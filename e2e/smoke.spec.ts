@@ -117,18 +117,26 @@ test.describe('HUD lifted to React (LUL-34)', () => {
     await expect(page.locator('#objective')).toBeVisible();
 
     // Drive the range inputs like a real drag would (Playwright's `fill()`
-    // refuses `type=range`): set the DOM value directly and dispatch the
-    // same 'input' event React's onChange listens for.
-    await page.locator('#pace').evaluate((el: HTMLInputElement) => {
-      el.value = '10';
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    // refuses `type=range`). Assigning `el.value` is NOT enough: React installs
+    // a value tracker on every input it manages, and a direct assignment updates
+    // that tracker's cached value too -- so React concludes nothing changed and
+    // never fires onChange. A real drag never hits this, because the browser
+    // sets the value through the native setter. Do the same here: call the
+    // native setter explicitly so the tracker goes stale, then dispatch 'input'.
+    const setRange = (selector: string, value: string) =>
+      page.locator(selector).evaluate((el, v) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value',
+        )!.set!;
+        nativeSetter.call(el, v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }, value);
+
+    await setRange('#pace', '10');
     await expect(page.locator('#paceVal')).toHaveText('10');
 
-    await page.locator('#fog').evaluate((el: HTMLInputElement) => {
-      el.value = '0.09';
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    });
+    await setRange('#fog', '0.09');
     await expect(page.locator('#fogVal')).toHaveText('.090');
 
     await expect(page.locator('#sound')).toHaveText('Sound: on');
