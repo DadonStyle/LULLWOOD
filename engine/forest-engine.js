@@ -43,6 +43,11 @@ const CONFIG = {
   foliage: 0x102420,
   ground:  0x0c1117,
   lake:    { x: 34, z: -28, r: 15, clear: 22, glow: 0x86b8ff },
+  // LUL-38: home is the spawn point -- already a tree-free clearing (inSpawn,
+  // radius ~6.3) and requires no new landmark placement / RNG draws, so map
+  // generation stays byte-identical for existing seeds.
+  home:    { x: 0, z: 0, r: 4.5 },
+  carrySpeedMult: 0.82,   // a burden, not a cripple, while carrying the child home
 };
 const half = CONFIG.mapSize / 2;
 const margin = 4;
@@ -528,7 +533,7 @@ const player = { x:0, z:0, yaw:0, pitch:-0.02 };
 const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
-    dead = false, pickingUp = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
+    dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false;
 
 on(window, 'keydown', e => {
@@ -836,6 +841,10 @@ function enter(){
 // same lifetime as everything else window.ForestEngine hands out.
 if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('qaHooks')){
   window.ForestEngine.qaTeleportNearBaby = function(){ player.x = baby.x + 2; player.z = baby.z; };
+  // LUL-38: same idea for the return trip -- drops the player at the home
+  // landmark so e2e/smoke.spec.ts can assert the walk-home/win half of the
+  // loop without scripting real navigation across procedural terrain.
+  window.ForestEngine.qaTeleportHome = function(){ player.x = CONFIG.home.x; player.z = CONFIG.home.z; };
 
   // Same idea for the death path. Reaching it naturally means standing still until
   // `sinceClose > 30` forces a hunt, then waiting for the animal to cross the map --
@@ -879,13 +888,25 @@ function pickup(){
   pickBoomed = false;
   playPickupMusic();
 }
-function finishPickup(){
-  pickingUp = false; won = true;
+// LUL-38: the arms cinematic no longer wins the game by itself -- it hands off
+// to a return trip. beginCarrying() ends the cinematic (same trigger point as
+// the old finishPickup()) and starts the walk home; finishPickup() now fires
+// only once the player actually reaches the home landmark (see the objective
+// HUD block in tick()).
+function beginCarrying(){
+  pickingUp = false; carrying = true;
   armsGroup.visible = false; babyGroup.visible = false;
+  document.body.style.cursor = '';
+}
+function finishPickup(){
+  carrying = false; won = true;
   document.body.style.cursor = '';
   pushState({ winVisible: true });
 }
 function triggerDeath(kind){
+  // LUL-38: `carrying` is deliberately not in this guard -- the whole point of
+  // the return trip is that predators can still catch you before you reach
+  // home, same as any other time you're `playing`.
   if(dead || won || pickingUp) return;
   dead = true; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
   if(locked) document.exitPointerLock();
@@ -905,7 +926,7 @@ function revealLoss(){ deathShown = true; document.body.style.cursor = ''; pushS
 function restart(){
   pushState({ winVisible: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
-  won = dead = pickingUp = hidden = false; hideTime = 0; eyeH = CONFIG.eye; deathShown = false;
+  won = dead = pickingUp = carrying = hidden = false; hideTime = 0; eyeH = CONFIG.eye; deathShown = false;
   armsGroup.visible = false; babyGroup.visible = true;
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
@@ -1056,7 +1077,7 @@ function tick(){
   let spd = 0, dist = 0;
   if(playing && !hidden){
     const running = keys['ShiftLeft'] || keys['ShiftRight'];
-    const maxSpd = running ? walk*1.8 : walk;
+    const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carrySpeedMult : 1);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
@@ -1098,7 +1119,7 @@ function tick(){
     lookM.lookAt(camera.position, boomGroup.visible ? boomGroup.position : babyGroup.position, camera.up);
     lookQ.setFromRotationMatrix(lookM);
     camera.quaternion.slerp(lookQ, 0.06);
-    if(e >= 11.3) finishPickup();
+    if(e >= 11.3) beginCarrying();
   } else if(dead){
     // the death "cutscene" is a real video overlay (see #deathVideo); just reveal the loss text at the end
     if((clock.elapsedTime - deathStart) >= CUT_END && !deathShown) revealLoss();
@@ -1149,11 +1170,27 @@ function tick(){
       statusText = sniffer ? 'Hidden · something is sniffing you — DON’T MOVE'
                             : 'Hidden · ' + hideTime.toFixed(1) + 's   (move to break cover)';
     }
-    pushState({
-      objectiveVisible: true, objectiveReady: canPickup,
-      objectiveText: canPickup ? 'Press  E  to lift the child' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm',
-      statusVisible, statusHiding: statusVisible, statusText,
-    });
+    // LUL-38: pickup no longer wins by itself -- once carrying, the objective
+    // prompt (same hudState field the "find the child" prompt already used)
+    // points home instead, and reaching it is what actually fires the win.
+    if(carrying){
+      const distHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
+      if(distHome < CONFIG.home.r){
+        finishPickup();
+      } else {
+        pushState({
+          objectiveVisible: true, objectiveReady: false,
+          objectiveText: 'Carry the child home  ·  ' + Math.round(distHome) + 'm',
+          statusVisible, statusHiding: statusVisible, statusText,
+        });
+      }
+    } else {
+      pushState({
+        objectiveVisible: true, objectiveReady: canPickup,
+        objectiveText: canPickup ? 'Press  E  to lift the child' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm',
+        statusVisible, statusHiding: statusVisible, statusText,
+      });
+    }
   } else {
     pushState({ objectiveVisible: false, statusVisible: false });
   }

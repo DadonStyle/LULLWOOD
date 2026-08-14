@@ -151,12 +151,17 @@ test.describe('lift the child / win', () => {
   // property of "walk a straight vector across procedural terrain", not evidence
   // the lift/win state machine is broken, and scripting real obstacle-avoidance
   // navigation is out of scope for what this test is trying to prove. So it uses
-  // the `qaTeleportNearBaby` hook (public/forest-engine.js, opt-in via
+  // the `qaTeleportNearBaby` hook (engine/forest-engine.js, opt-in via
   // `?qaHooks=1`, same convention as GameLoader's `__qaRemount`) to place the
   // player at pickup range directly and assert the actual mechanic: E ->
   // cinematic -> win screen. Reliable child-seeking navigation across arbitrary
   // procedural terrain is filed separately (see LUL-21 handoff comment).
-  test('teleport to pickup range, pressing E, and the win screen', async ({ page }) => {
+  //
+  // LUL-38: pickup no longer wins by itself -- the cinematic hands off to a
+  // return trip (`carrying`), and only reaching the home landmark fires
+  // finishPickup()/won. This test asserts the full loop: pickup -> cinematic ->
+  // NOT won yet -> teleport home (qaTeleportHome, same convention) -> won.
+  test('teleport to pickup range, pressing E, cinematic ends without winning, then walking home wins', async ({ page }) => {
     test.setTimeout(30_000);
     await page.goto('/?qaHooks=1', { waitUntil: 'networkidle', timeout: 60_000 });
     await page.waitForTimeout(4000);
@@ -169,9 +174,16 @@ test.describe('lift the child / win', () => {
     expect(objective, 'qaTeleportNearBaby did not land within pickup range').toContain('Press');
 
     await page.keyboard.press('KeyE');
-    // Pickup cinematic runs ~11.3s (public/forest-engine.js key3 timeline) before
-    // finishPickup() flips the win screen on.
-    await expect(page.locator('#winScreen')).toBeVisible({ timeout: 15_000 });
+    // Pickup cinematic runs ~11.3s (engine/forest-engine.js key3 timeline) before
+    // beginCarrying() ends it and hands off to the return trip.
+    await page.waitForTimeout(12_500);
+    await expect(page.locator('#winScreen')).toBeHidden();
+    const carryObjective = await readObjective(page);
+    expect(carryObjective, 'cinematic end did not hand off to the carry-home objective').toContain('home');
+
+    await page.evaluate(() => (window as any).ForestEngine.qaTeleportHome());
+    await page.waitForTimeout(300); // let the next tick() recompute the home distance
+    await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('#winScreen h1')).toHaveText('YOU WON');
   });
 });
