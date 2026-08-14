@@ -19,9 +19,10 @@ Open [http://localhost:3000](http://localhost:3000) — the game is playable at 
   `next/dynamic({ ssr: false })` (the engine touches `document`/`window`/`AudioContext`
   at module scope and cannot run on the server).
 - `components/GameCanvas.tsx` — injects the game's original CSS + DOM overlay
-  (verbatim from the prototype), imports `three@0.128` from npm and assigns it
-  to `window.THREE`, then imports `engine/forest-engine.js` and calls its
-  `init()`/`dispose()` around the component's mount/unmount.
+  (verbatim from the prototype), then dynamically imports `engine/forest-engine.js`
+  and calls its `init()`/`dispose()` around the component's mount/unmount. The
+  engine imports `three@0.128` itself and is bundled with it (LUL-28); there is no
+  `window.THREE` global.
 - `engine/forest-engine.js` — the game's original `<script>` body, wrapped in an
   `init()`/`dispose()` lifecycle (LUL-17) so it survives React StrictMode's
   double-invoked effects; otherwise unmodified. Not linted or type-checked (see
@@ -30,7 +31,8 @@ Open [http://localhost:3000](http://localhost:3000) — the game is playable at 
   the wiki: `game/port-plan`).
 - `public/death.mp4` — the death sequence video, extracted from the prototype's
   inline base64 data URI.
-- `watchdog/` — standalone rate-limit tooling, unrelated to the Next.js app.
+- `NOAM_MDS/` — human-facing documentation: `NOAM_MDS/ARCHITECTURE.md` describes every
+  directory and what its files do, grouped by responsibility.
 
 The original single-file prototype (`game/forest.html`) was removed once the port
 superseded it — the app never served it. It remains in git history at `5e46ed1`
