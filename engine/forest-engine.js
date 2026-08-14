@@ -43,6 +43,8 @@ const CONFIG = {
   foliage: 0x102420,
   ground:  0x0c1117,
   lake:    { x: 34, z: -28, r: 15, clear: 22, glow: 0x86b8ff },
+  home:    { x: 0, z: 0, r: 3.6, glow: 0xffd9b0 },   // LUL-38: reuses the spawn point, no new rng draw
+  carryPaceMul: 0.72,                                 // LUL-38: burden while carrying the child, not a cripple
 };
 const half = CONFIG.mapSize / 2;
 const margin = 4;
@@ -183,6 +185,7 @@ function generateMap(seed){
   drawMinimapStatic();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
+  bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
 }
 
 // ---- Lake landmark (the thing to find) -----------------------------------
@@ -197,6 +200,17 @@ ring.rotation.x = -Math.PI/2; ring.position.set(CONFIG.lake.x, 0.06, CONFIG.lake
 
 const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3, 75, 2);
 lakeLight.position.set(CONFIG.lake.x, 7, CONFIG.lake.z); scene.add(lakeLight);
+
+// ---- Home landmark: where the child must be carried (LUL-38) -------------
+// Deliberately minimal -- "reuse the spawn point" per the ticket's own scope,
+// a lit waypoint rather than a new art pass. Static (no rng draw), so map
+// generation stays byte-identical for existing seeds.
+const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0, 24, 2);
+homeLight.position.set(CONFIG.home.x, 3, CONFIG.home.z); scene.add(homeLight);
+const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG.home.r*1.1, 40),
+  new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+homeRing.rotation.x = -Math.PI/2; homeRing.position.set(CONFIG.home.x, 0.04, CONFIG.home.z); scene.add(homeRing);
 
 const LW = 50, lwArr = new Float32Array(LW*3);
 for(let i=0;i<LW;i++){ const a=Math.random()*Math.PI*2, r=Math.random()*CONFIG.lake.r*0.95;
@@ -528,7 +542,7 @@ const player = { x:0, z:0, yaw:0, pitch:-0.02 };
 const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
-    dead = false, pickingUp = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
+    dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false;
 
 on(window, 'keydown', e => {
@@ -837,6 +851,12 @@ function enter(){
 if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('qaHooks')){
   window.ForestEngine.qaTeleportNearBaby = function(){ player.x = baby.x + 2; player.z = baby.z; };
 
+  // LUL-38: same rationale -- home is a fixed point (CONFIG.home, reuses
+  // spawn) so there's no navigation-reliability reason to walk there in a
+  // test; this lets e2e assert the carry -> arrive -> win transition without
+  // depending on procedural-terrain pathing.
+  window.ForestEngine.qaTeleportHome = function(){ player.x = CONFIG.home.x; player.z = CONFIG.home.z; };
+
   // Same idea for the death path. Reaching it naturally means standing still until
   // `sinceClose > 30` forces a hunt, then waiting for the animal to cross the map --
   // and both of those are measured in game time, which is not wall time: dt is
@@ -872,6 +892,7 @@ if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
   if(baby.taken || won || dead || pickingUp) return;
   baby.taken = true; pickingUp = true; pickStart = clock.elapsedTime; hidden = false;
+  bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found; carrying starts now
   pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
@@ -880,10 +901,22 @@ function pickup(){
   playPickupMusic();
 }
 function finishPickup(){
-  pickingUp = false; won = true;
-  armsGroup.visible = false; babyGroup.visible = false;
+  // LUL-38: the burst above (fireBoom) is the moment of pickup, not the child
+  // leaving -- winning now requires walking them to CONFIG.home. They ride
+  // along small and glowing until you arrive; see arriveHome(). Reset the
+  // glow properties the cinematic left mid-transition (the "boomed" branch
+  // above forces babyLight to 0 every frame while pickingUp).
+  pickingUp = false; carrying = true;
+  armsGroup.visible = false;
   document.body.style.cursor = '';
-  pushState({ winVisible: true });
+  babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
+  bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.55;
+  halo.material.opacity = 0.22; babyLight.intensity = 1.3;
+}
+function arriveHome(){
+  won = true; carrying = false;
+  babyGroup.visible = false;
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true });
 }
 function triggerDeath(kind){
   if(dead || won || pickingUp) return;
@@ -905,8 +938,8 @@ function revealLoss(){ deathShown = true; document.body.style.cursor = ''; pushS
 function restart(){
   pushState({ winVisible: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
-  won = dead = pickingUp = hidden = false; hideTime = 0; eyeH = CONFIG.eye; deathShown = false;
-  armsGroup.visible = false; babyGroup.visible = true;
+  won = dead = pickingUp = carrying = hidden = false; hideTime = 0; eyeH = CONFIG.eye; deathShown = false;
+  armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   document.body.style.cursor = '';
@@ -1056,7 +1089,7 @@ function tick(){
   let spd = 0, dist = 0;
   if(playing && !hidden){
     const running = keys['ShiftLeft'] || keys['ShiftRight'];
-    const maxSpd = running ? walk*1.8 : walk;
+    const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carryPaceMul : 1);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
@@ -1099,6 +1132,16 @@ function tick(){
     lookQ.setFromRotationMatrix(lookM);
     camera.quaternion.slerp(lookQ, 0.06);
     if(e >= 11.3) finishPickup();
+  } else if(carrying){
+    // LUL-38: carrying phase — child rides at the player's feet, glowing
+    babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
+    babyGroup.rotation.y = t * 0.4;
+    halo.material.opacity = 0.20 + Math.sin(t*1.8)*0.04;
+    babyLight.intensity = 1.2 + Math.sin(t*1.8)*0.2;
+    camera.position.set(player.x, eyeH, player.z);
+    camera.rotation.set(player.pitch, player.yaw, 0);
+    const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
+    if(dh < CONFIG.home.r) arriveHome();
   } else if(dead){
     // the death "cutscene" is a real video overlay (see #deathVideo); just reveal the loss text at the end
     if((clock.elapsedTime - deathStart) >= CUT_END && !deathShown) revealLoss();
@@ -1141,6 +1184,7 @@ function tick(){
   // objective + status HUD
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
   canPickup = !baby.taken && distBaby < 3.6;
+  const distHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);   // LUL-38
   if(playing){
     let statusVisible = false, statusText = '';
     if(hidden){
@@ -1151,13 +1195,14 @@ function tick(){
     }
     pushState({
       objectiveVisible: true, objectiveReady: canPickup,
-      objectiveText: canPickup ? 'Press  E  to lift the child' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm',
+      objectiveText: carrying
+        ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm'
+        : (canPickup ? 'Press  E  to lift the child' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'),
       statusVisible, statusHiding: statusVisible, statusText,
     });
   } else {
     pushState({ objectiveVisible: false, statusVisible: false });
   }
-
   // the child's idle glow (outside the cinematic)
   if(!baby.taken){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
@@ -1198,6 +1243,9 @@ function tick(){
     audio.foot += dist;                              // footsteps play in both states
     if(spd > 0.3 && audio.foot >= 1.9){ audio.foot -= 1.9; footstep(0.12); }
   }
+
+  // home landmark breathes, gently (LUL-38)
+  homeRing.material.opacity = 0.16 + Math.sin(t*0.9)*0.06;
 
   // pool breathes; its wisps rise
   ring.material.opacity = 0.14 + Math.sin(t*0.8)*0.05;
