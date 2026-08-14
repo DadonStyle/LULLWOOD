@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 
 // Verbatim from game/forest.html (M2 wiki plan: game/port-plan) -- CSS lines 6-99,
 // body markup lines 102-142. Not refactored per LUL-13 scope: M1 ports as-is,
@@ -150,25 +150,48 @@ const OVERLAY_MARKUP = `
 const THREE_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const ENGINE_SRC = '/forest-engine.js';
 
+declare global {
+  interface Window {
+    ForestEngine?: { init: () => void; dispose: () => void };
+  }
+}
+
+// Module-scope (not per-mount) caches: the two <script> tags are page-global
+// resources and must be injected at most once, even across StrictMode's
+// mount -> unmount -> remount in dev. `ForestEngine.init`/`dispose` (LUL-17)
+// are what actually start/stop a game run; they're safe to call repeatedly.
+let engineLoadPromise: Promise<void> | null = null;
+function loadEngineScript(): Promise<void> {
+  if (!engineLoadPromise) {
+    engineLoadPromise = new Promise((resolve, reject) => {
+      const threeScript = document.createElement('script');
+      threeScript.src = THREE_SRC;
+      threeScript.onload = () => {
+        const engineScript = document.createElement('script');
+        engineScript.src = ENGINE_SRC;
+        engineScript.onload = () => resolve();
+        engineScript.onerror = () => reject(new Error('Failed to load ' + ENGINE_SRC));
+        document.body.appendChild(engineScript);
+      };
+      threeScript.onerror = () => reject(new Error('Failed to load ' + THREE_SRC));
+      document.body.appendChild(threeScript);
+    });
+  }
+  return engineLoadPromise;
+}
+
 export default function GameCanvas() {
-  const startedRef = useRef(false);
-
   useEffect(() => {
-    // The engine (public/forest-engine.js) registers listeners and starts an
-    // unconditional rAF loop with no teardown -- it was never built to be mounted
-    // twice. Guard against StrictMode's double-effect in dev (also see
-    // next.config.ts, which turns StrictMode off for the same reason).
-    if (startedRef.current) return;
-    startedRef.current = true;
+    let cancelled = false;
 
-    const threeScript = document.createElement('script');
-    threeScript.src = THREE_SRC;
-    threeScript.onload = () => {
-      const engineScript = document.createElement('script');
-      engineScript.src = ENGINE_SRC;
-      document.body.appendChild(engineScript);
+    loadEngineScript().then(() => {
+      if (!cancelled) window.ForestEngine?.init();
+    });
+
+    return () => {
+      cancelled = true;
+      window.ForestEngine?.dispose();
     };
-    document.body.appendChild(threeScript);
   }, []);
 
   return (

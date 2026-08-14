@@ -1,3 +1,31 @@
+// Ported from the forest.html prototype (M1). LUL-17 (M2a) gave it a real
+// init()/dispose() lifecycle so it can survive React StrictMode's double-invoked
+// effects: everything that was module-scope state now lives inside init()'s
+// closure, every addEventListener/setTimeout is tracked via on()/later() so
+// dispose() can undo it, and dispose() walks the scene graph to release Three
+// resources (geometries, materials, textures) plus the renderer/AudioContext.
+// Keeps the global THREE contract (loaded from cdnjs, see components/GameCanvas.tsx)
+// -- the npm swap is a separate ticket (P2).
+(function () {
+'use strict';
+
+let activeDispose = null;
+
+function init() {
+  if (activeDispose) return;   // already running; init() is idempotent
+
+  const cleanupFns = [];
+  function on(target, type, handler, opts) {
+    target.addEventListener(type, handler, opts);
+    cleanupFns.push(function () { target.removeEventListener(type, handler, opts); });
+  }
+  const timers = [];
+  function later(fn, ms) {
+    const id = setTimeout(fn, ms);
+    timers.push(id);
+    return id;
+  }
+
 // ---- Knobs ---------------------------------------------------------------
 const CONFIG = {
   seed:    20260718,
@@ -499,14 +527,14 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false;
 
-addEventListener('keydown', e => {
+on(window, 'keydown', e => {
   keys[e.code] = true;
   const playing = entered && !won && !dead && !pickingUp;
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
   if(e.code === 'KeyE' && canPickup && playing && !paused) pickup();
   if(e.code === 'KeyH' && playing && !paused){ hidden = !hidden; if(hidden) hideTime = 0; }
 });
-addEventListener('keyup', e => { keys[e.code] = false; });
+on(window, 'keyup', e => { keys[e.code] = false; });
 
 // Look: free mouse-look via Pointer Lock, with click-and-drag as a fallback
 let dragging = false, locked = false, paused = false;
@@ -517,24 +545,24 @@ function applyLook(dx, dy){
   player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - dy*SENS));
 }
 function requestLock(){ if(el.requestPointerLock) el.requestPointerLock(); }
-document.addEventListener('pointerlockchange', () => {
+on(document, 'pointerlockchange', () => {
   locked = document.pointerLockElement === el;
   if(locked) setPaused(false);
   else if(entered && !won && !dead && !pickingUp) setPaused(true);     // Esc / released lock -> menu
 });
-document.addEventListener('pointerlockerror', () => { locked = false; });
-el.addEventListener('mousedown', () => {
+on(document, 'pointerlockerror', () => { locked = false; });
+on(el, 'mousedown', () => {
   if(paused){ setPaused(false); requestLock(); return; }   // click to look again
   if(!locked){ dragging = true; el.style.cursor = 'grabbing'; }
 });
-addEventListener('mouseup', () => { dragging = false; el.style.cursor = 'default'; });
-addEventListener('mousemove', e => {
+on(window, 'mouseup', () => { dragging = false; el.style.cursor = 'default'; });
+on(window, 'mousemove', e => {
   if(locked) applyLook(e.movementX, e.movementY);
   else if(dragging) applyLook(e.movementX, e.movementY);
 });
 let lastTouch = null;
-renderer.domElement.addEventListener('touchstart', e => { lastTouch = e.touches[0]; }, {passive:true});
-renderer.domElement.addEventListener('touchmove', e => {
+on(renderer.domElement, 'touchstart', e => { lastTouch = e.touches[0]; }, {passive:true});
+on(renderer.domElement, 'touchmove', e => {
   const t = e.touches[0];
   if(lastTouch) applyLook((t.clientX-lastTouch.clientX)*2, (t.clientY-lastTouch.clientY)*2);
   lastTouch = t;
@@ -644,7 +672,7 @@ function playPickupMusic(){
     g.gain.exponentialRampToValueAtTime(0.14, s+0.02); g.gain.exponentialRampToValueAtTime(0.0001, s+1.4);
     o.connect(g); g.connect(bus); g.connect(conv); o.start(s); o.stop(s+1.5);
   });
-  setTimeout(() => { if(audio){ audio.wg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); audio.dg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); } }, 11000);
+  later(() => { if(audio){ audio.wg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); audio.dg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); } }, 11000);
 }
 // distinct voice per species so you can hear what's coming
 function predatorCall(kind, big){
@@ -771,9 +799,9 @@ function enter(){
   else if(audio){ audio.ctx.resume(); }
   requestLock();
   hint.style.opacity = '0.85';
-  setTimeout(() => { hint.style.opacity = '0'; }, 5000);
+  later(() => { hint.style.opacity = '0'; }, 5000);
 }
-gate.addEventListener('click', enter);
+on(gate, 'click', enter);
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
 const objective = document.getElementById('objective');
@@ -784,7 +812,7 @@ const deathScreen = document.getElementById('deathScreen');
 const deathText = document.getElementById('deathText');
 const deathVideo = document.getElementById('deathVideo');
 const CUT_END = 3.7;   // death video length; reveal the loss text at the end
-if(deathVideo) deathVideo.addEventListener('ended', () => { if(dead) revealLoss(); });
+if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
   if(baby.taken || won || dead || pickingUp) return;
   baby.taken = true; pickingUp = true; pickStart = clock.elapsedTime; hidden = false;
@@ -833,19 +861,21 @@ function restart(){
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
   enter();
 }
-document.querySelectorAll('.restartBtn').forEach(b => b.addEventListener('click', restart));
+document.querySelectorAll('.restartBtn').forEach(b => on(b, 'click', restart));
 
 // ---- Controls ------------------------------------------------------------
 const paceEl = document.getElementById('pace'), fogEl = document.getElementById('fog');
-paceEl.addEventListener('input', e => { walk = +e.target.value; document.getElementById('paceVal').textContent = walk; });
-fogEl.addEventListener('input', e => { scene.fog.density = +e.target.value;
+on(paceEl, 'input', e => { walk = +e.target.value; document.getElementById('paceVal').textContent = walk; });
+on(fogEl, 'input', e => { scene.fog.density = +e.target.value;
   document.getElementById('fogVal').textContent = (+e.target.value).toFixed(3).slice(1); });
-document.getElementById('sound').addEventListener('click', e => {
+const soundBtn = document.getElementById('sound');
+on(soundBtn, 'click', e => {
   soundOn = !soundOn; e.target.textContent = 'Sound: ' + (soundOn ? 'on' : 'off');
   if(audio) audio.master.gain.setTargetAtTime(soundOn ? 0.6 : 0.0001, audio.ctx.currentTime, 0.1);
 });
-document.getElementById('regen').addEventListener('click', () => generateMap((Math.random()*1e9)>>>0));
-addEventListener('resize', () => {
+const regenBtn = document.getElementById('regen');
+on(regenBtn, 'click', () => generateMap((Math.random()*1e9)>>>0));
+on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   applyRes();
 });
@@ -959,9 +989,10 @@ function applyRes(){ if(usePost) makeTargets(); else { renderer.setPixelRatio(RE
 generateMap(CONFIG.seed);
 const clock = new THREE.Clock();
 let bobPhase = 0;
+let rafId = null;
 
 function tick(){
-  requestAnimationFrame(tick);
+  rafId = requestAnimationFrame(tick);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
 
   // hiding: H toggles crouch, any movement key breaks cover
@@ -1066,7 +1097,7 @@ function tick(){
     else { objective.textContent = 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'; objective.classList.remove('ready'); }
     if(hidden){ statusEl.style.display='block'; statusEl.className='hiding';
       const sniffer = predators.some(p => p.state==='investigate' && Math.hypot(player.x-p.x, player.z-p.z) < 6);
-      statusEl.textContent = sniffer ? 'Hidden · something is sniffing you — DON\u2019T MOVE'
+      statusEl.textContent = sniffer ? 'Hidden · something is sniffing you — DON’T MOVE'
                                      : 'Hidden · ' + hideTime.toFixed(1) + 's   (move to break cover)'; }
     else statusEl.style.display = 'none';
   } else { objective.style.display = 'none'; statusEl.style.display = 'none'; }
@@ -1148,3 +1179,51 @@ function tick(){
   adaptResolution(dt, t);
 }
 tick();
+
+  // ---- Teardown: undo everything the run above did ------------------------
+  activeDispose = function dispose() {
+    cancelAnimationFrame(rafId);
+    timers.forEach(id => clearTimeout(id));
+    cleanupFns.forEach(fn => fn());
+
+    if(document.pointerLockElement === el) document.exitPointerLock();
+    document.body.style.cursor = '';
+
+    // release every geometry/material/texture reachable from the scene graph
+    scene.traverse(obj => {
+      if(obj.geometry) obj.geometry.dispose();
+      if(obj.material){
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        mats.forEach(m => {
+          for(const k in m){ const v = m[k]; if(v && v.isTexture) v.dispose(); }
+          m.dispose();
+        });
+      }
+    });
+    if(scene.background && scene.background.isTexture) scene.background.dispose();
+
+    // post-processing: fullscreen quad + shader materials + render targets
+    if(fsQuad){
+      fsQuad.geometry.dispose();
+      [matBright, matBlur, matComposite].forEach(m => m && m.dispose());
+    }
+    [sceneRT, brightRT, blurA, blurB].forEach(rt => rt && rt.dispose());
+
+    // renderer + WebGL context (browsers cap live contexts; release it explicitly)
+    renderer.domElement.remove();
+    renderer.dispose();
+    renderer.forceContextLoss();
+
+    // AudioContext
+    if(audio){ try { audio.ctx.close(); } catch(e){} }
+
+    activeDispose = null;
+  };
+}
+
+function dispose() {
+  if(activeDispose) activeDispose();
+}
+
+if(typeof window !== 'undefined') window.ForestEngine = { init: init, dispose: dispose };
+})();

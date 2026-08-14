@@ -1,12 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // The ported game engine (public/forest-engine.js, see components/GameCanvas.tsx)
-  // registers 16 listeners and starts an rAF loop with no teardown -- it wasn't built
-  // to survive a mount/unmount/remount cycle. StrictMode's double-invoked effects in
-  // dev would double every listener, WebGL context, and AudioContext. Giving the
-  // engine a real dispose() lifecycle is M2 (LUL-9) scope, not this port.
-  reactStrictMode: false,
+  // public/forest-engine.js now exposes init()/dispose() (LUL-17): every listener
+  // is tracked and removed, the rAF loop is cancelled, and Three/Audio resources
+  // are released. GameCanvas.tsx calls dispose() on unmount, so StrictMode's
+  // double-invoked dev effects leave exactly one running instance.
+  reactStrictMode: true,
 };
 
 export default nextConfig;
