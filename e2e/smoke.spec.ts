@@ -150,7 +150,7 @@ test.describe('HUD lifted to React (LUL-34)', () => {
   });
 });
 
-test.describe('lift the child / win', () => {
+test.describe('lift the child / carry home / win', () => {
   // Walking a computed straight line to the child (BABY_X/BABY_Z from the seeded
   // map RNG, see wiki:systems/headless-qa-rig) is not reliable here: this seed's
   // spawn sits in a pocket where -- confirmed by hand with a throwaway script --
@@ -159,13 +159,14 @@ test.describe('lift the child / win', () => {
   // property of "walk a straight vector across procedural terrain", not evidence
   // the lift/win state machine is broken, and scripting real obstacle-avoidance
   // navigation is out of scope for what this test is trying to prove. So it uses
-  // the `qaTeleportNearBaby` hook (public/forest-engine.js, opt-in via
-  // `?qaHooks=1`, same convention as GameLoader's `__qaRemount`) to place the
-  // player at pickup range directly and assert the actual mechanic: E ->
-  // cinematic -> win screen. Reliable child-seeking navigation across arbitrary
-  // procedural terrain is filed separately (see LUL-21 handoff comment).
-  test('teleport to pickup range, pressing E, and the win screen', async ({ page }) => {
-    test.setTimeout(30_000);
+  // the `qaTeleportNearBaby` / `qaTeleportHome` hooks (engine/forest-engine.js,
+  // opt-in via `?qaHooks=1`, same convention as GameLoader's `__qaRemount`) to
+  // place the player at pickup range and then at the home landmark directly, and
+  // assert the actual mechanic: E -> cinematic -> carrying -> arrive home -> win
+  // screen. Reliable child-seeking navigation across arbitrary procedural terrain
+  // is filed separately (see LUL-21 handoff comment).
+  test('pressing E lifts the child; only reaching home (not the pickup) shows the win screen', async ({ page }) => {
+    test.setTimeout(45_000);
     await page.goto('/?qaHooks=1', { waitUntil: 'networkidle', timeout: 60_000 });
     await page.waitForTimeout(4000);
     await enter(page);
@@ -177,9 +178,24 @@ test.describe('lift the child / win', () => {
     expect(objective, 'qaTeleportNearBaby did not land within pickup range').toContain('Press');
 
     await page.keyboard.press('KeyE');
-    // Pickup cinematic runs ~11.3s (public/forest-engine.js key3 timeline) before
-    // finishPickup() flips the win screen on.
-    await expect(page.locator('#winScreen')).toBeVisible({ timeout: 15_000 });
+
+    // LUL-38: pickup() no longer wins by itself -- the arms cinematic runs
+    // ~11.3s (engine/forest-engine.js key3 timeline) and finishPickup() then
+    // hands off to a "carry the child home" phase; only arriving at
+    // CONFIG.home flips the win screen. Poll the HUD text for that handoff
+    // instead of a fixed wall-clock sleep: game time and wall time diverge
+    // under this rig's software rendering (wiki systems/dt-clamp-vs-walltime),
+    // so a hardcoded ~11.3s wait would flake on a slower run.
+    await expect
+      .poll(() => readObjective(page), {
+        message: 'pickup did not hand off to the carry-home objective (LUL-38)',
+        timeout: 30_000,
+      })
+      .toContain('Carry the child home');
+    await expect(page.locator('#winScreen'), 'reaching pickup range alone must not win (LUL-38)').toBeHidden();
+
+    await page.evaluate(() => (window as any).ForestEngine.qaTeleportHome());
+    await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('#winScreen h1')).toHaveText('YOU WON');
   });
 });
