@@ -19,24 +19,36 @@ Open [http://localhost:3000](http://localhost:3000) — the game is playable at 
   `next/dynamic({ ssr: false })` (the engine touches `document`/`window`/`AudioContext`
   at module scope and cannot run on the server).
 - `components/GameCanvas.tsx` — injects the game's original CSS + DOM overlay
-  (verbatim from `game/forest.html`), imports `three@0.128` from npm and assigns it
-  to `window.THREE`, then loads `public/forest-engine.js` and calls its
+  (verbatim from the prototype), imports `three@0.128` from npm and assigns it
+  to `window.THREE`, then imports `engine/forest-engine.js` and calls its
   `init()`/`dispose()` around the component's mount/unmount.
-- `public/forest-engine.js` — the game's original `<script>` body, wrapped in an
+- `engine/forest-engine.js` — the game's original `<script>` body, wrapped in an
   `init()`/`dispose()` lifecycle (LUL-17) so it survives React StrictMode's
   double-invoked effects; otherwise unmodified. Not linted or type-checked (see
   `eslint.config.mjs`) — it's a vendored, as-is port, not app source. Module
   decomposition into typed `lib/game/` units is a separate, later milestone (see
   the wiki: `game/port-plan`).
-- `game/forest.html` — the original single-file prototype, kept as the source of
-  truth the port was taken from. Not served by the app.
+- `public/death.mp4` — the death sequence video, extracted from the prototype's
+  inline base64 data URI.
 - `watchdog/` — standalone rate-limit tooling, unrelated to the Next.js app.
+
+The original single-file prototype (`game/forest.html`) was removed once the port
+superseded it — the app never served it. It remains in git history at `5e46ed1`
+(`git show 5e46ed1:game/forest.html`) if you ever need to diff against it.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every PR: `eslint` (`next lint` was removed in
-Next.js 16), `tsc --noEmit`, and `next build`. A placeholder `smoke` job exists for
-Playwright smoke tests once a Game Tester is staffed.
+`.github/workflows/ci.yml` runs on every PR in two jobs: `build, typecheck, lint`
+(`eslint` — `next lint` was removed in Next.js 16 — then `next typegen`, `tsc
+--noEmit`, `next build`) and `playwright smoke suite` (`e2e/`, headless Chromium,
+report uploaded as an artifact).
+
+## Deploys
+
+`main` auto-deploys to [lullwood.vercel.app](https://lullwood.vercel.app) via the
+Vercel GitHub App. Vercel builds independently of CI and does not run Playwright,
+so CI status does not gate a production deploy — that requires branch protection on
+`main` (tracked as LUL-33).
 
 ## Status
 
