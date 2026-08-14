@@ -14,8 +14,9 @@ import * as THREE from 'three';
 
 let activeDispose = null;
 
-function init() {
-  if (activeDispose) return;   // already running; init() is idempotent
+function init(onStateChange) {
+  if (activeDispose) return null;   // already running; init() is idempotent
+  const emitState = typeof onStateChange === 'function' ? onStateChange : function(){};
 
   const cleanupFns = [];
   function on(target, type, handler, opts) {
@@ -789,14 +790,34 @@ function boom(when){
     so.connect(sg); sg.connect(master); sg.connect(conv); so.start(t+d); so.stop(t+d+0.75); });
 }
 
+// ---- HUD state (LUL-34: engine emits, React renders) ---------------------
+// One-directional: the engine owns this object and pushes patches out via
+// emitState(). Nothing reads it back in -- React never reaches into engine
+// internals, it only calls the action functions returned by init() below.
+let hudState = {
+  entered: false,
+  objectiveVisible: false, objectiveText: '', objectiveReady: false,
+  statusVisible: false, statusHiding: false, statusText: '',
+  winVisible: false,
+  deathVisible: false, deathKind: 'wolf', lossRevealed: false,
+  pace: CONFIG.walk, fogDisplay: '.045', soundOn: true,
+};
+function pushState(patch){
+  let changed = false;
+  for(const k in patch){ if(hudState[k] !== patch[k]){ changed = true; break; } }
+  if(!changed) return;
+  hudState = Object.assign({}, hudState, patch);
+  emitState(hudState);
+}
+emitState(hudState);   // initial sync, in case a listener mounted before init() ran
+
 // ---- Gate + pause --------------------------------------------------------
-const gate = document.getElementById('gate');
 const hint = document.getElementById('hint');
 const pausePrompt = document.getElementById('pausePrompt');
 function setPaused(p){ paused = p; pausePrompt.style.display = p ? 'flex' : 'none'; }
 function enter(){
-  gate.style.display = 'none';
   entered = true;
+  pushState({ entered: true });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
   else if(audio){ audio.ctx.resume(); }
@@ -804,7 +825,6 @@ function enter(){
   hint.style.opacity = '0.85';
   later(() => { hint.style.opacity = '0'; }, 5000);
 }
-on(gate, 'click', enter);
 
 // QA-only, opt-in (?qaHooks=1): the procedurally generated forest can wedge a
 // straight-line walk against a tree cluster near spawn depending on seed/heading,
@@ -845,19 +865,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
-const objective = document.getElementById('objective');
-const statusEl = document.getElementById('status');
 const spotFlashEl = document.getElementById('spotFlash');
-const winScreen = document.getElementById('winScreen');
-const deathScreen = document.getElementById('deathScreen');
-const deathText = document.getElementById('deathText');
 const deathVideo = document.getElementById('deathVideo');
 const CUT_END = 3.7;   // death video length; reveal the loss text at the end
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
   if(baby.taken || won || dead || pickingUp) return;
   baby.taken = true; pickingUp = true; pickStart = clock.elapsedTime; hidden = false;
-  objective.style.display = 'none'; statusEl.style.display = 'none';
+  pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   armsGroup.visible = true;
@@ -868,17 +883,14 @@ function finishPickup(){
   pickingUp = false; won = true;
   armsGroup.visible = false; babyGroup.visible = false;
   document.body.style.cursor = '';
-  winScreen.style.display = 'flex';
+  pushState({ winVisible: true });
 }
 function triggerDeath(kind){
   if(dead || won || pickingUp) return;
   dead = true; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
-  document.getElementById('deathKind').textContent = kind;
-  deathText.style.opacity = '0';
-  deathScreen.style.background = 'rgba(0,0,0,0)';
-  deathScreen.style.display = 'flex';
+  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -889,33 +901,30 @@ function playDeathVideo(){
   const pr = deathVideo.play();
   if(pr && pr.catch) pr.catch(() => {});     // muted autoplay is allowed; ignore any rejection
 }
-function revealLoss(){ deathShown = true; document.body.style.cursor = ''; deathText.style.opacity = '1'; }
+function revealLoss(){ deathShown = true; document.body.style.cursor = ''; pushState({ lossRevealed: true }); }
 function restart(){
-  winScreen.style.display = 'none'; deathScreen.style.display = 'none';
+  pushState({ winVisible: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   won = dead = pickingUp = hidden = false; hideTime = 0; eyeH = CONFIG.eye; deathShown = false;
   armsGroup.visible = false; babyGroup.visible = true;
-  deathText.style.opacity = '0'; deathScreen.style.background = 'rgba(0,0,0,0)';
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   document.body.style.cursor = '';
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
   enter();
 }
-document.querySelectorAll('.restartBtn').forEach(b => on(b, 'click', restart));
 
-// ---- Controls ------------------------------------------------------------
-const paceEl = document.getElementById('pace'), fogEl = document.getElementById('fog');
-on(paceEl, 'input', e => { walk = +e.target.value; document.getElementById('paceVal').textContent = walk; });
-on(fogEl, 'input', e => { scene.fog.density = +e.target.value;
-  document.getElementById('fogVal').textContent = (+e.target.value).toFixed(3).slice(1); });
-const soundBtn = document.getElementById('sound');
-on(soundBtn, 'click', e => {
-  soundOn = !soundOn; e.target.textContent = 'Sound: ' + (soundOn ? 'on' : 'off');
+// ---- Controls --------------------------------------------------------
+// LUL-34: these are now the engine's public action API (returned by init()
+// below) instead of DOM event listeners on elements the engine no longer owns.
+function setPace(v){ walk = v; pushState({ pace: v }); }
+function setFog(v){ scene.fog.density = v; pushState({ fogDisplay: v.toFixed(3).slice(1) }); }
+function toggleSound(){
+  soundOn = !soundOn;
   if(audio) audio.master.gain.setTargetAtTime(soundOn ? 0.6 : 0.0001, audio.ctx.currentTime, 0.1);
-});
-const regenBtn = document.getElementById('regen');
-on(regenBtn, 'click', () => generateMap((Math.random()*1e9)>>>0));
+  pushState({ soundOn });
+}
+function regenMap(){ generateMap((Math.random()*1e9)>>>0); }
 on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   applyRes();
@@ -1133,15 +1142,21 @@ function tick(){
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
   canPickup = !baby.taken && distBaby < 3.6;
   if(playing){
-    objective.style.display = 'block';
-    if(canPickup){ objective.textContent = 'Press  E  to lift the child'; objective.classList.add('ready'); }
-    else { objective.textContent = 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'; objective.classList.remove('ready'); }
-    if(hidden){ statusEl.style.display='block'; statusEl.className='hiding';
+    let statusVisible = false, statusText = '';
+    if(hidden){
+      statusVisible = true;
       const sniffer = predators.some(p => p.state==='investigate' && Math.hypot(player.x-p.x, player.z-p.z) < 6);
-      statusEl.textContent = sniffer ? 'Hidden · something is sniffing you — DON’T MOVE'
-                                     : 'Hidden · ' + hideTime.toFixed(1) + 's   (move to break cover)'; }
-    else statusEl.style.display = 'none';
-  } else { objective.style.display = 'none'; statusEl.style.display = 'none'; }
+      statusText = sniffer ? 'Hidden · something is sniffing you — DON’T MOVE'
+                            : 'Hidden · ' + hideTime.toFixed(1) + 's   (move to break cover)';
+    }
+    pushState({
+      objectiveVisible: true, objectiveReady: canPickup,
+      objectiveText: canPickup ? 'Press  E  to lift the child' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm',
+      statusVisible, statusHiding: statusVisible, statusText,
+    });
+  } else {
+    pushState({ objectiveVisible: false, statusVisible: false });
+  }
 
   // the child's idle glow (outside the cinematic)
   if(!baby.taken){
@@ -1260,6 +1275,12 @@ tick();
 
     activeDispose = null;
   };
+
+  // LUL-34: the public action API. GameCanvas wires these to React event
+  // handlers (gate click, restart buttons, panel sliders/buttons) -- the only
+  // direction React is allowed to reach into the engine, as opposed to state,
+  // which only ever flows the other way via emitState().
+  return { enter, restart, setPace, setFog, toggleSound, regenMap };
 }
 
 function dispose() {

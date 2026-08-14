@@ -89,6 +89,67 @@ test.describe('initial load', () => {
 // separate Playwright project against a different webServer -- see
 // playwright.config.ts).
 
+test.describe('HUD lifted to React (LUL-34)', () => {
+  // Before LUL-34, the engine wrote directly into a DOM overlay that was
+  // always present, just toggled via `style.display`. Now GameCanvas/Hud
+  // conditionally *mount* these nodes from React state, and the panel
+  // controls call into the engine's action API (setPace/setFog/toggleSound)
+  // instead of native `addEventListener` handlers the engine installed
+  // itself. Assert the parts of that rewrite a plain textContent check
+  // wouldn't catch: real mount/unmount, and the round trip through React's
+  // event handlers back into the engine still lands.
+  test('gate/objective mount and unmount with engine state; panel controls round-trip through React into the engine', async ({
+    page,
+  }) => {
+    const { consoleErrors, pageErrors } = trackConsoleErrors(page);
+
+    await page.goto('/', { waitUntil: 'networkidle', timeout: 60_000 });
+    await page.waitForTimeout(4000);
+
+    // Pre-entry: gate is mounted, objective/status are not -- the old
+    // version kept #objective/#status in the DOM at all times.
+    await expect(page.locator('#gate')).toHaveCount(1);
+    await expect(page.locator('#objective')).toHaveCount(0);
+    await expect(page.locator('#status')).toHaveCount(0);
+
+    await enter(page);
+    await expect(page.locator('#gate')).toHaveCount(0); // unmounted, not just hidden
+    await expect(page.locator('#objective')).toBeVisible();
+
+    // Drive the range inputs like a real drag would (Playwright's `fill()`
+    // refuses `type=range`). Assigning `el.value` is NOT enough: React installs
+    // a value tracker on every input it manages, and a direct assignment updates
+    // that tracker's cached value too -- so React concludes nothing changed and
+    // never fires onChange. A real drag never hits this, because the browser
+    // sets the value through the native setter. Do the same here: call the
+    // native setter explicitly so the tracker goes stale, then dispatch 'input'.
+    const setRange = (selector: string, value: string) =>
+      page.locator(selector).evaluate((el, v) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value',
+        )!.set!;
+        nativeSetter.call(el, v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }, value);
+
+    await setRange('#pace', '10');
+    await expect(page.locator('#paceVal')).toHaveText('10');
+
+    await setRange('#fog', '0.09');
+    await expect(page.locator('#fogVal')).toHaveText('.090');
+
+    await expect(page.locator('#sound')).toHaveText('Sound: on');
+    await page.locator('#sound').click();
+    await expect(page.locator('#sound')).toHaveText('Sound: off');
+    await page.locator('#sound').click();
+    await expect(page.locator('#sound')).toHaveText('Sound: on');
+
+    expect(consoleErrors, consoleErrors.join(' | ')).toHaveLength(0);
+    expect(pageErrors, pageErrors.join(' | ')).toHaveLength(0);
+  });
+});
+
 test.describe('lift the child / win', () => {
   // Walking a computed straight line to the child (BABY_X/BABY_Z from the seeded
   // map RNG, see wiki:systems/headless-qa-rig) is not reliable here: this seed's

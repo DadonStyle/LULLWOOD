@@ -1,11 +1,19 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
 
-// Verbatim from game/forest.html (M2 wiki plan: game/port-plan) -- CSS lines 6-99,
-// body markup lines 102-142. Not refactored per LUL-13 scope: M1 ports as-is,
-// module decomposition is M2 (LUL-9). Only change from the source file: the death
-// video's inline base64 data URI was swapped for /death.mp4 (public/death.mp4).
+// CSS verbatim from game/forest.html (M2 wiki plan: game/port-plan) -- lines 6-99.
+// Only change from the source file: the death video's inline base64 data URI was
+// swapped for /death.mp4 (public/death.mp4).
+//
+// LUL-34 (M2b): the gate/objective/status/win/death/panel *markup* moved out of
+// this string and into <Hud> (components/Hud.tsx) as real JSX driven by engine
+// state -- see that file. The rules below stay here because the elements Hud
+// renders still use these ids/classes (#gate, #objective, .ready, #status,
+// .hiding, #winScreen, #deathScreen, #deathText, #panel, .restartBtn, ...), and
+// splitting one stylesheet across two files for no reason would just make it
+// harder to diff against the original CSS.
 const OVERLAY_STYLE = `
   html, body { height: 100%; margin: 0; background: #0a0e15; overflow: hidden;
     font-family: ui-sans-serif, system-ui, sans-serif; color: #b9c8dd; }
@@ -103,57 +111,32 @@ const OVERLAY_STYLE = `
   #deathText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #b98f88; }
 `;
 
+// Elements still owned directly by the engine (getElementById, out of LUL-34's
+// scope) -- everything else from the original overlay now lives in <Hud>.
 const OVERLAY_MARKUP = `
 <div id="vignette"></div>
 <div id="spotFlash"></div>
 <div id="flash"></div>
 <canvas id="minimap" width="160" height="160"></canvas>
 <div id="hint">move the mouse to look &nbsp;·&nbsp; WASD to walk</div>
-
-<div id="panel">
-  <label>Pace <input id="pace" type="range" min="2" max="12" step="0.5" value="6"><span id="paceVal">6</span></label>
-  <label>Mist <input id="fog" type="range" min="0.02" max="0.11" step="0.005" value="0.045"><span id="fogVal">.045</span></label>
-  <button id="sound">Sound: on</button>
-  <button id="regen">New map</button>
-</div>
-
-<div id="gate">
-  <div id="gateTitle">LULLWOOD</div>
-  <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
-  <div id="gateKeys">
-    <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run<br>
-    <b>H</b> — hide from predators &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
-  </div>
-</div>
-
 <div id="pausePrompt">click to look around</div>
-
-<div id="objective"></div>
-<div id="status"></div>
-
-<div id="winScreen">
-  <h1>YOU WON</h1>
-  <p>the child is safe — you carried them home through the Lullwood</p>
-  <button class="restartBtn">Play again</button>
-</div>
-
 <video id="deathVideo" muted playsinline preload="auto" src="/death.mp4"></video>
-<div id="deathScreen">
-  <div id="deathText">
-    <h1>YOU LOSE</h1>
-    <p>a <span id="deathKind">wolf</span> caught you in the dark</p>
-    <button class="restartBtn">Try again</button>
-  </div>
-</div>
 `;
 
 declare global {
   interface Window {
-    ForestEngine?: { init: () => void; dispose: () => void; threeRevision: string };
+    ForestEngine?: {
+      init: (onStateChange?: (state: EngineHudState) => void) => EngineActions | null;
+      dispose: () => void;
+      threeRevision: string;
+    };
   }
 }
 
 export default function GameCanvas() {
+  const [hud, setHud] = useState<EngineHudState>(INITIAL_HUD_STATE);
+  const [actions, setActions] = useState<EngineActions | null>(null);
+
   useEffect(() => {
     // The engine is a bundled module now (LUL-28), so there is no <script> tag
     // to inject and no `window.THREE` global to install first. The import still
@@ -169,14 +152,21 @@ export default function GameCanvas() {
 
     import('@/engine/forest-engine').then(({ init }) => {
       if (cancelled) return;
-      init();
+      // LUL-34: init() now takes a state-change callback and returns the
+      // engine's action API (enter/restart/setPace/...) instead of nothing --
+      // see engine/forest-engine.js's own comment on `emitState`/`pushState`.
+      setActions(init(setHud) as EngineActions | null);
       started = true;
     });
 
     return () => {
       cancelled = true;
       // Only tear down an engine this mount actually started.
-      if (started) window.ForestEngine?.dispose();
+      if (started) {
+        window.ForestEngine?.dispose();
+        setActions(null);
+        setHud(INITIAL_HUD_STATE);
+      }
     };
   }, []);
 
@@ -184,6 +174,7 @@ export default function GameCanvas() {
     <>
       <style dangerouslySetInnerHTML={{ __html: OVERLAY_STYLE }} />
       <div dangerouslySetInnerHTML={{ __html: OVERLAY_MARKUP }} />
+      <Hud state={hud} actions={actions} />
     </>
   );
 }
