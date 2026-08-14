@@ -816,6 +816,32 @@ on(gate, 'click', enter);
 // same lifetime as everything else window.ForestEngine hands out.
 if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('qaHooks')){
   window.ForestEngine.qaTeleportNearBaby = function(){ player.x = baby.x + 2; player.z = baby.z; };
+
+  // Same idea for the death path. Reaching it naturally means standing still until
+  // `sinceClose > 30` forces a hunt, then waiting for the animal to cross the map --
+  // and both of those are measured in game time, which is not wall time: dt is
+  // clamped to 0.05 in the render loop, so under software rendering at ~12 fps game
+  // time accrues at ~63% of real time and a wall-clock test deadline quietly stops
+  // meaning what it says. See wiki: systems/dt-clamp-vs-walltime.
+  //
+  // So this skips the waiting, not the mechanic: it drops the nearest predator a few
+  // units away and sets the same `hunt` flag the 30s trigger would have set. The
+  // approach, the catch test (`dist < p.rad + 1.3`) and triggerDeath all still run
+  // for real -- the animal is placed outside catch range and closes it itself.
+  window.ForestEngine.qaLurePredator = function(){
+    let nearest = null, best = 1e9;
+    for(const p of predators){
+      const d = Math.hypot(player.x - p.x, player.z - p.z);
+      if(d < best){ best = d; nearest = p; }
+    }
+    if(!nearest) return null;
+    // +x is arbitrary; 6 units clears p.rad + 1.3 for every species (max rad 1.5)
+    // while still being about a one-second approach.
+    nearest.x = player.x + 6; nearest.z = player.z;
+    nearest.vx = nearest.vz = 0;
+    nearest.hunt = true;
+    return nearest.kind;
+  };
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------

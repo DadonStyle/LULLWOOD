@@ -124,26 +124,33 @@ test.describe('lift the child / win', () => {
 });
 
 test.describe('predator catch / death', () => {
-  test('standing still long enough forces a predator to hunt and kill you', async ({ page }) => {
+  test('a hunting predator closes the distance and kills you', async ({ page }) => {
     test.setTimeout(120_000);
-    await page.goto('/', { waitUntil: 'networkidle', timeout: 60_000 });
+    await page.goto('/?qaHooks=1', { waitUntil: 'networkidle', timeout: 60_000 });
     await page.waitForTimeout(4000);
     await enter(page);
 
-    // Do nothing. public/forest-engine.js: if no predator has been within 20 units
-    // for 30s, the nearest one is forced to hunt (`nearP.hunt = true`) and does not
-    // give up. This is a real in-game mechanic (the game punishes standing in the
-    // open), not a test-only hook -- see line ~1075.
+    // In-game, the trigger is standing still: if no predator has been within 20
+    // units for 30s, the nearest is forced to hunt (`nearP.hunt = true`) and does
+    // not give up. Waiting that out here does not work -- those 30s are GAME
+    // seconds, and engine/forest-engine.js clamps dt to 0.05, so at the ~12 fps
+    // this rig gets from software rendering, game time runs at ~63% of wall clock
+    // and the animal's approach is slowed by the same factor. The old version of
+    // this test waited 100s of wall clock for a sequence that needs far more, and
+    // failed for reasons unrelated to the mechanic. See wiki:
+    // systems/dt-clamp-vs-walltime.
     //
-    // NOTE: which of wolf/bear/lion catches you here is whichever spawned nearest
-    // for this seed -- deterministic run to run, but not pinned to a specific
-    // species by this test. Species-specific coverage for the other two predator
-    // kinds is filed as a follow-up (see LUL-21 handoff comment): it needs either
-    // replicating forest-engine.js's full tree-placement RNG consumption to derive
-    // exact spawn points, or a test-only debug hook in the engine, both out of
-    // scope for this pass.
+    // qaLurePredator() sets that same `hunt` flag and places the animal 6 units
+    // out -- outside catch range (`p.rad + 1.3`, max 2.8). What is under test is
+    // unchanged: it still has to close the distance itself, and the catch and
+    // triggerDeath paths run for real. Only the waiting is skipped.
+    const lured = await page.evaluate(() => (window as any).ForestEngine.qaLurePredator());
+    expect(['wolf', 'bear', 'lion'], 'a predator was lured').toContain(lured);
+
+    // NOTE: which species this is depends on which spawned nearest for the seed.
+    // Pinning a specific one needs a spawn-point hook; filed as follow-up.
     const deathScreen = page.locator('#deathScreen');
-    await expect(deathScreen).toBeVisible({ timeout: 100_000 });
+    await expect(deathScreen).toBeVisible({ timeout: 30_000 });
 
     const kind = await page.locator('#deathKind').textContent();
     expect(['wolf', 'bear', 'lion']).toContain(kind);
