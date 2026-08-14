@@ -4,11 +4,13 @@
 // closure, every addEventListener/setTimeout is tracked via on()/later() so
 // dispose() can undo it, and dispose() walks the scene graph to release Three
 // resources (geometries, materials, textures) plus the renderer/AudioContext.
-// Keeps the global THREE contract: LUL-15 moved Three to npm, and
-// components/GameCanvas.tsx assigns the import to window.THREE before this
-// script loads, so this file is unchanged from the earlier runtime-CDN setup.
-(function () {
-'use strict';
+// LUL-28 (M2b) made it a real ES module: it `import`s three directly and is
+// bundled by Turbopack, instead of being served from /public as a raw <script>
+// that read a `window.THREE` global GameCanvas had to install first. The IIFE
+// wrapper is gone because module scope already provides one, and modules are
+// always strict. The body below is otherwise unchanged -- deliberately not
+// reindented, so this stays a reviewable diff and not a 1,200-line reformat.
+import * as THREE from 'three';
 
 let activeDispose = null;
 
@@ -1238,5 +1240,15 @@ function dispose() {
   if(activeDispose) activeDispose();
 }
 
-if(typeof window !== 'undefined') window.ForestEngine = { init: init, dispose: dispose };
-})();
+export { init, dispose };
+
+// `window.ForestEngine` is no longer how the app reaches the engine -- GameCanvas
+// imports init/dispose above. It stays as a deliberate debug/QA surface: the
+// Playwright suite waits on it to know the engine mounted, and the `?qaHooks=1`
+// teleport hook hangs off it (see the qaHooks block inside init). `threeRevision`
+// is exposed because dropping the `window.THREE` global left the e2e suite no
+// other way to assert the three@0.128 pin (decisions/0002-threejs-pin) from the
+// browser.
+if(typeof window !== 'undefined'){
+  window.ForestEngine = { init: init, dispose: dispose, threeRevision: THREE.REVISION };
+}

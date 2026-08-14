@@ -14,8 +14,14 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Standalone Node tool, not part of the Next.js app (own module resolution).
     "watchdog/**",
-    // Vendored game engine, ported as-is (LUL-13): not app source, not refactored.
     "public/**",
+    // The game engine, ported as-is from the prototype (LUL-13) and still in its
+    // original style. LUL-28 moved it out of public/ and made it a bundled
+    // module, so it is real app source now and no longer covered by `public/**`
+    // -- but bringing 1,200 lines of prototype JS up to the app's lint rules is
+    // its own migration, not part of the module conversion. Ignored explicitly
+    // so that stays visible, deliberate debt instead of an accident.
+    "engine/**",
   ]),
   {
     // Playwright specs (LUL-21): they reach into page.evaluate()'s browser

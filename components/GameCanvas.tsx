@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect } from 'react';
-import * as THREE from 'three';
 
 // Verbatim from game/forest.html (M2 wiki plan: game/port-plan) -- CSS lines 6-99,
 // body markup lines 102-142. Not refactored per LUL-13 scope: M1 ports as-is,
@@ -148,48 +147,36 @@ const OVERLAY_MARKUP = `
 </div>
 `;
 
-const ENGINE_SRC = '/forest-engine.js';
-
 declare global {
   interface Window {
-    THREE?: typeof THREE;
-    ForestEngine?: { init: () => void; dispose: () => void };
+    ForestEngine?: { init: () => void; dispose: () => void; threeRevision: string };
   }
-}
-
-// Module-scope (not per-mount) cache: the engine <script> tag is a page-global
-// resource and must be injected at most once, even across StrictMode's
-// mount -> unmount -> remount in dev. `ForestEngine.init`/`dispose` (LUL-17)
-// are what actually start/stop a game run; they're safe to call repeatedly.
-let engineLoadPromise: Promise<void> | null = null;
-function loadEngineScript(): Promise<void> {
-  if (!engineLoadPromise) {
-    engineLoadPromise = new Promise((resolve, reject) => {
-      // public/forest-engine.js reads a global THREE (LUL-15: three now comes
-      // from npm, not a runtime <script> tag) -- keep that contract by assigning
-      // the import to the global before the engine loads, per game/port-plan.
-      window.THREE = THREE;
-      const engineScript = document.createElement('script');
-      engineScript.src = ENGINE_SRC;
-      engineScript.onload = () => resolve();
-      engineScript.onerror = () => reject(new Error('Failed to load ' + ENGINE_SRC));
-      document.body.appendChild(engineScript);
-    });
-  }
-  return engineLoadPromise;
 }
 
 export default function GameCanvas() {
   useEffect(() => {
+    // The engine is a bundled module now (LUL-28), so there is no <script> tag
+    // to inject and no `window.THREE` global to install first. The import still
+    // belongs inside the effect rather than at module top level: the engine
+    // touches `document` as soon as it evaluates, and keeping it dynamic means
+    // three + the engine land in their own chunk instead of the entry bundle.
+    //
+    // `cancelled` guards StrictMode's double-invoke -- the effect can be torn
+    // down before this promise settles, and calling init() after that would
+    // strand a live engine that no cleanup will ever dispose.
     let cancelled = false;
+    let started = false;
 
-    loadEngineScript().then(() => {
-      if (!cancelled) window.ForestEngine?.init();
+    import('@/engine/forest-engine').then(({ init }) => {
+      if (cancelled) return;
+      init();
+      started = true;
     });
 
     return () => {
       cancelled = true;
-      window.ForestEngine?.dispose();
+      // Only tear down an engine this mount actually started.
+      if (started) window.ForestEngine?.dispose();
     };
   }, []);
 

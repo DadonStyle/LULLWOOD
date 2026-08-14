@@ -41,7 +41,13 @@ test.describe('initial load', () => {
 
     const load = await page.evaluate(() => ({
       title: document.title,
-      threeRevision: (window as any).THREE ? (window as any).THREE.REVISION : null,
+      // LUL-28: three is bundled into the engine module now, so there is no
+      // `window.THREE` to read a revision off. The engine re-exports it as
+      // `ForestEngine.threeRevision` so this pin stays checkable from here.
+      threeRevision: (window as any).ForestEngine?.threeRevision ?? null,
+      // Nothing else may leak onto window -- asserts the <script>-tag/global
+      // loading path is really gone, not just unused.
+      threeGlobal: typeof (window as any).THREE,
       engineApi:
         typeof (window as any).ForestEngine === 'object'
           ? Object.keys((window as any).ForestEngine).sort()
@@ -55,7 +61,8 @@ test.describe('initial load', () => {
 
     expect(load.title).toBe('Lullwood');
     expect(String(load.threeRevision)).toBe('128');
-    expect(load.engineApi).toEqual(['dispose', 'init']);
+    expect(load.threeGlobal, 'three must not leak onto window (LUL-28)').toBe('undefined');
+    expect(load.engineApi).toEqual(['dispose', 'init', 'threeRevision']);
     expect(load.canvases).toHaveLength(2);
     expect(load.text).toContain('LULLWOOD');
     expect(load.text).toContain('click to enter');
