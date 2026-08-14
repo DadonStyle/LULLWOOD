@@ -804,6 +804,18 @@ function enter(){
 }
 on(gate, 'click', enter);
 
+// QA-only, opt-in (?qaHooks=1): the procedurally generated forest can wedge a
+// straight-line walk against a tree cluster near spawn depending on seed/heading,
+// which makes "walk to the child" an unreliable way to test the lift/win state
+// machine itself (navigation, not the mechanic, would be under test). This drops
+// the player next to the child so e2e/smoke.spec.ts can assert pickup -> win
+// deterministically. Absent by default, so it does nothing for real players.
+// player/baby are init()-local (LUL-17 closure), so this is exposed per-init,
+// same lifetime as everything else window.ForestEngine hands out.
+if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('qaHooks')){
+  window.ForestEngine.qaTeleportNearBaby = function(){ player.x = baby.x + 2; player.z = baby.z; };
+}
+
 // ---- Objective, pickup cinematic, win / death ----------------------------
 const objective = document.getElementById('objective');
 const statusEl = document.getElementById('status');

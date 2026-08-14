@@ -34,12 +34,34 @@ jobs:
       - name: build
         run: npx next build
 
-  # Playwright smoke tests land here once the Game Tester role is staffed
-  # (see wiki: agents/roster, game/port-plan). Not written yet per LUL-13 scope --
-  # this job is intentionally a no-op placeholder so the workflow name is stable
-  # for whoever wires the real job in.
   smoke:
-    name: smoke tests (placeholder)
+    name: playwright smoke suite
+    needs: build
     runs-on: ubuntu-latest
     steps:
-      - run: echo "No smoke tests yet -- tracked for the Game Tester hire. See wiki:agents/roster."
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # GitHub runners have root, so real system deps get installed here
+      # instead of the user-prefix workaround playwright.config.ts falls back
+      # to locally (see wiki:systems/headless-qa-rig). `CI` is set by GitHub
+      # Actions automatically, which is what that fallback checks against.
+      - name: install playwright browsers + system deps
+        run: npx playwright install --with-deps chromium
+
+      - name: playwright smoke suite
+        run: npx playwright test
+
+      - name: upload playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
