@@ -28,6 +28,12 @@ jobs:
       - name: lint
         run: npm run lint
 
+      # Next 16 injects globals like LayoutProps from generated route types, and
+      # next-env.d.ts is gitignored. Neither exists in a fresh checkout, so tsc
+      # must not run until typegen has written them.
+      - name: typegen
+        run: npx next typegen
+
       - name: typecheck
         run: npx tsc --noEmit
 
