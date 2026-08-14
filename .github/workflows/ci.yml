@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same PR/branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build, typecheck, lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # `next lint` was removed in Next.js 16; eslint runs directly (see package.json).
+      - name: lint
+        run: npm run lint
+
+      - name: typecheck
+        run: npx tsc --noEmit
+
+      - name: build
+        run: npx next build
+
+  # Playwright smoke tests land here once the Game Tester role is staffed
+  # (see wiki: agents/roster, game/port-plan). Not written yet per LUL-13 scope --
+  # this job is intentionally a no-op placeholder so the workflow name is stable
+  # for whoever wires the real job in.
+  smoke:
+    name: smoke tests (placeholder)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No smoke tests yet -- tracked for the Game Tester hire. See wiki:agents/roster."

@@ -1,36 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lullwood
 
-## Getting Started
+A lost child is somewhere in the dark. Next.js (App Router, TypeScript) shell around
+the original single-file prototype, ported in as-is.
 
-First, run the development server:
+## Getting started
 
 ```bash
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) — the game is playable at `/`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Layout
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `app/` — Next.js App Router shell. `app/page.tsx` renders `components/GameLoader.tsx`,
+  a `'use client'` wrapper that loads `components/GameCanvas.tsx` via
+  `next/dynamic({ ssr: false })` (the engine touches `document`/`window`/`AudioContext`
+  at module scope and cannot run on the server).
+- `components/GameCanvas.tsx` — injects the game's original CSS + DOM overlay
+  (verbatim from `game/forest.html`), then loads Three.js r128 from cdnjs and
+  `public/forest-engine.js`.
+- `public/forest-engine.js` — the game's original `<script>` body, unmodified. Not
+  linted or type-checked (see `eslint.config.mjs`) — it's a vendored, as-is port, not
+  app source. Module decomposition into typed `lib/game/` units is a separate,
+  later milestone (see the wiki: `game/port-plan`).
+- `game/forest.html` — the original single-file prototype, kept as the source of
+  truth the port was taken from. Not served by the app.
+- `watchdog/` — standalone rate-limit tooling, unrelated to the Next.js app.
 
-## Learn More
+## CI
 
-To learn more about Next.js, take a look at the following resources:
+`.github/workflows/ci.yml` runs on every PR: `eslint` (`next lint` was removed in
+Next.js 16), `tsc --noEmit`, and `next build`. A placeholder `smoke` job exists for
+Playwright smoke tests once a Game Tester is staffed.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Status
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Code-correctness only has been verified (build/typecheck/lint clean, dev/prod server
+serves `/` and both game assets with 200s). Gameplay, visual, and audio fidelity are
+unverified — no tester has confirmed the port yet.

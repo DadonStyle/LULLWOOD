@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Standalone Node tool, not part of the Next.js app (own module resolution).
     "watchdog/**",
+    // Vendored game engine, ported as-is (LUL-13): not app source, not refactored.
+    "public/**",
   ]),
 ]);
 
