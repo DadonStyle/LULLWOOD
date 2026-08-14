@@ -19,12 +19,15 @@ Open [http://localhost:3000](http://localhost:3000) — the game is playable at 
   `next/dynamic({ ssr: false })` (the engine touches `document`/`window`/`AudioContext`
   at module scope and cannot run on the server).
 - `components/GameCanvas.tsx` — injects the game's original CSS + DOM overlay
-  (verbatim from `game/forest.html`), then loads Three.js r128 from cdnjs and
-  `public/forest-engine.js`.
-- `public/forest-engine.js` — the game's original `<script>` body, unmodified. Not
-  linted or type-checked (see `eslint.config.mjs`) — it's a vendored, as-is port, not
-  app source. Module decomposition into typed `lib/game/` units is a separate,
-  later milestone (see the wiki: `game/port-plan`).
+  (verbatim from `game/forest.html`), imports `three@0.128` from npm and assigns it
+  to `window.THREE`, then loads `public/forest-engine.js` and calls its
+  `init()`/`dispose()` around the component's mount/unmount.
+- `public/forest-engine.js` — the game's original `<script>` body, wrapped in an
+  `init()`/`dispose()` lifecycle (LUL-17) so it survives React StrictMode's
+  double-invoked effects; otherwise unmodified. Not linted or type-checked (see
+  `eslint.config.mjs`) — it's a vendored, as-is port, not app source. Module
+  decomposition into typed `lib/game/` units is a separate, later milestone (see
+  the wiki: `game/port-plan`).
 - `game/forest.html` — the original single-file prototype, kept as the source of
   truth the port was taken from. Not served by the app.
 - `watchdog/` — standalone rate-limit tooling, unrelated to the Next.js app.

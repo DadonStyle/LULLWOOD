@@ -4,8 +4,9 @@
 // closure, every addEventListener/setTimeout is tracked via on()/later() so
 // dispose() can undo it, and dispose() walks the scene graph to release Three
 // resources (geometries, materials, textures) plus the renderer/AudioContext.
-// Keeps the global THREE contract (loaded from cdnjs, see components/GameCanvas.tsx)
-// -- the npm swap is a separate ticket (P2).
+// Keeps the global THREE contract: LUL-15 moved Three to npm, and
+// components/GameCanvas.tsx assigns the import to window.THREE before this
+// script loads, so this file is unchanged from the earlier runtime-CDN setup.
 (function () {
 'use strict';
 

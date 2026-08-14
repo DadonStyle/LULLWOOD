@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import * as THREE from 'three';
 
 // Verbatim from game/forest.html (M2 wiki plan: game/port-plan) -- CSS lines 6-99,
 // body markup lines 102-142. Not refactored per LUL-13 scope: M1 ports as-is,
@@ -147,34 +148,32 @@ const OVERLAY_MARKUP = `
 </div>
 `;
 
-const THREE_SRC = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
 const ENGINE_SRC = '/forest-engine.js';
 
 declare global {
   interface Window {
+    THREE?: typeof THREE;
     ForestEngine?: { init: () => void; dispose: () => void };
   }
 }
 
-// Module-scope (not per-mount) caches: the two <script> tags are page-global
-// resources and must be injected at most once, even across StrictMode's
+// Module-scope (not per-mount) cache: the engine <script> tag is a page-global
+// resource and must be injected at most once, even across StrictMode's
 // mount -> unmount -> remount in dev. `ForestEngine.init`/`dispose` (LUL-17)
 // are what actually start/stop a game run; they're safe to call repeatedly.
 let engineLoadPromise: Promise<void> | null = null;
 function loadEngineScript(): Promise<void> {
   if (!engineLoadPromise) {
     engineLoadPromise = new Promise((resolve, reject) => {
-      const threeScript = document.createElement('script');
-      threeScript.src = THREE_SRC;
-      threeScript.onload = () => {
-        const engineScript = document.createElement('script');
-        engineScript.src = ENGINE_SRC;
-        engineScript.onload = () => resolve();
-        engineScript.onerror = () => reject(new Error('Failed to load ' + ENGINE_SRC));
-        document.body.appendChild(engineScript);
-      };
-      threeScript.onerror = () => reject(new Error('Failed to load ' + THREE_SRC));
-      document.body.appendChild(threeScript);
+      // public/forest-engine.js reads a global THREE (LUL-15: three now comes
+      // from npm, not a runtime <script> tag) -- keep that contract by assigning
+      // the import to the global before the engine loads, per game/port-plan.
+      window.THREE = THREE;
+      const engineScript = document.createElement('script');
+      engineScript.src = ENGINE_SRC;
+      engineScript.onload = () => resolve();
+      engineScript.onerror = () => reject(new Error('Failed to load ' + ENGINE_SRC));
+      document.body.appendChild(engineScript);
     });
   }
   return engineLoadPromise;
