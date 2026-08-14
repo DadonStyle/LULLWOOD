@@ -27,10 +27,27 @@ readonly KEY="${LULLWOOD_DEPLOY_KEY:-$HOME/.lullwood/deploy_key}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# Two ways in, in preference order:
+#
+#   1. A forwarded ssh-agent. If the human reached this box with `ssh -A`, their
+#      own GitHub key is usable here and nothing has to be added to the repo.
+#      Note ~/.ssh/authorized_keys holds their *public* key -- that only lets
+#      them log in here, it cannot push, so the agent is the only way their
+#      identity gets used.
+#   2. The repo-scoped deploy key, which needs a one-time paste into GitHub.
+#
 # IdentitiesOnly stops ssh from offering any other agent key first and getting
 # rate-limited out before it ever tries this one.
+agent_has_identities() {
+  [[ -n "${SSH_AUTH_SOCK:-}" ]] && ssh-add -l >/dev/null 2>&1
+}
+
 ssh_cmd() {
-  printf 'ssh -i %q -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o BatchMode=yes' "$KEY"
+  if agent_has_identities; then
+    printf 'ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes'
+  else
+    printf 'ssh -i %q -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o BatchMode=yes' "$KEY"
+  fi
 }
 
 ensure_key() {
