@@ -31,7 +31,7 @@ while IFS= read -r path; do
     # here is a policy change and must never be able to wave itself through --
     # otherwise a branch widens the allowlist and `[ship]`s that widening in the
     # same commit. Must stay ABOVE the `.github/*` allow below.
-    .github/scripts/ship-allowed.sh|.github/workflows/auto-pr.yml|.github/workflows/automerge.yml)
+    .github/scripts/ship-allowed.sh|.github/workflows/auto-pr.yml|.github/workflows/automerge.yml|.github/workflows/ci.yml)
       denied+=("$path (changes the merge gate itself)") ;;
     # Prose, anywhere in the tree.
     *.md) ;;
