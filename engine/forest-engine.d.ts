@@ -29,6 +29,9 @@ declare global {
       qaTeleportHome?: () => void;
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
+      /** Same as qaLurePredator, filtered to the given species. Returns the
+       * lured predator's kind, or null if none of that species was found. */
+      qaLurePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => 'wolf' | 'bear' | 'lion' | null;
     };
   }
 }
