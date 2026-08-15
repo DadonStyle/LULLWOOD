@@ -85,7 +85,11 @@ jobs:
     name: playwright smoke suite
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    # A job-level `if:` replaces the implicit `needs: success()` gate rather
+    # than adding to it (LUL-106), so the fork-scope condition alone would let
+    # this run even when `build` genuinely fails. `needs.build.result` restores
+    # that gate explicitly.
+    if: needs.build.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     steps:
       - uses: actions/checkout@v4
 
