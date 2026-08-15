@@ -968,6 +968,25 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return nearest.kind;
   };
 
+  // LUL-55: qaLurePredator above always takes whichever predator happens to be
+  // nearest, so an e2e death test can only ever assert "some animal caught me" --
+  // it cannot pin the death sequence to a specific species without hoping the
+  // right one spawned closest. This is the same lure, filtered to a chosen kind,
+  // so the suite can cover all three death sequences deterministically.
+  window.ForestEngine.qaLurePredatorKind = function(kind){
+    let nearest = null, best = 1e9;
+    for(const p of predators){
+      if(p.kind !== kind) continue;
+      const d = Math.hypot(player.x - p.x, player.z - p.z);
+      if(d < best){ best = d; nearest = p; }
+    }
+    if(!nearest) return null;
+    nearest.x = player.x + 6; nearest.z = player.z;
+    nearest.vx = nearest.vz = 0;
+    nearest.hunt = true;
+    return nearest.kind;
+  };
+
   // LUL-65: seeds one synthetic scent point `age` game-seconds old at (player.x+dx,
   // player.z+dz) -- skips real walking and real-time aging so a test can place a
   // stale, distant trail deterministically. Same rationale as qaLurePredator
