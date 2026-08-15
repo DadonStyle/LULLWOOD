@@ -41,6 +41,22 @@ declare global {
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
       ) => { state: string; dist: number; scentCalls: number; t: number } | null;
+      // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
+      // inside init() in forest-engine.js). Both placement hooks return the
+      // predator's index into `predators`, or null if the scenario couldn't
+      // be set up (no lion spawned / no non-tree cover generated) -- callers
+      // must check for null rather than assume the index is always valid.
+      /** Teleports the player to the spawn clearing and a lion 4 units out, hunting. Returns the lion's `predators` index, or null if no lion spawned. */
+      qaOpenHideNearLion?: () => number | null;
+      /** Places predator[0] and the player on opposite sides of a real (non-tree) cover prop. Returns 0, or null if no cover prop exists. */
+      qaHideBehindCover?: () => number | null;
+      /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve. */
+      qaPredatorState?: (idx: number) => {
+        kind: 'wolf' | 'bear' | 'lion';
+        state: string;
+        inv: string;
+        sniffsLeft: number;
+      } | null;
     };
   }
 }

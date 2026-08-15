@@ -27,6 +27,12 @@ jobs:
       startsWith(github.event.workflow_run.head_branch, 'lul-')
     runs-on: ubuntu-latest
     steps:
+      # `main`, not the branch under test: this is where the merge gate is read
+      # from, so it must come from a ref the branch cannot edit.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
       - name: merge if green and shipped
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,9 +47,30 @@ jobs:
             exit 0
           fi
 
+          # The marker must be a line of its own -- a substring test also matches
+          # commits that merely discuss shipping. Must stay identical to the test
+          # in auto-pr.yml; if these two ever disagree, a PR merges down one path
+          # and not the other.
           message="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA" --jq '.commit.message')"
-          if ! printf '%s' "$message" | grep -qF '[ship]'; then
+          if ! printf '%s\n' "$message" | grep -qE '^[[:space:]]*\[ship\][[:space:]]*$'; then
             echo "::notice::#$number has no [ship] marker; leaving it open."
+            exit 0
+          fi
+
+          # `[ship]` skips the Code Reviewer, so it only covers diffs where a
+          # green CI run is genuinely the whole quality bar. auto-pr.yml applies
+          # the same gate and explains it on the PR; this is the fallback path,
+          # so it enforces silently rather than commenting twice.
+          # Fail closed if the gate is missing rather than merging ungated.
+          if [ ! -x ./.github/scripts/ship-allowed.sh ]; then
+            echo "::warning::no ship-allowed.sh on main; refusing to auto-merge #$number."
+            exit 0
+          fi
+
+          if ! blocked="$(gh pr view "$number" --json files --jq '.files[].path' \
+                          | ./.github/scripts/ship-allowed.sh)"; then
+            echo "::warning::#$number carries [ship] but changes files that need the Code Reviewer:"
+            printf '  %s\n' "$blocked"
             exit 0
           fi
 
