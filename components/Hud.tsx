@@ -1,5 +1,7 @@
 'use client';
 
+import TouchControls from './TouchControls';
+
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
 // this component only renders it -- it never reaches back into engine
@@ -37,6 +39,12 @@ export interface EngineActions {
   setFog: (v: number) => void;
   toggleSound: () => void;
   regenMap: () => void;
+  // LUL-68: twin-stick touch input — called by TouchControls
+  setTouchMove: (x: number, z: number) => void;
+  setTouchLook: (x: number, y: number) => void;
+  setTouchSprint: (v: boolean) => void;
+  triggerTouchHide: () => void;
+  triggerTouchInteract: () => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -76,6 +84,9 @@ export default function Hud({
 }) {
   return (
     <>
+      {/* LUL-68: twin-stick touch controls (only renders on touch-capable viewports) */}
+      <TouchControls actions={actions} entered={state.entered} />
+
       <div id="panel">
         {/* Controlled, not `defaultValue`: the engine is the source of truth for
             both knobs, so the thumb follows engine state (including a restart or
@@ -122,6 +133,8 @@ export default function Hud({
             <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run
             <br />
             <b>H</b> — hide from predators &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
+            <br />
+            <span style={{ fontSize: 11, opacity: 0.7 }}>on mobile: left stick — move &nbsp;·&nbsp; right stick — look &nbsp;·&nbsp; Hide / E buttons</span>
           </div>
         </div>
       )}
