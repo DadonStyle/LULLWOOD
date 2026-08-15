@@ -388,7 +388,7 @@ function makePredator(kind){
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:Math.random()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
-    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0 };
+    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0 };
 }
 const predators = [];
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++) predators.push(makePredator(k));
@@ -400,7 +400,7 @@ function placePredators(){
     while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 26 || blockedR(x, z, p.rad+0.5)) && tries < 60);
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
-    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=false; p.alert=0;
+    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=false; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   sinceClose = 0; huntTime = 0; spotFlash = 0;
@@ -443,6 +443,7 @@ const SCENT_RADIUS_WALK      = 2.2;  // sniff-pickup radius (units), fresh, at a
 const SCENT_RADIUS_RUN       = 3.6;  // Shift leaves a louder trail -- the cost that finally balances it
 const WIND_STRENGTH          = 3.2;  // units/second a point's effective position drifts downwind
 const WIND_DRIFT_CAP         = 9;    // drift never carries a point more than this many units total
+const SCENT_TRACK_TIME       = 8;    // seconds a scent-triggered chase ignores the detect*1.5 leash
 
 let windX = 1, windZ = 0;   // unit vector; redrawn once per generateMap(), see generateWind()
 function generateWind(){
@@ -473,7 +474,9 @@ function checkScent(p){
 // picks up even though nothing looked at you), which is what makes it learnable
 // without a tutorial or a status readout.
 function scentOnto(p){
-  p.state = 'chase'; p.callTimer = rnd(2.6,4.2);
+  if(p.scentLock > 0) return;   // already tracking off a scent cue: don't re-trigger the roar
+  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
+  p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
   predatorCall(p.kind);
 }
@@ -485,6 +488,8 @@ function updatePredators(dt){
     const ux = dx/dist, uz = dz/dist;
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
+    if(p.scentLock > 0) p.scentLock -= dt;   // ticks in every state, so a lock set during `chase`
+                                              // has actually expired by the time `roam` re-checks it
     // spot "alert": brief rear-up + freeze the instant it locks on
     if(p.alert > 0){
       p.alert -= dt; facePlayer = true; speed = 0;
@@ -514,7 +519,7 @@ function updatePredators(dt){
       else {
         if(dist < p.rad + 1.3){ triggerDeath(p.kind); }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
-        if(dist > p.spec.detect*1.5){ p.state='roam'; p.spotted=false; }
+        if(p.scentLock <= 0 && dist > p.spec.detect*1.5){ p.state='roam'; p.spotted=false; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -980,6 +985,43 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     nearest.vx = nearest.vz = 0;
     nearest.hunt = true;
     return nearest.kind;
+  };
+
+  // LUL-65: seeds one synthetic scent point `age` game-seconds old at (player.x+dx,
+  // player.z+dz) -- skips real walking and real-time aging so a test can place a
+  // stale, distant trail deterministically. Same rationale as qaLurePredator
+  // skipping the 30s idle-hunt wait: what's under test is the mechanic that
+  // consumes the point (checkScent/scentOnto), not how the point got laid.
+  window.ForestEngine.qaSeedScentPoint = function(dx, dz, age){
+    scentPoints.push({ x: player.x + dx, z: player.z + dz, t0: clock.elapsedTime - age, radius: SCENT_RADIUS_WALK });
+  };
+
+  // LUL-65: places a named predator on the drifted position of the oldest still-live
+  // scent point and drops it into `roam` so checkScent()/scentOnto() run for real on
+  // the next tick, the same way a wandering predator would find it -- this is what
+  // lets a test exercise "picks up a stale, distant trail" without waiting out
+  // SCENT_LIFETIME in real time. Returns null if there is no live point (nothing laid
+  // yet, or it already decayed) or the species isn't found.
+  window.ForestEngine.qaProbeScentOnOldest = function(kind){
+    if(!scentPoints.length) return null;
+    const s = scentPoints[0], age = clock.elapsedTime - s.t0;
+    if(age >= SCENT_LIFETIME) return null;
+    const p = predators.find(pp => pp.kind === kind);
+    if(!p) return null;
+    const drift = Math.min(WIND_DRIFT_CAP, WIND_STRENGTH * age);
+    p.x = s.x + windX*drift; p.z = s.z + windZ*drift;
+    p.vx = 0; p.vz = 0; p.state = 'roam'; p.scentLock = 0; p.scentCalls = 0; p.spotted = false;
+    p.g.position.x = p.x; p.g.position.z = p.z;
+    return { age, dist: Math.hypot(player.x - p.x, player.z - p.z) };
+  };
+
+  // LUL-65: state + distance + the scentOnto() re-trigger count, for asserting a
+  // scent-triggered chase actually closes distance (not the stutter this ticket
+  // fixed) without re-roaring every frame.
+  window.ForestEngine.qaProbePredatorState = function(kind){
+    const p = predators.find(pp => pp.kind === kind);
+    if(!p) return null;
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls };
   };
 }
 
