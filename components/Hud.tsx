@@ -5,9 +5,11 @@
 // this component only renders it -- it never reaches back into engine
 // internals except through the action functions `init()` returns (`actions`
 // below), which is the one sanctioned way React talks back to the engine.
-// Markup, classes, and copy are unchanged from game/forest.html / the M1 port
-// (components/GameCanvas.tsx's old OVERLAY_MARKUP) so nothing about how the
-// game looks or feels should be different -- only how it's rendered.
+// Markup, classes, and copy are unchanged from the original prototype / the M1
+// port (components/GameCanvas.tsx's old OVERLAY_MARKUP) so nothing about how the
+// game looks or feels should be different -- only how it's rendered. The
+// prototype itself is gone from the tree; see README.md for the git ref if you
+// need to diff against it.
 //
 // Not lifted here, still engine-owned DOM (out of LUL-34 scope, see the ticket):
 // #vignette, #spotFlash, #flash, #minimap, #hint, #pausePrompt, #deathVideo.
@@ -18,14 +20,13 @@ export interface EngineHudState {
   objectiveText: string;
   objectiveReady: boolean;
   statusVisible: boolean;
-  statusHiding: boolean;
   statusText: string;
   winVisible: boolean;
   deathVisible: boolean;
   deathKind: string;
   lossRevealed: boolean;
   pace: number;
-  fogDisplay: string;
+  fog: number;
   soundOn: boolean;
 }
 
@@ -38,25 +39,33 @@ export interface EngineActions {
   regenMap: () => void;
 }
 
-// Mirrors the static defaults the original HTML markup had baked in before any
-// JS ran (slider `value=` attributes, "Sound: on"), so the first paint before
-// the engine module loads looks identical to what the as-is port showed.
+// Placeholder for the single frame before the engine module resolves and calls
+// emitState() with the real values. LUL-35 (pass 2): `pace`/`fog` must match
+// engine CONFIG.walk / CONFIG.fog. They used to be a third copy of those
+// defaults (alongside the engine's and the inputs' `defaultValue=`), and the
+// copies had already drifted -- the panel showed mist `.045` while the scene
+// rendered CONFIG.fog `0.04`. The sliders below are driven from state now, so
+// this is the only literal on the React side.
 export const INITIAL_HUD_STATE: EngineHudState = {
   entered: false,
   objectiveVisible: false,
   objectiveText: '',
   objectiveReady: false,
   statusVisible: false,
-  statusHiding: false,
   statusText: '',
   winVisible: false,
   deathVisible: false,
   deathKind: 'wolf',
   lossRevealed: false,
   pace: 6,
-  fogDisplay: '.045',
+  fog: 0.04,
   soundOn: true,
 };
+
+// The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
+// leading-dot format ('.040') is presentation and belongs here, not in the
+// engine's state object.
+const formatFog = (density: number) => density.toFixed(3).slice(1);
 
 export default function Hud({
   state,
@@ -68,6 +77,9 @@ export default function Hud({
   return (
     <>
       <div id="panel">
+        {/* Controlled, not `defaultValue`: the engine is the source of truth for
+            both knobs, so the thumb follows engine state (including a restart or
+            a future engine-side change) instead of a hardcoded starting copy. */}
         <label>
           Pace{' '}
           <input
@@ -76,7 +88,7 @@ export default function Hud({
             min={2}
             max={12}
             step={0.5}
-            defaultValue={6}
+            value={state.pace}
             onChange={(e) => actions?.setPace(+e.target.value)}
           />
           <span id="paceVal">{state.pace}</span>
@@ -89,10 +101,10 @@ export default function Hud({
             min={0.02}
             max={0.11}
             step={0.005}
-            defaultValue={0.045}
+            value={state.fog}
             onChange={(e) => actions?.setFog(+e.target.value)}
           />
-          <span id="fogVal">{state.fogDisplay}</span>
+          <span id="fogVal">{formatFog(state.fog)}</span>
         </label>
         <button id="sound" onClick={() => actions?.toggleSound()}>
           Sound: {state.soundOn ? 'on' : 'off'}
@@ -124,8 +136,11 @@ export default function Hud({
         </div>
       )}
 
+      {/* `hiding` is not a second flag: status only ever appears while hidden
+          (LUL-35 pass 2 removed the `statusHiding` field, which the engine only
+          ever set to the same value as `statusVisible`). */}
       {state.statusVisible && (
-        <div id="status" className={state.statusHiding ? 'hiding' : undefined} style={{ display: 'block' }}>
+        <div id="status" className="hiding" style={{ display: 'block' }}>
           {state.statusText}
         </div>
       )}
