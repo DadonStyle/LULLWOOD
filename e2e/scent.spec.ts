@@ -45,21 +45,37 @@ test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
     expect(first).not.toBeNull();
     expect(first!.scentCalls, 'scentOnto() should fire exactly once on pickup').toBe(1);
 
-    // Give the engine real time to tick. Game time runs slower than wall time under
-    // this rig's software rendering (dt is clamped, see wiki: systems/dt-clamp-vs-
-    // walltime), so a short wall-clock wait is a conservative lower bound on game
-    // time elapsed -- the pre-fix bug (0.7 u/s against a ~6.8 u/s top speed) would
-    // fail this even generously.
-    await page.waitForTimeout(4_000);
+    // LUL-99: wait for the *game* clock to advance, not the wall clock. Game time
+    // runs slower than wall time under this rig's software rendering -- dt is
+    // clamped at engine/forest-engine.js:~1220, so below 20fps it never catches up
+    // to real time (wiki: systems/dt-clamp-vs-walltime). A wall-clock wait here
+    // measures the runner's frame rate, not the hunt logic. `t` on the probe is the
+    // same clock the engine's own timers accumulate against, so diffing it gives the
+    // actual in-sim window the movement below ran for. 3 game-seconds stays
+    // comfortably inside the 8s scentLock leash exemption (SCENT_TRACK_TIME) so the
+    // chase can't lapse mid-sample, and is generous either side of the ~6.8u/s top
+    // speed vs. the pre-fix 0.7u/s stutter this assertion exists to catch.
+    const GAME_SECONDS = 3;
+    await expect
+      .poll(
+        async () => {
+          const s = await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null);
+          return s ? s.t - first!.t : 0;
+        },
+        {
+          message: 'game clock did not advance far enough to sample distance closed',
+          timeout: 45_000,
+        },
+      )
+      .toBeGreaterThanOrEqual(GAME_SECONDS);
 
     const second = await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null);
     expect(second).not.toBeNull();
 
     // The headline assertion: it actually tracks. Pre-fix this closed ~0.7 units/s
     // (the leash-vs-scent-range fight); post-fix it should close close to its real
-    // speed. 8 units over ~4 real seconds is a wide margin either side of the
-    // dt-clamp slowdown, comfortably above the stutter and comfortably below what
-    // an unthrottled chase actually covers.
+    // speed. 8 units over 3 *game* seconds is a wide margin either side of that
+    // stutter and comfortably below what an unthrottled chase actually covers.
     expect(second!.dist, 'the bear must close distance, not stutter in place').toBeLessThan(first!.dist - 8);
 
     // The leash-vs-scent flip-flop this ticket fixes would have bounced the state

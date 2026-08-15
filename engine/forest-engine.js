@@ -1018,10 +1018,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // LUL-65: state + distance + the scentOnto() re-trigger count, for asserting a
   // scent-triggered chase actually closes distance (not the stutter this ticket
   // fixed) without re-roaring every frame.
+  //
+  // LUL-99: also returns `t`, the same clock.elapsedTime the render loop's dt
+  // clamp (line ~1220) accumulates against. Below 20fps under this rig's
+  // software rendering, that clock runs slower than wall time and never
+  // catches up (wiki: systems/dt-clamp-vs-walltime) -- a test that samples this
+  // probe twice and diffs `t` gets the actual game-time window the sim ran for,
+  // instead of assuming it from a wall-clock wait.
   window.ForestEngine.qaProbePredatorState = function(kind){
     const p = predators.find(pp => pp.kind === kind);
     if(!p) return null;
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls };
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, t: clock.elapsedTime };
   };
 }
 
