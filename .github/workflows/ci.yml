@@ -13,23 +13,48 @@ name: CI
 # not permitted to open PRs (a human-opened PR still gets its checks), and
 # dropping it would deadlock this very change — the PR introducing it would be
 # evaluated against its own workflow file and never run a check at all.
-# A human-opened PR therefore runs CI twice. Public repos get free minutes and
-# the two concurrency groups do not cancel each other, so both go green.
+#
+# LUL-100: for any branch that lives in THIS repo, the push trigger above
+# already covers it, so the pull_request trigger is pure duplication — same
+# head SHA, two full runs (including two Playwright suites), racing each
+# other under different concurrency groups (`refs/heads/<branch>` vs
+# `refs/pull/N/merge`) that never cancel each other. When the runner is slow,
+# both runs draw against the same wall-clock-sensitive assertions
+# (scent.spec.ts:63, smoke.spec.ts:132) and doubling the draws doubles the
+# odds one instance comes back red — and one red instance on the head SHA is
+# enough to hold `mergeable_state: blocked`, even though the *other* instance
+# (the more meaningful one, base-merged) is green. See wiki
+# systems/ci-double-run.
+#
+# A same-SHA concurrency group with cancel-in-progress does not fix this: a
+# required check that gets cancelled reports conclusion `cancelled`, which
+# GitHub does not treat as passing, so the cancelled duplicate would still
+# block the merge it was meant to stop blocking. So this is a scope filter,
+# not a race — `pull_request` runs only when the PR's head repo differs from
+# this one, i.e. only for an external fork, which is the one case the push
+# trigger structurally cannot cover (a fork's push never reaches Actions on
+# this repo). Every `lul-*` branch and every same-repo human-opened PR is
+# push-covered and gets exactly one run.
 on:
   push:
     branches: ['**']
   pull_request:
   workflow_dispatch:
 
-# Cancel superseded runs on the same PR/branch.
+# Cancel superseded runs on the same PR/branch. Keyed on head SHA (not
+# `github.ref`, which differs between the push and pull_request events for
+# the same commit) so a rapid double-push to one branch still dedupes.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
   build:
     name: build, typecheck, lint
     runs-on: ubuntu-latest
+    # See the LUL-100 comment above `on:` — same-repo branches are already
+    # covered by the push trigger; only a fork PR needs this event.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +85,7 @@ jobs:
     name: playwright smoke suite
     needs: build
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v4
 
