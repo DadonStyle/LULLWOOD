@@ -1,0 +1,94 @@
+name: Auto PR
+
+# Why this exists
+# ---------------
+# `main` is protected by ruleset 20886790: a PR is mandatory, direct pushes are
+# rejected, and two checks must be green. Our agents authenticate to GitHub with
+# an SSH deploy key, which can push refs and nothing else — it has no API scope,
+# so it cannot open a pull request. Without this workflow every branch an agent
+# pushes is stranded and a human has to open the PR by hand.
+#
+# The only channel an agent has to this repo is `git push`, so all intent rides
+# in the branch name and the commit message:
+#
+#   git push origin HEAD:refs/heads/lul-42-my-change   -> a PR is opened for you
+#   ...with "[ship]" in the head commit message        -> it also merges on green
+#
+# Runs as GITHUB_TOKEN, so it needs "Allow GitHub Actions to create and approve
+# pull requests" (Settings -> Actions -> General -> Workflow permissions).
+
+on:
+  push:
+    branches: ['lul-*']
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  open-pr:
+    name: open or refresh the PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: open or refresh the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # checkout@v4 only fetches the pushed ref, so main has to be asked for.
+          git fetch --no-tags origin main
+
+          # Nothing to propose if the branch has no commits main lacks.
+          if [ "$(git rev-list --count FETCH_HEAD..HEAD)" = "0" ]; then
+            echo "::notice::$BRANCH is not ahead of main; no PR to open."
+            exit 0
+          fi
+
+          number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+
+          if [ -z "$number" ]; then
+            printf '%s\n' \
+              'Opened automatically by `.github/workflows/auto-pr.yml` because an agent' \
+              'pushed this branch, and deploy keys cannot call the GitHub API.' \
+              '' \
+              'The two required checks run off the branch push rather than off this PR,' \
+              'so look for them on the head commit.' \
+              '' \
+              'Add `[ship]` to the head commit message to have this merged automatically' \
+              'once both checks are green.' > /tmp/pr-body.md
+
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$(git log -1 --pretty=%s)" \
+              --body-file /tmp/pr-body.md
+
+            number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')"
+            echo "::notice::opened PR #$number for $BRANCH"
+          else
+            echo "::notice::PR #$number already open for $BRANCH"
+          fi
+
+          # `[ship]` is the agent's merge intent. Without it the PR just sits
+          # there green, which is the right default for work-in-progress pushes.
+          if git log -1 --pretty=%B | grep -qF '[ship]'; then
+            if gh pr merge "$number" --auto --squash --delete-branch; then
+              echo "::notice::auto-merge armed on #$number"
+            else
+              # "Allow auto-merge" may be off in repo settings; automerge.yml
+              # picks this up after CI instead.
+              echo "::warning::could not arm auto-merge on #$number; automerge.yml will handle it once CI reports."
+            fi
+          else
+            echo "::notice::no [ship] marker in the head commit; leaving #$number for review."
+          fi
