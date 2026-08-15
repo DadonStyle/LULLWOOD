@@ -83,11 +83,11 @@ test.describe('initial load', () => {
   });
 });
 
-// `H` hide toggle: e2e/hide.spec.ts (deterministic, no baby-walk needed, kept
-// separate so it stays fast). Mount/unmount/remount + dispose() lifecycle:
-// e2e/lifecycle.spec.ts (needs `next dev` for StrictMode, so it runs under a
-// separate Playwright project against a different webServer -- see
-// playwright.config.ts).
+// `H` hide toggle: e2e/hide.spec.ts (LUL-29 -- deterministic, no baby-walk
+// needed, kept separate so it stays fast). Mount/unmount/remount + dispose()
+// lifecycle: e2e/lifecycle.spec.ts (needs `next dev` for StrictMode, so it
+// runs under a separate Playwright project against a different webServer --
+// see playwright.config.ts).
 
 test.describe('HUD lifted to React (LUL-34)', () => {
   // Before LUL-34, the engine wrote directly into a DOM overlay that was
@@ -224,8 +224,13 @@ test.describe('predator catch / death', () => {
     const lured = await page.evaluate(() => (window as any).ForestEngine.qaLurePredator());
     expect(['wolf', 'bear', 'lion'], 'a predator was lured').toContain(lured);
 
-    // NOTE: which species this is depends on which spawned nearest for the seed.
-    // Pinning a specific one needs a spawn-point hook; filed as follow-up.
+    // NOTE (LUL-29): which species this is depends on which spawned nearest for
+    // the seed -- this run-to-run variation in death-path coverage is a
+    // documented, accepted limitation, not silently dropped. Pinning a specific
+    // species needs an engine-side `?qaHooks=1` hook (qaLurePredator only takes
+    // "nearest"); that is real engine-touching work out of scope for a QA-only
+    // pass, so it's filed as LUL-55 for the Founding Engineer rather than done
+    // here. Once that hook lands, extend this test to loop all three kinds.
     const deathScreen = page.locator('#deathScreen');
     await expect(deathScreen).toBeVisible({ timeout: 30_000 });
 
