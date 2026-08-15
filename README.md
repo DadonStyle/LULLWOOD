@@ -1,5 +1,11 @@
 # Lullwood
 
+**[Play Lullwood in your browser -> lullwood.vercel.app](https://lullwood.vercel.app)**
+
+Lullwood is a browser-based first-person horror game. You cross a foggy night forest to
+find a lost, glowing child and carry them home, while wolves, bears and lions hunt you by
+sight and scent. The core loop is hiding and holding still while they sniff.
+
 A lost child is somewhere in the dark. Next.js (App Router, TypeScript) shell around
 the original single-file prototype, ported in as-is.
 
