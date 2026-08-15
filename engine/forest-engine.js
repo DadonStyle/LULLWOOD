@@ -808,13 +808,23 @@ function boom(when){
 // One-directional: the engine owns this object and pushes patches out via
 // emitState(). Nothing reads it back in -- React never reaches into engine
 // internals, it only calls the action functions returned by init() below.
+//
+// LUL-35 (pass 2): this object carries *data*, never presentation. It used to
+// emit `fogDisplay: '.045'` -- a pre-formatted string, and a wrong one, since
+// the scene actually starts at CONFIG.fog (0.04); the HUD opened by lying about
+// the mist it was rendering. The engine now emits the number it really uses and
+// components/Hud.tsx formats it, which also makes CONFIG the one source of
+// truth for the slider positions instead of a third hand-written copy.
+// `statusHiding` went the same way: it was only ever assigned `statusVisible`,
+// so React derives the class from that instead of carrying two names for one
+// fact.
 let hudState = {
   entered: false,
   objectiveVisible: false, objectiveText: '', objectiveReady: false,
-  statusVisible: false, statusHiding: false, statusText: '',
+  statusVisible: false, statusText: '',
   winVisible: false,
   deathVisible: false, deathKind: 'wolf', lossRevealed: false,
-  pace: CONFIG.walk, fogDisplay: '.045', soundOn: true,
+  pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
 };
 function pushState(patch){
   let changed = false;
@@ -951,7 +961,7 @@ function restart(){
 // LUL-34: these are now the engine's public action API (returned by init()
 // below) instead of DOM event listeners on elements the engine no longer owns.
 function setPace(v){ walk = v; pushState({ pace: v }); }
-function setFog(v){ scene.fog.density = v; pushState({ fogDisplay: v.toFixed(3).slice(1) }); }
+function setFog(v){ scene.fog.density = v; pushState({ fog: v }); }
 function toggleSound(){
   soundOn = !soundOn;
   if(audio) audio.master.gain.setTargetAtTime(soundOn ? 0.6 : 0.0001, audio.ctx.currentTime, 0.1);
@@ -1198,7 +1208,7 @@ function tick(){
       objectiveText: carrying
         ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm'
         : (canPickup ? 'Press  E  to lift the child' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'),
-      statusVisible, statusHiding: statusVisible, statusText,
+      statusVisible, statusText,
     });
   } else {
     pushState({ objectiveVisible: false, statusVisible: false });

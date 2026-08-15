@@ -3,21 +3,26 @@
 // open AudioContext -- never two.
 //
 // This deliberately does not rely on React StrictMode's own dev-only
-// double-invoke to exercise dispose(): GameCanvas.tsx loads
-// `forest-engine.js` asynchronously (a <script> tag), and StrictMode's
-// mount -> cleanup -> remount sequence runs synchronously, before that async
-// load resolves. So the cleanup that fires mid-sequence calls
-// `window.ForestEngine?.dispose()` while `window.ForestEngine` is still
-// undefined -- a no-op against a StrictMode remount either way, dev or prod.
+// double-invoke to exercise dispose(): GameCanvas.tsx pulls the engine in with
+// a dynamic `import()` (LUL-28 made it a bundled ES module -- this comment used
+// to say "a <script> tag", which has not been true since), and StrictMode's
+// mount -> cleanup -> remount sequence runs synchronously, before that import
+// resolves. So the cleanup that fires mid-sequence has no live engine to tear
+// down -- a no-op against a StrictMode remount either way, dev or prod.
 //
 // Instead this spec uses a QA-only hook added to GameLoader.tsx
 // (`?qaHooks=1` -> `window.__qaRemount()`) to force a genuine React
 // unmount/remount of a *live* engine via a `key` change -- see GameLoader.tsx
 // for why that hook is safe for real players (opt-in, absent by default).
-// Because the trigger is explicit rather than StrictMode's automatic one,
-// this runs against the same prod build (`next build && next start`) as the
-// rest of the suite -- no separate dev-mode project needed.
+//
+// LUL-35 (pass 2): because that trigger is explicit rather than StrictMode's
+// automatic one, this spec does not need a dev server -- and it no longer gets
+// one. playwright.config.ts used to boot a second `next dev` webServer on its
+// own port purely for this file, on the stale premise that it needed
+// StrictMode; the file's own header had said the opposite for just as long.
+// One webServer, one project, one prod build, same as the rest of the suite.
 import { test, expect } from '@playwright/test';
+import { boot } from './helpers';
 
 // Installed before any page script runs (Playwright guarantees addInitScript
 // executes ahead of the page's own scripts on every navigation), so it sees
@@ -82,12 +87,7 @@ test.describe('lifecycle', () => {
     page,
   }) => {
     await page.addInitScript(installInstrumentation);
-    await page.goto('/?qaHooks=1', { waitUntil: 'networkidle', timeout: 60_000 });
-
-    await page.waitForFunction(
-      () => (window as any).ForestEngine && document.querySelectorAll('canvas').length === 2,
-      { timeout: 30_000 },
-    );
+    await boot(page, { qaHooks: true });
     await page.waitForTimeout(500); // let the rAF loop settle into steady state
 
     const baseline = await page.evaluate(() => {

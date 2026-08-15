@@ -10,48 +10,27 @@
 // rasterizer, not the game. Do not assert on audio *behavior* -- the browser is
 // launched with --mute-audio (playwright.config.ts), so the WebAudio graph runs but
 // is never actually heard; only AudioContext lifecycle (created/closed) is checked.
-import { test, expect, type Page, type ConsoleMessage } from '@playwright/test';
-
-const VIEW_X = 640;
-const VIEW_Y = 360;
-
-function trackConsoleErrors(page: Page) {
-  const consoleErrors: string[] = [];
-  const pageErrors: string[] = [];
-  page.on('console', (m: ConsoleMessage) => m.type() === 'error' && consoleErrors.push(m.text()));
-  page.on('pageerror', (e) => pageErrors.push(String(e)));
-  return { consoleErrors, pageErrors };
-}
-
-async function enter(page: Page) {
-  await page.mouse.click(VIEW_X, VIEW_Y);
-  await page.waitForTimeout(1200); // gate fade + requestPointerLock settle
-}
-
-async function readObjective(page: Page) {
-  return (await page.locator('#objective').textContent()) ?? '';
-}
+// Boot/enter/console-error helpers are shared with the other specs in
+// e2e/helpers.ts (LUL-35 pass 2) -- each file used to carry its own copy.
+import { test, expect } from '@playwright/test';
+import { boot, enter, expectNoConsoleErrors, readObjective, trackConsoleErrors } from './helpers';
 
 test.describe('initial load', () => {
   test('title gate, engine API, two canvases, no console errors', async ({ page }) => {
-    const { consoleErrors, pageErrors } = trackConsoleErrors(page);
+    const errors = trackConsoleErrors(page);
 
-    await page.goto('/', { waitUntil: 'networkidle', timeout: 60_000 });
-    await page.waitForTimeout(4000);
+    await boot(page);
 
     const load = await page.evaluate(() => ({
       title: document.title,
       // LUL-28: three is bundled into the engine module now, so there is no
       // `window.THREE` to read a revision off. The engine re-exports it as
       // `ForestEngine.threeRevision` so this pin stays checkable from here.
-      threeRevision: (window as any).ForestEngine?.threeRevision ?? null,
+      threeRevision: window.ForestEngine?.threeRevision ?? null,
       // Nothing else may leak onto window -- asserts the <script>-tag/global
       // loading path is really gone, not just unused.
-      threeGlobal: typeof (window as any).THREE,
-      engineApi:
-        typeof (window as any).ForestEngine === 'object'
-          ? Object.keys((window as any).ForestEngine).sort()
-          : null,
+      threeGlobal: typeof (window as unknown as { THREE?: unknown }).THREE,
+      engineApi: window.ForestEngine ? Object.keys(window.ForestEngine).sort() : null,
       canvases: [...document.querySelectorAll('canvas')].map((c) => [
         (c as HTMLCanvasElement).width,
         (c as HTMLCanvasElement).height,
@@ -78,8 +57,7 @@ test.describe('initial load', () => {
     expect(playing).not.toContain('click to enter');
     expect(playing).toMatch(/Find the lost child/);
 
-    expect(consoleErrors, consoleErrors.join(' | ')).toHaveLength(0);
-    expect(pageErrors, pageErrors.join(' | ')).toHaveLength(0);
+    expectNoConsoleErrors(errors);
   });
 });
 
@@ -101,16 +79,22 @@ test.describe('HUD lifted to React (LUL-34)', () => {
   test('gate/objective mount and unmount with engine state; panel controls round-trip through React into the engine', async ({
     page,
   }) => {
-    const { consoleErrors, pageErrors } = trackConsoleErrors(page);
+    const errors = trackConsoleErrors(page);
 
-    await page.goto('/', { waitUntil: 'networkidle', timeout: 60_000 });
-    await page.waitForTimeout(4000);
+    await boot(page);
 
     // Pre-entry: gate is mounted, objective/status are not -- the old
     // version kept #objective/#status in the DOM at all times.
     await expect(page.locator('#gate')).toHaveCount(1);
     await expect(page.locator('#objective')).toHaveCount(0);
     await expect(page.locator('#status')).toHaveCount(0);
+
+    // LUL-35 (pass 2) regression guard: the panel must open showing the values
+    // the engine is actually running (CONFIG.walk 6, CONFIG.fog 0.04). It used
+    // to open at mist `.045` while the scene rendered `0.04`, because that
+    // default was written out by hand in three places and two of them drifted.
+    await expect(page.locator('#paceVal')).toHaveText('6');
+    await expect(page.locator('#fogVal')).toHaveText('.040');
 
     await enter(page);
     await expect(page.locator('#gate')).toHaveCount(0); // unmounted, not just hidden
@@ -145,8 +129,7 @@ test.describe('HUD lifted to React (LUL-34)', () => {
     await page.locator('#sound').click();
     await expect(page.locator('#sound')).toHaveText('Sound: on');
 
-    expect(consoleErrors, consoleErrors.join(' | ')).toHaveLength(0);
-    expect(pageErrors, pageErrors.join(' | ')).toHaveLength(0);
+    expectNoConsoleErrors(errors);
   });
 });
 
@@ -167,11 +150,10 @@ test.describe('lift the child / carry home / win', () => {
   // is filed separately (see LUL-21 handoff comment).
   test('pressing E lifts the child; only reaching home (not the pickup) shows the win screen', async ({ page }) => {
     test.setTimeout(45_000);
-    await page.goto('/?qaHooks=1', { waitUntil: 'networkidle', timeout: 60_000 });
-    await page.waitForTimeout(4000);
+    await boot(page, { qaHooks: true });
     await enter(page);
 
-    await page.evaluate(() => (window as any).ForestEngine.qaTeleportNearBaby());
+    await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());
     await page.waitForTimeout(300); // let the next tick() recompute canPickup from the new position
 
     const objective = await readObjective(page);
@@ -194,7 +176,7 @@ test.describe('lift the child / carry home / win', () => {
       .toContain('Carry the child home');
     await expect(page.locator('#winScreen'), 'reaching pickup range alone must not win (LUL-38)').toBeHidden();
 
-    await page.evaluate(() => (window as any).ForestEngine.qaTeleportHome());
+    await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
     await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('#winScreen h1')).toHaveText('YOU WON');
   });
@@ -203,8 +185,7 @@ test.describe('lift the child / carry home / win', () => {
 test.describe('predator catch / death', () => {
   test('a hunting predator closes the distance and kills you', async ({ page }) => {
     test.setTimeout(120_000);
-    await page.goto('/?qaHooks=1', { waitUntil: 'networkidle', timeout: 60_000 });
-    await page.waitForTimeout(4000);
+    await boot(page, { qaHooks: true });
     await enter(page);
 
     // In-game, the trigger is standing still: if no predator has been within 20
@@ -221,7 +202,7 @@ test.describe('predator catch / death', () => {
     // out -- outside catch range (`p.rad + 1.3`, max 2.8). What is under test is
     // unchanged: it still has to close the distance itself, and the catch and
     // triggerDeath paths run for real. Only the waiting is skipped.
-    const lured = await page.evaluate(() => (window as any).ForestEngine.qaLurePredator());
+    const lured = await page.evaluate(() => window.ForestEngine?.qaLurePredator?.() ?? null);
     expect(['wolf', 'bear', 'lion'], 'a predator was lured').toContain(lured);
 
     // NOTE (LUL-29): which species this is depends on which spawned nearest for

@@ -9,3 +9,26 @@ import type { EngineActions, EngineHudState } from '@/components/Hud';
 
 export function init(onStateChange?: (state: EngineHudState) => void): EngineActions | null;
 export function dispose(): void;
+
+// LUL-35 (pass 2): the `window.ForestEngine` shape used to be re-declared by
+// hand in GameCanvas.tsx, which meant the same two signatures were written
+// twice and could drift apart. It is declared here instead -- next to the
+// module that actually installs the global (see the bottom of
+// forest-engine.js) -- and the `init` / `dispose` entries reuse the exported
+// types above rather than restating them.
+declare global {
+  interface Window {
+    ForestEngine?: {
+      init: typeof init;
+      dispose: typeof dispose;
+      threeRevision: string;
+      // Present only under `?qaHooks=1` (see the qaHooks block inside init()).
+      // Declared here so the Playwright specs can call them without each one
+      // casting `window` to `any` and losing every other guarantee with it.
+      qaTeleportNearBaby?: () => void;
+      qaTeleportHome?: () => void;
+      /** Returns the lured predator's kind, or null if none was found. */
+      qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
+    };
+  }
+}

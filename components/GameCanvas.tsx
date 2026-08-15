@@ -3,9 +3,12 @@
 import { useEffect, useState } from 'react';
 import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
 
-// CSS verbatim from game/forest.html (M2 wiki plan: game/port-plan) -- lines 6-99.
-// Only change from the source file: the death video's inline base64 data URI was
-// swapped for /death.mp4 (public/death.mp4).
+// CSS verbatim from the original single-file prototype (M2 wiki plan:
+// game/port-plan) -- its lines 6-99. The prototype is no longer in the tree;
+// README.md has the git ref to diff against. Only change from the source file:
+// the death video's inline base64 data URI was swapped for /death.mp4
+// (public/death.mp4). LUL-35 (pass 2) dropped one dead rule, `#status.danger`
+// -- no code path has ever applied that class.
 //
 // LUL-34 (M2b): the gate/objective/status/win/death/panel *markup* moved out of
 // this string and into <Hud> (components/Hud.tsx) as real JSX driven by engine
@@ -94,7 +97,6 @@ const OVERLAY_STYLE = `
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
     font-size: 13px; letter-spacing: 0.03em; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #status.hiding { color: #9fd7b0; border-color: rgba(120,200,150,0.4); }
-  #status.danger { color: #ff9a86; border-color: rgba(255,120,90,0.5); }
 
   /* death: video cutscene + loss text */
   #spotFlash { position: fixed; inset: 0; z-index: 12; pointer-events: none; opacity: 0;
@@ -123,16 +125,6 @@ const OVERLAY_MARKUP = `
 <video id="deathVideo" muted playsinline preload="auto" src="/death.mp4"></video>
 `;
 
-declare global {
-  interface Window {
-    ForestEngine?: {
-      init: (onStateChange?: (state: EngineHudState) => void) => EngineActions | null;
-      dispose: () => void;
-      threeRevision: string;
-    };
-  }
-}
-
 export default function GameCanvas() {
   const [hud, setHud] = useState<EngineHudState>(INITIAL_HUD_STATE);
   const [actions, setActions] = useState<EngineActions | null>(null);
@@ -148,22 +140,27 @@ export default function GameCanvas() {
     // down before this promise settles, and calling init() after that would
     // strand a live engine that no cleanup will ever dispose.
     let cancelled = false;
-    let started = false;
+    // LUL-35 (pass 2): teardown used to go through `window.ForestEngine.dispose()`,
+    // a second way into the same function that contradicted the engine's own
+    // claim that the global is a QA/debug surface only. Holding the imported
+    // `dispose` here keeps one path in and one path out, and doubles as the
+    // "did this mount actually start an engine?" flag the cleanup needs.
+    let disposeEngine: (() => void) | null = null;
 
-    import('@/engine/forest-engine').then(({ init }) => {
+    import('@/engine/forest-engine').then(({ init, dispose }) => {
       if (cancelled) return;
       // LUL-34: init() now takes a state-change callback and returns the
       // engine's action API (enter/restart/setPace/...) instead of nothing --
       // see engine/forest-engine.js's own comment on `emitState`/`pushState`.
-      setActions(init(setHud) as EngineActions | null);
-      started = true;
+      setActions(init(setHud));
+      disposeEngine = dispose;
     });
 
     return () => {
       cancelled = true;
       // Only tear down an engine this mount actually started.
-      if (started) {
-        window.ForestEngine?.dispose();
+      if (disposeEngine) {
+        disposeEngine();
         setActions(null);
         setHud(INITIAL_HUD_STATE);
       }
