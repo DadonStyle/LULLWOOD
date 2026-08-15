@@ -1,6 +1,37 @@
 'use client';
 
+import { useCallback, useEffect, useState } from 'react';
 import TouchControls from './TouchControls';
+
+// LUL-124: fullscreen toggle. `document.fullscreenEnabled` is false on
+// browsers that never expose the API (older iOS Safari) so the button is
+// simply omitted there instead of rendering a control that would reject on
+// every click. The `fullscreenchange` listener is what keeps `isFullscreen`
+// correct after the browser's own exit paths (Esc key, system UI) which
+// don't otherwise call back into this component.
+function useFullscreen() {
+  const supported = useState(() => typeof document !== 'undefined' && document.fullscreenEnabled)[0];
+  const [isFullscreen, setIsFullscreen] = useState(
+    () => typeof document !== 'undefined' && document.fullscreenElement != null,
+  );
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onChange = () => setIsFullscreen(document.fullscreenElement != null);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  }, []);
+
+  return { supported, isFullscreen, toggle };
+}
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -82,6 +113,8 @@ export default function Hud({
   state: EngineHudState;
   actions: EngineActions | null;
 }) {
+  const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
+
   return (
     <>
       {/* LUL-68: twin-stick touch controls (only renders on touch-capable viewports) */}
@@ -123,6 +156,11 @@ export default function Hud({
         <button id="regen" onClick={() => actions?.regenMap()}>
           New map
         </button>
+        {fullscreenSupported && (
+          <button id="fullscreen" onClick={toggleFullscreen}>
+            Fullscreen: {isFullscreen ? 'on' : 'off'}
+          </button>
+        )}
       </div>
 
       {!state.entered && (
