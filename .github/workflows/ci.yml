@@ -1,9 +1,25 @@
 name: CI
 
+# The branch-push trigger is the load-bearing one, and it is new here.
+#
+# Pull requests opened by GITHUB_TOKEN (see auto-pr.yml) do not start
+# `pull_request` workflow runs — GitHub suppresses them so workflows cannot
+# recurse. A PR whose checks never start can never satisfy the required status
+# checks on `main`, so for agent-opened PRs, CI has to attach to the branch push
+# instead. Branch protection resolves required checks against the head SHA no
+# matter which event produced them, so the ruleset is satisfied either way.
+#
+# `pull_request` stays for two reasons: it is the fallback if Actions is ever
+# not permitted to open PRs (a human-opened PR still gets its checks), and
+# dropping it would deadlock this very change — the PR introducing it would be
+# evaluated against its own workflow file and never run a check at all.
+# A human-opened PR therefore runs CI twice. Public repos get free minutes and
+# the two concurrency groups do not cancel each other, so both go green.
 on:
-  pull_request:
   push:
-    branches: [main]
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
 
 # Cancel superseded runs on the same PR/branch.
 concurrency:
