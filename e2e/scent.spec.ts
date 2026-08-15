@@ -45,11 +45,16 @@ test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
     expect(first).not.toBeNull();
     expect(first!.scentCalls, 'scentOnto() should fire exactly once on pickup').toBe(1);
 
-    // LUL-99: poll on *game* time, not wall time. The dt clamp at engine line ~1201
-    // means game time runs slower than wall time under software rendering -- a
-    // wall-clock wait measures the runner, not the hunt logic (wiki: systems/dt-clamp-vs-walltime).
-    // 3 game-seconds is comfortably inside the 8s scentLock leash exemption and
-    // generous either side of the ~6.8u/s top speed vs. the pre-fix 0.7u/s stutter.
+    // LUL-99: wait for the *game* clock to advance, not the wall clock. Game time
+    // runs slower than wall time under this rig's software rendering -- dt is
+    // clamped at engine/forest-engine.js:~1220, so below 20fps it never catches up
+    // to real time (wiki: systems/dt-clamp-vs-walltime). A wall-clock wait here
+    // measures the runner's frame rate, not the hunt logic. `t` on the probe is the
+    // same clock the engine's own timers accumulate against, so diffing it gives the
+    // actual in-sim window the movement below ran for. 3 game-seconds stays
+    // comfortably inside the 8s scentLock leash exemption (SCENT_TRACK_TIME) so the
+    // chase can't lapse mid-sample, and is generous either side of the ~6.8u/s top
+    // speed vs. the pre-fix 0.7u/s stutter this assertion exists to catch.
     const GAME_SECONDS = 3;
     await expect
       .poll(
@@ -57,7 +62,10 @@ test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
           const s = await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null);
           return s ? s.t - first!.t : 0;
         },
-        { message: 'game clock did not advance far enough to sample distance closed', timeout: 45_000 },
+        {
+          message: 'game clock did not advance far enough to sample distance closed',
+          timeout: 45_000,
+        },
       )
       .toBeGreaterThanOrEqual(GAME_SECONDS);
 

@@ -36,7 +36,8 @@ declare global {
       qaSeedScentPoint?: (dx: number, dz: number, age: number) => void;
       /** LUL-65: places `kind` on the drifted oldest live scent point, in `roam`. Null if none live or species not found. */
       qaProbeScentOnOldest?: (kind: 'wolf' | 'bear' | 'lion') => { age: number; dist: number } | null;
-      /** LUL-65/LUL-99: state + distance-to-player + scentOnto() re-trigger count + game clock `t` for `kind`. Null if not found. */
+      /** LUL-65: state + distance-to-player + scentOnto() re-trigger count for `kind`. Null if not found.
+       * LUL-99: `t` is clock.elapsedTime -- game time, not wall time (see wiki: systems/dt-clamp-vs-walltime). */
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
       ) => { state: string; dist: number; scentCalls: number; t: number } | null;
