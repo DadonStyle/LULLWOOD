@@ -27,11 +27,15 @@ denied=()
 while IFS= read -r path; do
   [ -z "$path" ] && continue
   case "$path" in
-    # This file and the workflows that enforce it are the gate itself. A change
-    # here is a policy change and must never be able to wave itself through --
-    # otherwise a branch widens the allowlist and `[ship]`s that widening in the
-    # same commit. Must stay ABOVE the `.github/*` allow below.
-    .github/scripts/ship-allowed.sh|.github/workflows/auto-pr.yml|.github/workflows/automerge.yml|.github/workflows/ci.yml)
+    # Workflows are the gate itself -- including ones that don't exist yet. A
+    # brand-new file under .github/workflows/ is not named anywhere below, so
+    # without this arm it would fall through to the generic `.github/*` allow
+    # and could self-merge unreviewed with its own triggers and permissions.
+    # Denying the whole directory (not just today's four files) closes that.
+    # Must stay ABOVE the `.github/*` allow below.
+    .github/workflows/*)
+      denied+=("$path (workflow changes need review, new or existing)") ;;
+    .github/scripts/ship-allowed.sh)
       denied+=("$path (changes the merge gate itself)") ;;
     # Prose, anywhere in the tree.
     *.md) ;;
