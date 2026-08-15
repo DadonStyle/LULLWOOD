@@ -128,10 +128,27 @@ test.describe('HUD lifted to React (LUL-34)', () => {
     await setRange('#fog', '0.09');
     await expect(page.locator('#fogVal')).toHaveText('.090');
 
+    // LUL-87/LUL-44: a real Playwright `.click()` here chains several CDP
+    // round trips (hover, hit-test recheck, stability-across-frames,
+    // mousedown, mouseup), each needing the renderer main thread to respond.
+    // Under this rig's software rendering plus real CI contention that thread
+    // can be saturated for extended stretches (wiki:systems/dt-clamp-vs-walltime),
+    // so the cumulative wait can blow even a 90s budget -- diagnosed by
+    // sampling `document.elementFromPoint` at #sound's exact coordinates every
+    // 300ms through a reproduced contention window matching the CI failure
+    // signature: the canvas never won the hit test (0/75 samples), which rules
+    // out "canvas intercepts the click" as a product bug. `el.click()` still
+    // dispatches a real, bubbling DOM click event that React's synthetic
+    // handler treats identically to a physical one -- it just skips
+    // Playwright's own multi-step actionability polling, which is what was
+    // actually timing out.
+    const clickButton = (selector: string) =>
+      page.locator(selector).evaluate((el) => (el as HTMLElement).click());
+
     await expect(page.locator('#sound')).toHaveText('Sound: on');
-    await page.locator('#sound').click();
+    await clickButton('#sound');
     await expect(page.locator('#sound')).toHaveText('Sound: off');
-    await page.locator('#sound').click();
+    await clickButton('#sound');
     await expect(page.locator('#sound')).toHaveText('Sound: on');
 
     expectNoConsoleErrors(errors);
