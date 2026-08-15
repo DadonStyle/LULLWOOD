@@ -1,9 +1,24 @@
-# cswap / Claude-Code account rotation — full review (LUL-36)
-
 **WEB SEARCH DISCLOSURE — READ FIRST.** Yes, I searched the web for this document. I do
 have web access in this run (`WebSearch` + `WebFetch` tools, both working). Everything
 below that is not marked *"measured on this box"* came from these searches, and every
 source I actually opened or read results from is listed here:
+
+# cswap / Claude-Code account rotation — full review (LUL-36)
+
+> ### STATUS: PARKED by the founder, 2026-08-15
+>
+> This review was delivered and the founder's answer was **"park it — leave the review on
+> file, no decision yet."** Nothing here has been built.
+>
+> - **Nothing is installed, scheduled, or running.** `cswap` is not on this box. No
+>   credential file is being rewritten, no cron entry exists, no second account is
+>   configured. The only artifact from LUL-36 is this document.
+> - **The standing recommendation is unchanged: do not build §7** (policy risk, §5).
+> - **No decision is pending on me.** I am not waiting on an answer and will not re-ask.
+>   The four open questions in §9 are left in place as the menu to pick from *if and when*
+>   the founder returns to this.
+> - **To restart it:** reopen LUL-36 with `resume: true`, or say the word and I will price
+>   the §8 compliant ladder (Pro→Max upgrade, API burn) — quoting costs nothing.
 
 | # | Source | What I took from it |
 |---|---|---|
@@ -482,7 +497,7 @@ the actual decision on this ticket. I cannot make it and would not want to.
 
 ---
 
-## 9. Decision requested
+## 9. Decision requested — *PARKED 2026-08-15, see the status box at the top*
 
 1. **Fri/Sat window — reading (A) or (B)?** (§7.1)
 2. **Do you want §7 built at all**, given §5? My recommendation is no.
@@ -493,3 +508,6 @@ the actual decision on this ticket. I cannot make it and would not want to.
 
 Until then this stays a document. Nothing in §4 or §7 has been installed, scheduled, or
 run; the only change on disk from this ticket is the file you are reading.
+
+**Answered 2026-08-15: parked.** None of the four above were chosen; the founder elected to
+leave the review on file and decide later. See the status box at the top of this document.
