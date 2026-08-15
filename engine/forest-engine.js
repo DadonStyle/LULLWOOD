@@ -635,7 +635,17 @@ function updatePredators(dt){
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
       }
     } else if(p.state === 'chase'){
-      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4); }
+      // While scentLock (LUL-23) holds, this chase was triggered by a stale
+      // trail, not a live sighting -- scentOnto()'s contract is "a growl and a
+      // straight line toward you", not "until I next lose sight of you".
+      // Gating on canSee() unconditionally (LUL-22, for the spotted case)
+      // froze every scent chase solid: a trail is by definition beyond detect
+      // range when picked up, so canSee() is false the very next tick,
+      // chase->investigate fires, and investigate bounces straight back to
+      // chase since the player isn't hidden -- zero-speed forever. Keep
+      // chasing blind while scentLock holds; once it expires, gate on sight
+      // the same way a spotted chase always has.
+      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4); }
       else {
         if(dist < p.rad + 1.3){ triggerDeath(p.kind); }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
