@@ -1002,7 +1002,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbePredatorState = function(kind){
     const p = predators.find(pp => pp.kind === kind);
     if(!p) return null;
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls };
+    // LUL-99: `t` is the same game clock the render loop accumulates, so the spec
+    // can poll on game-time delta instead of a wall-clock wait (wiki: systems/dt-clamp-vs-walltime).
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, t: clock.elapsedTime };
   };
 }
 
