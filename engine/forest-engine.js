@@ -116,11 +116,34 @@ const parts = [
 ];
 parts.forEach(p => { p.frustumCulled = false; scene.add(p); });
 
+// ---- Cover props (LUL-43): brambles, fallen logs, rock shelves -----------
+// Purely visual + line-of-sight-blocking (see canSee()/hasLOS() below) --
+// deliberately NOT movement colliders. Trees already own movement collision
+// via `grid`/blockedR below; giving these their own physical collision too
+// would touch predator path/stuck-avoidance logic that this ticket has no
+// budget to re-verify. Declared in the LUL-43 handoff; a fast-follow can add
+// it if the founder wants these to be walls, not just visual/LOS cover.
+const COVER_PROPS = 220;
+const logGeo = new THREE.BoxGeometry(1, 1, 1);
+const rockGeo = new THREE.DodecahedronGeometry(1, 0);
+const brambleGeo = new THREE.IcosahedronGeometry(1, 1);
+const logMat = new THREE.MeshStandardMaterial({ color: 0x241a10, roughness: 1 });
+const rockMat = new THREE.MeshStandardMaterial({ color: 0x2c3036, roughness: 1 });
+const brambleMat = new THREE.MeshStandardMaterial({ color: 0x121a0e, roughness: 1 });
+const coverMeshes = {
+  log: new THREE.InstancedMesh(logGeo, logMat, COVER_PROPS),
+  rock: new THREE.InstancedMesh(rockGeo, rockMat, COVER_PROPS),
+  bramble: new THREE.InstancedMesh(brambleGeo, brambleMat, COVER_PROPS),
+};
+Object.values(coverMeshes).forEach(m => { m.frustumCulled = false; scene.add(m); });
+
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
 let treeData = [];            // {x,z,s,cr}
 const CELL = 8;
 let grid = new Map();
+let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
+let coverGrid = new Map();     // same CELL keying as `grid`, built from coverData
 
 function inLake(x,z){ const dx=x-CONFIG.lake.x, dz=z-CONFIG.lake.z; return dx*dx+dz*dz < CONFIG.lake.clear**2; }
 function inSpawn(x,z){ return x*x+z*z < 40; }
@@ -142,6 +165,58 @@ function blockedR(x,z,pr){
   return false;
 }
 function blocked(x,z){ return blockedR(x,z,0.6); }
+
+function buildCoverGrid(){
+  coverGrid = new Map();
+  for(const c of coverData){
+    const k = key(Math.floor(c.x/CELL), Math.floor(c.z/CELL));
+    (coverGrid.get(k) || coverGrid.set(k, []).get(k)).push(c);
+  }
+}
+// Tag a subset of the trees just placed as cover, then scatter new dedicated
+// props. This runs at the END of generateMap(), after every existing rng draw
+// (baby, trees, predators) -- so it only ever APPENDS to the seeded stream and
+// today's map (tree/baby/predator positions) stays byte-identical.
+function generateCover(){
+  coverData = [];
+  for(const t of treeData) if(t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
+
+  let tries = 0, placed = 0;
+  while(placed < COVER_PROPS && tries < COVER_PROPS*25){
+    tries++;
+    const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
+    if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
+    const roll = rng();
+    let kind, hx, hz, y;
+    if(roll < 0.4){ kind='log'; const long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25;
+      if(rng() < 0.5){ hx=long; hz=thin; } else { hx=thin; hz=long; } y=0.3; }
+    else if(roll < 0.75){ kind='rock'; const r = 0.9+rng()*0.9; hx=r; hz=r*(0.7+rng()*0.5); y=r*0.55; }
+    else { kind='bramble'; const r = 0.8+rng()*0.7; hx=r; hz=r; y=r*0.6; }
+    coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
+    placed++;
+  }
+  buildCoverGrid();
+}
+function layoutCoverMeshes(){
+  const counts = { log: 0, rock: 0, bramble: 0 };
+  for(const c of coverData){
+    if(c.kind === 'tree') continue;
+    const i = counts[c.kind]++;
+    dummy.position.set(c.x, c.y, c.z);
+    dummy.rotation.set(0, c.ry, 0);
+    dummy.scale.set(c.hx*2, c.y*2, c.hz*2);
+    dummy.updateMatrix();
+    coverMeshes[c.kind].setMatrixAt(i, dummy.matrix);
+  }
+  for(const k in coverMeshes){
+    const m = coverMeshes[k];
+    for(let i = counts[k]; i < COVER_PROPS; i++){
+      dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
+      dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
+    }
+    m.instanceMatrix.needsUpdate = true;
+  }
+}
 
 function generateMap(seed){
   rng = mulberry32(seed >>> 0);
@@ -185,6 +260,7 @@ function generateMap(seed){
   drawMinimapStatic();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
+  generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
 }
 
@@ -409,6 +485,49 @@ function avoidDir(p, dx, dz){
   }
   return [dx, dz];
 }
+
+// ---- Positional hiding / detection (LUL-43, LUL-22) -----------------------
+// `hidden` (declared with the rest of player state below) is now purely the
+// hold-still stance: it lowers eye height and silences footsteps, same as
+// before, but no longer gates detection by itself. Detection is canSee(): a
+// raycast for line of sight (against cover AABBs only, XZ-only like every
+// other distance check in this file) combined with an effective detect range
+// that shrinks the longer you've held still. It never reaches zero, so
+// standing still in the open next to a predator still gets you caught.
+const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
+const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
+function segRayVsAABB(x0,z0,x1,z1, cx,cz,hx,hz){
+  const minX=cx-hx, maxX=cx+hx, minZ=cz-hz, maxZ=cz+hz;
+  let tmin=0, tmax=1;
+  const dx=x1-x0, dz=z1-z0;
+  if(Math.abs(dx) < 1e-9){ if(x0 < minX || x0 > maxX) return false; }
+  else { let t0=(minX-x0)/dx, t1=(maxX-x0)/dx; if(t0>t1){ const s=t0; t0=t1; t1=s; }
+    tmin=Math.max(tmin,t0); tmax=Math.min(tmax,t1); if(tmin>tmax) return false; }
+  if(Math.abs(dz) < 1e-9){ if(z0 < minZ || z0 > maxZ) return false; }
+  else { let t0=(minZ-z0)/dz, t1=(maxZ-z0)/dz; if(t0>t1){ const s=t0; t0=t1; t1=s; }
+    tmin=Math.max(tmin,t0); tmax=Math.min(tmax,t1); if(tmin>tmax) return false; }
+  return true;
+}
+function hasLOS(x0,z0,x1,z1){
+  // Walk the segment in half-cell steps and only test cover registered in the
+  // cells it actually passes through -- never all cover, never all 1,300 trees.
+  const d = Math.hypot(x1-x0, z1-z0), steps = Math.max(1, Math.ceil(d / (CELL*0.5)));
+  const seen = new Set();
+  for(let i=0; i<=steps; i++){
+    const u = i/steps, cx = Math.floor((x0+(x1-x0)*u)/CELL), cz = Math.floor((z0+(z1-z0)*u)/CELL);
+    const k = key(cx,cz); if(seen.has(k)) continue; seen.add(k);
+    const arr = coverGrid.get(k); if(!arr) continue;
+    for(const c of arr) if(segRayVsAABB(x0,z0,x1,z1, c.x,c.z,c.hx,c.hz)) return false;
+  }
+  return true;
+}
+function canSee(p, dist){
+  const stillness = hidden ? Math.min(1, hideTime / STILL_RAMP) : 0;
+  const effDetect = p.spec.detect * (1 - stillness * STILL_DETECT_CUT);
+  if(dist >= effDetect) return false;
+  return hasLOS(p.x, p.z, player.x, player.z);
+}
+
 function updatePredators(dt){
   const tt = clock.elapsedTime;
   for(const p of predators){
@@ -425,14 +544,16 @@ function updatePredators(dt){
       const bx=p.rrX-p.x, bz=p.rrZ-p.z, bd=Math.hypot(bx,bz);
       if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7; }
       if(p.reroute <= 0) p.stuckT = 0;
-    } else if(p.hunt && !hidden){                    // forced: comes straight for you (no giving up)
-      if(dist < p.rad + 1.3) triggerDeath(p.kind);
-      else { desx=ux; desz=uz; speed=p.spec.speed; }
-      if(dist < 8) p.hunt = false;                   // reached you → back to normal
-      if(hidden) { p.state='investigate'; p.inv='approach'; p.sniffsLeft=1+Math.floor(Math.random()*4); p.hunt=false; }
-      p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
+    } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
+      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=1+Math.floor(Math.random()*4); p.hunt=false; }
+      else {
+        if(dist < p.rad + 1.3) triggerDeath(p.kind);
+        else { desx=ux; desz=uz; speed=p.spec.speed; }
+        if(dist < 8) p.hunt = false;                   // reached you → back to normal
+        p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
+      }
     } else if(p.state === 'roam'){
-      if(!hidden && dist < p.spec.detect){ spotOnto(p); }
+      if(canSee(p, dist)){ spotOnto(p); }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){ const a=Math.random()*Math.PI*2, r=15+Math.random()*40;
@@ -440,7 +561,7 @@ function updatePredators(dt){
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
       }
     } else if(p.state === 'chase'){
-      if(hidden){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4); }
+      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4); }
       else {
         if(dist < p.rad + 1.3){ triggerDeath(p.kind); }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
@@ -448,6 +569,13 @@ function updatePredators(dt){
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
+      // Deliberately still gated on `hidden` (hold-still), not canSee(): once a
+      // predator has closed to sniff range it is often standing right next to
+      // you, and cover only blocks LOS, not its movement, so canSee() would
+      // flicker true the instant it steps past whatever broke LOS in the first
+      // place. The re-escalation the sniff loop actually cares about is "did
+      // you stop hiding" (move), which `hidden` already answers, and the
+      // ticket is explicit: don't retune this loop's timing.
       if(!hidden){ p.state='chase'; }
       else if(p.inv === 'approach'){
         facePlayer = true;
@@ -910,6 +1038,74 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     nearest.vx = nearest.vz = 0;
     nearest.hunt = true;
     return nearest.kind;
+  };
+
+  // LUL-43 positional-hiding scaffolding. Both hooks place a specific predator
+  // deterministically -- never "wherever the seed happened to spawn one" -- so
+  // e2e/hide.spec.ts doesn't have to search the procedural map for a matching
+  // case, and both return the predator's index into `predators` so the test
+  // can poll its real state instead of racing a wall-clock sleep against the
+  // dt clamp (wiki: systems/dt-clamp-vs-walltime).
+
+  // Case 1: "hide in the open near a lion -> caught". Teleport the player to
+  // the spawn clearing (`inSpawn`, r<~6.3) that every seed keeps tree- and
+  // cover-free, so there is provably nothing between predator and player, and
+  // put a lion a few units out with hunt=true. Even at full stillness this
+  // must still catch you (STILL_DETECT_CUT never reaches 1).
+  window.ForestEngine.qaOpenHideNearLion = function(){
+    player.x = 0; player.z = 0;
+    const idx = predators.findIndex(p => p.kind === 'lion');
+    if(idx < 0) return null;
+    const lion = predators[idx];
+    lion.x = player.x + 4; lion.z = player.z;
+    lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
+    lion.state = 'chase'; lion.hunt = true;
+    return idx;
+  };
+
+  // Case 2: "hide behind cover -> predator sniffs -> backs off". Use one of
+  // the dedicated cover props (log/rock/bramble), not a tagged tree: trees
+  // also sit in the movement-collision grid, and placing a predator's direct
+  // approach straight through one risks the same stuck/reroute path a normal
+  // chase can hit against any tree -- fine in open play, a flaky thing to
+  // build a deterministic test on. The chosen prop itself is never a movement
+  // obstacle (LOS-only), but an unrelated real tree can still overlap the
+  // predator's or the player's *own spawn point* for a given candidate, not
+  // just the line between them -- found by tracing a stuck run where the
+  // predator never moved a single unit from its placement: `blockedR` was
+  // already true at (px,pz) itself, so every candidate step out of it also
+  // read blocked and the reroute loop span forever without the trail ever
+  // going anywhere. The interior-only sample (i=1..STEPS-1) that used to be
+  // here never checked i=0 or i=STEPS, i.e. never checked the endpoints it
+  // was about to commit to. Both endpoints are now checked explicitly before
+  // the interior walk. With COVER_PROPS=220 some candidate is always clear.
+  window.ForestEngine.qaHideBehindCover = function(){
+    const idx = 0;
+    const p = predators[idx];
+    for(const c of coverData){
+      if(c.kind === 'tree') continue;
+      const reach = Math.max(c.hx, c.hz) + 3;
+      const px = c.x - reach, pz = c.z, qx = c.x + reach, qz = c.z;
+      if(blockedR(px, pz, p.rad) || blocked(qx, qz)) continue;
+      let clear = true;
+      const STEPS = 12;
+      for(let i = 1; i < STEPS; i++){
+        const u = i / STEPS;
+        if(blockedR(px + (qx-px)*u, pz + (qz-pz)*u, p.rad)){ clear = false; break; }
+      }
+      if(!clear) continue;
+      p.x = px; p.z = pz;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+      p.state = 'chase'; p.hunt = false;
+      player.x = qx; player.z = qz;
+      return idx;
+    }
+    return null;
+  };
+
+  window.ForestEngine.qaPredatorState = function(idx){
+    const p = predators[idx];
+    return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft } : null;
   };
 }
 
