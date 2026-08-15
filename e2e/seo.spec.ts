@@ -23,6 +23,8 @@ test.describe('SEO metadata', () => {
         twitterCard: meta('twitter:card', 'name'),
         twitterTitle: meta('twitter:title', 'name'),
         canonical: document.querySelector('link[rel="canonical"]')?.getAttribute('href') ?? null,
+        ogImage: meta('og:image'),
+        twitterImage: meta('twitter:image', 'name'),
         jsonLd,
       };
     });
@@ -35,6 +37,11 @@ test.describe('SEO metadata', () => {
     expect(head.twitterCard).toBe('summary_large_image');
     expect(head.twitterTitle).toBe('Lullwood');
     expect(head.canonical).toBeTruthy();
+    // LUL-49: static app/opengraph-image.png + app/twitter-image.png,
+    // registered by Next's file convention -- assert they resolve, not just
+    // that the tag exists (a dangling reference would 404 silently).
+    expect(head.ogImage).toContain('opengraph-image.png');
+    expect(head.twitterImage).toContain('twitter-image.png');
 
     expect(head.jsonLd).toBeTruthy();
     const data = JSON.parse(head.jsonLd as string);
@@ -54,5 +61,13 @@ test.describe('SEO metadata', () => {
     const sitemap = await request.get('/sitemap.xml');
     expect(sitemap.status()).toBe(200);
     expect(await sitemap.text()).toContain('<urlset');
+  });
+
+  test('opengraph-image.png and twitter-image.png resolve (LUL-49)', async ({ request }) => {
+    for (const path of ['/opengraph-image.png', '/twitter-image.png']) {
+      const res = await request.get(path);
+      expect(res.status(), path).toBe(200);
+      expect(res.headers()['content-type'], path).toBe('image/png');
+    }
   });
 });
