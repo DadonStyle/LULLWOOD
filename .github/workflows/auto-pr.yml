@@ -1,0 +1,145 @@
+name: Auto PR
+
+# Why this exists
+# ---------------
+# `main` is protected by ruleset 20886790: a PR is mandatory, direct pushes are
+# rejected, and two checks must be green. Our agents authenticate to GitHub with
+# an SSH deploy key, which can push refs and nothing else — it has no API scope,
+# so it cannot open a pull request. Without this workflow every branch an agent
+# pushes is stranded and a human has to open the PR by hand.
+#
+# The only channel an agent has to this repo is `git push`, so all intent rides
+# in the branch name and the commit message:
+#
+#   git push origin HEAD:refs/heads/lul-42-my-change   -> a PR is opened for you
+#   ...with "[ship]" in the head commit message        -> it also merges on green
+#
+# Runs as GITHUB_TOKEN, so it needs "Allow GitHub Actions to create and approve
+# pull requests" (Settings -> Actions -> General -> Workflow permissions).
+
+on:
+  push:
+    branches: ['lul-*']
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  open-pr:
+    name: open or refresh the PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: open or refresh the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # checkout@v4 only fetches the pushed ref, so main has to be asked for.
+          git fetch --no-tags origin main
+
+          # Nothing to propose if the branch has no commits main lacks.
+          if [ "$(git rev-list --count FETCH_HEAD..HEAD)" = "0" ]; then
+            echo "::notice::$BRANCH is not ahead of main; no PR to open."
+            exit 0
+          fi
+
+          number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+
+          if [ -z "$number" ]; then
+            printf '%s\n' \
+              'Opened automatically by `.github/workflows/auto-pr.yml` because an agent' \
+              'pushed this branch, and deploy keys cannot call the GitHub API.' \
+              '' \
+              'The two required checks run off the branch push rather than off this PR,' \
+              'so look for them on the head commit.' \
+              '' \
+              'Add `[ship]` to the head commit message to have this merged automatically' \
+              'once both checks are green — but only for docs, CI config and test-only' \
+              'diffs. Anything touching game or app code goes to the Code Reviewer' \
+              '(see `.github/scripts/ship-allowed.sh`).' > /tmp/pr-body.md
+
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$(git log -1 --pretty=%s)" \
+              --body-file /tmp/pr-body.md
+
+            number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')"
+            echo "::notice::opened PR #$number for $BRANCH"
+          else
+            echo "::notice::PR #$number already open for $BRANCH"
+          fi
+
+          # `[ship]` is the agent's merge intent. Without it the PR just sits
+          # there green, which is the right default for work-in-progress pushes.
+          #
+          # The marker must be a line of its own. A substring test (the original)
+          # matches any commit whose message merely *discusses* shipping -- the
+          # commit that introduced this very guard tripped it, which is how the
+          # bug was found. Intent has to be unambiguous to be intent.
+          if git log -1 --pretty=%B | grep -qE '^[[:space:]]*\[ship\][[:space:]]*$'; then
+
+            # ...but intent is not authority. `[ship]` merges on green alone,
+            # which skips the Code Reviewer, so it is scoped to diffs where
+            # green really is the whole quality bar. See the script for why.
+            # Run MAIN's copy of the allowlist, never the branch's. The branch
+            # is the thing being judged; letting it supply its own rule is the
+            # whole bypass. (The script also refuses to ship changes to itself,
+            # so this is the second of two locks, not the only one.)
+            # Fail CLOSED if main has no allowlist -- e.g. before this change is
+            # itself merged, or if someone deletes it. No gate means no `[ship]`,
+            # never "no gate means ship anything".
+            if ! git show FETCH_HEAD:.github/scripts/ship-allowed.sh \
+                 > "$RUNNER_TEMP/ship-allowed.sh" 2>/dev/null; then
+              echo "::warning::no ship-allowed.sh on main; refusing to auto-merge #$number."
+              exit 0
+            fi
+            chmod +x "$RUNNER_TEMP/ship-allowed.sh"
+
+            # Three dots: diff from the merge-base, so commits that landed on
+            # main since this branch forked are not counted as ours.
+            if ! blocked="$(git diff --name-only FETCH_HEAD...HEAD | "$RUNNER_TEMP/ship-allowed.sh")"; then
+              echo "::warning::[ship] ignored on #$number — this diff needs the Code Reviewer."
+
+              # Every push re-runs this workflow, so say it once per PR.
+              if gh pr view "$number" --json comments \
+                   --jq '.comments[].body' | grep -qF 'SHIP_DENIED'; then
+                echo "::notice::already explained on #$number; not commenting again."
+                exit 0
+              fi
+
+              printf '%s\n' \
+                '<!-- SHIP_DENIED -->' \
+                '`[ship]` was found in the head commit, but this branch changes files outside' \
+                'the docs/CI/tests allowlist, so it will **not** self-merge:' \
+                '' \
+                "$(printf '%s\n' "$blocked" | sed 's/^/- `/; s/$/`/')" \
+                '' \
+                'This is not a failure — the PR is open and CI is running. It needs a' \
+                '`REVIEW: APPROVED` from the Code Reviewer, then someone merges it.' \
+                'Policy: LUL-73. Allowlist: `.github/scripts/ship-allowed.sh`.' > /tmp/ship-denied.md
+              gh pr comment "$number" --body-file /tmp/ship-denied.md || true
+              exit 0
+            fi
+
+            if gh pr merge "$number" --auto --squash --delete-branch; then
+              echo "::notice::auto-merge armed on #$number"
+            else
+              # "Allow auto-merge" may be off in repo settings; automerge.yml
+              # picks this up after CI instead.
+              echo "::warning::could not arm auto-merge on #$number; automerge.yml will handle it once CI reports."
+            fi
+          else
+            echo "::notice::no [ship] marker in the head commit; leaving #$number for review."
+          fi

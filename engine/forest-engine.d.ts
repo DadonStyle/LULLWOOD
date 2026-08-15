@@ -29,6 +29,9 @@ declare global {
       qaTeleportHome?: () => void;
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
+      /** Same as qaLurePredator, filtered to the given species. Returns the
+       * lured predator's kind, or null if none of that species was found. */
+      qaLurePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => 'wolf' | 'bear' | 'lion' | null;
       // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
       // inside init() in forest-engine.js). Both placement hooks return the
       // predator's index into `predators`, or null if the scenario couldn't
