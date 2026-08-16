@@ -580,6 +580,40 @@ function scentOnto(p){
   predatorCall(p.kind);
 }
 
+// ---- Sound: footstep noise as a third detection channel (LUL-39) ---------
+// Weaker than sight (spotOnto: instant chase, alert rear-up, roar) and weaker
+// than scent (scentOnto: instant chase, held by the scentLock leash
+// exemption) -- noise instead drops a roaming predator straight into the
+// existing investigate (approach -> sniff -> back) loop untouched by LUL-22,
+// same state a chase already falls back to on losing sight. That loop is
+// explicitly not to be retuned (see the block below), so this only adds a
+// new *trigger* into it; the scentLock trap documented at
+// [[game/lul23-scent-review]] doesn't apply here since investigate was never
+// gated by the chase leash to begin with.
+//
+// No second broadphase: noise radius is a single number derived from the
+// player's own speed each frame (tick()'s movement block), so checking it is
+// one distance compare per predator per frame -- the same shape checkScent()
+// already runs, just without a persisted point array. Nothing here touches
+// the 8-unit tree hash (`grid`/`coverGrid`); there is nothing for it to help
+// with when the query is "distance from the player," not "what's nearby."
+const NOISE_RADIUS_WALK   = 14;   // footstep audibility (units) at walking pace
+const NOISE_RADIUS_RUN    = 24;   // Shift is louder -- same louder-but-riskier trade SCENT_RADIUS_RUN charges
+const HEAR_CHANCE_PER_SEC = 0.5;  // dt-scaled roll: being in radius is a chance to notice, not an instant catch
+
+function checkNoise(p, dist, noiseRadius, dt){
+  if(noiseRadius <= 0 || dist >= noiseRadius) return false;
+  return Math.random() < HEAR_CHANCE_PER_SEC * dt;
+}
+// Commit to the investigate loop toward wherever the player currently is --
+// same target the loop already uses when a chase loses sight (LUL-22: `desx,
+// desz` there are recomputed from live player position every tick, not a
+// stored point), so "last noisy position" falls out of that existing
+// approach behavior for free.
+function hearNoise(p){
+  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4);
+}
+
 // ---- Positional hiding / detection (LUL-43, LUL-22) -----------------------
 // `hidden` (declared with the rest of player state below) is now purely the
 // hold-still stance: it lowers eye height and silences footsteps, same as
@@ -670,7 +704,7 @@ function updateWolfPack(dt){
   }
 }
 
-function updatePredators(dt){
+function updatePredators(dt, noiseRadius){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
   for(const p of predators){
@@ -700,6 +734,7 @@ function updatePredators(dt){
     } else if(p.state === 'roam'){
       if(canSee(p, dist)){ spotOnto(p); }
       else if(checkScent(p)){ scentOnto(p); }
+      else if(checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){ const a=Math.random()*Math.PI*2, r=15+Math.random()*40;
@@ -1606,9 +1641,9 @@ function tick(){
 
   const playing = entered && !paused && !won && !dead && !pickingUp;
 
-  let spd = 0, dist = 0;
+  let spd = 0, dist = 0, running = false, noiseRadius = 0;
   if(playing && !hidden){
-    const running = keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint;
+    running = keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint;
     const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carryPaceMul : 1);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
@@ -1633,6 +1668,9 @@ function tick(){
       // which already implies not moving) never adds to the trail.
       scentEmitT -= dt;
       if(scentEmitT <= 0){ depositScent(running); scentEmitT = SCENT_DEPOSIT_INTERVAL; }
+      // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
+      // shape as scent, sized off the same running flag rather than a new one.
+      noiseRadius = running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK;
     }
   }
 
@@ -1679,7 +1717,7 @@ function tick(){
     camera.rotation.set(player.pitch, player.yaw, 0);
   }
 
-  if(playing) updatePredators(dt);   // predators only hunt while you're actually playing
+  if(playing) updatePredators(dt, noiseRadius);   // predators only hunt while you're actually playing
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
   let nearDist = 1e9, nearP = null, approaching = false;
