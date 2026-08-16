@@ -31,19 +31,8 @@ function init(onStateChange) {
   }
 
 // ---- Knobs ---------------------------------------------------------------
-// LUL-83: the initial map seed used to be the hardcoded constant 20260718, so
-// every player got the byte-identical forest on first load. `?seed=` pins it
-// back to an exact value (QA/e2e use this to reproduce 20260718, the old
-// default, exactly); absent that, each session draws its own from
-// crypto.getRandomValues. Neither branch touches mulberry32 or generateMap's
-// draw order -- same algorithm, same append-only stream, different starting seed.
-function resolveInitialSeed(){
-  const pinned = new URLSearchParams(window.location.search).get('seed');
-  if(pinned !== null && pinned !== '' && Number.isFinite(Number(pinned))) return Number(pinned) >>> 0;
-  return crypto.getRandomValues(new Uint32Array(1))[0];
-}
 const CONFIG = {
-  seed:    resolveInitialSeed(),
+  seed:    20260718,
   mapSize: 240,          // the forest is a fixed square this many units across
   trees:   1300,
   walk:    6,            // walking speed (units/s); Shift multiplies it
