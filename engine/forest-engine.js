@@ -469,6 +469,7 @@ function makePredator(kind){
 const predators = [];
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++) predators.push(makePredator(k));
 let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
+let coverAmt = 0;   // LUL-144: eased 0..1 desaturation driven by the cover-feedback scan below
 function placePredators(){
   for(const p of predators){
     let x, z, tries = 0;
@@ -592,10 +593,15 @@ function hasLOS(x0,z0,x1,z1){
   }
   return true;
 }
-function canSee(p, dist){
+// Split out of canSee() so the LUL-144 cover-feedback scan below can test
+// "in range" separately from "has line of sight" for every predator, not
+// just stop at the first one that can see the player.
+function effectiveDetect(p){
   const stillness = hidden ? Math.min(1, hideTime / STILL_RAMP) : 0;
-  const effDetect = p.spec.detect * (1 - stillness * STILL_DETECT_CUT);
-  if(dist >= effDetect) return false;
+  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT);
+}
+function canSee(p, dist){
+  if(dist >= effectiveDetect(p)) return false;
   return hasLOS(p.x, p.z, player.x, player.z);
 }
 
@@ -1295,6 +1301,7 @@ function restart(){
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   document.body.style.cursor = '';
+  coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
   enter();
 }
@@ -1522,11 +1529,22 @@ function tick(){
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
   let nearDist = 1e9, nearP = null, approaching = false;
+  // LUL-144: cover-state feedback. `canSee()` (the raycast that actually
+  // gates detection, see the LUL-43 block above) never depended on `hidden`
+  // -- walking behind a rock breaks it exactly as well as crouching -- but
+  // nothing on screen ever reflected that. Scan every predator with the same
+  // in-range + hasLOS() test canSee() uses, but keep going past the first hit
+  // so "is anyone able to see me" and "is a nearby threat blocked by cover"
+  // are both known, not just whichever predator the array reaches first.
+  let exposedNow = false, coveredNow = false;
   if(playing){
     for(const p of predators){
       const dpd = Math.hypot(player.x - p.x, player.z - p.z);
       if(dpd < nearDist){ nearDist = dpd; nearP = p; }
       if(p.state==='chase' || p.hunt || (p.state==='investigate' && p.inv!=='back')) approaching = true;
+      if(dpd < effectiveDetect(p)){
+        if(hasLOS(p.x, p.z, player.x, player.z)) exposedNow = true; else coveredNow = true;
+      }
     }
     // if nobody has been near for 30s, the closest one comes straight for you
     if(nearDist < 20) sinceClose = 0; else sinceClose += dt;
@@ -1542,6 +1560,22 @@ function tick(){
       }
     } else pianoTimer = 0;
   } else { sinceClose = 0; }
+
+  // LUL-144: the player-facing half of the scan above. `covered` is the
+  // instantaneous, un-eased signal (a real predator, in range, LOS blocked,
+  // and nothing nearer has you spotted) -- exposed on the canvas element so
+  // it's assertable without parsing the eased CSS filter string below.
+  // `coverAmt` eases toward it (Conviction-style: no HUD chrome, the screen
+  // itself desaturates while cover is actually working) at a faster rate
+  // going in than coming out, so losing cover reads immediately while
+  // regaining it doesn't flicker on a one-frame LOS gap.
+  const covered = playing && coveredNow && !exposedNow;
+  document.body.dataset.losCovered = covered ? '1' : '0';
+  const coverTarget = covered ? 1 : 0;
+  coverAmt += (coverTarget - coverAmt) * Math.min(1, dt * (coverTarget > coverAmt ? 3.5 : 2.2));
+  if(coverAmt < 0.002) coverAmt = 0;
+  el.style.filter = coverAmt > 0 ? `grayscale(${coverAmt.toFixed(3)})` : '';
+
   spotFlash = Math.max(0, spotFlash - dt*1.6);
   spotFlashEl.style.opacity = (spotFlash*0.55).toFixed(3);
 
@@ -1658,6 +1692,7 @@ tick();
 
     if(document.pointerLockElement === el) document.exitPointerLock();
     document.body.style.cursor = '';
+    delete document.body.dataset.losCovered;   // LUL-144: don't leak this mount's signal into the next one
 
     // release every geometry/material/texture reachable from the scene graph
     scene.traverse(obj => {
