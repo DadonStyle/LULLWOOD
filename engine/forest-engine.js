@@ -11,6 +11,7 @@
 // always strict. The body below is otherwise unchanged -- deliberately not
 // reindented, so this stays a reviewable diff and not a 1,200-line reformat.
 import * as THREE from 'three';
+import { track } from '@/lib/analytics';
 
 let activeDispose = null;
 
@@ -53,6 +54,10 @@ const margin = 4;
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
   t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
 let rng = mulberry32(CONFIG.seed);
+// LUL-153: the seed actually in play -- generateMap() below is called with a
+// fresh random seed on every restart()/regenMap(), so CONFIG.seed alone only
+// describes the very first map. Analytics events that carry `seed` read this.
+let currentSeed = CONFIG.seed;
 const rnd = (a=1,b) => b===undefined ? rng()*a : a + rng()*(b-a);
 const clamp = (v,a,b) => v<a ? a : v>b ? b : v;
 
@@ -233,6 +238,7 @@ function layoutCoverMeshes(){
 }
 
 function generateMap(seed){
+  currentSeed = seed >>> 0;
   rng = mulberry32(seed >>> 0);
   scentPoints = [];   // LUL-23: no trail survives a fresh map/restart
 
@@ -313,6 +319,13 @@ const lwisps = new THREE.Points(lwGeo, new THREE.PointsMaterial({ color: CONFIG.
 lwisps.frustumCulled = false; scene.add(lwisps);
 
 // ---- Ambient dust that drifts around you ---------------------------------
+// Drift direction is windX/windZ (LUL-195): wind silently decides scent
+// outcomes (checkScent(), ~line 569) with no other player-visible tell, so
+// the one ambient particle system already running becomes that tell for
+// free -- no HUD, no compass, matches the "no readouts" feel of the rest of
+// the game. Speed is tuned for legibility, not to match WIND_STRENGTH
+// (3.2u/s would read as a gust, not a steady drift).
+const DUST_WIND_SPEED = 0.3;
 const DUST = 350, dustArr = new Float32Array(DUST*3);
 for(let i=0;i<DUST;i++){ dustArr[i*3]=(Math.random()*2-1)*30; dustArr[i*3+1]=Math.random()*12; dustArr[i*3+2]=(Math.random()*2-1)*30-3; }
 const dustGeo = new THREE.BufferGeometry(); dustGeo.setAttribute('position', new THREE.BufferAttribute(dustArr,3));
@@ -880,18 +893,29 @@ const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0;
+// LUL-153: `game_start` fires once per page-load (first real pointer-lock
+// acquisition), not once per restart -- it feeds the page_view -> ... -> win
+// funnel, which measures "did this visitor ever reach gameplay," not run count.
+let gameStartFired = false;
 // LUL-24: last normalized heading the player actually moved along -- the "escape
 // vector" the wolf pack flanks off of. Only updated while moving (see tick()'s
 // movement block), so it holds the most recent flight direction while the
 // player is stationary or hiding, instead of snapping to a stale default.
 let escX = 0, escZ = -1;
 
+// LUL-153: shared by the keyboard and touch (triggerTouchHide) hide toggles so
+// the feature_engagement('hide') event fires from one place, not two.
+function toggleHidden(){
+  hidden = !hidden;
+  if(hidden){ hideTime = 0; track({ event: 'feature_engagement', feature: 'hide', action: 'used' }); }
+}
+
 on(window, 'keydown', e => {
   keys[e.code] = true;
   const playing = entered && !won && !dead && !pickingUp;
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
   if(e.code === 'KeyE' && canPickup && playing && !paused) pickup();
-  if(e.code === 'KeyH' && playing && !paused){ hidden = !hidden; if(hidden) hideTime = 0; }
+  if(e.code === 'KeyH' && playing && !paused) toggleHidden();
 });
 on(window, 'keyup', e => { keys[e.code] = false; });
 
@@ -906,7 +930,13 @@ function applyLook(dx, dy){
 function requestLock(){ if(el.requestPointerLock) el.requestPointerLock(); }
 on(document, 'pointerlockchange', () => {
   locked = document.pointerLockElement === el;
-  if(locked) setPaused(false);
+  if(locked){
+    setPaused(false);
+    // LUL-153: the actual "gameplay begins" moment -- distinct from the gate
+    // click (cta_start_clicked, fired in Hud.tsx), which only requests the
+    // lock; this is the browser actually granting it.
+    if(entered && !gameStartFired){ gameStartFired = true; track({ event: 'game_start', seed: currentSeed }); }
+  }
   else if(entered && !won && !dead && !pickingUp) setPaused(true);     // Esc / released lock -> menu
 });
 on(document, 'pointerlockerror', () => { locked = false; });
@@ -1179,7 +1209,15 @@ emitState(hudState);   // initial sync, in case a listener mounted before init()
 // ---- Gate + pause --------------------------------------------------------
 const hint = document.getElementById('hint');
 const pausePrompt = document.getElementById('pausePrompt');
-function setPaused(p){ paused = p; pausePrompt.style.display = p ? 'flex' : 'none'; }
+// LUL-153: "options-menu open" per the analytics schema is this pause overlay
+// -- the gate's own instructions call Esc "menu", and the tuning panel
+// (#panel: pace/fog/sound/regen/fullscreen) is what stays reachable while
+// paused. There is no separate modal settings surface today (LUL-70, still
+// backlog); if one ships later, move this call site to its open handler.
+function setPaused(p){
+  if(p && !paused) track({ event: 'feature_engagement', feature: 'options_menu', action: 'opened' });
+  paused = p; pausePrompt.style.display = p ? 'flex' : 'none';
+}
 function enter(){
   entered = true;
   enteredAt = clock.elapsedTime;
@@ -1427,14 +1465,18 @@ function finishPickup(){
 function arriveHome(){
   won = true; carrying = false;
   babyGroup.visible = false;
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds: Math.max(0, clock.elapsedTime - enteredAt) });
+  const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
 }
 function triggerDeath(kind){
   if(dead || won || pickingUp) return;
   dead = true; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
-  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds: Math.max(0, deathStart - enteredAt) });
+  const survivedSeconds = Math.max(0, deathStart - enteredAt);
+  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -1810,14 +1852,15 @@ function tick(){
   for(let i=0;i<LW;i++){ lp[i*3+1] += dt*0.25; if(lp[i*3+1] > 4.5) lp[i*3+1] = 0.2; }
   lwGeo.attributes.position.needsUpdate = true;
 
-  // ambient dust follows you
+  // ambient dust follows you, drifting downwind (LUL-195, see setup above)
   const amp = reduce ? 0.3 : 1, dp = dustGeo.attributes.position.array;
+  const wdx = windX * dt * DUST_WIND_SPEED * amp, wdz = windZ * dt * DUST_WIND_SPEED * amp;
   for(let i=0;i<DUST;i++){
-    dp[i*3]   += Math.sin(t*0.4 + i) * dt * 0.12 * amp;
+    dp[i*3]   += Math.sin(t*0.4 + i) * dt * 0.12 * amp + wdx;
     dp[i*3+1] += Math.sin(t*0.3 + i*1.7) * dt * 0.1 * amp;
-    dp[i*3+2] += dt * 0.3 * amp;
-    if(dp[i*3+2] > 4)  dp[i*3+2] -= 34;
-    if(dp[i*3] > 30)   dp[i*3] -= 60; else if(dp[i*3] < -30) dp[i*3] += 60;
+    dp[i*3+2] += Math.sin(t*0.37 + i*2.3) * dt * 0.12 * amp + wdz;
+    if(dp[i*3+2] > 4)   dp[i*3+2] -= 34; else if(dp[i*3+2] < -30) dp[i*3+2] += 34;
+    if(dp[i*3] > 30)    dp[i*3] -= 60;  else if(dp[i*3] < -30)    dp[i*3] += 60;
   }
   dustGeo.attributes.position.needsUpdate = true;
   dust.position.copy(camera.position);
@@ -1894,7 +1937,7 @@ tick();
   function setTouchSprint(v)  { touchSprint = v; }
   function triggerTouchHide() {
     const playing = entered && !won && !dead && !pickingUp;
-    if(playing && !paused){ hidden = !hidden; if(hidden) hideTime = 0; }
+    if(playing && !paused) toggleHidden();
   }
   function triggerTouchInteract() {
     const playing = entered && !won && !dead && !pickingUp;
