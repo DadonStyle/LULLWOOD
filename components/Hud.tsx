@@ -58,6 +58,7 @@ export interface EngineHudState {
   deathVisible: boolean;
   deathKind: string;
   lossRevealed: boolean;
+  survivedSeconds: number;
   pace: number;
   fog: number;
   soundOn: boolean;
@@ -96,6 +97,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   deathVisible: false,
   deathKind: 'wolf',
   lossRevealed: false,
+  survivedSeconds: 0,
   pace: 6,
   fog: 0.04,
   soundOn: true,
@@ -106,6 +108,86 @@ export const INITIAL_HUD_STATE: EngineHudState = {
 // engine's state object.
 const formatFog = (density: number) => density.toFixed(3).slice(1);
 
+const formatDuration = (totalSeconds: number) => {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const m = Math.floor(s / 60);
+  return `${m}:${(s % 60).toString().padStart(2, '0')}`;
+};
+
+// LUL-84: personal-best time survived, local only (no backend, no M4 telemetry).
+// Guarded the same way as the rest of the project's client-only state (see
+// useFullscreen above / LUL-26's panel persistence) -- `typeof window` first,
+// then a try/catch around the actual localStorage calls so private-mode/quota
+// rejections degrade to "no best to compare against" instead of a crash.
+const BEST_TIME_KEY = 'lullwood:bestTimeSeconds';
+
+function readBestTime(): number | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(BEST_TIME_KEY);
+    const n = raw == null ? NaN : Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBestTime(seconds: number) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(BEST_TIME_KEY, String(seconds));
+  } catch {
+    // private mode / quota exceeded -- this run's time still renders, it just won't persist
+  }
+}
+
+// Reacts to the `ended` flip (false -> true) exactly once per run, not on
+// every re-render, even though winVisible/deathVisible stay true for the rest
+// of the screen's lifetime. `best`/`isNewBest` are adjusted synchronously
+// during render (the React-documented "adjusting state when a prop changes"
+// pattern: https://react.dev/learn/you-might-not-need-an-effect) instead of
+// from a useEffect, because setting state from inside an effect body triggers
+// an extra cascading render for no benefit here. The actual localStorage
+// write is the one genuine side effect, so that alone stays in a useEffect.
+function useRunRecap(ended: boolean, survivedSeconds: number) {
+  const [wasEnded, setWasEnded] = useState(ended);
+  const [best, setBest] = useState<number | null>(() => readBestTime());
+  const [isNewBest, setIsNewBest] = useState(false);
+
+  if (ended !== wasEnded) {
+    setWasEnded(ended);
+    if (ended) {
+      const beat = best == null || survivedSeconds > best;
+      setIsNewBest(beat);
+      if (beat) setBest(survivedSeconds);
+    } else {
+      setIsNewBest(false);
+    }
+  }
+
+  useEffect(() => {
+    if (isNewBest && best != null) writeBestTime(best);
+  }, [isNewBest, best]);
+
+  return { best, isNewBest };
+}
+
+function RunRecap({ survivedSeconds, best, isNewBest }: { survivedSeconds: number; best: number | null; isNewBest: boolean }) {
+  return (
+    <p id="runRecap">
+      time survived: {formatDuration(survivedSeconds)}
+      {isNewBest ? (
+        <>
+          {' '}
+          — <span className="newBest">new best!</span>
+        </>
+      ) : best != null ? (
+        <> · best: {formatDuration(best)}</>
+      ) : null}
+    </p>
+  );
+}
+
 export default function Hud({
   state,
   actions,
@@ -114,6 +196,7 @@ export default function Hud({
   actions: EngineActions | null;
 }) {
   const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
+  const { best: bestTime, isNewBest } = useRunRecap(state.winVisible || state.deathVisible, state.survivedSeconds);
 
   return (
     <>
@@ -200,6 +283,7 @@ export default function Hud({
         <div id="winScreen" style={{ display: 'flex' }}>
           <h1>YOU WON</h1>
           <p>the child is safe — you carried them home through the Lullwood</p>
+          <RunRecap survivedSeconds={state.survivedSeconds} best={bestTime} isNewBest={isNewBest} />
           <button className="restartBtn" onClick={() => actions?.restart()}>
             Play again
           </button>
@@ -213,6 +297,7 @@ export default function Hud({
             <p>
               a <span id="deathKind">{state.deathKind}</span> caught you in the dark
             </p>
+            <RunRecap survivedSeconds={state.survivedSeconds} best={bestTime} isNewBest={isNewBest} />
             <button className="restartBtn" onClick={() => actions?.restart()}>
               Try again
             </button>
