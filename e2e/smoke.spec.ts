@@ -205,53 +205,57 @@ test.describe('lift the child / carry home / win', () => {
 });
 
 test.describe('predator catch / death', () => {
-  test('a hunting predator closes the distance and kills you', async ({ page }) => {
-    test.setTimeout(120_000);
-    await boot(page, { qaHooks: true });
-    await enter(page);
+  // LUL-55's engine hook landed (qaLurePredatorKind, engine/forest-engine.js),
+  // so this loops all three species instead of asserting on whichever animal
+  // happened to spawn nearest (LUL-29's documented gap, LUL-61's follow-through).
+  // Each iteration is its own `test()`, not one test with an inner loop, so a
+  // single species regressing shows up as a named failure instead of aborting
+  // coverage for the other two.
+  for (const kind of ['wolf', 'bear', 'lion'] as const) {
+    test(`a hunting ${kind} closes the distance and kills you`, async ({ page }) => {
+      test.setTimeout(120_000);
+      await boot(page, { qaHooks: true });
+      await enter(page);
 
-    // In-game, the trigger is standing still: if no predator has been within 20
-    // units for 30s, the nearest is forced to hunt (`nearP.hunt = true`) and does
-    // not give up. Waiting that out here does not work -- those 30s are GAME
-    // seconds, and engine/forest-engine.js clamps dt to 0.05, so at the ~12 fps
-    // this rig gets from software rendering, game time runs at ~63% of wall clock
-    // and the animal's approach is slowed by the same factor. The old version of
-    // this test waited 100s of wall clock for a sequence that needs far more, and
-    // failed for reasons unrelated to the mechanic. See wiki:
-    // systems/dt-clamp-vs-walltime.
-    //
-    // qaLurePredator() sets that same `hunt` flag and places the animal 6 units
-    // out -- outside catch range (`p.rad + 1.3`, max 2.8). What is under test is
-    // unchanged: it still has to close the distance itself, and the catch and
-    // triggerDeath paths run for real. Only the waiting is skipped.
-    const lured = await page.evaluate(() => window.ForestEngine?.qaLurePredator?.() ?? null);
-    expect(['wolf', 'bear', 'lion'], 'a predator was lured').toContain(lured);
+      // In-game, the trigger is standing still: if no predator has been within 20
+      // units for 30s, the nearest is forced to hunt (`nearP.hunt = true`) and does
+      // not give up. Waiting that out here does not work -- those 30s are GAME
+      // seconds, and engine/forest-engine.js clamps dt to 0.05, so at the ~12 fps
+      // this rig gets from software rendering, game time runs at ~63% of wall clock
+      // and the animal's approach is slowed by the same factor. The old version of
+      // this test waited 100s of wall clock for a sequence that needs far more, and
+      // failed for reasons unrelated to the mechanic. See wiki:
+      // systems/dt-clamp-vs-walltime.
+      //
+      // qaLurePredatorKind(kind) sets that same `hunt` flag on the nearest predator
+      // of the requested species and places it 6 units out -- outside catch range
+      // (`p.rad + 1.3`, max 2.8). What is under test is unchanged: it still has to
+      // close the distance itself, and the catch and triggerDeath paths run for
+      // real. Only the waiting (and which species gets tested) is controlled.
+      const lured = await page.evaluate(
+        (k) => window.ForestEngine?.qaLurePredatorKind?.(k) ?? null,
+        kind,
+      );
+      expect(lured, `a ${kind} was lured (none left alive?)`).toBe(kind);
 
-    // NOTE (LUL-29): which species this is depends on which spawned nearest for
-    // the seed -- this run-to-run variation in death-path coverage is a
-    // documented, accepted limitation, not silently dropped. Pinning a specific
-    // species needs an engine-side `?qaHooks=1` hook (qaLurePredator only takes
-    // "nearest"); that is real engine-touching work out of scope for a QA-only
-    // pass, so it's filed as LUL-55 for the Founding Engineer rather than done
-    // here. Once that hook lands, extend this test to loop all three kinds.
-    const deathScreen = page.locator('#deathScreen');
-    await expect(deathScreen).toBeVisible({ timeout: 30_000 });
+      const deathScreen = page.locator('#deathScreen');
+      await expect(deathScreen).toBeVisible({ timeout: 30_000 });
 
-    const kind = await page.locator('#deathKind').textContent();
-    expect(['wolf', 'bear', 'lion']).toContain(kind);
+      await expect(page.locator('#deathKind')).toHaveText(kind);
 
-    // The death "cutscene" is a real <video> overlay, not a CSS animation --
-    // confirm it actually plays (paused stays false) rather than just being shown.
-    const videoState = await page.evaluate(() => {
-      const v = document.getElementById('deathVideo') as HTMLVideoElement | null;
-      return v ? { display: getComputedStyle(v).display, paused: v.paused, currentTime: v.currentTime } : null;
+      // The death "cutscene" is a real <video> overlay, not a CSS animation --
+      // confirm it actually plays (paused stays false) rather than just being shown.
+      const videoState = await page.evaluate(() => {
+        const v = document.getElementById('deathVideo') as HTMLVideoElement | null;
+        return v ? { display: getComputedStyle(v).display, paused: v.paused, currentTime: v.currentTime } : null;
+      });
+      expect(videoState?.display).toBe('block');
+      expect(videoState?.paused).toBe(false);
+
+      // CUT_END = 3.7s in forest-engine.js; the loss text reveals once the video ends.
+      await expect(page.locator('#deathText')).toHaveCSS('opacity', '1', { timeout: 10_000 });
+      await expect(page.locator('#deathText h1')).toHaveText('YOU LOSE');
     });
-    expect(videoState?.display).toBe('block');
-    expect(videoState?.paused).toBe(false);
-
-    // CUT_END = 3.7s in forest-engine.js; the loss text reveals once the video ends.
-    await expect(page.locator('#deathText')).toHaveCSS('opacity', '1', { timeout: 10_000 });
-    await expect(page.locator('#deathText h1')).toHaveText('YOU LOSE');
-  });
+  }
 });
 
