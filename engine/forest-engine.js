@@ -1427,6 +1427,8 @@ function finishPickup(){
 function arriveHome(){
   won = true; carrying = false;
   babyGroup.visible = false;
+  if(locked) document.exitPointerLock();
+  document.body.style.cursor = '';
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds: Math.max(0, clock.elapsedTime - enteredAt) });
 }
 function triggerDeath(kind){
