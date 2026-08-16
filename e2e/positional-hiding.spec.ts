@@ -12,15 +12,21 @@
 // of catching you outright).
 //
 // Both cases use the dedicated `?qaHooks=1` scaffolding added for this ticket
-// (qaOpenHideNearLion / qaHideBehindCover / qaPredatorState -- see the LUL-43
-// block in engine/forest-engine.js) instead of hunting the procedural map for
-// a matching predator/cover pair or waiting out the real 30s "force a hunt"
-// trigger. That trigger and the predator's approach are both measured in game
-// time, not wall time (the render loop clamps dt to 0.05, and this rig's
-// software rendering runs well under 60fps, so game time and wall time
-// diverge -- wiki: systems/dt-clamp-vs-walltime); the hooks place the
-// predator a few units out and let the real approach/catch/investigate code
-// run from there, same trick e2e/smoke.spec.ts's predator-death case uses.
+// (qaOpenHideNearLion / qaHideBehindCover / qaHideBehindCoverKind /
+// qaPredatorState -- see the LUL-43 block in engine/forest-engine.js) instead
+// of hunting the procedural map for a matching predator/cover pair or waiting
+// out the real 30s "force a hunt" trigger. That trigger and the predator's
+// approach are both measured in game time, not wall time (the render loop
+// clamps dt to 0.05, and this rig's software rendering runs well under 60fps,
+// so game time and wall time diverge -- wiki: systems/dt-clamp-vs-walltime);
+// the hooks place the predator a few units out and let the real
+// approach/catch/investigate code run from there, same trick
+// e2e/smoke.spec.ts's predator-death case uses.
+//
+// LUL-121: species coverage added — wolf, bear, and lion each exercise the
+// LOS path independently via qaHideBehindCoverKind(kind). The wolf case
+// supercedes the old predators[0] coverage in qaHideBehindCover (which
+// happened to be a wolf anyway).
 import { test, expect } from '@playwright/test';
 import { boot, enter } from './helpers';
 
@@ -65,85 +71,119 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     await expect(page.locator('#deathKind')).toHaveText('lion');
   });
 
-  test('hiding behind cover makes a chasing predator lose the player and sniff instead of catching them', async ({
-    page,
-  }) => {
-    test.setTimeout(60_000);
+  // LUL-121: parameterised helper — reused by all three species cover tests.
+  // Each species has different detect range, speed, and body radius, so they
+  // each exercise distinct branches of the canSee() geometry even though the
+  // state-machine path is the same. Bear has rad=1.5 (largest), which is the
+  // case most likely to reveal a placement bug (blocked endpoint check).
+  async function assertCoverHidesFromSpecies(
+    page: import('@playwright/test').Page,
+    kind: 'wolf' | 'bear' | 'lion',
+  ) {
     await boot(page, { qaHooks: true });
     await enter(page);
 
-    // qaHideBehindCover puts predators[0] and the player on opposite sides of
-    // a real, non-tree cover prop (log/rock/bramble) with the predator
-    // already in 'chase'. Cover props are LOS-blocking only -- not in the
-    // movement-collision grid trees use -- so the predator's approach after
-    // losing LOS is not at risk of the same stuck/reroute path a straight
-    // walk into a tree can hit; what's under test is the state-machine
-    // transition, not pathing luck. Null means this seed generated no
-    // non-tree cover at all, which would be its own bug (COVER_PROPS=220
-    // makes that practically impossible) -- fail loudly rather than pass on
-    // an untested scenario.
-    const idx = await page.evaluate(() => window.ForestEngine?.qaHideBehindCover?.() ?? null);
-    if (idx === null) {
-      throw new Error('qaHideBehindCover returned null -- no non-tree cover prop was found for this seed');
+    const result = await page.evaluate(
+      (k) => window.ForestEngine?.qaHideBehindCoverKind?.(k) ?? null,
+      kind,
+    );
+    if (result === null) {
+      throw new Error(
+        `qaHideBehindCoverKind('${kind}') returned null -- no non-tree cover prop with a clear path was found`,
+      );
     }
+    const idx: number = result.idx;
 
-    // Hold still. This matters here for a different reason than case 1: the
-    // 'investigate' state's own comment in forest-engine.js is explicit that
-    // re-escalation back to 'chase' is gated on `hidden` (not `canSee()`,
-    // which would flicker true the moment the predator steps past whatever
-    // broke LOS). Without holding still the predator would revert to chase
-    // on its very next tick and the sniff cycle would never run.
+    // Hold still so the investigate→sniff cycle can run without re-escalating
+    // (forest-engine.js: re-escalation back to chase is gated on !hidden).
     await page.keyboard.press('KeyH');
 
-    // First transition: LOS is blocked by the cover prop, so the chasing
-    // predator's `canSee()` check fails and it drops into 'investigate',
-    // picking a sniff budget of 1 + rand(0..3) right on that transition
-    // (forest-engine.js: `p.sniffsLeft = 1 + Math.floor(Math.random()*4)`).
-    // Poll instead of sleeping: how long the transition takes to land depends
-    // on when the predator's next tick happens to fall, which is a frame-timing
-    // detail this rig's software rendering makes unpredictable, not something
-    // worth pinning to a sleep.
+    // Transition 1: predator was placed in 'chase' with cover between it and
+    // the player. On its next tick canSee() returns false; it flips to
+    // 'investigate' and sets sniffsLeft = 1 + rand(0..3).
     await expect
       .poll(
         () => page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i)?.state ?? null, idx),
         {
-          message: 'predator never left "chase" for "investigate" after LOS was blocked by cover',
+          message: `${kind}: predator never left "chase" for "investigate" after LOS was blocked by cover`,
           timeout: 20_000,
         },
       )
       .toBe('investigate');
 
     const afterTransition = await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx);
-    expect(afterTransition, 'qaPredatorState went stale between the poll and this read').not.toBeNull();
+    expect(afterTransition, 'qaPredatorState went stale between poll and read').not.toBeNull();
     expect(
       afterTransition!.sniffsLeft,
-      `sniffsLeft (${afterTransition!.sniffsLeft}) should be the 1 + rand(0..3) budget set on the chase->investigate transition`,
+      `${kind}: sniffsLeft (${afterTransition!.sniffsLeft}) should be the 1+rand(0..3) budget set on the chase→investigate transition`,
     ).toBeGreaterThanOrEqual(1);
     expect(afterTransition!.sniffsLeft).toBeLessThanOrEqual(4);
 
-    // Second transition: the predator actually runs the cycle, not just flags
-    // into 'investigate' and stalls. 'approach' walks it up to sniff range
-    // (dist < p.rad + 1.7) at 0.45x speed; poll for 'sniff' to prove that
-    // walk really happens rather than asserting sniffsLeft alone, which is
-    // set at the moment of the first transition and would pass even if the
-    // predator never moved another inch.
+    // Transition 2: predator approaches into sniff range. Proves the cycle
+    // actually runs, not just that the flag flipped.
     await expect
       .poll(
         () => page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i)?.inv ?? null, idx),
         {
-          message: 'predator reached "investigate" but never approached into sniff range/state',
+          message: `${kind}: predator reached "investigate" but never approached into sniff range/state`,
           timeout: 20_000,
         },
       )
       .toBe('sniff');
 
-    // The whole point: the predator backing off into the sniff cycle instead
-    // of catching the player. #deathScreen only mounts on triggerDeath(), so
-    // its absence here is the real "not killed" surface, not an inference
-    // from the state machine being in 'investigate'.
+    // The player must still be alive -- cover did its job.
     await expect(
       page.locator('#deathScreen'),
-      'a sniffing predator must not have caught the player',
+      `${kind}: a sniffing predator must not have caught the player`,
     ).toHaveCount(0);
+  }
+
+  test('wolf: hiding behind cover makes the predator lose the player and sniff instead of catching them', async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await assertCoverHidesFromSpecies(page, 'wolf');
+  });
+
+  test('bear: hiding behind cover makes the predator lose the player and sniff instead of catching them', async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await assertCoverHidesFromSpecies(page, 'bear');
+  });
+
+  test('lion: hiding behind cover makes the predator lose the player and sniff instead of catching them', async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await assertCoverHidesFromSpecies(page, 'lion');
+  });
+
+  test('hold-still alone does not save you when a predator is on top of you (catch path still works)', async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    // This is the L572-L574 catch path: once a predator has closed to within
+    // its radius the `hidden` check gates the kill, not canSee(). Cover is
+    // irrelevant at that range. Use qaLurePredatorKind so we can pin the
+    // species and assert deathKind.
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    const kind = await page.evaluate(() => window.ForestEngine?.qaLurePredatorKind?.('wolf') ?? null);
+    if (kind === null) {
+      throw new Error('qaLurePredatorKind("wolf") returned null -- no wolf in predators');
+    }
+
+    // Hold still immediately -- cover is NOT between us and the wolf (it was
+    // just placed 6 units away in the open). This confirms that the catch
+    // path (hidden-gated kill at close range) is still wired up and that
+    // cover + stillness together do not create an invincibility exploit.
+    await page.keyboard.press('KeyH');
+
+    await expect(page.locator('#deathScreen'), 'wolf should catch the player even while holding still in the open').toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.locator('#deathKind')).toHaveText('wolf');
   });
 });
