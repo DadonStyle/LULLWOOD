@@ -68,6 +68,20 @@ camera.position.set(0, CONFIG.eye, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
+// LUL-160: the canvas used to rely on being the only content in <body>'s
+// normal flow to sit at the top of the page -- true back when it was the
+// sole thing appendChild ever put there. LUL-46's SSR content shell
+// (app/page.tsx's <main class="about">) added real in-flow height *before*
+// this element in document order, which pushed the statically-positioned
+// canvas down the page by however tall that shell is; html/body's
+// overflow:hidden then just hid the scrollbar that would have revealed it,
+// not the mispositioning itself. Pin it to the viewport like every other
+// overlay element already is (#gate, #vignette, ...) so its position no
+// longer depends on sibling content at all. z-index -1 keeps it under all
+// of those (they're all z-index:auto/positive) regardless of DOM order.
+renderer.domElement.style.position = 'fixed';
+renderer.domElement.style.inset = '0';
+renderer.domElement.style.zIndex = '-1';
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55));
