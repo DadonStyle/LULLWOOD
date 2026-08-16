@@ -844,7 +844,7 @@ const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
-    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0;
+    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0;
 // LUL-24: last normalized heading the player actually moved along -- the "escape
 // vector" the wolf pack flanks off of. Only updated while moving (see tick()'s
 // movement block), so it holds the most recent flight direction while the
@@ -1129,6 +1129,7 @@ let hudState = {
   statusVisible: false, statusText: '',
   winVisible: false,
   deathVisible: false, deathKind: 'wolf', lossRevealed: false,
+  survivedSeconds: 0,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
 };
 function pushState(patch){
@@ -1146,6 +1147,7 @@ const pausePrompt = document.getElementById('pausePrompt');
 function setPaused(p){ paused = p; pausePrompt.style.display = p ? 'flex' : 'none'; }
 function enter(){
   entered = true;
+  enteredAt = clock.elapsedTime;
   pushState({ entered: true });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
@@ -1390,14 +1392,14 @@ function finishPickup(){
 function arriveHome(){
   won = true; carrying = false;
   babyGroup.visible = false;
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true });
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds: Math.max(0, clock.elapsedTime - enteredAt) });
 }
 function triggerDeath(kind){
   if(dead || won || pickingUp) return;
   dead = true; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
-  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false });
+  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds: Math.max(0, deathStart - enteredAt) });
   playDeathVideo();
   deathAudio(kind);
 }
