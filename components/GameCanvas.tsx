@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
+import { track, startSessionTracking } from '@/lib/analytics';
 
 // CSS verbatim from the original single-file prototype (M2 wiki plan:
 // game/port-plan) -- its lines 6-99. The prototype is no longer in the tree;
@@ -140,6 +141,14 @@ const OVERLAY_MARKUP = `
 export default function GameCanvas() {
   const [hud, setHud] = useState<EngineHudState>(INITIAL_HUD_STATE);
   const [actions, setActions] = useState<EngineActions | null>(null);
+
+  // LUL-153: page_view + session_length are independent of whether the engine
+  // module ever finishes loading, so they get their own effect rather than
+  // living inside the dynamic-import one below.
+  useEffect(() => {
+    track({ event: 'page_view' });
+    return startSessionTracking();
+  }, []);
 
   useEffect(() => {
     // The engine is a bundled module now (LUL-28), so there is no <script> tag

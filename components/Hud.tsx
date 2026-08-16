@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import TouchControls from './TouchControls';
+import { track } from '@/lib/analytics';
 
 // LUL-124: fullscreen toggle. `document.fullscreenEnabled` is false on
 // browsers that never expose the API (older iOS Safari) so the button is
@@ -247,7 +248,17 @@ export default function Hud({
       </div>
 
       {!state.entered && (
-        <div id="gate" onClick={() => actions?.enter()}>
+        <div
+          id="gate"
+          onClick={() => {
+            // LUL-153: the real gate-dismiss click. Must not live inside the
+            // engine's enter() -- restart() also calls enter() on every "Play
+            // again"/"Try again," and this event exists to count first-time
+            // starts for the funnel, not every run.
+            track({ event: 'cta_start_clicked' });
+            actions?.enter();
+          }}
+        >
           <div id="gateTitle">LULLWOOD</div>
           <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
           <div id="gateKeys">
