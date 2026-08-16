@@ -790,13 +790,12 @@ on(window, 'mousemove', e => {
   if(locked) applyLook(e.movementX, e.movementY);
   else if(dragging) applyLook(e.movementX, e.movementY);
 });
-let lastTouch = null;
-on(renderer.domElement, 'touchstart', e => { lastTouch = e.touches[0]; }, {passive:true});
-on(renderer.domElement, 'touchmove', e => {
-  const t = e.touches[0];
-  if(lastTouch) applyLook((t.clientX-lastTouch.clientX)*2, (t.clientY-lastTouch.clientY)*2);
-  lastTouch = t;
-}, {passive:true});
+// LUL-68: twin-stick touch input — populated by the React TouchControls
+// component via the action functions returned below. The old free-drag-anywhere
+// touch look is removed; right stick replaces it with a rate-based camera.
+const touchMove = { x: 0, z: 0 };   // normalised direction [-1..1]
+const touchLook = { x: 0, y: 0 };   // stick offset [-1..1] → yaw/pitch rate
+let touchSprint = false;
 
 // ---- Procedural audio (built on first entry) -----------------------------
 let audio = null, started = false, soundOn = true;
@@ -1431,9 +1430,17 @@ function tick(){
   rafId = requestAnimationFrame(tick);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
 
+  // LUL-68: right stick look rate applied each frame before movement
+  if(touchLook.x || touchLook.y){
+    const YAW_SPEED = 2.2, PITCH_SPEED = 1.5;  // rad/s at full stick
+    player.yaw -= touchLook.x * YAW_SPEED * dt;
+    player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - touchLook.y * PITCH_SPEED * dt));
+  }
+
   // hiding: H toggles crouch, any movement key breaks cover
+  const hasTouchMove = Math.hypot(touchMove.x, touchMove.z) > 0.15;
   const moveKey = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
-  if(hidden && moveKey) hidden = false;
+  if(hidden && (moveKey || hasTouchMove)) hidden = false;
   hideTime = hidden ? hideTime + dt : 0;
   eyeH += ((hidden ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
 
@@ -1441,13 +1448,15 @@ function tick(){
 
   let spd = 0, dist = 0;
   if(playing && !hidden){
-    const running = keys['ShiftLeft'] || keys['ShiftRight'];
+    const running = keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint;
     const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carryPaceMul : 1);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
     if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
     if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
+    // LUL-68: merge touch left-stick direction (threshold 0.2 dead-zone)
+    if(hasTouchMove){ ix += touchMove.x; iz += touchMove.z; }
     const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
     const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
     let mvx = fx*iz + rx*ix, mvz = fz*iz + rz*ix;
@@ -1685,7 +1694,23 @@ tick();
   // handlers (gate click, restart buttons, panel sliders/buttons) -- the only
   // direction React is allowed to reach into the engine, as opposed to state,
   // which only ever flows the other way via emitState().
-  return { enter, restart, setPace, setFog, toggleSound, regenMap };
+  //
+  // LUL-68: touch-stick setters. React's TouchControls component calls these
+  // on every pointer move / pointer up. The engine reads them in tick().
+  function setTouchMove(x, z) { touchMove.x = x; touchMove.z = z; }
+  function setTouchLook(x, y) { touchLook.x = x; touchLook.y = y; }
+  function setTouchSprint(v)  { touchSprint = v; }
+  function triggerTouchHide() {
+    const playing = entered && !won && !dead && !pickingUp;
+    if(playing && !paused){ hidden = !hidden; if(hidden) hideTime = 0; }
+  }
+  function triggerTouchInteract() {
+    const playing = entered && !won && !dead && !pickingUp;
+    if(canPickup && playing && !paused) pickup();
+  }
+
+  return { enter, restart, setPace, setFog, toggleSound, regenMap,
+           setTouchMove, setTouchLook, setTouchSprint, triggerTouchHide, triggerTouchInteract };
 }
 
 function dispose() {
