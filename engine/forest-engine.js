@@ -220,6 +220,7 @@ function layoutCoverMeshes(){
 
 function generateMap(seed){
   rng = mulberry32(seed >>> 0);
+  scentPoints = [];   // LUL-23: no trail survives a fresh map/restart
 
   // place the child far across the map (the "other side"), clear of the pool
   do {
@@ -261,6 +262,7 @@ function generateMap(seed){
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
   generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
+  generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
 }
 
@@ -394,9 +396,13 @@ function key3(time, keys){   // smoothstep-interpolated keyframes
 
 // ---- Predators: wolf, bear, lion -----------------------------------------
 const PSPEC = {
-  wolf: { body:0x565b63, sz:1.0, len:1.6, h:0.9,  mane:false, ears:true,  speed:8.5, detect:42, eye:0xffd23a, rad:0.8, budget:6 },
-  bear: { body:0x3d2c22, sz:1.8, len:2.0, h:1.45, mane:false, ears:false, speed:6.8, detect:30, eye:0xff5a2a, rad:1.5, budget:9 },
-  lion: { body:0xc79a5b, sz:1.2, len:1.7, h:1.0,  mane:true,  ears:true,  speed:9.2, detect:48, eye:0xffcf3a, rad:1.0, budget:4 },
+  // `nose` (LUL-23): scent-pickup radius multiplier. The bear gets the strongest
+  // nose and the lion the weakest -- it hunts by stalking/sight, per LUL-24's
+  // reserved two-stage stalk/circle behaviour -- so the three species stay
+  // differentiated across both detection channels, not just sight.
+  wolf: { body:0x565b63, sz:1.0, len:1.6, h:0.9,  mane:false, ears:true,  speed:8.5, detect:42, eye:0xffd23a, rad:0.8, budget:6, nose:1.0 },
+  bear: { body:0x3d2c22, sz:1.8, len:2.0, h:1.45, mane:false, ears:false, speed:6.8, detect:30, eye:0xff5a2a, rad:1.5, budget:9, nose:1.4 },
+  lion: { body:0xc79a5b, sz:1.2, len:1.7, h:1.0,  mane:true,  ears:true,  speed:9.2, detect:48, eye:0xffcf3a, rad:1.0, budget:4, nose:0.75 },
 };
 // Size each animal's speed from its warning budget: from the moment it SEES you and you
 // flee at top speed, the fastest (lion) still gives ≥4s, the bear ≥9s. All are faster than
@@ -458,7 +464,7 @@ function makePredator(kind){
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:Math.random()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
-    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0 };
+    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0 };
 }
 const predators = [];
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++) predators.push(makePredator(k));
@@ -470,7 +476,7 @@ function placePredators(){
     while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 26 || blockedR(x, z, p.rad+0.5)) && tries < 60);
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
-    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=false; p.alert=0;
+    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=false; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   sinceClose = 0; huntTime = 0; spotFlash = 0;
@@ -484,6 +490,71 @@ function avoidDir(p, dx, dz){
     if(!blockedR(p.x + rx*look, p.z + rz*look, p.rad)) return [rx, rz];
   }
   return [dx, dz];
+}
+// ---- Scent trail + wind (LUL-23) ------------------------------------------
+// The player leaves scent while moving (see the deposit call in tick()'s
+// movement block -- nothing is deposited while `hidden` or standing still, so
+// holding still both stops laying new trail AND lets the old trail decay out
+// from under you; that's the counterplay, not a HUD readout). Each point only
+// remembers where and when it was laid. At query time its live radius shrinks
+// with age and its effective position drifts downwind, so a predator can walk
+// through a patch of forest well after the player has moved on and still find
+// something there -- or, if it's upwind, never will. A roaming predator that
+// crosses a still-live point converts straight to `chase`, the same state
+// sight-spotting uses, so the existing chase→investigate→sniff loop (LUL-22
+// spec: do not retune its timing) is exactly what handles losing it again.
+//
+// No second spatial hash: SCENT_LIFETIME / SCENT_DEPOSIT_INTERVAL bounds the
+// array at a few dozen points (oldest pruned on every deposit), and it's only
+// walked for predators in `roam`. A linear scan over that -- worst case ~9
+// predators x ~45 points, once per frame -- is cheaper than building and
+// maintaining a grid for a dataset this small, so the 8-unit tree hash is left
+// alone rather than given a second, mostly-empty user.
+//
+// Named constants so tuning is a one-line change (decay rate and wind
+// strength, per the ticket):
+const SCENT_DEPOSIT_INTERVAL = 0.3;  // seconds between trail points while moving
+const SCENT_LIFETIME         = 14;   // seconds until a point is fully decayed -- the difficulty dial
+const SCENT_RADIUS_WALK      = 2.2;  // sniff-pickup radius (units), fresh, at a walking pace
+const SCENT_RADIUS_RUN       = 3.6;  // Shift leaves a louder trail -- the cost that finally balances it
+const WIND_STRENGTH          = 3.2;  // units/second a point's effective position drifts downwind
+const WIND_DRIFT_CAP         = 9;    // drift never carries a point more than this many units total
+const SCENT_TRACK_TIME       = 8;    // seconds a scent-triggered chase ignores the detect*1.5 leash
+
+let windX = 1, windZ = 0;   // unit vector; redrawn once per generateMap(), see generateWind()
+function generateWind(){
+  const a = rng() * Math.PI * 2;
+  windX = Math.cos(a); windZ = Math.sin(a);
+}
+
+let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 is always oldest)
+function depositScent(hot){
+  scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius: hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK });
+  const cutoff = clock.elapsedTime - SCENT_LIFETIME;
+  while(scentPoints.length && scentPoints[0].t0 < cutoff) scentPoints.shift();
+}
+function checkScent(p){
+  for(let i = scentPoints.length - 1; i >= 0; i--){
+    const s = scentPoints[i], age = clock.elapsedTime - s.t0;
+    if(age >= SCENT_LIFETIME) continue;
+    const drift = Math.min(WIND_DRIFT_CAP, WIND_STRENGTH * age);
+    const dx = p.x - (s.x + windX*drift), dz = p.z - (s.z + windZ*drift);
+    const r = s.radius * (1 - age/SCENT_LIFETIME) * p.spec.nose;
+    if(dx*dx + dz*dz < r*r) return true;
+  }
+  return false;
+}
+// Like spotOnto, but scent isn't "being watched": no roar / screen flash / rear-up
+// freeze. Just a growl and a straight line toward you -- the tell is behavioural
+// (a predator that was ambling suddenly moves with purpose, and the hunt music
+// picks up even though nothing looked at you), which is what makes it learnable
+// without a tutorial or a status readout.
+function scentOnto(p){
+  if(p.scentLock > 0) return;   // already tracking off a scent cue: don't re-trigger the roar
+  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
+  p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
+  if(!p.spotted) p.spotted = true;
+  predatorCall(p.kind);
 }
 
 // ---- Positional hiding / detection (LUL-43, LUL-22) -----------------------
@@ -535,6 +606,8 @@ function updatePredators(dt){
     const ux = dx/dist, uz = dz/dist;
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
+    if(p.scentLock > 0) p.scentLock -= dt;   // ticks in every state, so a lock set during `chase`
+                                              // has actually expired by the time `roam` re-checks it
     // spot "alert": brief rear-up + freeze the instant it locks on
     if(p.alert > 0){
       p.alert -= dt; facePlayer = true; speed = 0;
@@ -554,6 +627,7 @@ function updatePredators(dt){
       }
     } else if(p.state === 'roam'){
       if(canSee(p, dist)){ spotOnto(p); }
+      else if(checkScent(p)){ scentOnto(p); }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){ const a=Math.random()*Math.PI*2, r=15+Math.random()*40;
@@ -561,11 +635,21 @@ function updatePredators(dt){
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
       }
     } else if(p.state === 'chase'){
-      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4); }
+      // While scentLock (LUL-23) holds, this chase was triggered by a stale
+      // trail, not a live sighting -- scentOnto()'s contract is "a growl and a
+      // straight line toward you", not "until I next lose sight of you".
+      // Gating on canSee() unconditionally (LUL-22, for the spotted case)
+      // froze every scent chase solid: a trail is by definition beyond detect
+      // range when picked up, so canSee() is false the very next tick,
+      // chase->investigate fires, and investigate bounces straight back to
+      // chase since the player isn't hidden -- zero-speed forever. Keep
+      // chasing blind while scentLock holds; once it expires, gate on sight
+      // the same way a spotted chase always has.
+      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4); }
       else {
         if(dist < p.rad + 1.3){ triggerDeath(p.kind); }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
-        if(dist > p.spec.detect*1.5){ p.state='roam'; p.spotted=false; }
+        if(p.scentLock <= 0 && dist > p.spec.detect*1.5){ p.state='roam'; p.spotted=false; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -671,7 +755,7 @@ const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
-    deathStart = 0, deathShown = false, pickBoomed = false;
+    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0;
 
 on(window, 'keydown', e => {
   keys[e.code] = true;
@@ -1039,6 +1123,50 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return nearest.kind;
   };
 
+  // LUL-65: seeds one synthetic scent point `age` game-seconds old at (player.x+dx,
+  // player.z+dz) -- skips real walking and real-time aging so a test can place a
+  // stale, distant trail deterministically. Same rationale as qaLurePredator
+  // skipping the 30s idle-hunt wait: what's under test is the mechanic that
+  // consumes the point (checkScent/scentOnto), not how the point got laid.
+  window.ForestEngine.qaSeedScentPoint = function(dx, dz, age){
+    scentPoints.push({ x: player.x + dx, z: player.z + dz, t0: clock.elapsedTime - age, radius: SCENT_RADIUS_WALK });
+  };
+
+  // LUL-65: places a named predator on the drifted position of the oldest still-live
+  // scent point and drops it into `roam` so checkScent()/scentOnto() run for real on
+  // the next tick, the same way a wandering predator would find it -- this is what
+  // lets a test exercise "picks up a stale, distant trail" without waiting out
+  // SCENT_LIFETIME in real time. Returns null if there is no live point (nothing laid
+  // yet, or it already decayed) or the species isn't found.
+  window.ForestEngine.qaProbeScentOnOldest = function(kind){
+    if(!scentPoints.length) return null;
+    const s = scentPoints[0], age = clock.elapsedTime - s.t0;
+    if(age >= SCENT_LIFETIME) return null;
+    const p = predators.find(pp => pp.kind === kind);
+    if(!p) return null;
+    const drift = Math.min(WIND_DRIFT_CAP, WIND_STRENGTH * age);
+    p.x = s.x + windX*drift; p.z = s.z + windZ*drift;
+    p.vx = 0; p.vz = 0; p.state = 'roam'; p.scentLock = 0; p.scentCalls = 0; p.spotted = false;
+    p.g.position.x = p.x; p.g.position.z = p.z;
+    return { age, dist: Math.hypot(player.x - p.x, player.z - p.z) };
+  };
+
+  // LUL-65: state + distance + the scentOnto() re-trigger count, for asserting a
+  // scent-triggered chase actually closes distance (not the stutter this ticket
+  // fixed) without re-roaring every frame.
+  //
+  // LUL-99: also returns `t`, the same clock.elapsedTime the render loop's dt
+  // clamp (line ~1220) accumulates against. Below 20fps under this rig's
+  // software rendering, that clock runs slower than wall time and never
+  // catches up (wiki: systems/dt-clamp-vs-walltime) -- a test that samples this
+  // probe twice and diffs `t` gets the actual game-time window the sim ran for,
+  // instead of assuming it from a wall-clock wait.
+  window.ForestEngine.qaProbePredatorState = function(kind){
+    const p = predators.find(pp => pp.kind === kind);
+    if(!p) return null;
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, t: clock.elapsedTime };
+  };
+
   // LUL-43 positional-hiding scaffolding. Both hooks place a specific predator
   // deterministically -- never "wherever the seed happened to spawn one" -- so
   // e2e/hide.spec.ts doesn't have to search the procedural map for a matching
@@ -1340,6 +1468,10 @@ function tick(){
       const nz = Math.max(-lim, Math.min(lim, player.z + mvz*step));
       if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }  // slide along trunks
       if(!blocked(player.x, nz)){ dist += Math.abs(nz - player.z); player.z = nz; }
+      // LUL-23: lay scent while actually moving -- holding still (or being hidden,
+      // which already implies not moving) never adds to the trail.
+      scentEmitT -= dt;
+      if(scentEmitT <= 0){ depositScent(running); scentEmitT = SCENT_DEPOSIT_INTERVAL; }
     }
   }
 
