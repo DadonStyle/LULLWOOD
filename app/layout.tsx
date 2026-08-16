@@ -46,6 +46,27 @@ const videoGameJsonLd = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en">
+      <head>
+        <script
+          // LUL-135: GameCanvas's overlay <style> (overflow: hidden on
+          // html/body) is client-only and doesn't land in the DOM until
+          // GameCanvas actually mounts -- ~130ms after DOMContentLoaded on
+          // prod, per the ticket's measurements. During that window the SSR
+          // content shell (app/page.tsx's <main class="about">, pushed below
+          // the fold by globals.css) is genuinely reachable by a fast
+          // scroll/wheel or a restored scroll position. This blocking
+          // <head> script runs synchronously during HTML parsing, before
+          // <body> exists or paints, so it closes the window entirely for
+          // anyone with JS enabled. It's a deliberate no-op with JS
+          // disabled: GameCanvas never mounts in that case either, so the
+          // about content staying reachable is the correct fallback, not a
+          // bug -- see the "no JS still sees it in normal document flow"
+          // comment in globals.css.
+          dangerouslySetInnerHTML={{
+            __html: "document.documentElement.style.overflow='hidden';",
+          }}
+        />
+      </head>
       <body>
         <script
           type="application/ld+json"

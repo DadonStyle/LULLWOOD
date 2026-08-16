@@ -41,11 +41,14 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Cancel superseded runs on the same PR/branch. Keyed on head SHA (not
-# `github.ref`, which differs between the push and pull_request events for
-# the same commit) so a rapid double-push to one branch still dedupes.
+# Cancel superseded runs on the same PR/branch. Keyed on event name + head SHA
+# so that a `pull_request` run (which is skipped for same-repo branches via
+# the `if:` guards below) does not share a concurrency group with the `push`
+# run and therefore cannot cancel it via cancel-in-progress.
+# Without the event name prefix, the pull_request run would cancel the push
+# run and then immediately be skipped itself, leaving no CI run for the commit.
 concurrency:
-  group: ci-${{ github.event.pull_request.head.sha || github.sha }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:

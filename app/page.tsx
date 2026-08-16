@@ -41,7 +41,8 @@ export default function Home() {
               <strong>Shift</strong> — run
             </li>
             <li>
-              <strong>H</strong> — hide from predators
+              <strong>H</strong> — hold still (use cover to break line of
+              sight)
             </li>
             <li>
               <strong>E</strong> — lift and carry the child
