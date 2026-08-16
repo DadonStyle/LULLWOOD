@@ -7,3 +7,52 @@
   padding: 0;
   margin: 0;
 }
+
+/* SSR content shell (LUL-46 / M3b), rendered by app/page.tsx below <GameLoader />.
+   margin-top: 100vh keeps it below the game's first screen -- once GameCanvas
+   mounts, its injected overlay style (html/body overflow: hidden, #gate fixed
+   inset: 0) covers this section for real players; a crawler with no JS still
+   sees it in normal document flow. Namespaced under .about so nothing here
+   collides with the game's own #id/.class overlay styling. */
+main.about {
+  max-width: 640px;
+  margin: 100vh auto 0;
+  padding: 48px 24px 96px;
+  background: #0a0e15;
+  color: #9fb2cd;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.6;
+}
+main.about h1 {
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: #d7e4f6;
+  margin-bottom: 10px;
+}
+main.about .about-tagline {
+  font-size: 15px;
+  color: #b9c8dd;
+  margin-bottom: 8px;
+}
+main.about h2 {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: #cdd9ea;
+  margin: 32px 0 8px;
+}
+main.about p {
+  font-size: 14px;
+}
+main.about ul {
+  list-style: none;
+}
+main.about li {
+  font-size: 14px;
+  margin: 4px 0;
+}
+main.about li strong {
+  color: #b7c7de;
+  font-weight: 500;
+}
