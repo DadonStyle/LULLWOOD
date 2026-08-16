@@ -22,7 +22,7 @@ const OVERLAY_STYLE = `
     font-family: ui-sans-serif, system-ui, sans-serif; color: #b9c8dd; }
   canvas { display: block; }
 
-  #vignette { position: fixed; inset: 0; pointer-events: none;
+  #vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none;
     background: radial-gradient(120% 90% at 50% 44%, transparent 45%, rgba(0,0,0,0.6) 100%); }
 
   /* entry / pause gate */
@@ -37,7 +37,7 @@ const OVERLAY_STYLE = `
     letter-spacing: 0.03em; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
 
-  #hint { position: fixed; top: 20px; left: 0; right: 0; text-align: center;
+  #hint { position: fixed; top: 20px; left: 0; right: 0; z-index: 1; text-align: center;
     font-size: 12px; letter-spacing: 0.05em; color: #9fb2cd; pointer-events: none;
     text-shadow: 0 1px 8px rgba(0,0,0,0.8); transition: opacity 1.4s ease; opacity: 0; }
 

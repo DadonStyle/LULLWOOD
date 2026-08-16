@@ -77,11 +77,17 @@ renderer.setSize(innerWidth, innerHeight);
 // overflow:hidden then just hid the scrollbar that would have revealed it,
 // not the mispositioning itself. Pin it to the viewport like every other
 // overlay element already is (#gate, #vignette, ...) so its position no
-// longer depends on sibling content at all. z-index -1 keeps it under all
-// of those (they're all z-index:auto/positive) regardless of DOM order.
+// longer depends on sibling content at all.
+// LUL-211: z-index was -1, which places the canvas BEHIND normal-flow
+// elements (body, main.about) in the CSS stacking order -- step 2 (negative
+// z-index) is below step 3 (normal-flow boxes), so the body's background
+// (#0a0e15) painted over the canvas, making the 3D scene invisible. Using
+// z-index 0 puts the canvas in step 6 (positioned, z-index 0/auto), above
+// the body background and the main.about SSR shell, while remaining below
+// all the game's fixed overlays (z-index 10+).
 renderer.domElement.style.position = 'fixed';
 renderer.domElement.style.inset = '0';
-renderer.domElement.style.zIndex = '-1';
+renderer.domElement.style.zIndex = '0';
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55));
@@ -193,6 +199,16 @@ function blockedR(x,z,pr){
   for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
     const arr = grid.get(key(gx,gz)); if(!arr) continue;
     for(const t of arr){ const dx=x-t.x, dz=z-t.z, rr=t.cr+pr; if(dx*dx+dz*dz < rr*rr) return true; }
+  }
+  // LUL-211: cover props (logs, rocks, brambles) only blocked LOS; they had
+  // no movement collision for the player. Check coverGrid with circle-vs-AABB:
+  // expand each prop's half-extents by pr and test whether the point is inside.
+  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
+    const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
+    for(const c of arr){
+      if(c.kind === 'tree') continue;   // trees are already in the circle grid above
+      if(Math.abs(x - c.x) < c.hx + pr && Math.abs(z - c.z) < c.hz + pr) return true;
+    }
   }
   return false;
 }
