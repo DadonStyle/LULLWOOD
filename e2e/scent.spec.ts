@@ -74,9 +74,15 @@ test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
 
     // The headline assertion: it actually tracks. Pre-fix this closed ~0.7 units/s
     // (the leash-vs-scent-range fight); post-fix it should close close to its real
-    // speed. 8 units over 3 *game* seconds is a wide margin either side of that
-    // stutter and comfortably below what an unthrottled chase actually covers.
-    expect(second!.dist, 'the bear must close distance, not stutter in place').toBeLessThan(first!.dist - 8);
+    // speed. The bar was originally 8, derived from a ~6.8u/s top-speed budget that
+    // predates LUL-22 (positional hiding), which put cover volumes and
+    // line-of-sight pathing between predator and player -- approach velocity is no
+    // longer raw movement speed, and 8 has not been met on any commit since LUL-22
+    // merged (observed 5.3-6.6 units across CI runs at cd227edc/ff217a6c). Per the
+    // LUL-115 ruling, recalibrated to 4: ~25% headroom below the worst observed
+    // sample (so it doesn't itself flake), while still failing the pre-fix 0.7u/s
+    // stutter and the LUL-119 0.0u/s freeze by a wide margin.
+    expect(second!.dist, 'the bear must close distance, not stutter in place').toBeLessThan(first!.dist - 4);
 
     // The leash-vs-scent flip-flop this ticket fixes would have bounced the state
     // back to `roam` (and, via checkScent() re-firing, straight back to `chase`)
