@@ -205,19 +205,33 @@ function blockedR(x,z,pr){
     const arr = grid.get(key(gx,gz)); if(!arr) continue;
     for(const t of arr){ const dx=x-t.x, dz=z-t.z, rr=t.cr+pr; if(dx*dx+dz*dz < rr*rr) return true; }
   }
-  // LUL-211: cover props (logs, rocks, brambles) only blocked LOS; they had
-  // no movement collision for the player. Check coverGrid with circle-vs-AABB:
-  // expand each prop's half-extents by pr and test whether the point is inside.
+  return false;
+}
+// LUL-211: cover props (logs, rocks, brambles) only ever blocked LOS; the
+// player could walk straight through them. AABB check against the same
+// coverGrid data hasLOS()/findHideSpot() already use (trees excluded --
+// they're the circle grid blockedR() above already handles).
+//
+// Deliberately NOT folded into blockedR() itself: predators call blockedR()
+// directly (not through blocked()) for their own movement, and their
+// avoidDir() steering isn't built to route around a solid box on the
+// straight-line paths several qa hooks and the scent-chase spec place them
+// on (qaHideBehindCoverKind, the scent stale-trail test) -- doing that
+// produced a stuck-predator freeze, the exact class of bug LUL-119 fixed.
+// Whether predators should also collide with cover is a real follow-up
+// question (LUL-222), just not one this fix's scope covers.
+function coverBlockedR(x,z,pr){
+  const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
   for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
     const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
     for(const c of arr){
-      if(c.kind === 'tree') continue;   // trees are already in the circle grid above
+      if(c.kind === 'tree') continue;
       if(Math.abs(x - c.x) < c.hx + pr && Math.abs(z - c.z) < c.hz + pr) return true;
     }
   }
   return false;
 }
-function blocked(x,z){ return blockedR(x,z,0.6); }
+function blocked(x,z){ return blockedR(x,z,0.6) || coverBlockedR(x,z,0.6); }
 
 function buildCoverGrid(){
   coverGrid = new Map();
