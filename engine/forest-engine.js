@@ -68,6 +68,20 @@ camera.position.set(0, CONFIG.eye, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
+// LUL-160: the canvas used to rely on being the only content in <body>'s
+// normal flow to sit at the top of the page -- true back when it was the
+// sole thing appendChild ever put there. LUL-46's SSR content shell
+// (app/page.tsx's <main class="about">) added real in-flow height *before*
+// this element in document order, which pushed the statically-positioned
+// canvas down the page by however tall that shell is; html/body's
+// overflow:hidden then just hid the scrollbar that would have revealed it,
+// not the mispositioning itself. Pin it to the viewport like every other
+// overlay element already is (#gate, #vignette, ...) so its position no
+// longer depends on sibling content at all. z-index -1 keeps it under all
+// of those (they're all z-index:auto/positive) regardless of DOM order.
+renderer.domElement.style.position = 'fixed';
+renderer.domElement.style.inset = '0';
+renderer.domElement.style.zIndex = '-1';
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55));
@@ -464,11 +478,13 @@ function makePredator(kind){
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:Math.random()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
-    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0 };
+    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
+    packTimer:0, flankX:0, flankZ:0 };
 }
 const predators = [];
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++) predators.push(makePredator(k));
 let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
+let coverAmt = 0;   // LUL-144: eased 0..1 desaturation driven by the cover-feedback scan below
 function placePredators(){
   for(const p of predators){
     let x, z, tries = 0;
@@ -477,6 +493,7 @@ function placePredators(){
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=false; p.alert=0; p.scentLock=0; p.scentCalls=0;
+    p.packTimer=0; p.flankX=0; p.flankZ=0;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   sinceClose = 0; huntTime = 0; spotFlash = 0;
@@ -592,15 +609,64 @@ function hasLOS(x0,z0,x1,z1){
   }
   return true;
 }
-function canSee(p, dist){
+// Split out of canSee() so the LUL-144 cover-feedback scan below can test
+// "in range" separately from "has line of sight" for every predator, not
+// just stop at the first one that can see the player.
+function effectiveDetect(p){
   const stillness = hidden ? Math.min(1, hideTime / STILL_RAMP) : 0;
-  const effDetect = p.spec.detect * (1 - stillness * STILL_DETECT_CUT);
-  if(dist >= effDetect) return false;
+  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT);
+}
+function canSee(p, dist){
+  if(dist >= effectiveDetect(p)) return false;
   return hasLOS(p.x, p.z, player.x, player.z);
+}
+
+// ---- Wolf pack coordination (LUL-24) ---------------------------------------
+// Wolves only -- bears stay solitary (the contrast is the point) and lions'
+// two-stage stalk/circle is reserved for after cover+scent mature further.
+// Spec: the instant one wolf enters `chase` (the "point"), the other two path
+// to points +-60deg off the player's live escape heading, at ~1.4x each
+// flanker's own current distance from the player, and hold an investigate/sniff
+// there instead of beelining the player -- the pack reads as a closing shape,
+// not three animals converging on one spot.
+const FLANK_ANGLE      = Math.PI / 3;  // 60 degrees either side of the escape heading
+const FLANK_DIST_MUL   = 1.4;
+const FLANK_RECOMPUTE  = 0.5;          // budget cap: one path recompute per wolf per 0.5s
+const FLANK_ARRIVE_R   = 4;
+const FLANK_SPEED_MUL  = 0.7;          // purposeful trot: faster than roam, short of a chase sprint
+
+function updateWolfPack(dt){
+  const wolves = predators.filter(p => p.kind === 'wolf');
+  for(const p of wolves) if(p.packTimer > 0) p.packTimer -= dt;
+
+  const chasers = wolves.filter(p => p.state === 'chase' || p.hunt);
+  if(!chasers.length){
+    // nothing hunting: any wolf still mid-flank stands down rather than
+    // finishing a pincer around a threat that no longer exists
+    for(const p of wolves) if(p.state === 'flank'){ p.state = 'roam'; p.spotted = false; p.inv = ''; }
+    return;
+  }
+  // orient the pincer on whichever chaser is actually closest to the player
+  let leader = chasers[0], leaderDist = Math.hypot(player.x-leader.x, player.z-leader.z);
+  for(const c of chasers){ const d = Math.hypot(player.x-c.x, player.z-c.z); if(d < leaderDist){ leader = c; leaderDist = d; } }
+
+  let side = -1;   // alternate the two flankers to opposite sides of the escape heading
+  for(const p of wolves){
+    if(p === leader || chasers.includes(p)) continue;   // already hunting on its own -- not a flanker
+    if(p.packTimer > 0) continue;                        // recompute cap
+    const ang = FLANK_ANGLE * side; side *= -1;
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const ex = escX*ca - escZ*sa, ez = escX*sa + escZ*ca;   // rotate the escape heading by +-60deg
+    const dist = Math.hypot(player.x-p.x, player.z-p.z) * FLANK_DIST_MUL;
+    p.flankX = clamp(player.x + ex*dist, -half+4, half-4);
+    p.flankZ = clamp(player.z + ez*dist, -half+4, half-4);
+    p.state = 'flank'; p.inv = ''; p.packTimer = FLANK_RECOMPUTE;
+  }
 }
 
 function updatePredators(dt){
   const tt = clock.elapsedTime;
+  updateWolfPack(dt);
   for(const p of predators){
     const dx = player.x - p.x, dz = player.z - p.z, dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
@@ -677,6 +743,29 @@ function updatePredators(dt){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5; }
       }
+    } else if(p.state === 'flank'){
+      // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
+      // still work normally -- a flanker that stumbles onto the player still
+      // spots/scents them -- this only replaces what it does with *no* signal.
+      if(canSee(p, dist)){ spotOnto(p); }
+      else if(checkScent(p)){ scentOnto(p); }
+      else if(p.inv === 'hold'){
+        // holding investigate *at the flank point*, deliberately not gated on
+        // `hidden` like the sight-loss investigate loop above: this wolf never
+        // had the player in sight to begin with, so "did they stop hiding" is
+        // not a meaningful re-escalation signal here -- canSee()/checkScent()
+        // above are the only way a hold converts to a real chase.
+        p.sniffTimer -= dt;
+        if(p.sniffTimer <= 0){
+          p.sniffsLeft--;
+          if(p.sniffsLeft > 0) p.sniffTimer = rnd(1,4);
+          else { p.state='roam'; p.spotted=false; p.inv=''; }
+        }
+      } else {
+        const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
+        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=1+Math.floor(Math.random()*3); p.sniffTimer=rnd(1,4); sniff(); }
+        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL; }
+      }
     }
 
     if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz);
@@ -717,7 +806,7 @@ function updatePredators(dt){
     // ---- articulated animation ----
     const moving = vmag > 0.3;
     p.phase += dt * (moving ? vmag*0.9 : 1.4);
-    const sniffing = p.state==='investigate' && p.inv==='sniff';
+    const sniffing = (p.state==='investigate' && p.inv==='sniff') || (p.state==='flank' && p.inv==='hold');
     const alerting = p.alert > 0;
     // legs: diagonal gait (bend the knee on the forward swing)
     for(let i=0;i<p.legs.length;i++){
@@ -755,7 +844,12 @@ const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
-    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0;
+    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0;
+// LUL-24: last normalized heading the player actually moved along -- the "escape
+// vector" the wolf pack flanks off of. Only updated while moving (see tick()'s
+// movement block), so it holds the most recent flight direction while the
+// player is stationary or hiding, instead of snapping to a stale default.
+let escX = 0, escZ = -1;
 
 on(window, 'keydown', e => {
   keys[e.code] = true;
@@ -1035,6 +1129,7 @@ let hudState = {
   statusVisible: false, statusText: '',
   winVisible: false,
   deathVisible: false, deathKind: 'wolf', lossRevealed: false,
+  survivedSeconds: 0,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
 };
 function pushState(patch){
@@ -1052,6 +1147,7 @@ const pausePrompt = document.getElementById('pausePrompt');
 function setPaused(p){ paused = p; pausePrompt.style.display = p ? 'flex' : 'none'; }
 function enter(){
   entered = true;
+  enteredAt = clock.elapsedTime;
   pushState({ entered: true });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
@@ -1230,6 +1326,34 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return null;
   };
 
+  // LUL-121: species-specific cover hook. Same geometry as qaHideBehindCover
+  // but picks the first predator of the requested kind so tests can pin each
+  // species independently. Returns { idx, kind } on success, null on failure.
+  window.ForestEngine.qaHideBehindCoverKind = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    for(const c of coverData){
+      if(c.kind === 'tree') continue;
+      const reach = Math.max(c.hx, c.hz) + 3;
+      const px = c.x - reach, pz = c.z, qx = c.x + reach, qz = c.z;
+      if(blockedR(px, pz, p.rad) || blocked(qx, qz)) continue;
+      let clear = true;
+      const STEPS = 12;
+      for(let i = 1; i < STEPS; i++){
+        const u = i / STEPS;
+        if(blockedR(px + (qx-px)*u, pz + (qz-pz)*u, p.rad)){ clear = false; break; }
+      }
+      if(!clear) continue;
+      p.x = px; p.z = pz;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+      p.state = 'chase'; p.hunt = false;
+      player.x = qx; player.z = qz;
+      return { idx, kind };
+    }
+    return null;
+  };
+
   window.ForestEngine.qaPredatorState = function(idx){
     const p = predators[idx];
     return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft } : null;
@@ -1268,14 +1392,14 @@ function finishPickup(){
 function arriveHome(){
   won = true; carrying = false;
   babyGroup.visible = false;
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true });
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds: Math.max(0, clock.elapsedTime - enteredAt) });
 }
 function triggerDeath(kind){
   if(dead || won || pickingUp) return;
   dead = true; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
-  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false });
+  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds: Math.max(0, deathStart - enteredAt) });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -1295,6 +1419,7 @@ function restart(){
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   document.body.style.cursor = '';
+  coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
   enter();
 }
@@ -1463,6 +1588,7 @@ function tick(){
     const mag = Math.hypot(mvx, mvz);
     if(mag > 0){
       mvx /= mag; mvz /= mag; spd = maxSpd;
+      escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
       const step = maxSpd*dt, lim = half - margin;
       const nx = Math.max(-lim, Math.min(lim, player.x + mvx*step));
       const nz = Math.max(-lim, Math.min(lim, player.z + mvz*step));
@@ -1522,11 +1648,22 @@ function tick(){
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
   let nearDist = 1e9, nearP = null, approaching = false;
+  // LUL-144: cover-state feedback. `canSee()` (the raycast that actually
+  // gates detection, see the LUL-43 block above) never depended on `hidden`
+  // -- walking behind a rock breaks it exactly as well as crouching -- but
+  // nothing on screen ever reflected that. Scan every predator with the same
+  // in-range + hasLOS() test canSee() uses, but keep going past the first hit
+  // so "is anyone able to see me" and "is a nearby threat blocked by cover"
+  // are both known, not just whichever predator the array reaches first.
+  let exposedNow = false, coveredNow = false;
   if(playing){
     for(const p of predators){
       const dpd = Math.hypot(player.x - p.x, player.z - p.z);
       if(dpd < nearDist){ nearDist = dpd; nearP = p; }
       if(p.state==='chase' || p.hunt || (p.state==='investigate' && p.inv!=='back')) approaching = true;
+      if(dpd < effectiveDetect(p)){
+        if(hasLOS(p.x, p.z, player.x, player.z)) exposedNow = true; else coveredNow = true;
+      }
     }
     // if nobody has been near for 30s, the closest one comes straight for you
     if(nearDist < 20) sinceClose = 0; else sinceClose += dt;
@@ -1542,6 +1679,22 @@ function tick(){
       }
     } else pianoTimer = 0;
   } else { sinceClose = 0; }
+
+  // LUL-144: the player-facing half of the scan above. `covered` is the
+  // instantaneous, un-eased signal (a real predator, in range, LOS blocked,
+  // and nothing nearer has you spotted) -- exposed on the canvas element so
+  // it's assertable without parsing the eased CSS filter string below.
+  // `coverAmt` eases toward it (Conviction-style: no HUD chrome, the screen
+  // itself desaturates while cover is actually working) at a faster rate
+  // going in than coming out, so losing cover reads immediately while
+  // regaining it doesn't flicker on a one-frame LOS gap.
+  const covered = playing && coveredNow && !exposedNow;
+  document.body.dataset.losCovered = covered ? '1' : '0';
+  const coverTarget = covered ? 1 : 0;
+  coverAmt += (coverTarget - coverAmt) * Math.min(1, dt * (coverTarget > coverAmt ? 3.5 : 2.2));
+  if(coverAmt < 0.002) coverAmt = 0;
+  el.style.filter = coverAmt > 0 ? `grayscale(${coverAmt.toFixed(3)})` : '';
+
   spotFlash = Math.max(0, spotFlash - dt*1.6);
   spotFlashEl.style.opacity = (spotFlash*0.55).toFixed(3);
 
@@ -1658,6 +1811,7 @@ tick();
 
     if(document.pointerLockElement === el) document.exitPointerLock();
     document.body.style.cursor = '';
+    delete document.body.dataset.losCovered;   // LUL-144: don't leak this mount's signal into the next one
 
     // release every geometry/material/texture reachable from the scene graph
     scene.traverse(obj => {
