@@ -152,11 +152,13 @@ test.describe('scent acquisition behind cover (LUL-196)', () => {
 
     // Wait for the predator's scentCalls to increment: checkScent() ran and
     // scentOnto() accepted the trail despite the player being behind cover.
+    // Poll by index (not by kind) to target the exact predator staged above.
     await expect
       .poll(
         async () => {
           const s = await page.evaluate(
-            () => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null,
+            (i) => window.ForestEngine?.qaPredatorState?.(i) ?? null,
+            idx,
           );
           return s?.scentCalls ?? 0;
         },

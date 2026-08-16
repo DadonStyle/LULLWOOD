@@ -1443,7 +1443,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   window.ForestEngine.qaPredatorState = function(idx){
     const p = predators[idx];
-    return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft } : null;
+    return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls } : null;
   };
 }
 
