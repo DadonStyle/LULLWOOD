@@ -62,6 +62,17 @@ const OVERLAY_STYLE = `
   #panel button:hover { background: rgba(150,175,215,0.18); }
   #panel :focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
 
+  /* LUL-198: on touch/narrow viewports, TouchControls (components/TouchControls.tsx)
+     draws an always-present movement stick + E button in this same bottom-left
+     corner at z-index 30, above #panel's z-index 10 -- the stick's 128px hit
+     region could sit directly over Sound/New map/Fullscreen. Lift #panel clear of
+     that band instead of fighting it with z-index: 24px wrapper bottom + 128px
+     stick + 10px gap + 56px E button + margin. 768px matches the breakpoint
+     TouchControls' useTouchDevice() already uses for "is this a phone". */
+  @media (max-width: 768px) {
+    #panel { bottom: 240px; }
+  }
+
   /* shown when pointer lock is released — visual only, never blocks the panel */
   #pausePrompt { position: fixed; inset: 0; z-index: 15; display: none;
     align-items: center; justify-content: center; pointer-events: none;
