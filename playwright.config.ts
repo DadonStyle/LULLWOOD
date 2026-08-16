@@ -56,6 +56,27 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 720 } },
+      // LUL-216: e2e/replay/** is recording-only (run by hand via `--project=replay`,
+      // never as part of the required checks) -- excluded here so the smoke suite
+      // doesn't pay to run the same scenarios twice on every push.
+      testIgnore: '**/replay/**',
+    },
+    // LUL-216: dedicated project for recording GAMES_REPLAY/ clips. Kept separate
+    // from the `chromium` smoke project so CI's per-run/per-shard smoke suite
+    // never pays for a video (which is `retain-on-failure` above, i.e. off on a
+    // green run) -- only `npx playwright test --project=replay` records anything,
+    // and that is run by hand/on demand, not as part of the required checks.
+    {
+      name: 'replay',
+      testDir: './e2e/replay',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1280, height: 720 },
+        // Matches the game canvas's own aspect ratio (16:9) at a size that keeps
+        // committed .webm files small -- see GAMES_REPLAY/README.md for the
+        // repo-weight budget these clips are curated against.
+        video: { mode: 'on', size: { width: 960, height: 540 } },
+      },
     },
   ],
 });
