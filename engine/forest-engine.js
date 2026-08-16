@@ -478,7 +478,8 @@ function makePredator(kind){
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:Math.random()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
-    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0 };
+    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
+    packTimer:0, flankX:0, flankZ:0 };
 }
 const predators = [];
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++) predators.push(makePredator(k));
@@ -492,6 +493,7 @@ function placePredators(){
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=false; p.alert=0; p.scentLock=0; p.scentCalls=0;
+    p.packTimer=0; p.flankX=0; p.flankZ=0;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   sinceClose = 0; huntTime = 0; spotFlash = 0;
@@ -619,8 +621,52 @@ function canSee(p, dist){
   return hasLOS(p.x, p.z, player.x, player.z);
 }
 
+// ---- Wolf pack coordination (LUL-24) ---------------------------------------
+// Wolves only -- bears stay solitary (the contrast is the point) and lions'
+// two-stage stalk/circle is reserved for after cover+scent mature further.
+// Spec: the instant one wolf enters `chase` (the "point"), the other two path
+// to points +-60deg off the player's live escape heading, at ~1.4x each
+// flanker's own current distance from the player, and hold an investigate/sniff
+// there instead of beelining the player -- the pack reads as a closing shape,
+// not three animals converging on one spot.
+const FLANK_ANGLE      = Math.PI / 3;  // 60 degrees either side of the escape heading
+const FLANK_DIST_MUL   = 1.4;
+const FLANK_RECOMPUTE  = 0.5;          // budget cap: one path recompute per wolf per 0.5s
+const FLANK_ARRIVE_R   = 4;
+const FLANK_SPEED_MUL  = 0.7;          // purposeful trot: faster than roam, short of a chase sprint
+
+function updateWolfPack(dt){
+  const wolves = predators.filter(p => p.kind === 'wolf');
+  for(const p of wolves) if(p.packTimer > 0) p.packTimer -= dt;
+
+  const chasers = wolves.filter(p => p.state === 'chase' || p.hunt);
+  if(!chasers.length){
+    // nothing hunting: any wolf still mid-flank stands down rather than
+    // finishing a pincer around a threat that no longer exists
+    for(const p of wolves) if(p.state === 'flank'){ p.state = 'roam'; p.spotted = false; p.inv = ''; }
+    return;
+  }
+  // orient the pincer on whichever chaser is actually closest to the player
+  let leader = chasers[0], leaderDist = Math.hypot(player.x-leader.x, player.z-leader.z);
+  for(const c of chasers){ const d = Math.hypot(player.x-c.x, player.z-c.z); if(d < leaderDist){ leader = c; leaderDist = d; } }
+
+  let side = -1;   // alternate the two flankers to opposite sides of the escape heading
+  for(const p of wolves){
+    if(p === leader || chasers.includes(p)) continue;   // already hunting on its own -- not a flanker
+    if(p.packTimer > 0) continue;                        // recompute cap
+    const ang = FLANK_ANGLE * side; side *= -1;
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const ex = escX*ca - escZ*sa, ez = escX*sa + escZ*ca;   // rotate the escape heading by +-60deg
+    const dist = Math.hypot(player.x-p.x, player.z-p.z) * FLANK_DIST_MUL;
+    p.flankX = clamp(player.x + ex*dist, -half+4, half-4);
+    p.flankZ = clamp(player.z + ez*dist, -half+4, half-4);
+    p.state = 'flank'; p.inv = ''; p.packTimer = FLANK_RECOMPUTE;
+  }
+}
+
 function updatePredators(dt){
   const tt = clock.elapsedTime;
+  updateWolfPack(dt);
   for(const p of predators){
     const dx = player.x - p.x, dz = player.z - p.z, dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
@@ -697,6 +743,29 @@ function updatePredators(dt){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5; }
       }
+    } else if(p.state === 'flank'){
+      // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
+      // still work normally -- a flanker that stumbles onto the player still
+      // spots/scents them -- this only replaces what it does with *no* signal.
+      if(canSee(p, dist)){ spotOnto(p); }
+      else if(checkScent(p)){ scentOnto(p); }
+      else if(p.inv === 'hold'){
+        // holding investigate *at the flank point*, deliberately not gated on
+        // `hidden` like the sight-loss investigate loop above: this wolf never
+        // had the player in sight to begin with, so "did they stop hiding" is
+        // not a meaningful re-escalation signal here -- canSee()/checkScent()
+        // above are the only way a hold converts to a real chase.
+        p.sniffTimer -= dt;
+        if(p.sniffTimer <= 0){
+          p.sniffsLeft--;
+          if(p.sniffsLeft > 0) p.sniffTimer = rnd(1,4);
+          else { p.state='roam'; p.spotted=false; p.inv=''; }
+        }
+      } else {
+        const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
+        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=1+Math.floor(Math.random()*3); p.sniffTimer=rnd(1,4); sniff(); }
+        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL; }
+      }
     }
 
     if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz);
@@ -737,7 +806,7 @@ function updatePredators(dt){
     // ---- articulated animation ----
     const moving = vmag > 0.3;
     p.phase += dt * (moving ? vmag*0.9 : 1.4);
-    const sniffing = p.state==='investigate' && p.inv==='sniff';
+    const sniffing = (p.state==='investigate' && p.inv==='sniff') || (p.state==='flank' && p.inv==='hold');
     const alerting = p.alert > 0;
     // legs: diagonal gait (bend the knee on the forward swing)
     for(let i=0;i<p.legs.length;i++){
@@ -776,6 +845,11 @@ const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0;
+// LUL-24: last normalized heading the player actually moved along -- the "escape
+// vector" the wolf pack flanks off of. Only updated while moving (see tick()'s
+// movement block), so it holds the most recent flight direction while the
+// player is stationary or hiding, instead of snapping to a stale default.
+let escX = 0, escZ = -1;
 
 on(window, 'keydown', e => {
   keys[e.code] = true;
@@ -1514,6 +1588,7 @@ function tick(){
     const mag = Math.hypot(mvx, mvz);
     if(mag > 0){
       mvx /= mag; mvz /= mag; spd = maxSpd;
+      escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
       const step = maxSpd*dt, lim = half - margin;
       const nx = Math.max(-lim, Math.min(lim, player.x + mvx*step));
       const nz = Math.max(-lim, Math.min(lim, player.z + mvz*step));
