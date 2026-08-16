@@ -1617,6 +1617,8 @@ function finishPickup(){
 function arriveHome(){
   won = true; carrying = false;
   babyGroup.visible = false;
+  if(locked) document.exitPointerLock();
+  document.body.style.cursor = '';
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
