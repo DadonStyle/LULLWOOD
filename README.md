@@ -58,6 +58,31 @@ Vercel GitHub App. Vercel builds independently of CI and does not run Playwright
 so CI status does not gate a production deploy — that requires branch protection on
 `main` (tracked as LUL-33).
 
+## Search engine submission (IndexNow)
+
+`public/0f3f71513c622b57f35fbc26e3090808.txt` is the site's [IndexNow](https://www.indexnow.org/)
+key file — its content is the key itself, and it's served at
+`https://lullwood.vercel.app/0f3f71513c622b57f35fbc26e3090808.txt`. IndexNow keys are
+public by design (that's how the API verifies you own the host); there's nothing to
+protect. If this file is ever deleted or the key needs to change, generate a fresh
+32-char hex string, commit it as a new `public/<key>.txt`, and update
+`scripts/indexnow.mjs` accordingly (it discovers the key file automatically).
+
+`scripts/indexnow.mjs` submits the URLs currently in `app/sitemap.ts` to
+`https://api.indexnow.org/indexnow`, which fans out to Bing, DuckDuckGo (Bing-backed),
+Yandex and Seznam in one call. Run it manually after a production deploy that changes
+sitemap URLs:
+
+```bash
+node scripts/indexnow.mjs
+```
+
+It is **not** wired into CI or the build — pinging on every push is treated as abuse
+and gets the key ignored. At most once per deploy.
+
+Google does not consume IndexNow; getting into Google requires Search Console, which
+needs the founder's account (tracked separately, out of scope here).
+
 ## Status
 
 Code-correctness only has been verified (build/typecheck/lint clean, dev/prod server
