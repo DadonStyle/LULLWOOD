@@ -6,6 +6,13 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // LUL-153: lib/*.test.ts run directly via `node --test` (no bundler, no
+    // test framework dependency), which requires the literal `.ts` extension
+    // in relative imports -- tsc rejects that by default under "bundler"
+    // resolution. Safe alongside `noEmit` (required by this flag): it only
+    // loosens an import-specifier diagnostic, nothing about emit or Next's
+    // own bundler resolution changes.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
