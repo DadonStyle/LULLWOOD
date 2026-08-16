@@ -331,6 +331,13 @@ const lwisps = new THREE.Points(lwGeo, new THREE.PointsMaterial({ color: CONFIG.
 lwisps.frustumCulled = false; scene.add(lwisps);
 
 // ---- Ambient dust that drifts around you ---------------------------------
+// Drift direction is windX/windZ (LUL-195): wind silently decides scent
+// outcomes (checkScent(), ~line 569) with no other player-visible tell, so
+// the one ambient particle system already running becomes that tell for
+// free -- no HUD, no compass, matches the "no readouts" feel of the rest of
+// the game. Speed is tuned for legibility, not to match WIND_STRENGTH
+// (3.2u/s would read as a gust, not a steady drift).
+const DUST_WIND_SPEED = 0.3;
 const DUST = 350, dustArr = new Float32Array(DUST*3);
 for(let i=0;i<DUST;i++){ dustArr[i*3]=(Math.random()*2-1)*30; dustArr[i*3+1]=Math.random()*12; dustArr[i*3+2]=(Math.random()*2-1)*30-3; }
 const dustGeo = new THREE.BufferGeometry(); dustGeo.setAttribute('position', new THREE.BufferAttribute(dustArr,3));
@@ -1933,14 +1940,15 @@ function tick(){
   for(let i=0;i<LW;i++){ lp[i*3+1] += dt*0.25; if(lp[i*3+1] > 4.5) lp[i*3+1] = 0.2; }
   lwGeo.attributes.position.needsUpdate = true;
 
-  // ambient dust follows you
+  // ambient dust follows you, drifting downwind (LUL-195, see setup above)
   const amp = reduce ? 0.3 : 1, dp = dustGeo.attributes.position.array;
+  const wdx = windX * dt * DUST_WIND_SPEED * amp, wdz = windZ * dt * DUST_WIND_SPEED * amp;
   for(let i=0;i<DUST;i++){
-    dp[i*3]   += Math.sin(t*0.4 + i) * dt * 0.12 * amp;
+    dp[i*3]   += Math.sin(t*0.4 + i) * dt * 0.12 * amp + wdx;
     dp[i*3+1] += Math.sin(t*0.3 + i*1.7) * dt * 0.1 * amp;
-    dp[i*3+2] += dt * 0.3 * amp;
-    if(dp[i*3+2] > 4)  dp[i*3+2] -= 34;
-    if(dp[i*3] > 30)   dp[i*3] -= 60; else if(dp[i*3] < -30) dp[i*3] += 60;
+    dp[i*3+2] += Math.sin(t*0.37 + i*2.3) * dt * 0.12 * amp + wdz;
+    if(dp[i*3+2] > 4)   dp[i*3+2] -= 34; else if(dp[i*3+2] < -30) dp[i*3+2] += 34;
+    if(dp[i*3] > 30)    dp[i*3] -= 60;  else if(dp[i*3] < -30)    dp[i*3] += 60;
   }
   dustGeo.attributes.position.needsUpdate = true;
   dust.position.copy(camera.position);
