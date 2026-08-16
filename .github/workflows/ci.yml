@@ -43,9 +43,16 @@ on:
 
 # Cancel superseded runs on the same PR/branch. Keyed on head SHA (not
 # `github.ref`, which differs between the push and pull_request events for
-# the same commit) so a rapid double-push to one branch still dedupes.
+# the same commit) so a rapid double-push to one branch still dedupes. Also
+# keyed on event_name (LUL-109): a same-repo commit gets both a push run and
+# a pull_request run on the identical SHA, and without event_name in the key
+# they'd share one group — cancel-in-progress would then let whichever run
+# starts second cancel the other at the workflow-run level, before the
+# fork-scope `if:` on `jobs.*` ever gets a chance to no-op the pull_request
+# run. That killed the real (push) run and left the required checks
+# `cancelled` on an otherwise-green commit. See wiki systems/ci-double-run.
 concurrency:
-  group: ci-${{ github.event.pull_request.head.sha || github.sha }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
