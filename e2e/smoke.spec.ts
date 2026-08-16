@@ -51,7 +51,7 @@ test.describe('initial load', () => {
     expect(load.text).toContain('LULLWOOD');
     expect(load.text).toContain('click to enter');
     expect(load.text).toContain('WASD');
-    expect(load.text).toContain('hide from predators');
+    expect(load.text).toContain('hold still');
 
     await enter(page);
     await page.keyboard.down('KeyW');
