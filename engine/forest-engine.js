@@ -31,8 +31,19 @@ function init(onStateChange) {
   }
 
 // ---- Knobs ---------------------------------------------------------------
+// LUL-83: the initial map seed used to be the hardcoded constant 20260718, so
+// every player got the byte-identical forest on first load. `?seed=` pins it
+// back to an exact value (QA/e2e use this to reproduce 20260718, the old
+// default, exactly); absent that, each session draws its own from
+// crypto.getRandomValues. Neither branch touches mulberry32 or generateMap's
+// draw order -- same algorithm, same append-only stream, different starting seed.
+function resolveInitialSeed(){
+  const pinned = new URLSearchParams(window.location.search).get('seed');
+  if(pinned !== null && pinned !== '' && Number.isFinite(Number(pinned))) return Number(pinned) >>> 0;
+  return crypto.getRandomValues(new Uint32Array(1))[0];
+}
 const CONFIG = {
-  seed:    20260718,
+  seed:    resolveInitialSeed(),
   mapSize: 240,          // the forest is a fixed square this many units across
   trees:   1300,
   walk:    6,            // walking speed (units/s); Shift multiplies it
@@ -1352,6 +1363,20 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       return { idx, kind };
     }
     return null;
+  };
+
+  // LUL-196: reset a predator to roam without moving it. Existing hooks that
+  // exercise scent acquisition (checkScent/scentOnto) all teleport the predator,
+  // destroying any cover staging. This hook lets a test position the predator
+  // with qaHideBehindCoverKind, then call this to drop it back to roam so
+  // checkScent() actually runs. Returns the predator's current {x,z} on success
+  // so the caller can verify it was not relocated.
+  window.ForestEngine.qaSetPredatorRoam = function(idx){
+    const p = predators[idx];
+    if(!p) return null;
+    p.state = 'roam'; p.spotted = false; p.scentLock = 0; p.scentCalls = 0;
+    p.hunt = false; p.alert = 0; p.sniffsLeft = 0;
+    return { x: p.x, z: p.z };
   };
 
   window.ForestEngine.qaPredatorState = function(idx){

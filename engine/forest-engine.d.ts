@@ -52,6 +52,8 @@ declare global {
       qaHideBehindCover?: () => number | null;
       /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind } on success, null if no clear cover placement exists. */
       qaHideBehindCoverKind?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number; kind: 'wolf' | 'bear' | 'lion' } | null;
+      /** LUL-196: reset predator[idx] to roam without relocating it; returns {x,z} so callers can verify position unchanged, or null if idx doesn't resolve. */
+      qaSetPredatorRoam?: (idx: number) => { x: number; z: number } | null;
       /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
