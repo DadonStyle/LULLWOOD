@@ -50,6 +50,8 @@ declare global {
       qaOpenHideNearLion?: () => number | null;
       /** Places predator[0] and the player on opposite sides of a real (non-tree) cover prop. Returns 0, or null if no cover prop exists. */
       qaHideBehindCover?: () => number | null;
+      /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind } on success, null if no clear cover placement exists. */
+      qaHideBehindCoverKind?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number; kind: 'wolf' | 'bear' | 'lion' } | null;
       /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';

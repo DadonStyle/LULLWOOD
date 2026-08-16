@@ -1285,6 +1285,34 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return null;
   };
 
+  // LUL-121: species-specific cover hook. Same geometry as qaHideBehindCover
+  // but picks the first predator of the requested kind so tests can pin each
+  // species independently. Returns { idx, kind } on success, null on failure.
+  window.ForestEngine.qaHideBehindCoverKind = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    for(const c of coverData){
+      if(c.kind === 'tree') continue;
+      const reach = Math.max(c.hx, c.hz) + 3;
+      const px = c.x - reach, pz = c.z, qx = c.x + reach, qz = c.z;
+      if(blockedR(px, pz, p.rad) || blocked(qx, qz)) continue;
+      let clear = true;
+      const STEPS = 12;
+      for(let i = 1; i < STEPS; i++){
+        const u = i / STEPS;
+        if(blockedR(px + (qx-px)*u, pz + (qz-pz)*u, p.rad)){ clear = false; break; }
+      }
+      if(!clear) continue;
+      p.x = px; p.z = pz;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+      p.state = 'chase'; p.hunt = false;
+      player.x = qx; player.z = qz;
+      return { idx, kind };
+    }
+    return null;
+  };
+
   window.ForestEngine.qaPredatorState = function(idx){
     const p = predators[idx];
     return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft } : null;
