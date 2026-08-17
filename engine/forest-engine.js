@@ -572,7 +572,7 @@ const PSPEC = {
   // nose and the lion the weakest -- it hunts by stalking/sight, per LUL-24's
   // reserved two-stage stalk/circle behaviour -- so the three species stay
   // differentiated across both detection channels, not just sight.
-  wolf: { body:0x565b63, sz:1.0, len:1.6, h:0.9,  mane:false, ears:true,  speed:8.5, detect:42, eye:0xffd23a, rad:0.8, budget:6, nose:1.0 },
+  wolf: { body:0x565b63, sz:1.0, len:1.6, h:0.9,  mane:false, ears:true,  speed:8.5, detect:42, eye:0xadd8e6, rad:0.8, budget:6, nose:1.0 },
   bear: { body:0x3d2c22, sz:1.8, len:2.0, h:1.45, mane:false, ears:false, speed:6.8, detect:30, eye:0xff5a2a, rad:1.5, budget:9, nose:1.4 },
   lion: { body:0xc79a5b, sz:1.2, len:1.7, h:1.0,  mane:true,  ears:true,  speed:9.2, detect:48, eye:0xffcf3a, rad:1.0, budget:4, nose:0.75 },
 };
@@ -805,7 +805,7 @@ function hasLOS(x0,z0,x1,z1){
     const u = i/steps, cx = Math.floor((x0+(x1-x0)*u)/CELL), cz = Math.floor((z0+(z1-z0)*u)/CELL);
     const k = key(cx,cz); if(seen.has(k)) continue; seen.add(k);
     const arr = coverGrid.get(k); if(!arr) continue;
-    for(const c of arr) if(segRayVsAABB(x0,z0,x1,z1, c.x,c.z,c.hx,c.hz)) return false;
+    for(const c of arr){ const ry=c.ry??0,co=Math.cos(ry),si=Math.sin(ry),dx0=x0-c.x,dz0=z0-c.z,dx1=x1-c.x,dz1=z1-c.z; if(segRayVsAABB(dx0*co-dz0*si,dx0*si+dz0*co, dx1*co-dz1*si,dx1*si+dz1*co, 0,0,c.hx,c.hz)) return false; }
   }
   return true;
 }
@@ -1608,6 +1608,43 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // test; this lets e2e assert the carry -> arrive -> win transition without
   // depending on procedural-terrain pathing.
   window.ForestEngine.qaTeleportHome = function(){ player.x = CONFIG.home.x; player.z = CONFIG.home.z; };
+
+  // LUL-211: the cover-collision fix (coverBlockedR, folded into blocked())
+  // was unprovable from a test -- nothing outside the closure could read where
+  // the player ended up, so "you can walk through a boulder" could only ever be
+  // reported by a human. These two hooks close that: stage the player facing a
+  // prop of a given kind, hold W, then read the position back.
+  window.ForestEngine.qaProbePlayer = function(){
+    return { x: player.x, z: player.z, yaw: player.yaw };
+  };
+
+  // Drops the player `standoff` units on the -x side of the first reachable
+  // cover prop of `kind` and points them straight at it (forward is
+  // (-sin yaw, -cos yaw), so yaw = -PI/2 faces +x). Returns the prop's AABB and
+  // rotation (ry) so the caller can assert the player never enters it. Skips
+  // candidates whose standing spot or first forward step is already blocked --
+  // LUL-267's canopyBlockedR can block movement even when the spawn point itself
+  // is clear (player at a canopy edge), which would wedge the player and make the
+  // "player never moved" assertion fire falsely.
+  // LUL-288: props render rotated (c.ry), so a flat hx-based standoff can land
+  // inside the prop's true rotated collision boundary when hz binds instead of
+  // hx (see coverBlockedR() above). The player walks in +x with z pinned to
+  // c.z, so in the prop's local frame dz=0 the whole way and the true first
+  // blocked dx is -min((hx+pr)/|cos ry|, (hz+pr)/|sin ry|) -- same transform
+  // coverBlockedR() itself uses, pr=0.6 to match blocked()'s hardcoded radius.
+  // Standoff is that distance plus a 1-unit margin, not a flat offset.
+  window.ForestEngine.qaStageWalkIntoCover = function(kind){
+    for(const c of coverData){
+      if(c.kind !== kind) continue;
+      const co = Math.cos(c.ry), si = Math.sin(c.ry);
+      const standoff = Math.min((c.hx + 0.6) / Math.abs(co), (c.hz + 0.6) / Math.abs(si)) + 1;
+      const px = c.x - standoff, pz = c.z;
+      if(blocked(px, pz)) continue;
+      player.x = px; player.z = pz; player.yaw = -Math.PI/2;
+      return { prop: { x: c.x, z: c.z, hx: c.hx, hz: c.hz, ry: c.ry, kind: c.kind }, start: { x: px, z: pz } };
+    }
+    return null;
+  };
 
   // Same idea for the death path. Reaching it naturally means standing still until
   // `sinceClose > 30` forces a hunt, then waiting for the animal to cross the map --
