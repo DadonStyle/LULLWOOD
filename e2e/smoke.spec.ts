@@ -209,6 +209,15 @@ test.describe('lift the child / carry home / win', () => {
     await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
     await assertInViewport(page.locator('#winScreen'), page, '#winScreen');
     await expect(page.locator('#winScreen h1')).toHaveText('YOU WON');
+
+    // LUL-197: arriveHome() used to skip the exitPointerLock()/cursor reset that
+    // triggerDeath() and pickup() both do, so the win screen rendered underneath
+    // a still-engaged Pointer Lock -- clicks landed but the OS cursor stayed
+    // hidden/captured, making "Play again" look unclickable.
+    const pointerLocked = await page.evaluate(() => document.pointerLockElement !== null);
+    expect(pointerLocked, 'winning must release Pointer Lock (LUL-197)').toBe(false);
+    const cursor = await page.evaluate(() => document.body.style.cursor);
+    expect(cursor, 'winning must restore the OS cursor (LUL-197)').not.toBe('none');
   });
 });
 
