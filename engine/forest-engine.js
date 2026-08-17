@@ -1488,17 +1488,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   // Drops the player `standoff` units on the -x side of the first reachable
   // cover prop of `kind` and points them straight at it (forward is
-  // (-sin yaw, -cos yaw), so yaw = -PI/2 faces +x). Returns the prop's AABB so
-  // the caller can assert the player never enters it. Skips candidates whose
-  // standing spot is already blocked by unrelated geometry -- same guard
-  // qaHideBehindCover uses, same reason (a wedged start proves nothing).
+  // (-sin yaw, -cos yaw), so yaw = -PI/2 faces +x). Returns the prop's AABB and
+  // rotation (ry) so the caller can assert the player never enters it. Skips
+  // candidates whose standing spot or first forward step is already blocked --
+  // LUL-267's canopyBlockedR can block movement even when the spawn point itself
+  // is clear (player at a canopy edge), which would wedge the player and make the
+  // "player never moved" assertion fire falsely.
   window.ForestEngine.qaStageWalkIntoCover = function(kind){
     for(const c of coverData){
       if(c.kind !== kind) continue;
       const px = c.x - (c.hx + 1.6), pz = c.z;
-      if(blocked(px, pz)) continue;
+      if(blocked(px, pz) || blocked(px + 0.5, pz)) continue;
       player.x = px; player.z = pz; player.yaw = -Math.PI/2;
-      return { prop: { x: c.x, z: c.z, hx: c.hx, hz: c.hz, kind: c.kind }, start: { x: px, z: pz } };
+      return { prop: { x: c.x, z: c.z, hx: c.hx, hz: c.hz, ry: c.ry, kind: c.kind }, start: { x: px, z: pz } };
     }
     return null;
   };

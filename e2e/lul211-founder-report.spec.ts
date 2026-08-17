@@ -140,13 +140,21 @@ test.describe('LUL-211: cover props are solid', () => {
       // Moved toward the prop at all -- otherwise the test proves nothing
       // (a wedged player also never enters the box).
       expect(end.x, 'the player never moved toward the prop').toBeGreaterThan(start.x + 0.3);
-      // ...and stopped at its face. blocked() uses a 0.6 player radius, so the
-      // furthest legal x is (prop.x - prop.hx - 0.6); allow one 0.05s-clamped
-      // step of slack rather than pinning the exact sub-step.
-      const faceX = prop.x - prop.hx - 0.6;
+      // ...and stopped at its face. blocked() uses a 0.6 player radius. The player
+      // approaches in +x with dz=0, so the collision boundary in world-X depends on
+      // the prop's rotation (ry). In prop-local frame the player stops when BOTH
+      // |lx| < hx+0.6 AND |lz| < hz+0.6; since lx = dx*cos(ry) and lz = dx*sin(ry)
+      // (with dz_world=0), the first-blocked dx is
+      //   max(-(hx+0.6)/|cos(ry)|, -(hz+0.6)/|sin(ry)|)
+      // (clamp denominators away from zero). Allow one 0.05s-clamped step of slack.
+      const ry = prop.ry ?? 0;
+      const absCos = Math.max(Math.abs(Math.cos(ry)), 1e-6);
+      const absSin = Math.max(Math.abs(Math.sin(ry)), 1e-6);
+      const faceDx = Math.max(-(prop.hx + 0.6) / absCos, -(prop.hz + 0.6) / absSin);
+      const faceX = prop.x + faceDx;
       expect(
         end.x,
-        `player reached x=${end.x.toFixed(2)}, past the ${kind} face at x=${faceX.toFixed(2)} (prop centre ${prop.x.toFixed(2)}, hx ${prop.hx.toFixed(2)})`,
+        `player reached x=${end.x.toFixed(2)}, past the ${kind} face at x=${faceX.toFixed(2)} (prop centre ${prop.x.toFixed(2)}, hx ${prop.hx.toFixed(2)}, ry ${ry.toFixed(3)})`,
       ).toBeLessThan(faceX + 0.35);
     });
   }
