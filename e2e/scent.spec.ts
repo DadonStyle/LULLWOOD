@@ -105,8 +105,22 @@ test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
 // Setup: stage with qaHideBehindCoverKind (player behind prop, predator on
 // far side, both in known positions), then call qaSetPredatorRoam to reset
 // state to roam without moving the predator. Seed a fresh scent point at the
-// player's position, then wait and observe whether scentCalls increments --
-// i.e. whether checkScent() fires and scentOnto() accepts the trail.
+// predator's own position, then wait and observe whether scentCalls
+// increments -- i.e. whether checkScent() fires and scentOnto() accepts the
+// trail.
+//
+// LUL-242: seeding at the player's position (dx=0, dz=0) is what LUL-233/
+// LUL-241 review found geometrically unwinnable -- qaHideBehindCoverKind
+// always separates player and predator by >=6 units (2 * (max(hx,hz) + 3)
+// for whichever cover prop it finds), but checkScent()'s max possible detect
+// radius (bear, age 0, the freshest/most-sensitive case) is 3.08 units. No
+// prop size or species lets a point seeded at the player ever fall inside
+// that radius. Cover-clearance distance and scent-pickup distance are
+// different quantities. qaHideBehindCoverKind now also returns the player's
+// placed position (playerX/playerZ) so this test can compute an exact
+// offset back to the predator's real position instead of guessing a
+// constant -- reach varies per cover prop, so no fixed offset is safe.
+// See wiki: game/lul196-scent-behind-cover-geometry.
 //
 // Note on the stall observed during LUL-196 investigation: the predator placed
 // by qaHideBehindCoverKind sat at exactly placement-separation distance for
@@ -125,9 +139,12 @@ test.describe('scent acquisition behind cover (LUL-196)', () => {
       window.ForestEngine?.qaHideBehindCoverKind?.('bear') ?? null,
     );
     expect(staged, 'qaHideBehindCoverKind must find a valid cover placement').not.toBeNull();
-    const { idx } = staged!;
+    const { idx, playerX, playerZ } = staged!;
 
-    // Reset the predator to roam without relocating it.
+    // Reset the predator to roam without relocating it. Returns the
+    // predator's real (x,z), which is what we need to place the scent point
+    // within its detect radius regardless of how far cover staging put it
+    // from the player.
     const pos = await page.evaluate(
       (i) => window.ForestEngine?.qaSetPredatorRoam?.(i) ?? null,
       idx,
@@ -141,14 +158,15 @@ test.describe('scent acquisition behind cover (LUL-196)', () => {
     );
     expect(predAfterRoam?.state, 'predator must now be in roam').toBe('roam');
 
-    // Seed a fresh scent point at the player's current position (age=0).
-    // The player is behind the cover prop, so the predator has no LOS to them.
-    await page.evaluate(() => {
-      const pe = window.ForestEngine;
-      // Player position is accessible via the engine state; use a zero-offset
-      // seed relative to origin as a fallback if the helper is unavailable.
-      pe?.qaSeedScentPoint?.(0, 0, 0);
-    });
+    // Seed a fresh scent point exactly at the predator's real position
+    // (age=0): qaSeedScentPoint(dx, dz, age) offsets from the *player*, so
+    // the offset is the predator's position minus the player's. The player
+    // is still behind the cover prop and out of LOS -- only the scent point
+    // moves, not the player.
+    await page.evaluate(
+      ({ dx, dz }) => window.ForestEngine?.qaSeedScentPoint?.(dx, dz, 0),
+      { dx: pos!.x - playerX, dz: pos!.z - playerZ },
+    );
 
     // Wait for the predator's scentCalls to increment: checkScent() ran and
     // scentOnto() accepted the trail despite the player being behind cover.

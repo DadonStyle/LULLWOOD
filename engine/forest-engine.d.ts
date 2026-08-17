@@ -50,8 +50,10 @@ declare global {
       qaOpenHideNearLion?: () => number | null;
       /** Places predator[0] and the player on opposite sides of a real (non-tree) cover prop. Returns 0, or null if no cover prop exists. */
       qaHideBehindCover?: () => number | null;
-      /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind } on success, null if no clear cover placement exists. */
-      qaHideBehindCoverKind?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number; kind: 'wolf' | 'bear' | 'lion' } | null;
+      /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind, playerX, playerZ } on success (playerX/playerZ per LUL-242, the player's placed position -- needed to compute an exact offset back to the predator, since cover-clearance separation and scent-pickup radius are different quantities), null if no clear cover placement exists. */
+      qaHideBehindCoverKind?: (
+        kind: 'wolf' | 'bear' | 'lion',
+      ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; playerX: number; playerZ: number } | null;
       /** LUL-196: reset predator[idx] to roam without relocating it; returns {x,z} so callers can verify position unchanged, or null if idx doesn't resolve. */
       qaSetPredatorRoam?: (idx: number) => { x: number; z: number } | null;
       /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve. */
@@ -60,6 +62,7 @@ declare global {
         state: string;
         inv: string;
         sniffsLeft: number;
+        scentCalls: number;
       } | null;
     };
   }

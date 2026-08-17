@@ -1401,7 +1401,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   // LUL-121: species-specific cover hook. Same geometry as qaHideBehindCover
   // but picks the first predator of the requested kind so tests can pin each
-  // species independently. Returns { idx, kind } on success, null on failure.
+  // species independently. Returns { idx, kind, playerX, playerZ } on success,
+  // null on failure. LUL-242: playerX/playerZ (the player's placed position)
+  // are exposed so a caller can compute an exact offset back to the predator
+  // -- cover-clearance separation (>=6 units, driven by `reach`) is unrelated
+  // to and always exceeds scent-pickup radius (<=3.08 units), so a test that
+  // wants a scent point near the predator cannot derive it from a guessed
+  // constant offset; see wiki: game/lul196-scent-behind-cover-geometry.
   window.ForestEngine.qaHideBehindCoverKind = function(kind){
     const idx = predators.findIndex(p => p.kind === kind);
     if(idx < 0) return null;
@@ -1422,7 +1428,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
-      return { idx, kind };
+      return { idx, kind, playerX: qx, playerZ: qz };
     }
     return null;
   };
