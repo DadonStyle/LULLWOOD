@@ -8,9 +8,15 @@
 // Two scenarios, two tests below:
 //
 // 1. The actual "ordinary desktop" case (no touch signal at all -- the
-//    `chromium` project's plain default context). This is the regression this
-//    ticket most needs pinned: an untouched desktop must never mount the
-//    overlay, must bind desktop mode, and must never drift pitch on its own.
+//    `chromium` project's plain default context). An untouched desktop must
+//    never mount the overlay and must bind desktop mode. Its pitch-stability
+//    check is a baseline sanity check only, *not* a FACT 2 regression gate:
+//    with no overlay mounted, touchLook is structurally unreachable here --
+//    both the tick's touch-look block and the exposed `setTouchLook` action
+//    independently early-return unless `mode === 'mobile'`, and there is no
+//    UI or QA hook in desktop mode to drive it around those guards. Reverting
+//    FACT 2's fix would not make this test go red; test 2 below is where that
+//    guard is actually exercised, because only there is `mode` 'mobile'.
 //
 // 2. `hasTouch: true` layered onto that same desktop project. This was meant
 //    to reproduce FACT 1's exact trigger condition per the original spec plan
@@ -25,8 +31,10 @@
 //    `isMobile() === true` under `hasTouch: true` is *correct*, not a
 //    regression; the useful thing left to assert is that the app agrees with
 //    itself about it everywhere (no split-brain between the HUD's mount
-//    decision and the engine's own `mode`), which is the deeper fix FACT 2
-//    actually needed.
+//    decision and the engine's own `mode`), and -- because `mode` really is
+//    'mobile' here -- this is the test that can and does gate FACT 2 for
+//    real: it drives the right stick (including a lost pointerup) and proves
+//    a real mouse event has zero effect on pitch while classified mobile.
 //
 // The mobile-only half of this regression (FACT 3: stick-up must move the
 // player forward, not backward) lives in e2e/mobile/input-mode.spec.ts --
@@ -56,9 +64,10 @@ test.describe('ordinary desktop, no touch signal (LUL-274 FACT 1 / FACT 2 regres
 
     const pitchLater = (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.pitch;
 
-    // Exact equality, not "close to": FACT 2's bug was a second listener set
-    // writing player.pitch every frame, which is a continuous drift, not
-    // rounding noise -- any nonzero delta here is that bug back.
+    // Baseline sanity only (see file header): nothing in desktop mode ever
+    // writes pitch without input, so this can't distinguish fixed from
+    // reverted -- it just guards against an unrelated idle-drift bug here.
+    // The real FACT 2 regression gate is the mouse-vs-stick test below.
     expect(pitchLater).toBe(pitchAfterLock);
   });
 });
@@ -66,7 +75,7 @@ test.describe('ordinary desktop, no touch signal (LUL-274 FACT 1 / FACT 2 regres
 test.describe('touch-emulated desktop context (hasTouch: true)', () => {
   test.use({ hasTouch: true });
 
-  test('is classified mobile consistently everywhere (no split-brain), and pitch does not drift with zero stick input', async ({
+  test('is classified mobile consistently everywhere (no split-brain), the stick alone drives pitch (including a lost pointerup), and the mouse never also writes it', async ({
     page,
   }) => {
     await boot(page, { qaHooks: true });
@@ -85,10 +94,50 @@ test.describe('touch-emulated desktop context (hasTouch: true)', () => {
 
     await enter(page);
 
-    const pitchAfterEnter = (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.pitch;
-    await page.waitForTimeout(500); // zero stick input in between
-    const pitchLater = (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.pitch;
+    // REVIEW (PR #47): the previous version of this test only sampled pitch
+    // across an idle window with no input at all, so it could not go red
+    // against a revert of forest-engine.js's `if(mode === 'desktop')` guard
+    // around the mouse-look listeners -- touchLook was {0,0} throughout and
+    // nothing was ever exercised. Below actually drives both input paths.
 
-    expect(pitchLater).toBe(pitchAfterEnter);
+    // Phase 1: the right stick alone must drive pitch, including the
+    // documented "lost pointerup" trigger (game/lul274-input-mode-separation)
+    // -- drag it and deliberately withhold pointerup so the stick reads as
+    // still held while we sample.
+    const rightStick = page.getByTestId('rightStick');
+    await expect(rightStick).toBeVisible();
+    const box = await rightStick.boundingBox();
+    if (!box) throw new Error('rightStick has no bounding box');
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const pointerOpts = { pointerId: 1, pointerType: 'touch', isPrimary: true, bubbles: true };
+
+    const pitchBeforeStick = (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.pitch;
+    await rightStick.dispatchEvent('pointerdown', { ...pointerOpts, clientX: cx, clientY: cy });
+    await rightStick.dispatchEvent('pointermove', { ...pointerOpts, clientX: cx, clientY: cy - 30 }); // push up, above the dead zone
+    await page.waitForTimeout(300); // stuck "held" -- pointerup deliberately not sent yet
+    const pitchWhileStuck = (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.pitch;
+    expect(typeof pitchBeforeStick).toBe('number');
+    expect(pitchWhileStuck).not.toBe(pitchBeforeStick); // the touch path is actually live
+
+    // Release the stick before isolating the mouse's contribution below.
+    await rightStick.dispatchEvent('pointerup', { ...pointerOpts, clientX: cx, clientY: cy - 30 });
+    await page.waitForTimeout(200); // let touchLook settle back to {0,0}
+
+    // Phase 2: the actual FACT 2 regression gate -- with mode classified
+    // mobile, a real mouse event must have zero effect on pitch. Pre-fix
+    // (or with the `if(mode === 'desktop')` guard reverted) the desktop
+    // mouse-look listeners bind unconditionally, so this dispatch would move
+    // pitch; post-fix they are never registered in mobile mode at all.
+    const pitchBeforeMouse = (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.pitch;
+    await page.evaluate(() => {
+      const canvas = document.querySelector('canvas:not(#minimap)');
+      canvas?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      window.dispatchEvent(new MouseEvent('mousemove', { movementX: 400, movementY: 400, bubbles: true } as MouseEventInit));
+      window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    });
+    const pitchAfterMouse = (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.pitch;
+
+    expect(pitchAfterMouse).toBe(pitchBeforeMouse);
   });
 });
