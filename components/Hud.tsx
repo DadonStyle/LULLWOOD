@@ -264,7 +264,7 @@ export default function Hud({
           <div id="gateKeys">
             <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run
             <br />
-            <b>H</b> — hold still (cover breaks line of sight) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
+            <b>H</b> — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
             <br />
             <span style={{ fontSize: 11, opacity: 0.7 }}>on mobile: left stick — move &nbsp;·&nbsp; right stick — look &nbsp;·&nbsp; Hide / E buttons</span>
           </div>
