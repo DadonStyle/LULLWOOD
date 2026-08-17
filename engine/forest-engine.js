@@ -1680,6 +1680,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const p = predators[idx];
     return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft } : null;
   };
+
+  // LUL-275: exposes player.x/z/yaw/pitch plus the `mode` this init() bound
+  // ('desktop' | 'mobile'), so a regression spec can assert what actually
+  // bound at runtime instead of only what it requested via ?qaHooks -- the
+  // whole point of LUL-274's bug was that mode detection could disagree with
+  // reality. See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
+  window.ForestEngine.qaPlayerState = function(){
+    return { x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode };
+  };
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------

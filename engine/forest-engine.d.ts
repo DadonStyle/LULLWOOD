@@ -67,6 +67,10 @@ declare global {
         inv: string;
         sniffsLeft: number;
       } | null;
+      /** LUL-275: player position/orientation plus the `mode` ('desktop' | 'mobile')
+       * this init() actually bound -- proves which input branch bound at runtime,
+       * not just which the test requested. See wiki: game/lul274-input-mode-separation. */
+      qaPlayerState?: () => { x: number; z: number; yaw: number; pitch: number; mode: 'desktop' | 'mobile' };
     };
   }
 }
