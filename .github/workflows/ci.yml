@@ -52,6 +52,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  unit:
+    name: unit tests
+    runs-on: ubuntu-latest
+    # Same fork-scope guard as `build` — see the LUL-100 comment above `on:`.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: unit tests
+        run: npm test
+
   build:
     name: build, typecheck, lint
     runs-on: ubuntu-latest

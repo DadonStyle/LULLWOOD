@@ -32,3 +32,15 @@ git push origin HEAD:refs/heads/lul-42-short-description
 
 Never try to push `main` directly and never force-push it — the ruleset rejects
 both, for every actor including the founder.
+
+## Tests
+
+**Changing logic means changing its tests, in the same PR.** If you change a
+pure function's behaviour on purpose, update its unit tests in the same
+commit. A behaviour change with an untouched test file is not "tests still
+pass" — it means the tests were not testing that behaviour. New pure logic
+ships with its tests or it does not ship.
+
+Unit tests are `node --test`, colocated as `*.test.ts`. Pure logic only — no
+Three.js, no DOM, no `window`, no timers, no wall-clock reads, no unseeded
+`Math.random()`. Rendering and input stay Playwright's job.
