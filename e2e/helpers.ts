@@ -10,7 +10,7 @@
 // Deliberately not a Playwright fixture: the specs need to choose when to boot
 // (the console-error tracker has to be attached before `goto`), and a fixture
 // that auto-navigates would take that choice away.
-import { expect, type Page, type ConsoleMessage } from '@playwright/test';
+import { expect, type Page, type ConsoleMessage, type Locator } from '@playwright/test';
 
 // Centre of the 1280x720 viewport configured in playwright.config.ts. The gate
 // covers the whole viewport, so any point works -- centre is just the honest
@@ -66,4 +66,23 @@ export async function enter(page: Page) {
 /** Current objective banner text (empty string when it is not mounted). */
 export async function readObjective(page: Page) {
   return (await page.locator('#objective').textContent()) ?? '';
+}
+
+/**
+ * `toBeVisible()` only checks that an element isn't `display:none` and has a
+ * non-zero bounding box -- it does not check the box is inside the viewport
+ * (LUL-160: the canvas passed `toBeVisible()` while rendered a full viewport
+ * off-screen). This asserts the element's box actually intersects what a
+ * player would see.
+ */
+export async function assertInViewport(locator: Locator, page: Page, label = '') {
+  const box = await locator.boundingBox();
+  const viewport = page.viewportSize();
+  expect(viewport, `${label}: page must have a viewport size`).not.toBeNull();
+  const { width: vw, height: vh } = viewport!;
+  expect(box, `${label}: element must have a bounding box`).not.toBeNull();
+  expect(box!.x, `${label}: left edge in viewport`).toBeGreaterThanOrEqual(0);
+  expect(box!.y, `${label}: top edge in viewport`).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width, `${label}: right edge in viewport`).toBeLessThanOrEqual(vw + 1);
+  expect(box!.y + box!.height, `${label}: bottom edge in viewport`).toBeLessThanOrEqual(vh + 1);
 }
