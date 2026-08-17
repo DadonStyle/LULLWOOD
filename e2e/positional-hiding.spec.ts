@@ -35,7 +35,7 @@
 // tests actually assert on (canSee/hasLOS against the coverGrid) is
 // unchanged; rock and tagged trees still block sight exactly as before.
 import { test, expect } from '@playwright/test';
-import { boot, enter } from './helpers';
+import { assertInViewport, boot, enter } from './helpers';
 
 test.describe('positional hiding (LUL-22 / LUL-43)', () => {
   test('hiding in the open near a lion still gets you caught', async ({ page }) => {
@@ -72,6 +72,7 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     await expect(page.locator('#deathScreen'), 'the lion should have caught the player in the open').toBeVisible({
       timeout: 20_000,
     });
+    await assertInViewport(page.locator('#deathScreen'), page, '#deathScreen');
 
     // qaOpenHideNearLion specifically grabs a lion, so the death surface
     // should name it -- pins the scenario, not just "a death happened".
@@ -191,6 +192,7 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     await expect(page.locator('#deathScreen'), 'wolf should catch the player even while holding still in the open').toBeVisible({
       timeout: 20_000,
     });
+    await assertInViewport(page.locator('#deathScreen'), page, '#deathScreen');
     await expect(page.locator('#deathKind')).toHaveText('wolf');
   });
 });
