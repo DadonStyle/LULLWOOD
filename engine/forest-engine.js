@@ -1380,6 +1380,32 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // depending on procedural-terrain pathing.
   window.ForestEngine.qaTeleportHome = function(){ player.x = CONFIG.home.x; player.z = CONFIG.home.z; };
 
+  // LUL-211: the cover-collision fix (coverBlockedR, folded into blocked())
+  // was unprovable from a test -- nothing outside the closure could read where
+  // the player ended up, so "you can walk through a boulder" could only ever be
+  // reported by a human. These two hooks close that: stage the player facing a
+  // prop of a given kind, hold W, then read the position back.
+  window.ForestEngine.qaProbePlayer = function(){
+    return { x: player.x, z: player.z, yaw: player.yaw };
+  };
+
+  // Drops the player `standoff` units on the -x side of the first reachable
+  // cover prop of `kind` and points them straight at it (forward is
+  // (-sin yaw, -cos yaw), so yaw = -PI/2 faces +x). Returns the prop's AABB so
+  // the caller can assert the player never enters it. Skips candidates whose
+  // standing spot is already blocked by unrelated geometry -- same guard
+  // qaHideBehindCover uses, same reason (a wedged start proves nothing).
+  window.ForestEngine.qaStageWalkIntoCover = function(kind){
+    for(const c of coverData){
+      if(c.kind !== kind) continue;
+      const px = c.x - (c.hx + 1.6), pz = c.z;
+      if(blocked(px, pz)) continue;
+      player.x = px; player.z = pz; player.yaw = -Math.PI/2;
+      return { prop: { x: c.x, z: c.z, hx: c.hx, hz: c.hz, kind: c.kind }, start: { x: px, z: pz } };
+    }
+    return null;
+  };
+
   // Same idea for the death path. Reaching it naturally means standing still until
   // `sinceClose > 30` forces a hunt, then waiting for the animal to cross the map --
   // and both of those are measured in game time, which is not wall time: dt is
