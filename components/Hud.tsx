@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import TouchControls from './TouchControls';
+import DesktopControls from './DesktopControls';
+import MobileControls from './MobileControls';
+import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 
 // LUL-124: fullscreen toggle. `document.fullscreenEnabled` is false on
@@ -75,7 +77,7 @@ export interface EngineActions {
   setFog: (v: number) => void;
   toggleSound: () => void;
   regenMap: () => void;
-  // LUL-68: twin-stick touch input — called by TouchControls
+  // LUL-68: twin-stick touch input — called by MobileControls
   setTouchMove: (x: number, z: number) => void;
   setTouchLook: (x: number, y: number) => void;
   setTouchSprint: (v: boolean) => void;
@@ -202,11 +204,18 @@ export default function Hud({
 }) {
   const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
   const { best: bestTime, isNewBest } = useRunRecap(state.winVisible || state.deathVisible, state.survivedSeconds);
+  // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
+  // runs on the server and there's no hydration mismatch to worry about).
+  // Exactly one of DesktopControls/MobileControls mounts below.
+  const mobile = useState(() => isMobile())[0];
 
   return (
     <>
-      {/* LUL-68: twin-stick touch controls (only renders on touch-capable viewports) */}
-      <TouchControls actions={actions} entered={state.entered} />
+      {mobile ? (
+        <MobileControls actions={actions} entered={state.entered} />
+      ) : (
+        <DesktopControls />
+      )}
 
       <div id="panel">
         {/* Controlled, not `defaultValue`: the engine is the source of truth for

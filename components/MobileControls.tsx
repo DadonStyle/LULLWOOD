@@ -1,9 +1,10 @@
 'use client';
 
 // LUL-68: twin-stick touch controls for mobile.
-//
-// Renders only on touch-capable / no-pointer-lock viewports; desktop keyboard +
-// mouse-look are unaffected and neither stick appears there.
+// LUL-276: renamed from TouchControls.tsx and split from desktop input.
+// Mounting is decided once, by Hud.tsx, via lib/input-mode.ts's isMobile() --
+// this component no longer detects touch itself, and DesktopControls mounts
+// in its place on desktop. Exactly one of the two ever mounts.
 //
 // Layout:
 //   Left  stick  (bottom-left)  → movement   (setTouchMove)
@@ -14,7 +15,7 @@
 // Both sticks are always-visible fixed-position circles, not thumb-anchored on
 // first touch. This guarantees their touch regions never overlap.
 
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import type { EngineActions } from './Hud';
 
 // Dead-zone: stick must move beyond this fraction before input is emitted.
@@ -26,21 +27,6 @@ interface StickState {
   active: boolean;
   ox: number;  // offset from centre, clamped to [-RADIUS, RADIUS]
   oy: number;
-}
-
-// Lazy initializer: safe here because GameCanvas is ssr:false so this
-// component never runs on the server.
-function useTouchDevice() {
-  return useState(() => {
-    if (typeof window === 'undefined') return false;
-    // Pointer-lock unavailability is the canonical signal.
-    // Width ≤ 768 catches touch tablets that do expose the API.
-    return (
-      !document.documentElement.requestPointerLock ||
-      window.matchMedia('(max-width: 768px)').matches ||
-      navigator.maxTouchPoints > 0
-    );
-  })[0];
 }
 
 interface StickProps {
@@ -174,16 +160,14 @@ function ActionBtn({ label, onTap }: ActionBtnProps) {
   );
 }
 
-export default function TouchControls({
+export default function MobileControls({
   actions,
   entered,
 }: {
   actions: EngineActions | null;
   entered: boolean;
 }) {
-  const isTouch = useTouchDevice();
-
-  if (!isTouch || !actions) return null;
+  if (!actions) return null;
 
   const wrapper: React.CSSProperties = {
     position: 'fixed',
@@ -214,7 +198,11 @@ export default function TouchControls({
           <ActionBtn label="E" onTap={() => actions.triggerTouchInteract()} />
         )}
         <Stick
-          onMove={(nx, ny) => actions.setTouchMove(nx, ny)}
+          // LUL-274 FACT 3: the stick reports screen-down-positive ny, but
+          // the engine's iz axis is forward-positive (KeyW -> iz += 1). Flip
+          // the sign here, at the source, so nothing downstream has to know
+          // the stick and the engine disagree on which way is "up".
+          onMove={(nx, ny) => actions.setTouchMove(nx, -ny)}
           onSprint={(v) => actions.setTouchSprint(v)}
         />
       </div>
