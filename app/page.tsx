@@ -41,8 +41,7 @@ export default function Home() {
               <strong>Shift</strong> — run
             </li>
             <li>
-              <strong>H</strong> — hold still (use cover to break line of
-              sight)
+              <strong>H</strong> — hide (bushes and hollow logs only)
             </li>
             <li>
               <strong>E</strong> — lift and carry the child
@@ -58,9 +57,9 @@ export default function Home() {
             Most horror games hand you a weapon. Lullwood doesn&apos;t.
             Predators track you by line of sight and by a decaying scent
             trail you leave behind as you move — the only tool you have is
-            stillness: duck behind real cover, hold still, and let them lose
-            the trail. You win by carrying the child all the way home, not
-            just finding them.
+            stillness: duck into a bush or a hollow log, hold still, and let
+            them lose the trail. You win by carrying the child all the way
+            home, not just finding them.
           </p>
         </section>
       </main>

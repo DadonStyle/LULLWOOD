@@ -3,16 +3,28 @@
 //
 // Deterministic and baby-walk-free on purpose: `hidden` is pure client-side state
 // (engine/forest-engine.js: keydown KeyH handler + the tick()-loop moveKey check),
-// so there is nothing here that needs a predator, the seeded map, or a wall-clock
-// race against dt-clamped game time (wiki: systems/dt-clamp-vs-walltime). That is
-// exactly why this stays its own fast file instead of living inside smoke.spec.ts.
+// so there is nothing here that needs a predator or a wall-clock race against
+// dt-clamped game time (wiki: systems/dt-clamp-vs-walltime). That is exactly why
+// this stays its own fast file instead of living inside smoke.spec.ts.
+//
+// LUL-212: `hidden` can no longer be entered anywhere -- it requires standing at
+// a dedicated hiding-spot prop (bush/hollow log; see findHideSpot() in the
+// engine). The seeded map is now load-bearing for this spec, so `qaTeleportToHideSpot`
+// (added for this ticket) places the player at the nearest one before the first
+// KeyH press, the same "place deterministically instead of hunting the procedural
+// map" pattern e2e/positional-hiding.spec.ts already uses.
 import { test, expect } from '@playwright/test';
 import { boot, enter } from './helpers';
 
 test.describe('H hide toggle', () => {
   test('H toggles the Hidden status HUD, and moving breaks cover automatically', async ({ page }) => {
-    await boot(page);
+    await boot(page, { qaHooks: true });
     await enter(page);
+
+    const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
+    if (spot === null) {
+      throw new Error('qaTeleportToHideSpot returned null -- no bush/hollow-log hiding spot was found for this seed');
+    }
 
     // Not hiding yet: #status is unmounted (Hud.tsx only mounts it when
     // statusVisible, which is driven 1:1 by `hidden` outside a sniff event).
