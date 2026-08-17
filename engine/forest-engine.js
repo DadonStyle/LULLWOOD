@@ -1893,7 +1893,13 @@ function arriveHome(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds });
+  // LUL-303: updatePredators() (the only other place that clears the charge
+  // HUD) stops running once `playing` goes false here, so a charge/telegraph
+  // in flight at the exact moment of arrival would otherwise render on top
+  // of the win screen forever -- clear it the same way placePredators() does
+  // on restart.
+  activeCharges = 0;
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
 }
 function triggerDeath(kind){
