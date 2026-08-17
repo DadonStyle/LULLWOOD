@@ -1839,7 +1839,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // which is exactly what a test can't wait on reliably. Places the predator due
   // +x of the player at the midpoint of the trigger band, in the open (spawn
   // clearing has no cover, same guarantee qaOpenHideNearLion relies on), and
-  // faces the player -x so playerCanSee() would independently agree if re-checked.
+  // faces the player +x so playerCanSee() would independently agree if re-checked.
   // Returns the predator's `predators` index, or null if that species isn't spawned.
   window.ForestEngine.qaTriggerCharge = function(kind){
     if(kind !== 'wolf' && kind !== 'lion') return null;
@@ -1847,7 +1847,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(idx < 0) return null;
     const p = predators[idx];
     const dist = (CHARGE_TRIGGER_MIN + CHARGE_TRIGGER_MAX) / 2;
-    player.x = 0; player.z = 0; player.yaw = Math.PI/2;   // faces -x, i.e. toward the predator below
+    player.x = 0; player.z = 0; player.yaw = -Math.PI/2;   // forward = (-sin(yaw), -cos(yaw)) = (+1, 0), faces the predator below
     p.x = player.x + dist; p.z = player.z;
     p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.hunt = false;
     p.state = 'chase'; p.scentLock = 0; p.chargeCooldown = 0;
