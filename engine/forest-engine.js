@@ -715,7 +715,7 @@ function hasLOS(x0,z0,x1,z1){
     const u = i/steps, cx = Math.floor((x0+(x1-x0)*u)/CELL), cz = Math.floor((z0+(z1-z0)*u)/CELL);
     const k = key(cx,cz); if(seen.has(k)) continue; seen.add(k);
     const arr = coverGrid.get(k); if(!arr) continue;
-    for(const c of arr){ const ry=c.ry??0,co=Math.cos(-ry),si=Math.sin(-ry),dx0=x0-c.x,dz0=z0-c.z,dx1=x1-c.x,dz1=z1-c.z; if(segRayVsAABB(dx0*co-dz0*si,dx0*si+dz0*co, dx1*co-dz1*si,dx1*si+dz1*co, 0,0,c.hx,c.hz)) return false; }
+    for(const c of arr){ const ry=c.ry??0,co=Math.cos(ry),si=Math.sin(ry),dx0=x0-c.x,dz0=z0-c.z,dx1=x1-c.x,dz1=z1-c.z; if(segRayVsAABB(dx0*co-dz0*si,dx0*si+dz0*co, dx1*co-dz1*si,dx1*si+dz1*co, 0,0,c.hx,c.hz)) return false; }
   }
   return true;
 }
