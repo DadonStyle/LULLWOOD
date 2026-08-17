@@ -78,6 +78,10 @@ declare global {
        * band's midpoint, in the open. Returns the predator's `predators` index, or
        * null if that species isn't spawned or `kind` isn't `wolf`/`lion`. */
       qaTriggerCharge?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
+      /** LUL-275: snapshot of the player's transform and detected input mode --
+       * this init() actually bound -- proves which input branch bound at runtime,
+       * not just which the test requested. See wiki: game/lul274-input-mode-separation. */
+      qaPlayerState?: () => { x: number; z: number; yaw: number; pitch: number; mode: 'desktop' | 'mobile' };
     };
   }
 }

@@ -1856,6 +1856,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     beginChargeHud();
     return idx;
   };
+
+  // LUL-275: snapshot of the player's transform and detected input mode -- proves
+  // which input branch init() actually bound at runtime, not just which the test
+  // requested. See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
+  window.ForestEngine.qaPlayerState = function(){
+    return { x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode };
+  };
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
