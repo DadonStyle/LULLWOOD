@@ -126,6 +126,16 @@ moonGroup.add(
 );
 scene.add(moonGroup);
 const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playerLight);
+// LUL-40: player-controlled binary dim, hold KeyF. Two states only, on purpose --
+// a slider players set once and forget wouldn't be the every-second decision the
+// ticket wants. The lit radius shrinks along with intensity so dimming reads as
+// "smaller pool of light", not just "dimmer light in the same pool". Detection
+// math doesn't read this yet -- LUL-22's effectiveDetect() is the place to wire
+// it in as one more multiplier alongside stillness, deliberately left dormant
+// per the ticket's own sequencing note (ship the control first).
+const LIGHT_NORMAL = { intensity: 0.7, distance: 20 };
+const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
+let lightDimmed = false;
 
 // ---- Trees: one instanced "master tree", positions fixed per map ---------
 const trunkGeo = new THREE.CylinderGeometry(0.12, 0.20, 1.6, 6); trunkGeo.translate(0, 0.8, 0);
@@ -1329,6 +1339,7 @@ let hudState = {
   deathVisible: false, deathKind: 'wolf', lossRevealed: false,
   survivedSeconds: 0,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
+  lightDimmed: false,
 };
 function pushState(patch){
   let changed = false;
@@ -1828,6 +1839,18 @@ function tick(){
   eyeH += ((hidden ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
 
   const playing = entered && !paused && !won && !dead && !pickingUp;
+
+  // LUL-40: hold KeyF to dim. Read every frame like `running` below rather than
+  // from the keydown/keyup handlers, so releasing F while e.g. the pause menu is
+  // open (which stops updating `keys` mid-hold) can't strand the light dimmed.
+  const dimmed = playing && !!keys['KeyF'];
+  if(dimmed !== lightDimmed){
+    lightDimmed = dimmed;
+    const cfg = dimmed ? LIGHT_DIMMED : LIGHT_NORMAL;
+    playerLight.intensity = cfg.intensity;
+    playerLight.distance = cfg.distance;
+    pushState({ lightDimmed });
+  }
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
   if(playing && !hidden){

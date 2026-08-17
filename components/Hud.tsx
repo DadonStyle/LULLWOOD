@@ -63,6 +63,9 @@ export interface EngineHudState {
   pace: number;
   fog: number;
   soundOn: boolean;
+  // LUL-40: hold-to-dim follow-light, engine-driven (see engine/forest-engine.js
+  // tick()) -- read-only here, there's no setter because React never triggers it.
+  lightDimmed: boolean;
 }
 
 export interface EngineActions {
@@ -102,6 +105,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   pace: 6,
   fog: 0.04,
   soundOn: true,
+  lightDimmed: false,
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -237,6 +241,9 @@ export default function Hud({
         <button id="sound" onClick={() => actions?.toggleSound()}>
           Sound: {state.soundOn ? 'on' : 'off'}
         </button>
+        {/* LUL-40: readout only, not a control -- the engine drives this from the
+            held key (hold F), same one-directional emit path as pace/fog/soundOn. */}
+        <span id="lightState">Light: {state.lightDimmed ? 'dimmed' : 'normal'}</span>
         <button id="regen" onClick={() => actions?.regenMap()}>
           New map
         </button>
@@ -265,6 +272,8 @@ export default function Hud({
             <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run
             <br />
             <b>H</b> — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
+            <br />
+            <b>F</b> — hold to dim your light (smaller lit radius)
             <br />
             <span style={{ fontSize: 11, opacity: 0.7 }}>on mobile: left stick — move &nbsp;·&nbsp; right stick — look &nbsp;·&nbsp; Hide / E buttons</span>
           </div>
