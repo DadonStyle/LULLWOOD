@@ -15,9 +15,16 @@ import { track } from '@/lib/analytics';
 
 let activeDispose = null;
 
-function init(onStateChange) {
+function init(onStateChange, inputMode) {
   if (activeDispose) return null;   // already running; init() is idempotent
   const emitState = typeof onStateChange === 'function' ? onStateChange : function(){};
+  // LUL-276: 'desktop' | 'mobile', set once at init and never re-derived.
+  // Desktop binds pointer-lock/mouse listeners and mobile's touch setters
+  // become no-ops; mobile never binds the mouse listeners and the touchLook
+  // tick block never runs. See wiki game/lul274-input-mode-separation --
+  // this is the fix for the mouse and stick both writing player.yaw/pitch
+  // in the same frame.
+  const mode = inputMode === 'mobile' ? 'mobile' : 'desktop';
 
   const cleanupFns = [];
   function on(target, type, handler, opts) {
@@ -138,9 +145,40 @@ const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
 let lightDimmed = false;
 
 // ---- Trees: one instanced "master tree", positions fixed per map ---------
-const trunkGeo = new THREE.CylinderGeometry(0.12, 0.20, 1.6, 6); trunkGeo.translate(0, 0.8, 0);
-const cone1Geo = new THREE.ConeGeometry(1.15, 2.5, 7);           cone1Geo.translate(0, 2.1, 0);
-const cone2Geo = new THREE.ConeGeometry(0.78, 1.9, 7);           cone2Geo.translate(0, 3.35, 0);
+const CANOPY_R = 1.15;     // cone1Geo base radius, at its widest (near the ground)
+const CONE1_HEIGHT = 2.5, CONE1_Y = 2.1;
+const trunkGeo = new THREE.CylinderGeometry(0.12, 0.20, 1.6, 6);   trunkGeo.translate(0, 0.8, 0);
+const cone1Geo = new THREE.ConeGeometry(CANOPY_R, CONE1_HEIGHT, 7); cone1Geo.translate(0, CONE1_Y, 0);
+const cone2Geo = new THREE.ConeGeometry(0.78, 1.9, 7);             cone2Geo.translate(0, 3.35, 0);
+// LUL-267: cone1's radius at the player's own eye height, not its (much wider)
+// base -- a cone tapers, so the true cross-section the camera can hit is
+// narrower than the base almost everywhere along its height. Eye height is
+// fixed at CONFIG.eye while moving -- the only lower eye height (hiding,
+// 1.05) always exits hiding on the same frame movement resumes (see
+// exitHide() call site, `hidden && moveKey`), so no in-motion frame needs a
+// wider radius than this.
+//
+// Trees are instance-scaled uniformly around the origin (dummy.scale.setScalar(s)
+// in generateMap()), so cone1's baked-in translate scales too: a *larger* tree's
+// foliage base sits proportionally *higher* off the ground, not just wider. So
+// CONFIG.eye intersects a different relative slice of the cone depending on s --
+// this is why the visual bug gets worse on large trees (LUL-266's own finding):
+// at large s the (risen) base is close to eye height, so the true cross-section
+// there is close to the full base radius; at small s, eye height sits close to
+// the (also risen-in-scale, but tiny) apex, where the cross-section is nearly 0.
+// A first pass used a single scale-independent coefficient (fixed fraction of
+// CANOPY_R*s) and was measured live to be wrong in both directions: too wide for
+// small/mid trees (walled the player in a few units from spawn -- neighbouring
+// canopies' widened circles started overlapping previously-walkable gaps, the
+// same shape of regression LUL-119 already burned once, just against the player
+// instead of a predator) and, since it was still only ~46% of the base radius,
+// too narrow to fully clear large trees. canopyRadiusAtEye() derives the exact
+// per-tree value from the cone's actual (scaled) geometry instead of guessing
+// one coefficient for every tree size.
+const CONE1_APEX_Y = CONE1_Y + CONE1_HEIGHT/2;   // local apex height, before per-tree scale
+function canopyRadiusAtEye(s){
+  return Math.max(0, (CANOPY_R / CONE1_HEIGHT) * (CONE1_APEX_Y*s - CONFIG.eye));
+}
 const trunkMat   = new THREE.MeshStandardMaterial({ color: CONFIG.trunk,   roughness: 1 });
 const foliageMat = new THREE.MeshStandardMaterial({ color: CONFIG.foliage, roughness: 1 });
 
@@ -192,7 +230,7 @@ const HIDE_RADIUS = 2.2;   // proximity, beyond the prop's own footprint, to sti
 
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
-let treeData = [];            // {x,z,s,cr}
+let treeData = [];            // {x,z,s,cr,crCanopy}
 const CELL = 8;
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
@@ -230,18 +268,58 @@ function blockedR(x,z,pr){
 // produced a stuck-predator freeze, the exact class of bug LUL-119 fixed.
 // Whether predators should also collide with cover is a real follow-up
 // question (LUL-222), just not one this fix's scope covers.
+//
+// LUL-268: props render rotated (layoutCoverMeshes sets dummy.rotation.set(0,
+// c.ry, 0)), so a world-space axis-aligned test against hx/hz is wrong for
+// any non-tree, non-square prop (logs are 7:1) -- same bug class as the
+// hasLOS() sign fix (systems/los-rotated-aabb-sign-bug). World->local needs
+// the *inverse* of Three's Y-rotation matrix, which works out to the same
+// (cos,sin) pair evaluated at +ry, not -ry: localX = dx*co - dz*si,
+// localZ = dx*si + dz*co.
 function coverBlockedR(x,z,pr){
   const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
   for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
     const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
     for(const c of arr){
       if(c.kind === 'tree') continue;
-      if(Math.abs(x - c.x) < c.hx + pr && Math.abs(z - c.z) < c.hz + pr) return true;
+      const dx = x - c.x, dz = z - c.z;
+      const co = Math.cos(c.ry), si = Math.sin(c.ry);
+      const lx = dx*co - dz*si, lz = dx*si + dz*co;
+      if(Math.abs(lx) < c.hx + pr && Math.abs(lz) < c.hz + pr) return true;
     }
   }
   return false;
 }
-function blocked(x,z){ return blockedR(x,z,0.6) || coverBlockedR(x,z,0.6); }
+// LUL-267: the visual foliage canopy (cone1Geo, base radius CANOPY_R*s) is
+// ~3.3x wider than the trunk movement-collision radius (t.cr = 0.35*s) above,
+// so the player could walk close enough for the camera to end up inside the
+// canopy mesh -- point-blank, unfogged foliage material fills the screen for
+// under a second until they walk through (LUL-266 root cause).
+//
+// Same split as coverBlockedR() just above, and for the same reason: predators
+// call blockedR() directly, not blocked(), for their own steering, and the
+// standing comment on coverBlockedR() already documents that touching the
+// shared movement-collision radius caused a stuck-predator regression
+// (LUL-119). Widening t.cr itself (the simpler fix) would change predator
+// pathing near every tree; this only ever affects the player's own movement
+// block, so predator behaviour near trees is unchanged.
+//
+// Tuning: before this, the player could approach to `t.cr+0.6` (0.85-1.44
+// units, tree-scale dependent) while the canopy reached out to `CANOPY_R*s`
+// (0.8-2.76 units) -- always past the canopy edge, worse on large trees.
+// `t.crCanopy` (== `canopyRadiusAtEye(s)`, see that function's comment for why
+// this isn't simply CANOPY_R*s) is the minimum radius that still guarantees
+// the camera can't end up inside the mesh while moving, without over-blocking
+// gaps between trees that were previously walkable.
+function canopyBlockedR(x,z){
+  const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
+  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
+    const arr = grid.get(key(gx,gz)); if(!arr) continue;
+    for(const t of arr){ const dx=x-t.x, dz=z-t.z, rr=t.crCanopy; if(dx*dx+dz*dz < rr*rr) return true; }
+  }
+  return false;
+}
+function blocked(x,z){ return blockedR(x,z,0.6) || coverBlockedR(x,z,0.6) || canopyBlockedR(x,z); }
 
 function buildCoverGrid(){
   coverGrid = new Map();
@@ -317,7 +395,7 @@ function generateMap(seed){
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
     const s = 0.7 + rng()*1.7;
-    treeData.push({ x, z, s, cr: 0.35*s });
+    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s) });
   }
   for(let i=0; i<CONFIG.trees; i++){
     if(i < treeData.length){
@@ -1010,28 +1088,36 @@ function applyLook(dx, dy){
   player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - dy*SENS));
 }
 function requestLock(){ if(el.requestPointerLock) el.requestPointerLock(); }
-on(document, 'pointerlockchange', () => {
-  locked = document.pointerLockElement === el;
-  if(locked){
-    setPaused(false);
-    // LUL-153: the actual "gameplay begins" moment -- distinct from the gate
-    // click (cta_start_clicked, fired in Hud.tsx), which only requests the
-    // lock; this is the browser actually granting it.
-    if(entered && !gameStartFired){ gameStartFired = true; track({ event: 'game_start', seed: currentSeed }); }
-  }
-  else if(entered && !won && !dead && !pickingUp) setPaused(true);     // Esc / released lock -> menu
-});
-on(document, 'pointerlockerror', () => { locked = false; });
-on(el, 'mousedown', () => {
-  if(paused){ setPaused(false); requestLock(); return; }   // click to look again
-  if(!locked){ dragging = true; el.style.cursor = 'grabbing'; }
-});
-on(window, 'mouseup', () => { dragging = false; el.style.cursor = 'default'; });
-on(window, 'mousemove', e => {
-  if(locked) applyLook(e.movementX, e.movementY);
-  else if(dragging) applyLook(e.movementX, e.movementY);
-});
-// LUL-68: twin-stick touch input — populated by the React TouchControls
+// LUL-276: these listeners are the desktop mouse-look mechanism -- byte-
+// identical to before (SENS, pointer lock, movementX/movementY, drag
+// fallback), just bound only in desktop mode. In mobile mode `locked`/
+// `dragging` simply stay false forever and nothing here ever runs, so a
+// stray mousemove/pointerlockchange can't reach player.yaw/pitch alongside
+// the touch stick.
+if(mode === 'desktop'){
+  on(document, 'pointerlockchange', () => {
+    locked = document.pointerLockElement === el;
+    if(locked){
+      setPaused(false);
+      // LUL-153: the actual "gameplay begins" moment -- distinct from the gate
+      // click (cta_start_clicked, fired in Hud.tsx), which only requests the
+      // lock; this is the browser actually granting it.
+      if(entered && !gameStartFired){ gameStartFired = true; track({ event: 'game_start', seed: currentSeed }); }
+    }
+    else if(entered && !won && !dead && !pickingUp) setPaused(true);     // Esc / released lock -> menu
+  });
+  on(document, 'pointerlockerror', () => { locked = false; });
+  on(el, 'mousedown', () => {
+    if(paused){ setPaused(false); requestLock(); return; }   // click to look again
+    if(!locked){ dragging = true; el.style.cursor = 'grabbing'; }
+  });
+  on(window, 'mouseup', () => { dragging = false; el.style.cursor = 'default'; });
+  on(window, 'mousemove', e => {
+    if(locked) applyLook(e.movementX, e.movementY);
+    else if(dragging) applyLook(e.movementX, e.movementY);
+  });
+}
+// LUL-68: twin-stick touch input — populated by the React MobileControls
 // component via the action functions returned below. The old free-drag-anywhere
 // touch look is removed; right stick replaces it with a rate-based camera.
 const touchMove = { x: 0, z: 0 };   // normalised direction [-1..1]
@@ -1818,16 +1904,24 @@ function tick(){
   rafId = requestAnimationFrame(tick);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
 
-  // LUL-68: right stick look rate applied each frame before movement
-  if(touchLook.x || touchLook.y){
-    const YAW_SPEED = 2.2, PITCH_SPEED = 1.5;  // rad/s at full stick
-    player.yaw -= touchLook.x * YAW_SPEED * dt;
-    player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - touchLook.y * PITCH_SPEED * dt));
+  // LUL-68: right stick look rate applied each frame before movement.
+  // LUL-276: mobile-only -- in desktop mode this whole block is dead, not
+  // merely fed zeroes, because setTouchLook is a no-op there (see below) and
+  // this `if` never runs in the first place. YAW/PITCH halved-ish from the
+  // original 2.2/1.5 (tuning call, tester+founder to confirm -- see wiki
+  // game/lul274-input-mode-separation).
+  let hasTouchMove = false;
+  if(mode === 'mobile'){
+    if(touchLook.x || touchLook.y){
+      const YAW_SPEED = 1.1, PITCH_SPEED = 0.7;  // rad/s at full stick
+      player.yaw -= touchLook.x * YAW_SPEED * dt;
+      player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - touchLook.y * PITCH_SPEED * dt));
+    }
+    hasTouchMove = Math.hypot(touchMove.x, touchMove.z) > 0.15;
   }
 
   // hiding: H toggles crouch at a hiding spot (LUL-212, see findHideSpot/
   // toggleHidden above), any movement key breaks it
-  const hasTouchMove = Math.hypot(touchMove.x, touchMove.z) > 0.15;
   const moveKey = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
   if(hidden && (moveKey || hasTouchMove)) exitHide();
   hideTime = hidden ? hideTime + dt : 0;
@@ -2129,11 +2223,15 @@ tick();
   // direction React is allowed to reach into the engine, as opposed to state,
   // which only ever flows the other way via emitState().
   //
-  // LUL-68: touch-stick setters. React's TouchControls component calls these
+  // LUL-68: touch-stick setters. React's MobileControls component calls these
   // on every pointer move / pointer up. The engine reads them in tick().
-  function setTouchMove(x, z) { touchMove.x = x; touchMove.z = z; }
-  function setTouchLook(x, y) { touchLook.x = x; touchLook.y = y; }
-  function setTouchSprint(v)  { touchSprint = v; }
+  // LUL-276: no-ops outside mobile mode, so nothing can write touch state
+  // for the desktop tick() to accidentally read (it never does today, since
+  // the touchLook block itself is mode-gated, but this keeps the setters
+  // themselves honest about what mode they're allowed to affect).
+  function setTouchMove(x, z) { if(mode !== 'mobile') return; touchMove.x = x; touchMove.z = z; }
+  function setTouchLook(x, y) { if(mode !== 'mobile') return; touchLook.x = x; touchLook.y = y; }
+  function setTouchSprint(v)  { if(mode !== 'mobile') return; touchSprint = v; }
   function triggerTouchHide() {
     const playing = entered && !won && !dead && !pickingUp;
     if(playing && !paused) toggleHidden();
