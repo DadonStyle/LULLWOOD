@@ -7,7 +7,13 @@
 // there's a single source of truth.
 import type { EngineActions, EngineHudState } from '@/components/Hud';
 
-export function init(onStateChange?: (state: EngineHudState) => void): EngineActions | null;
+// LUL-276: inputMode picks which listeners the engine binds -- 'desktop'
+// (default) wires pointer-lock/mouse, 'mobile' leaves those unbound and
+// makes the touch setters live. See wiki game/lul274-input-mode-separation.
+export function init(
+  onStateChange?: (state: EngineHudState) => void,
+  inputMode?: 'desktop' | 'mobile',
+): EngineActions | null;
 export function dispose(): void;
 
 // LUL-35 (pass 2): the `window.ForestEngine` shape used to be re-declared by
@@ -50,8 +56,12 @@ declare global {
       qaOpenHideNearLion?: () => number | null;
       /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble/log; LUL-212 narrowed this from any non-tree cover prop). Returns 0, or null if no hiding-spot prop exists. */
       qaHideBehindCover?: () => number | null;
-      /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind } on success, null if no clear hiding-spot placement exists. */
-      qaHideBehindCoverKind?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number; kind: 'wolf' | 'bear' | 'lion' } | null;
+      /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind, playerX, playerZ } on success (playerX/playerZ per LUL-242, the player's placed position -- needed to compute an exact offset back to the predator, since cover-clearance separation and scent-pickup radius are different quantities), null if no clear hiding-spot placement exists. */
+      qaHideBehindCoverKind?: (
+        kind: 'wolf' | 'bear' | 'lion',
+      ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; playerX: number; playerZ: number } | null;
+      /** LUL-196: reset predator[idx] to roam without relocating it; returns {x,z} so callers can verify position unchanged, or null if idx doesn't resolve. */
+      qaSetPredatorRoam?: (idx: number) => { x: number; z: number } | null;
       /** LUL-212: teleports the player to the nearest hiding spot (bramble/log), no predator involved. Returns the spot's kind, or null if none were generated. */
       qaTeleportToHideSpot?: () => string | null;
       /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve. */
@@ -60,6 +70,7 @@ declare global {
         state: string;
         inv: string;
         sniffsLeft: number;
+        scentCalls: number;
       } | null;
     };
   }

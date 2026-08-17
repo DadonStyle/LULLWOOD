@@ -15,9 +15,16 @@ import { track } from '@/lib/analytics';
 
 let activeDispose = null;
 
-function init(onStateChange) {
+function init(onStateChange, inputMode) {
   if (activeDispose) return null;   // already running; init() is idempotent
   const emitState = typeof onStateChange === 'function' ? onStateChange : function(){};
+  // LUL-276: 'desktop' | 'mobile', set once at init and never re-derived.
+  // Desktop binds pointer-lock/mouse listeners and mobile's touch setters
+  // become no-ops; mobile never binds the mouse listeners and the touchLook
+  // tick block never runs. See wiki game/lul274-input-mode-separation --
+  // this is the fix for the mouse and stick both writing player.yaw/pitch
+  // in the same frame.
+  const mode = inputMode === 'mobile' ? 'mobile' : 'desktop';
 
   const cleanupFns = [];
   function on(target, type, handler, opts) {
@@ -1081,28 +1088,36 @@ function applyLook(dx, dy){
   player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - dy*SENS));
 }
 function requestLock(){ if(el.requestPointerLock) el.requestPointerLock(); }
-on(document, 'pointerlockchange', () => {
-  locked = document.pointerLockElement === el;
-  if(locked){
-    setPaused(false);
-    // LUL-153: the actual "gameplay begins" moment -- distinct from the gate
-    // click (cta_start_clicked, fired in Hud.tsx), which only requests the
-    // lock; this is the browser actually granting it.
-    if(entered && !gameStartFired){ gameStartFired = true; track({ event: 'game_start', seed: currentSeed }); }
-  }
-  else if(entered && !won && !dead && !pickingUp) setPaused(true);     // Esc / released lock -> menu
-});
-on(document, 'pointerlockerror', () => { locked = false; });
-on(el, 'mousedown', () => {
-  if(paused){ setPaused(false); requestLock(); return; }   // click to look again
-  if(!locked){ dragging = true; el.style.cursor = 'grabbing'; }
-});
-on(window, 'mouseup', () => { dragging = false; el.style.cursor = 'default'; });
-on(window, 'mousemove', e => {
-  if(locked) applyLook(e.movementX, e.movementY);
-  else if(dragging) applyLook(e.movementX, e.movementY);
-});
-// LUL-68: twin-stick touch input — populated by the React TouchControls
+// LUL-276: these listeners are the desktop mouse-look mechanism -- byte-
+// identical to before (SENS, pointer lock, movementX/movementY, drag
+// fallback), just bound only in desktop mode. In mobile mode `locked`/
+// `dragging` simply stay false forever and nothing here ever runs, so a
+// stray mousemove/pointerlockchange can't reach player.yaw/pitch alongside
+// the touch stick.
+if(mode === 'desktop'){
+  on(document, 'pointerlockchange', () => {
+    locked = document.pointerLockElement === el;
+    if(locked){
+      setPaused(false);
+      // LUL-153: the actual "gameplay begins" moment -- distinct from the gate
+      // click (cta_start_clicked, fired in Hud.tsx), which only requests the
+      // lock; this is the browser actually granting it.
+      if(entered && !gameStartFired){ gameStartFired = true; track({ event: 'game_start', seed: currentSeed }); }
+    }
+    else if(entered && !won && !dead && !pickingUp) setPaused(true);     // Esc / released lock -> menu
+  });
+  on(document, 'pointerlockerror', () => { locked = false; });
+  on(el, 'mousedown', () => {
+    if(paused){ setPaused(false); requestLock(); return; }   // click to look again
+    if(!locked){ dragging = true; el.style.cursor = 'grabbing'; }
+  });
+  on(window, 'mouseup', () => { dragging = false; el.style.cursor = 'default'; });
+  on(window, 'mousemove', e => {
+    if(locked) applyLook(e.movementX, e.movementY);
+    else if(dragging) applyLook(e.movementX, e.movementY);
+  });
+}
+// LUL-68: twin-stick touch input — populated by the React MobileControls
 // component via the action functions returned below. The old free-drag-anywhere
 // touch look is removed; right stick replaces it with a rate-based camera.
 const touchMove = { x: 0, z: 0 };   // normalised direction [-1..1]
@@ -1625,7 +1640,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   // LUL-121: species-specific cover hook. Same geometry as qaHideBehindCover
   // but picks the first predator of the requested kind so tests can pin each
-  // species independently. Returns { idx, kind } on success, null on failure.
+  // species independently. Returns { idx, kind, playerX, playerZ } on success,
+  // null on failure. LUL-242: playerX/playerZ (the player's placed position)
+  // are exposed so a caller can compute an exact offset back to the predator
+  // -- cover-clearance separation (driven by `predReach`/`hideReach`, which
+  // vary per prop) is unrelated to and can exceed scent-pickup radius
+  // (<=3.08 units at freshest/bear), so a test that wants a scent point near
+  // the predator cannot derive it from a guessed constant offset; see wiki:
+  // game/lul196-scent-behind-cover-geometry.
   window.ForestEngine.qaHideBehindCoverKind = function(kind){
     const idx = predators.findIndex(p => p.kind === kind);
     if(idx < 0) return null;
@@ -1646,9 +1668,23 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
-      return { idx, kind };
+      return { idx, kind, playerX: qx, playerZ: qz };
     }
     return null;
+  };
+
+  // LUL-196: reset a predator to roam without moving it. Existing hooks that
+  // exercise scent acquisition (checkScent/scentOnto) all teleport the predator,
+  // destroying any cover staging. This hook lets a test position the predator
+  // with qaHideBehindCoverKind, then call this to drop it back to roam so
+  // checkScent() actually runs. Returns the predator's current {x,z} on success
+  // so the caller can verify it was not relocated.
+  window.ForestEngine.qaSetPredatorRoam = function(idx){
+    const p = predators[idx];
+    if(!p) return null;
+    p.state = 'roam'; p.spotted = false; p.scentLock = 0; p.scentCalls = 0;
+    p.hunt = false; p.alert = 0; p.sniffsLeft = 0;
+    return { x: p.x, z: p.z };
   };
 
   // LUL-212: teleport the player to the nearest hiding spot (bramble/log),
@@ -1663,7 +1699,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   window.ForestEngine.qaPredatorState = function(idx){
     const p = predators[idx];
-    return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft } : null;
+    return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls } : null;
   };
 }
 
@@ -1868,16 +1904,24 @@ function tick(){
   rafId = requestAnimationFrame(tick);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
 
-  // LUL-68: right stick look rate applied each frame before movement
-  if(touchLook.x || touchLook.y){
-    const YAW_SPEED = 2.2, PITCH_SPEED = 1.5;  // rad/s at full stick
-    player.yaw -= touchLook.x * YAW_SPEED * dt;
-    player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - touchLook.y * PITCH_SPEED * dt));
+  // LUL-68: right stick look rate applied each frame before movement.
+  // LUL-276: mobile-only -- in desktop mode this whole block is dead, not
+  // merely fed zeroes, because setTouchLook is a no-op there (see below) and
+  // this `if` never runs in the first place. YAW/PITCH halved-ish from the
+  // original 2.2/1.5 (tuning call, tester+founder to confirm -- see wiki
+  // game/lul274-input-mode-separation).
+  let hasTouchMove = false;
+  if(mode === 'mobile'){
+    if(touchLook.x || touchLook.y){
+      const YAW_SPEED = 1.1, PITCH_SPEED = 0.7;  // rad/s at full stick
+      player.yaw -= touchLook.x * YAW_SPEED * dt;
+      player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - touchLook.y * PITCH_SPEED * dt));
+    }
+    hasTouchMove = Math.hypot(touchMove.x, touchMove.z) > 0.15;
   }
 
   // hiding: H toggles crouch at a hiding spot (LUL-212, see findHideSpot/
   // toggleHidden above), any movement key breaks it
-  const hasTouchMove = Math.hypot(touchMove.x, touchMove.z) > 0.15;
   const moveKey = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
   if(hidden && (moveKey || hasTouchMove)) exitHide();
   hideTime = hidden ? hideTime + dt : 0;
@@ -2179,11 +2223,15 @@ tick();
   // direction React is allowed to reach into the engine, as opposed to state,
   // which only ever flows the other way via emitState().
   //
-  // LUL-68: touch-stick setters. React's TouchControls component calls these
+  // LUL-68: touch-stick setters. React's MobileControls component calls these
   // on every pointer move / pointer up. The engine reads them in tick().
-  function setTouchMove(x, z) { touchMove.x = x; touchMove.z = z; }
-  function setTouchLook(x, y) { touchLook.x = x; touchLook.y = y; }
-  function setTouchSprint(v)  { touchSprint = v; }
+  // LUL-276: no-ops outside mobile mode, so nothing can write touch state
+  // for the desktop tick() to accidentally read (it never does today, since
+  // the touchLook block itself is mode-gated, but this keeps the setters
+  // themselves honest about what mode they're allowed to affect).
+  function setTouchMove(x, z) { if(mode !== 'mobile') return; touchMove.x = x; touchMove.z = z; }
+  function setTouchLook(x, y) { if(mode !== 'mobile') return; touchLook.x = x; touchLook.y = y; }
+  function setTouchSprint(v)  { if(mode !== 'mobile') return; touchSprint = v; }
   function triggerTouchHide() {
     const playing = entered && !won && !dead && !pickingUp;
     if(playing && !paused) toggleHidden();
