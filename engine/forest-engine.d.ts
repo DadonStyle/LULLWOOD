@@ -7,7 +7,13 @@
 // there's a single source of truth.
 import type { EngineActions, EngineHudState } from '@/components/Hud';
 
-export function init(onStateChange?: (state: EngineHudState) => void): EngineActions | null;
+// LUL-276: inputMode picks which listeners the engine binds -- 'desktop'
+// (default) wires pointer-lock/mouse, 'mobile' leaves those unbound and
+// makes the touch setters live. See wiki game/lul274-input-mode-separation.
+export function init(
+  onStateChange?: (state: EngineHudState) => void,
+  inputMode?: 'desktop' | 'mobile',
+): EngineActions | null;
 export function dispose(): void;
 
 // LUL-35 (pass 2): the `window.ForestEngine` shape used to be re-declared by
