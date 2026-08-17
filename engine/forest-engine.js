@@ -261,13 +261,24 @@ function blockedR(x,z,pr){
 // produced a stuck-predator freeze, the exact class of bug LUL-119 fixed.
 // Whether predators should also collide with cover is a real follow-up
 // question (LUL-222), just not one this fix's scope covers.
+//
+// LUL-268: props render rotated (layoutCoverMeshes sets dummy.rotation.set(0,
+// c.ry, 0)), so a world-space axis-aligned test against hx/hz is wrong for
+// any non-tree, non-square prop (logs are 7:1) -- same bug class as the
+// hasLOS() sign fix (systems/los-rotated-aabb-sign-bug). World->local needs
+// the *inverse* of Three's Y-rotation matrix, which works out to the same
+// (cos,sin) pair evaluated at +ry, not -ry: localX = dx*co - dz*si,
+// localZ = dx*si + dz*co.
 function coverBlockedR(x,z,pr){
   const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
   for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
     const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
     for(const c of arr){
       if(c.kind === 'tree') continue;
-      if(Math.abs(x - c.x) < c.hx + pr && Math.abs(z - c.z) < c.hz + pr) return true;
+      const dx = x - c.x, dz = z - c.z;
+      const co = Math.cos(c.ry), si = Math.sin(c.ry);
+      const lx = dx*co - dz*si, lz = dx*si + dz*co;
+      if(Math.abs(lx) < c.hx + pr && Math.abs(lz) < c.hz + pr) return true;
     }
   }
   return false;
