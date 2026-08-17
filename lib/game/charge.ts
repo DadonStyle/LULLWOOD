@@ -18,10 +18,20 @@ export interface ChargeState {
   phase: ChargePhase;
   /** seconds elapsed in the current phase */
   t: number;
-  /** distance (units) the predator was from the player when the charge started -- also
-   * the overshoot distance once dodged, so a successful dodge always sprints past by
-   * exactly the distance it closed to get there. */
+  /** distance (units) the predator was from the player when the charge started.
+   * Fixed for the life of the charge -- feeds chargeSpeed() so telegraph->charging
+   * and the overshoot run share one speed, same as always. */
   distance: number;
+  /** Only meaningful during 'overshoot': how long (seconds, at that same speed) the
+   * predator actually spent closing distance before the jump landed -- not
+   * CHARGE_RUN_TIME. A dodge thrown right as the tell starts means the predator
+   * has barely moved, so the overshoot should barely continue either; a dodge
+   * thrown right at the window's edge means it had nearly closed the full gap, so
+   * the overshoot nearly repeats it. Using a fixed CHARGE_RUN_TIME here regardless
+   * of when the jump landed was the LUL-213 bug: an early, correctly-timed dodge
+   * still overshot the *full original* distance and landed back on the player. 0
+   * outside 'overshoot'. */
+  overshootDuration: number;
 }
 
 // A charge only makes sense at close-to-mid range: too near and there is no
@@ -53,7 +63,7 @@ export function shouldTriggerCharge(dist: number, dt: number, rand: () => number
 }
 
 export function startCharge(distance: number): ChargeState {
-  return { phase: 'telegraph', t: 0, distance };
+  return { phase: 'telegraph', t: 0, distance, overshootDuration: 0 };
 }
 
 /** Advances a charge by one frame. `jumped` is whether the player's jump
@@ -67,15 +77,25 @@ export function stepCharge(state: ChargeState, dt: number, jumped: boolean): Cha
   const t = state.t + dt;
 
   if (state.phase === 'telegraph' || state.phase === 'charging') {
-    if (jumped) return { phase: 'overshoot', t: 0, distance: state.distance };
-    if (t >= CHARGE_WINDOW) return { phase: 'caught', t: 0, distance: state.distance };
-    return { phase: t >= CHARGE_TELL_TIME ? 'charging' : 'telegraph', t, distance: state.distance };
+    if (jumped) {
+      // How long the predator was actually in the moving ('charging') sub-phase
+      // before this jump landed -- 0 if dodged during the stationary telegraph,
+      // up to CHARGE_RUN_TIME if dodged right at the window's edge. The overshoot
+      // repeats *that* run, not the full original gap (see the field comment on
+      // ChargeState.overshootDuration).
+      const chargingElapsed = Math.min(Math.max(0, t - CHARGE_TELL_TIME), CHARGE_RUN_TIME);
+      return { phase: 'overshoot', t: 0, distance: state.distance, overshootDuration: chargingElapsed };
+    }
+    if (t >= CHARGE_WINDOW) return { phase: 'caught', t: 0, distance: state.distance, overshootDuration: 0 };
+    return { phase: t >= CHARGE_TELL_TIME ? 'charging' : 'telegraph', t, distance: state.distance, overshootDuration: 0 };
   }
 
-  // overshoot: sprint on for the same distance just closed, at the same
-  // speed (see chargeSpeed) -- always takes CHARGE_RUN_TIME by construction.
-  if (t >= CHARGE_RUN_TIME) return { phase: 'cleared', t: 0, distance: state.distance };
-  return { phase: 'overshoot', t, distance: state.distance };
+  // overshoot: sprint on at the same speed (see chargeSpeed) for exactly as
+  // long as the charge run actually lasted before the dodge -- not a flat
+  // CHARGE_RUN_TIME, or an early dodge overshoots the full original distance
+  // and lands back on the player (LUL-323).
+  if (t >= state.overshootDuration) return { phase: 'cleared', t: 0, distance: state.distance, overshootDuration: 0 };
+  return { phase: 'overshoot', t, distance: state.distance, overshootDuration: state.overshootDuration };
 }
 
 /** Speed (units/sec) needed to close `distance` during the charge-run portion

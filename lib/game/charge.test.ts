@@ -40,7 +40,7 @@ test('shouldTriggerCharge is a plain dt-scaled roll: rand() below the threshold 
 
 test('startCharge begins in telegraph at t=0 with the captured distance', () => {
   const s = startCharge(12);
-  assert.deepEqual(s, { phase: 'telegraph', t: 0, distance: 12 });
+  assert.deepEqual(s, { phase: 'telegraph', t: 0, distance: 12, overshootDuration: 0 });
 });
 
 test('stepCharge stays in telegraph before CHARGE_TELL_TIME elapses', () => {
@@ -74,22 +74,70 @@ test('stepCharge dodges into overshoot from telegraph too, not just charging', (
   assert.equal(s.t, 0);
 });
 
-test('overshoot resolves to cleared after CHARGE_RUN_TIME and not a moment before', () => {
-  let s: ChargeState = { phase: 'overshoot', t: 0, distance: 10 };
+test('overshoot resolves to cleared after its own overshootDuration and not a moment before', () => {
+  let s: ChargeState = { phase: 'overshoot', t: 0, distance: 10, overshootDuration: CHARGE_RUN_TIME };
   s = stepCharge(s, CHARGE_RUN_TIME - 0.01, false);
   assert.equal(s.phase, 'overshoot');
   s = stepCharge(s, 0.01, false);
   assert.equal(s.phase, 'cleared');
 });
 
+// ---- LUL-323: overshoot must repeat only the distance actually closed, not
+// the full original trigger distance, or an early (correctly-timed!) dodge
+// overshoots straight back onto the player. ---------------------------------
+
+test('dodging during the stationary telegraph closes zero distance, so overshoot is instant (0 duration)', () => {
+  let s = startCharge(10);
+  s = stepCharge(s, 0.1, true); // still inside telegraph (< CHARGE_TELL_TIME), no movement yet
+  assert.equal(s.phase, 'overshoot');
+  assert.equal(s.overshootDuration, 0);
+  // Any further step, however small, is already past overshootDuration=0.
+  s = stepCharge(s, 0.001, false);
+  assert.equal(s.phase, 'cleared');
+});
+
+test('dodging just after charging starts overshoots for only the sliver of time actually spent charging', () => {
+  let s = startCharge(10);
+  s = stepCharge(s, CHARGE_TELL_TIME + 0.02, true); // 0.02s into the moving sub-phase
+  assert.equal(s.phase, 'overshoot');
+  assert.ok(Math.abs(s.overshootDuration - 0.02) < 1e-9);
+});
+
+test('dodging right at the window edge (after nearly the whole charging run) overshoots for nearly the full CHARGE_RUN_TIME', () => {
+  let s = startCharge(10);
+  s = stepCharge(s, CHARGE_WINDOW - 0.001, true); // almost the entire charging run elapsed
+  assert.equal(s.phase, 'overshoot');
+  assert.ok(Math.abs(s.overshootDuration - (CHARGE_RUN_TIME - 0.001)) < 1e-9);
+});
+
+test('overshootDuration is never negative and never exceeds CHARGE_RUN_TIME regardless of dodge timing', () => {
+  for (const dodgeAt of [0, 0.1, CHARGE_TELL_TIME, CHARGE_TELL_TIME + 0.01, CHARGE_WINDOW - 0.001, CHARGE_WINDOW]) {
+    let s = startCharge(10);
+    s = stepCharge(s, dodgeAt, true);
+    assert.ok(s.overshootDuration >= 0, `dodgeAt=${dodgeAt}`);
+    assert.ok(s.overshootDuration <= CHARGE_RUN_TIME + 1e-9, `dodgeAt=${dodgeAt}`);
+  }
+});
+
+test('an early dodge lands the predator far short of the player (regression for LUL-323): total distance traveled after resolution is small, not the full trigger distance', () => {
+  let s = startCharge(10);
+  s = stepCharge(s, CHARGE_TELL_TIME + 0.01, true); // dodge right as movement starts
+  const speed = chargeSpeed(s.distance);
+  const distanceCoveredByOvershoot = speed * s.overshootDuration;
+  // Barely moved before the dodge (0.01s of the 0.65s run) -> barely
+  // overshoots either. Old, buggy behavior always traveled the full 10 units
+  // here, which is what put the predator back on top of the player.
+  assert.ok(distanceCoveredByOvershoot < 1, `expected a small overshoot, got ${distanceCoveredByOvershoot}`);
+});
+
 test('stepCharge is a no-op once terminal (caught)', () => {
-  const caught = { phase: 'caught' as const, t: 0, distance: 10 };
+  const caught = { phase: 'caught' as const, t: 0, distance: 10, overshootDuration: 0 };
   const next = stepCharge(caught, 5, true);
   assert.deepEqual(next, caught);
 });
 
 test('stepCharge is a no-op once terminal (cleared)', () => {
-  const cleared = { phase: 'cleared' as const, t: 0, distance: 10 };
+  const cleared = { phase: 'cleared' as const, t: 0, distance: 10, overshootDuration: 0 };
   const next = stepCharge(cleared, 5, false);
   assert.deepEqual(next, cleared);
 });
