@@ -12,6 +12,15 @@
 // reindented, so this stays a reviewable diff and not a 1,200-line reformat.
 import * as THREE from 'three';
 import { track } from '@/lib/analytics';
+import { jumpOffset, JUMP_DURATION } from '@/lib/game/jump';
+import {
+  shouldTriggerCharge,
+  startCharge,
+  stepCharge,
+  chargeSpeed,
+  CHARGE_TRIGGER_MIN,
+  CHARGE_TRIGGER_MAX,
+} from '@/lib/game/charge';
 
 let activeDispose = null;
 
@@ -628,7 +637,8 @@ function makePredator(kind){
     phase:Math.random()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
-    packTimer:0, flankX:0, flankZ:0 };
+    packTimer:0, flankX:0, flankZ:0,
+    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0 };
 }
 const predators = [];
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++) predators.push(makePredator(k));
@@ -643,9 +653,11 @@ function placePredators(){
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=false; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0;
+    p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   sinceClose = 0; huntTime = 0; spotFlash = 0;
+  activeCharges = 0; pushState({ chargeVisible: false });
 }
 // steer a desired direction around trees the predator would otherwise walk into
 function avoidDir(p, dx, dz){
@@ -870,6 +882,13 @@ function updateWolfPack(dt){
   }
 }
 
+// LUL-213: once a charge resolves (either way) the same predator can't
+// immediately roll for another -- without this a wolf that just missed you
+// would be back in telegraph two frames later, since dist and LOS are still
+// exactly where they were. Long enough to read as "that's over," short
+// enough that a second charge later in the same chase is still in play.
+const CHARGE_COOLDOWN = 10;
+
 function updatePredators(dt, noiseRadius){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
@@ -880,8 +899,34 @@ function updatePredators(dt, noiseRadius){
 
     if(p.scentLock > 0) p.scentLock -= dt;   // ticks in every state, so a lock set during `chase`
                                               // has actually expired by the time `roam` re-checks it
+    if(p.chargeCooldown > 0) p.chargeCooldown -= dt;
+
+    // LUL-213: an active charge owns movement outright until it resolves --
+    // skips the roam/chase/investigate/flank chain below entirely, same as
+    // the `hunt`/`alert` overrides already do, so it can't fight them for
+    // desx/desz/speed.
+    if(p.charge){
+      const cs = stepCharge(p.charge, dt, jumpPressed);
+      if(cs.phase === 'caught'){
+        p.charge = null;
+        endChargeHud();
+        triggerDeath(p.kind);
+      } else if(cs.phase === 'cleared'){
+        p.charge = null; p.chargeCooldown = CHARGE_COOLDOWN;
+        // "the animal continue... than continue normally": rejoin the
+        // existing investigate/approach loop (LUL-22, not to be retuned)
+        // rather than snapping straight back into a full chase mid-overshoot
+        // -- it just sprinted past you and has to notice you again.
+        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*3);
+        endChargeHud();
+      } else {
+        p.charge = cs;
+        facePlayer = cs.phase === 'telegraph';
+        if(cs.phase !== 'telegraph'){ desx = p.chargeDirX; desz = p.chargeDirZ; speed = chargeSpeed(cs.distance); }
+      }
+    }
     // spot "alert": brief rear-up + freeze the instant it locks on
-    if(p.alert > 0){
+    else if(p.alert > 0){
       p.alert -= dt; facePlayer = true; speed = 0;
       // (movement handled below; the rear is applied in the animation section)
     } else if(p.reroute > 0){                        // stuck → back up along its trail, then a different way
@@ -919,6 +964,21 @@ function updatePredators(dt, noiseRadius){
       // chasing blind while scentLock holds; once it expires, gate on sight
       // the same way a spotted chase always has.
       if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4); }
+      // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
+      // contrast is the point, same call LUL-24 made for pack flanking).
+      // canSee(p,dist) here (not just the enclosing branch, which also
+      // allows a blind scentLock chase through) is "the predator sees you";
+      // playerCanSee(p) is the founder's "always only when the user sees the
+      // target" -- both have to hold or the telegraph never starts.
+      else if((p.kind === 'wolf' || p.kind === 'lion') && p.chargeCooldown <= 0
+              && canSee(p, dist) && playerCanSee(p) && shouldTriggerCharge(dist, dt)){
+        // Commit to the heading right now, not a homing one -- a telegraphed
+        // charge is dodgeable specifically *because* the animal has
+        // committed to a line, same as the real thing.
+        p.charge = startCharge(dist);
+        p.chargeDirX = ux; p.chargeDirZ = uz;
+        beginChargeHud();
+      }
       else {
         if(dist < p.rad + 1.3){ triggerDeath(p.kind); }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
@@ -1015,6 +1075,13 @@ function updatePredators(dt, noiseRadius){
     p.phase += dt * (moving ? vmag*0.9 : 1.4);
     const sniffing = (p.state==='investigate' && p.inv==='sniff') || (p.state==='flank' && p.inv==='hold');
     const alerting = p.alert > 0;
+    // LUL-213: the readable tell -- stopped, tail up and wiggling, leaning
+    // into the charge. Only true during the stationary half of the window
+    // (see lib/game/charge.ts CHARGE_TELL_TIME); once it commits to
+    // 'charging'/'overshoot' this goes false and the normal sprint gait
+    // below (driven by vmag, now large from chargeSpeed()) takes over --
+    // no separate charge-run animation needed.
+    const telegraphing = !!p.charge && p.charge.phase === 'telegraph';
     // legs: diagonal gait (bend the knee on the forward swing)
     for(let i=0;i<p.legs.length;i++){
       const ph = p.phase + ((i===0||i===3) ? 0 : Math.PI);     // diagonal pairs
@@ -1027,15 +1094,27 @@ function updatePredators(dt, noiseRadius){
     p.g.position.y = bob;
     p.torso.rotation.z += ((moving ? Math.sin(p.phase)*0.05 : 0) - p.torso.rotation.z) * Math.min(1, dt*8);
     p.g.rotation.z = clamp(-d*0.6, -0.22, 0.22);
-    // neck/head: bob with gait, dip low to sniff, rear up when alerting
-    const neckTarget = sniffing ? 0.9 : alerting ? -0.6 : (moving ? 0.5 + Math.sin(p.phase*2+1)*0.06 : 0.5);
-    p.neck.rotation.x += (neckTarget - p.neck.rotation.x) * Math.min(1, dt*6);
+    // neck/head: bob with gait, dip low to sniff, rear up when alerting, dip
+    // forward into the lean when telegraphing a charge
+    const neckTarget = telegraphing ? 0.1 : sniffing ? 0.9 : alerting ? -0.6 : (moving ? 0.5 + Math.sin(p.phase*2+1)*0.06 : 0.5);
+    p.neck.rotation.x += (neckTarget - p.neck.rotation.x) * Math.min(1, dt*8);
     p.head.rotation.x += (((sniffing?0.5:0) + (alerting?-0.3:0)) - p.head.rotation.x) * Math.min(1, dt*6);
-    // rear the whole body a touch when alerting
-    p.torso.rotation.x += (((alerting?-0.18:0)) - p.torso.rotation.x) * Math.min(1, dt*8);
-    // tail sway
-    p.tail.rotation.z = Math.sin(tt*3 + p.phase)*0.18;
-    p.tail2.rotation.z = Math.sin(tt*3 + p.phase + 0.8)*0.22;
+    // rear the whole body a touch when alerting; lean forward, front-loaded,
+    // when telegraphing a charge (opposite sign and bigger than the alert
+    // rear -- this is a wind-up, not a startle)
+    const torsoLeanTarget = telegraphing ? 0.32 : (alerting ? -0.18 : 0);
+    p.torso.rotation.x += (torsoLeanTarget - p.torso.rotation.x) * Math.min(1, dt*8);
+    // tail sway -- raised and wiggling hard during the telegraph, normal
+    // idle sway otherwise. rotation.x is only ever driven here (the mesh's
+    // built-in 0.6 rad droop is a one-time creation-time pose), so it must
+    // ease back to that baseline once telegraphing ends or the tail would
+    // stay lifted forever.
+    const tailLiftTarget = telegraphing ? -0.35 : 0.6;
+    p.tail.rotation.x += (tailLiftTarget - p.tail.rotation.x) * Math.min(1, dt*8);
+    const tailWiggleHz = telegraphing ? 14 : 3;
+    const tailWiggleAmp = telegraphing ? 1.6 : 1;
+    p.tail.rotation.z = Math.sin(tt*tailWiggleHz + p.phase)*0.18*tailWiggleAmp;
+    p.tail2.rotation.z = Math.sin(tt*tailWiggleHz + p.phase + 0.8)*0.22*tailWiggleAmp;
   }
 }
 // lock onto the player: stinger, roar, screen flash, and a rear-up alert beat
@@ -1052,7 +1131,8 @@ const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
-    hideKind = null;   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
+    hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
+    jumping = false, jumpElapsed = 0, jumpPressed = false;   // LUL-213: see beginJump() / tick()'s jumpY
 // LUL-153: `game_start` fires once per page-load (first real pointer-lock
 // acquisition), not once per restart -- it feeds the page_view -> ... -> win
 // funnel, which measures "did this visitor ever reach gameplay," not run count.
@@ -1070,12 +1150,33 @@ function toggleHidden(){
   if(hidden){ hideTime = 0; track({ event: 'feature_engagement', feature: 'hide', action: 'used' }); }
 }
 
+// LUL-213: always available while actually playing, not gated behind being
+// chased -- "add jump support all the time by pressing space" per the ticket.
+// Kept a plain function (not inlined in the keydown handler below) so the
+// qaTriggerCharge QA hook can also drive a jump without dispatching a real
+// DOM event.
+function beginJump(){
+  if(jumping) return;
+  jumping = true; jumpElapsed = 0;
+}
+
 on(window, 'keydown', e => {
   keys[e.code] = true;
   const playing = entered && !won && !dead && !pickingUp;
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
   if(e.code === 'KeyE' && canPickup && playing && !paused) pickup();
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
+  // LUL-213: jumping stands you up first (same as any movement key already
+  // does via the moveKey-breaks-hide check in tick()) -- a charge can still
+  // catch a hidden player (STILL_DETECT_CUT never reaches 1), and jump is the
+  // only way out of one, so it can't be blocked by being crouched.
+  // e.repeat is dropped so holding Space down doesn't spam a jump every OS
+  // auto-repeat tick; JUMP_DURATION is the only real cooldown once airborne.
+  if(e.code === 'Space' && playing && !paused && !e.repeat){
+    if(hidden) exitHide();
+    beginJump();
+    jumpPressed = true;   // consumed by updatePredators() this frame, then cleared in tick()
+  }
 });
 on(window, 'keyup', e => { keys[e.code] = false; });
 
@@ -1426,6 +1527,7 @@ let hudState = {
   survivedSeconds: 0,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
+  chargeVisible: false, chargeToken: 0,
 };
 function pushState(patch){
   let changed = false;
@@ -1435,6 +1537,36 @@ function pushState(patch){
   emitState(hudState);
 }
 emitState(hudState);   // initial sync, in case a listener mounted before init() ran
+
+// ---- Predator charge: telegraph -> commit -> jump-or-catch (LUL-213) -----
+// `activeCharges` lets more than one predator (rare, but two wolves in a pack
+// could both qualify the same frame) show the same one HUD prompt without
+// fighting over it -- the prompt only clears once every active charge has
+// resolved. `chargeToken` only bumps on a 0->1 edge so an overlapping second
+// charge doesn't restart the dodge-window CSS animation the HUD keys off it.
+let activeCharges = 0, chargeToken = 0;
+function beginChargeHud(){
+  activeCharges++;
+  if(activeCharges === 1) chargeToken++;
+  pushState({ chargeVisible: true, chargeToken });
+}
+function endChargeHud(){
+  activeCharges = Math.max(0, activeCharges - 1);
+  if(activeCharges === 0) pushState({ chargeVisible: false });
+}
+// "always only when the user sees the target" (founder's own phrasing on this
+// ticket): canSee(p, dist) already gates whether the *predator* can see the
+// player (LOS raycast, LUL-22/43). This is the missing other half -- is the
+// predator inside the *player's* forward view cone -- so the telegraph never
+// starts off-screen or behind the player's back where it can't be reacted to.
+// ~130deg total FOV: generous enough to not feel unfair, narrow enough that
+// "behind you" really means behind you.
+const PLAYER_FOV_COS = Math.cos(65 * Math.PI/180);
+function playerCanSee(p){
+  const dx = p.x - player.x, dz = p.z - player.z, d = Math.hypot(dx, dz) || 0.0001;
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  return (dx/d)*fx + (dz/d)*fz > PLAYER_FOV_COS;
+}
 
 // ---- Gate + pause --------------------------------------------------------
 const hint = document.getElementById('hint');
@@ -1701,6 +1833,29 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const p = predators[idx];
     return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls } : null;
   };
+
+  // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
+  // -- the real trigger is a probabilistic per-frame roll (shouldTriggerCharge),
+  // which is exactly what a test can't wait on reliably. Places the predator due
+  // +x of the player at the midpoint of the trigger band, in the open (spawn
+  // clearing has no cover, same guarantee qaOpenHideNearLion relies on), and
+  // faces the player -x so playerCanSee() would independently agree if re-checked.
+  // Returns the predator's `predators` index, or null if that species isn't spawned.
+  window.ForestEngine.qaTriggerCharge = function(kind){
+    if(kind !== 'wolf' && kind !== 'lion') return null;
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    const dist = (CHARGE_TRIGGER_MIN + CHARGE_TRIGGER_MAX) / 2;
+    player.x = 0; player.z = 0; player.yaw = Math.PI/2;   // faces -x, i.e. toward the predator below
+    p.x = player.x + dist; p.z = player.z;
+    p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.hunt = false;
+    p.state = 'chase'; p.scentLock = 0; p.chargeCooldown = 0;
+    p.charge = startCharge(dist);
+    p.chargeDirX = -1; p.chargeDirZ = 0;
+    beginChargeHud();
+    return idx;
+  };
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
@@ -1764,6 +1919,7 @@ function restart(){
   pushState({ winVisible: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   won = dead = pickingUp = carrying = hidden = false; hideTime = 0; hideKind = null; eyeH = CONFIG.eye; deathShown = false;
+  jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
@@ -1927,6 +2083,12 @@ function tick(){
   hideTime = hidden ? hideTime + dt : 0;
   eyeH += ((hidden ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
 
+  // LUL-213: advance in game time (dt is already clamped above -- see wiki
+  // systems/dt-clamp-vs-walltime) so the arc can't drift relative to
+  // predator movement/animation, which run off the same dt.
+  if(jumping){ jumpElapsed += dt; if(jumpElapsed >= JUMP_DURATION){ jumping = false; jumpElapsed = 0; } }
+  const jumpY = jumping ? jumpOffset(jumpElapsed) : 0;
+
   const playing = entered && !paused && !won && !dead && !pickingUp;
 
   // LUL-40: hold KeyF to dim. Read every frame like `running` below rather than
@@ -2003,7 +2165,7 @@ function tick(){
     babyGroup.rotation.y = t * 0.4;
     halo.material.opacity = 0.20 + Math.sin(t*1.8)*0.04;
     babyLight.intensity = 1.2 + Math.sin(t*1.8)*0.2;
-    camera.position.set(player.x, eyeH, player.z);
+    camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
     const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
     if(dh < CONFIG.home.r) arriveHome();
@@ -2013,11 +2175,12 @@ function tick(){
   } else {
     if(spd > 0 && !reduce) bobPhase += dt * 9;
     const bob = spd > 0 && !reduce ? Math.sin(bobPhase) * 0.06 : 0;
-    camera.position.set(player.x, eyeH + bob, player.z);
+    camera.position.set(player.x, eyeH + bob + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
   }
 
   if(playing) updatePredators(dt, noiseRadius);   // predators only hunt while you're actually playing
+  jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
   let nearDist = 1e9, nearP = null, approaching = false;
