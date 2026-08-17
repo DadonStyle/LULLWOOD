@@ -115,6 +115,21 @@ const OVERLAY_STYLE = `
     font-size: 13px; letter-spacing: 0.03em; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #status.hiding { color: #9fd7b0; border-color: rgba(120,200,150,0.4); }
 
+  /* LUL-213: charge-dodge visual key + 1s countdown bar. The animation
+     duration (1s) mirrors lib/game/charge.ts's CHARGE_WINDOW -- see the
+     comment on #chargePrompt in Hud.tsx for why that isn't threaded through
+     as engine-emitted data instead of hardcoded here. */
+  #chargePrompt { position: fixed; bottom: 130px; left: 50%; transform: translateX(-50%); z-index: 13;
+    display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+  #chargeKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6);
+    animation: chargePulse 0.4s ease-in-out infinite alternate; }
+  #chargeBarTrack { width: 120px; height: 5px; border-radius: 999px; background: rgba(150,175,215,0.25); overflow: hidden; }
+  #chargeBar { height: 100%; width: 100%; background: #e8554a; transform-origin: left;
+    animation: chargeDrain 1s linear forwards; }
+  @keyframes chargeDrain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+  @keyframes chargePulse { from { transform: scale(1); } to { transform: scale(1.08); } }
+
   /* death: video cutscene + loss text */
   #spotFlash { position: fixed; inset: 0; z-index: 12; pointer-events: none; opacity: 0;
     background: radial-gradient(circle at 50% 45%, rgba(255,20,20,0) 40%, rgba(200,0,0,0.5) 100%); }

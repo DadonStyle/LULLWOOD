@@ -72,6 +72,12 @@ declare global {
         sniffsLeft: number;
         scentCalls: number;
       } | null;
+      /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
+       * deterministically (the real trigger is a per-frame probability roll, which a
+       * test can't reliably wait on). Places it due +x of the player at the trigger
+       * band's midpoint, in the open. Returns the predator's `predators` index, or
+       * null if that species isn't spawned or `kind` isn't `wolf`/`lion`. */
+      qaTriggerCharge?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
     };
   }
 }
