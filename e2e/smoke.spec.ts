@@ -13,7 +13,14 @@
 // Boot/enter/console-error helpers are shared with the other specs in
 // e2e/helpers.ts (LUL-35 pass 2) -- each file used to carry its own copy.
 import { test, expect } from '@playwright/test';
-import { boot, enter, expectNoConsoleErrors, readObjective, trackConsoleErrors } from './helpers';
+import {
+  assertInViewport,
+  boot,
+  enter,
+  expectNoConsoleErrors,
+  readObjective,
+  trackConsoleErrors,
+} from './helpers';
 
 test.describe('initial load', () => {
   test('title gate, engine API, two canvases, no console errors', async ({ page }) => {
@@ -200,7 +207,17 @@ test.describe('lift the child / carry home / win', () => {
 
     await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
     await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
+    await assertInViewport(page.locator('#winScreen'), page, '#winScreen');
     await expect(page.locator('#winScreen h1')).toHaveText('YOU WON');
+
+    // LUL-197: arriveHome() used to skip the exitPointerLock()/cursor reset that
+    // triggerDeath() and pickup() both do, so the win screen rendered underneath
+    // a still-engaged Pointer Lock -- clicks landed but the OS cursor stayed
+    // hidden/captured, making "Play again" look unclickable.
+    const pointerLocked = await page.evaluate(() => document.pointerLockElement !== null);
+    expect(pointerLocked, 'winning must release Pointer Lock (LUL-197)').toBe(false);
+    const cursor = await page.evaluate(() => document.body.style.cursor);
+    expect(cursor, 'winning must restore the OS cursor (LUL-197)').not.toBe('none');
   });
 });
 
@@ -240,6 +257,7 @@ test.describe('predator catch / death', () => {
 
       const deathScreen = page.locator('#deathScreen');
       await expect(deathScreen).toBeVisible({ timeout: 30_000 });
+      await assertInViewport(deathScreen, page, '#deathScreen');
 
       await expect(page.locator('#deathKind')).toHaveText(kind);
 
@@ -254,6 +272,7 @@ test.describe('predator catch / death', () => {
 
       // CUT_END = 3.7s in forest-engine.js; the loss text reveals once the video ends.
       await expect(page.locator('#deathText')).toHaveCSS('opacity', '1', { timeout: 10_000 });
+      await assertInViewport(page.locator('#deathText'), page, '#deathText');
       await expect(page.locator('#deathText h1')).toHaveText('YOU LOSE');
     });
   }
