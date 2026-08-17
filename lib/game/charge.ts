@@ -99,8 +99,10 @@ export function stepCharge(state: ChargeState, dt: number, jumped: boolean): Cha
 }
 
 /** Speed (units/sec) needed to close `distance` during the charge-run portion
- * of the window. Also the overshoot speed, so overshoot covers `distance`
- * again in exactly CHARGE_RUN_TIME. */
+ * of the window. Also the overshoot speed -- overshoot runs at this speed for
+ * ChargeState.overshootDuration (see that field's doc comment), so it only
+ * covers `distance` again in full when the dodge lands right at the window's
+ * edge; a typical dodge covers proportionally less. */
 export function chargeSpeed(distance: number): number {
   return distance / CHARGE_RUN_TIME;
 }
