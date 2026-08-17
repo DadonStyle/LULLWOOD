@@ -1640,7 +1640,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   // LUL-121: species-specific cover hook. Same geometry as qaHideBehindCover
   // but picks the first predator of the requested kind so tests can pin each
-  // species independently. Returns { idx, kind } on success, null on failure.
+  // species independently. Returns { idx, kind, playerX, playerZ } on success,
+  // null on failure. LUL-242: playerX/playerZ (the player's placed position)
+  // are exposed so a caller can compute an exact offset back to the predator
+  // -- cover-clearance separation (driven by `predReach`/`hideReach`, which
+  // vary per prop) is unrelated to and can exceed scent-pickup radius
+  // (<=3.08 units at freshest/bear), so a test that wants a scent point near
+  // the predator cannot derive it from a guessed constant offset; see wiki:
+  // game/lul196-scent-behind-cover-geometry.
   window.ForestEngine.qaHideBehindCoverKind = function(kind){
     const idx = predators.findIndex(p => p.kind === kind);
     if(idx < 0) return null;
@@ -1661,9 +1668,23 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
-      return { idx, kind };
+      return { idx, kind, playerX: qx, playerZ: qz };
     }
     return null;
+  };
+
+  // LUL-196: reset a predator to roam without moving it. Existing hooks that
+  // exercise scent acquisition (checkScent/scentOnto) all teleport the predator,
+  // destroying any cover staging. This hook lets a test position the predator
+  // with qaHideBehindCoverKind, then call this to drop it back to roam so
+  // checkScent() actually runs. Returns the predator's current {x,z} on success
+  // so the caller can verify it was not relocated.
+  window.ForestEngine.qaSetPredatorRoam = function(idx){
+    const p = predators[idx];
+    if(!p) return null;
+    p.state = 'roam'; p.spotted = false; p.scentLock = 0; p.scentCalls = 0;
+    p.hunt = false; p.alert = 0; p.sniffsLeft = 0;
+    return { x: p.x, z: p.z };
   };
 
   // LUL-212: teleport the player to the nearest hiding spot (bramble/log),
@@ -1678,7 +1699,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   window.ForestEngine.qaPredatorState = function(idx){
     const p = predators[idx];
-    return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft } : null;
+    return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls } : null;
   };
 }
 
