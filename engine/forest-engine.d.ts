@@ -64,6 +64,19 @@ declare global {
       qaSetPredatorRoam?: (idx: number) => { x: number; z: number } | null;
       /** LUL-212: teleports the player to the nearest hiding spot (bramble/log), no predator involved. Returns the spot's kind, or null if none were generated. */
       qaTeleportToHideSpot?: () => string | null;
+      /** LUL-211: the player's world position and heading -- the only way a test can
+       * see where movement actually ended up (player is init()-closure-local). */
+      qaProbePlayer?: () => { x: number; z: number; yaw: number };
+      /** LUL-211/LUL-288: places the player off the -x face of the first reachable
+       * cover prop of `kind`, facing it, so a held KeyW walks straight into it. The
+       * standoff distance is rotation-aware (props render at prop.ry), so it clears
+       * the prop's true rotated collision boundary, not just its axis-aligned hx.
+       * Returns the prop's AABB (plus ry) and the player's start, or null if no
+       * clear placement exists for that kind. */
+      qaStageWalkIntoCover?: (kind: 'tree' | 'rock' | 'log' | 'bramble') => {
+        prop: { x: number; z: number; hx: number; hz: number; ry: number; kind: string };
+        start: { x: number; z: number };
+      } | null;
       /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
@@ -72,6 +85,12 @@ declare global {
         sniffsLeft: number;
         scentCalls: number;
       } | null;
+      /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
+       * deterministically (the real trigger is a per-frame probability roll, which a
+       * test can't reliably wait on). Places it due +x of the player at the trigger
+       * band's midpoint, in the open. Returns the predator's `predators` index, or
+       * null if that species isn't spawned or `kind` isn't `wolf`/`lion`. */
+      qaTriggerCharge?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
     };
   }
 }
