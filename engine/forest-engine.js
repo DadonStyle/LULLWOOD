@@ -1494,11 +1494,20 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // LUL-267's canopyBlockedR can block movement even when the spawn point itself
   // is clear (player at a canopy edge), which would wedge the player and make the
   // "player never moved" assertion fire falsely.
+  // LUL-288: props render rotated (c.ry), so a flat hx-based standoff can land
+  // inside the prop's true rotated collision boundary when hz binds instead of
+  // hx (see coverBlockedR() above). The player walks in +x with z pinned to
+  // c.z, so in the prop's local frame dz=0 the whole way and the true first
+  // blocked dx is -min((hx+pr)/|cos ry|, (hz+pr)/|sin ry|) -- same transform
+  // coverBlockedR() itself uses, pr=0.6 to match blocked()'s hardcoded radius.
+  // Standoff is that distance plus a 1-unit margin, not a flat offset.
   window.ForestEngine.qaStageWalkIntoCover = function(kind){
     for(const c of coverData){
       if(c.kind !== kind) continue;
-      const px = c.x - (c.hx + 1.6), pz = c.z;
-      if(blocked(px, pz) || blocked(px + 0.5, pz)) continue;
+      const co = Math.cos(c.ry), si = Math.sin(c.ry);
+      const standoff = Math.min((c.hx + 0.6) / Math.abs(co), (c.hz + 0.6) / Math.abs(si)) + 1;
+      const px = c.x - standoff, pz = c.z;
+      if(blocked(px, pz)) continue;
       player.x = px; player.z = pz; player.yaw = -Math.PI/2;
       return { prop: { x: c.x, z: c.z, hx: c.hx, hz: c.hz, ry: c.ry, kind: c.kind }, start: { x: px, z: pz } };
     }
