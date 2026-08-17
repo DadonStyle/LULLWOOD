@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
 import { track, startSessionTracking } from '@/lib/analytics';
+import { isMobile } from '@/lib/input-mode';
 
 // CSS verbatim from the original single-file prototype (M2 wiki plan:
 // game/port-plan) -- its lines 6-99. The prototype is no longer in the tree;
@@ -62,14 +63,17 @@ const OVERLAY_STYLE = `
   #panel button:hover { background: rgba(150,175,215,0.18); }
   #panel :focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
 
-  /* LUL-198: on touch/narrow viewports, TouchControls (components/TouchControls.tsx)
+  /* LUL-198: on touch/narrow viewports, MobileControls (components/MobileControls.tsx)
      draws an always-present movement stick + E button in this same bottom-left
      corner at z-index 30, above #panel's z-index 10 -- the stick's 128px hit
      region could sit directly over Sound/New map/Fullscreen. Lift #panel clear of
      that band instead of fighting it with z-index: 24px wrapper bottom + 128px
-     stick + 10px gap + 56px E button + margin. 768px matches the breakpoint
-     TouchControls' useTouchDevice() already uses for "is this a phone". */
-  @media (max-width: 768px) {
+     stick + 10px gap + 56px E button + margin. LUL-276: this condition has to
+     stay byte-for-byte in sync with lib/input-mode.ts's isMobile() (max-width
+     768px fallback, OR (pointer: coarse) and (hover: none) -- CSS supports the
+     same media features JS's matchMedia does), or LUL-198's overlap returns
+     for viewports isMobile() calls mobile that this query doesn't catch. */
+  @media (max-width: 768px), (pointer: coarse) and (hover: none) {
     #panel { bottom: 240px; }
   }
 
@@ -173,7 +177,10 @@ export default function GameCanvas() {
       // LUL-34: init() now takes a state-change callback and returns the
       // engine's action API (enter/restart/setPace/...) instead of nothing --
       // see engine/forest-engine.js's own comment on `emitState`/`pushState`.
-      setActions(init(setHud));
+      // LUL-276: also takes an explicit inputMode so desktop mouse-look and
+      // mobile touch input bind disjoint listeners inside the engine instead
+      // of both being live and writing player.yaw/pitch at once.
+      setActions(init(setHud, isMobile() ? 'mobile' : 'desktop'));
       disposeEngine = dispose;
     });
 
