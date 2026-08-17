@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
 import { track, startSessionTracking } from '@/lib/analytics';
 import { isMobile } from '@/lib/input-mode';
+import { CHARGE_WINDOW } from '@/lib/game/charge';
 
 // CSS verbatim from the original single-file prototype (M2 wiki plan:
 // game/port-plan) -- its lines 6-99. The prototype is no longer in the tree;
@@ -115,10 +116,12 @@ const OVERLAY_STYLE = `
     font-size: 13px; letter-spacing: 0.03em; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #status.hiding { color: #9fd7b0; border-color: rgba(120,200,150,0.4); }
 
-  /* LUL-213: charge-dodge visual key + 1s countdown bar. The animation
-     duration (1s) mirrors lib/game/charge.ts's CHARGE_WINDOW -- see the
-     comment on #chargePrompt in Hud.tsx for why that isn't threaded through
-     as engine-emitted data instead of hardcoded here. */
+  /* LUL-213/LUL-304: charge-dodge visual key + countdown bar. The animation
+     duration is CHARGE_WINDOW (imported from lib/game/charge.ts, not
+     restated as a literal) so the bar can never drift from the real dodge
+     window -- see the comment on #chargePrompt in Hud.tsx for why that
+     constant is still spliced into CSS here rather than threaded through as
+     per-frame engine-emitted state. */
   #chargePrompt { position: fixed; bottom: 130px; left: 50%; transform: translateX(-50%); z-index: 13;
     display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
   #chargeKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
@@ -126,7 +129,7 @@ const OVERLAY_STYLE = `
     animation: chargePulse 0.4s ease-in-out infinite alternate; }
   #chargeBarTrack { width: 120px; height: 5px; border-radius: 999px; background: rgba(150,175,215,0.25); overflow: hidden; }
   #chargeBar { height: 100%; width: 100%; background: #e8554a; transform-origin: left;
-    animation: chargeDrain 1s linear forwards; }
+    animation: chargeDrain ${CHARGE_WINDOW}s linear forwards; }
   @keyframes chargeDrain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
   @keyframes chargePulse { from { transform: scale(1); } to { transform: scale(1.08); } }
 
