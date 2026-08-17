@@ -11,6 +11,7 @@
 // always strict. The body below is otherwise unchanged -- deliberately not
 // reindented, so this stays a reviewable diff and not a 1,200-line reformat.
 import * as THREE from 'three';
+import { track } from '@/lib/analytics';
 
 let activeDispose = null;
 
@@ -53,6 +54,10 @@ const margin = 4;
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
   t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
 let rng = mulberry32(CONFIG.seed);
+// LUL-153: the seed actually in play -- generateMap() below is called with a
+// fresh random seed on every restart()/regenMap(), so CONFIG.seed alone only
+// describes the very first map. Analytics events that carry `seed` read this.
+let currentSeed = CONFIG.seed;
 const rnd = (a=1,b) => b===undefined ? rng()*a : a + rng()*(b-a);
 const clamp = (v,a,b) => v<a ? a : v>b ? b : v;
 
@@ -77,11 +82,17 @@ renderer.setSize(innerWidth, innerHeight);
 // overflow:hidden then just hid the scrollbar that would have revealed it,
 // not the mispositioning itself. Pin it to the viewport like every other
 // overlay element already is (#gate, #vignette, ...) so its position no
-// longer depends on sibling content at all. z-index -1 keeps it under all
-// of those (they're all z-index:auto/positive) regardless of DOM order.
+// longer depends on sibling content at all.
+// LUL-211: z-index was -1, which places the canvas BEHIND normal-flow
+// elements (body, main.about) in the CSS stacking order -- step 2 (negative
+// z-index) is below step 3 (normal-flow boxes), so the body's background
+// (#0a0e15) painted over the canvas, making the 3D scene invisible. Using
+// z-index 0 puts the canvas in step 6 (positioned, z-index 0/auto), above
+// the body background and the main.about SSR shell, while remaining below
+// all the game's fixed overlays (z-index 10+).
 renderer.domElement.style.position = 'fixed';
 renderer.domElement.style.inset = '0';
-renderer.domElement.style.zIndex = '-1';
+renderer.domElement.style.zIndex = '0';
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55));
@@ -151,6 +162,24 @@ const coverMeshes = {
 };
 Object.values(coverMeshes).forEach(m => { m.frustumCulled = false; scene.add(m); });
 
+// ---- Hiding spots (LUL-212) -------------------------------------------
+// Every cover prop still blocks line of sight the same way (see canSee()/
+// hasLOS() below -- that math is untouched). What changed: the player's
+// deliberate `hidden` stance (KeyH / touch Hide button) no longer works
+// anywhere you can find LOS-blocking geometry. It now requires standing at
+// one of two dedicated hiding-spot kinds -- researched against real-world
+// stealth/horror foley convention (rustling leaves read as the universal
+// "something is hiding in the brush" cue; a hollow log is the other classic
+// natural forest hiding spot) -- bramble ("bush", leaf rustle) and log
+// ("hollow log", a wood knock/creak). Rocks and tagged trees remain sight
+// -blocking obstacles you can duck behind incidentally, exactly as before,
+// but never a place you can formally "hide": no crouch, no stillness bonus,
+// no sound. That is the ticket's whole ask -- "hiding will only be in
+// specific places" -- narrowed to props that read as something a person
+// could actually climb into or behind, not just stand near.
+const HIDE_KINDS = { bramble: true, log: true };
+const HIDE_RADIUS = 2.2;   // proximity, beyond the prop's own footprint, to still count as "at" it
+
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
 let treeData = [];            // {x,z,s,cr}
@@ -178,7 +207,31 @@ function blockedR(x,z,pr){
   }
   return false;
 }
-function blocked(x,z){ return blockedR(x,z,0.6); }
+// LUL-211: cover props (logs, rocks, brambles) only ever blocked LOS; the
+// player could walk straight through them. AABB check against the same
+// coverGrid data hasLOS()/findHideSpot() already use (trees excluded --
+// they're the circle grid blockedR() above already handles).
+//
+// Deliberately NOT folded into blockedR() itself: predators call blockedR()
+// directly (not through blocked()) for their own movement, and their
+// avoidDir() steering isn't built to route around a solid box on the
+// straight-line paths several qa hooks and the scent-chase spec place them
+// on (qaHideBehindCoverKind, the scent stale-trail test) -- doing that
+// produced a stuck-predator freeze, the exact class of bug LUL-119 fixed.
+// Whether predators should also collide with cover is a real follow-up
+// question (LUL-222), just not one this fix's scope covers.
+function coverBlockedR(x,z,pr){
+  const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
+  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
+    const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
+    for(const c of arr){
+      if(c.kind === 'tree') continue;
+      if(Math.abs(x - c.x) < c.hx + pr && Math.abs(z - c.z) < c.hz + pr) return true;
+    }
+  }
+  return false;
+}
+function blocked(x,z){ return blockedR(x,z,0.6) || coverBlockedR(x,z,0.6); }
 
 function buildCoverGrid(){
   coverGrid = new Map();
@@ -233,6 +286,7 @@ function layoutCoverMeshes(){
 }
 
 function generateMap(seed){
+  currentSeed = seed >>> 0;
   rng = mulberry32(seed >>> 0);
   scentPoints = [];   // LUL-23: no trail survives a fresh map/restart
 
@@ -313,6 +367,13 @@ const lwisps = new THREE.Points(lwGeo, new THREE.PointsMaterial({ color: CONFIG.
 lwisps.frustumCulled = false; scene.add(lwisps);
 
 // ---- Ambient dust that drifts around you ---------------------------------
+// Drift direction is windX/windZ (LUL-195): wind silently decides scent
+// outcomes (checkScent(), ~line 569) with no other player-visible tell, so
+// the one ambient particle system already running becomes that tell for
+// free -- no HUD, no compass, matches the "no readouts" feel of the rest of
+// the game. Speed is tuned for legibility, not to match WIND_STRENGTH
+// (3.2u/s would read as a gust, not a steady drift).
+const DUST_WIND_SPEED = 0.3;
 const DUST = 350, dustArr = new Float32Array(DUST*3);
 for(let i=0;i<DUST;i++){ dustArr[i*3]=(Math.random()*2-1)*30; dustArr[i*3+1]=Math.random()*12; dustArr[i*3+2]=(Math.random()*2-1)*30-3; }
 const dustGeo = new THREE.BufferGeometry(); dustGeo.setAttribute('position', new THREE.BufferAttribute(dustArr,3));
@@ -616,6 +677,11 @@ function hearNoise(p){
 // other distance check in this file) combined with an effective detect range
 // that shrinks the longer you've held still. It never reaches zero, so
 // standing still in the open next to a predator still gets you caught.
+//
+// LUL-212: entering `hidden` in the first place is now gated on standing at
+// a dedicated hiding-spot prop (findHideSpot(), below) -- this block's LOS
+// math is otherwise untouched, so cover still blocks sight for anyone
+// walking behind a rock or a tree exactly as before, hidden or not.
 const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
 function segRayVsAABB(x0,z0,x1,z1, cx,cz,hx,hz){
@@ -642,6 +708,24 @@ function hasLOS(x0,z0,x1,z1){
     for(const c of arr) if(segRayVsAABB(x0,z0,x1,z1, c.x,c.z,c.hx,c.hz)) return false;
   }
   return true;
+}
+// LUL-212: is the player currently at a hiding spot (bush/hollow log, see
+// HIDE_KINDS)? Reuses the same coverGrid spatial hash blockedR()/hasLOS()
+// already walk -- no second data structure. Returns the nearest qualifying
+// prop within HIDE_RADIUS of its own edge, or null.
+function findHideSpot(x, z){
+  const cx = Math.floor(x/CELL), cz = Math.floor(z/CELL);
+  let best = null, bestD = Infinity;
+  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
+    const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
+    for(const c of arr){
+      if(!HIDE_KINDS[c.kind]) continue;
+      const dx = x-c.x, dz = z-c.z, edge = Math.max(c.hx, c.hz);
+      const d = Math.hypot(dx,dz) - edge;
+      if(d < HIDE_RADIUS && d < bestD){ bestD = d; best = c; }
+    }
+  }
+  return best;
 }
 // Split out of canSee() so the LUL-144 cover-feedback scan below can test
 // "in range" separately from "has line of sight" for every predator, not
@@ -879,19 +963,31 @@ const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
-    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0;
+    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
+    hideKind = null;   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
+// LUL-153: `game_start` fires once per page-load (first real pointer-lock
+// acquisition), not once per restart -- it feeds the page_view -> ... -> win
+// funnel, which measures "did this visitor ever reach gameplay," not run count.
+let gameStartFired = false;
 // LUL-24: last normalized heading the player actually moved along -- the "escape
 // vector" the wolf pack flanks off of. Only updated while moving (see tick()'s
 // movement block), so it holds the most recent flight direction while the
 // player is stationary or hiding, instead of snapping to a stale default.
 let escX = 0, escZ = -1;
 
+// LUL-153: shared by the keyboard and touch (triggerTouchHide) hide toggles so
+// the feature_engagement('hide') event fires from one place, not two.
+function toggleHidden(){
+  hidden = !hidden;
+  if(hidden){ hideTime = 0; track({ event: 'feature_engagement', feature: 'hide', action: 'used' }); }
+}
+
 on(window, 'keydown', e => {
   keys[e.code] = true;
   const playing = entered && !won && !dead && !pickingUp;
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
   if(e.code === 'KeyE' && canPickup && playing && !paused) pickup();
-  if(e.code === 'KeyH' && playing && !paused){ hidden = !hidden; if(hidden) hideTime = 0; }
+  if(e.code === 'KeyH' && playing && !paused) toggleHidden();
 });
 on(window, 'keyup', e => { keys[e.code] = false; });
 
@@ -906,7 +1002,13 @@ function applyLook(dx, dy){
 function requestLock(){ if(el.requestPointerLock) el.requestPointerLock(); }
 on(document, 'pointerlockchange', () => {
   locked = document.pointerLockElement === el;
-  if(locked) setPaused(false);
+  if(locked){
+    setPaused(false);
+    // LUL-153: the actual "gameplay begins" moment -- distinct from the gate
+    // click (cta_start_clicked, fired in Hud.tsx), which only requests the
+    // lock; this is the browser actually granting it.
+    if(entered && !gameStartFired){ gameStartFired = true; track({ event: 'game_start', seed: currentSeed }); }
+  }
   else if(entered && !won && !dead && !pickingUp) setPaused(true);     // Esc / released lock -> menu
 });
 on(document, 'pointerlockerror', () => { locked = false; });
@@ -985,6 +1087,67 @@ function footstep(vol){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t+0.005); g.gain.exponentialRampToValueAtTime(0.0001, t+0.18);
   src.connect(f); f.connect(g); g.connect(master); g.connect(conv); src.start(t); src.stop(t+0.22);
+}
+// LUL-212: enter/exit foley for the two hiding-spot kinds. Bandpass-filtered
+// noise bursts, same building blocks as footstep()/the rest of this file --
+// no audio files, per the engine's existing all-procedural-WebAudio approach.
+// Bush: a few quick high, bright bursts read as individual leaves brushing
+// past -- the "something is hiding in the brush" cue that's the universal
+// foley convention for stealth/horror games (wiki: game/lul212-hiding-spots).
+function leafRustle(entering){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const bursts = entering ? 3 : 2;
+  for(let i=0; i<bursts; i++){
+    const d = i*0.07 + Math.random()*0.03;
+    const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.12, false);
+    const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = 2200 + Math.random()*1800; bp.Q.value = 0.9;
+    const hp = ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value = 1200;
+    const g = ctx.createGain();
+    const vol = (entering ? 0.16 : 0.11) * (1 - i*0.25);
+    g.gain.setValueAtTime(0.0001, t+d);
+    g.gain.exponentialRampToValueAtTime(vol, t+d+0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+d+0.1);
+    src.connect(bp); bp.connect(hp); hp.connect(g); g.connect(master); g.connect(conv);
+    src.start(t+d); src.stop(t+d+0.14);
+  }
+}
+// Hollow log: a low resonant knock (short bandpassed noise burst + a falling
+// sine thump, the same "hollow body" pairing a real knock on dead wood
+// produces) plus, on entry only, a soft dry creak as the player settles in.
+function hollowLogSound(entering){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.1, false);
+  const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = 220; bp.Q.value = 6;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(entering ? 0.3 : 0.2, t+0.008); ng.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
+  nb.connect(bp); bp.connect(ng); ng.connect(master); ng.connect(conv); nb.start(t); nb.stop(t+0.18);
+
+  const o = ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(90, t+0.2);
+  const og = ctx.createGain();
+  og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(entering ? 0.22 : 0.14, t+0.01); og.gain.exponentialRampToValueAtTime(0.0001, t+0.22);
+  o.connect(og); og.connect(master); og.connect(conv); o.start(t); o.stop(t+0.24);
+
+  if(entering){
+    const cb = ctx.createBufferSource(); cb.buffer = noise(ctx, 0.3, true);
+    const cf = ctx.createBiquadFilter(); cf.type='bandpass'; cf.frequency.setValueAtTime(500, t+0.05); cf.frequency.linearRampToValueAtTime(340, t+0.32); cf.Q.value = 3;
+    const cg = ctx.createGain();
+    cg.gain.setValueAtTime(0.0001, t+0.05); cg.gain.exponentialRampToValueAtTime(0.09, t+0.09); cg.gain.exponentialRampToValueAtTime(0.0001, t+0.34);
+    cb.connect(cf); cf.connect(cg); cg.connect(master); cg.connect(conv); cb.start(t+0.05); cb.stop(t+0.36);
+  }
+}
+function playHideSfx(kind, entering){ if(kind === 'log') hollowLogSound(entering); else leafRustle(entering); }
+// The three call sites (KeyH, the touch Hide button, and tick()'s
+// movement-breaks-cover check) all funnel through these so entering/exiting
+// always agree on `hidden`/`hideTime`/`hideKind` and always play the right
+// prop's sound -- no call site duplicates the bookkeeping.
+function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); }
+function exitHide(){ if(!hidden) return; playHideSfx(hideKind, false); hidden = false; hideKind = null; }
+function toggleHidden(){
+  if(hidden){ exitHide(); return; }
+  const spot = findHideSpot(player.x, player.z);
+  if(spot) enterHide(spot);
 }
 const SCALE = [523.25, 587.33, 659.25, 783.99, 880.0, 987.77];
 function twinkle(vol, bright){
@@ -1179,7 +1342,15 @@ emitState(hudState);   // initial sync, in case a listener mounted before init()
 // ---- Gate + pause --------------------------------------------------------
 const hint = document.getElementById('hint');
 const pausePrompt = document.getElementById('pausePrompt');
-function setPaused(p){ paused = p; pausePrompt.style.display = p ? 'flex' : 'none'; }
+// LUL-153: "options-menu open" per the analytics schema is this pause overlay
+// -- the gate's own instructions call Esc "menu", and the tuning panel
+// (#panel: pace/fog/sound/regen/fullscreen) is what stays reachable while
+// paused. There is no separate modal settings surface today (LUL-70, still
+// backlog); if one ships later, move this call site to its open handler.
+function setPaused(p){
+  if(p && !paused) track({ event: 'feature_engagement', feature: 'options_menu', action: 'opened' });
+  paused = p; pausePrompt.style.display = p ? 'flex' : 'none';
+}
 function enter(){
   entered = true;
   enteredAt = clock.elapsedTime;
@@ -1321,12 +1492,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return idx;
   };
 
-  // Case 2: "hide behind cover -> predator sniffs -> backs off". Use one of
-  // the dedicated cover props (log/rock/bramble), not a tagged tree: trees
-  // also sit in the movement-collision grid, and placing a predator's direct
-  // approach straight through one risks the same stuck/reroute path a normal
-  // chase can hit against any tree -- fine in open play, a flaky thing to
-  // build a deterministic test on. The chosen prop itself is never a movement
+  // Case 2: "hide behind cover -> predator sniffs -> backs off". LUL-212:
+  // narrowed from "any dedicated cover prop (log/rock/bramble)" to only
+  // HIDE_KINDS (bramble/log) -- rock is still LOS-blocking cover but is no
+  // longer a place `hidden` can be entered, so a test staged on a rock would
+  // press KeyH and get nothing, then hang waiting for `investigate` to hold
+  // (forest-engine.js: that loop re-escalates to `chase` every tick `!hidden`
+  // holds). Not a tagged tree either: trees also sit in the movement
+  // -collision grid, and placing a predator's direct approach straight
+  // through one risks the same stuck/reroute path a normal chase can hit
+  // against any tree -- fine in open play, a flaky thing to build a
+  // deterministic test on. The chosen prop itself is never a movement
   // obstacle (LOS-only), but an unrelated real tree can still overlap the
   // predator's or the player's *own spawn point* for a given candidate, not
   // just the line between them -- found by tracing a stuck run where the
@@ -1336,14 +1512,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // going anywhere. The interior-only sample (i=1..STEPS-1) that used to be
   // here never checked i=0 or i=STEPS, i.e. never checked the endpoints it
   // was about to commit to. Both endpoints are now checked explicitly before
-  // the interior walk. With COVER_PROPS=220 some candidate is always clear.
+  // the interior walk. The player lands `hideReach` from the prop's edge --
+  // inside HIDE_RADIUS, so the immediately-following KeyH press actually
+  // finds a hiding spot -- while the predator keeps the wider safety margin
+  // against unrelated tree overlap. With COVER_PROPS=220 (~65% bramble/log)
+  // some candidate is always clear.
   window.ForestEngine.qaHideBehindCover = function(){
     const idx = 0;
     const p = predators[idx];
     for(const c of coverData){
-      if(c.kind === 'tree') continue;
-      const reach = Math.max(c.hx, c.hz) + 3;
-      const px = c.x - reach, pz = c.z, qx = c.x + reach, qz = c.z;
+      if(!HIDE_KINDS[c.kind]) continue;
+      const edge = Math.max(c.hx, c.hz), predReach = edge + 3, hideReach = edge + 1;
+      const px = c.x - predReach, pz = c.z, qx = c.x + hideReach, qz = c.z;
       if(blockedR(px, pz, p.rad) || blocked(qx, qz)) continue;
       let clear = true;
       const STEPS = 12;
@@ -1369,9 +1549,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(idx < 0) return null;
     const p = predators[idx];
     for(const c of coverData){
-      if(c.kind === 'tree') continue;
-      const reach = Math.max(c.hx, c.hz) + 3;
-      const px = c.x - reach, pz = c.z, qx = c.x + reach, qz = c.z;
+      if(!HIDE_KINDS[c.kind]) continue;
+      const edge = Math.max(c.hx, c.hz), predReach = edge + 3, hideReach = edge + 1;
+      const px = c.x - predReach, pz = c.z, qx = c.x + hideReach, qz = c.z;
       if(blockedR(px, pz, p.rad) || blocked(qx, qz)) continue;
       let clear = true;
       const STEPS = 12;
@@ -1387,6 +1567,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       return { idx, kind };
     }
     return null;
+  };
+
+  // LUL-212: teleport the player to the nearest hiding spot (bramble/log),
+  // no predator involved -- e2e/hide.spec.ts only needs a deterministic spot
+  // to press KeyH at, not a chase scenario.
+  window.ForestEngine.qaTeleportToHideSpot = function(){
+    const spot = coverData.find(c => HIDE_KINDS[c.kind]);
+    if(!spot) return null;
+    player.x = spot.x; player.z = spot.z;
+    return spot.kind;
   };
 
   window.ForestEngine.qaPredatorState = function(idx){
@@ -1429,14 +1619,18 @@ function arriveHome(){
   babyGroup.visible = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds: Math.max(0, clock.elapsedTime - enteredAt) });
+  const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
 }
 function triggerDeath(kind){
   if(dead || won || pickingUp) return;
   dead = true; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
-  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds: Math.max(0, deathStart - enteredAt) });
+  const survivedSeconds = Math.max(0, deathStart - enteredAt);
+  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -1451,7 +1645,7 @@ function revealLoss(){ deathShown = true; document.body.style.cursor = ''; pushS
 function restart(){
   pushState({ winVisible: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
-  won = dead = pickingUp = carrying = hidden = false; hideTime = 0; eyeH = CONFIG.eye; deathShown = false;
+  won = dead = pickingUp = carrying = hidden = false; hideTime = 0; hideKind = null; eyeH = CONFIG.eye; deathShown = false;
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
@@ -1599,10 +1793,11 @@ function tick(){
     player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - touchLook.y * PITCH_SPEED * dt));
   }
 
-  // hiding: H toggles crouch, any movement key breaks cover
+  // hiding: H toggles crouch at a hiding spot (LUL-212, see findHideSpot/
+  // toggleHidden above), any movement key breaks it
   const hasTouchMove = Math.hypot(touchMove.x, touchMove.z) > 0.15;
   const moveKey = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
-  if(hidden && (moveKey || hasTouchMove)) hidden = false;
+  if(hidden && (moveKey || hasTouchMove)) exitHide();
   hideTime = hidden ? hideTime + dt : 0;
   eyeH += ((hidden ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
 
@@ -1812,14 +2007,15 @@ function tick(){
   for(let i=0;i<LW;i++){ lp[i*3+1] += dt*0.25; if(lp[i*3+1] > 4.5) lp[i*3+1] = 0.2; }
   lwGeo.attributes.position.needsUpdate = true;
 
-  // ambient dust follows you
+  // ambient dust follows you, drifting downwind (LUL-195, see setup above)
   const amp = reduce ? 0.3 : 1, dp = dustGeo.attributes.position.array;
+  const wdx = windX * dt * DUST_WIND_SPEED * amp, wdz = windZ * dt * DUST_WIND_SPEED * amp;
   for(let i=0;i<DUST;i++){
-    dp[i*3]   += Math.sin(t*0.4 + i) * dt * 0.12 * amp;
+    dp[i*3]   += Math.sin(t*0.4 + i) * dt * 0.12 * amp + wdx;
     dp[i*3+1] += Math.sin(t*0.3 + i*1.7) * dt * 0.1 * amp;
-    dp[i*3+2] += dt * 0.3 * amp;
-    if(dp[i*3+2] > 4)  dp[i*3+2] -= 34;
-    if(dp[i*3] > 30)   dp[i*3] -= 60; else if(dp[i*3] < -30) dp[i*3] += 60;
+    dp[i*3+2] += Math.sin(t*0.37 + i*2.3) * dt * 0.12 * amp + wdz;
+    if(dp[i*3+2] > 4)   dp[i*3+2] -= 34; else if(dp[i*3+2] < -30) dp[i*3+2] += 34;
+    if(dp[i*3] > 30)    dp[i*3] -= 60;  else if(dp[i*3] < -30)    dp[i*3] += 60;
   }
   dustGeo.attributes.position.needsUpdate = true;
   dust.position.copy(camera.position);
@@ -1896,7 +2092,7 @@ tick();
   function setTouchSprint(v)  { touchSprint = v; }
   function triggerTouchHide() {
     const playing = entered && !won && !dead && !pickingUp;
-    if(playing && !paused){ hidden = !hidden; if(hidden) hideTime = 0; }
+    if(playing && !paused) toggleHidden();
   }
   function triggerTouchInteract() {
     const playing = entered && !won && !dead && !pickingUp;

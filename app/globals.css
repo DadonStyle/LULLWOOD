@@ -15,6 +15,7 @@
    sees it in normal document flow. Namespaced under .about so nothing here
    collides with the game's own #id/.class overlay styling. */
 main.about {
+  pointer-events: none;   /* LUL-211: never intercept clicks meant for the game canvas */
   max-width: 640px;
   margin: 100vh auto 0;
   padding: 48px 24px 96px;

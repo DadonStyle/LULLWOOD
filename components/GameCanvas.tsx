@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
+import { track, startSessionTracking } from '@/lib/analytics';
 
 // CSS verbatim from the original single-file prototype (M2 wiki plan:
 // game/port-plan) -- its lines 6-99. The prototype is no longer in the tree;
@@ -22,7 +23,7 @@ const OVERLAY_STYLE = `
     font-family: ui-sans-serif, system-ui, sans-serif; color: #b9c8dd; }
   canvas { display: block; }
 
-  #vignette { position: fixed; inset: 0; pointer-events: none;
+  #vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none;
     background: radial-gradient(120% 90% at 50% 44%, transparent 45%, rgba(0,0,0,0.6) 100%); }
 
   /* entry / pause gate */
@@ -37,7 +38,7 @@ const OVERLAY_STYLE = `
     letter-spacing: 0.03em; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
 
-  #hint { position: fixed; top: 20px; left: 0; right: 0; text-align: center;
+  #hint { position: fixed; top: 20px; left: 0; right: 0; z-index: 1; text-align: center;
     font-size: 12px; letter-spacing: 0.05em; color: #9fb2cd; pointer-events: none;
     text-shadow: 0 1px 8px rgba(0,0,0,0.8); transition: opacity 1.4s ease; opacity: 0; }
 
@@ -60,6 +61,17 @@ const OVERLAY_STYLE = `
     border-radius: 8px; padding: 6px 12px; }
   #panel button:hover { background: rgba(150,175,215,0.18); }
   #panel :focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
+
+  /* LUL-198: on touch/narrow viewports, TouchControls (components/TouchControls.tsx)
+     draws an always-present movement stick + E button in this same bottom-left
+     corner at z-index 30, above #panel's z-index 10 -- the stick's 128px hit
+     region could sit directly over Sound/New map/Fullscreen. Lift #panel clear of
+     that band instead of fighting it with z-index: 24px wrapper bottom + 128px
+     stick + 10px gap + 56px E button + margin. 768px matches the breakpoint
+     TouchControls' useTouchDevice() already uses for "is this a phone". */
+  @media (max-width: 768px) {
+    #panel { bottom: 240px; }
+  }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
   #pausePrompt { position: fixed; inset: 0; z-index: 15; display: none;
@@ -129,6 +141,14 @@ const OVERLAY_MARKUP = `
 export default function GameCanvas() {
   const [hud, setHud] = useState<EngineHudState>(INITIAL_HUD_STATE);
   const [actions, setActions] = useState<EngineActions | null>(null);
+
+  // LUL-153: page_view + session_length are independent of whether the engine
+  // module ever finishes loading, so they get their own effect rather than
+  // living inside the dynamic-import one below.
+  useEffect(() => {
+    track({ event: 'page_view' });
+    return startSessionTracking();
+  }, []);
 
   useEffect(() => {
     // The engine is a bundled module now (LUL-28), so there is no <script> tag

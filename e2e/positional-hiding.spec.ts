@@ -27,6 +27,13 @@
 // LOS path independently via qaHideBehindCoverKind(kind). The wolf case
 // supercedes the old predators[0] coverage in qaHideBehindCover (which
 // happened to be a wolf anyway).
+//
+// LUL-212: entering `hidden` itself now requires standing at a dedicated
+// hiding-spot prop (bush/hollow log), not just any LOS-blocking cover --
+// qaHideBehindCover(Kind) only ever place the player at one of those two
+// kinds now, so the KeyH presses below still succeed. The LOS math these
+// tests actually assert on (canSee/hasLOS against the coverGrid) is
+// unchanged; rock and tagged trees still block sight exactly as before.
 import { test, expect } from '@playwright/test';
 import { boot, enter } from './helpers';
 
