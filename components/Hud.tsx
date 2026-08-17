@@ -68,6 +68,12 @@ export interface EngineHudState {
   // LUL-40: hold-to-dim follow-light, engine-driven (see engine/forest-engine.js
   // tick()) -- read-only here, there's no setter because React never triggers it.
   lightDimmed: boolean;
+  // LUL-213: a wolf/lion is telegraphing a charge -- press Space within the
+  // window or get caught. `chargeToken` only changes on a fresh charge (not
+  // every frame one is active), so it can key the prompt element and retrigger
+  // its CSS countdown animation from a clean start each time.
+  chargeVisible: boolean;
+  chargeToken: number;
 }
 
 export interface EngineActions {
@@ -108,6 +114,8 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   fog: 0.04,
   soundOn: true,
   lightDimmed: false,
+  chargeVisible: false,
+  chargeToken: 0,
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -282,6 +290,8 @@ export default function Hud({
             <br />
             <b>H</b> — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
             <br />
+            <b>Space</b> — jump (also how you clear a charging wolf or lion)
+            <br />
             <b>F</b> — hold to dim your light (smaller lit radius)
             <br />
             <span style={{ fontSize: 11, opacity: 0.7 }}>on mobile: left stick — move &nbsp;·&nbsp; right stick — look &nbsp;·&nbsp; Hide / E buttons</span>
@@ -305,6 +315,22 @@ export default function Hud({
       {state.statusVisible && (
         <div id="status" className="hiding" style={{ display: 'block' }}>
           {state.statusText}
+        </div>
+      )}
+
+      {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
+          forces React to remount this element on every fresh charge (not on
+          overlapping ones, see beginChargeHud in the engine), which restarts
+          the CSS countdown bar animation from a clean 100%. The 1s duration
+          is hardcoded in globals.css rather than read from engine state
+          because it's a fixed, learnable window by design (see lib/game/charge.ts) --
+          not a tunable the HUD needs to stay in sync with frame to frame. */}
+      {state.chargeVisible && (
+        <div id="chargePrompt" key={state.chargeToken}>
+          <span id="chargeKey">SPACE</span>
+          <div id="chargeBarTrack">
+            <div id="chargeBar" />
+          </div>
         </div>
       )}
 
