@@ -138,9 +138,40 @@ const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
 let lightDimmed = false;
 
 // ---- Trees: one instanced "master tree", positions fixed per map ---------
-const trunkGeo = new THREE.CylinderGeometry(0.12, 0.20, 1.6, 6); trunkGeo.translate(0, 0.8, 0);
-const cone1Geo = new THREE.ConeGeometry(1.15, 2.5, 7);           cone1Geo.translate(0, 2.1, 0);
-const cone2Geo = new THREE.ConeGeometry(0.78, 1.9, 7);           cone2Geo.translate(0, 3.35, 0);
+const CANOPY_R = 1.15;     // cone1Geo base radius, at its widest (near the ground)
+const CONE1_HEIGHT = 2.5, CONE1_Y = 2.1;
+const trunkGeo = new THREE.CylinderGeometry(0.12, 0.20, 1.6, 6);   trunkGeo.translate(0, 0.8, 0);
+const cone1Geo = new THREE.ConeGeometry(CANOPY_R, CONE1_HEIGHT, 7); cone1Geo.translate(0, CONE1_Y, 0);
+const cone2Geo = new THREE.ConeGeometry(0.78, 1.9, 7);             cone2Geo.translate(0, 3.35, 0);
+// LUL-267: cone1's radius at the player's own eye height, not its (much wider)
+// base -- a cone tapers, so the true cross-section the camera can hit is
+// narrower than the base almost everywhere along its height. Eye height is
+// fixed at CONFIG.eye while moving -- the only lower eye height (hiding,
+// 1.05) always exits hiding on the same frame movement resumes (see
+// exitHide() call site, `hidden && moveKey`), so no in-motion frame needs a
+// wider radius than this.
+//
+// Trees are instance-scaled uniformly around the origin (dummy.scale.setScalar(s)
+// in generateMap()), so cone1's baked-in translate scales too: a *larger* tree's
+// foliage base sits proportionally *higher* off the ground, not just wider. So
+// CONFIG.eye intersects a different relative slice of the cone depending on s --
+// this is why the visual bug gets worse on large trees (LUL-266's own finding):
+// at large s the (risen) base is close to eye height, so the true cross-section
+// there is close to the full base radius; at small s, eye height sits close to
+// the (also risen-in-scale, but tiny) apex, where the cross-section is nearly 0.
+// A first pass used a single scale-independent coefficient (fixed fraction of
+// CANOPY_R*s) and was measured live to be wrong in both directions: too wide for
+// small/mid trees (walled the player in a few units from spawn -- neighbouring
+// canopies' widened circles started overlapping previously-walkable gaps, the
+// same shape of regression LUL-119 already burned once, just against the player
+// instead of a predator) and, since it was still only ~46% of the base radius,
+// too narrow to fully clear large trees. canopyRadiusAtEye() derives the exact
+// per-tree value from the cone's actual (scaled) geometry instead of guessing
+// one coefficient for every tree size.
+const CONE1_APEX_Y = CONE1_Y + CONE1_HEIGHT/2;   // local apex height, before per-tree scale
+function canopyRadiusAtEye(s){
+  return Math.max(0, (CANOPY_R / CONE1_HEIGHT) * (CONE1_APEX_Y*s - CONFIG.eye));
+}
 const trunkMat   = new THREE.MeshStandardMaterial({ color: CONFIG.trunk,   roughness: 1 });
 const foliageMat = new THREE.MeshStandardMaterial({ color: CONFIG.foliage, roughness: 1 });
 
@@ -192,7 +223,7 @@ const HIDE_RADIUS = 2.2;   // proximity, beyond the prop's own footprint, to sti
 
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
-let treeData = [];            // {x,z,s,cr}
+let treeData = [];            // {x,z,s,cr,crCanopy}
 const CELL = 8;
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
@@ -252,7 +283,36 @@ function coverBlockedR(x,z,pr){
   }
   return false;
 }
-function blocked(x,z){ return blockedR(x,z,0.6) || coverBlockedR(x,z,0.6); }
+// LUL-267: the visual foliage canopy (cone1Geo, base radius CANOPY_R*s) is
+// ~3.3x wider than the trunk movement-collision radius (t.cr = 0.35*s) above,
+// so the player could walk close enough for the camera to end up inside the
+// canopy mesh -- point-blank, unfogged foliage material fills the screen for
+// under a second until they walk through (LUL-266 root cause).
+//
+// Same split as coverBlockedR() just above, and for the same reason: predators
+// call blockedR() directly, not blocked(), for their own steering, and the
+// standing comment on coverBlockedR() already documents that touching the
+// shared movement-collision radius caused a stuck-predator regression
+// (LUL-119). Widening t.cr itself (the simpler fix) would change predator
+// pathing near every tree; this only ever affects the player's own movement
+// block, so predator behaviour near trees is unchanged.
+//
+// Tuning: before this, the player could approach to `t.cr+0.6` (0.85-1.44
+// units, tree-scale dependent) while the canopy reached out to `CANOPY_R*s`
+// (0.8-2.76 units) -- always past the canopy edge, worse on large trees.
+// `t.crCanopy` (== `canopyRadiusAtEye(s)`, see that function's comment for why
+// this isn't simply CANOPY_R*s) is the minimum radius that still guarantees
+// the camera can't end up inside the mesh while moving, without over-blocking
+// gaps between trees that were previously walkable.
+function canopyBlockedR(x,z){
+  const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
+  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
+    const arr = grid.get(key(gx,gz)); if(!arr) continue;
+    for(const t of arr){ const dx=x-t.x, dz=z-t.z, rr=t.crCanopy; if(dx*dx+dz*dz < rr*rr) return true; }
+  }
+  return false;
+}
+function blocked(x,z){ return blockedR(x,z,0.6) || coverBlockedR(x,z,0.6) || canopyBlockedR(x,z); }
 
 function buildCoverGrid(){
   coverGrid = new Map();
@@ -328,7 +388,7 @@ function generateMap(seed){
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
     const s = 0.7 + rng()*1.7;
-    treeData.push({ x, z, s, cr: 0.35*s });
+    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s) });
   }
   for(let i=0; i<CONFIG.trees; i++){
     if(i < treeData.length){
