@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
+import SettingsPanel from './SettingsPanel';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 
@@ -74,6 +75,15 @@ export interface EngineHudState {
   // its CSS countdown animation from a clean start each time.
   chargeVisible: boolean;
   chargeToken: number;
+  // LUL-26: difficulty + accessibility, engine-controlled like pace/fog above.
+  difficulty: 'lantern' | 'night' | 'blackout';
+  runMode: 'hold' | 'toggle';
+  sensitivity: number;
+  invertY: boolean;
+  reducedMotion: boolean;
+  captionsOn: boolean;
+  caption: string | null;
+  captionId: number;
 }
 
 export interface EngineActions {
@@ -89,6 +99,13 @@ export interface EngineActions {
   setTouchSprint: (v: boolean) => void;
   triggerTouchHide: () => void;
   triggerTouchInteract: () => void;
+  // LUL-26: difficulty + accessibility
+  setDifficulty: (d: 'lantern' | 'night' | 'blackout') => void;
+  setRunMode: (m: 'hold' | 'toggle') => void;
+  setSensitivity: (v: number) => void;
+  setInvertY: (v: boolean) => void;
+  setReducedMotion: (v: boolean) => void;
+  setCaptions: (v: boolean) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -116,6 +133,14 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lightDimmed: false,
   chargeVisible: false,
   chargeToken: 0,
+  difficulty: 'night',
+  runMode: 'hold',
+  sensitivity: 1,
+  invertY: false,
+  reducedMotion: false,
+  captionsOn: false,
+  caption: null,
+  captionId: 0,
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -187,6 +212,42 @@ function useRunRecap(ended: boolean, survivedSeconds: number) {
   return { best, isNewBest };
 }
 
+// LUL-26: captions are the only channel carrying predator warnings for a deaf/
+// HoH player (every game sound is synthesized WebAudio, no other track exists),
+// so the toast needs its own visible lifetime -- the engine only ever sets
+// `caption` and bumps `captionId` on a fresh call, it never clears it back to
+// null. `captionId === 0` is the pre-game placeholder (INITIAL_HUD_STATE), so
+// the very first render doesn't flash a toast with no real caption behind it.
+const CAPTION_DISPLAY_MS = 3200;
+
+function useCaptionToast(captionsOn: boolean, captionId: number) {
+  // Same "adjust state during render" pattern as useRunRecap's `wasEnded`
+  // above: `lastSeenId` is last render's captionId, compared inline instead
+  // of from a useEffect, so a fresh caption shows immediately in the render
+  // that received it rather than one tick later.
+  const [lastSeenId, setLastSeenId] = useState(captionId);
+  const [visible, setVisible] = useState(false);
+
+  if (captionId !== lastSeenId) {
+    setLastSeenId(captionId);
+    setVisible(captionsOn && captionId !== 0);
+  } else if (!captionsOn && visible) {
+    setVisible(false);
+  }
+
+  // The auto-hide timer is the one genuine side effect -- it has to key on
+  // captionId too (not just visible) so a second caption arriving while the
+  // first is still showing restarts the clock instead of the first timeout
+  // cutting the second caption's display short.
+  useEffect(() => {
+    if (!visible) return;
+    const t = setTimeout(() => setVisible(false), CAPTION_DISPLAY_MS);
+    return () => clearTimeout(t);
+  }, [visible, captionId]);
+
+  return visible;
+}
+
 function RunRecap({ survivedSeconds, best, isNewBest }: { survivedSeconds: number; best: number | null; isNewBest: boolean }) {
   return (
     <p id="runRecap">
@@ -216,6 +277,9 @@ export default function Hud({
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
   const mobile = useState(() => isMobile())[0];
+  // LUL-26: difficulty + accessibility settings panel.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const captionVisible = useCaptionToast(state.captionsOn, state.captionId);
 
   return (
     <>
@@ -269,7 +333,24 @@ export default function Hud({
             Fullscreen: {isFullscreen ? 'on' : 'off'}
           </button>
         )}
+        {/* LUL-26: difficulty presets + accessibility, one dialog. */}
+        <button id="settingsBtn" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog">
+          Settings
+        </button>
       </div>
+
+      <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {/* LUL-26: closed captions for predator calls -- the only warning
+          channel for a player who can't hear the (fully synthesized) audio.
+          `key` forces a remount per captionId so a caption that arrives while
+          the previous one is still fading restarts the toast cleanly instead
+          of the old text lingering under a re-triggered fade. */}
+      {captionVisible && state.caption && (
+        <div id="captionToast" key={state.captionId} role="status" aria-live="polite">
+          {state.caption}
+        </div>
+      )}
 
       {!state.entered && (
         <div
