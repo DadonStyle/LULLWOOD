@@ -164,6 +164,27 @@ const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playe
 const LIGHT_NORMAL = { intensity: 0.7, distance: 20 };
 const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
 let lightDimmed = false;
+// LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
+// found the point-light radius/intensity cut above unreadable against this
+// scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
+// PointLight.distance never produces a visible edge. Diagnosis on the ticket:
+// cutting distance further won't fix that on its own, because the thing
+// that's swamping it (ambient) is untouched either way. Cue is layered on
+// top instead, on the existing #vignette DOM overlay (GameCanvas.tsx) rather
+// than in the post-processing shader below, so it applies identically
+// whether or not WebGL post-processing initialized (usePost).
+// dimAmount eases 0->1 the same way eyeH eases above, so the pool visibly
+// contracts over ~0.3s instead of popping -- reads as "a smaller lit area
+// with dark past its rim" per the ticket's own framing, not just darker.
+let dimAmount = 0;
+const vignetteEl = document.getElementById('vignette');
+const VIGNETTE_NORMAL = { inner: 45, outerAlpha: 0.60 };
+const VIGNETTE_DIMMED  = { inner: 18, outerAlpha: 0.92 };
+function applyVignette(amt){
+  const inner = VIGNETTE_NORMAL.inner + (VIGNETTE_DIMMED.inner - VIGNETTE_NORMAL.inner) * amt;
+  const outerAlpha = VIGNETTE_NORMAL.outerAlpha + (VIGNETTE_DIMMED.outerAlpha - VIGNETTE_NORMAL.outerAlpha) * amt;
+  vignetteEl.style.background = `radial-gradient(120% 90% at 50% 44%, transparent ${inner}%, rgba(0,0,0,${outerAlpha}) 100%)`;
+}
 
 // ---- Trees: one instanced "master tree", positions fixed per map ---------
 const CANOPY_R = 1.15;     // cone1Geo base radius, at its widest (near the ground)
@@ -2149,6 +2170,8 @@ function tick(){
     playerLight.distance = cfg.distance;
     pushState({ lightDimmed });
   }
+  dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
+  applyVignette(dimAmount);
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
   if(playing && !hidden){
