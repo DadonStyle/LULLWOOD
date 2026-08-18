@@ -37,7 +37,10 @@ count it in the "current" list above since it isn't live.
 
 ## How I implemented this list
 
-I read the entire game engine file (`engine/forest-engine.js`, 2,602 lines)
+I read the entire game engine file (`engine/forest-engine.js`, 2,519 lines
+as of `main`'s current tip, `7796362` — corrected 2026-08-18, LUL-411; it
+was 2,602 in an earlier snapshot, which is why the citations in
+`docs/ELEMENTS.md` needed a full re-derive)
 top to bottom rather than working from memory or the original ticket's
 wording, per your own instruction ("enumerated from the engine"). For each
 element I wrote down, with a citation to the exact line of code:
