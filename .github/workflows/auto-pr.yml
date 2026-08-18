@@ -42,7 +42,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
-          LUL327_TEST_FORCE_5XX: "true" # TEMPORARY -- LUL-327 retry-gate proof, removed next commit
         run: |
           set -euo pipefail
 
