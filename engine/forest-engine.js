@@ -162,6 +162,27 @@ const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playe
 const LIGHT_NORMAL = { intensity: 0.7, distance: 20 };
 const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
 let lightDimmed = false;
+// LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
+// found the point-light radius/intensity cut above unreadable against this
+// scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
+// PointLight.distance never produces a visible edge. Diagnosis on the ticket:
+// cutting distance further won't fix that on its own, because the thing
+// that's swamping it (ambient) is untouched either way. Cue is layered on
+// top instead, on the existing #vignette DOM overlay (GameCanvas.tsx) rather
+// than in the post-processing shader below, so it applies identically
+// whether or not WebGL post-processing initialized (usePost).
+// dimAmount eases 0->1 the same way eyeH eases above, so the pool visibly
+// contracts over ~0.3s instead of popping -- reads as "a smaller lit area
+// with dark past its rim" per the ticket's own framing, not just darker.
+let dimAmount = 0;
+const vignetteEl = document.getElementById('vignette');
+const VIGNETTE_NORMAL = { inner: 45, outerAlpha: 0.60 };
+const VIGNETTE_DIMMED  = { inner: 18, outerAlpha: 0.92 };
+function applyVignette(amt){
+  const inner = VIGNETTE_NORMAL.inner + (VIGNETTE_DIMMED.inner - VIGNETTE_NORMAL.inner) * amt;
+  const outerAlpha = VIGNETTE_NORMAL.outerAlpha + (VIGNETTE_DIMMED.outerAlpha - VIGNETTE_NORMAL.outerAlpha) * amt;
+  vignetteEl.style.background = `radial-gradient(120% 90% at 50% 44%, transparent ${inner}%, rgba(0,0,0,${outerAlpha}) 100%)`;
+}
 
 // ---- Trees: one instanced "master tree", positions fixed per map ---------
 const CANOPY_R = 1.15;     // cone1Geo base radius, at its widest (near the ground)
@@ -1883,7 +1904,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // which is exactly what a test can't wait on reliably. Places the predator due
   // +x of the player at the midpoint of the trigger band, in the open (spawn
   // clearing has no cover, same guarantee qaOpenHideNearLion relies on), and
-  // faces the player -x so playerCanSee() would independently agree if re-checked.
+  // faces the player +x so playerCanSee() would independently agree if re-checked.
   // Returns the predator's `predators` index, or null if that species isn't spawned.
   window.ForestEngine.qaTriggerCharge = function(kind){
     if(kind !== 'wolf' && kind !== 'lion') return null;
@@ -1891,7 +1912,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(idx < 0) return null;
     const p = predators[idx];
     const dist = (CHARGE_TRIGGER_MIN + CHARGE_TRIGGER_MAX) / 2;
-    player.x = 0; player.z = 0; player.yaw = Math.PI/2;   // faces -x, i.e. toward the predator below
+    player.x = 0; player.z = 0; player.yaw = -Math.PI/2;   // forward = (-sin(yaw), -cos(yaw)) = (+1, 0), faces the predator below
     p.x = player.x + dist; p.z = player.z;
     p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.hunt = false;
     p.state = 'chase'; p.scentLock = 0; p.chargeCooldown = 0;
@@ -1899,6 +1920,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.chargeDirX = -1; p.chargeDirZ = 0;
     beginChargeHud();
     return idx;
+  };
+
+  // LUL-275: snapshot of the player's transform and detected input mode -- proves
+  // which input branch init() actually bound at runtime, not just which the test
+  // requested. See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
+  window.ForestEngine.qaPlayerState = function(){
+    return { x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode };
   };
 }
 
@@ -1937,7 +1965,13 @@ function arriveHome(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds });
+  // LUL-303: updatePredators() (the only other place that clears the charge
+  // HUD) stops running once `playing` goes false here, so a charge/telegraph
+  // in flight at the exact moment of arrival would otherwise render on top
+  // of the win screen forever -- clear it the same way placePredators() does
+  // on restart.
+  activeCharges = 0;
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
 }
 function triggerDeath(kind){
@@ -2146,6 +2180,8 @@ function tick(){
     playerLight.distance = cfg.distance;
     pushState({ lightDimmed });
   }
+  dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
+  applyVignette(dimAmount);
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
   if(playing && !hidden){
