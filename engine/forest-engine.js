@@ -2470,7 +2470,7 @@ function tick(){
   // scary music plays ONLY while an animal actually sees you (chasing or bee-lining).
   // lose sight → it starts sniffing/searching and the music falls back to the calm bed;
   // it finds you again (investigate → chase) and the music returns.
-  const hunting = playing && predators.some(p => p.state === 'chase' || p.hunt);
+  const hunting = playing && predators.some(p => !p.inert && (p.state === 'chase' || p.hunt));
   huntTime = hunting ? huntTime + dt : Math.max(0, huntTime - dt*0.5);
   if(audio && soundOn){
     const esc = clamp(huntTime/25 + (nearDist < 1e8 ? clamp(1 - nearDist/40, 0, 1)*0.5 : 0), 0, 1);
