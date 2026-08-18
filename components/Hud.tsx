@@ -321,10 +321,12 @@ export default function Hud({
       {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
           forces React to remount this element on every fresh charge (not on
           overlapping ones, see beginChargeHud in the engine), which restarts
-          the CSS countdown bar animation from a clean 100%. The 1s duration
-          is hardcoded in globals.css rather than read from engine state
-          because it's a fixed, learnable window by design (see lib/game/charge.ts) --
-          not a tunable the HUD needs to stay in sync with frame to frame. */}
+          the CSS countdown bar animation from a clean 100%. The countdown
+          duration is CHARGE_WINDOW, imported into GameCanvas.tsx's OVERLAY_STYLE
+          (see lib/game/charge.ts) rather than passed here as engine state --
+          it's a fixed, learnable window by design, not a per-frame tunable
+          the HUD needs to stay in sync with. LUL-304: this used to restate the
+          value as a bare "1s" literal in the CSS; it's now the same constant. */}
       {state.chargeVisible && (
         <div id="chargePrompt" key={state.chargeToken}>
           <span id="chargeKey">SPACE</span>
