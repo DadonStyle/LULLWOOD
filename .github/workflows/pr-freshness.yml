@@ -1,0 +1,84 @@
+name: PR freshness
+
+# Why this exists (LUL-380)
+# -------------------------
+# `main`'s ruleset requires branches to be strictly up to date before they can
+# merge (systems/main-branch-merge-gate). Every PR merge re-stales every other
+# open PR, so approved+green PRs were piling up BEHIND with nothing bringing
+# them back up to date except an agent noticing by hand (LUL-361).
+#
+# This workflow does that backmerge automatically, using GitHub's "update
+# pull request branch" API. That API performs a real merge commit from base
+# into head -- it is not a rebase and it does not force-push -- so it matches
+# decision 0010 (no force-push, branches track main by backmerge) without any
+# agent having to run the manual loop in AGENTS.md for routine staleness.
+#
+# It does NOT touch review status, CI, or the merge itself. A PR still needs
+# its own approval and green checks to land; this only keeps it mergeable.
+#
+# Conflicts are the one case this can't handle -- update-branch fails if the
+# merge isn't clean, and this workflow does not attempt conflict resolution
+# (that would risk exactly the "logic and function loss" LUL-380 warned
+# about). It leaves a comment on the PR instead and moves on.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Fallback cadence in case the push trigger is missed (e.g. a merge that
+    # landed while this workflow itself was mid-update). Same 30-minute
+    # ballpark as the checks this feeds.
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pr-freshness
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: backmerge main into stale open PRs
+    runs-on: ubuntu-latest
+    steps:
+      - name: update behind branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          gh pr list --repo "$REPO" --state open \
+            --json number,headRefName,mergeStateStatus \
+            --jq '.[] | select(.headRefName | startswith("lul-")) | [.number, .headRefName, .mergeStateStatus] | @tsv' \
+          | while IFS=$'\t' read -r number branch status; do
+              if [ "$status" != "BEHIND" ]; then
+                echo "::notice::#$number ($branch) is $status; skipping."
+                continue
+              fi
+
+              echo "::notice::#$number ($branch) is BEHIND main; requesting update-branch."
+              if gh api -X PUT "repos/$REPO/pulls/$number/update-branch" >/dev/null 2>/tmp/update-err.log; then
+                echo "::notice::#$number updated."
+              else
+                echo "::warning::update-branch failed for #$number -- likely a real merge conflict, needs a manual backmerge:"
+                cat /tmp/update-err.log
+
+                if ! gh pr view "$number" --repo "$REPO" --json comments \
+                     --jq '.comments[].body' | grep -qF '<!-- PR_FRESHNESS_CONFLICT -->'; then
+                  printf '%s\n' \
+                    '<!-- PR_FRESHNESS_CONFLICT -->' \
+                    "PR freshness check: this branch is behind \`main\` and \`update-branch\` could not" \
+                    'fast-forward it automatically -- most likely a real merge conflict. Needs a' \
+                    'manual backmerge (`git fetch origin main && git merge FETCH_HEAD`, resolve, push --' \
+                    'never force-push). See systems/lullwood-checkout and decisions/0010-no-force-push' \
+                    'in the wiki.' > /tmp/conflict-comment.md
+                  gh pr comment "$number" --repo "$REPO" --body-file /tmp/conflict-comment.md || true
+                else
+                  echo "::notice::already flagged the conflict on #$number; not commenting again."
+                fi
+              fi
+            done
