@@ -168,10 +168,8 @@ const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playe
 // LUL-40: player-controlled binary dim, hold KeyF. Two states only, on purpose --
 // a slider players set once and forget wouldn't be the every-second decision the
 // ticket wants. The lit radius shrinks along with intensity so dimming reads as
-// "smaller pool of light", not just "dimmer light in the same pool". Detection
-// math doesn't read this yet -- LUL-22's effectiveDetect() is the place to wire
-// it in as one more multiplier alongside stillness, deliberately left dormant
-// per the ticket's own sequencing note (ship the control first).
+// "smaller pool of light", not just "dimmer light in the same pool". Wired into
+// sight detection at effectiveDetect() via DIM_DETECT_MUL (LUL-291).
 const LIGHT_NORMAL = { intensity: 0.7, distance: 20 };
 const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
 let lightDimmed = false;
@@ -819,6 +817,12 @@ function hearNoise(p){
 // walking behind a rock or a tree exactly as before, hidden or not.
 const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
+// LUL-291: dimmed light shrinks sight-detect range by 25% -- proposed starting value,
+// unverified tuning for the Game Tester. Deliberately a smaller lever than full stillness
+// (STILL_DETECT_CUT above): dimming is a free toggle, stillness is a sustained commitment,
+// and the two stack multiplicatively so hiding still + dimmed is the strongest state.
+// Sight only -- p.spec.scent is untouched, dimming doesn't affect how far predators smell you.
+const DIM_DETECT_MUL = 0.75;
 function segRayVsAABB(x0,z0,x1,z1, cx,cz,hx,hz){
   const minX=cx-hx, maxX=cx+hx, minZ=cz-hz, maxZ=cz+hz;
   let tmin=0, tmax=1;
@@ -867,7 +871,7 @@ function findHideSpot(x, z){
 // just stop at the first one that can see the player.
 function effectiveDetect(p){
   const stillness = hidden ? Math.min(1, hideTime / STILL_RAMP) : 0;
-  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT);
+  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT) * (lightDimmed ? DIM_DETECT_MUL : 1);
 }
 function canSee(p, dist){
   if(dist >= effectiveDetect(p)) return false;
