@@ -35,6 +35,7 @@ import {
 } from '@/lib/game/scent';
 import {
   backOffPoint,
+  canCatchInChase,
   hasReachedSniffRange,
   isCaught,
   rollSniffs,
@@ -1015,7 +1016,12 @@ function updatePredators(dt, noiseRadius){
         beginChargeHud();
       }
       else {
-        if(isCaught(dist, p.rad)){ triggerDeath(p.kind); }
+        // LUL-387: gate the kill on an actual sightline, not just distance --
+        // see canCatchInChase()'s comment. Without this, a predator still
+        // mid-blind-chase (scentLock > 0) can catch the player straight
+        // through the cover prop breaking canSee() right now, since
+        // predators never physically collide with cover (LUL-119/LUL-211).
+        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind); }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
