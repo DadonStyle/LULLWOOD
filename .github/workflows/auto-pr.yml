@@ -42,8 +42,56 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
+          LUL327_TEST_FORCE_5XX: "true" # TEMPORARY -- LUL-327 retry-gate proof, removed next commit
         run: |
           set -euo pipefail
+
+          # Bounded retry for gh calls: 3 attempts, exponential backoff (2s/4s),
+          # retried only on 5xx/429 -- a transient GitHub-side error, not a real
+          # problem with the branch (LUL-327: a GraphQL 503 here used to red-X a
+          # healthy PR and silently leave auto-merge unarmed, since nothing ever
+          # retried it). Anything else (4xx, auth, bad args) fails on the first
+          # try, since retrying can't fix it.
+          #
+          # Exhausting all attempts on a retryable error still exits non-zero --
+          # do NOT change this to `|| true`. A swallowed failure here is worse
+          # than a red X: it looks green while auto-merge never got armed.
+          gh_retry() {
+            local attempt=1 max_attempts=3 delay=2 stderr_file rc out
+            stderr_file="$(mktemp)"
+            while true; do
+              # `rc=$?` has to sit in an explicit `else`: an `if cond; then ...; fi`
+              # with no `else`, taking the false branch, itself exits 0 -- reading
+              # `$?` right after the `fi` silently reads a fake success.
+              if out="$("$@" 2>"$stderr_file")"; then
+                cat "$stderr_file" >&2
+                rm -f "$stderr_file"
+                printf '%s' "$out"
+                return 0
+              else
+                rc=$?
+              fi
+              if [ "$attempt" -ge "$max_attempts" ] || ! grep -qE 'HTTP (5[0-9]{2}|429)' "$stderr_file"; then
+                cat "$stderr_file" >&2
+                rm -f "$stderr_file"
+                return "$rc"
+              fi
+              echo "::warning::gh_retry: attempt $attempt/$max_attempts failed with a retryable error, retrying in ${delay}s -- $*" >&2
+              cat "$stderr_file" >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          # LUL-327 test hook only -- unset in every real run. Forces the first
+          # gh call to fail with a fake 503 so the retry gate can be proven live
+          # without waiting on an actual GitHub outage. Left in deliberately as
+          # a cheap, permanent way to re-prove the gate later; it is a no-op
+          # unless the workflow env explicitly sets it to "true".
+          if [ "${LUL327_TEST_FORCE_5XX:-}" = "true" ]; then
+            gh() { echo "HTTP 503: LUL-327 test stub -- simulated GitHub outage (not a real failure)" >&2; return 1; }
+          fi
 
           # checkout@v4 only fetches the pushed ref, so main has to be asked for.
           git fetch --no-tags origin main
@@ -54,7 +102,7 @@ jobs:
             exit 0
           fi
 
-          number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          number="$(gh_retry gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
 
           if [ -z "$number" ]; then
             printf '%s\n' \
@@ -69,13 +117,13 @@ jobs:
               'diffs. Anything touching game or app code goes to the Code Reviewer' \
               '(see `.github/scripts/ship-allowed.sh`).' > /tmp/pr-body.md
 
-            gh pr create \
+            gh_retry gh pr create \
               --base main \
               --head "$BRANCH" \
               --title "$(git log -1 --pretty=%s)" \
               --body-file /tmp/pr-body.md
 
-            number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')"
+            number="$(gh_retry gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')"
             echo "::notice::opened PR #$number for $BRANCH"
           else
             echo "::notice::PR #$number already open for $BRANCH"
@@ -113,7 +161,7 @@ jobs:
               echo "::warning::[ship] ignored on #$number — this diff needs the Code Reviewer."
 
               # Every push re-runs this workflow, so say it once per PR.
-              if gh pr view "$number" --json comments \
+              if gh_retry gh pr view "$number" --json comments \
                    --jq '.comments[].body' | grep -qF 'SHIP_DENIED'; then
                 echo "::notice::already explained on #$number; not commenting again."
                 exit 0
@@ -129,11 +177,13 @@ jobs:
                 'This is not a failure — the PR is open and CI is running. It needs a' \
                 '`REVIEW: APPROVED` from the Code Reviewer, then someone merges it.' \
                 'Policy: LUL-73. Allowlist: `.github/scripts/ship-allowed.sh`.' > /tmp/ship-denied.md
-              gh pr comment "$number" --body-file /tmp/ship-denied.md || true
+              # Best-effort: losing this comment doesn't disarm anything, it's
+              # just the explanation, so it stays retried-but-non-fatal.
+              gh_retry gh pr comment "$number" --body-file /tmp/ship-denied.md || true
               exit 0
             fi
 
-            if gh pr merge "$number" --auto --squash --delete-branch; then
+            if gh_retry gh pr merge "$number" --auto --squash --delete-branch; then
               echo "::notice::auto-merge armed on #$number"
             else
               # "Allow auto-merge" may be off in repo settings; automerge.yml
