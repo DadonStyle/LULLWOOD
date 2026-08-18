@@ -27,11 +27,27 @@ git push origin HEAD:refs/heads/lul-42-short-description
   the PR stays open for review — that is the right default for a WIP push.
 - CI runs on the branch push, not on the PR (see the comment at the top of
   `ci.yml`). Watch the checks on the head commit.
-- If the merge is refused, the branch is behind `main`: rebase onto the current
-  `main` and push again.
+- If the merge is refused, the branch is behind `main`: **backmerge** `main` into
+  the branch and push again. Never rebase — that needs a force-push, which is
+  banned (see below).
 
-Never try to push `main` directly and never force-push it — the ruleset rejects
-both, for every actor including the founder.
+  ```bash
+  git fetch --no-tags origin main
+  git merge FETCH_HEAD   # resolve conflicts here, commit the merge
+  git push origin HEAD:refs/heads/lul-<ticket>-<slug>   # plain, fast-forward
+  ```
+
+  Merge commits on a feature branch are expected and correct: every PR lands via
+  squash-merge, so the branch collapses to one commit and `main` stays linear.
+
+Never try to push `main` directly — the ruleset rejects it for every actor
+including the founder.
+
+**Force-push is banned on every branch, including your own `lul-*` branch.** That
+covers `--force` and `--force-with-lease`, and the disguised forms: interactive
+rebase on a pushed branch, `--amend` on a pushed commit, reset-and-repush. There
+is no "it's my own branch" carve-out and no approval that unlocks one. Branches
+track `main` by backmerge, as above.
 
 ## Tests
 

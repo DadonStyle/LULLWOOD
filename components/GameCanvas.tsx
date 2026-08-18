@@ -78,6 +78,59 @@ const OVERLAY_STYLE = `
     #panel { bottom: 240px; }
   }
 
+  /* LUL-26: difficulty presets + accessibility dialog. The 9999px spread is
+     the standard trick for a full-viewport dim without a second DOM node --
+     SettingsPanel.tsx renders one #settingsPanel element, not a card plus a
+     backdrop. */
+  #settingsPanel { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 40;
+    width: min(420px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto;
+    padding: 20px 22px; border-radius: 14px;
+    background: rgba(14,19,29,0.94); border: 1px solid rgba(150,175,215,0.22);
+    box-shadow: 0 0 0 9999px rgba(6,9,15,0.72), 0 20px 60px rgba(0,0,0,0.5);
+    font-size: 13px; color: #b9c8dd; }
+  #settingsHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  #settingsHeader h2 { margin: 0; font-size: 16px; font-weight: 500; letter-spacing: 0.06em; color: #d7e4f6; }
+  #settingsHeader button { font: inherit; font-size: 16px; color: #cdd9ea; cursor: pointer;
+    background: transparent; border: none; padding: 4px 8px; border-radius: 6px; }
+  #settingsHeader button:hover { background: rgba(150,175,215,0.14); }
+  #settingsPanel fieldset { border: 1px solid rgba(150,175,215,0.16); border-radius: 10px;
+    padding: 10px 14px 14px; margin: 0 0 14px; }
+  #settingsPanel legend { padding: 0 6px; font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #9fb2cd; }
+  #settingsPanel .radioRow, #settingsPanel .sliderRow { display: flex; align-items: center;
+    gap: 8px; padding: 6px 0; user-select: none; }
+  #settingsPanel .sliderRow { justify-content: space-between; }
+  #settingsPanel .sliderRow input[type="range"] { flex: 1; accent-color: #7fa6dd; cursor: pointer; }
+  #settingsPanel .sliderRow span { min-width: 40px; text-align: right; opacity: 0.7; }
+  #settingsPanel input[type="checkbox"], #settingsPanel input[type="radio"] { accent-color: #7fa6dd; cursor: pointer; }
+  #settingsPanel :focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
+
+  /* LUL-26: closed captions for predator calls -- every sound in this game is
+     synthesized WebAudio with no other track, so this is the sole warning
+     channel for a player who can't hear it. Sits above #status (bottom: 74px)
+     and below #chargePrompt (bottom: 130px) so a caption and a charge-dodge
+     prompt can never overlap. */
+  #captionToast { position: fixed; bottom: 180px; left: 50%; transform: translateX(-50%); z-index: 14;
+    padding: 7px 16px; border-radius: 999px; white-space: nowrap; pointer-events: none;
+    background: rgba(12,17,26,0.72); border: 1px solid rgba(150,175,215,0.22);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8; text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+    animation: captionFade 0.25s ease; }
+  @keyframes captionFade { from { opacity: 0; transform: translate(-50%, 4px); } to { opacity: 1; transform: translateX(-50%); } }
+
+  /* LUL-26: high-contrast HUD. Presentation only -- SettingsPanel.tsx toggles
+     this via document.body.dataset.highContrast, the same direct-DOM pattern
+     LUL-144's cover desaturation already uses (data-los-covered). Brightens
+     HUD chrome only; the WebGL scene itself is untouched. */
+  body[data-high-contrast="1"] #panel,
+  body[data-high-contrast="1"] #objective,
+  body[data-high-contrast="1"] #status,
+  body[data-high-contrast="1"] #captionToast,
+  body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
+  body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
+  body[data-high-contrast="1"] #status.hiding { color: #baffcf; border-color: #6fe89a; }
+  body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
+
   /* shown when pointer lock is released — visual only, never blocks the panel */
   #pausePrompt { position: fixed; inset: 0; z-index: 15; display: none;
     align-items: center; justify-content: center; pointer-events: none;
