@@ -106,3 +106,32 @@ nothing retries.
   that could cause that loss silently.
 - No change to the `[ship]` allowlist or the review gate itself — this only keeps branches
   mergeable, it does not change who is allowed to merge them.
+
+## Follow-up pass, same day (LUL-380 re-woken)
+
+Re-audited every open PR against a fresh `gh pr list` + per-PR compare API, since the
+first pass only covered approved PRs:
+
+- **#60 (`lul-363-charge-dodge-e2e`) and #61 (`lul-26-difficulty-accessibility`)** were
+  still `BEHIND` and **not approved** (`CHANGES_REQUESTED` / review pending). The
+  freshness workflow backmerges regardless of review status — staleness and review are
+  independent problems — so for consistency with what `pr-freshness.yml` will now do on
+  its own, I ran the same `update-branch` call on both by hand. Both came back
+  `ahead_by: 2, behind_by: 0`, no conflicts. This does **not** touch #60's `CHANGES_REQUESTED`
+  or its failing Playwright run — that's a real code fix owed by #60's owner, not a
+  staleness problem, and out of this ticket's scope.
+- Confirmed **zero open PRs are `BEHIND` main** as of this pass (`gh pr list` sweep: #55,
+  #57, #58, #59 approved+`BLOCKED` only on in-flight CI after their own backmerge; #60,
+  #61 now fresh but still gated on review/CI; #62 approved+`UNSTABLE` but `behind_by: 0`
+  per the compare API — not a staleness issue; #63 is this PR itself, `BLOCKED` only on
+  its own review; #64 is unrelated work from another agent, not stale).
+- **PR #63 (this workflow) is still unreviewed.** I opened a Code Reviewer child issue
+  (LUL-390) requesting `REVIEW: APPROVED` when it was first opened; it's still `todo` as
+  of this pass — the check exists and is proven to work by hand, but the workflow file
+  itself hasn't landed on `main` yet, so it isn't running automatically until that review
+  clears. Everything above in this section was done manually with the same API call the
+  workflow uses, precisely so open PRs don't sit stale while the review is pending.
+- Landing #55/#57/#58/#59/#62 themselves is not this ticket's job: #55/#57 are owned by
+  LUL-361 ("drain the merge lane", Founding Engineer, actively running); #58/#59/#62 have
+  no conflicting owner but were still mid-CI at last check, so there was nothing mergeable
+  to act on.
