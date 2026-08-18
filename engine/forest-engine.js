@@ -33,6 +33,16 @@ import {
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
 } from '@/lib/game/scent';
+import {
+  backOffPoint,
+  hasReachedSniffRange,
+  isCaught,
+  rollSniffs,
+  shouldGiveUpChase,
+  stepFlankHold,
+  stepSniffLoop,
+  tickTimers,
+} from '@/lib/game/predator';
 
 let activeDispose = null;
 
@@ -788,7 +798,7 @@ function checkNoise(p, dist, noiseRadius, dt){
 // stored point), so "last noisy position" falls out of that existing
 // approach behavior for free.
 function hearNoise(p){
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4);
+  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(Math.random, 4);
 }
 
 // ---- Positional hiding / detection (LUL-43, LUL-22) -----------------------
@@ -925,9 +935,10 @@ function updatePredators(dt, noiseRadius){
     const ux = dx/dist, uz = dz/dist;
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
-    if(p.scentLock > 0) p.scentLock -= dt;   // ticks in every state, so a lock set during `chase`
-                                              // has actually expired by the time `roam` re-checks it
-    if(p.chargeCooldown > 0) p.chargeCooldown -= dt;
+    // ticks in every state, so a lock set during `chase` has actually
+    // expired by the time `roam` re-checks it (see lib/game/predator.ts)
+    const timers = tickTimers({ scentLock: p.scentLock, chargeCooldown: p.chargeCooldown }, dt);
+    p.scentLock = timers.scentLock; p.chargeCooldown = timers.chargeCooldown;
 
     // LUL-213: an active charge owns movement outright until it resolves --
     // skips the roam/chase/investigate/flank chain below entirely, same as
@@ -945,7 +956,7 @@ function updatePredators(dt, noiseRadius){
         // existing investigate/approach loop (LUL-22, not to be retuned)
         // rather than snapping straight back into a full chase mid-overshoot
         // -- it just sprinted past you and has to notice you again.
-        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*3);
+        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(Math.random, 3);
         endChargeHud();
       } else {
         p.charge = cs;
@@ -963,9 +974,9 @@ function updatePredators(dt, noiseRadius){
       if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
-      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=1+Math.floor(Math.random()*4); p.hunt=false; }
+      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(Math.random, 4); p.hunt=false; }
       else {
-        if(dist < p.rad + 1.3) triggerDeath(p.kind);
+        if(isCaught(dist, p.rad)) triggerDeath(p.kind);
         else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
@@ -991,7 +1002,7 @@ function updatePredators(dt, noiseRadius){
       // chase since the player isn't hidden -- zero-speed forever. Keep
       // chasing blind while scentLock holds; once it expires, gate on sight
       // the same way a spotted chase always has.
-      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = 1 + Math.floor(Math.random()*4); }
+      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = rollSniffs(Math.random, 4); }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -1008,9 +1019,9 @@ function updatePredators(dt, noiseRadius){
         beginChargeHud();
       }
       else {
-        if(dist < p.rad + 1.3){ triggerDeath(p.kind); }
+        if(isCaught(dist, p.rad)){ triggerDeath(p.kind); }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
-        if(p.scentLock <= 0 && dist > p.spec.detect*1.5){ p.state='roam'; p.spotted=false; }
+        if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -1024,14 +1035,15 @@ function updatePredators(dt, noiseRadius){
       if(!hidden){ p.state='chase'; }
       else if(p.inv === 'approach'){
         facePlayer = true;
-        if(dist < p.rad + 1.7){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
+        if(hasReachedSniffRange(dist, p.rad)){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
         else { desx=ux; desz=uz; speed=p.spec.speed*0.45; }
       } else if(p.inv === 'sniff'){
         facePlayer = true; p.sniffTimer -= dt;
-        if(p.sniffTimer <= 0){
-          p.sniffsLeft--;
-          if(p.sniffsLeft > 0){ p.inv='back'; const bd = 8 + Math.random()*8;
-            p.backX = clamp(p.x - ux*bd, -half+4, half-4); p.backZ = clamp(p.z - uz*bd, -half+4, half-4); }
+        const sniffOutcome = stepSniffLoop(p.sniffTimer, p.sniffsLeft);
+        if(sniffOutcome.done){
+          p.sniffsLeft = sniffOutcome.sniffsLeft;
+          if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + Math.random()*8;
+            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half); }
           else { p.state='roam'; p.spotted=false; }
         }
       } else if(p.inv === 'back'){
@@ -1051,14 +1063,15 @@ function updatePredators(dt, noiseRadius){
         // not a meaningful re-escalation signal here -- canSee()/checkScent()
         // above are the only way a hold converts to a real chase.
         p.sniffTimer -= dt;
-        if(p.sniffTimer <= 0){
-          p.sniffsLeft--;
-          if(p.sniffsLeft > 0) p.sniffTimer = rnd(1,4);
+        const holdOutcome = stepFlankHold(p.sniffTimer, p.sniffsLeft);
+        if(holdOutcome.done){
+          p.sniffsLeft = holdOutcome.sniffsLeft;
+          if(holdOutcome.next === 'hold') p.sniffTimer = rnd(1,4);
           else { p.state='roam'; p.spotted=false; p.inv=''; }
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
-        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=1+Math.floor(Math.random()*3); p.sniffTimer=rnd(1,4); sniff(); }
+        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(Math.random, 3); p.sniffTimer=rnd(1,4); sniff(); }
         else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL; }
       }
     }
