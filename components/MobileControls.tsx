@@ -32,9 +32,10 @@ interface StickState {
 interface StickProps {
   onMove: (nx: number, ny: number) => void;  // normalised [-1..1], 0,0 on release
   onSprint?: (v: boolean) => void;           // left stick only
+  testId: string;
 }
 
-function Stick({ onMove, onSprint }: StickProps) {
+function Stick({ onMove, onSprint, testId }: StickProps) {
   const stateRef = useRef<StickState>({ active: false, ox: 0, oy: 0 });
   const thumbRef = useRef<HTMLDivElement>(null);
   const ptIdRef  = useRef<number | null>(null);
@@ -114,6 +115,7 @@ function Stick({ onMove, onSprint }: StickProps) {
   return (
     <div
       style={base}
+      data-testid={testId}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -191,7 +193,7 @@ export default function MobileControls({
   };
 
   return (
-    <div style={wrapper}>
+    <div style={wrapper} data-testid="mobileControls">
       {/* Left side: interact button above left stick */}
       <div style={side}>
         {entered && (
@@ -204,6 +206,7 @@ export default function MobileControls({
           // the stick and the engine disagree on which way is "up".
           onMove={(nx, ny) => actions.setTouchMove(nx, -ny)}
           onSprint={(v) => actions.setTouchSprint(v)}
+          testId="leftStick"
         />
       </div>
 
@@ -214,6 +217,7 @@ export default function MobileControls({
         )}
         <Stick
           onMove={(nx, ny) => actions.setTouchLook(nx, ny)}
+          testId="rightStick"
         />
       </div>
     </div>

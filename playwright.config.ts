@@ -58,8 +58,11 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 720 } },
       // LUL-216: e2e/replay/** is recording-only (run by hand via `--project=replay`,
       // never as part of the required checks) -- excluded here so the smoke suite
-      // doesn't pay to run the same scenarios twice on every push.
-      testIgnore: '**/replay/**',
+      // doesn't pay to run the same scenarios twice on every push. LUL-275:
+      // e2e/mobile/** needs a real mobile-emulated context (see the `mobile`
+      // project below), which this desktop project can't give it -- excluded
+      // the same way, not doubled up.
+      testIgnore: ['**/replay/**', '**/mobile/**'],
     },
     // LUL-216: dedicated project for recording GAMES_REPLAY/ clips. Kept separate
     // from the `chromium` smoke project so CI's per-run/per-shard smoke suite
@@ -77,6 +80,23 @@ export default defineConfig({
         // repo-weight budget these clips are curated against.
         video: { mode: 'on', size: { width: 960, height: 540 } },
       },
+    },
+    // LUL-275: real mobile emulation (touch, coarse pointer, no hover, narrow
+    // viewport) for the half of the input-mode regression that `hasTouch`
+    // alone on a desktop context can't reproduce -- see
+    // e2e/mobile/input-mode.spec.ts. `devices['Pixel 5']`, not an iPhone
+    // preset: those default `browserType` to webkit, and this repo installs
+    // and runs chromium only (see the LD_LIBRARY_PATH / launchOptions comments
+    // above, and CI's `playwright install --with-deps chromium`). Own testDir,
+    // isolated the same way `replay` is isolated above, so this project only
+    // ever runs the mobile spec, not the whole smoke suite a second time under
+    // a tiny viewport. Unlike `replay` this carries no opt-in flag: VP R&D's
+    // ask on LUL-275 is a permanent gate, so it runs on every plain
+    // `npx playwright test`, same as `chromium`.
+    {
+      name: 'mobile',
+      testDir: './e2e/mobile',
+      use: { ...devices['Pixel 5'] },
     },
   ],
 });
