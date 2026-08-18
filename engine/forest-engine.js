@@ -2139,7 +2139,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // which is exactly what a test can't wait on reliably. Places the predator due
   // +x of the player at the midpoint of the trigger band, in the open (spawn
   // clearing has no cover, same guarantee qaOpenHideNearLion relies on), and
-  // faces the player -x so playerCanSee() would independently agree if re-checked.
+  // faces the player +x so playerCanSee() would independently agree if re-checked.
   // Returns the predator's `predators` index, or null if that species isn't spawned.
   window.ForestEngine.qaTriggerCharge = function(kind){
     if(kind !== 'wolf' && kind !== 'lion') return null;
@@ -2147,7 +2147,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(idx < 0) return null;
     const p = predators[idx];
     const dist = (CHARGE_TRIGGER_MIN + CHARGE_TRIGGER_MAX) / 2;
-    player.x = 0; player.z = 0; player.yaw = Math.PI/2;   // faces -x, i.e. toward the predator below
+    player.x = 0; player.z = 0; player.yaw = -Math.PI/2;   // forward = (-sin(yaw), -cos(yaw)) = (+1, 0), faces the predator below
     p.x = player.x + dist; p.z = player.z;
     p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.hunt = false;
     p.state = 'chase'; p.scentLock = 0; p.chargeCooldown = 0;
@@ -2155,6 +2155,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.chargeDirX = -1; p.chargeDirZ = 0;
     beginChargeHud();
     return idx;
+  };
+
+  // LUL-275: snapshot of the player's transform and detected input mode -- proves
+  // which input branch init() actually bound at runtime, not just which the test
+  // requested. See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
+  window.ForestEngine.qaPlayerState = function(){
+    return { x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode };
   };
 }
 
@@ -2193,7 +2200,13 @@ function arriveHome(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, survivedSeconds });
+  // LUL-303: updatePredators() (the only other place that clears the charge
+  // HUD) stops running once `playing` goes false here, so a charge/telegraph
+  // in flight at the exact moment of arrival would otherwise render on top
+  // of the win screen forever -- clear it the same way placePredators() does
+  // on restart.
+  activeCharges = 0;
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
 }
 function triggerDeath(kind){
