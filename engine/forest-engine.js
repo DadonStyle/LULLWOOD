@@ -21,6 +21,18 @@ import {
   CHARGE_TRIGGER_MIN,
   CHARGE_TRIGGER_MAX,
 } from '@/lib/game/charge';
+import {
+  clampDt,
+  isScentDetected,
+  isScentExpired,
+  isScentPastPruneCutoff,
+  scentDriftDistance,
+  SCENT_DEPOSIT_INTERVAL,
+  SCENT_LIFETIME,
+  SCENT_RADIUS_WALK,
+  SCENT_RADIUS_RUN,
+  SCENT_TRACK_TIME,
+} from '@/lib/game/scent';
 
 let activeDispose = null;
 
@@ -689,15 +701,11 @@ function avoidDir(p, dx, dz){
 // maintaining a grid for a dataset this small, so the 8-unit tree hash is left
 // alone rather than given a second, mostly-empty user.
 //
-// Named constants so tuning is a one-line change (decay rate and wind
-// strength, per the ticket):
-const SCENT_DEPOSIT_INTERVAL = 0.3;  // seconds between trail points while moving
-const SCENT_LIFETIME         = 14;   // seconds until a point is fully decayed -- the difficulty dial
-const SCENT_RADIUS_WALK      = 2.2;  // sniff-pickup radius (units), fresh, at a walking pace
-const SCENT_RADIUS_RUN       = 3.6;  // Shift leaves a louder trail -- the cost that finally balances it
-const WIND_STRENGTH          = 3.2;  // units/second a point's effective position drifts downwind
-const WIND_DRIFT_CAP         = 9;    // drift never carries a point more than this many units total
-const SCENT_TRACK_TIME       = 8;    // seconds a scent-triggered chase ignores the detect*1.5 leash
+// LUL-279: the decay curve, wind drift, and expiry/prune math (plus the
+// named constants above the ticket refers to) now live in lib/game/scent.ts,
+// unit tested there -- imported at the top of this file. This file keeps all
+// the *state* (scentPoints, player, clock, wind) and calls the pure math
+// back in.
 
 let windX = 1, windZ = 0;   // unit vector; redrawn once per generateMap(), see generateWind()
 function generateWind(){
@@ -708,17 +716,12 @@ function generateWind(){
 let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 is always oldest)
 function depositScent(hot){
   scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius: hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK });
-  const cutoff = clock.elapsedTime - SCENT_LIFETIME;
-  while(scentPoints.length && scentPoints[0].t0 < cutoff) scentPoints.shift();
+  while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0)) scentPoints.shift();
 }
 function checkScent(p){
   for(let i = scentPoints.length - 1; i >= 0; i--){
     const s = scentPoints[i], age = clock.elapsedTime - s.t0;
-    if(age >= SCENT_LIFETIME) continue;
-    const drift = Math.min(WIND_DRIFT_CAP, WIND_STRENGTH * age);
-    const dx = p.x - (s.x + windX*drift), dz = p.z - (s.z + windZ*drift);
-    const r = s.radius * (1 - age/SCENT_LIFETIME) * p.spec.nose;
-    if(dx*dx + dz*dz < r*r) return true;
+    if(isScentDetected(s, age, p.x, p.z, windX, windZ, p.spec.nose)) return true;
   }
   return false;
 }
@@ -1709,10 +1712,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeScentOnOldest = function(kind){
     if(!scentPoints.length) return null;
     const s = scentPoints[0], age = clock.elapsedTime - s.t0;
-    if(age >= SCENT_LIFETIME) return null;
+    if(isScentExpired(age)) return null;
     const p = predators.find(pp => pp.kind === kind);
     if(!p) return null;
-    const drift = Math.min(WIND_DRIFT_CAP, WIND_STRENGTH * age);
+    const drift = scentDriftDistance(age);
     p.x = s.x + windX*drift; p.z = s.z + windZ*drift;
     p.vx = 0; p.vz = 0; p.state = 'roam'; p.scentLock = 0; p.scentCalls = 0; p.spotted = false;
     p.g.position.x = p.x; p.g.position.z = p.z;
@@ -2108,7 +2111,7 @@ let rafId = null;
 
 function tick(){
   rafId = requestAnimationFrame(tick);
-  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  const dt = clampDt(clock.getDelta()), t = clock.elapsedTime;
 
   // LUL-68: right stick look rate applied each frame before movement.
   // LUL-276: mobile-only -- in desktop mode this whole block is dead, not
