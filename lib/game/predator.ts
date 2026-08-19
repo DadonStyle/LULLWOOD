@@ -129,12 +129,34 @@ export function stepFlankHold(sniffTimer: number, sniffsLeft: number): FlankHold
     : { done: true, sniffsLeft: remaining, next: 'roam' };
 }
 
+// ---- post-sniff detection immunity (LUL-437) -------------------------------------
+// A predator that just gave up an investigate-sniff or flank-hold loop is,
+// almost by construction, standing right on top of the exact scent point
+// that pulled it in -- `roam`'s checkScent()/checkNoise()/canSee() chain ran
+// unconditionally the very next tick, so giving up read as "sniffing always
+// ends in getting caught" (LUL-437's report) rather than the predator
+// actually losing the trail. `sniffImmuneT` is armed to SNIFF_IMMUNITY_TIME
+// wherever stepSniffLoop/stepFlankHold report `done: true` (both the
+// continue-looping and give-up-to-roam outcomes) and ticks down like every
+// other predator timer. While it holds AND the player is still holding
+// still (`hidden`), `roam`'s re-detection chain is skipped for that
+// predator -- moving cancels the immunity's protection immediately, same as
+// hiding itself already requires holding still.
+export const SNIFF_IMMUNITY_TIME = 1.5;
+export function isSniffImmune(sniffImmuneT: number, hidden: boolean): boolean {
+  return hidden && sniffImmuneT > 0;
+}
+
 // ---- backoff retreat point -------------------------------------------------------
 // `p.inv === 'sniff'`'s giving-up-a-sniff retreat point: `dist` units back
 // along the predator-to-player line, clamped to the map bounds the same way
 // every other waypoint in this file is (`-half+4, half-4`). `dist` is
 // pre-rolled by the caller (`8 + Math.random()*8` on main) -- this function
-// is pure placement math only, no randomness.
+// is pure placement math only, no randomness. `zMax` defaults to `half` for
+// a square map; LUL-25's bog band is a rectangle (x stays +-half, z's lower
+// bound stays -half but the upper bound extends past it), so callers on that
+// map shape pass the extended `zMax` separately -- same asymmetric pattern
+// every other waypoint clamp in engine/forest-engine.js already uses.
 export function backOffPoint(
   x: number,
   z: number,
@@ -142,7 +164,8 @@ export function backOffPoint(
   uz: number,
   dist: number,
   half: number,
+  zMax: number = half,
 ): [number, number] {
   const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
-  return [clamp(x - ux * dist, -half + 4, half - 4), clamp(z - uz * dist, -half + 4, half - 4)];
+  return [clamp(x - ux * dist, -half + 4, half - 4), clamp(z - uz * dist, -half + 4, zMax - 4)];
 }

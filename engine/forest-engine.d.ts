@@ -33,6 +33,12 @@ declare global {
       // casting `window` to `any` and losing every other guarantee with it.
       qaTeleportNearBaby?: () => void;
       qaTeleportHome?: () => void;
+      /** LUL-25: sets difficulty for the *next* generateMap() (restart/regen), not the
+       * current map. No UI wires this yet (LUL-26) -- it's how a test exercises hard
+       * mode's "child spawns beyond the bog" before that UI exists. */
+      qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
+      /** LUL-25: the child's world position and whether it's past the forest/bog seam. */
+      qaProbeBaby?: () => { x: number; z: number; inBog: boolean };
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
       /** Same as qaLurePredator, filtered to the given species. Returns the

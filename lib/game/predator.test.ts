@@ -6,9 +6,11 @@ import {
   CATCH_MARGIN,
   hasReachedSniffRange,
   isCaught,
+  isSniffImmune,
   rollSniffs,
   shouldGiveUpChase,
   SNIFF_APPROACH_MARGIN,
+  SNIFF_IMMUNITY_TIME,
   stepFlankHold,
   stepSniffLoop,
   tickTimers,
@@ -191,6 +193,28 @@ test('stepFlankHold with sniffsLeft=1 decrements to 0 and gives up to roam -- th
 test('stepFlankHold never returns next: "back" -- that transition belongs to stepSniffLoop only', () => {
   const out = stepFlankHold(0, 2);
   assert.notEqual((out as { next?: string }).next, 'back');
+});
+
+// ---- isSniffImmune (LUL-437) -----------------------------------------------------
+
+test('isSniffImmune is true while the timer is positive and the player is hidden', () => {
+  assert.equal(isSniffImmune(SNIFF_IMMUNITY_TIME, true), true);
+});
+
+test('isSniffImmune is false once the timer reaches zero, even hidden', () => {
+  assert.equal(isSniffImmune(0, true), false);
+});
+
+test('isSniffImmune is false for a negative (overshot) timer', () => {
+  assert.equal(isSniffImmune(-0.01, true), false);
+});
+
+test('isSniffImmune is false if the player is not hidden, no matter the timer -- moving cancels the grace immediately', () => {
+  assert.equal(isSniffImmune(SNIFF_IMMUNITY_TIME, false), false);
+});
+
+test('isSniffImmune is false with neither condition met', () => {
+  assert.equal(isSniffImmune(0, false), false);
 });
 
 // ---- backOffPoint ---------------------------------------------------------------
