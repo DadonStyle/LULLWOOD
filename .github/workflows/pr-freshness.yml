@@ -82,24 +82,6 @@ jobs:
     name: backmerge main into stale open PRs
     runs-on: ubuntu-latest
     steps:
-      - name: approve parked action_required runs (same-repo branches only)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
-          | jq -r --arg repo "$REPO" \
-              '.workflow_runs[] | select(.event == "pull_request" and (.head_repository.full_name // "") == $repo) | "\(.id)\t\(.head_branch)"' \
-          | while IFS=$'\t' read -r run_id branch; do
-              echo "::notice::approving parked run $run_id on same-repo branch $branch"
-              if ! gh api -X POST "repos/$REPO/actions/runs/$run_id/approve" 2>/tmp/approve-err.log; then
-                echo "::warning::could not approve run $run_id ($branch):"
-                cat /tmp/approve-err.log
-              fi
-            done
-
       - name: update behind branches
         env:
           GH_TOKEN: ${{ github.token }}
@@ -147,5 +129,28 @@ jobs:
                 else
                   echo "::notice::already flagged the conflict on #$number; not commenting again."
                 fi
+              fi
+            done
+
+      - name: approve parked action_required runs (same-repo branches only)
+        # Runs after the backmerge step, not before: an `update-branch` call
+        # above triggers its own PR-synchronize `pull_request` run, which
+        # lands parked exactly like the original-open case this step exists
+        # to clear. Running last catches both in one pass instead of leaving
+        # backmerge-spawned runs for the next scheduled cycle.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
+          | jq -r --arg repo "$REPO" \
+              '.workflow_runs[] | select(.event == "pull_request" and (.head_repository.full_name // "") == $repo) | "\(.id)\t\(.head_branch)"' \
+          | while IFS=$'\t' read -r run_id branch; do
+              echo "::notice::approving parked run $run_id on same-repo branch $branch"
+              if ! gh api -X POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>/tmp/approve-err.log; then
+                echo "::warning::could not approve run $run_id ($branch):"
+                cat /tmp/approve-err.log
               fi
             done
