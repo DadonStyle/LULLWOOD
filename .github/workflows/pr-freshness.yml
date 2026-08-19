@@ -90,7 +90,7 @@ jobs:
           set -euo pipefail
 
           gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
-            --jq --arg repo "$REPO" \
+          | jq -r --arg repo "$REPO" \
               '.workflow_runs[] | select(.event == "pull_request" and (.head_repository.full_name // "") == $repo) | "\(.id)\t\(.head_branch)"' \
           | while IFS=$'\t' read -r run_id branch; do
               echo "::notice::approving parked run $run_id on same-repo branch $branch"
