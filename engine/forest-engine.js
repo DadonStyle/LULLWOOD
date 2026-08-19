@@ -534,6 +534,10 @@ function generateReeds(){
 // landed), set only via qaSetDifficulty(). Normal never calls
 // pickHardBabyPosition, so its rng stream is byte-identical to before this
 // ticket; hard draws its extra point after every other generateMap() draw.
+// Named distinctly from LUL-26's `difficulty` (DIFFICULTY_PRESETS, below) --
+// they are two unrelated concepts (baby spawn placement vs. the real
+// lantern/night/blackout preset) that collided on the same identifier during
+// a backmerge; see LUL-427.
 let babySpawnDifficulty = 'normal';
 function applyHardBabySpawn(){
   if(babySpawnDifficulty !== 'hard') return;
