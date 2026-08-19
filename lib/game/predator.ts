@@ -33,6 +33,25 @@ export function isCaught(dist: number, rad: number): boolean {
   return dist < rad + CATCH_MARGIN;
 }
 
+// ---- chase catch gate (LUL-387) -------------------------------------------------
+// `chase`'s blind-scent branch keeps closing on the player's live position
+// while `scentLock` holds even with no line of sight (LUL-22/LUL-23's "chase
+// blind while the trail holds" contract, see updatePredators()) -- but on
+// `main` that branch's kill check was bare `isCaught(dist, rad)`, a pure
+// distance threshold with no LOS/collision awareness at all (every player<->
+// predator "contact" in this game is a distance check, never a solid-body
+// collision -- docs/ELEMENTS.md, Player collision profile). Predators never
+// collide with cover props either (deliberate, LUL-119/LUL-211), so a
+// blind-chasing predator can walk straight through the very bramble/log/rock
+// breaking its own sightline and still catch the player hiding behind it.
+// `hunt`'s branch already requires `canSee()` before it ever reaches
+// `isCaught()`; this gives `chase` the identical guarantee explicitly,
+// instead of leaving the kill check gateless whenever the LOS-losing branch
+// above doesn't fire (which `scentLock > 0` guarantees it won't).
+export function canCatchInChase(canSee: boolean, dist: number, rad: number): boolean {
+  return canSee && isCaught(dist, rad);
+}
+
 // ---- investigate sniff-approach range ------------------------------------------
 // `dist < p.rad + 1.7`, the investigate/approach -> sniff transition. A
 // separate, wider margin than the catch check above -- not the same
