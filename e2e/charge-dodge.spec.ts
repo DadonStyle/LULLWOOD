@@ -206,11 +206,18 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       // nowhere near 0, so a regression back to "flat and untracked" (which
       // would also make Case 1 fail its exact-0 check on its own) can't
       // pass both.
+      // LUL-421 (CI fix): ideally 0 (jump landed in telegraph, chargingElapsed clamped
+      // to 0), but on a loaded CI runner the Space press can register 1-2 frames after
+      // the telegraph ends (dt = 0.05s/frame cap), giving a tiny positive value. The
+      // regression (LUL-213 bug) returns earlyOvershoot ≈ CHARGE_RUN_TIME ≈ 0.65s;
+      // anything below CHARGE_RUN_TIME * 0.25 = 0.16s is structurally an early dodge.
+      // lateOvershoot is asserted > 0.25 below, so the gap still catches a regression.
       expect(
         earlyOvershoot,
         `${kind}: an immediate/telegraph-phase dodge recorded overshootDuration=${earlyOvershoot}s, expected ` +
-          `exactly 0 -- chargingElapsed should clamp to 0 for any dodge before CHARGE_TELL_TIME`,
-      ).toBe(0);
+          `< CHARGE_RUN_TIME * 0.25 (${CHARGE_RUN_TIME * 0.25}s) -- ` +
+          `chargingElapsed should be near-zero for a jump in/near the telegraph phase`,
+      ).toBeLessThan(CHARGE_RUN_TIME * 0.25);
       expect(
         lateOvershoot,
         `${kind}: a mid-charge dodge recorded overshootDuration=${lateOvershoot}s, not measurably greater than ` +
@@ -223,8 +230,11 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       // guards against a regression that accidentally made every charge
       // survivable). No Space press at all this time.
       await triggerAndGetIdx();
+      // LUL-421 (CI fix): CHARGE_WINDOW = 1s game-time. On a loaded CI runner where
+      // rAF is throttled and dt is capped at 0.05s, game time can run at ~1/20 of
+      // wall time (1fps * 0.05s/frame). Budget 30s wall to cover that worst case.
       await expect(deathScreen, `${kind}: failing to dodge did not kill the player`).toBeVisible({
-        timeout: 8_000,
+        timeout: 30_000,
       });
       await expect(page.locator('#deathKind')).toHaveText(kind);
 
