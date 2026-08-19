@@ -42,8 +42,13 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   L1225-1228, `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213).
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
-  within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop
-  (`HIDE_KINDS`, L278-279; `findHideSpot()` L879-892). Hiding lowers eye
+  within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
+  rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`
+  L908-922, edge distance via `distanceToCoverEdge()` in `lib/game/cover.ts`,
+  LUL-405/LUL-430 fix — previously approximated the edge as a
+  `Math.max(hx,hz)` circle, which over-extended the trigger several times
+  past the object's real thickness on an elongated log's thin side). Hiding
+  lowers eye
   height (2.2→1.05, damped ~0.3s), silences footsteps/scent deposit, and
   shrinks predator detect range the longer it's held (`STILL_RAMP`=1.2s,
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
@@ -288,7 +293,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
   the full derivation and its known residual close-up-foliage limitation.
 - Block line of sight for **both** player and predators, but only if
   `s > 1.4` ("large" trees get tagged into `coverData` as `kind:'tree'`,
-  `generateCover()` L387).
+  `generateCover()` L407).
 - Render with per-instance brightness variation and random rotation
   (`generateMap()` L450-462).
 
@@ -316,7 +321,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 - Player: trunk circle (`0.35*s + 0.6`) **and** canopy circle (`crCanopy`,
   eye-height-derived, see Player section).
 - Predator: trunk circle only (`0.35*s + p.rad`).
-- LOS: rotated-AABB `{hx:hz: t.cr*1.4}` (L387), tagged trees only.
+- LOS: rotated-AABB `{hx:hz: t.cr*1.4}` (L407), tagged trees only.
 
 ---
 
@@ -327,7 +332,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 - Block LOS for both player and predators (`hasLOS()`).
 - Render as one of three cover-prop kinds (`DodecahedronGeometry`, L251),
   ~35% of the 220 `COVER_PROPS` roll (`roll < 0.75 && roll >= 0.4`,
-  `generateCover()` L398).
+  `generateCover()` L418).
 
 **What it CANNOT do**
 - Cannot block predator movement (predators never call `coverBlockedR()`).
@@ -337,7 +342,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 
 **Behaviours & logic**
 - `hx=r, hz=r*(0.7+rng()*0.5)`, `r=0.9+rng()*0.9`, random rotation `ry`
-  (`generateCover()` L398, L400).
+  (`generateCover()` L418, L420).
 
 **Collision & physics profile**
 - Player-only rotated-AABB collider (half-extents `hx,hz`, rotation `ry`).
@@ -351,7 +356,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 - Everything Rock can do, **plus**: is a valid `hidden`-stance location
   (`HIDE_KINDS.log = true`) — entering/exiting plays a distinct "hollow
   log knock" sound (`hollowLogSound()`, L1397-1418).
-- ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()` L396), long/thin
+- ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()` L416), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
 
 **What it CANNOT do**
@@ -360,12 +365,12 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
-  between long-on-x / long-on-z (`generateCover()` L396-397).
+  between long-on-x / long-on-z (`generateCover()` L416-417).
 
 **Collision & physics profile**
 - Same as Rock: player-only rotated-AABB collider, LOS for both actors.
 - Additionally gates `findHideSpot()` (proximity search, `HIDE_RADIUS`=2.2u
-  beyond the prop's own edge, L879-892).
+  beyond the prop's own edge, L908-922).
 
 ---
 
@@ -376,7 +381,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
   with a distinct "leaf rustle" enter/exit sound (`leafRustle()`,
   L1376-1393) — researched against stealth/horror foley convention per the
   LUL-212 handoff (wiki `game/lul212-hiding-spots`).
-- ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()` L399).
+- ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()` L419).
 
 **What it CANNOT do**
 - Same as Log: no predator movement collision; not guaranteed clear of tree
@@ -384,7 +389,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 
 **Behaviours & logic**
 - `r = 0.8+rng()*0.7`, `hx=hz=r` (roughly round footprint,
-  `generateCover()` L399).
+  `generateCover()` L419).
 
 **Collision & physics profile**
 - Same as Log: player-only rotated-AABB collider, LOS for both actors,
@@ -630,7 +635,7 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 | **WO** Wolf | | | ·⁹ | **U**¹⁰ | **U**¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | **U**¹² | – | – | – | TRIG⁶ |
 | **BE** Bear | | | | –¹³ | **U**¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | **U**¹² | – | – | – | TRIG⁶ |
 | **LI** Lion | | | | | –¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | **U**¹² | – | – | – | TRIG⁶ |
-| **TR** Tree | | | | | | · | **U**¹⁴ | **U**¹⁴ | **U**¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ |
+| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ |
 | **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
 | **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
 | **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – |
@@ -676,11 +681,15 @@ later roam into) the lake is unresolved by source. Filed as **LUL-395**.
 ¹³ Bears and lions are explicitly solitary — no pack coordination exists for
 either species (LUL-24 comment: "bears stay solitary... the contrast is the
 point"). Defined absence, not undefined.
-¹⁴ **Notable.** `generateCover()` (L385-404) never checks tree positions —
-only `inLake()`/`inSpawn()`/`inBaby()`. A rock/log/bramble can spawn
-overlapping a tree trunk. Filed as **LUL-396**.
+¹⁴ **Fixed, LUL-396/LUL-450.** `generateCover()` (L405-424) now rejects a
+candidate rock/log/bramble whose own footprint circle overlaps a nearby
+tree's trunk collision circle (`treesNear()` + `overlapsTreeTrunk()` in
+`lib/game/cover.ts`) before placing it, same as the `inLake()`/`inSpawn()`/
+`inBaby()` rejections already there. Previously unchecked — a prop could
+spawn overlapping a tree trunk, a possible unreachable/broken hide spot if
+it hit a `bramble`/`log`.
 ¹⁵ Trees and cover props both reject `inLake()` spawn candidates
-(`generateMap()` L446, `generateCover()` L393) — defined, not undefined.
+(`generateMap()` L446, `generateCover()` L413) — defined, not undefined.
 ¹⁶ Both protected from home only indirectly, via the shared `inSpawn()`
 check (home reuses the spawn coordinates) — see Home's "what it cannot do."
 ¹⁷ Rendered as a dot/circle on the minimap (`drawMinimapStatic()`,
@@ -720,10 +729,8 @@ registry's own merge.
 - **LUL-395** — Predator spawn placement doesn't check `inLake()`, unlike
   tree/child placement; whether a predator can spawn in the lake is
   unverified. P2 (spawn-correctness question, easy fix if real).
-- **LUL-396** — Cover-prop placement (`generateCover()`) doesn't check tree
-  clearance; a rock/log/bramble can spawn overlapping a tree trunk. P2
-  (visual clipping, possibly an unreachable/broken hiding spot if it hits a
-  `bramble`/`log`).
+- ~~**LUL-396**~~ — **Fixed, LUL-450.** Cover-prop placement (`generateCover()`)
+  now checks tree clearance before placing; see footnote 14 above.
 
 ---
 
