@@ -2015,6 +2015,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return idx;
   };
 
+  // LUL-373: exposes the live ChargeState.phase/t ('telegraph'/'charging'/
+  // 'overshoot'/'caught'/'cleared', and seconds elapsed in that phase -- game
+  // time, not wall time) for a predator mid-charge, or null if it has none.
+  // Exists so a test can poll for "well into the charging sub-phase" against
+  // the engine's own game-time clock instead of guessing a wall-clock wait --
+  // see wiki systems/dt-clamp-vs-walltime for why a fixed ms wait doesn't
+  // reliably land at the same game-time point across rigs of different frame
+  // rates.
+  window.ForestEngine.qaChargePhase = function(idx){
+    const p = predators[idx];
+    return p && p.charge ? { phase: p.charge.phase, t: p.charge.t } : null;
+  };
+
   // LUL-275: snapshot of the player's transform and detected input mode -- proves
   // which input branch init() actually bound at runtime, not just which the test
   // requested. See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.

@@ -15,12 +15,15 @@
 // overshoot duration should track when you dodged, not the raw distance the
 // charge started from.
 //
-// Measuring overshoot duration without a new engine hook: qaPredatorState()
-// only exposes kind/state/inv/sniffsLeft/scentCalls, not position or charge
-// phase, and this spec deliberately doesn't add one (that's its own PR/
-// review, out of scope for a verification pass). Instead it reads
-// #chargePrompt (LUL-213's HUD, shown for the whole telegraph->charging->
-// overshoot span, hidden the instant the charge resolves either way --
+// Measuring overshoot duration: qaPredatorState() only exposes kind/state/
+// inv/sniffsLeft/scentCalls, not position or charge phase, so this spec adds
+// a narrow read-only hook, qaChargePhase(idx) (LUL-373), returning the
+// predator's live ChargeState.phase/t. It is used only to time *when* to
+// press Space (so Case 2 below reliably lands mid-charge at any rig speed,
+// see MID_CHARGE_T above) -- not asserted on directly. The actual pass/fail
+// signal is still the same one this spec always used: it reads #chargePrompt
+// (LUL-213's HUD, shown for the whole telegraph->charging->overshoot span,
+// hidden the instant the charge resolves either way --
 // engine/forest-engine.js's beginChargeHud()/endChargeHud() call sites) and
 // #deathScreen at that exact moment. The wall-clock gap between the dodge
 // (Space) landing and #chargePrompt clearing is a direct, unmodified proxy
@@ -58,6 +61,16 @@
 // one. Not asserted on here for that reason -- see LUL-302 for its own fix.
 import { test, expect } from '@playwright/test';
 import { boot, enter, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
+import { CHARGE_TELL_TIME, CHARGE_RUN_TIME } from '../lib/game/charge';
+
+// "Well into" the charging sub-phase. ChargeState.t is cumulative since the
+// charge started (spans telegraph *and* charging, not reset at the phase
+// boundary -- see stepCharge in lib/game/charge.ts), so 'charging' covers
+// t in [CHARGE_TELL_TIME, CHARGE_TELL_TIME + CHARGE_RUN_TIME). Target the
+// midpoint of that range: comfortably past the transition (so we're not
+// timing-racing the phase flip itself) and comfortably short of its end (so
+// a slow poll tick can't overshoot into 'caught').
+const MID_CHARGE_T = CHARGE_TELL_TIME + CHARGE_RUN_TIME * 0.5;
 
 test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', () => {
   for (const kind of ['wolf', 'lion'] as const) {
@@ -79,6 +92,30 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
           timeout: 5_000,
         });
         return idxOrNull;
+      }
+
+      // Polls the live ChargeState (qaChargePhase, LUL-373) for MID_CHARGE_T
+      // game-time seconds into 'charging', instead of a fixed wall-clock wait.
+      // A fixed ms wait only reliably lands at the same game-time point on the
+      // rig it was tuned against -- game-time accrues slower per wall-clock ms
+      // on a loaded/slower runner (dt clamp, see wiki systems/dt-clamp-vs-
+      // walltime), which is exactly what made CI flake on the original 1100ms
+      // version of this spec (LUL-373 review). Polling the engine's own clock
+      // is correct at any rig speed.
+      async function waitForMidCharge(idx: number): Promise<void> {
+        await expect
+          .poll(
+            async () => {
+              const cs = await page.evaluate((i) => window.ForestEngine?.qaChargePhase?.(i) ?? null, idx);
+              return cs && cs.phase === 'charging' ? cs.t : -1;
+            },
+            {
+              message: `${kind}: charge never reached ${MID_CHARGE_T.toFixed(2)}s into 'charging'`,
+              timeout: 3_000,
+              intervals: [20, 50, 100],
+            },
+          )
+          .toBeGreaterThanOrEqual(MID_CHARGE_T);
       }
 
       // --- Case 1: dodge as early as possible (telegraph phase). -----------
@@ -110,31 +147,25 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       // run controls for per-run rig speed variance instead of comparing
       // across two separately-timed tests.
       //
-      // 1100ms wall-clock wait before the jump: empirically measured (see
-      // the diagnostic run in the file header) to land solidly inside the
-      // 'charging' sub-phase on this rig -- comfortably past the ~0.3-0.7s
-      // wall-clock telegraph and comfortably short of the ~1.8-2.0s wall-
-      // clock point where a miss gets caught (measured separately in Case 3
-      // below). Not derived from the game-time constants directly because
-      // this rig's actual game-time/wall-time ratio varies run to run (see
-      // wiki: systems/dt-clamp-vs-walltime) -- the empirical measurement is
-      // the more reliable anchor.
-      await triggerAndGetIdx();
-      await page.waitForTimeout(1_100);
+      // Wait for the live charge state to actually reach MID_CHARGE_T seconds
+      // into 'charging' (LUL-373) rather than guessing a wall-clock ms delay
+      // -- see waitForMidCharge's comment above for why the original 1100ms
+      // version of this line flaked on CI's slower rig.
+      const idx2 = await triggerAndGetIdx();
+      await waitForMidCharge(idx2);
       await page.keyboard.press('Space');
       const lateJumpAt = Date.now();
       await expect(
         chargePrompt,
-        `${kind}: a mid-charge dodge never cleared the charge HUD -- resolution stalled, or the 1100ms wait ` +
-          `landed past the window and the predator caught the player outright (check #deathScreen/test output)`,
+        `${kind}: a mid-charge dodge never cleared the charge HUD -- resolution stalled, or the predator caught ` +
+          `the player outright (check #deathScreen/test output)`,
       ).toBeHidden({ timeout: 3_000 });
       const lateResolveMs = Date.now() - lateJumpAt;
       const lateDied = await deathScreen.isVisible();
       expect(
         lateDied,
-        `${kind}: the player was already dead the instant a mid-charge dodge resolved -- either the 1100ms wait ` +
-          `landed past the window (a spec-timing issue, not a dodge-logic finding -- lower the wait), or the ` +
-          `predator caught the player right at resolution`,
+        `${kind}: the player was already dead the instant a mid-charge dodge resolved -- the predator caught ` +
+          `the player right at resolution`,
       ).toBe(false);
 
       // Core LUL-323 regression check: pre-fix, overshootDuration was always
