@@ -33,6 +33,7 @@ import {
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
 } from '@/lib/game/scent';
+import { distanceToCoverEdge, overlapsTreeTrunk } from '@/lib/game/cover';
 import {
   isInBog,
   bogSpeedMultiplier,
@@ -439,6 +440,33 @@ function buildCoverGrid(){
 // props. This runs at the END of generateMap(), after every existing rng draw
 // (baby, trees, predators) -- so it only ever APPENDS to the seeded stream and
 // today's map (tree/baby/predator positions) stays byte-identical.
+// LUL-396: cover props only ever checked inLake()/inSpawn()/inBaby() against
+// their own center point -- never tree positions -- so a rock/log/bramble
+// could spawn overlapping a tree trunk's own movement-collision circle
+// (t.cr). Worst case for a HIDE_KINDS prop (bramble/log): an unreachable or
+// broken hide spot, since the player's own tree collision (blockedR) would
+// keep them from ever standing where findHideSpot() would trigger. Reuses
+// the same tree `grid` blockedR() walks (already built by buildGrid() before
+// generateCover() runs, see generateMap()) against overlapsTreeTrunk()
+// (lib/game/cover.ts), rather than a second parallel implementation of the
+// same circle-overlap math.
+//
+// Deliberate consequence, not a bug: the new rejection branch below skips a
+// candidate's `ry` rng() draw when it fires (same short-circuit shape the
+// existing inLake()/inSpawn()/inBaby() check above already has). Tree/baby/
+// predator positions are unaffected (this fix only touches generateCover()'s
+// own stream, which runs after all of those per the comment above) -- but
+// the exact set and layout of cover props for a given seed will shift from
+// pre-fix `main` wherever a rejected overlap used to land. That is the fix
+// working, not a regression.
+function treesNear(x, z){
+  const cx = Math.floor(x/CELL), cz = Math.floor(z/CELL);
+  const nearby = [];
+  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
+    const arr = grid.get(key(gx,gz)); if(arr) nearby.push(...arr);
+  }
+  return nearby;
+}
 function generateCover(){
   coverData = [];
   for(const t of treeData) if(t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
@@ -454,6 +482,7 @@ function generateCover(){
       if(rng() < 0.5){ hx=long; hz=thin; } else { hx=thin; hz=long; } y=0.3; }
     else if(roll < 0.75){ kind='rock'; const r = 0.9+rng()*0.9; hx=r; hz=r*(0.7+rng()*0.5); y=r*0.55; }
     else { kind='bramble'; const r = 0.8+rng()*0.7; hx=r; hz=r; y=r*0.6; }
+    if(overlapsTreeTrunk(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
     placed++;
   }
@@ -1100,6 +1129,14 @@ function hasLOS(x0,z0,x1,z1){
 // HIDE_KINDS)? Reuses the same coverGrid spatial hash blockedR()/hasLOS()
 // already walk -- no second data structure. Returns the nearest qualifying
 // prop within HIDE_RADIUS of its own edge, or null.
+//
+// LUL-405/LUL-430: this used to approximate a prop's edge as a circle of
+// radius Math.max(hx,hz) -- the *longer* half-extent, applied uniformly in
+// every direction -- which balloons the hide-trigger region on an elongated
+// log's thin side to several times the object's real thickness there. Now
+// uses distanceToCoverEdge() (lib/game/cover.ts) against the true,
+// rotation-aware rectangular footprint, same world->local convention as
+// coverBlockedR()/hasLOS() (systems/los-rotated-aabb-sign-bug).
 function findHideSpot(x, z){
   const cx = Math.floor(x/CELL), cz = Math.floor(z/CELL);
   let best = null, bestD = Infinity;
@@ -1107,8 +1144,10 @@ function findHideSpot(x, z){
     const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
     for(const c of arr){
       if(!HIDE_KINDS[c.kind]) continue;
-      const dx = x-c.x, dz = z-c.z, edge = Math.max(c.hx, c.hz);
-      const d = Math.hypot(dx,dz) - edge;
+      const dx = x-c.x, dz = z-c.z;
+      const co = Math.cos(c.ry), si = Math.sin(c.ry);
+      const lx = dx*co - dz*si, lz = dx*si + dz*co;
+      const d = distanceToCoverEdge(lx, lz, c.hx, c.hz);
       if(d < HIDE_RADIUS && d < bestD){ bestD = d; best = c; }
     }
   }
