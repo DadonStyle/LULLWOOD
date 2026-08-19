@@ -13,13 +13,28 @@ name: PR freshness
 # decision 0010 (no force-push, branches track main by backmerge) without any
 # agent having to run the manual loop in AGENTS.md for routine staleness.
 #
-# It does NOT touch review status, CI, or the merge itself. A PR still needs
-# its own approval and green checks to land; this only keeps it mergeable.
+# It does NOT touch review status or the merge itself. A PR still needs its
+# own approval and green checks to land; this only keeps it mergeable.
 #
 # Conflicts are the one case this can't handle -- update-branch fails if the
 # merge isn't clean, and this workflow does not attempt conflict resolution
 # (that would risk exactly the "logic and function loss" LUL-380 warned
 # about). It leaves a comment on the PR instead and moves on.
+#
+# LUL-439: update-branch's merge commit is authored via this workflow's own
+# GITHUB_TOKEN, and GitHub does not emit push or pull_request events for
+# commits made with GITHUB_TOKEN (recursion guard) -- so the new head would
+# otherwise never get a CI run, ci.yml's push trigger and pull_request trigger
+# both silently no-op on it, and the branch sits BLOCKED forever with every
+# required context reading MISSING (not failing -- missing; measured in
+# wiki systems/ci-github-token-blind-spot). workflow_dispatch is explicitly
+# exempted from that suppression (GitHub docs: "workflow_dispatch and
+# repository_dispatch events always create workflow runs"), and ci.yml
+# already declares `workflow_dispatch:` as a trigger, so dispatching it on
+# the branch right after a successful update-branch gets the exact same
+# jobs (same job `if:` conditions all pass for workflow_dispatch, since
+# github.event_name != 'pull_request') to run against the new head, with no
+# new PAT/secret required.
 
 on:
   push:
@@ -34,6 +49,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 concurrency:
   group: pr-freshness
@@ -91,6 +107,17 @@ jobs:
               echo "::notice::#$number ($branch) is $behind commit(s) BEHIND main; requesting update-branch."
               if gh api -X PUT "repos/$REPO/pulls/$number/update-branch" >/dev/null 2>/tmp/update-err.log; then
                 echo "::notice::#$number updated."
+
+                # The merge commit above is GITHUB_TOKEN-authored, so it gets
+                # no push/pull_request CI run (see LUL-439 comment at top of
+                # file). workflow_dispatch is exempt from that suppression --
+                # use it to get CI onto the new head.
+                if gh api -X POST "repos/$REPO/actions/workflows/ci.yml/dispatches" -f "ref=$branch" >/tmp/dispatch-err.log 2>&1; then
+                  echo "::notice::CI dispatched on $branch for the refreshed head."
+                else
+                  echo "::warning::workflow_dispatch failed for #$number ($branch); required checks will read MISSING on the new head until a manual dispatch or real push covers it:"
+                  cat /tmp/dispatch-err.log
+                fi
               else
                 echo "::warning::update-branch failed for #$number -- likely a real merge conflict, needs a manual backmerge:"
                 cat /tmp/update-err.log
