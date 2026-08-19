@@ -118,7 +118,14 @@ test.describe('LUL-211: winning shows YOU WON and stays there', () => {
 });
 
 test.describe('LUL-211: cover props are solid', () => {
-  for (const kind of ['rock', 'log', 'bramble'] as const) {
+  // LUL-388: 'tree' added -- qaStageWalkIntoCover('tree') was reachable but had
+  // never actually been driven by a spec (only rock/log/bramble were), and it
+  // turned out to be broken (NaN positions, fixed in the same change that added
+  // this case -- see the hook's own LUL-388 comment in forest-engine.js). Large
+  // trees (coverData's `s>1.4` subset) are the one element the interaction
+  // matrix (docs/ELEMENTS.md) marks C+LOS same as rock, so player-vs-tree
+  // collision belongs in this exact loop, not a separate spec.
+  for (const kind of ['rock', 'log', 'bramble', 'tree'] as const) {
     test(`walking straight into a ${kind} does not pass through it`, async ({ page }) => {
       test.setTimeout(45_000);
       await boot(page, { qaHooks: true });
