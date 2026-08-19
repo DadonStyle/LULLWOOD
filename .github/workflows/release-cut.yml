@@ -1,0 +1,227 @@
+name: Release cut
+
+# LUL-497 (LUL-492b) -- turns a batch of feature PRs already merged into
+# `release/next` into one production release on `main`. Full design:
+# wiki `systems/release-train`, the `plan` document on LUL-492.
+#
+# This workflow only performs steps 1-2 of the cut (open the PR, confirm the
+# combined suite is green). It deliberately stops there rather than merging,
+# tagging and recreating `release/next` unattended -- see
+# `.github/scripts/finish-release-cut.sh` for why, and for the rest of the
+# cut. Short version: `release/next`'s ruleset requires an approving review
+# on every PR that touches it (including the "recreate" PR after a merge),
+# with no bypass actor, and no identity distinct from the studio PAT is
+# available inside Actions to supply that review without either a new
+# PAT-in-Actions secret (a secrets-provisioning decision, LUL-529) or hitting
+# the documented self-approval wall (systems/github-access) -- so the last
+# mile stays a deliberate, scripted manual step, same as every other PR in
+# this repo (AGENTS.md "Landing code").
+#
+# Why this doesn't re-run CI itself: every merge into `release/next` is
+# PAT-authored (not GITHUB_TOKEN), so it gets a normal push-triggered
+# `ci.yml` run against exactly that combined tree -- release/next's tip
+# always already carries a fresh result for "everything batched so far,
+# combined". This workflow's job is to CONFIRM that result is green (polling
+# in case a merge is still in flight) before proposing it as a release, not
+# to manufacture a new run. That confirmation, done fresh right before the
+# cut, is what makes "per-PR green does not imply batch green" true here --
+# see the plan doc's framing on LUL-492.
+#
+# Scheduled triggers only fire off the copy of this file on the default
+# branch (`main`). Until the first cut lands, only `workflow_dispatch`
+# (dispatchable against `release/next` directly, see systems/github-access)
+# is live -- that first manual dispatch is also what gets this file onto
+# `main` in the first place.
+
+on:
+  schedule:
+    # Daily fixed-hour cut. Founder requirement: at least one version a day.
+    # Always cuts if there is anything to cut, regardless of K.
+    - cron: '0 6 * * *'
+    # K-ahead poll. Cuts early only if release/next is more than K PRs ahead
+    # of main; otherwise a no-op. 30 min matches pr-freshness.yml's cadence
+    # for the same class of "cheap periodic check".
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: release-cut
+  cancel-in-progress: false
+
+env:
+  # LUL-497 spec: cut early once release/next is more than K PRs ahead of main.
+  K_AHEAD: 8
+  DAILY_CRON: '0 6 * * *'
+  KAHEAD_CRON: '*/30 * * * *'
+
+jobs:
+  cut:
+    name: propose a release cut
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: propose a release cut
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags origin main release/next
+
+          # Only one release cut in flight at a time. An open one is not an
+          # error -- it just means the next cut waits for it to finish
+          # (.github/scripts/finish-release-cut.sh), same as the daily
+          # schedule silently no-opping when there's nothing new to batch.
+          existing="$(gh pr list --repo "$REPO" --base main --head release/next --state open --json number,url --jq '.[0] // empty')"
+          if [ -n "$existing" ]; then
+            number="$(printf '%s' "$existing" | jq -r '.number')"
+            url="$(printf '%s' "$existing" | jq -r '.url')"
+            echo "::notice::release PR #$number ($url) is already open; not opening another. Finish it first."
+            exit 0
+          fi
+
+          # Precondition: release/next must already contain everything on
+          # main. If it doesn't, a hotfix landed on main directly (the
+          # documented [hotfix] exception) and release/next has drifted
+          # behind it. A version cut from here would silently drop the
+          # hotfix's fix the moment release/next's PR merges into main, so
+          # this must fail loud and stop -- not degrade to a warning. Fix:
+          # the standard backmerge loop (AGENTS.md), landed as a normal
+          # reviewed PR into release/next, same as any other change to it.
+          behind="$(git rev-list --count origin/release/next..origin/main)"
+          if [ "$behind" -gt 0 ]; then
+            echo "::error::release/next is $behind commit(s) behind main -- main has a hotfix release/next lacks. Backmerge main into release/next (a normal reviewed PR) before the next cut can run. See wiki systems/release-train, hotfix path."
+            exit 1
+          fi
+
+          ahead="$(git rev-list --count origin/main..origin/release/next)"
+          if [ "$ahead" -eq 0 ]; then
+            echo "::notice::release/next has nothing beyond main; nothing to cut."
+            exit 0
+          fi
+
+          # Decide whether THIS trigger should actually cut. workflow_dispatch
+          # and the daily schedule always cut when there's something to cut;
+          # the frequent poll only cuts early once K is exceeded, so it stays
+          # a no-op on every other run.
+          due=false
+          case "$EVENT_NAME" in
+            workflow_dispatch) due=true ;;
+            schedule)
+              if [ "$SCHEDULE" = "$DAILY_CRON" ]; then
+                due=true
+              elif [ "$SCHEDULE" = "$KAHEAD_CRON" ]; then
+                if [ "$ahead" -gt "$K_AHEAD" ]; then
+                  due=true
+                fi
+              fi
+              ;;
+          esac
+
+          if [ "$due" != true ]; then
+            echo "::notice::release/next is $ahead commit(s) (~PRs) ahead of main; below K=$K_AHEAD, and this isn't the daily cut. Not cutting yet."
+            exit 0
+          fi
+
+          # release/next's tip already contains "everything batched so far,
+          # combined" and already got a normal push-triggered ci.yml run when
+          # it was merged (PAT-authored merges are real pushes, not
+          # GITHUB_TOKEN, so they aren't recursion-suppressed). Confirm that
+          # run is actually green -- polling in case a merge landed seconds
+          # ago and its run is still in flight -- rather than trusting a
+          # rollup. Never trust mergeStateStatus alone here (LUL-512): read
+          # the three required contexts by name.
+          head_sha="$(git rev-parse origin/release/next)"
+          required=("build, typecheck, lint" "unit tests" "playwright smoke suite")
+
+          echo "::notice::confirming required checks are green on release/next @ $head_sha before proposing a cut"
+
+          deadline=$((SECONDS + 35 * 60))
+          while :; do
+            runs_json="$(gh api "repos/$REPO/commits/$head_sha/check-runs" --paginate --jq '[.check_runs[]]')"
+
+            all_green=true
+            summary=""
+            for name in "${required[@]}"; do
+              # Latest run for this context by started_at, in case of a
+              # cancel+rerun leaving more than one check-run for the same name.
+              latest="$(printf '%s' "$runs_json" | jq --arg n "$name" '[.[] | select(.name == $n)] | sort_by(.started_at) | last')"
+              if [ "$latest" = "null" ] || [ -z "$latest" ]; then
+                status="missing"; conclusion="-"
+              else
+                status="$(printf '%s' "$latest" | jq -r '.status')"
+                conclusion="$(printf '%s' "$latest" | jq -r '.conclusion // "-"')"
+              fi
+              summary="$summary  $name: $status/$conclusion"
+              if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+                all_green=false
+              fi
+            done
+
+            if [ "$all_green" = true ]; then
+              echo "::notice::all required checks green on $head_sha"
+              break
+            fi
+
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::required checks on release/next @ $head_sha did not all report success within 35 minutes:$summary. Cut aborted, release/next untouched, no PR opened."
+              exit 1
+            fi
+
+            echo "::notice::not all required checks green yet, polling:$summary"
+            sleep 30
+          done
+
+          # vYYYY.MM.DD-N, N starting at 1 and incrementing for extra cuts on
+          # the same UTC day (K-ahead trigger + a manual dispatch same day, etc).
+          date="$(date -u +%Y.%m.%d)"
+          existing_n="$(git ls-remote --tags origin "refs/tags/v${date}-*" | sed -E "s#.*refs/tags/v${date}-([0-9]+)\$#\1#" | sort -n | tail -1)"
+          n=$(( ${existing_n:-0} + 1 ))
+          tag="v${date}-${n}"
+          title="Release ${tag}"
+
+          {
+            echo "Automated version cut (\`.github/workflows/release-cut.yml\`, LUL-497)."
+            echo
+            echo "Batches everything merged into \`release/next\` since the last cut. All three"
+            echo "required checks (\`build, typecheck, lint\`, \`unit tests\`, \`playwright smoke"
+            echo "suite\`) are green on \`release/next\` @ \`$head_sha\` as of this PR's opening."
+            echo
+            echo "**Needs the Code Reviewer's full-version review** (LUL-492d mandate: cross-PR"
+            echo "collisions -- two PRs touching the same system, duplicate identifiers,"
+            echo "contradictory tuning -- not a per-PR re-review). Open a Paperclip review child"
+            echo "issue for the Code Reviewer if one doesn't already exist; wait for"
+            echo "\`REVIEW: APPROVED\`."
+            echo
+            echo "**Do not squash-merge this.** Once approved, finish the cut with"
+            echo "\`.github/scripts/finish-release-cut.sh $tag\` -- merges with a merge commit"
+            echo "(so individual PR history survives on \`main\`), tags \`$tag\`, and recreates"
+            echo "\`release/next\` from the new \`main\`."
+            echo
+            echo "Commits included:"
+            echo '```'
+            git log --oneline --no-merges origin/main..origin/release/next
+            echo '```'
+            echo
+            echo '<!-- RELEASE_CUT_TAG: '"$tag"' -->'
+          } > /tmp/release-pr-body.md
+
+          gh pr create --repo "$REPO" \
+            --base main \
+            --head release/next \
+            --title "$title" \
+            --body-file /tmp/release-pr-body.md
+
+          number="$(gh pr list --repo "$REPO" --base main --head release/next --state open --json number --jq '.[0].number')"
+          echo "::notice::opened release PR #$number ($title)"
