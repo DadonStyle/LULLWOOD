@@ -34,6 +34,12 @@ import {
   SCENT_TRACK_TIME,
 } from '@/lib/game/scent';
 import {
+  isInBog,
+  bogSpeedMultiplier,
+  bogNoiseMultiplier,
+  pickHardBabyPosition,
+} from '@/lib/game/bog';
+import {
   backOffPoint,
   canCatchInChase,
   hasReachedSniffRange,
@@ -76,6 +82,7 @@ function init(onStateChange, inputMode) {
 const CONFIG = {
   seed:    20260718,
   mapSize: 240,          // the forest is a fixed square this many units across
+  bogDepth: 120,         // LUL-25: the bog band appended past the forest's +z edge
   trees:   1300,
   walk:    6,            // walking speed (units/s); Shift multiplies it
   fog:     0.04,
@@ -90,6 +97,25 @@ const CONFIG = {
 };
 const half = CONFIG.mapSize / 2;
 const margin = 4;
+// LUL-25: the world is a rectangle now, not a square -- `half` still bounds
+// x symmetrically (and is the z coordinate the forest ends at), `zMax` is the
+// new outer z edge, out past the bog. Every place that used to clamp z the
+// same way it clamps x now clamps to [-half, zMax] instead of [-half, half].
+const zMax = half + CONFIG.bogDepth;
+function inBog(x, z){ return isInBog(z, { half, zMax }); }
+// LUL-25: four fixed navigational landmarks, "visible over the fog line" so
+// the player can orient without the minimap (which stays scaled to the
+// original 240x240 forest -- see w2m()/drawMinimap() below, both untouched).
+// Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home
+// -- a place you can actually learn, not one more random prop. Two sit in the
+// forest, two mark the bog: the split oak at its near edge (a gateway you see
+// coming) and the drowned car deep in it (how far you've come).
+const LANDMARKS = [
+  { kind: 'fireTower',   x: -95, z: -95, clear: 12 },
+  { kind: 'stoneMarker', x: 100, z: -75, clear: 9  },
+  { kind: 'oak',         x: -65, z: 135, clear: 10 },
+  { kind: 'drownedCar',  x: 55,  z: 205, clear: 11 },
+];
 
 // ---- Seeded RNG (so a given map is a real, repeatable place) --------------
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
@@ -242,6 +268,19 @@ const parts = [
 ];
 parts.forEach(p => { p.frustumCulled = false; scene.add(p); });
 
+// ---- Bog tree cover (LUL-25) -----------------------------------------------
+// Same trunk/foliage geometry, own InstancedMesh trio sized much smaller than
+// CONFIG.trees -- "thinner tree cover" per the ticket. A separate pool, not a
+// bigger CONFIG.trees, so the original forest loop's rng draw count (and
+// every draw after it) is untouched -- see generateBogTrees() below.
+const BOG_TREES = 90;
+const bogParts = [
+  new THREE.InstancedMesh(trunkGeo, trunkMat,   BOG_TREES),
+  new THREE.InstancedMesh(cone1Geo, foliageMat, BOG_TREES),
+  new THREE.InstancedMesh(cone2Geo, foliageMat, BOG_TREES),
+];
+bogParts.forEach(p => { p.frustumCulled = false; scene.add(p); });
+
 // ---- Cover props (LUL-43): brambles, fallen logs, rock shelves -----------
 // Purely visual + line-of-sight-blocking (see canSee()/hasLOS() below) --
 // deliberately NOT movement colliders. Trees already own movement collision
@@ -256,10 +295,18 @@ const brambleGeo = new THREE.IcosahedronGeometry(1, 1);
 const logMat = new THREE.MeshStandardMaterial({ color: 0x241a10, roughness: 1 });
 const rockMat = new THREE.MeshStandardMaterial({ color: 0x2c3036, roughness: 1 });
 const brambleMat = new THREE.MeshStandardMaterial({ color: 0x121a0e, roughness: 1 });
+// LUL-25: reed clumps -- tall cover volumes in the bog, same "duck behind it"
+// LOS-blocking treatment as rock/bramble (see coverBlockedR/hasLOS below),
+// not a HIDE_KINDS entry -- canSee()'s LOS raycast already treats any
+// coverData AABB as real sight-cover regardless of hide-stance membership;
+// the reeds' actual cost is the louder splash while wading (see bogNoiseMultiplier).
+const reedGeo = new THREE.ConeGeometry(0.5, 1, 5);
+const reedMat = new THREE.MeshStandardMaterial({ color: 0x2e3b1c, roughness: 1 });
 const coverMeshes = {
   log: new THREE.InstancedMesh(logGeo, logMat, COVER_PROPS),
   rock: new THREE.InstancedMesh(rockGeo, rockMat, COVER_PROPS),
   bramble: new THREE.InstancedMesh(brambleGeo, brambleMat, COVER_PROPS),
+  reed: new THREE.InstancedMesh(reedGeo, reedMat, COVER_PROPS),   // capacity reused, see layoutCoverMeshes()
 };
 Object.values(coverMeshes).forEach(m => { m.frustumCulled = false; scene.add(m); });
 
@@ -284,6 +331,8 @@ const HIDE_RADIUS = 2.2;   // proximity, beyond the prop's own footprint, to sti
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
 let treeData = [];            // {x,z,s,cr,crCanopy}
+let bogTreeData = [];          // LUL-25: same shape, thinner cover, bog band only -- own array so
+                                // it can't shift how many rng() calls the original tree loop makes
 const CELL = 8;
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
@@ -296,6 +345,10 @@ function key(cx,cz){ return cx+','+cz; }
 function buildGrid(){
   grid = new Map();
   for(const t of treeData){
+    const k = key(Math.floor(t.x/CELL), Math.floor(t.z/CELL));
+    (grid.get(k) || grid.set(k, []).get(k)).push(t);
+  }
+  for(const t of bogTreeData){
     const k = key(Math.floor(t.x/CELL), Math.floor(t.z/CELL));
     (grid.get(k) || grid.set(k, []).get(k)).push(t);
   }
@@ -406,7 +459,7 @@ function generateCover(){
   buildCoverGrid();
 }
 function layoutCoverMeshes(){
-  const counts = { log: 0, rock: 0, bramble: 0 };
+  const counts = { log: 0, rock: 0, bramble: 0, reed: 0 };
   for(const c of coverData){
     if(c.kind === 'tree') continue;
     const i = counts[c.kind]++;
@@ -424,6 +477,76 @@ function layoutCoverMeshes(){
     }
     m.instanceMatrix.needsUpdate = true;
   }
+}
+
+function nearLandmarks(x, z, pad){
+  for(const l of LANDMARKS){ if(Math.hypot(x-l.x, z-l.z) < l.clear+pad) return true; }
+  return false;
+}
+// ---- Bog map band (LUL-25) --------------------------------------------------
+// generateBogTrees()/generateReeds()/applyHardBabySpawn() are all called from
+// the tail of generateMap(), strictly after every existing rng() draw (baby,
+// trees, predators, cover, wind) -- new content only ever appends to the
+// seeded stream, same rule LUL-43/LUL-23 already established, so the current
+// forest keeps generating byte-identical for CONFIG.seed.
+function generateBogTrees(){
+  bogTreeData = [];
+  let tries = 0;
+  while(bogTreeData.length < BOG_TREES && tries < BOG_TREES*25){
+    tries++;
+    const x = rnd(-half+margin, half-margin), z = rnd(half+margin, zMax-margin);
+    if(nearLandmarks(x, z, 2)) continue;
+    const s = 0.6 + rng()*1.3;   // thinner cover -- same scatter shape, smaller sizes than the forest
+    bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s) });
+  }
+  for(let i=0; i<BOG_TREES; i++){
+    if(i < bogTreeData.length){
+      const t = bogTreeData[i];
+      dummy.position.set(t.x, 0, t.z);
+      dummy.rotation.set(0, rng()*Math.PI*2, 0);
+      dummy.scale.setScalar(t.s);
+    } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
+    dummy.updateMatrix();
+    for(const p of bogParts) p.setMatrixAt(i, dummy.matrix);
+    const b = i < bogTreeData.length ? 0.72 + rng()*0.5 : 1;
+    tintCol.setRGB(b*0.92, b, b*0.86);
+    bogParts[1].setColorAt(i, tintCol); bogParts[2].setColorAt(i, tintCol);
+  }
+  for(const p of bogParts) p.instanceMatrix.needsUpdate = true;
+  if(bogParts[1].instanceColor) bogParts[1].instanceColor.needsUpdate = true;
+  if(bogParts[2].instanceColor) bogParts[2].instanceColor.needsUpdate = true;
+}
+// Reeds: tall cover volumes, bog band only. Pushed into the same coverData
+// array log/rock/bramble use (see coverMeshes.reed above) so canSee()'s LOS
+// raycast and the player's coverBlockedR() movement check treat them exactly
+// like any other prop, with zero changes to either function.
+function generateReeds(){
+  let tries = 0, placed = 0;
+  while(placed < COVER_PROPS && tries < COVER_PROPS*25){
+    tries++;
+    const x = rnd(-half+margin, half-margin), z = rnd(half+4, zMax-4);
+    if(nearLandmarks(x, z, 3)) continue;
+    const r = 0.5 + rng()*0.4, h = 1.3 + rng()*0.9;
+    coverData.push({ x, z, hx: r, hz: r, y: h*0.5, kind: 'reed', ry: rng()*Math.PI*2 });
+    placed++;
+  }
+  buildCoverGrid();
+}
+// LUL-25: 'normal' | 'hard' -- no UI yet (LUL-26, difficulty presets, hasn't
+// landed), set only via qaSetDifficulty(). Normal never calls
+// pickHardBabyPosition, so its rng stream is byte-identical to before this
+// ticket; hard draws its extra point after every other generateMap() draw.
+// Named distinctly from LUL-26's `difficulty` (DIFFICULTY_PRESETS, below) --
+// they are two unrelated concepts (baby spawn placement vs. the real
+// lantern/night/blackout preset) that collided on the same identifier during
+// a backmerge; see LUL-427.
+let babySpawnDifficulty = 'normal';
+function applyHardBabySpawn(){
+  if(babySpawnDifficulty !== 'hard') return;
+  const pos = pickHardBabyPosition(rng, { half, zMax }, half, LANDMARKS);
+  baby.x = pos.x; baby.z = pos.z;
+  babyGroup.position.set(baby.x, 0, baby.z);
+  placeBabyWisps();
 }
 
 function generateMap(seed){
@@ -472,6 +595,13 @@ function generateMap(seed){
   placePredators();
   generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
   generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
+  // LUL-25: everything below is new and runs last -- see the comment on
+  // generateBogTrees() for why the ordering is load-bearing.
+  generateBogTrees();
+  generateReeds(); layoutCoverMeshes();
+  buildGrid();   // picks up bogTreeData for blockedR()/canopyBlockedR()
+  placeLandmarks();
+  applyHardBabySpawn();
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
 }
 
@@ -498,6 +628,96 @@ const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG
   new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
 homeRing.rotation.x = -Math.PI/2; homeRing.position.set(CONFIG.home.x, 0.04, CONFIG.home.z); scene.add(homeRing);
+
+// ---- Navigational landmarks (LUL-25) --------------------------------------
+// Same "static group + a light to read through the fog" recipe as the lake/
+// home beacons above, just four distinct low-poly silhouettes instead of a
+// ring. Built once at module scope (LANDMARKS gives each its target x/z);
+// placeLandmarks(), called at the tail of generateMap(), only ever nudges
+// their position a few units to keep this seed's actual trees from
+// overlapping a fixed spot -- it never touches rng, so it can't affect
+// determinism for anything else generateMap() draws.
+function buildFireTower(){
+  const g = new THREE.Group();
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x2a1d12, roughness: 1 });
+  const legGeo = new THREE.CylinderGeometry(0.14, 0.2, 9, 5);
+  for(const [lx,lz] of [[-1.1,-1.1],[1.1,-1.1],[-1.1,1.1],[1.1,1.1]]){
+    const leg = new THREE.Mesh(legGeo, legMat);
+    leg.position.set(lx*0.55, 4.5, lz*0.55);
+    leg.rotation.x = -lx*0.12; leg.rotation.z = lz*0.12;
+    g.add(leg);
+  }
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.25, 2.6), legMat);
+  deck.position.y = 9; g.add(deck);
+  const light = new THREE.PointLight(0xff9a4a, 0.9, 26, 2); light.position.set(0, 9.6, 0); g.add(light);
+  g.rotation.z = 0.13; g.rotation.x = 0.05;   // leaning
+  return g;
+}
+function buildStoneMarker(){
+  const g = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x565f68, roughness: 0.9 });
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.75, 5.5, 4), stoneMat);
+  shaft.position.y = 2.75; shaft.rotation.y = 0.4; g.add(shaft);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.5, 0.6, 4), stoneMat);
+  cap.position.y = 5.6; cap.rotation.y = 0.4; g.add(cap);
+  const glow = new THREE.PointLight(0x9fd0ff, 0.55, 16, 2); glow.position.set(0, 3.2, 0); g.add(glow);
+  return g;
+}
+function buildDrownedCar(){
+  const g = new THREE.Group();
+  const rustMat = new THREE.MeshStandardMaterial({ color: 0x3a2320, roughness: 1 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.3, 1.9), rustMat);
+  body.position.y = 0.35; g.add(body);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.9, 1.7), rustMat);
+  cab.position.set(-0.3, 1.15, 0); g.add(cab);
+  g.rotation.set(0.05, 0.6, 0.16);   // tilted, half-sunken
+  g.position.y = -0.3;
+  const headlight = new THREE.PointLight(0xffcf7a, 0.35, 9, 2); headlight.position.set(2.0, 0.5, 0.6); g.add(headlight);
+  return g;
+}
+function buildSplitOak(){
+  const g = new THREE.Group();
+  const charMat = new THREE.MeshStandardMaterial({ color: 0x201a16, roughness: 1 });
+  const boneMat = new THREE.MeshStandardMaterial({ color: 0xb8ada0, roughness: 0.85 });
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.85, 4.5, 6), charMat);
+  trunk.position.y = 2.25; g.add(trunk);
+  for(const side of [-1, 1]){
+    const half_ = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.35, 6.5, 5), boneMat);
+    half_.position.set(side*0.6, 4.5 + 3.25, side*0.3);
+    half_.rotation.z = -side*0.35; half_.rotation.x = 0.1;
+    g.add(half_);
+  }
+  const glow = new THREE.PointLight(0xcfe6ff, 0.4, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
+  return g;
+}
+const landmarkGroups = {
+  fireTower: buildFireTower(),
+  stoneMarker: buildStoneMarker(),
+  drownedCar: buildDrownedCar(),
+  oak: buildSplitOak(),
+};
+Object.values(landmarkGroups).forEach(g => scene.add(g));
+// Nudges (x,z) away from any tree/cover prop this seed actually generated
+// nearby -- pure geometry, no rng, so it can't shift the seeded stream.
+function clearLandmarkSpot(x, z, clear){
+  for(let i=0; i<8; i++){
+    let hit = false;
+    for(const t of treeData){ if(Math.hypot(x-t.x, z-t.z) < clear + t.cr) { hit = true; break; } }
+    if(!hit) for(const t of bogTreeData){ if(Math.hypot(x-t.x, z-t.z) < clear + t.cr) { hit = true; break; } }
+    if(!hit) for(const c of coverData){ if(Math.hypot(x-c.x, z-c.z) < clear + Math.max(c.hx, c.hz)) { hit = true; break; } }
+    if(!hit) return [x, z];
+    const a = i * 0.9;
+    x += Math.cos(a) * 3; z += Math.sin(a) * 3;
+  }
+  return [x, z];
+}
+function placeLandmarks(){
+  for(const l of LANDMARKS){
+    const [x, z] = clearLandmarkSpot(l.x, l.z, l.clear);
+    landmarkGroups[l.kind].position.x = x;
+    landmarkGroups[l.kind].position.z = z;
+  }
+}
 
 const LW = 50, lwArr = new Float32Array(LW*3);
 for(let i=0;i<LW;i++){ const a=Math.random()*Math.PI*2, r=Math.random()*CONFIG.lake.r*0.95;
@@ -943,7 +1163,7 @@ function updateWolfPack(dt){
     const ex = escX*ca - escZ*sa, ez = escX*sa + escZ*ca;   // rotate the escape heading by +-60deg
     const dist = Math.hypot(player.x-p.x, player.z-p.z) * FLANK_DIST_MUL;
     p.flankX = clamp(player.x + ex*dist, -half+4, half-4);
-    p.flankZ = clamp(player.z + ez*dist, -half+4, half-4);
+    p.flankZ = clamp(player.z + ez*dist, -half+4, zMax-4);
     p.state = 'flank'; p.inv = ''; p.packTimer = FLANK_RECOMPUTE;
   }
 }
@@ -1031,7 +1251,7 @@ function updatePredators(dt, noiseRadius){
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){ const a=Math.random()*Math.PI*2, r=15+Math.random()*40;
-          p.wpx=clamp(p.x+Math.cos(a)*r,-half+4,half-4); p.wpz=clamp(p.z+Math.sin(a)*r,-half+4,half-4); }
+          p.wpx=clamp(p.x+Math.cos(a)*r,-half+4,half-4); p.wpz=clamp(p.z+Math.sin(a)*r,-half+4,zMax-4); }
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
       }
     } else if(p.state === 'chase'){
@@ -1092,7 +1312,7 @@ function updatePredators(dt, noiseRadius){
           p.sniffsLeft = sniffOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + Math.random()*8;
-            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half); }
+            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax); }
           else { p.state='roam'; p.spotted=false; }
         }
       } else if(p.inv === 'back'){
@@ -1133,7 +1353,7 @@ function updatePredators(dt, noiseRadius){
     p.vx += (dvx - p.vx) * Math.min(1, dt*accel);
     p.vz += (dvz - p.vz) * Math.min(1, dt*accel);
     const px0 = p.x, pz0 = p.z;
-    const nx = clamp(p.x + p.vx*dt, -half+2, half-2), nz = clamp(p.z + p.vz*dt, -half+2, half-2);
+    const nx = clamp(p.x + p.vx*dt, -half+2, half-2), nz = clamp(p.z + p.vz*dt, -half+2, zMax-2);
     if(!blockedR(nx, p.z, p.rad)) p.x = nx; else p.vx *= 0.2;
     if(!blockedR(p.x, nz, p.rad)) p.z = nz; else p.vz *= 0.2;
     p.g.position.x = p.x; p.g.position.z = p.z;
@@ -1148,7 +1368,7 @@ function updatePredators(dt, noiseRadius){
         const back = p.trail[0] || [p.x - ux*6, p.z - uz*6];
         p.rrX = back[0]; p.rrZ = back[1]; p.reroute = 1.4; p.stuckT = 0;
         p.wpx = clamp(p.x + (Math.random()-0.5)*40, -half+4, half-4);   // fresh, different waypoint
-        p.wpz = clamp(p.z + (Math.random()-0.5)*40, -half+4, half-4);
+        p.wpz = clamp(p.z + (Math.random()-0.5)*40, -half+4, zMax-4);
       }
     }
 
@@ -1390,6 +1610,22 @@ function footstep(vol){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t+0.005); g.gain.exponentialRampToValueAtTime(0.0001, t+0.18);
   src.connect(f); f.connect(g); g.connect(master); g.connect(conv); src.start(t); src.stop(t+0.22);
+}
+// LUL-25: bog footstep foley -- a noise burst through a lowpass sweep (bright
+// slap of impact dropping to a dull glug as the ripple settles), same
+// building blocks as the rest of this file's all-procedural audio. Deliberately
+// louder than footstep() (see the bogNoiseMultiplier call site) -- the whole
+// point of wading through the bog is that it costs you on the sound channel.
+function splash(vol){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.22, false);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.setValueAtTime(2600, t); lp.frequency.exponentialRampToValueAtTime(220, t+0.24);
+  lp.Q.value = 0.7;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t+0.006); g.gain.exponentialRampToValueAtTime(0.0001, t+0.26);
+  nb.connect(lp); lp.connect(g); g.connect(master); g.connect(conv); nb.start(t); nb.stop(t+0.28);
 }
 // LUL-212: enter/exit foley for the two hiding-spot kinds. Bandpass-filtered
 // noise bursts, same building blocks as footstep()/the rest of this file --
@@ -1747,6 +1983,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // test; this lets e2e assert the carry -> arrive -> win transition without
   // depending on procedural-terrain pathing.
   window.ForestEngine.qaTeleportHome = function(){ player.x = CONFIG.home.x; player.z = CONFIG.home.z; };
+
+  // LUL-25: sets difficulty for the *next* generateMap() call (restart/regen
+  // -- the current map doesn't retroactively move the child). No UI wires
+  // this yet (LUL-26 hasn't landed); it exists so hard mode's "child spawns
+  // beyond the bog" is actually testable before that UI exists.
+  window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
+  window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
 
   // LUL-211: the cover-collision fix (coverBlockedR, folded into blocked())
   // was unprovable from a test -- nothing outside the closure could read where
@@ -2318,9 +2561,10 @@ function tick(){
   applyVignette(dimAmount);
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
+  const playerInBog = inBog(player.x, player.z);   // LUL-25: shallow water -- half speed, louder splash
   if(playing && !hidden){
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
-    const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carryPaceMul : 1);
+    const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerInBog);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
@@ -2335,9 +2579,9 @@ function tick(){
     if(mag > 0){
       mvx /= mag; mvz /= mag; spd = maxSpd;
       escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
-      const step = maxSpd*dt, lim = half - margin;
+      const step = maxSpd*dt, lim = half - margin, zLim = zMax - margin;
       const nx = Math.max(-lim, Math.min(lim, player.x + mvx*step));
-      const nz = Math.max(-lim, Math.min(lim, player.z + mvz*step));
+      const nz = Math.max(-lim, Math.min(zLim, player.z + mvz*step));
       if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }  // slide along trunks
       if(!blocked(player.x, nz)){ dist += Math.abs(nz - player.z); player.z = nz; }
       // LUL-23: lay scent while actually moving -- holding still (or being hidden,
@@ -2346,7 +2590,9 @@ function tick(){
       if(scentEmitT <= 0){ depositScent(running); scentEmitT = SCENT_DEPOSIT_INTERVAL; }
       // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
       // shape as scent, sized off the same running flag rather than a new one.
-      noiseRadius = running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK;
+      // LUL-25: splashing through the bog carries further than a dry footstep --
+      // the sight-cover reeds give you costs you on the sound channel instead.
+      noiseRadius = (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK) * bogNoiseMultiplier(playerInBog);
     }
   }
 
@@ -2518,7 +2764,10 @@ function tick(){
       }
     }
     audio.foot += dist;                              // footsteps play in both states
-    if(spd > 0.3 && audio.foot >= 1.9){ audio.foot -= 1.9; footstep(0.12); }
+    if(spd > 0.3 && audio.foot >= 1.9){
+      audio.foot -= 1.9;
+      if(playerInBog) splash(0.3); else footstep(0.12);   // LUL-25: same cadence, louder/wetter in the bog
+    }
   }
 
   // home landmark breathes, gently (LUL-38)
