@@ -135,3 +135,119 @@ first pass only covered approved PRs:
   LUL-361 ("drain the merge lane", Founding Engineer, actively running); #58/#59/#62 have
   no conflicting owner but were still mid-CI at last check, so there was nothing mergeable
   to act on.
+
+---
+
+# UPDATE 2026-08-19 — the check above works by hand, but is a no-op in production, and it was jamming the merge lane
+
+Added by VP R&D, 2026-08-19T00:50–01:00Z. Everything above this line is accurate about
+what was *built*. This section is about what it actually *does* once it runs unattended.
+Tracked as **LUL-439** (Founding Engineer, critical).
+
+## Short answer to the founder's three questions
+
+**"Is there cover for not-updated branches?"** Yes — `pr-freshness.yml` landed and runs.
+But the cover was **negative**: every branch it refreshed became *permanently* unmergeable.
+It is now the highest-priority infrastructure ticket in the studio.
+
+**"How are PRs handled now?"** As described above, with one correction: the up-to-date
+backmerge step silently strips CI coverage from the branch it just helped.
+
+**"What happens on a failed review? What's the cycle?"** Unchanged and working:
+reviewer posts `CHANGES_REQUESTED` and blocks only on P0/P1 (P2/P3 become tickets, nits
+are suggestions) → the owning agent pushes a fix to the same branch → CI re-runs on the new
+head → a re-review ticket is filed against the Code Reviewer → on `REVIEW: APPROVED` a
+landing ticket merges it. The weak link was never the review cycle; it was that the *merge*
+step had no live owner, and now also that CI silently stopped reporting.
+
+## The bug
+
+Two workflows, each correct in isolation, that cancel each other out:
+
+1. **`ci.yml` makes the `push` trigger load-bearing.** Every job is guarded with
+   `if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository`,
+   so for a same-repo `lul-*` branch the `pull_request` run is **skipped by design**
+   (LUL-100, to stop the double-run). Required contexts come only from the **push** run.
+2. **`pr-freshness.yml` calls `update-branch` under `GH_TOKEN: ${{ github.token }}`** —
+   GITHUB_TOKEN.
+
+GitHub does not raise workflow-triggering events for commits authored by GITHUB_TOKEN. So a
+branch refreshed by `pr-freshness` gets a new head sha with **no push run** (suppressed) and
+**no pull_request run** (skipped by the fork guard). All three required contexts —
+`build, typecheck, lint`, `playwright smoke suite`, `unit tests` — are then **MISSING
+forever** on that head, and the ruleset can never be satisfied no matter how many approvals
+the PR has.
+
+**The automation built to unstick PRs is what was permanently sticking them.**
+
+## Evidence
+
+Heads refreshed by `pr-freshness` — one check run each, all required contexts absent:
+
+| PR | head sha | checks present | required contexts |
+|----|----------|----------------|-------------------|
+| #58 | `154053d4` | `Vercel Preview Comments` only | all 3 MISSING |
+| #60 | `b52b750f` | `Vercel Preview Comments` only | all 3 MISSING |
+| #66 | `e7423873` | `Vercel Preview Comments` only | all 3 MISSING |
+
+Heads pushed by a real agent credential — all three green: #64 (`b0ae5afb`), #67 (`9af2069c`).
+
+**Control experiment.** I re-ran the *identical* `update-branch` call on #58 and #60 with
+the studio PAT instead of GITHUB_TOKEN. New heads `c7f0cce3` / `1ca8c205`, and `CI / push`
+runs started on both immediately. Same call, same repo, same branches — only the credential
+differed. That isolates the cause to the token.
+
+**Refinement:** the suppression follows the *actor chain*, not just the token. `e7423873`
+was refreshed on a chain rooted in `github-actions[bot]` → no push run, stuck. `872dec66`
+was refreshed on a chain rooted in my PAT-authenticated merge → push run fired. So
+`pr-freshness` poisons a head only when its own trigger chain is bot-rooted, which is the
+common case. **This is why the jam looked intermittent** and why several audit passes
+reasonably wrote it off as "transient, still pending."
+
+## Why it went unnoticed for days
+
+Three signals each lied in a way that resembled good news:
+
+1. `mergeStateStatus: BLOCKED` alongside `reviewDecision: APPROVED` reads as "a check is
+   red." Nothing was red — nothing had run.
+2. GraphQL `statusCheckRollup.state` returned **SUCCESS** for #66 and #60, because Vercel's
+   single green check *is* the entire rollup. A green rollup over zero required checks.
+3. 11 CI runs sat at `action_required` (oldest 2026-08-15), which looked like the cause. I
+   approved four; **every one concluded `skipped`** via the fork guard. Approving them is
+   not a workaround.
+
+**The rule that replaces the old audit:** assert each required context is present **by name**
+on the PR's actual head sha. Never read the rollup state. `MISSING` and `failure` are
+opposite diagnoses — `MISSING` means no code fix will ever help until someone pushes from a
+real credential.
+
+One further trap, which caught me mid-investigation: most shas carry each context name
+**twice** (the fork-guard-`skipped` `pull_request` copy plus the real one). Keying check
+runs by name lets the `skipped` copy overwrite the real result. Group by name and keep every
+conclusion.
+
+## The fix — pick one, do not half-apply
+
+1. **Give `pr-freshness.yml` a real credential** (PAT in a repo secret). Smallest change.
+   Adding a secret is a founder approval gate, so it needs Noam's sign-off first.
+2. **Make `ci.yml` cover the gap** — let the `pull_request` run proceed when the head sha has
+   no push-run coverage. No secret needed, but reintroduces some of the LUL-100 double-run.
+3. **Land the merge queue (LUL-359) and delete `pr-freshness` entirely.** A merge queue does
+   its own up-to-date builds, making strict-mode backmerging obsolete. This is the real fix;
+   1 or 2 is the stopgap.
+
+Whichever lands, prove it the way this was proved: refresh a branch, then assert each
+required context **by name** on the new head. A green rollup is not the assertion.
+
+## Lane state after this pass (2026-08-19T~01:00Z)
+
+- **PR #65 merged** as `16daa4f1` — unjams LUL-387 → LUL-382 / LUL-384 / LUL-383 (collisions).
+- **#58** — real `build, typecheck, lint` **failure**. The only genuine code defect in the
+  lane. Owner: LUL-427 (Game Engineer).
+- **#60, #66** — build + unit green on their new heads, smoke suite running. Owners:
+  LUL-432 (re-review), LUL-433 (land).
+- **#64** — green, `CHANGES_REQUESTED`. Owner: LUL-434 (Code Reviewer).
+- **#67** — all three green but `CONFLICTING`; `pr-freshness` deliberately won't touch a
+  conflict. Owner: LUL-428 (Game Engineer), manual backmerge, no force-push.
+
+Everything in the lane except #58 was this infrastructure bug wearing a code bug's clothes.
