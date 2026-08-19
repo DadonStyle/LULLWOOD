@@ -251,3 +251,111 @@ required context **by name** on the new head. A green rollup is not the assertio
   conflict. Owner: LUL-428 (Game Engineer), manual backmerge, no force-push.
 
 Everything in the lane except #58 was this infrastructure bug wearing a code bug's clothes.
+
+---
+
+# UPDATE 2026-08-19T01:2x–01:4xZ — the check had never run *once*, for a reason nobody had looked at
+
+Added by VP R&D. The section above diagnosed what happens **after** `update-branch`
+succeeds (the GITHUB_TOKEN CI blind spot, LUL-439, PR #71). This section is about a
+separate, earlier defect: **`update-branch` was never being called in the first place.**
+
+Both are real, and **PR #71 alone does not unjam the lane** — it repairs the second half of
+a pipeline whose first half never fires.
+
+## Measurement
+
+`pr-freshness.yml` decided staleness by reading `mergeStateStatus` and skipping anything
+that wasn't the literal string `BEHIND`. Across the **12 most recent runs**, counting only
+lines the workflow emits at runtime:
+
+| run | PRs evaluated | selected as BEHIND | backmerges performed |
+|---|---|---|---|
+| 32204232890 | 9 | **0** | **0** |
+| 32202834377 | 5 | **0** | **0** |
+| 32201832134 | 6 | **0** | **0** |
+| 9 older runs | 0 | **0** | **0** |
+
+The most recent run's log is nine identical lines: `#72 … is UNKNOWN; skipping.`,
+`#71 … is UNKNOWN; skipping.`, … all nine open PRs.
+
+> Method note: my first count of this said "1 attempt per run." That was the grep matching
+> the workflow's own script text echoed into the log, not an execution. The table above
+> counts only `#<digits> (` runtime lines, a pattern the script source cannot match.
+
+## Two causes, both from reading `mergeStateStatus`
+
+1. **It is computed lazily, and the push trigger races it.** GitHub invalidates every open
+   PR's merge state when `main` moves and recomputes on demand. This workflow's primary
+   trigger is `push: [main]` — it fires at precisely the moment every PR reads `UNKNOWN`.
+   So the push-triggered run, the one that exists to react to staleness the instant it is
+   created, **structurally selects nothing**. The 30-minute schedule does see computed
+   values, which is why this looked intermittent rather than broken.
+
+2. **It is a single enum, so it reports only the first problem.** A PR that is behind *and*
+   has a pending check reports `BLOCKED`; behind *and* conflicted reports `DIRTY`. Both
+   hide the staleness. Live example at the time of writing: **PR #67 is 8 commits behind
+   `main`** and the old logic skips it as `DIRTY`. As a side effect the workflow's
+   conflict-detection branch — the part that comments "this needs a manual backmerge" —
+   was **unreachable dead code**, because a conflicted PR never got past the `!= BEHIND`
+   test to attempt the update that would reveal the conflict.
+
+## The fix
+
+Staleness is now measured with `GET /repos/{repo}/compare/main...{branch}` and its
+`behind_by` field. That endpoint is always computed, never returns `UNKNOWN`, and is
+independent of review state and check state — so it cannot be masked by a pending check or
+a conflict. `mergeStateStatus` is no longer read at all.
+
+Verified as a before/after control on the live repo, same moment, same nine PRs:
+
+```
+OLD (mergeStateStatus)      NEW (compare.behind_by)
+  >> #73,72,71,70,68          >> #73 (behind 1) ... #68 (behind 1)
+  SKIP #67 (DIRTY)            >> #67 (behind 8)   <-- recovered
+  >> #66,60,58                >> #66,60,58
+```
+
+This run happened to be a *computed* moment, so the old logic scored 8/9 rather than 0/9;
+the 0/9 case is the push-trigger run in the table above. The durable difference visible in
+both regimes is #67.
+
+## Honest scope — what this does and does not fix
+
+- **Fixed:** stale branches are now actually detected, on the push trigger and on schedule,
+  including ones masked as `BLOCKED`/`DIRTY`. Conflicted PRs now get their comment.
+- **Not fixed by this change:** the LUL-439 token blind spot above. Once selection works,
+  every branch it refreshes still needs CI to run on the new head — that is PR #71's job.
+  **Both must land for the lane to drain unattended.** Landing only one is the "half-apply"
+  the section above warns about.
+- **Still not automated, deliberately:** conflict *resolution* (#67), review outcomes, and
+  the merge itself.
+
+## The merge step still has no automatic owner — this is the remaining structural gap
+
+Worth stating plainly, because it is the founder's original question. `automerge.yml` only
+merges commits carrying a `[ship]` marker, and `ship-allowed.sh` denies `[ship]` for any
+game/app/engine diff. **So a normal, reviewer-approved PR has no automated path to land at
+all** — freshness keeps it mergeable, CI keeps it green, review approves it, and then it
+waits for an agent to notice and run the merge by hand. That is why approved PRs pile up.
+
+Compounding it: `main`'s ruleset is strict-up-to-date, so **merging is inherently serial** —
+each merge re-stales every other open PR, which must then be backmerged and re-run CI before
+its turn. Six approved PRs is six sequential CI cycles, not one. Observed directly this run:
+merging #69 at 01:30:59Z put all eight remaining PRs back to `behind 1` instantly.
+
+The real fix for both is the GitHub **merge queue** (LUL-359), which does its own
+up-to-date builds and makes strict-mode backmerging obsolete. Until it lands, draining the
+lane stays a periodic agent task.
+
+## Lane state at the end of this pass
+
+- **#69 merged** (`9253438d`, LUL-436 GAMES_REPLAY capture) — verified `state=MERGED`.
+- **#66, #68, #70** — I backmerged all three by hand (`update-branch` via the studio PAT,
+  which *does* trigger CI, unlike the workflow's own token); all reached `behind=0` with CI
+  re-running, then went back to `behind 1` when #69 landed.
+- **#67** — 8 commits behind and genuinely conflicted; needs a manual backmerge with no
+  force-push. Not auto-resolvable, by design.
+- **#60** — `CHANGES_REQUESTED` + a real `playwright smoke suite` failure. A code fix owed
+  by its owner, not a staleness problem.
+- **#72, #73** — awaiting Code Reviewer.
