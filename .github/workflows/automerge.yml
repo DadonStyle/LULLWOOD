@@ -3,7 +3,7 @@ name: Auto merge
 # The fallback path for auto-pr.yml. `gh pr merge --auto` only works when
 # "Allow auto-merge" is enabled in repo settings; this workflow does not need
 # that setting. It fires when CI finishes on a `lul-*` branch and merges the
-# open PR if CI was green and the head commit asked to ship.
+# open PR if CI was green and any commit in the PR asked to ship.
 #
 # Branch protection still adjudicates the merge: if either required check is
 # missing or red, the API call fails and the PR stays open. This workflow
@@ -47,12 +47,34 @@ jobs:
             exit 0
           fi
 
+          # Only merge what CI actually tested. If the PR moved on since this
+          # run started, the newer push has its own CI and its own shot at this.
+          #
+          # This has to run BEFORE the marker check, not after: the marker is now
+          # read from live PR state (the commit list below) rather than from the
+          # sha CI tested, so without this gate first we could ship intent that
+          # arrived after CI ran. Same assertion as before, moved earlier.
+          pr_head="$(gh pr view "$number" --json headRefOid --jq '.headRefOid')"
+          if [ "$pr_head" != "$HEAD_SHA" ]; then
+            echo "::notice::#$number moved to $pr_head since CI ran on $HEAD_SHA; skipping."
+            exit 0
+          fi
+
           # The marker must be a line of its own -- a substring test also matches
           # commits that merely discuss shipping. Must stay identical to the test
           # in auto-pr.yml; if these two ever disagree, a PR merges down one path
           # and not the other.
-          message="$(gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA" --jq '.commit.message')"
-          if ! printf '%s\n' "$message" | grep -qE '^[[:space:]]*\[ship\][[:space:]]*$'; then
+          #
+          # Read it from EVERY commit in the PR, not just the head commit (LUL-465).
+          # Backmerging main into the branch is the standard way to track main
+          # (decisions/0010-no-force-push) and pr-freshness.yml does it automatically,
+          # so the head commit is routinely a "Merge branch 'main' into ..." commit
+          # that never carries the marker. Reading only the head silently and
+          # permanently disarmed self-merge for any PR that outlived one main push.
+          # The PR's own commit list is exactly main..HEAD; backmerge commits come
+          # along and are harmlessly ignored by the exact-line regex.
+          messages="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number/commits" --paginate --jq '.[].commit.message')"
+          if ! printf '%s\n' "$messages" | grep -qE '^[[:space:]]*\[ship\][[:space:]]*$'; then
             echo "::notice::#$number has no [ship] marker; leaving it open."
             exit 0
           fi
@@ -71,14 +93,6 @@ jobs:
                           | ./.github/scripts/ship-allowed.sh)"; then
             echo "::warning::#$number carries [ship] but changes files that need the Code Reviewer:"
             printf '  %s\n' "$blocked"
-            exit 0
-          fi
-
-          # Only merge what CI actually tested. If the PR moved on since this
-          # run started, the newer push has its own CI and its own shot at this.
-          pr_head="$(gh pr view "$number" --json headRefOid --jq '.headRefOid')"
-          if [ "$pr_head" != "$HEAD_SHA" ]; then
-            echo "::notice::#$number moved to $pr_head since CI ran on $HEAD_SHA; skipping."
             exit 0
           fi
 

@@ -12,7 +12,11 @@ name: Auto PR
 # in the branch name and the commit message:
 #
 #   git push origin HEAD:refs/heads/lul-42-my-change   -> a PR is opened for you
-#   ...with "[ship]" in the head commit message        -> it also merges on green
+#   ...with "[ship]" alone on a line of any commit     -> it also merges on green
+#
+# "[ship]" must be the entire content of its own line, on any commit the branch
+# authored (not just the head -- backmerges routinely replace the head with a
+# merge commit). Appending it to a subject line does nothing.
 #
 # Runs as GITHUB_TOKEN, so it needs "Allow GitHub Actions to create and approve
 # pull requests" (Settings -> Actions -> General -> Workflow permissions).
@@ -111,9 +115,18 @@ jobs:
               'The two required checks run off the branch push rather than off this PR,' \
               'so look for them on the head commit.' \
               '' \
-              'Add `[ship]` to the head commit message to have this merged automatically' \
-              'once both checks are green — but only for docs, CI config and test-only' \
-              'diffs. Anything touching game or app code goes to the Code Reviewer' \
+              'To have this merged automatically once both checks are green, put a' \
+              '`[ship]` marker on any commit on this branch. **The marker must be a' \
+              'line of its own** — `[ship]` appended to a descriptive subject line is' \
+              'not recognised and will never self-merge. The simplest way to tag a' \
+              'branch you have already pushed:' \
+              '' \
+              '```bash' \
+              "git commit --allow-empty -m '[ship]' && git push" \
+              '```' \
+              '' \
+              'This only covers docs, CI config and test-only diffs. Anything touching' \
+              'game or app code goes to the Code Reviewer' \
               '(see `.github/scripts/ship-allowed.sh`).' > /tmp/pr-body.md
 
             gh_retry gh pr create \
@@ -135,7 +148,18 @@ jobs:
           # matches any commit whose message merely *discusses* shipping -- the
           # commit that introduced this very guard tripped it, which is how the
           # bug was found. Intent has to be unambiguous to be intent.
-          if git log -1 --pretty=%B | grep -qE '^[[:space:]]*\[ship\][[:space:]]*$'; then
+          #
+          # Read it from every commit this branch authored, not just the head
+          # commit (LUL-465). Backmerging main is the standard way to track main
+          # (decisions/0010-no-force-push) and pr-freshness.yml does it for us, so
+          # the head is routinely a merge commit that never carries the marker --
+          # which silently and permanently disarmed self-merge for any PR that
+          # outlived one main push. `--no-merges` drops those backmerge commits
+          # (they can never carry a marker anyway); `FETCH_HEAD..HEAD` excludes
+          # everything already on main. The regex below is unchanged and must
+          # stay byte-identical to automerge.yml's -- only the input widens.
+          messages="$(git log --no-merges FETCH_HEAD..HEAD --pretty=%B)"
+          if printf '%s\n' "$messages" | grep -qE '^[[:space:]]*\[ship\][[:space:]]*$'; then
 
             # ...but intent is not authority. `[ship]` merges on green alone,
             # which skips the Code Reviewer, so it is scoped to diffs where
@@ -189,6 +213,53 @@ jobs:
               # picks this up after CI instead.
               echo "::warning::could not arm auto-merge on #$number; automerge.yml will handle it once CI reports."
             fi
+          elif printf '%s\n' "$messages" | grep -qF '[ship]'; then
+            # LUL-465 / Gap B. `[ship]` appears somewhere in the branch's commits
+            # but never on a line of its own, so the exact-line test above found
+            # nothing and the PR would otherwise sit silently unmerged forever.
+            # This is the most common way the marker fails -- appending it to a
+            # descriptive subject line is the natural move and it never works.
+            # Say so out loud instead of logging a notice nobody reads.
+            #
+            # A docs commit that merely *discusses* `[ship]` trips this too. That
+            # is a known, accepted false positive: the outcome is one advisory
+            # comment and never a block, so the wording stays conditional and
+            # must not accuse.
+            echo "::warning::#$number has a [ship] substring but no own-line marker; not self-merging."
+
+            # Every push re-runs this workflow, so say it once per PR.
+            if gh_retry gh pr view "$number" --json comments \
+                 --jq '.comments[].body' | grep -qF 'SHIP_MALFORMED'; then
+              echo "::notice::already explained on #$number; not commenting again."
+              exit 0
+            fi
+
+            printf '%s\n' \
+              '<!-- SHIP_MALFORMED -->' \
+              'This branch mentions `[ship]`, but not on a line of its own — so the' \
+              'auto-merge check did not match and this PR will **not** self-merge.' \
+              '' \
+              'The only accepted form is a line whose entire content is the marker:' \
+              '' \
+              '```' \
+              '[ship]' \
+              '```' \
+              '' \
+              '`[ship]` appended to a subject line, or inside a sentence, is ignored by' \
+              'design — that test exists so a commit merely *discussing* shipping cannot' \
+              'arm a merge.' \
+              '' \
+              'If you meant to tag this PR, add the marker as its own commit:' \
+              '' \
+              '```bash' \
+              "git commit --allow-empty -m '[ship]' && git push" \
+              '```' \
+              '' \
+              'If you were only writing about the marker, ignore this — nothing is' \
+              'blocked, and this comment is posted once per PR.' > /tmp/ship-malformed.md
+            # Best-effort: losing this comment doesn't change any outcome, it is
+            # only the explanation, so it stays retried-but-non-fatal.
+            gh_retry gh pr comment "$number" --body-file /tmp/ship-malformed.md || true
           else
-            echo "::notice::no [ship] marker in the head commit; leaving #$number for review."
+            echo "::notice::no [ship] marker on any commit in #$number; leaving it for review."
           fi
