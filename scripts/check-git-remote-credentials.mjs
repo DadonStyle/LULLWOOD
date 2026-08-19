@@ -14,9 +14,14 @@
 // directly, bypassing git entirely -- used for the "fail on purpose" self
 // test against a throwaway file.
 //
-// Exits 0 if clean, 1 if any remote URL contains a credential pattern, 2 on
-// a usage/setup error. Never prints the matched credential -- only the file
-// path and which pattern name matched.
+// Exits 0 only if every config it found was actually read and is clean. Exits
+// 1 if any remote URL contains a credential pattern, OR if any registered
+// worktree/config could not be resolved or read (fail-closed: LUL-468 --
+// a config the guard couldn't open is not "clean", e.g. a worktree still
+// registered in `git worktree list` whose directory was deleted without
+// `git worktree remove`, such as a Paperclip /tmp run scratch dir cleaned up
+// after its run ended). Exits 2 on a usage/setup error. Never prints the
+// matched credential -- only the file path and which pattern name matched.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -98,6 +103,14 @@ function main() {
 
   // path -> Set(pattern names)
   const filesToCheck = new Map();
+  // Configs the guard could not resolve or read. Any entry here is not
+  // proven credential-free, so it fails the run -- see LUL-468: a stale
+  // worktree registration (directory deleted without `git worktree remove`,
+  // e.g. a Paperclip /tmp run scratch dir cleaned up after the run ended)
+  // used to log a warning and be silently excluded from the "checked N"
+  // count, which reported OK while having skipped a config it never looked
+  // at.
+  const unresolved = [];
 
   for (const configFile of configs) {
     filesToCheck.set(path.resolve(configFile), null);
@@ -119,21 +132,30 @@ function main() {
       try {
         filesToCheck.set(configPathFor(wt), null);
       } catch (err) {
-        console.error(`warning: could not resolve config for worktree ${wt}: ${err.message}`);
+        unresolved.push({ source: wt, reason: `could not resolve config for worktree: ${err.message}` });
       }
     }
   }
 
   const offenders = [];
+  let checkedClean = 0;
   for (const configFile of filesToCheck.keys()) {
     if (!existsSync(configFile)) {
-      console.error(`warning: config file not found, skipping: ${configFile}`);
+      unresolved.push({ source: configFile, reason: 'resolved config file not found' });
       continue;
     }
-    const text = readFileSync(configFile, 'utf8');
+    let text;
+    try {
+      text = readFileSync(configFile, 'utf8');
+    } catch (err) {
+      unresolved.push({ source: configFile, reason: `could not read config file: ${err.message}` });
+      continue;
+    }
     const matches = findMatches(text);
     if (matches.length > 0) {
       offenders.push({ file: configFile, patterns: matches.map((m) => m.name) });
+    } else {
+      checkedClean++;
     }
   }
 
@@ -152,8 +174,24 @@ function main() {
     process.exit(1);
   }
 
+  if (unresolved.length > 0) {
+    console.error('git-remote-credential guard: FAILED (unresolved)');
+    console.error(
+      `${unresolved.length} config location(s) could not be checked and are therefore not proven credential-free:`,
+    );
+    for (const { source, reason } of unresolved) {
+      console.error(`  - ${source}: ${reason}`);
+    }
+    console.error(
+      'A config the guard could not read is not "clean". If this is a stale worktree registration for a ' +
+        'directory that no longer exists, run `git worktree prune` and re-run the guard; otherwise ' +
+        'investigate why the file is unreadable before treating this repo as clean.',
+    );
+    process.exit(1);
+  }
+
   console.log(
-    `git-remote-credential guard: OK (checked ${filesToCheck.size} config file(s), no embedded credentials found)`,
+    `git-remote-credential guard: OK (checked ${checkedClean} config file(s), no embedded credentials found)`,
   );
   process.exit(0);
 }
