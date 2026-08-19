@@ -35,6 +35,21 @@ name: CI
 # trigger structurally cannot cover (a fork's push never reaches Actions on
 # this repo). Every `lul-*` branch and every same-repo human-opened PR is
 # push-covered and gets exactly one run.
+#
+# LUL-479: a job-level `if:` only decides whether a job's STEPS run — GitHub
+# still records a check-run under the job's `name:` with conclusion `skipped`
+# for the same-repo `pull_request` run that self-skips below. That skipped
+# check-run shares its name with the required context, and GitHub's ruleset
+# treats a `skipped` conclusion as satisfying a required status check — it
+# is not "latest wins", it is "skipped counts as pass", independent of a
+# later `failure` conclusion landing under the same name from the real run
+# (confirmed live: PR #78, head 526a0ab0, `mergeable_state: clean` while
+# `playwright smoke suite` read `failure` — see wiki systems/ci-double-run).
+# So `if:` alone cannot make this safe; the self-skip copy must never carry
+# the required-context name at all. Each job's `name:` below is therefore
+# conditional: only the genuinely-skipped same-repo `pull_request` run gets a
+# renamed, non-required check-run name. Push, workflow_dispatch, and a real
+# fork `pull_request` run all still produce the exact required-context name.
 on:
   push:
     branches: ['**']
@@ -53,7 +68,10 @@ concurrency:
 
 jobs:
   unit:
-    name: unit tests
+    # LUL-479: renamed on the same-repo `pull_request` self-skip path so its
+    # `skipped` check-run never shares the required context's name — see the
+    # comment above `on:`.
+    name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'unit tests (self-skip, not a required-check instance)' || 'unit tests' }}
     runs-on: ubuntu-latest
     # Same fork-scope guard as `build` — see the LUL-100 comment above `on:`.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
@@ -77,7 +95,8 @@ jobs:
         run: npm test
 
   build:
-    name: build, typecheck, lint
+    # LUL-479: see the comment on the `unit` job's `name:` above — same idea.
+    name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'build, typecheck, lint (self-skip, not a required-check instance)' || 'build, typecheck, lint' }}
     runs-on: ubuntu-latest
     # See the LUL-100 comment above `on:` — same-repo branches are already
     # covered by the push trigger; only a fork PR needs this event.
@@ -109,7 +128,10 @@ jobs:
         run: npx next build
 
   smoke:
-    name: playwright smoke suite
+    # LUL-479: see the comment on the `unit` job's `name:` above — same idea.
+    # `needs: build` below refers to the job id, not this display name, so
+    # renaming here does not affect that reference.
+    name: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'playwright smoke suite (self-skip, not a required-check instance)' || 'playwright smoke suite' }}
     needs: build
     runs-on: ubuntu-latest
     # A job-level `if:` replaces the implicit `needs: success()` gate rather
