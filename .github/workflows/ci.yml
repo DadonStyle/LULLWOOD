@@ -65,6 +65,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      # LUL-445: cheap guard against a credential embedded in a remote URL
+      # (LUL-221/LUL-238/LUL-438 all leaked the same PAT this way). No
+      # node_modules needed, so this runs before `npm ci`.
+      - name: git remote credential guard
+        run: node scripts/check-git-remote-credentials.mjs --repo .
+
       - run: npm ci
 
       - name: unit tests

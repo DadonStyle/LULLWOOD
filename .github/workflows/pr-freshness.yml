@@ -35,6 +35,28 @@ name: PR freshness
 # jobs (same job `if:` conditions all pass for workflow_dispatch, since
 # github.event_name != 'pull_request') to run against the new head, with no
 # new PAT/secret required.
+#
+# LUL-463: `github-actions[bot]` is permanently classified a first-time
+# contributor (Settings -> Actions -> fork-pr-contributor-approval ==
+# "first_time_contributors"), and every PR in this repo is opened by that
+# bot (auto-pr.yml). So the `pull_request`-triggered CI run for every PR
+# lands `action_required` -- parked, waiting for a human to click "Approve
+# and run" -- and a parked run is not a skipped run and not an absent run:
+# the ruleset still counts it as owing the required contexts, so the PR
+# sits `blocked` forever even when every context already has a `success`
+# instance from the push/workflow_dispatch run (measured live in wiki
+# systems/main-branch-merge-gate, 2026-08-19 LUL-450 section).
+#
+# The safe fix is not loosening `approval_policy` -- that setting is the
+# only thing stopping an actual fork PR from running arbitrary code on our
+# runners, and this repo is public. Instead: auto-approve the parked run,
+# but only when its head branch lives in THIS repository (i.e. it was
+# pushed by us, not opened from a fork). `head_repository.full_name` on
+# the run object is exactly the signal ci.yml's own job `if:` guards
+# already use to draw this same line (see the LUL-100 comment in ci.yml).
+# A fork's head repository can never equal `github.repository`, so a fork
+# PR's parked run is never touched here and stays exactly as gated as
+# GitHub's own policy already makes it.
 
 on:
   push:
@@ -135,5 +157,28 @@ jobs:
                 else
                   echo "::notice::already flagged the conflict on #$number; not commenting again."
                 fi
+              fi
+            done
+
+      - name: approve parked action_required runs (same-repo branches only)
+        # Runs after the backmerge step, not before: an `update-branch` call
+        # above triggers its own PR-synchronize `pull_request` run, which
+        # lands parked exactly like the original-open case this step exists
+        # to clear. Running last catches both in one pass instead of leaving
+        # backmerge-spawned runs for the next scheduled cycle.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
+          | jq -r --arg repo "$REPO" \
+              '.workflow_runs[] | select(.event == "pull_request" and (.head_repository.full_name // "") == $repo) | "\(.id)\t\(.head_branch)"' \
+          | while IFS=$'\t' read -r run_id branch; do
+              echo "::notice::approving parked run $run_id on same-repo branch $branch"
+              if ! gh api -X POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>/tmp/approve-err.log; then
+                echo "::warning::could not approve run $run_id ($branch):"
+                cat /tmp/approve-err.log
               fi
             done
