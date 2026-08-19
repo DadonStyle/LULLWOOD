@@ -111,11 +111,17 @@ function inBog(x, z){ return isInBog(z, { half, zMax }); }
 // -- a place you can actually learn, not one more random prop. Two sit in the
 // forest, two mark the bog: the split oak at its near edge (a gateway you see
 // coming) and the drowned car deep in it (how far you've come).
+// `cr` is the movement-collision radius (LUL-374) -- deliberately much
+// smaller than `clear` (which only keeps trees/cover from generating too
+// close to the landmark's nudge target). Every `cr` here is comfortably
+// under its row's `clear`, so clearLandmarkSpot()'s existing guarantee --
+// nothing else this seed placed sits within `clear` of the settled position
+// -- also guarantees nothing overlaps the tighter `cr` collider.
 const LANDMARKS = [
-  { kind: 'fireTower',   x: -95, z: -95, clear: 12 },
-  { kind: 'stoneMarker', x: 100, z: -75, clear: 9  },
-  { kind: 'oak',         x: -65, z: 135, clear: 10 },
-  { kind: 'drownedCar',  x: 55,  z: 205, clear: 11 },
+  { kind: 'fireTower',   x: -95, z: -95, clear: 12, cr: 1.6 },
+  { kind: 'stoneMarker', x: 100, z: -75, clear: 9,  cr: 1.1 },
+  { kind: 'oak',         x: -65, z: 135, clear: 10, cr: 1.3 },
+  { kind: 'drownedCar',  x: 55,  z: 205, clear: 11, cr: 2.3 },
 ];
 
 // ---- Seeded RNG (so a given map is a real, repeatable place) --------------
@@ -334,6 +340,11 @@ const tintCol = new THREE.Color();
 let treeData = [];            // {x,z,s,cr,crCanopy}
 let bogTreeData = [];          // LUL-25: same shape, thinner cover, bog band only -- own array so
                                 // it can't shift how many rng() calls the original tree loop makes
+let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders for the four fixed
+                                 // landmark meshes, populated by placeLandmarks() post-nudge. No
+                                 // crCanopy (canopyBlockedR() skips entries that lack it) and never
+                                 // added to coverData/HIDE_KINDS -- these block movement, not LOS,
+                                 // and aren't meant to be hiding spots.
 const CELL = 8;
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
@@ -352,6 +363,13 @@ function buildGrid(){
   for(const t of bogTreeData){
     const k = key(Math.floor(t.x/CELL), Math.floor(t.z/CELL));
     (grid.get(k) || grid.set(k, []).get(k)).push(t);
+  }
+  // LUL-374: landmarkData is only populated once placeLandmarks() has run
+  // (empty on the first, pre-landmark call this function makes at map-gen
+  // time -- see the third call right after placeLandmarks() below).
+  for(const l of landmarkData){
+    const k = key(Math.floor(l.x/CELL), Math.floor(l.z/CELL));
+    (grid.get(k) || grid.set(k, []).get(k)).push(l);
   }
 }
 function blockedR(x,z,pr){
@@ -630,6 +648,8 @@ function generateMap(seed){
   generateReeds(); layoutCoverMeshes();
   buildGrid();   // picks up bogTreeData for blockedR()/canopyBlockedR()
   placeLandmarks();
+  buildGrid();   // LUL-374: re-run now landmarkData is populated, so blockedR()/predators'
+                  // own blockedR() calls treat the four landmark meshes as solid too
   applyHardBabySpawn();
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
 }
@@ -741,10 +761,12 @@ function clearLandmarkSpot(x, z, clear){
   return [x, z];
 }
 function placeLandmarks(){
+  landmarkData = [];
   for(const l of LANDMARKS){
     const [x, z] = clearLandmarkSpot(l.x, l.z, l.clear);
     landmarkGroups[l.kind].position.x = x;
     landmarkGroups[l.kind].position.z = z;
+    landmarkData.push({ x, z, cr: l.cr });
   }
 }
 
