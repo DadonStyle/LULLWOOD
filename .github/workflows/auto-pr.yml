@@ -96,12 +96,12 @@ jobs:
             gh() { echo "HTTP 503: LUL-327 test stub -- simulated GitHub outage (not a real failure)" >&2; return 1; }
           fi
 
-          # checkout@v4 only fetches the pushed ref, so main has to be asked for.
-          git fetch --no-tags origin main
+          # checkout@v4 only fetches the pushed ref, so release/next has to be asked for.
+          git fetch --no-tags origin release/next
 
-          # Nothing to propose if the branch has no commits main lacks.
+          # Nothing to propose if the branch has no commits release/next lacks.
           if [ "$(git rev-list --count FETCH_HEAD..HEAD)" = "0" ]; then
-            echo "::notice::$BRANCH is not ahead of main; no PR to open."
+            echo "::notice::$BRANCH is not ahead of release/next; no PR to open."
             exit 0
           fi
 
@@ -130,7 +130,7 @@ jobs:
               '(see `.github/scripts/ship-allowed.sh`).' > /tmp/pr-body.md
 
             gh_retry gh pr create \
-              --base main \
+              --base release/next \
               --head "$BRANCH" \
               --title "$(git log -1 --pretty=%s)" \
               --body-file /tmp/pr-body.md
