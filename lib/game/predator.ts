@@ -129,6 +129,24 @@ export function stepFlankHold(sniffTimer: number, sniffsLeft: number): FlankHold
     : { done: true, sniffsLeft: remaining, next: 'roam' };
 }
 
+// ---- post-sniff detection immunity (LUL-437) -------------------------------------
+// A predator that just gave up an investigate-sniff or flank-hold loop is,
+// almost by construction, standing right on top of the exact scent point
+// that pulled it in -- `roam`'s checkScent()/checkNoise()/canSee() chain ran
+// unconditionally the very next tick, so giving up read as "sniffing always
+// ends in getting caught" (LUL-437's report) rather than the predator
+// actually losing the trail. `sniffImmuneT` is armed to SNIFF_IMMUNITY_TIME
+// wherever stepSniffLoop/stepFlankHold report `done: true` (both the
+// continue-looping and give-up-to-roam outcomes) and ticks down like every
+// other predator timer. While it holds AND the player is still holding
+// still (`hidden`), `roam`'s re-detection chain is skipped for that
+// predator -- moving cancels the immunity's protection immediately, same as
+// hiding itself already requires holding still.
+export const SNIFF_IMMUNITY_TIME = 1.5;
+export function isSniffImmune(sniffImmuneT: number, hidden: boolean): boolean {
+  return hidden && sniffImmuneT > 0;
+}
+
 // ---- backoff retreat point -------------------------------------------------------
 // `p.inv === 'sniff'`'s giving-up-a-sniff retreat point: `dist` units back
 // along the predator-to-player line, clamped to the map bounds the same way

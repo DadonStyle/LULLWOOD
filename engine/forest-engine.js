@@ -39,8 +39,10 @@ import {
   canCatchInChase,
   hasReachedSniffRange,
   isCaught,
+  isSniffImmune,
   rollSniffs,
   shouldGiveUpChase,
+  SNIFF_IMMUNITY_TIME,
   stepFlankHold,
   stepSniffLoop,
   tickTimers,
@@ -721,7 +723,7 @@ function makePredator(kind){
     phase:Math.random()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
-    packTimer:0, flankX:0, flankZ:0,
+    packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
     charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false };
 }
 const predators = [];
@@ -747,7 +749,7 @@ function placePredators(){
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
-    p.packTimer=0; p.flankX=0; p.flankZ=0;
+    p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
@@ -1005,6 +1007,11 @@ function updatePredators(dt, noiseRadius){
     // expired by the time `roam` re-checks it (see lib/game/predator.ts)
     const timers = tickTimers({ scentLock: p.scentLock, chargeCooldown: p.chargeCooldown }, dt);
     p.scentLock = timers.scentLock; p.chargeCooldown = timers.chargeCooldown;
+    // LUL-437: post-sniff re-detection grace, same unconditional-every-state
+    // decay as the timers above -- not folded into tickTimers() itself since
+    // that helper's shape is deliberately pinned to scentLock/chargeCooldown
+    // (see its own comment) and this field has nothing to do with either.
+    if(p.sniffImmuneT > 0) p.sniffImmuneT -= dt;
 
     // LUL-213: an active charge owns movement outright until it resolves --
     // skips the roam/chase/investigate/flank chain below entirely, same as
@@ -1048,9 +1055,18 @@ function updatePredators(dt, noiseRadius){
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'roam'){
-      if(canSee(p, dist)){ spotOnto(p); }
-      else if(checkScent(p)){ scentOnto(p); }
-      else if(checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
+      // LUL-437: a predator lands in `roam` right on top of the scent point
+      // that pulled it into investigate/flank in the first place (that's why
+      // it was sniffing there) -- without this gate, giving up a sniff and
+      // re-checking canSee/checkScent/checkNoise unconditionally the very
+      // next tick reacquired near-instantly, reading as "sniffing always
+      // ends in getting caught" rather than the predator actually losing you.
+      // Wandering (the `else` block below) still runs during the immunity --
+      // only re-detection is suppressed, so it isn't frozen in place.
+      const sniffImmune = isSniffImmune(p.sniffImmuneT, hidden);
+      if(!sniffImmune && canSee(p, dist)){ spotOnto(p); }
+      else if(!sniffImmune && checkScent(p)){ scentOnto(p); }
+      else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){ const a=Math.random()*Math.PI*2, r=15+Math.random()*40;
@@ -1113,6 +1129,7 @@ function updatePredators(dt, noiseRadius){
         const sniffOutcome = stepSniffLoop(p.sniffTimer, p.sniffsLeft);
         if(sniffOutcome.done){
           p.sniffsLeft = sniffOutcome.sniffsLeft;
+          p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + Math.random()*8;
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half); }
           else { p.state='roam'; p.spotted=false; }
@@ -1137,6 +1154,7 @@ function updatePredators(dt, noiseRadius){
         const holdOutcome = stepFlankHold(p.sniffTimer, p.sniffsLeft);
         if(holdOutcome.done){
           p.sniffsLeft = holdOutcome.sniffsLeft;
+          p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(holdOutcome.next === 'hold') p.sniffTimer = rnd(1,4);
           else { p.state='roam'; p.spotted=false; p.inv=''; }
         }
