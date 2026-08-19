@@ -1,0 +1,46 @@
+name: LUL-508 isolation
+
+# Throwaway workflow to isolate why jobs.<id>.name with a ternary expression
+# renders as the raw literal string on skipped check-runs (wiki
+# systems/ci-jobname-expr-literal). Four jobs cross trigger x skip-status so
+# skip and trigger are no longer confounded:
+#
+#   push_run       push,          if: true   (runs)
+#   push_skip      push,          if: false  (skipped)
+#   pr_run         pull_request,  if: true   (runs)
+#   pr_skip        pull_request,  if: false  (skipped)
+#
+# Delete this file and the branch once LUL-508's check-runs are captured.
+on:
+  push:
+    branches: ['ci-isolation-508']
+  pull_request:
+
+jobs:
+  push_run:
+    name: ${{ (github.event_name == 'push') && 'ISO push_run RAN' || 'ISO push_run else-branch' }}
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - run: echo push_run
+
+  push_skip:
+    name: ${{ (github.event_name == 'push') && 'ISO push_skip RAN (should never appear)' || 'ISO push_skip else-branch' }}
+    runs-on: ubuntu-latest
+    if: false
+    steps:
+      - run: echo push_skip
+
+  pr_run:
+    name: ${{ (github.event_name == 'pull_request') && 'ISO pr_run RAN' || 'ISO pr_run else-branch' }}
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - run: echo pr_run
+
+  pr_skip:
+    name: ${{ (github.event_name == 'pull_request') && 'ISO pr_skip RAN (should never appear)' || 'ISO pr_skip else-branch' }}
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - run: echo pr_skip
