@@ -21,7 +21,9 @@ git push origin HEAD:refs/heads/lul-42-short-description
 ```
 
 - Name the branch `lul-<ticket>-<slug>`. `.github/workflows/auto-pr.yml` opens a
-  pull request against `main` for any branch matching `lul-*`.
+  pull request against **`release/next`** for any branch matching `lul-*`.
+  (`release/next` feeds into `main` at version gates; it has the same checks as
+  `main` but `strict: false`, so you never need to backmerge it before CI runs.)
 - Put a `[ship]` marker on a commit when the work is ready to land. The PR is
   then squash-merged automatically once both checks pass. Leave it out and the
   PR stays open for review — that is the right default for a WIP push.
@@ -40,18 +42,18 @@ git push origin HEAD:refs/heads/lul-42-short-description
   It never blocks anything.
 - CI runs on the branch push, not on the PR (see the comment at the top of
   `ci.yml`). Watch the checks on the head commit.
-- If the merge is refused, the branch is behind `main`: **backmerge** `main` into
-  the branch and push again. Never rebase — that needs a force-push, which is
-  banned (see below).
+- If the merge is refused, the branch is behind `release/next`: **backmerge**
+  `release/next` into the branch and push again. Never rebase — that needs a
+  force-push, which is banned (see below).
 
   ```bash
-  git fetch --no-tags origin main
+  git fetch --no-tags origin release/next
   git merge FETCH_HEAD   # resolve conflicts here, commit the merge
   git push origin HEAD:refs/heads/lul-<ticket>-<slug>   # plain, fast-forward
   ```
 
   Merge commits on a feature branch are expected and correct: every PR lands via
-  squash-merge, so the branch collapses to one commit and `main` stays linear.
+  squash-merge, so the branch collapses to one commit and `release/next` stays linear.
 
 Never try to push `main` directly — the ruleset rejects it for every actor
 including the founder.

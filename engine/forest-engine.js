@@ -33,7 +33,7 @@ import {
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
 } from '@/lib/game/scent';
-import { distanceToCoverEdge, overlapsTreeTrunk } from '@/lib/game/cover';
+import { coverKindBlocksPlayerMovement, distanceToCoverEdge, overlapsTreeCanopy, overlapsTreeTrunk } from '@/lib/game/cover';
 import {
   isInBog,
   bogSpeedMultiplier,
@@ -402,12 +402,22 @@ function blockedR(x,z,pr){
 // the *inverse* of Three's Y-rotation matrix, which works out to the same
 // (cos,sin) pair evaluated at +ry, not -ry: localX = dx*co - dz*si,
 // localZ = dx*si + dz*co.
+//
+// LUL-384: 'tree' was already skipped (its own circle-grid collision above
+// handles it); 'log' is now skipped too, via coverKindBlocksPlayerMovement()
+// (lib/game/cover.ts) -- a fallen log is the one cover prop a person
+// naturally steps/runs over rather than routes around, and predators already
+// ignore all cover-prop collision (see this function's own comment above).
+// LOS (hasLOS()) and hide-spot eligibility (findHideSpot()/HIDE_KINDS) both
+// read coverGrid independently of this function, so a log is still
+// sight-cover and still a valid hiding spot -- only the player's own
+// movement block is lifted. Rock/bramble/reed are unchanged, still solid.
 function coverBlockedR(x,z,pr){
   const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
   for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
     const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
     for(const c of arr){
-      if(c.kind === 'tree') continue;
+      if(!coverKindBlocksPlayerMovement(c.kind)) continue;
       const dx = x - c.x, dz = z - c.z;
       const co = Math.cos(c.ry), si = Math.sin(c.ry);
       const lx = dx*co - dz*si, lz = dx*si + dz*co;
@@ -469,6 +479,14 @@ function buildCoverGrid(){
 // (lib/game/cover.ts), rather than a second parallel implementation of the
 // same circle-overlap math.
 //
+// LUL-384/LUL-491: walkable kinds (currently just 'log') get an extra check
+// against the wider canopy radius (overlapsTreeCanopy(), lib/game/cover.ts).
+// Trunk-only clearance is fine for solid props, but a log invites the player
+// to walk its full span, and canopyBlockedR() blocks unconditionally within
+// a tree's canopy circle regardless of what's on the ground -- without this,
+// a log could spawn clear of every trunk yet still clip a canopy circle
+// somewhere along its length and wedge the player mid-crossing.
+//
 // Deliberate consequence, not a bug: the new rejection branch below skips a
 // candidate's `ry` rng() draw when it fires (same short-circuit shape the
 // existing inLake()/inSpawn()/inBaby() check above already has). Tree/baby/
@@ -501,6 +519,7 @@ function generateCover(){
     else if(roll < 0.75){ kind='rock'; const r = 0.9+rng()*0.9; hx=r; hz=r*(0.7+rng()*0.5); y=r*0.55; }
     else { kind='bramble'; const r = 0.8+rng()*0.7; hx=r; hz=r; y=r*0.6; }
     if(overlapsTreeTrunk(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
+    if(!coverKindBlocksPlayerMovement(kind) && overlapsTreeCanopy(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
     placed++;
   }
@@ -1255,10 +1274,18 @@ function updatePredators(dt, noiseRadius){
     if(p.charge){
       const cs = stepCharge(p.charge, dt, jumpPressed);
       if(cs.phase === 'caught'){
+        // LUL-421: persisted past the p.charge=null below so a QA hook can
+        // still read it after resolution -- see qaChargePhase's fallback.
+        p.lastCharge = { result: 'caught', overshootDuration: 0 };
         p.charge = null;
         endChargeHud();
         triggerDeath(p.kind);
       } else if(cs.phase === 'cleared'){
+        // stepCharge() (lib/game/charge.ts) zeroes overshootDuration on the
+        // 'cleared' state it returns, so read it off the *old* p.charge
+        // (still the value that governed this overshoot run) before it's
+        // gone -- see qaChargePhase's fallback for why this is kept at all.
+        p.lastCharge = { result: 'cleared', overshootDuration: p.charge.overshootDuration };
         p.charge = null; p.chargeCooldown = CHARGE_COOLDOWN;
         // "the animal continue... than continue normally": rejoin the
         // existing investigate/approach loop (LUL-22, not to be retuned)
@@ -2082,6 +2109,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return null;
   };
 
+  // LUL-384: exposes the exact predicate real player movement gates on
+  // (see the `blocked(nx, player.z)`/`blocked(player.x, nz)` calls in the
+  // tick loop below). Lets a test assert a whole span is collision-free by
+  // direct sampling instead of integrating real player movement over a fixed
+  // wall-clock window -- the latter ties the assertion to how many animation
+  // frames actually ran in that window, which is not stable under CI load
+  // (same class of flake as LUL-421's charge-dodge wall-clock assertions,
+  // wiki: systems/dt-clamp-vs-walltime). Movement is still driven by real
+  // keyboard input elsewhere in this spec; this only replaces the "did we
+  // travel far enough in 3 real seconds" assertion with something that
+  // doesn't depend on render throughput.
+  window.ForestEngine.qaProbeBlocked = function(x, z){ return blocked(x, z); };
+
   // Same idea for the death path. Reaching it naturally means standing still until
   // `sinceClose > 30` forces a hunt, then waiting for the animal to cross the map --
   // and both of those are measured in game time, which is not wall time: dt is
@@ -2328,6 +2368,31 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.chargeDirX = -1; p.chargeDirZ = 0;
     beginChargeHud();
     return idx;
+  };
+
+  // LUL-373: exposes the live ChargeState.phase/t ('telegraph'/'charging'/
+  // 'overshoot'/'caught'/'cleared', and seconds elapsed in that phase -- game
+  // time, not wall time) for a predator mid-charge, or null if it has none.
+  // Exists so a test can poll for "well into the charging sub-phase" against
+  // the engine's own game-time clock instead of guessing a wall-clock wait --
+  // see wiki systems/dt-clamp-vs-walltime for why a fixed ms wait doesn't
+  // reliably land at the same game-time point across rigs of different frame
+  // rates.
+  //
+  // LUL-421: also returns overshootDuration, and falls back to the most
+  // recently resolved charge (p.lastCharge) once p.charge itself goes null
+  // on resolution -- lets a test read the LUL-323 overshoot-tracking value
+  // straight from engine state instead of inferring it from a wall-clock
+  // gap around the #chargePrompt HUD, which is the dt-clamp-vs-walltime trap
+  // this ticket exists to remove. `t` is 0 in the fallback case since the
+  // resolved ChargeState itself isn't kept, only the two fields the spec
+  // needs.
+  window.ForestEngine.qaChargePhase = function(idx){
+    const p = predators[idx];
+    if(!p) return null;
+    if(p.charge) return { phase: p.charge.phase, t: p.charge.t, overshootDuration: p.charge.overshootDuration };
+    if(p.lastCharge) return { phase: p.lastCharge.result, t: 0, overshootDuration: p.lastCharge.overshootDuration };
+    return null;
   };
 
   // LUL-275: snapshot of the player's transform and detected input mode -- proves

@@ -83,6 +83,11 @@ declare global {
         prop: { x: number; z: number; hx: number; hz: number; ry: number; kind: string };
         start: { x: number; z: number };
       } | null;
+      /** LUL-384: exposes the exact `blocked()` predicate player movement gates on,
+       * so a test can sample collision across a span directly instead of inferring
+       * it from how far real keyboard-driven movement got within a fixed wall-clock
+       * window (unreliable under CI render load, wiki: systems/dt-clamp-vs-walltime). */
+      qaProbeBlocked?: (x: number, z: number) => boolean;
       /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
@@ -97,6 +102,19 @@ declare global {
        * band's midpoint, in the open. Returns the predator's `predators` index, or
        * null if that species isn't spawned or `kind` isn't `wolf`/`lion`. */
       qaTriggerCharge?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
+      /** LUL-373: live ChargeState.phase/t for predator `idx`, or null if it has
+       * no active charge. `t` is seconds elapsed in that phase, in game time
+       * (not wall time). Lets a test poll for "well into 'charging'" against
+       * the engine's own clock instead of guessing a wall-clock wait -- see
+       * wiki systems/dt-clamp-vs-walltime.
+       * LUL-421: also returns overshootDuration (the LUL-323 dodge-timing
+       * value), and falls back to the most recently resolved charge once the
+       * live one goes null -- `t` is 0 in that fallback case. */
+      qaChargePhase?: (idx: number) => {
+        phase: 'telegraph' | 'charging' | 'overshoot' | 'caught' | 'cleared';
+        t: number;
+        overshootDuration: number;
+      } | null;
       /** LUL-275: snapshot of the player's transform and detected input mode --
        * this init() actually bound -- proves which input branch bound at runtime,
        * not just which the test requested. See wiki: game/lul274-input-mode-separation. */
