@@ -135,3 +135,43 @@ first pass only covered approved PRs:
   LUL-361 ("drain the merge lane", Founding Engineer, actively running); #58/#59/#62 have
   no conflicting owner but were still mid-CI at last check, so there was nothing mergeable
   to act on.
+
+## Recovery pass — 2026-08-19 (VP R&D, LUL-380 re-wake after timeout)
+
+The previous run (8a14d407) timed out at 900s while resolving the PR #67 conflict.
+This pass picks up from where it stopped.
+
+### PR state at start of this pass
+
+| PR | Branch | State | Approved | Action |
+|---|---|---|---|---|
+| #73 | lul-389-feature-checklist | BEHIND | 0 reviews | pr-freshness triggered |
+| #72 | lul-445-git-remote-credential-guard | BEHIND | 0 reviews | pr-freshness triggered |
+| #71 | lul-439-ci-token-blindspot | BLOCKED (playwright in-flight) | 1 | wait for CI |
+| #70 | lul-380-check-status-update | BEHIND | 2 reviews | pr-freshness triggered |
+| #68 | lul-437-post-sniff-detection-fix | BLOCKED (playwright in-flight) | 1 | wait for CI |
+| #67 | lul-374-landmark-colliders | BLOCKED (build failure) | 1 | **fixed — see below** |
+| #60 | lul-363-charge-dodge-e2e | BEHIND | 1 | pr-freshness triggered |
+| #58 | lul-25-bog-map-landmarks | BLOCKED (playwright in-flight) | 2 | wait for CI |
+
+### PR #67 build failure — fixed
+
+**Root cause:** `engine/forest-engine.js` had two `let difficulty` declarations after a backmerge
+from main brought in LUL-26's `let difficulty = 'night'` (difficulty preset system), colliding
+with LUL-25's existing `let difficulty = 'normal'` (baby spawn positioning).
+Same collision documented in `game/lul427-difficulty-var-collision` — two independent features,
+not a copy-paste duplicate. Deleting either would have caused a P0 runtime crash.
+
+**Fix:** Renamed LUL-25's local variable to `babySpawnDifficulty` at 3 sites:
+- declaration (`let babySpawnDifficulty = 'normal'`)
+- `applyHardBabySpawn()` guard
+- `qaSetDifficulty()` assignment
+
+LUL-26's `difficulty`/`DIFFICULTY_PRESETS` system left untouched. Commit `e937fd4` pushed to
+`lul-374-landmark-colliders` — CI re-triggered.
+
+### Behind PRs — pr-freshness triggered
+
+Manually dispatched `pr-freshness.yml` via `workflow_dispatch` to backmerge PRs #73, #72, #70, #60.
+The workflow handles these automatically on schedule and on main-push; this dispatch just
+accelerates the current batch.
