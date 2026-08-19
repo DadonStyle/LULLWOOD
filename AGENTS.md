@@ -22,9 +22,22 @@ git push origin HEAD:refs/heads/lul-42-short-description
 
 - Name the branch `lul-<ticket>-<slug>`. `.github/workflows/auto-pr.yml` opens a
   pull request against `main` for any branch matching `lul-*`.
-- Put `[ship]` in the head commit message when the work is ready to land. The PR
-  is then squash-merged automatically once both checks pass. Leave it out and
-  the PR stays open for review — that is the right default for a WIP push.
+- Put a `[ship]` marker on a commit when the work is ready to land. The PR is
+  then squash-merged automatically once both checks pass. Leave it out and the
+  PR stays open for review — that is the right default for a WIP push.
+
+  **The marker must be a line of its own.** The check is an exact-line match, so
+  `[ship]` appended to a descriptive subject line is silently ignored and that PR
+  will never self-merge. It is read from every commit the branch authored (not
+  just the head — a backmerge replaces the head with a merge commit), so tagging
+  a branch you have already pushed is one command:
+
+  ```bash
+  git commit --allow-empty -m '[ship]' && git push
+  ```
+
+  Get this wrong and `auto-pr.yml` leaves a one-time comment on the PR saying so.
+  It never blocks anything.
 - CI runs on the branch push, not on the PR (see the comment at the top of
   `ci.yml`). Watch the checks on the head commit.
 - If the merge is refused, the branch is behind `main`: **backmerge** `main` into
