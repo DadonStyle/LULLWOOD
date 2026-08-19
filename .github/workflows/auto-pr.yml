@@ -192,7 +192,7 @@ jobs:
 
               printf '%s\n' \
                 '<!-- SHIP_DENIED -->' \
-                '`[ship]` was found in the head commit, but this branch changes files outside' \
+                '`[ship]` was found on a commit in this branch, but the branch changes files outside' \
                 'the docs/CI/tests allowlist, so it will **not** self-merge:' \
                 '' \
                 "$(printf '%s\n' "$blocked" | sed 's/^/- `/; s/$/`/')" \
