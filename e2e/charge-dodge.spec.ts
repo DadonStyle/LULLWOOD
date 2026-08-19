@@ -111,7 +111,16 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
             },
             {
               message: `${kind}: charge never reached ${MID_CHARGE_T.toFixed(2)}s into 'charging'`,
-              timeout: 3_000,
+              // LUL-421 (review on PR #60): was 3_000. `cs.t` is
+              // ChargeState's hand-accumulated `+= dt` timer (lib/game/
+              // charge.ts), the exact dilated-timer category wiki
+              // `systems/dt-clamp-vs-walltime` documents -- below 20fps,
+              // game time accrues slower than wall time and never catches
+              // up, so a wall-clock deadline this tight on a ~0.68s
+              // game-time target flakes on a loaded/slower CI runner.
+              // 20_000 matches this suite's own precedent for a comparable
+              // game-time-dependent poll (e2e/positional-hiding.spec.ts).
+              timeout: 20_000,
               intervals: [20, 50, 100],
             },
           )
