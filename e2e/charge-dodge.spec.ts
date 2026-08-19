@@ -18,18 +18,25 @@
 // Measuring overshoot duration: qaPredatorState() only exposes kind/state/
 // inv/sniffsLeft/scentCalls, not position or charge phase, so this spec adds
 // a narrow read-only hook, qaChargePhase(idx) (LUL-373), returning the
-// predator's live ChargeState.phase/t. It is used only to time *when* to
-// press Space (so Case 2 below reliably lands mid-charge at any rig speed,
-// see MID_CHARGE_T above) -- not asserted on directly. The actual pass/fail
-// signal is still the same one this spec always used: it reads #chargePrompt
-// (LUL-213's HUD, shown for the whole telegraph->charging->overshoot span,
-// hidden the instant the charge resolves either way --
-// engine/forest-engine.js's beginChargeHud()/endChargeHud() call sites) and
-// #deathScreen at that exact moment. The wall-clock gap between the dodge
-// (Space) landing and #chargePrompt clearing is a direct, unmodified proxy
-// for how long resolution took -- which is exactly overshootDuration plus a
-// fixed few-frame constant, since stepCharge's 'overshoot' phase is the only
-// thing still running between the jump and the HUD clearing.
+// predator's live ChargeState.phase/t/overshootDuration. It's used to time
+// *when* to press Space (so Case 2 below reliably lands mid-charge at any
+// rig speed, see MID_CHARGE_T above) and, since LUL-421, it *is* the
+// pass/fail signal too: the core regression check reads overshootDuration
+// straight off engine state (qaChargePhase falls back to the last-resolved
+// charge once p.charge itself goes null, see engine/forest-engine.js) rather
+// than timing the wall-clock gap around #chargePrompt clearing. The earlier
+// version measured that gap with Date.now() and asserted fixed millisecond
+// thresholds (<700ms / >+300ms) against it; those flaked under CI load
+// (wiki: systems/dt-clamp-vs-walltime, "Second real occurrence") because the
+// overshoot phase's own duration is a hand-accumulated `+= dt` timer
+// (lib/game/charge.ts) that runs slower than wall time on a loaded runner --
+// a wall-clock deadline around it inherits that dilation no matter how the
+// wait to *trigger* the dodge is timed. overshootDuration is a plain
+// engine-computed number with no wall-clock component at all, so asserting
+// on it directly removes the dependency on rig speed instead of tuning
+// around it. #chargePrompt/#deathScreen are still used as *generous*,
+// non-precise backstops for "did resolution happen at all" (see the
+// toBeHidden waits below) -- just no longer the timing source.
 //
 // A prior version of this spec instead polled qaPredatorState().state for
 // 'chase' -> 'investigate' with a long (10s) timeout and got a false FAIL on
@@ -127,6 +134,16 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
           .toBeGreaterThanOrEqual(MID_CHARGE_T);
       }
 
+      // Reads overshootDuration off the charge that just resolved for `idx`
+      // (qaChargePhase's fallback to p.lastCharge, LUL-421) -- a plain
+      // engine-computed game-time value, not a wall-clock measurement, so
+      // it's the same number regardless of rig speed.
+      async function readOvershootDuration(idx: number): Promise<number> {
+        const cs = await page.evaluate((i) => window.ForestEngine?.qaChargePhase?.(i) ?? null, idx);
+        if (!cs) throw new Error(`${kind}: qaChargePhase(${idx}) returned null right after the charge resolved`);
+        return cs.overshootDuration;
+      }
+
       // --- Case 1: dodge as early as possible (telegraph phase). -----------
       // chargingElapsed is defined as clamp(t - CHARGE_TELL_TIME, 0, RUN_TIME);
       // any jump landing before the telegraph ends clamps to exactly 0, so
@@ -134,12 +151,10 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       // case -- no fine timing needed to land inside it.
       const idx = await triggerAndGetIdx();
       await page.keyboard.press('Space');
-      const earlyJumpAt = Date.now();
       await expect(
         chargePrompt,
         `${kind}: an immediate/telegraph-phase dodge never cleared the charge HUD -- resolution stalled`,
-      ).toBeHidden({ timeout: 3_000 });
-      const earlyResolveMs = Date.now() - earlyJumpAt;
+      ).toBeHidden({ timeout: 15_000 });
       const earlyDied = await deathScreen.isVisible();
       expect(
         earlyDied,
@@ -147,14 +162,13 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
           `on/near the player right at resolution (the exact LUL-213/LUL-323 overshoot-distance bug shape: an ` +
           `early dodge still overshooting the full trigger distance and re-landing on the player)`,
       ).toBe(false);
+      const earlyOvershoot = await readOvershootDuration(idx);
 
       // --- Case 2: dodge mid-charge (well into the 'charging' sub-phase). --
       // Re-triggering resets the same predator's charge state fresh
       // (qaTriggerCharge always zeroes chargeCooldown and re-places both
       // player and predator at their fixed setup positions), so this reuses
-      // the same page/session deliberately -- comparing both cases in one
-      // run controls for per-run rig speed variance instead of comparing
-      // across two separately-timed tests.
+      // the same page/session deliberately.
       //
       // Wait for the live charge state to actually reach MID_CHARGE_T seconds
       // into 'charging' (LUL-373) rather than guessing a wall-clock ms delay
@@ -163,36 +177,46 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       const idx2 = await triggerAndGetIdx();
       await waitForMidCharge(idx2);
       await page.keyboard.press('Space');
-      const lateJumpAt = Date.now();
       await expect(
         chargePrompt,
         `${kind}: a mid-charge dodge never cleared the charge HUD -- resolution stalled, or the predator caught ` +
           `the player outright (check #deathScreen/test output)`,
-      ).toBeHidden({ timeout: 3_000 });
-      const lateResolveMs = Date.now() - lateJumpAt;
+      ).toBeHidden({ timeout: 15_000 });
       const lateDied = await deathScreen.isVisible();
       expect(
         lateDied,
         `${kind}: the player was already dead the instant a mid-charge dodge resolved -- the predator caught ` +
           `the player right at resolution`,
       ).toBe(false);
+      const lateOvershoot = await readOvershootDuration(idx2);
 
-      // Core LUL-323 regression check: pre-fix, overshootDuration was always
-      // the flat CHARGE_RUN_TIME regardless of when the jump landed, so an
-      // early and a mid-charge dodge would resolve in statistically the same
-      // time. Post-fix they must differ, and in the right direction -- early
-      // (chargingElapsed = 0) resolves in a couple of engine ticks,
-      // mid-charge (chargingElapsed > 0) measurably later.
+      // Core LUL-323 regression check, LUL-421: read straight off engine
+      // state instead of timing a wall-clock proxy for it (see file header).
+      // Pre-fix, overshootDuration was always the flat CHARGE_RUN_TIME
+      // regardless of when the jump landed -- an immediate dodge would show
+      // the same non-zero value as a mid-charge one. Post-fix: an immediate/
+      // telegraph-phase dodge clamps chargingElapsed to exactly 0 (t is
+      // still < CHARGE_TELL_TIME when jumped is read, so
+      // Math.max(0, t - CHARGE_TELL_TIME) is exactly 0, not an
+      // approximation -- see lib/game/charge.ts), and a mid-charge dodge
+      // (triggered once waitForMidCharge confirms t has reached
+      // MID_CHARGE_T = CHARGE_TELL_TIME + CHARGE_RUN_TIME * 0.5) must be at
+      // least CHARGE_RUN_TIME * 0.25 -- comfortably below the ~0.5 floor
+      // waitForMidCharge guarantees, to absorb poll-interval slack, but
+      // nowhere near 0, so a regression back to "flat and untracked" (which
+      // would also make Case 1 fail its exact-0 check on its own) can't
+      // pass both.
       expect(
-        earlyResolveMs,
-        `${kind}: an immediate/telegraph-phase dodge took ${earlyResolveMs}ms to resolve -- expected near-instant`,
-      ).toBeLessThan(700);
+        earlyOvershoot,
+        `${kind}: an immediate/telegraph-phase dodge recorded overshootDuration=${earlyOvershoot}s, expected ` +
+          `exactly 0 -- chargingElapsed should clamp to 0 for any dodge before CHARGE_TELL_TIME`,
+      ).toBe(0);
       expect(
-        lateResolveMs,
-        `${kind}: mid-charge dodge (${lateResolveMs}ms) did not resolve measurably slower than the immediate ` +
-          `dodge (${earlyResolveMs}ms) -- overshoot duration is not tracking dodge timing (this is the exact ` +
+        lateOvershoot,
+        `${kind}: a mid-charge dodge recorded overshootDuration=${lateOvershoot}s, not measurably greater than ` +
+          `an immediate dodge's 0s -- overshoot duration is not tracking dodge timing (this is the exact ` +
           `LUL-213/LUL-323 bug shape: a flat overshoot time regardless of when the jump landed)`,
-      ).toBeGreaterThan(earlyResolveMs + 300);
+      ).toBeGreaterThan(CHARGE_RUN_TIME * 0.25);
 
       // --- Case 3: don't dodge at all -- confirm missing the window still --
       // kills you (the LUL-323 fix only changed the *survived* path; this

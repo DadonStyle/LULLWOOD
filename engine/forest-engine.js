@@ -1262,10 +1262,18 @@ function updatePredators(dt, noiseRadius){
     if(p.charge){
       const cs = stepCharge(p.charge, dt, jumpPressed);
       if(cs.phase === 'caught'){
+        // LUL-421: persisted past the p.charge=null below so a QA hook can
+        // still read it after resolution -- see qaChargePhase's fallback.
+        p.lastCharge = { result: 'caught', overshootDuration: 0 };
         p.charge = null;
         endChargeHud();
         triggerDeath(p.kind);
       } else if(cs.phase === 'cleared'){
+        // stepCharge() (lib/game/charge.ts) zeroes overshootDuration on the
+        // 'cleared' state it returns, so read it off the *old* p.charge
+        // (still the value that governed this overshoot run) before it's
+        // gone -- see qaChargePhase's fallback for why this is kept at all.
+        p.lastCharge = { result: 'cleared', overshootDuration: p.charge.overshootDuration };
         p.charge = null; p.chargeCooldown = CHARGE_COOLDOWN;
         // "the animal continue... than continue normally": rejoin the
         // existing investigate/approach loop (LUL-22, not to be retuned)
@@ -2345,9 +2353,21 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // see wiki systems/dt-clamp-vs-walltime for why a fixed ms wait doesn't
   // reliably land at the same game-time point across rigs of different frame
   // rates.
+  //
+  // LUL-421: also returns overshootDuration, and falls back to the most
+  // recently resolved charge (p.lastCharge) once p.charge itself goes null
+  // on resolution -- lets a test read the LUL-323 overshoot-tracking value
+  // straight from engine state instead of inferring it from a wall-clock
+  // gap around the #chargePrompt HUD, which is the dt-clamp-vs-walltime trap
+  // this ticket exists to remove. `t` is 0 in the fallback case since the
+  // resolved ChargeState itself isn't kept, only the two fields the spec
+  // needs.
   window.ForestEngine.qaChargePhase = function(idx){
     const p = predators[idx];
-    return p && p.charge ? { phase: p.charge.phase, t: p.charge.t } : null;
+    if(!p) return null;
+    if(p.charge) return { phase: p.charge.phase, t: p.charge.t, overshootDuration: p.charge.overshootDuration };
+    if(p.lastCharge) return { phase: p.lastCharge.result, t: 0, overshootDuration: p.lastCharge.overshootDuration };
+    return null;
   };
 
   // LUL-275: snapshot of the player's transform and detected input mode -- proves

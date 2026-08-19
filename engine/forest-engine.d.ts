@@ -101,10 +101,14 @@ declare global {
        * no active charge. `t` is seconds elapsed in that phase, in game time
        * (not wall time). Lets a test poll for "well into 'charging'" against
        * the engine's own clock instead of guessing a wall-clock wait -- see
-       * wiki systems/dt-clamp-vs-walltime. */
+       * wiki systems/dt-clamp-vs-walltime.
+       * LUL-421: also returns overshootDuration (the LUL-323 dodge-timing
+       * value), and falls back to the most recently resolved charge once the
+       * live one goes null -- `t` is 0 in that fallback case. */
       qaChargePhase?: (idx: number) => {
         phase: 'telegraph' | 'charging' | 'overshoot' | 'caught' | 'cleared';
         t: number;
+        overshootDuration: number;
       } | null;
       /** LUL-275: snapshot of the player's transform and detected input mode --
        * this init() actually bound -- proves which input branch bound at runtime,
