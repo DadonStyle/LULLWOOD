@@ -2099,6 +2099,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return null;
   };
 
+  // LUL-384: exposes the exact predicate real player movement gates on
+  // (see the `blocked(nx, player.z)`/`blocked(player.x, nz)` calls in the
+  // tick loop below). Lets a test assert a whole span is collision-free by
+  // direct sampling instead of integrating real player movement over a fixed
+  // wall-clock window -- the latter ties the assertion to how many animation
+  // frames actually ran in that window, which is not stable under CI load
+  // (same class of flake as LUL-421's charge-dodge wall-clock assertions,
+  // wiki: systems/dt-clamp-vs-walltime). Movement is still driven by real
+  // keyboard input elsewhere in this spec; this only replaces the "did we
+  // travel far enough in 3 real seconds" assertion with something that
+  // doesn't depend on render throughput.
+  window.ForestEngine.qaProbeBlocked = function(x, z){ return blocked(x, z); };
+
   // Same idea for the death path. Reaching it naturally means standing still until
   // `sinceClose > 30` forces a hunt, then waiting for the animal to cross the map --
   // and both of those are measured in game time, which is not wall time: dt is

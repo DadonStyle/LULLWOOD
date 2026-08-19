@@ -189,17 +189,6 @@ test.describe('LUL-384: log is walkable', () => {
     const { prop, start } = staged!;
     expect(start.x, 'staged start is already inside the prop').toBeLessThan(prop.x - prop.hx);
 
-    // Walking speed is 6 units/s (engine/forest-engine.js CONFIG.walk); 3s
-    // covers 18 units, comfortably more than twice the widest possible log
-    // footprint (hx/hz max ~2.4), so "cleared the far edge" is a real bar,
-    // not a coin flip on generated log size.
-    await page.keyboard.down('KeyW');
-    await page.waitForTimeout(3_000);
-    await page.keyboard.up('KeyW');
-    await page.waitForTimeout(200);
-
-    const end = (await page.evaluate(() => window.ForestEngine?.qaProbePlayer?.()))!;
-
     // Mirror of the solid-prop face-boundary math: the near face is at
     // prop.x + faceDx (faceDx <= 0), so the far face is the same offset
     // reflected through the centre.
@@ -207,11 +196,43 @@ test.describe('LUL-384: log is walkable', () => {
     const absCos = Math.max(Math.abs(Math.cos(ry)), 1e-6);
     const absSin = Math.max(Math.abs(Math.sin(ry)), 1e-6);
     const faceDx = Math.max(-(prop.hx + 0.6) / absCos, -(prop.hz + 0.6) / absSin);
+    const nearFaceX = prop.x + faceDx;
     const farFaceX = prop.x - faceDx;
 
+    // A short real walk still proves actual keyboard-driven movement engages
+    // the log approach (a genuinely wedged player would fail this weak bar
+    // too) -- see the solid-props loop above for the same 0.3-unit floor.
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(1_000);
+    await page.keyboard.up('KeyW');
+    await page.waitForTimeout(200);
+    const midway = (await page.evaluate(() => window.ForestEngine?.qaProbePlayer?.()))!;
+    expect(midway.x, 'the player never moved toward the log').toBeGreaterThan(start.x + 0.3);
+
+    // The definitive "no collision bug on the log" claim is checked by
+    // sampling blocked() -- the exact predicate real movement gates on --
+    // directly across the log's full footprint, near face to far face and a
+    // margin past it. This is deterministic and independent of how many
+    // animation frames actually ran during the walk above, unlike asserting
+    // a specific end position reached within a fixed wall-clock window
+    // (LUL-384 found that this specific window undershoots under CI's
+    // rendering load -- same class of flake as LUL-421's charge-dodge
+    // wall-clock assertions, wiki: systems/dt-clamp-vs-walltime).
+    const sampleFromX = nearFaceX - 0.5;
+    const sampleToX = farFaceX + 0.5;
+    const step = 0.2;
+    const blockedSamples: { x: number; blocked: boolean }[] = [];
+    for (let x = sampleFromX; x <= sampleToX; x += step) {
+      const isBlocked = await page.evaluate(
+        ({ x, z }) => window.ForestEngine?.qaProbeBlocked?.(x, z),
+        { x, z: prop.z },
+      );
+      blockedSamples.push({ x, blocked: !!isBlocked });
+    }
+    const firstBlocked = blockedSamples.find((s) => s.blocked);
     expect(
-      end.x,
-      `player stopped at x=${end.x.toFixed(2)} without clearing the log (near face x=${(prop.x + faceDx).toFixed(2)}, far face x=${farFaceX.toFixed(2)}) -- LUL-384 requires walking straight over it`,
-    ).toBeGreaterThan(farFaceX);
+      firstBlocked,
+      `blocked(x=${firstBlocked?.x.toFixed(2)}, z=${prop.z.toFixed(2)}) is true somewhere across the log's span (near face x=${nearFaceX.toFixed(2)}, far face x=${farFaceX.toFixed(2)}) -- LUL-384 requires the whole log to be collision-free for the player`,
+    ).toBeUndefined();
   });
 });

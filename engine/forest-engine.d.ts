@@ -83,6 +83,11 @@ declare global {
         prop: { x: number; z: number; hx: number; hz: number; ry: number; kind: string };
         start: { x: number; z: number };
       } | null;
+      /** LUL-384: exposes the exact `blocked()` predicate player movement gates on,
+       * so a test can sample collision across a span directly instead of inferring
+       * it from how far real keyboard-driven movement got within a fixed wall-clock
+       * window (unreliable under CI render load, wiki: systems/dt-clamp-vs-walltime). */
+      qaProbeBlocked?: (x: number, z: number) => boolean;
       /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
