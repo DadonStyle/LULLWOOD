@@ -53,3 +53,49 @@ export function overlapsTreeTrunk(x: number, z: number, propRadius: number, tree
   }
   return false;
 }
+
+// ---- walkable-cover-vs-tree-canopy spawn clearance (LUL-384, LUL-491 review) -
+// overlapsTreeTrunk() above deliberately checks only the trunk's movement
+// radius (t.cr), not the wider canopy radius (t.crCanopy, LUL-267) -- fine
+// for rock/bramble, which stay solid either way, so a prop spawning inside a
+// canopy circle but outside the trunk circle changes nothing observable.
+// LUL-384 made 'log' walkable, which breaks that assumption: canopyBlockedR()
+// blocks the player unconditionally within crCanopy regardless of what's on
+// the ground there, so a log whose footprint overlaps a nearby canopy circle
+// (without overlapping the trunk circle -- overlapsTreeTrunk alone would miss
+// this) invites the player to walk across it and then wedges them at the
+// invisible canopy edge mid-crossing. Found by LUL-491's re-review via direct
+// blocked()-sampling across a log's full span in
+// e2e/lul211-founder-report.spec.ts. generateCover() only calls this for
+// walkable kinds (coverKindBlocksPlayerMovement() false); rock/bramble/reed
+// keep the cheaper trunk-only check, unchanged.
+export interface TreeCanopy {
+  x: number;
+  z: number;
+  crCanopy: number;
+}
+
+export function overlapsTreeCanopy(x: number, z: number, propRadius: number, trees: readonly TreeCanopy[]): boolean {
+  for (const t of trees) {
+    const dx = x - t.x, dz = z - t.z, rr = propRadius + t.crCanopy;
+    if (dx * dx + dz * dz < rr * rr) return true;
+  }
+  return false;
+}
+
+// ---- which cover kinds block the player's own movement (LUL-384) -----------
+// coverBlockedR() already skipped 'tree' (its circle-grid collision via
+// blockedR()/grid is separate, so re-blocking it here would be a double
+// check, not new behaviour). This adds 'log' to that same skip list: a
+// fallen log is the one cover prop a person would naturally step/run over
+// rather than route around, and predators already ignore all cover-prop
+// collision entirely (LUL-119/LUL-211's "predators pass through" rule) --
+// making the player consistent with that for logs specifically, not for
+// rock/bramble/reed, which stay solid. LOS blocking (hasLOS()) and hide-spot
+// eligibility (findHideSpot()/HIDE_KINDS) both read coverGrid independently
+// of this function and are unchanged: a log is still sight-cover and still a
+// valid hiding spot, it just no longer stops you from walking or running
+// across it to get there.
+export function coverKindBlocksPlayerMovement(kind: string): boolean {
+  return kind !== 'tree' && kind !== 'log';
+}
