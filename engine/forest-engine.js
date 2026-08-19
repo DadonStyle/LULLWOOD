@@ -39,6 +39,7 @@ import {
   bogSpeedMultiplier,
   bogNoiseMultiplier,
   pickHardBabyPosition,
+  clearOfLandmarks,
 } from '@/lib/game/bog';
 import {
   backOffPoint,
@@ -527,8 +528,30 @@ function layoutCoverMeshes(){
 }
 
 function nearLandmarks(x, z, pad){
-  for(const l of LANDMARKS){ if(Math.hypot(x-l.x, z-l.z) < l.clear+pad) return true; }
-  return false;
+  return !clearOfLandmarks(x, z, LANDMARKS, pad);
+}
+// LUL-375: shared by generateMap()'s forest-tree loop and generateBogTrees() --
+// same scatter-and-instance shape, differing only in which parts/data/count
+// triple they close over. Draw order per tree is rotation then brightness,
+// matching what both inlined copies did, since this feeds the seeded rng
+// stream (see the LUL-25 ordering comment above generateBogTrees()).
+function layoutTreePool(meshParts, data, count){
+  for(let i=0; i<count; i++){
+    if(i < data.length){
+      const t = data[i];
+      dummy.position.set(t.x, 0, t.z);
+      dummy.rotation.set(0, rng()*Math.PI*2, 0);
+      dummy.scale.setScalar(t.s);
+    } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
+    dummy.updateMatrix();
+    for(const p of meshParts) p.setMatrixAt(i, dummy.matrix);
+    const b = i < data.length ? 0.72 + rng()*0.5 : 1;
+    tintCol.setRGB(b*0.92, b, b*0.86);
+    meshParts[1].setColorAt(i, tintCol); meshParts[2].setColorAt(i, tintCol);
+  }
+  for(const p of meshParts) p.instanceMatrix.needsUpdate = true;
+  if(meshParts[1].instanceColor) meshParts[1].instanceColor.needsUpdate = true;
+  if(meshParts[2].instanceColor) meshParts[2].instanceColor.needsUpdate = true;
 }
 // ---- Bog map band (LUL-25) --------------------------------------------------
 // generateBogTrees()/generateReeds()/applyHardBabySpawn() are all called from
@@ -546,22 +569,7 @@ function generateBogTrees(){
     const s = 0.6 + rng()*1.3;   // thinner cover -- same scatter shape, smaller sizes than the forest
     bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s) });
   }
-  for(let i=0; i<BOG_TREES; i++){
-    if(i < bogTreeData.length){
-      const t = bogTreeData[i];
-      dummy.position.set(t.x, 0, t.z);
-      dummy.rotation.set(0, rng()*Math.PI*2, 0);
-      dummy.scale.setScalar(t.s);
-    } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
-    dummy.updateMatrix();
-    for(const p of bogParts) p.setMatrixAt(i, dummy.matrix);
-    const b = i < bogTreeData.length ? 0.72 + rng()*0.5 : 1;
-    tintCol.setRGB(b*0.92, b, b*0.86);
-    bogParts[1].setColorAt(i, tintCol); bogParts[2].setColorAt(i, tintCol);
-  }
-  for(const p of bogParts) p.instanceMatrix.needsUpdate = true;
-  if(bogParts[1].instanceColor) bogParts[1].instanceColor.needsUpdate = true;
-  if(bogParts[2].instanceColor) bogParts[2].instanceColor.needsUpdate = true;
+  layoutTreePool(bogParts, bogTreeData, BOG_TREES);
 }
 // Reeds: tall cover volumes, bog band only. Pushed into the same coverData
 // array log/rock/bramble use (see coverMeshes.reed above) so canSee()'s LOS
@@ -620,22 +628,7 @@ function generateMap(seed){
     const s = 0.7 + rng()*1.7;
     treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s) });
   }
-  for(let i=0; i<CONFIG.trees; i++){
-    if(i < treeData.length){
-      const t = treeData[i];
-      dummy.position.set(t.x, 0, t.z);
-      dummy.rotation.set(0, rng()*Math.PI*2, 0);
-      dummy.scale.setScalar(t.s);
-    } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
-    dummy.updateMatrix();
-    for(const p of parts) p.setMatrixAt(i, dummy.matrix);
-    const b = i < treeData.length ? 0.72 + rng()*0.5 : 1;      // per-tree brightness variation
-    tintCol.setRGB(b*0.92, b, b*0.86);
-    parts[1].setColorAt(i, tintCol); parts[2].setColorAt(i, tintCol);
-  }
-  for(const p of parts) p.instanceMatrix.needsUpdate = true;
-  if(parts[1].instanceColor) parts[1].instanceColor.needsUpdate = true;
-  if(parts[2].instanceColor) parts[2].instanceColor.needsUpdate = true;
+  layoutTreePool(parts, treeData, CONFIG.trees);
   buildGrid();
   drawMinimapStatic();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
