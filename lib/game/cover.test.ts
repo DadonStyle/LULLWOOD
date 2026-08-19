@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { distanceToCoverEdge, overlapsTreeTrunk } from './cover.ts';
+import { coverKindBlocksPlayerMovement, distanceToCoverEdge, overlapsTreeTrunk } from './cover.ts';
 
 // ---- distanceToCoverEdge (LUL-405/LUL-430) ---------------------------------
 
@@ -122,4 +122,26 @@ test('overlapsTreeTrunk finds a match anywhere in a multi-tree list, not just th
     { x: 0.5, z: 0, cr: 0.3 },
   ];
   assert.equal(overlapsTreeTrunk(0, 0, 0.8, trees), true);
+});
+
+// ---- coverKindBlocksPlayerMovement (LUL-384) -------------------------------
+
+test('coverKindBlocksPlayerMovement is false for tree (own circle-grid collision handles it)', () => {
+  assert.equal(coverKindBlocksPlayerMovement('tree'), false);
+});
+
+test('coverKindBlocksPlayerMovement is false for log -- walkable, run/jump over it naturally', () => {
+  assert.equal(coverKindBlocksPlayerMovement('log'), false);
+});
+
+test('coverKindBlocksPlayerMovement is true for rock -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksPlayerMovement('rock'), true);
+});
+
+test('coverKindBlocksPlayerMovement is true for bramble -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksPlayerMovement('bramble'), true);
+});
+
+test('coverKindBlocksPlayerMovement is true for reed -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksPlayerMovement('reed'), true);
 });

@@ -53,3 +53,20 @@ export function overlapsTreeTrunk(x: number, z: number, propRadius: number, tree
   }
   return false;
 }
+
+// ---- which cover kinds block the player's own movement (LUL-384) -----------
+// coverBlockedR() already skipped 'tree' (its circle-grid collision via
+// blockedR()/grid is separate, so re-blocking it here would be a double
+// check, not new behaviour). This adds 'log' to that same skip list: a
+// fallen log is the one cover prop a person would naturally step/run over
+// rather than route around, and predators already ignore all cover-prop
+// collision entirely (LUL-119/LUL-211's "predators pass through" rule) --
+// making the player consistent with that for logs specifically, not for
+// rock/bramble/reed, which stay solid. LOS blocking (hasLOS()) and hide-spot
+// eligibility (findHideSpot()/HIDE_KINDS) both read coverGrid independently
+// of this function and are unchanged: a log is still sight-cover and still a
+// valid hiding spot, it just no longer stops you from walking or running
+// across it to get there.
+export function coverKindBlocksPlayerMovement(kind: string): boolean {
+  return kind !== 'tree' && kind !== 'log';
+}

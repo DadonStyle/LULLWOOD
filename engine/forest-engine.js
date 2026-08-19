@@ -33,7 +33,7 @@ import {
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
 } from '@/lib/game/scent';
-import { distanceToCoverEdge, overlapsTreeTrunk } from '@/lib/game/cover';
+import { coverKindBlocksPlayerMovement, distanceToCoverEdge, overlapsTreeTrunk } from '@/lib/game/cover';
 import {
   isInBog,
   bogSpeedMultiplier,
@@ -401,12 +401,22 @@ function blockedR(x,z,pr){
 // the *inverse* of Three's Y-rotation matrix, which works out to the same
 // (cos,sin) pair evaluated at +ry, not -ry: localX = dx*co - dz*si,
 // localZ = dx*si + dz*co.
+//
+// LUL-384: 'tree' was already skipped (its own circle-grid collision above
+// handles it); 'log' is now skipped too, via coverKindBlocksPlayerMovement()
+// (lib/game/cover.ts) -- a fallen log is the one cover prop a person
+// naturally steps/runs over rather than routes around, and predators already
+// ignore all cover-prop collision (see this function's own comment above).
+// LOS (hasLOS()) and hide-spot eligibility (findHideSpot()/HIDE_KINDS) both
+// read coverGrid independently of this function, so a log is still
+// sight-cover and still a valid hiding spot -- only the player's own
+// movement block is lifted. Rock/bramble/reed are unchanged, still solid.
 function coverBlockedR(x,z,pr){
   const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
   for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
     const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
     for(const c of arr){
-      if(c.kind === 'tree') continue;
+      if(!coverKindBlocksPlayerMovement(c.kind)) continue;
       const dx = x - c.x, dz = z - c.z;
       const co = Math.cos(c.ry), si = Math.sin(c.ry);
       const lx = dx*co - dz*si, lz = dx*si + dz*co;
