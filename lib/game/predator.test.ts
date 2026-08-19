@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   backOffPoint,
+  canCatchInChase,
   CATCH_MARGIN,
   hasReachedSniffRange,
   isCaught,
@@ -45,6 +46,28 @@ test('isCaught is true a hair inside the catch margin', () => {
 
 test('isCaught is false well outside the margin', () => {
   assert.equal(isCaught(10, 1), false);
+});
+
+// ---- canCatchInChase (LUL-387) --------------------------------------------------
+
+test('canCatchInChase is false at catch-range distance when there is no line of sight -- the through-cover regression', () => {
+  // Well within isCaught's own margin (dist=1, rad+CATCH_MARGIN=2.3), but a
+  // blind-scent chase (canSee=false, e.g. a bramble/log breaking sight) must
+  // not still be able to kill through the cover it can't see through.
+  assert.equal(canCatchInChase(false, 1, 1), false);
+});
+
+test('canCatchInChase is true at the same distance once there is a sightline', () => {
+  assert.equal(canCatchInChase(true, 1, 1), true);
+});
+
+test('canCatchInChase is false without LOS no matter how close the distance (dist=0)', () => {
+  assert.equal(canCatchInChase(false, 0, 1), false);
+});
+
+test('canCatchInChase defers to isCaught\'s own margin when LOS holds -- not caught a hair outside it', () => {
+  assert.equal(canCatchInChase(true, 1 + CATCH_MARGIN, 1), false);
+  assert.equal(canCatchInChase(true, 1 + CATCH_MARGIN - 0.001, 1), true);
 });
 
 // ---- hasReachedSniffRange ------------------------------------------------------

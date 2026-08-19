@@ -41,6 +41,7 @@ import {
 } from '@/lib/game/bog';
 import {
   backOffPoint,
+  canCatchInChase,
   hasReachedSniffRange,
   isCaught,
   rollSniffs,
@@ -199,10 +200,8 @@ const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playe
 // LUL-40: player-controlled binary dim, hold KeyF. Two states only, on purpose --
 // a slider players set once and forget wouldn't be the every-second decision the
 // ticket wants. The lit radius shrinks along with intensity so dimming reads as
-// "smaller pool of light", not just "dimmer light in the same pool". Detection
-// math doesn't read this yet -- LUL-22's effectiveDetect() is the place to wire
-// it in as one more multiplier alongside stillness, deliberately left dormant
-// per the ticket's own sequencing note (ship the control first).
+// "smaller pool of light", not just "dimmer light in the same pool". Wired into
+// sight detection at effectiveDetect() via DIM_DETECT_MUL (LUL-291).
 const LIGHT_NORMAL = { intensity: 0.7, distance: 20 };
 const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
 let lightDimmed = false;
@@ -862,6 +861,19 @@ const PSPEC = {
 // the player, so you can't simply outrun them — hiding is the real escape. Tune via CHASE_GAP.
 const RUN = CONFIG.walk * 1.8, CHASE_GAP = 28;
 for(const k in PSPEC) PSPEC[k].speed = RUN + CHASE_GAP / PSPEC[k].budget;
+
+// LUL-26: difficulty presets. `night` is the existing tuning verbatim (every
+// multiplier is a no-op) and stays default -- the ticket is explicit that
+// tuning must not change. `activePerSpecies` trims the roster without
+// touching PSPEC itself; `detectMul` scales the sight-detect radius at the
+// one place that already reads it (effectiveDetect); `glowMul` scales the
+// child's existing idle/carry glow values instead of new ones.
+const DIFFICULTY_PRESETS = {
+  lantern:  { activePerSpecies: 1, detectMul: 0.7, glowMul: 1.6, startHunting: false, minimap: true },
+  night:    { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: false, minimap: true },
+  blackout: { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: true,  minimap: false },
+};
+let difficulty = 'night';
 function makePredator(kind){
   const s = PSPEC[kind], g = new THREE.Group();
   const H = s.h, L = s.len, Wd = s.sz, bodyY = H*0.62;
@@ -919,24 +931,36 @@ function makePredator(kind){
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0,
-    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0 };
+    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false };
 }
 const predators = [];
-for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++) predators.push(makePredator(k));
+// `speciesIdx` (0..2 within its species) is what LUL-26's `activePerSpecies`
+// preset compares against -- fixed at creation so placePredators() doesn't
+// need to re-derive array position every restart.
+for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
 let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
 let coverAmt = 0;   // LUL-144: eased 0..1 desaturation driven by the cover-feedback scan below
 function placePredators(){
+  // LUL-26: `night` (default) has activePerSpecies:3, so `p.inert` is false
+  // for every predator and this loop draws exactly the RNG sequence it always
+  // has -- the preset system is a no-op at the default. Lower presets only
+  // diverge the stream when a player actually picks them.
+  const preset = DIFFICULTY_PRESETS[difficulty];
   for(const p of predators){
+    p.inert = p.speciesIdx >= preset.activePerSpecies;
+    p.g.visible = !p.inert;
+    if(p.inert){ p.x = p.z = -9999; continue; }   // parked off-map; both scan loops also skip on p.inert
     let x, z, tries = 0;
     do { const ang=rng()*Math.PI*2, d=half*(0.42+rng()*0.45); x=Math.cos(ang)*d; z=Math.sin(ang)*d; tries++; }
     while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 26 || blockedR(x, z, p.rad+0.5)) && tries < 60);
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
-    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=false; p.alert=0; p.scentLock=0; p.scentCalls=0;
+    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
+  mm.style.display = preset.minimap ? '' : 'none';
   sinceClose = 0; huntTime = 0; spotFlash = 0;
   activeCharges = 0; pushState({ chargeVisible: false });
 }
@@ -1004,7 +1028,7 @@ function scentOnto(p){
   p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
-  predatorCall(p.kind);
+  predatorCall(p.kind, false, p);
 }
 
 // ---- Sound: footstep noise as a third detection channel (LUL-39) ---------
@@ -1056,6 +1080,12 @@ function hearNoise(p){
 // walking behind a rock or a tree exactly as before, hidden or not.
 const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
+// LUL-291: dimmed light shrinks sight-detect range by 25% -- proposed starting value,
+// unverified tuning for the Game Tester. Deliberately a smaller lever than full stillness
+// (STILL_DETECT_CUT above): dimming is a free toggle, stillness is a sustained commitment,
+// and the two stack multiplicatively so hiding still + dimmed is the strongest state.
+// Sight only -- p.spec.scent is untouched, dimming doesn't affect how far predators smell you.
+const DIM_DETECT_MUL = 0.75;
 function segRayVsAABB(x0,z0,x1,z1, cx,cz,hx,hz){
   const minX=cx-hx, maxX=cx+hx, minZ=cz-hz, maxZ=cz+hz;
   let tmin=0, tmax=1;
@@ -1104,7 +1134,7 @@ function findHideSpot(x, z){
 // just stop at the first one that can see the player.
 function effectiveDetect(p){
   const stillness = hidden ? Math.min(1, hideTime / STILL_RAMP) : 0;
-  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT);
+  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT) * DIFFICULTY_PRESETS[difficulty].detectMul * (lightDimmed ? DIM_DETECT_MUL : 1);
 }
 function canSee(p, dist){
   if(dist >= effectiveDetect(p)) return false;
@@ -1126,7 +1156,7 @@ const FLANK_ARRIVE_R   = 4;
 const FLANK_SPEED_MUL  = 0.7;          // purposeful trot: faster than roam, short of a chase sprint
 
 function updateWolfPack(dt){
-  const wolves = predators.filter(p => p.kind === 'wolf');
+  const wolves = predators.filter(p => p.kind === 'wolf' && !p.inert);   // LUL-26: parked wolves don't flank
   for(const p of wolves) if(p.packTimer > 0) p.packTimer -= dt;
 
   const chasers = wolves.filter(p => p.state === 'chase' || p.hunt);
@@ -1165,6 +1195,7 @@ function updatePredators(dt, noiseRadius){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
   for(const p of predators){
+    if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
     const dx = player.x - p.x, dz = player.z - p.z, dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
@@ -1213,7 +1244,7 @@ function updatePredators(dt, noiseRadius){
         if(isCaught(dist, p.rad)) triggerDeath(p.kind);
         else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
-        p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
+        p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'roam'){
       if(canSee(p, dist)){ spotOnto(p); }
@@ -1253,10 +1284,15 @@ function updatePredators(dt, noiseRadius){
         beginChargeHud();
       }
       else {
-        if(isCaught(dist, p.rad)){ triggerDeath(p.kind); }
+        // LUL-387: gate the kill on an actual sightline, not just distance --
+        // see canCatchInChase()'s comment. Without this, a predator still
+        // mid-blind-chase (scentLock > 0) can catch the player straight
+        // through the cover prop breaking canSee() right now, since
+        // predators never physically collide with cover (LUL-119/LUL-211).
+        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind); }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; }
-        p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind); p.callTimer = rnd(2.6,4.6); }
+        p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
       // Deliberately still gated on `hidden` (hold-still), not canSee(): once a
@@ -1396,7 +1432,7 @@ function updatePredators(dt, noiseRadius){
 function spotOnto(p){
   p.state='chase'; p.callTimer=rnd(2.6,4.2); p.alert = 0.55;
   if(!p.spotted){ p.spotted=true; }
-  predatorCall(p.kind); spotSting(); spotFlash = 1;
+  predatorCall(p.kind, false, p); spotSting(); spotFlash = 1;
 }
 
 // ---- Player + input ------------------------------------------------------
@@ -1435,10 +1471,24 @@ function beginJump(){
   jumping = true; jumpElapsed = 0;
 }
 
+// LUL-26: accessibility settings. `reduce` above is the OS-level media query
+// (already wired to head-bob/dust); `reducedMotionSetting` is the in-game
+// toggle for players whose OS doesn't expose the preference. `motionReduced()`
+// is the one place both are combined, so every consumer stays in sync.
+let runMode = 'hold', toggleRunOn = false, sensMul = 1, invertY = false,
+    reducedMotionSetting = false, captionsOn = false, captionSeq = 0;
+function motionReduced(){ return reduce || reducedMotionSetting; }
+
 on(window, 'keydown', e => {
   keys[e.code] = true;
   const playing = entered && !won && !dead && !pickingUp;
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
+  // LUL-26: toggle-run edge-triggers off keydown (not keyup) so the very
+  // press that would have started a hold-run also starts a toggle-run --
+  // `e.repeat` guards the OS's own key-repeat from flipping it back and forth.
+  if((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && runMode === 'toggle' && !e.repeat && playing && !paused){
+    toggleRunOn = !toggleRunOn;
+  }
   if(e.code === 'KeyE' && canPickup && playing && !paused) pickup();
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
   // LUL-213: jumping stands you up first (same as any movement key already
@@ -1460,8 +1510,9 @@ let dragging = false, locked = false, paused = false;
 const el = renderer.domElement;
 const SENS = 0.0022;
 function applyLook(dx, dy){
-  player.yaw -= dx*SENS;
-  player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - dy*SENS));
+  const s = SENS * sensMul, dyEff = invertY ? -dy : dy;
+  player.yaw -= dx*s;
+  player.pitch = Math.max(-1.3, Math.min(1.3, player.pitch - dyEff*s));
 }
 function requestLock(){ if(el.requestPointerLock) el.requestPointerLock(); }
 // LUL-276: these listeners are the desktop mouse-look mechanism -- byte-
@@ -1684,7 +1735,31 @@ function playPickupMusic(){
   later(() => { if(audio){ audio.wg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); audio.dg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); } }, 11000);
 }
 // distinct voice per species so you can hear what's coming
-function predatorCall(kind, big){
+// LUL-26: closed captions for the fully-procedural audio -- there is no other
+// channel carrying predator warnings (every sound in this game is synthesized
+// WebAudio, per the wave-1 audio notes), so without this a deaf/HoH player
+// loses the entire warning system, not just flavor. Genre precedent (TLOU2's
+// audio-cue glossary) is "describe the event + where it's coming from", not a
+// literal onomatopoeia transcript, hence distance/direction instead of just
+// "wolf howls". `p` is the calling predator when known (most call sites);
+// deathAudio() calls this without one since the source is adjacent by then.
+function announceCaption(kind, big, p){
+  const verb = kind === 'wolf' ? 'howl' : 'roar';
+  let where;
+  if(!p){ where = 'right on you'; }
+  else {
+    const dx = p.x - player.x, dz = p.z - player.z, dist = Math.hypot(dx, dz);
+    const near = dist < 30 ? 'near' : 'far';
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+    const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+    const fwd = dx*fx + dz*fz, right = dx*rx + dz*rz;
+    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
+    where = `${near} · ${side}`;
+  }
+  pushState({ caption: `${kind} ${verb}${big ? ' (close)' : ''} · ${where}`, captionId: ++captionSeq });
+}
+function predatorCall(kind, big, p){
+  if(captionsOn) announceCaption(kind, big, p);
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t = ctx.currentTime, vol = big ? 1.0 : 0.6;
   if(kind === 'wolf'){                              // howl: gliding tone with vibrato
@@ -1747,12 +1822,16 @@ function chomp(when){
 }
 // death: duck everything, the animal roars, then the bite lands (timed to the video)
 function deathAudio(kind){
+  // LUL-26: captions must fire even with sound off -- gating the whole
+  // function on `!soundOn` used to also swallow the death caption, the one
+  // moment captions matter most. predatorCall() already gates its own
+  // audio-only half on soundOn/audio internally, so call it unconditionally.
+  predatorCall(kind, true);
   if(!audio || !soundOn) return;
   const t = audio.ctx.currentTime;
   audio.huntGain.gain.setTargetAtTime(0.0001, t, 0.12);
   audio.wg.gain.setTargetAtTime(0.0001, t, 0.12);
   audio.dg.gain.setTargetAtTime(0.0001, t, 0.12);
-  predatorCall(kind, true);
   chomp(t + 1.35);
 }
 // sharp stinger the instant an animal locks onto you
@@ -1819,6 +1898,11 @@ let hudState = {
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
   chargeVisible: false, chargeToken: 0,
+  // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
+  // already are -- the engine is the source of truth, React only renders it
+  // and persists it to localStorage (see components/Hud.tsx).
+  difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
+  reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
 };
 function pushState(patch){
   let changed = false;
@@ -2288,6 +2372,29 @@ function toggleSound(){
   pushState({ soundOn });
 }
 function regenMap(){ generateMap((Math.random()*1e9)>>>0); }
+
+// LUL-26: difficulty + accessibility actions. Mirrors setPace/setFog above --
+// the engine applies the change and echoes the new value back via pushState
+// so React's controls stay driven by engine state, not a second local copy.
+function setDifficulty(d){
+  if(!DIFFICULTY_PRESETS[d]) return;
+  difficulty = d;
+  // Repositioning/parking predators mid-chase would be jarring and could pop
+  // one in on top of the player, so a live difficulty change only re-applies
+  // immediately before the player has entered; otherwise it takes effect on
+  // the next restart() (which already calls placePredators() itself).
+  if(!entered) placePredators();
+  pushState({ difficulty: d });
+}
+function setRunMode(m){
+  if(m !== 'hold' && m !== 'toggle') return;
+  runMode = m; toggleRunOn = false;
+  pushState({ runMode: m });
+}
+function setSensitivity(v){ sensMul = clamp(v, 0.25, 3); pushState({ sensitivity: sensMul }); }
+function setInvertY(v){ invertY = !!v; pushState({ invertY }); }
+function setReducedMotion(v){ reducedMotionSetting = !!v; pushState({ reducedMotion: reducedMotionSetting }); }
+function setCaptions(v){ captionsOn = !!v; pushState({ captionsOn }); }
 on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   applyRes();
@@ -2456,7 +2563,7 @@ function tick(){
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
   const playerInBog = inBog(player.x, player.z);   // LUL-25: shallow water -- half speed, louder splash
   if(playing && !hidden){
-    running = keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint;
+    running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
     const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerInBog);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
@@ -2506,18 +2613,25 @@ function tick(){
     bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5 + e*0.15;
     babyLight.intensity = boomed ? 0 : key3(e, [[0,1],[4,3.2],[7,2],[9,3.5]]);
     if(boomed && !pickBoomed){ pickBoomed = true; fireBoom(baby.x, ay, baby.z); }   // the child bursts into the sky
-    // camera holds position and tilts up to follow the child, then the burst
+    // camera holds position and tilts up to follow the child, then the burst --
+    // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly the
+    // camera motion the setting exists to remove) and just hold the player's
+    // own look direction instead.
     camera.position.set(player.x, CONFIG.eye, player.z);
-    lookM.lookAt(camera.position, boomGroup.visible ? boomGroup.position : babyGroup.position, camera.up);
-    lookQ.setFromRotationMatrix(lookM);
-    camera.quaternion.slerp(lookQ, 0.06);
+    if(motionReduced()){
+      camera.rotation.set(player.pitch, player.yaw, 0);
+    } else {
+      lookM.lookAt(camera.position, boomGroup.visible ? boomGroup.position : babyGroup.position, camera.up);
+      lookQ.setFromRotationMatrix(lookM);
+      camera.quaternion.slerp(lookQ, 0.06);
+    }
     if(e >= 11.3) finishPickup();
   } else if(carrying){
     // LUL-38: carrying phase — child rides at the player's feet, glowing
     babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = 0.20 + Math.sin(t*1.8)*0.04;
-    babyLight.intensity = 1.2 + Math.sin(t*1.8)*0.2;
+    halo.material.opacity = (0.20 + Math.sin(t*1.8)*0.04) * DIFFICULTY_PRESETS[difficulty].glowMul;
+    babyLight.intensity = (1.2 + Math.sin(t*1.8)*0.2) * DIFFICULTY_PRESETS[difficulty].glowMul;
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
     const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
@@ -2526,8 +2640,8 @@ function tick(){
     // the death "cutscene" is a real video overlay (see #deathVideo); just reveal the loss text at the end
     if((clock.elapsedTime - deathStart) >= CUT_END && !deathShown) revealLoss();
   } else {
-    if(spd > 0 && !reduce) bobPhase += dt * 9;
-    const bob = spd > 0 && !reduce ? Math.sin(bobPhase) * 0.06 : 0;
+    if(spd > 0 && !motionReduced()) bobPhase += dt * 9;
+    const bob = spd > 0 && !motionReduced() ? Math.sin(bobPhase) * 0.06 : 0;
     camera.position.set(player.x, eyeH + bob + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
   }
@@ -2547,6 +2661,7 @@ function tick(){
   let exposedNow = false, coveredNow = false;
   if(playing){
     for(const p of predators){
+      if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
       const dpd = Math.hypot(player.x - p.x, player.z - p.z);
       if(dpd < nearDist){ nearDist = dpd; nearP = p; }
       if(p.state==='chase' || p.hunt || (p.state==='investigate' && p.inv!=='back')) approaching = true;
@@ -2615,8 +2730,8 @@ function tick(){
   if(!baby.taken){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = 0.11 + Math.sin(t*1.8) * 0.05;
-    babyLight.intensity = 1.0 + Math.sin(t*1.8) * 0.25;
+    halo.material.opacity = (0.11 + Math.sin(t*1.8) * 0.05) * DIFFICULTY_PRESETS[difficulty].glowMul;
+    babyLight.intensity = (1.0 + Math.sin(t*1.8) * 0.25) * DIFFICULTY_PRESETS[difficulty].glowMul;
     const bp = bwisps.geometry.attributes.position.array;
     for(let i=0;i<BW;i++){ bp[i*3+1] += dt*0.4; if(bp[i*3+1] > 3.4) bp[i*3+1] = 0.2; }
     bwisps.geometry.attributes.position.needsUpdate = true;
@@ -2625,7 +2740,7 @@ function tick(){
   // scary music plays ONLY while an animal actually sees you (chasing or bee-lining).
   // lose sight → it starts sniffing/searching and the music falls back to the calm bed;
   // it finds you again (investigate → chase) and the music returns.
-  const hunting = playing && predators.some(p => p.state === 'chase' || p.hunt);
+  const hunting = playing && predators.some(p => !p.inert && (p.state === 'chase' || p.hunt));
   huntTime = hunting ? huntTime + dt : Math.max(0, huntTime - dt*0.5);
   if(audio && soundOn){
     const esc = clamp(huntTime/25 + (nearDist < 1e8 ? clamp(1 - nearDist/40, 0, 1)*0.5 : 0), 0, 1);
@@ -2665,7 +2780,7 @@ function tick(){
   lwGeo.attributes.position.needsUpdate = true;
 
   // ambient dust follows you, drifting downwind (LUL-195, see setup above)
-  const amp = reduce ? 0.3 : 1, dp = dustGeo.attributes.position.array;
+  const amp = motionReduced() ? 0.3 : 1, dp = dustGeo.attributes.position.array;
   const wdx = windX * dt * DUST_WIND_SPEED * amp, wdz = windZ * dt * DUST_WIND_SPEED * amp;
   for(let i=0;i<DUST;i++){
     dp[i*3]   += Math.sin(t*0.4 + i) * dt * 0.12 * amp + wdx;
@@ -2761,7 +2876,8 @@ tick();
   }
 
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
-           setTouchMove, setTouchLook, setTouchSprint, triggerTouchHide, triggerTouchInteract };
+           setTouchMove, setTouchLook, setTouchSprint, triggerTouchHide, triggerTouchInteract,
+           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions };
 }
 
 function dispose() {
