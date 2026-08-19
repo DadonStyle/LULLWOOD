@@ -33,7 +33,7 @@ import {
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
 } from '@/lib/game/scent';
-import { coverKindBlocksPlayerMovement, distanceToCoverEdge, overlapsTreeTrunk } from '@/lib/game/cover';
+import { coverKindBlocksPlayerMovement, distanceToCoverEdge, overlapsTreeCanopy, overlapsTreeTrunk } from '@/lib/game/cover';
 import {
   isInBog,
   bogSpeedMultiplier,
@@ -478,6 +478,14 @@ function buildCoverGrid(){
 // (lib/game/cover.ts), rather than a second parallel implementation of the
 // same circle-overlap math.
 //
+// LUL-384/LUL-491: walkable kinds (currently just 'log') get an extra check
+// against the wider canopy radius (overlapsTreeCanopy(), lib/game/cover.ts).
+// Trunk-only clearance is fine for solid props, but a log invites the player
+// to walk its full span, and canopyBlockedR() blocks unconditionally within
+// a tree's canopy circle regardless of what's on the ground -- without this,
+// a log could spawn clear of every trunk yet still clip a canopy circle
+// somewhere along its length and wedge the player mid-crossing.
+//
 // Deliberate consequence, not a bug: the new rejection branch below skips a
 // candidate's `ry` rng() draw when it fires (same short-circuit shape the
 // existing inLake()/inSpawn()/inBaby() check above already has). Tree/baby/
@@ -510,6 +518,7 @@ function generateCover(){
     else if(roll < 0.75){ kind='rock'; const r = 0.9+rng()*0.9; hx=r; hz=r*(0.7+rng()*0.5); y=r*0.55; }
     else { kind='bramble'; const r = 0.8+rng()*0.7; hx=r; hz=r; y=r*0.6; }
     if(overlapsTreeTrunk(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
+    if(!coverKindBlocksPlayerMovement(kind) && overlapsTreeCanopy(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
     placed++;
   }

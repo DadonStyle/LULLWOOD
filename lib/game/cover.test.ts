@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { coverKindBlocksPlayerMovement, distanceToCoverEdge, overlapsTreeTrunk } from './cover.ts';
+import {
+  coverKindBlocksPlayerMovement,
+  distanceToCoverEdge,
+  overlapsTreeCanopy,
+  overlapsTreeTrunk,
+} from './cover.ts';
 
 // ---- distanceToCoverEdge (LUL-405/LUL-430) ---------------------------------
 
@@ -122,6 +127,48 @@ test('overlapsTreeTrunk finds a match anywhere in a multi-tree list, not just th
     { x: 0.5, z: 0, cr: 0.3 },
   ];
   assert.equal(overlapsTreeTrunk(0, 0, 0.8, trees), true);
+});
+
+// ---- overlapsTreeCanopy (LUL-384/LUL-491) ----------------------------------
+
+test('overlapsTreeCanopy is false with no trees nearby', () => {
+  assert.equal(overlapsTreeCanopy(0, 0, 1.5, []), false);
+});
+
+test('overlapsTreeCanopy is false when every canopy is well clear', () => {
+  const trees = [{ x: 20, z: 20, crCanopy: 1.5 }, { x: -30, z: 5, crCanopy: 2.0 }];
+  assert.equal(overlapsTreeCanopy(0, 0, 1.5, trees), false);
+});
+
+test('overlapsTreeCanopy is true when a candidate\'s own footprint circle overlaps a canopy circle', () => {
+  const trees = [{ x: 1.9, z: 0, crCanopy: 0.5 }];
+  // propRadius 1.5 + canopy 0.5 = 2.0 combined radius; centers are 1.9 apart -> inside.
+  assert.equal(overlapsTreeCanopy(0, 0, 1.5, trees), true);
+});
+
+test('overlapsTreeCanopy catches a canopy-only overlap that overlapsTreeTrunk would miss', () => {
+  // This is the exact LUL-491 finding: a log's footprint can clear a tree's
+  // trunk radius (t.cr) but still fall inside its much wider canopy radius
+  // (t.crCanopy, ~3.3x the trunk per LUL-267) -- canopyBlockedR() blocks the
+  // player there regardless of what cover prop, if any, sits on the ground.
+  const tree = { x: 3, z: 0, cr: 0.5, crCanopy: 1.8 };
+  const propRadius = 1.5;
+  assert.equal(overlapsTreeTrunk(0, 0, propRadius, [tree]), false, 'sanity: trunk-only check misses this');
+  assert.equal(overlapsTreeCanopy(0, 0, propRadius, [tree]), true, 'canopy check must catch it');
+});
+
+test('overlapsTreeCanopy is false exactly at the combined-radius boundary (strict less-than)', () => {
+  const exact = [{ x: 2.0, z: 0, crCanopy: 0.5 }];
+  assert.equal(overlapsTreeCanopy(0, 0, 1.5, exact), false);
+});
+
+test('overlapsTreeCanopy finds a match anywhere in a multi-tree list, not just the first entry', () => {
+  const trees = [
+    { x: 50, z: 50, crCanopy: 0.4 },
+    { x: -50, z: -50, crCanopy: 0.4 },
+    { x: 0.5, z: 0, crCanopy: 0.3 },
+  ];
+  assert.equal(overlapsTreeCanopy(0, 0, 0.8, trees), true);
 });
 
 // ---- coverKindBlocksPlayerMovement (LUL-384) -------------------------------

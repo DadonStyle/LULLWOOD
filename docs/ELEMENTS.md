@@ -368,7 +368,15 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 - Movement-blocking exemption now shared with the player too (LUL-384) —
   Log is the only cover kind that blocks neither actor's movement. Rock and
   Bramble are unchanged, still solid to the player.
-- Not guaranteed clear of tree trunks at placement (see matrix).
+- Guaranteed clear of tree **trunks** at placement, same as every cover kind
+  (see matrix) — and, unlike Rock/Bramble, also guaranteed clear of tree
+  **canopies** (`overlapsTreeCanopy()`, `lib/game/cover.ts`, LUL-491): since
+  a log invites the player to walk its full span and `canopyBlockedR()`
+  blocks unconditionally within a tree's canopy radius regardless of what
+  cover prop sits there, `generateCover()` rejects a log candidate whose
+  footprint overlaps a nearby canopy circle even when it clears the trunk
+  circle. Rock/Bramble don't get this extra check — solid either way, so a
+  canopy-only overlap there changes nothing observable.
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
@@ -699,7 +707,16 @@ tree's trunk collision circle (`treesNear()` + `overlapsTreeTrunk()` in
 `lib/game/cover.ts`) before placing it, same as the `inLake()`/`inSpawn()`/
 `inBaby()` rejections already there. Previously unchecked — a prop could
 spawn overlapping a tree trunk, a possible unreachable/broken hide spot if
-it hit a `bramble`/`log`.
+it hit a `bramble`/`log`. **Log additionally checks canopy clearance
+(LUL-384/LUL-491):** `overlapsTreeCanopy()` (`lib/game/cover.ts`) rejects a
+log candidate whose footprint overlaps a nearby tree's wider *canopy*
+circle (`t.crCanopy`), even when the trunk circle is clear — needed because
+Log is walkable (`coverKindBlocksPlayerMovement('log') === false`) and
+`canopyBlockedR()` blocks the player unconditionally within the canopy
+radius regardless of what's on the ground; without this a log could spawn
+clear of every trunk yet still wedge the player mid-crossing at a canopy
+edge. Rock/Bramble stay trunk-only — solid either way, so a canopy-only
+overlap changes nothing observable for them.
 ¹⁵ Trees and cover props both reject `inLake()` spawn candidates
 (`generateMap()` L446, `generateCover()` L413) — defined, not undefined.
 ¹⁶ Both protected from home only indirectly, via the shared `inSpawn()`
