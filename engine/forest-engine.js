@@ -552,9 +552,9 @@ function generateReeds(){
 // landed), set only via qaSetDifficulty(). Normal never calls
 // pickHardBabyPosition, so its rng stream is byte-identical to before this
 // ticket; hard draws its extra point after every other generateMap() draw.
-let difficulty = 'normal';
+let babySpawnDifficulty = 'normal';
 function applyHardBabySpawn(){
-  if(difficulty !== 'hard') return;
+  if(babySpawnDifficulty !== 'hard') return;
   const pos = pickHardBabyPosition(rng, { half, zMax }, half, LANDMARKS);
   baby.x = pos.x; baby.z = pos.z;
   babyGroup.position.set(baby.x, 0, baby.z);
@@ -1988,7 +1988,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // -- the current map doesn't retroactively move the child). No UI wires
   // this yet (LUL-26 hasn't landed); it exists so hard mode's "child spawns
   // beyond the bog" is actually testable before that UI exists.
-  window.ForestEngine.qaSetDifficulty = function(mode){ difficulty = mode === 'hard' ? 'hard' : 'normal'; };
+  window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
   window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
 
   // LUL-211: the cover-collision fix (coverBlockedR, folded into blocked())
