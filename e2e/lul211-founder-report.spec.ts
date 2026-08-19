@@ -22,6 +22,15 @@
 //     engine closure could read the player's position, so this was unprovable
 //     until the qaProbePlayer / qaStageWalkIntoCover hooks (added with this
 //     spec, ?qaHooks=1 only).
+//
+//     LUL-384 deliberately narrows this for `log` specifically: a fallen log
+//     is no longer solid to the *player's* movement (coverKindBlocksPlayerMovement(),
+//     lib/game/cover.ts) so walking/running over one feels natural, while LOS,
+//     hide-spot eligibility and predator catch are all untouched -- a log is
+//     still not a safe zone. That is an intentional, scoped exception, not a
+//     regression of this bug: rock and bramble are still fully solid to the
+//     player, and log is still solid to everything else. See the second
+//     describe block below.
 import { test, expect } from '@playwright/test';
 import { boot, enter, readObjective } from './helpers';
 
@@ -118,7 +127,10 @@ test.describe('LUL-211: winning shows YOU WON and stays there', () => {
 });
 
 test.describe('LUL-211: cover props are solid', () => {
-  for (const kind of ['rock', 'log', 'bramble'] as const) {
+  // 'log' deliberately excluded here as of LUL-384 -- see the file header and
+  // the 'LUL-384: log is walkable' describe block below, which pins the new,
+  // intended behaviour instead of the old one.
+  for (const kind of ['rock', 'bramble'] as const) {
     test(`walking straight into a ${kind} does not pass through it`, async ({ page }) => {
       test.setTimeout(45_000);
       await boot(page, { qaHooks: true });
@@ -158,4 +170,48 @@ test.describe('LUL-211: cover props are solid', () => {
       ).toBeLessThan(faceX + 0.35);
     });
   }
+});
+
+test.describe('LUL-384: log is walkable', () => {
+  test('walking straight into a log passes over it instead of stopping at its face', async ({
+    page,
+  }) => {
+    test.setTimeout(45_000);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    // Same staging hook as the solid-props test above -- it computes the
+    // standoff a *blocking* prop of this footprint would need, which still
+    // works fine as a starting point for log: it just means the walk below
+    // starts at (and then crosses) where a wall would have been.
+    const staged = await page.evaluate(() => window.ForestEngine?.qaStageWalkIntoCover?.('log'));
+    expect(staged, 'no reachable log to stage against').not.toBeNull();
+    const { prop, start } = staged!;
+    expect(start.x, 'staged start is already inside the prop').toBeLessThan(prop.x - prop.hx);
+
+    // Walking speed is 6 units/s (engine/forest-engine.js CONFIG.walk); 3s
+    // covers 18 units, comfortably more than twice the widest possible log
+    // footprint (hx/hz max ~2.4), so "cleared the far edge" is a real bar,
+    // not a coin flip on generated log size.
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(3_000);
+    await page.keyboard.up('KeyW');
+    await page.waitForTimeout(200);
+
+    const end = (await page.evaluate(() => window.ForestEngine?.qaProbePlayer?.()))!;
+
+    // Mirror of the solid-prop face-boundary math: the near face is at
+    // prop.x + faceDx (faceDx <= 0), so the far face is the same offset
+    // reflected through the centre.
+    const ry = prop.ry ?? 0;
+    const absCos = Math.max(Math.abs(Math.cos(ry)), 1e-6);
+    const absSin = Math.max(Math.abs(Math.sin(ry)), 1e-6);
+    const faceDx = Math.max(-(prop.hx + 0.6) / absCos, -(prop.hz + 0.6) / absSin);
+    const farFaceX = prop.x - faceDx;
+
+    expect(
+      end.x,
+      `player stopped at x=${end.x.toFixed(2)} without clearing the log (near face x=${(prop.x + faceDx).toFixed(2)}, far face x=${farFaceX.toFixed(2)}) -- LUL-384 requires walking straight over it`,
+    ).toBeGreaterThan(farFaceX);
+  });
 });
