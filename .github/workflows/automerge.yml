@@ -41,6 +41,26 @@ jobs:
         run: |
           set -euo pipefail
 
+          # This job runs as `workflow_run`, checked out at `main` (see the step
+          # above) -- its own check-run therefore attaches to `main`'s sha, never
+          # to the PR branch's head. Nothing this job logs with `::warning::` or
+          # `::notice::` is visible anywhere on the PR itself; a human would have
+          # to know to go find this specific workflow in the Actions tab (LUL-536).
+          # From the point past which we've committed to trying to merge (valid
+          # marker on this exact head, CI green) any further decline needs to say
+          # so somewhere the PR's own page shows -- a comment. Posted once per PR
+          # per marker so re-runs on later pushes don't spam it, same pattern as
+          # auto-pr.yml's SHIP_DENIED/SHIP_MALFORMED.
+          comment_once() {
+            local marker="$1" body_file="$2"
+            if gh pr view "$number" --json comments --jq '.comments[].body' \
+                 | grep -qF "$marker"; then
+              echo "::notice::already explained ($marker) on #$number; not commenting again."
+              return 0
+            fi
+            gh pr comment "$number" --body-file "$body_file" || true
+          }
+
           number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
           if [ -z "$number" ]; then
             echo "::notice::no open PR for $BRANCH; nothing to merge."
@@ -80,19 +100,43 @@ jobs:
           fi
 
           # `[ship]` skips the Code Reviewer, so it only covers diffs where a
-          # green CI run is genuinely the whole quality bar. auto-pr.yml applies
-          # the same gate and explains it on the PR; this is the fallback path,
-          # so it enforces silently rather than commenting twice.
-          # Fail closed if the gate is missing rather than merging ungated.
+          # green CI run is genuinely the whole quality bar.
+          # Fail closed if the gate is missing rather than merging ungated. This
+          # should not happen in normal operation -- if it does, silence would
+          # look identical to "nothing to do here," so say it on the PR too.
           if [ ! -x ./.github/scripts/ship-allowed.sh ]; then
             echo "::warning::no ship-allowed.sh on main; refusing to auto-merge #$number."
+            printf '%s\n' \
+              '<!-- SHIP_NO_ALLOWLIST -->' \
+              '`[ship]` is on this branch and CI is green, but `main` has no' \
+              '`.github/scripts/ship-allowed.sh` to check it against, so this refuses' \
+              'to self-merge rather than shipping ungated. This should not happen in' \
+              'normal operation -- if you are seeing this, the allowlist script itself' \
+              'is missing from `main`.' > /tmp/ship-no-allowlist.md
+            comment_once 'SHIP_NO_ALLOWLIST' /tmp/ship-no-allowlist.md
             exit 0
           fi
 
+          # auto-pr.yml applies the same gate at push time and comments
+          # SHIP_DENIED there if it fails; this re-checks at merge time because
+          # `gh pr view --json files` reflects the PR's *current* base, which can
+          # differ from what auto-pr.yml saw at push. comment_once skips posting
+          # a duplicate when auto-pr.yml already explained it.
           if ! blocked="$(gh pr view "$number" --json files --jq '.files[].path' \
                           | ./.github/scripts/ship-allowed.sh)"; then
             echo "::warning::#$number carries [ship] but changes files that need the Code Reviewer:"
             printf '  %s\n' "$blocked"
+            printf '%s\n' \
+              '<!-- SHIP_DENIED -->' \
+              '`[ship]` was found on a commit in this branch, but the branch changes files' \
+              'outside the docs/CI/tests allowlist, so it will **not** self-merge:' \
+              '' \
+              "$(printf '%s\n' "$blocked" | sed 's/^/- `/; s/$/`/')" \
+              '' \
+              'This is not a failure — the PR is open and CI is running. It needs a' \
+              '`REVIEW: APPROVED` from the Code Reviewer, then someone merges it.' \
+              'Policy: LUL-73. Allowlist: `.github/scripts/ship-allowed.sh`.' > /tmp/ship-denied.md
+            comment_once 'SHIP_DENIED' /tmp/ship-denied.md
             exit 0
           fi
 
@@ -102,5 +146,22 @@ jobs:
             # Expected when the branch is behind main: the ruleset requires
             # strict up-to-date branches, so the agent must rebase and re-push.
             echo "::warning::merge of #$number was refused — most likely the branch is behind main and needs a rebase."
+            printf '%s\n' \
+              '<!-- SHIP_MERGE_FAILED -->' \
+              '`[ship]` is valid, CI was green, and the allowlist passed, but the merge' \
+              'API call itself was refused. The most likely cause is `main` moving under' \
+              'this branch between CI finishing and this step running -- the ruleset' \
+              'requires an up-to-date branch (`strict`).' \
+              '' \
+              'Backmerge and re-push to give this another shot:' \
+              '' \
+              '```bash' \
+              'git fetch --no-tags origin main && git merge FETCH_HEAD' \
+              "git push origin HEAD:refs/heads/$BRANCH" \
+              '```' \
+              '' \
+              'Posted once per PR -- if this keeps happening on later pushes, treat this' \
+              'comment as stale and check the "Auto merge" workflow run log directly.' > /tmp/ship-merge-failed.md
+            comment_once 'SHIP_MERGE_FAILED' /tmp/ship-merge-failed.md
             exit 1
           fi
