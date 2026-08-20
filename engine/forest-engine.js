@@ -14,6 +14,16 @@ import * as THREE from 'three';
 import { track } from '@/lib/analytics';
 import { jumpOffset, JUMP_DURATION } from '@/lib/game/jump';
 import {
+  freshRunState,
+  isPlaying,
+  canPickUp,
+  beginPickup,
+  completePickup,
+  canArriveHome,
+  arriveHome as outcomeArriveHome,
+  triggerDeath as outcomeTriggerDeath,
+} from '@/lib/game/outcome';
+import {
   shouldTriggerCharge,
   startCharge,
   stepCharge,
@@ -40,6 +50,7 @@ import {
   overlapsTreeTrunk,
   canopyRadiusAtEye,
   rollCoverPropShape,
+  pickAvoidDirection,
   HIDE_KINDS,
   CELL,
   gridKey as key,
@@ -48,6 +59,8 @@ import {
   hasLOS as geoHasLOS,
   findHideSpot as geoFindHideSpot,
 } from '@/lib/game/cover';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN } from '@/lib/game/noise';
+import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import {
   isInBog,
   bogSpeedMultiplier,
@@ -979,15 +992,11 @@ function placePredators(){
   activeCharges = 0; pushState({ chargeVisible: false });
 }
 // steer a desired direction around trees the predator would otherwise walk into
-function avoidDir(p, dx, dz){
-  const look = p.rad + 2.4;
-  if(!blockedR(p.x + dx*look, p.z + dz*look, p.rad)) return [dx, dz];
-  for(const ang of [0.5,-0.5,1.0,-1.0,1.6,-1.6,2.2,-2.2]){
-    const c=Math.cos(ang), s=Math.sin(ang), rx=dx*c-dz*s, rz=dx*s+dz*c;
-    if(!blockedR(p.x + rx*look, p.z + rz*look, p.rad)) return [rx, rz];
-  }
-  return [dx, dz];
-}
+// LUL-593: the angle-fallback scan itself now lives in lib/game/cover.ts
+// (pickAvoidDirection, unit tested there) -- this stays a thin wrapper that
+// injects the engine's own tree/landmark `grid` closure state, same pattern
+// as blockedR/blocked/hasLOS/findHideSpot above.
+function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz, grid); }
 // ---- Scent trail + wind (LUL-23) ------------------------------------------
 // The player leaves scent while moving (see the deposit call in tick()'s
 // movement block -- nothing is deposited while `hidden` or standing still, so
@@ -1062,14 +1071,9 @@ function scentOnto(p){
 // already runs, just without a persisted point array. Nothing here touches
 // the 8-unit tree hash (`grid`/`coverGrid`); there is nothing for it to help
 // with when the query is "distance from the player," not "what's nearby."
-const NOISE_RADIUS_WALK   = 14;   // footstep audibility (units) at walking pace
-const NOISE_RADIUS_RUN    = 24;   // Shift is louder -- same louder-but-riskier trade SCENT_RADIUS_RUN charges
-const HEAR_CHANCE_PER_SEC = 0.5;  // dt-scaled roll: being in radius is a chance to notice, not an instant catch
-
-function checkNoise(p, dist, noiseRadius, dt){
-  if(noiseRadius <= 0 || dist >= noiseRadius) return false;
-  return Math.random() < HEAR_CHANCE_PER_SEC * dt;
-}
+// LUL-593: NOISE_RADIUS_WALK/RUN and the hear-roll predicate now live in
+// lib/game/noise.ts, unit tested there -- imported at the top of this file.
+function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRadius, dt); }
 // Commit to the investigate loop toward wherever the player currently is --
 // same target the loop already uses when a chase loses sight (LUL-22: `desx,
 // desz` there are recomputed from live player position every tick, not a
@@ -1141,12 +1145,11 @@ function canSee(p, dist){
 // flanker's own current distance from the player, and hold an investigate/sniff
 // there instead of beelining the player -- the pack reads as a closing shape,
 // not three animals converging on one spot.
-const FLANK_ANGLE      = Math.PI / 3;  // 60 degrees either side of the escape heading
-const FLANK_DIST_MUL   = 1.4;
-const FLANK_RECOMPUTE  = 0.5;          // budget cap: one path recompute per wolf per 0.5s
-const FLANK_ARRIVE_R   = 4;
-const FLANK_SPEED_MUL  = 0.7;          // purposeful trot: faster than roam, short of a chase sprint
-
+// LUL-593: leader selection (nearest chaser to the player) and the flank
+// -point rotation+clamp math now live in lib/game/pack.ts, unit tested
+// there -- imported at the top of this file. FLANK_RECOMPUTE/FLANK_ARRIVE_R/
+// FLANK_SPEED_MUL also come from there; FLANK_ANGLE/FLANK_DIST_MUL are used
+// only inside flankTarget() now, so they don't need an engine-local copy.
 function updateWolfPack(dt){
   const wolves = predators.filter(p => p.kind === 'wolf' && !p.inert);   // LUL-26: parked wolves don't flank
   for(const p of wolves) if(p.packTimer > 0) p.packTimer -= dt;
@@ -1159,19 +1162,15 @@ function updateWolfPack(dt){
     return;
   }
   // orient the pincer on whichever chaser is actually closest to the player
-  let leader = chasers[0], leaderDist = Math.hypot(player.x-leader.x, player.z-leader.z);
-  for(const c of chasers){ const d = Math.hypot(player.x-c.x, player.z-c.z); if(d < leaderDist){ leader = c; leaderDist = d; } }
+  const leader = chasers[selectPackLeaderIndex(chasers, player.x, player.z)];
 
   let side = -1;   // alternate the two flankers to opposite sides of the escape heading
   for(const p of wolves){
     if(p === leader || chasers.includes(p)) continue;   // already hunting on its own -- not a flanker
     if(p.packTimer > 0) continue;                        // recompute cap
-    const ang = FLANK_ANGLE * side; side *= -1;
-    const ca = Math.cos(ang), sa = Math.sin(ang);
-    const ex = escX*ca - escZ*sa, ez = escX*sa + escZ*ca;   // rotate the escape heading by +-60deg
-    const dist = Math.hypot(player.x-p.x, player.z-p.z) * FLANK_DIST_MUL;
-    p.flankX = clamp(player.x + ex*dist, -half+4, half-4);
-    p.flankZ = clamp(player.z + ez*dist, -half+4, zMax-4);
+    const [fx, fz] = flankTarget(player.x, player.z, escX, escZ, side, p.x, p.z, { half, zMax });
+    side *= -1;
+    p.flankX = fx; p.flankZ = fz;
     p.state = 'flank'; p.inv = ''; p.packTimer = FLANK_RECOMPUTE;
   }
 }
@@ -1469,6 +1468,13 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false;   // LUL-213: see beginJump() / tick()'s jumpY
+// LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
+// engine's own mutable locals (lib/game/outcome.ts is pure and holds no
+// state of its own) -- this snapshots them into the RunState shape the
+// module's pure functions read, on demand, right before each call.
+function runState(){
+  return { entered, won, dead, pickingUp, carrying, babyTaken: baby.taken };
+}
 // LUL-153: `game_start` fires once per page-load (first real pointer-lock
 // acquisition), not once per restart -- it feeds the page_view -> ... -> win
 // funnel, which measures "did this visitor ever reach gameplay," not run count.
@@ -1506,7 +1512,7 @@ function motionReduced(){ return reduce || reducedMotionSetting; }
 
 on(window, 'keydown', e => {
   keys[e.code] = true;
-  const playing = entered && !won && !dead && !pickingUp;
+  const playing = isPlaying(runState());
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
   // LUL-26: toggle-run edge-triggers off keydown (not keyup) so the very
   // press that would have started a hold-run also starts a toggle-run --
@@ -1556,7 +1562,7 @@ if(mode === 'desktop'){
       // lock; this is the browser actually granting it.
       if(entered && !gameStartFired){ gameStartFired = true; track({ event: 'game_start', seed: currentSeed }); }
     }
-    else if(entered && !won && !dead && !pickingUp) setPaused(true);     // Esc / released lock -> menu
+    else if(isPlaying(runState())) setPaused(true);     // Esc / released lock -> menu
   });
   on(document, 'pointerlockerror', () => { locked = false; });
   on(el, 'mousedown', () => {
@@ -2500,8 +2506,10 @@ const deathVideo = document.getElementById('deathVideo');
 const CUT_END = 3.7;   // death video length; reveal the loss text at the end
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
-  if(baby.taken || won || dead || pickingUp) return;
-  baby.taken = true; pickingUp = true; pickStart = clock.elapsedTime; hidden = false;
+  const next = beginPickup(runState());
+  if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
+  baby.taken = next.babyTaken; pickingUp = next.pickingUp;
+  pickStart = clock.elapsedTime; hidden = false;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found; carrying starts now
   pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
@@ -2516,7 +2524,8 @@ function finishPickup(){
   // along small and glowing until you arrive; see arriveHome(). Reset the
   // glow properties the cinematic left mid-transition (the "boomed" branch
   // above forces babyLight to 0 every frame while pickingUp).
-  pickingUp = false; carrying = true;
+  const next = completePickup(runState());
+  pickingUp = next.pickingUp; carrying = next.carrying;
   armsGroup.visible = false;
   document.body.style.cursor = '';
   babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
@@ -2524,7 +2533,8 @@ function finishPickup(){
   halo.material.opacity = 0.22; babyLight.intensity = 1.3;
 }
 function arriveHome(){
-  won = true; carrying = false;
+  const next = outcomeArriveHome(runState());
+  won = next.won; carrying = next.carrying;
   babyGroup.visible = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
@@ -2539,8 +2549,9 @@ function arriveHome(){
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
 }
 function triggerDeath(kind){
-  if(dead || won || pickingUp) return;
-  dead = true; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
+  const next = outcomeTriggerDeath(runState());
+  if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
+  dead = next.dead; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
@@ -2560,7 +2571,9 @@ function revealLoss(){ deathShown = true; document.body.style.cursor = ''; pushS
 function restart(){
   pushState({ winVisible: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
-  won = dead = pickingUp = carrying = hidden = false; hideTime = 0; hideKind = null; eyeH = CONFIG.eye; deathShown = false;
+  const fresh = freshRunState();
+  won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; baby.taken = fresh.babyTaken;
+  hidden = false; hideTime = 0; hideKind = null; eyeH = CONFIG.eye; deathShown = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
@@ -2757,7 +2770,7 @@ function tick(){
   if(jumping){ jumpElapsed += dt; if(jumpElapsed >= JUMP_DURATION){ jumping = false; jumpElapsed = 0; } }
   const jumpY = jumping ? jumpOffset(jumpElapsed) : 0;
 
-  const playing = entered && !paused && !won && !dead && !pickingUp;
+  const playing = isPlaying(runState()) && !paused;
 
   // LUL-40/LUL-382: hold KeyF for the mist veil. Read every frame like `running`
   // below rather than from the keydown/keyup handlers, so releasing F while e.g.
@@ -2859,7 +2872,10 @@ function tick(){
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
     const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
-    if(dh < CONFIG.home.r) arriveHome();
+    // LUL-596: canArriveHome() also requires !dead && !won -- this call site
+    // used to be the only thing keeping a dead player from winning (positional
+    // safety, not a precondition). Do not drop this guard.
+    if(canArriveHome(runState(), dh, CONFIG.home.r)) arriveHome();
   } else if(dead){
     // the death "cutscene" is a real video overlay (see #deathVideo); just reveal the loss text at the end
     if((clock.elapsedTime - deathStart) >= CUT_END && !deathShown) revealLoss();
@@ -2930,7 +2946,7 @@ function tick(){
 
   // objective + status HUD
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
-  canPickup = !baby.taken && distBaby < 3.6;
+  canPickup = canPickUp(runState(), distBaby, 3.6);
   const distHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);   // LUL-38
   if(playing){
     let statusVisible = false, statusText = '';
@@ -3091,11 +3107,11 @@ tick();
   function setTouchLook(x, y) { if(mode !== 'mobile') return; touchLook.x = x; touchLook.y = y; }
   function setTouchSprint(v)  { if(mode !== 'mobile') return; touchSprint = v; }
   function triggerTouchHide() {
-    const playing = entered && !won && !dead && !pickingUp;
+    const playing = isPlaying(runState());
     if(playing && !paused) toggleHidden();
   }
   function triggerTouchInteract() {
-    const playing = entered && !won && !dead && !pickingUp;
+    const playing = isPlaying(runState());
     if(canPickup && playing && !paused) pickup();
   }
 
