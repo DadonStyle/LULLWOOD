@@ -37,7 +37,7 @@ export interface Landmark extends Point {
   clear: number; // radius to keep clear of, in world units
 }
 
-function clearOfLandmarks(x: number, z: number, landmarks: readonly Landmark[], pad: number): boolean {
+export function clearOfLandmarks(x: number, z: number, landmarks: readonly Landmark[], pad: number): boolean {
   return landmarks.every((l) => Math.hypot(x - l.x, z - l.z) >= l.clear + pad);
 }
 

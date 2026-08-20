@@ -28,6 +28,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  deployments: read
 
 concurrency:
   group: auto-pr-${{ github.ref }}
@@ -41,6 +42,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # LUL-498: fail closed at 90 deployments in the trailing 24h, holding
+      # new PR opens (and refreshes) until the window rolls. This step's
+      # exit code gates everything below it -- a fail-closed result here
+      # stops the job before `gh pr create`/`gh pr merge` ever runs. See
+      # .github/scripts/deployment-budget.sh and systems/vercel-cd in the
+      # shared wiki for why GITHUB_TOKEN is enough (no VERCEL_API_TOKEN).
+      - name: check deployment budget before opening or refreshing a PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/deployment-budget.sh
 
       - name: open or refresh the PR
         env:
@@ -96,12 +109,12 @@ jobs:
             gh() { echo "HTTP 503: LUL-327 test stub -- simulated GitHub outage (not a real failure)" >&2; return 1; }
           fi
 
-          # checkout@v4 only fetches the pushed ref, so main has to be asked for.
-          git fetch --no-tags origin main
+          # checkout@v4 only fetches the pushed ref, so release/next has to be asked for.
+          git fetch --no-tags origin release/next
 
-          # Nothing to propose if the branch has no commits main lacks.
+          # Nothing to propose if the branch has no commits release/next lacks.
           if [ "$(git rev-list --count FETCH_HEAD..HEAD)" = "0" ]; then
-            echo "::notice::$BRANCH is not ahead of main; no PR to open."
+            echo "::notice::$BRANCH is not ahead of release/next; no PR to open."
             exit 0
           fi
 
@@ -130,7 +143,7 @@ jobs:
               '(see `.github/scripts/ship-allowed.sh`).' > /tmp/pr-body.md
 
             gh_retry gh pr create \
-              --base main \
+              --base release/next \
               --head "$BRANCH" \
               --title "$(git log -1 --pretty=%s)" \
               --body-file /tmp/pr-body.md

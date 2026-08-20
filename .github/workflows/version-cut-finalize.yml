@@ -1,0 +1,97 @@
+name: Version cut finalize
+
+# The second half of LUL-497. Fires once the cut PR opened by version-cut.yml
+# actually merges (a merge commit into `main`, per LUL-492 §3.4 -- never
+# squash, so individual PR history survives). Two things happen:
+#
+#   1. tag the merge commit `vYYYY.MM.DD-N`, parsed from the PR title
+#      version-cut.yml set, so tag and PR title stay in lockstep by
+#      construction.
+#   2. get everything `main` just gained back onto `release/next`.
+#
+# "Recreate release/next from main" (LUL-492 §3.5) is NOT implemented as a
+# reset or force-push. release/next carries the same `pull_request` and
+# `non_fast_forward` rules as main (systems/release-train) -- direct pushes
+# are rejected regardless of force, same as main -- and the studio-wide
+# force-push ban (LUL-105, decisions/0010-no-force-push) applies to every
+# branch with no carve-out for one this workflow manages. It's also the
+# wrong behaviour even where it'd be technically possible: release/next keeps
+# taking feature PRs the entire time the cut PR is out for review (strict is
+# off there precisely so it can), so by the time this fires release/next may
+# already be ahead of what went into the cut. A reset would silently drop
+# that work. Instead this opens an ordinary PR (head=main, base=release/next)
+# through the same gate every other release/next change goes through.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  finalize:
+    name: tag and sync release/next
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'release/next' &&
+      github.repository == 'DadonStyle/LULLWOOD'
+    runs-on: ubuntu-latest
+    steps:
+      - name: tag the version
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TITLE: ${{ github.event.pull_request.title }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+
+          # Title is "Release vYYYY.MM.DD-N" (version-cut.yml's own format).
+          # Fall back to today's date + the merge commit's short sha if a
+          # human retitled the PR -- never skip tagging over a cosmetic
+          # mismatch, and never guess an N that could collide.
+          tag="$(printf '%s' "$TITLE" | sed -n 's/^Release \(v[0-9.]*-[0-9]*\)$/\1/p')"
+          if [ -z "$tag" ]; then
+            tag="v$(date -u +%Y.%m.%d)-$(printf '%s' "$SHA" | cut -c1-7)"
+            echo "::warning::cut PR title '$TITLE' didn't match the expected 'Release vYYYY.MM.DD-N' shape; tagging '$tag' instead."
+          fi
+
+          gh api "repos/$REPO/git/refs" -f "ref=refs/tags/$tag" -f "sha=$SHA"
+          echo "::notice::tagged $SHA as $tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: open the release/next sync-back PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          number="$(gh pr list --repo "$REPO" --state open --base release/next --head main --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            echo "::notice::sync-back PR #$number already open; not opening a duplicate."
+            exit 0
+          fi
+
+          printf '%s\n' \
+            "Mechanical sync after the $TAG version cut (LUL-497): brings" \
+            'whatever `main` just gained back onto `release/next`, so it never' \
+            'drifts (LUL-492 §3.5).' \
+            '' \
+            'Everything in this diff already went through the version-cut review --' \
+            'nothing new to re-litigate, but branch protection on `release/next`' \
+            'still requires a green run and one approval same as any other PR' \
+            '(systems/release-train). Merge with a normal merge commit.' \
+            '' \
+            'Opened automatically by `.github/workflows/version-cut-finalize.yml`.' \
+            > /tmp/sync-pr-body.md
+
+          gh pr create --repo "$REPO" \
+            --base release/next --head main \
+            --title "Sync release/next after $TAG" \
+            --body-file /tmp/sync-pr-body.md

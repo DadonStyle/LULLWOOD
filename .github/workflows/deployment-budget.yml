@@ -1,0 +1,64 @@
+name: Deployment budget
+
+# LUL-498 (LUL-492 plan doc §5): enforces the founder's deployment cap.
+# Vercel allows 100 deployments/24h; stay under 90. Vercel mirrors every
+# deploy into GitHub's Deployments API (systems/vercel-cd in the shared
+# wiki), so this needs only GITHUB_TOKEN -- no VERCEL_API_TOKEN, no secret,
+# no approval gate.
+#
+# This workflow is the visibility path: it runs on a schedule so the
+# trailing-24h count is checkable in the job summary without digging, even
+# when nothing is opening a PR right now. The enforcement path -- holding
+# new PR opens -- lives in auto-pr.yml, which runs the same script
+# (.github/scripts/deployment-budget.sh) as a gating step before it ever
+# calls `gh pr create`.
+#
+# `workflow_dispatch`'s `fixture_count` input is a test hook: it fabricates
+# that many deployment records dated "now" and runs the real threshold
+# logic against them, so the fail-closed branch can be proven live in
+# Actions without waiting for 90 real deployments. Leave it empty for a
+# real run.
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+    inputs:
+      fixture_count:
+        description: 'Test hook: fabricate this many deployments dated "now" and check against them instead of the live API. Leave empty for a real run.'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  budget:
+    name: check trailing-24h deployment count
+    runs-on: ubuntu-latest
+    if: github.repository == 'DadonStyle/LULLWOOD'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build fixture (test hook only)
+        if: github.event.inputs.fixture_count != ''
+        env:
+          FIXTURE_COUNT: ${{ github.event.inputs.fixture_count }}
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import json, datetime, os
+          n = int(os.environ['FIXTURE_COUNT'])
+          now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          records = [{'created_at': now, 'environment': 'Preview'} for _ in range(n)]
+          json.dump(records, open('/tmp/deployment-budget-fixture.json', 'w'))
+          "
+          echo "DEPLOYMENT_BUDGET_FIXTURE=/tmp/deployment-budget-fixture.json" >> "$GITHUB_ENV"
+          echo "::notice::fixture mode -- checking against $FIXTURE_COUNT fabricated records, not the live API."
+
+      - name: check deployment budget
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/deployment-budget.sh
