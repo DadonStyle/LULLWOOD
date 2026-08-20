@@ -1,0 +1,61 @@
+name: Workflow guard check
+
+# LUL-589. A PR that touches .github/workflows/* must not delete a guard
+# that exists on main -- see systems/release-train-delivered "Trap 2" in the
+# shared wiki: PR #108's branch forked before LUL-498 landed, so its copy of
+# auto-pr.yml simply never mentioned deployment-budget.sh. Merging it would
+# have reverted the deployment-budget guard and re-armed the exact
+# deployment-amplification problem the release train exists to stop. Nobody
+# reads a 27-line YAML diff looking for an absence, so this checks presence
+# directly instead: .github/workflow-guards.json names markers that must
+# still appear in named workflow files, and .github/scripts/workflow-guard-
+# check.sh fails if one doesn't. See that script and manifest for the full
+# reasoning -- this file is only the trigger/scaffold.
+#
+# `on: push`, not `pull_request`, for the same reason ci.yml switched:
+# agent-opened PRs are opened by auto-pr.yml using GITHUB_TOKEN, and GitHub
+# suppresses `pull_request` runs an action's own GITHUB_TOKEN would have
+# caused (recursion guard) -- so `pull_request: opened` never fires for the
+# PRs this check exists to gate. The branch push itself uses the studio's
+# SSH deploy key, not GITHUB_TOKEN, so the push trigger fires normally and
+# checks are matched to the PR by head SHA regardless of which event
+# produced them (same reasoning as ci.yml, systems/ci-double-run).
+#
+# `pull_request` stays too, scoped to forks the same way ci.yml scopes it:
+# a fork's push never reaches Actions on this repo, so that's the one case
+# the push trigger structurally cannot cover.
+on:
+  push:
+    branches: ['**']
+    paths: ['.github/workflows/**']
+  pull_request:
+    paths: ['.github/workflows/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-guard-check-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  guard-check:
+    name: workflow guard check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Same fork-scope guard ci.yml uses -- see the `on:` comment above.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # checkout@v4 does not guarantee an `origin/main` tracking ref exists
+      # for a fetch-depth:0 checkout of a different branch -- fetch it
+      # explicitly, same as auto-pr.yml does for release/next.
+      - name: fetch main
+        run: git fetch --no-tags origin main
+
+      - name: check for a deleted guard
+        run: bash .github/scripts/workflow-guard-check.sh
