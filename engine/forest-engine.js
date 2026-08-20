@@ -48,6 +48,7 @@ import {
   isSniffImmune,
   rollSniffs,
   shouldGiveUpChase,
+  shouldRevertInvestigateToChase,
   SNIFF_IMMUNITY_TIME,
   stepFlankHold,
   stepSniffLoop,
@@ -1361,7 +1362,16 @@ function updatePredators(dt, noiseRadius){
       // place. The re-escalation the sniff loop actually cares about is "did
       // you stop hiding" (move), which `hidden` already answers, and the
       // ticket is explicit: don't retune this loop's timing.
-      if(!hidden){ p.state='chase'; }
+      //
+      // LUL-562: restricted to the 'sniff'/'back' sub-phases this comment is
+      // actually about -- a freshly-entered 'approach' (every chase->investigate
+      // transition sets p.inv='approach') used to hit this same instant revert
+      // before its own movement branch below ever ran, and chase's re-entry
+      // condition was still true a frame later since nothing had moved --
+      // volleying chase<->investigate forever at zero velocity. See
+      // shouldRevertInvestigateToChase()'s comment in lib/game/predator.ts and
+      // wiki game/lul223-chase-investigate-livelock for the confirmed repro.
+      if(shouldRevertInvestigateToChase(p.inv, hidden)){ p.state='chase'; }
       else if(p.inv === 'approach'){
         facePlayer = true;
         if(hasReachedSniffRange(dist, p.rad)){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
