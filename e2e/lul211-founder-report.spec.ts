@@ -22,6 +22,15 @@
 //     engine closure could read the player's position, so this was unprovable
 //     until the qaProbePlayer / qaStageWalkIntoCover hooks (added with this
 //     spec, ?qaHooks=1 only).
+//
+//     LUL-384 deliberately narrows this for `log` specifically: a fallen log
+//     is no longer solid to the *player's* movement (coverKindBlocksPlayerMovement(),
+//     lib/game/cover.ts) so walking/running over one feels natural, while LOS,
+//     hide-spot eligibility and predator catch are all untouched -- a log is
+//     still not a safe zone. That is an intentional, scoped exception, not a
+//     regression of this bug: rock and bramble are still fully solid to the
+//     player, and log is still solid to everything else. See the second
+//     describe block below.
 import { test, expect } from '@playwright/test';
 import { boot, enter, readObjective } from './helpers';
 
@@ -118,7 +127,17 @@ test.describe('LUL-211: winning shows YOU WON and stays there', () => {
 });
 
 test.describe('LUL-211: cover props are solid', () => {
-  for (const kind of ['rock', 'log', 'bramble'] as const) {
+  // LUL-388: 'tree' added -- qaStageWalkIntoCover('tree') was reachable but had
+  // never actually been driven by a spec (only rock/log/bramble were), and it
+  // turned out to be broken (NaN positions, fixed in the same change that added
+  // this case -- see the hook's own LUL-388 comment in forest-engine.js). Large
+  // trees (coverData's `s>1.4` subset) are the one element the interaction
+  // matrix (docs/ELEMENTS.md) marks C+LOS same as rock, so player-vs-tree
+  // collision belongs in this exact loop, not a separate spec.
+  // 'log' deliberately excluded here as of LUL-384 -- see the file header and
+  // the 'LUL-384: log is walkable' describe block below, which pins the new,
+  // intended behaviour instead of the old one.
+  for (const kind of ['rock', 'bramble', 'tree'] as const) {
     test(`walking straight into a ${kind} does not pass through it`, async ({ page }) => {
       test.setTimeout(45_000);
       await boot(page, { qaHooks: true });
@@ -158,4 +177,69 @@ test.describe('LUL-211: cover props are solid', () => {
       ).toBeLessThan(faceX + 0.35);
     });
   }
+});
+
+test.describe('LUL-384: log is walkable', () => {
+  test('walking straight into a log passes over it instead of stopping at its face', async ({
+    page,
+  }) => {
+    test.setTimeout(45_000);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    // Same staging hook as the solid-props test above -- it computes the
+    // standoff a *blocking* prop of this footprint would need, which still
+    // works fine as a starting point for log: it just means the walk below
+    // starts at (and then crosses) where a wall would have been.
+    const staged = await page.evaluate(() => window.ForestEngine?.qaStageWalkIntoCover?.('log'));
+    expect(staged, 'no reachable log to stage against').not.toBeNull();
+    const { prop, start } = staged!;
+    expect(start.x, 'staged start is already inside the prop').toBeLessThan(prop.x - prop.hx);
+
+    // Mirror of the solid-prop face-boundary math: the near face is at
+    // prop.x + faceDx (faceDx <= 0), so the far face is the same offset
+    // reflected through the centre.
+    const ry = prop.ry ?? 0;
+    const absCos = Math.max(Math.abs(Math.cos(ry)), 1e-6);
+    const absSin = Math.max(Math.abs(Math.sin(ry)), 1e-6);
+    const faceDx = Math.max(-(prop.hx + 0.6) / absCos, -(prop.hz + 0.6) / absSin);
+    const nearFaceX = prop.x + faceDx;
+    const farFaceX = prop.x - faceDx;
+
+    // A short real walk still proves actual keyboard-driven movement engages
+    // the log approach (a genuinely wedged player would fail this weak bar
+    // too) -- see the solid-props loop above for the same 0.3-unit floor.
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(1_000);
+    await page.keyboard.up('KeyW');
+    await page.waitForTimeout(200);
+    const midway = (await page.evaluate(() => window.ForestEngine?.qaProbePlayer?.()))!;
+    expect(midway.x, 'the player never moved toward the log').toBeGreaterThan(start.x + 0.3);
+
+    // The definitive "no collision bug on the log" claim is checked by
+    // sampling blocked() -- the exact predicate real movement gates on --
+    // directly across the log's full footprint, near face to far face and a
+    // margin past it. This is deterministic and independent of how many
+    // animation frames actually ran during the walk above, unlike asserting
+    // a specific end position reached within a fixed wall-clock window
+    // (LUL-384 found that this specific window undershoots under CI's
+    // rendering load -- same class of flake as LUL-421's charge-dodge
+    // wall-clock assertions, wiki: systems/dt-clamp-vs-walltime).
+    const sampleFromX = nearFaceX - 0.5;
+    const sampleToX = farFaceX + 0.5;
+    const step = 0.2;
+    const blockedSamples: { x: number; blocked: boolean }[] = [];
+    for (let x = sampleFromX; x <= sampleToX; x += step) {
+      const isBlocked = await page.evaluate(
+        ({ x, z }) => window.ForestEngine?.qaProbeBlocked?.(x, z),
+        { x, z: prop.z },
+      );
+      blockedSamples.push({ x, blocked: !!isBlocked });
+    }
+    const firstBlocked = blockedSamples.find((s) => s.blocked);
+    expect(
+      firstBlocked,
+      `blocked(x=${firstBlocked?.x.toFixed(2)}, z=${prop.z.toFixed(2)}) is true somewhere across the log's span (near face x=${nearFaceX.toFixed(2)}, far face x=${farFaceX.toFixed(2)}) -- LUL-384 requires the whole log to be collision-free for the player`,
+    ).toBeUndefined();
+  });
 });

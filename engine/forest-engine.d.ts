@@ -78,18 +78,30 @@ declare global {
        * standoff distance is rotation-aware (props render at prop.ry), so it clears
        * the prop's true rotated collision boundary, not just its axis-aligned hx.
        * Returns the prop's AABB (plus ry) and the player's start, or null if no
-       * clear placement exists for that kind. */
+       * clear placement exists for that kind. LUL-388: `kind:'tree'` is a circle
+       * (real trunk radius, ry always 0 in the returned prop), not a rotated box --
+       * tree coverData rows carry no `ry` at all. */
       qaStageWalkIntoCover?: (kind: 'tree' | 'rock' | 'log' | 'bramble') => {
         prop: { x: number; z: number; hx: number; hz: number; ry: number; kind: string };
         start: { x: number; z: number };
       } | null;
-      /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve. */
+      /** LUL-384: exposes the exact `blocked()` predicate player movement gates on,
+       * so a test can sample collision across a span directly instead of inferring
+       * it from how far real keyboard-driven movement got within a fixed wall-clock
+       * window (unreliable under CI render load, wiki: systems/dt-clamp-vs-walltime). */
+      qaProbeBlocked?: (x: number, z: number) => boolean;
+      /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve.
+       * LUL-388: `dist`/`canSee` are the exact live values the engine's own kill
+       * check uses this tick -- poll these instead of racing wall-clock time
+       * against game time (see wiki: systems/dt-clamp-vs-walltime). */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
         state: string;
         inv: string;
         sniffsLeft: number;
         scentCalls: number;
+        dist: number;
+        canSee: boolean;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
@@ -97,10 +109,56 @@ declare global {
        * band's midpoint, in the open. Returns the predator's `predators` index, or
        * null if that species isn't spawned or `kind` isn't `wolf`/`lion`. */
       qaTriggerCharge?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
+      /** LUL-373: live ChargeState.phase/t for predator `idx`, or null if it has
+       * no active charge. `t` is seconds elapsed in that phase, in game time
+       * (not wall time). Lets a test poll for "well into 'charging'" against
+       * the engine's own clock instead of guessing a wall-clock wait -- see
+       * wiki systems/dt-clamp-vs-walltime.
+       * LUL-421: also returns overshootDuration (the LUL-323 dodge-timing
+       * value), and falls back to the most recently resolved charge once the
+       * live one goes null -- `t` is 0 in that fallback case. */
+      qaChargePhase?: (idx: number) => {
+        phase: 'telegraph' | 'charging' | 'overshoot' | 'caught' | 'cleared';
+        t: number;
+        overshootDuration: number;
+      } | null;
       /** LUL-275: snapshot of the player's transform and detected input mode --
        * this init() actually bound -- proves which input branch bound at runtime,
        * not just which the test requested. See wiki: game/lul274-input-mode-separation. */
       qaPlayerState?: () => { x: number; z: number; yaw: number; pitch: number; mode: 'desktop' | 'mobile' };
+      /** LUL-388: places `kind` in a blind scent-chase (state='chase', scentLock=SCENT_TRACK_TIME)
+       * within catch range (dist < rad+CATCH_MARGIN) of the player, with a real cover prop's
+       * rotated AABB straddling the segment between them so canSee() reads false -- the exact
+       * shape of the LUL-387 regression. Every other predator is marked `inert` for the rest of
+       * the page's life so a catch can only ever be this one (see qaStageAndTraceBlindChase's
+       * comment for why that isolation is load-bearing, not defensive). Returns the predator's
+       * index, kind, and the staged distance, or null if no cover prop was thin enough to fit
+       * inside catch range for this species/seed. Prefer qaStageAndTraceBlindChase for an actual
+       * assertion -- this on its own races the exact scenario it stages, see that hook's comment. */
+      qaStageBlindChaseThroughCover?: (
+        kind: 'wolf' | 'bear' | 'lion',
+      ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; dist: number } | null;
+      /** LUL-388: stages (as qaStageBlindChaseThroughCover) then, in the same
+       * synchronous call, starts an in-page rAF loop recording `{t, dist, canSee,
+       * dead}` once per frame until `dead` or `maxMs` elapses. Staging and the
+       * first observed frame must happen in one page.evaluate() round trip, not
+       * two -- the staged gap is necessarily small (has to land inside catch
+       * range), and since predators never collide with cover (LUL-119/211) one
+       * measured closing it, into a genuine sightline, in fewer frames than a
+       * single Playwright IPC round trip takes. Two separate calls (stage, then
+       * a would-be trace/poll hook) let that closing happen in the gap between
+       * them and made every case look caught from frame one, even with the
+       * LUL-387 fix intact. Returns null if staging failed (see
+       * qaStageBlindChaseThroughCover). */
+      qaStageAndTraceBlindChase?: (
+        kind: 'wolf' | 'bear' | 'lion',
+        maxMs: number,
+      ) => Promise<{
+        idx: number;
+        kind: 'wolf' | 'bear' | 'lion';
+        dist: number;
+        trace: { t: number; dist: number; canSee: boolean; dead: boolean }[];
+      } | null>;
     };
   }
 }
