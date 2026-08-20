@@ -28,6 +28,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  deployments: read
 
 concurrency:
   group: auto-pr-${{ github.ref }}
@@ -41,6 +42,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # LUL-498: fail closed at 90 deployments in the trailing 24h, holding
+      # new PR opens (and refreshes) until the window rolls. This step's
+      # exit code gates everything below it -- a fail-closed result here
+      # stops the job before `gh pr create`/`gh pr merge` ever runs. See
+      # .github/scripts/deployment-budget.sh and systems/vercel-cd in the
+      # shared wiki for why GITHUB_TOKEN is enough (no VERCEL_API_TOKEN).
+      - name: check deployment budget before opening or refreshing a PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/deployment-budget.sh
 
       - name: open or refresh the PR
         env:
