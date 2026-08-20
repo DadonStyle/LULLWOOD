@@ -55,6 +55,7 @@ import {
   stepSniffLoop,
   tickTimers,
 } from '@/lib/game/predator';
+import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
 
 let activeDispose = null;
 
@@ -202,14 +203,27 @@ moonGroup.add(
 );
 scene.add(moonGroup);
 const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playerLight);
-// LUL-40: player-controlled binary dim, hold KeyF. Two states only, on purpose --
-// a slider players set once and forget wouldn't be the every-second decision the
-// ticket wants. The lit radius shrinks along with intensity so dimming reads as
-// "smaller pool of light", not just "dimmer light in the same pool". Wired into
-// sight detection at effectiveDetect() via DIM_DETECT_MUL (LUL-291).
+// LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
+// LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
+// the light cut is kept (still a smaller lit pool) but it's now one piece of a bigger,
+// world-visible state: mist ramps to near-opaque (MIST_VEIL_FOG below) and predator
+// sight range drops hard while it's up (veilDetectMul(), lib/game/veil.ts, used from
+// effectiveDetect()). Binary hold, not a slider, for the same reason as before -- an
+// every-second decision, not a set-once knob. `lightDimmed` now names "is the veil
+// actually active" (it can be held down and denied by the charge meter -- see
+// stepVeilCharge(), lib/game/veil.ts -- so it's not just "is F held").
 const LIGHT_NORMAL = { intensity: 0.7, distance: 20 };
 const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
 let lightDimmed = false;
+// LUL-382: charge/lock state machine and the two multipliers it gates live in
+// lib/game/veil.ts (pure, unit tested -- see wiki systems/unit-testing-standard).
+// The engine only owns the rendering-side bits: how fast the mist visibly ramps
+// (VEIL_RAMP), how thick it gets at full ramp (MIST_VEIL_FOG), and the mutable
+// per-frame state itself.
+const VEIL_RAMP = 1.6;            // seconds for mist/detect-cut to ease fully in or out
+let veilCharge = 1, veilLocked = false, veilAmount = 0;
+let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
+const MIST_VEIL_FOG = 0.34;       // ~3x the manual Mist slider's own max (0.11) -- deliberately overshoots it so the veil reads as a distinct world state
 // LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
 // found the point-light radius/intensity cut above unreadable against this
 // scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
@@ -1128,12 +1142,18 @@ function hearNoise(p){
 // walking behind a rock or a tree exactly as before, hidden or not.
 const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
-// LUL-291: dimmed light shrinks sight-detect range by 25% -- proposed starting value,
-// unverified tuning for the Game Tester. Deliberately a smaller lever than full stillness
-// (STILL_DETECT_CUT above): dimming is a free toggle, stillness is a sustained commitment,
-// and the two stack multiplicatively so hiding still + dimmed is the strongest state.
-// Sight only -- p.spec.scent is untouched, dimming doesn't affect how far predators smell you.
-const DIM_DETECT_MUL = 0.75;
+// LUL-382: the mist veil shrinks sight-detect range by 65% at full ramp (see
+// veilDetectMul(), lib/game/veil.ts) -- supersedes LUL-291's DIM_DETECT_MUL (0.75, a
+// 25% cut); the founder judged that too small a lever (decisions/0012-feature-impact-bar).
+// Scaled by veilAmount (tick(), 0..1) so the cut ramps in/out with the visible mist
+// rather than snapping the instant F is pressed. Stacks multiplicatively with
+// stillness, same relationship as before: hiding still + veil is the strongest state,
+// proposed/unverified tuning for the Game Tester either way. Sight only -- p.spec.scent
+// is untouched. That's a deliberate scope choice, not an oversight: real mist/smoke
+// obscures sightlines, not scent, and genre precedent (LUL-215 search) treats
+// smoke/flare tools as breaking line-of-sight tracking specifically, not detection
+// wholesale -- a predator can still scent-lock you through the veil, which keeps
+// scent-trail play (LUL-23/LUL-65) meaningful.
 function segRayVsAABB(x0,z0,x1,z1, cx,cz,hx,hz){
   const minX=cx-hx, maxX=cx+hx, minZ=cz-hz, maxZ=cz+hz;
   let tmin=0, tmax=1;
@@ -1192,7 +1212,7 @@ function findHideSpot(x, z){
 // just stop at the first one that can see the player.
 function effectiveDetect(p){
   const stillness = hidden ? Math.min(1, hideTime / STILL_RAMP) : 0;
-  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT) * DIFFICULTY_PRESETS[difficulty].detectMul * (lightDimmed ? DIM_DETECT_MUL : 1);
+  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT) * DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount);
 }
 function canSee(p, dist){
   if(dist >= effectiveDetect(p)) return false;
@@ -1979,6 +1999,8 @@ let hudState = {
   survivedSeconds: 0,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
+  // LUL-382: mist veil resource meter -- 1 is full charge, 0 is fully drained.
+  veilCharge: 1, veilLocked: false,
   chargeVisible: false, chargeToken: 0,
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
@@ -2625,7 +2647,10 @@ function restart(){
 // LUL-34: these are now the engine's public action API (returned by init()
 // below) instead of DOM event listeners on elements the engine no longer owns.
 function setPace(v){ walk = v; pushState({ pace: v }); }
-function setFog(v){ scene.fog.density = v; pushState({ fog: v }); }
+// LUL-382: no longer writes scene.fog.density directly -- tick() is now the single
+// writer (it ramps between fogBase and MIST_VEIL_FOG off veilAmount every frame), so
+// this only updates the baseline the veil ramps from and back to.
+function setFog(v){ fogBase = v; pushState({ fog: v }); }
 function toggleSound(){
   soundOn = !soundOn;
   if(audio) audio.master.gain.setTargetAtTime(soundOn ? 0.6 : 0.0001, audio.ctx.currentTime, 0.1);
@@ -2806,10 +2831,14 @@ function tick(){
 
   const playing = entered && !paused && !won && !dead && !pickingUp;
 
-  // LUL-40: hold KeyF to dim. Read every frame like `running` below rather than
-  // from the keydown/keyup handlers, so releasing F while e.g. the pause menu is
-  // open (which stops updating `keys` mid-hold) can't strand the light dimmed.
-  const dimmed = playing && !!keys['KeyF'];
+  // LUL-40/LUL-382: hold KeyF for the mist veil. Read every frame like `running`
+  // below rather than from the keydown/keyup handlers, so releasing F while e.g.
+  // the pause menu is open (which stops updating `keys` mid-hold) can't strand
+  // the veil active.
+  const veilHeld = playing && !!keys['KeyF'];
+  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt);
+  veilCharge = veilStep.charge; veilLocked = veilStep.locked;
+  const dimmed = veilStep.active;
   if(dimmed !== lightDimmed){
     lightDimmed = dimmed;
     const cfg = dimmed ? LIGHT_DIMMED : LIGHT_NORMAL;
@@ -2819,6 +2848,13 @@ function tick(){
   }
   dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
   applyVignette(dimAmount);
+  // LUL-382: mist ramp is deliberately slower than the vignette above (VEIL_RAMP
+  // 1.6s vs. dimAmount's ~0.5s) -- the light pool reacts fast, the world's mist
+  // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
+  // the sight-detect cut ramps in step with what the player actually sees.
+  veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
+  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount);
+  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked });
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
   const playerInBog = inBog(player.x, player.z);   // LUL-25: shallow water -- half speed, louder splash
