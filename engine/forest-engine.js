@@ -143,7 +143,15 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(CONFIG.bg);
 scene.fog = new THREE.FogExp2(0x0b1220, CONFIG.fog);
 
-const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 400);
+// LUL-69: a phone screen is usually narrower (portrait) or shorter (landscape)
+// than the 1280x720-ish desktop window this FOV was tuned for -- Three's
+// PerspectiveCamera `fov` is the *vertical* field of view, so horizontal
+// coverage (what a narrow/short aspect actually crops) is
+// `2*atan(tan(fov/2)*aspect)`. Widening the vertical FOV on mobile keeps more
+// of the scene visible on both aspect ratios without touching PLAYER_FOV_COS
+// below (a gameplay detection cone, unrelated to render FOV).
+const CAMERA_FOV = mode === 'mobile' ? 85 : 70;
+const camera = new THREE.PerspectiveCamera(CAMERA_FOV, innerWidth/innerHeight, 0.1, 400);
 camera.rotation.order = 'YXZ';
 camera.position.set(0, CONFIG.eye, 0);
 
@@ -2564,6 +2572,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       return { idx: staged.idx, kind: staged.kind, dist: staged.dist, trace: trace };
     });
   };
+
+  // LUL-69: camera.fov is closure-local (created fresh per init(), see
+  // CAMERA_FOV above) -- nothing outside init() could otherwise confirm the
+  // mobile/desktop FOV split actually took effect.
+  window.ForestEngine.qaCameraFov = function(){ return camera.fov; };
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------

@@ -15,8 +15,17 @@
 // 1 / FACT 2, desktop + hasTouch).
 //
 // See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
+//
+// LUL-69: this project's default viewport (devices['Pixel 5']) is portrait,
+// which the new OrientationGate now blocks input behind on a mobile device.
+// This spec is about stick-drag behavior, not the rotate prompt, so it opts
+// into a landscape viewport (dimensions swapped) the same way a real player
+// rotating their phone would -- e2e/mobile/orientation-gate.spec.ts is what
+// actually exercises the portrait-blocks/landscape-clears behavior.
 import { test, expect } from '@playwright/test';
 import { boot } from '../helpers';
+
+test.use({ viewport: { width: 727, height: 393 } });
 
 test('left stick pushed up moves the player forward, not backward', async ({ page }) => {
   await boot(page, { qaHooks: true });

@@ -159,6 +159,9 @@ declare global {
         dist: number;
         trace: { t: number; dist: number; canSee: boolean; dead: boolean }[];
       } | null>;
+      /** LUL-69: the live camera vertical FOV (degrees) -- confirms the
+       * mobile/desktop CAMERA_FOV split in init() actually took effect. */
+      qaCameraFov?: () => number;
     };
   }
 }

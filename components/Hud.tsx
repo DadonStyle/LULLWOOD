@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
+import OrientationGate from './OrientationGate';
 import SettingsPanel from './SettingsPanel';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
@@ -291,6 +292,8 @@ export default function Hud({
 
   return (
     <>
+      <OrientationGate />
+
       {mobile ? (
         <MobileControls actions={actions} entered={state.entered} />
       ) : (
