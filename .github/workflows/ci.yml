@@ -61,6 +61,11 @@ jobs:
   unit:
     name: unit tests
     runs-on: ubuntu-latest
+    # LUL-485: no explicit timeout meant a hang inherited GitHub's 360-minute
+    # default and pinned a runner for hours instead of failing fast. Observed
+    # duration across 12 green runs on 2026-08-19: 15-24s, so 10 min is ~25x
+    # headroom, not a tight guess.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -83,6 +88,9 @@ jobs:
   build:
     name: build, typecheck, lint
     runs-on: ubuntu-latest
+    # LUL-485: same rationale as `unit` above. Observed 26-40s across the same
+    # 12 green runs; 10 min is ~15x headroom.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -113,6 +121,18 @@ jobs:
     name: playwright smoke suite
     needs: build
     runs-on: ubuntu-latest
+    # LUL-485: this is the job that actually hangs. `playwright install
+    # --with-deps` shells out to `apt-get update`, and apt sets no read
+    # timeout, so a stalled mirror connection blocks forever (see
+    # wiki:systems/ci-job-timeout-apt-hang). 30 min, not 20: observed green
+    # runs were 12-19 min, so 20 would leave ~1 min of margin over a
+    # legitimately slow run. 30 keeps ~1.6x headroom.
+    #
+    # `concurrency: cancel-in-progress` does not reclaim these -- it only
+    # fires when a newer run in the same group arrives, and this group is
+    # keyed on the head SHA, so a wedged run on a head nobody pushes again
+    # has no successor to evict it.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
