@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION } from "../lib/site";
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, GOOGLE_SITE_VERIFICATION } from "../lib/site";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -10,6 +10,9 @@ export const metadata: Metadata = {
   authors: [{ name: SITE_NAME }],
   alternates: {
     canonical: "/",
+  },
+  verification: {
+    google: GOOGLE_SITE_VERIFICATION,
   },
   openGraph: {
     type: "website",
