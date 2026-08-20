@@ -35,8 +35,14 @@ on:
 permissions:
   contents: read
 
+# Keyed on event name + head SHA, same reasoning as ci.yml -- without the
+# event name prefix, a pull_request run shares this group with the push run
+# for the same commit and can cancel it via cancel-in-progress, then itself
+# resolve to `skipped` under the fork-scope `if:` below -- leaving a SKIPPED
+# (i.e. passing, for required-status-check purposes) conclusion on the SHA
+# without workflow-guard-check.sh ever having run. See systems/ci-double-run.
 concurrency:
-  group: workflow-guard-check-${{ github.event.pull_request.head.sha || github.sha }}
+  group: workflow-guard-check-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
