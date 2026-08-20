@@ -15,6 +15,16 @@ name: Auto merge
 # ship-allowed.sh already permits, right before merging (LUL-558). Without
 # that review the merge call fails unconditionally, regardless of how green
 # CI is or how fresh the branch is.
+#
+# That review MUST be submitted under a different identity than the PR author,
+# or GitHub 422s with "Review Can not approve your own pull request"
+# (systems/github-access "Self-approval"). Every `[ship]` PR on the self-serve
+# path is authored by `github-actions[bot]` (auto-pr.yml uses `github.token`
+# too), so the review step below cannot reuse `github.token` -- it needs the
+# studio PAT, wired in as the `SHIP_REVIEW_PAT` repo secret specifically for
+# this step. `gh pr merge` and everything else in this job stays on
+# `github.token`. See systems/ship-never-merges-review-count-gap, 2026-08-20
+# CHANGES REQUESTED entry (LUL-584) for the incident this fixes.
 
 on:
   workflow_run:
@@ -43,6 +53,7 @@ jobs:
       - name: merge if green and shipped
         env:
           GH_TOKEN: ${{ github.token }}
+          SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
@@ -161,7 +172,23 @@ jobs:
           # Approve only, never approve-and-force -- every other blocking rule
           # (checks, strict up-to-date) still applies below and must still
           # block, loudly, on its own merits.
-          if ! gh pr review "$number" --approve \
+          #
+          # Must run under SHIP_REVIEW_TOKEN (the studio PAT), never GH_TOKEN --
+          # GH_TOKEN is github.token, the same identity that authored this PR
+          # (auto-pr.yml opens it under github.token too), and GitHub 422s an
+          # identity approving its own PR unconditionally. See the file header.
+          if [ -z "${SHIP_REVIEW_TOKEN:-}" ]; then
+            echo "::warning::SHIP_REVIEW_PAT secret is not configured; refusing to auto-merge #$number."
+            printf '%s\n' \
+              '<!-- SHIP_REVIEW_FAILED -->' \
+              '`[ship]` is valid, CI was green, and the allowlist passed, but this repo has' \
+              'no `SHIP_REVIEW_PAT` secret configured, so there is no identity available to' \
+              'submit the required approving review that is distinct from this PR'"'"'s' \
+              'author (`github-actions[bot]`). Refusing to try an ungated merge. LUL-558.' > /tmp/ship-review-failed.md
+            comment_once 'SHIP_REVIEW_FAILED' /tmp/ship-review-failed.md
+            exit 1
+          fi
+          if ! GH_TOKEN="$SHIP_REVIEW_TOKEN" gh pr review "$number" --approve \
                --body "Auto-approved: \`[ship]\` + \`ship-allowed.sh\` passed for this exact head (\`$pr_head\`). Policy: LUL-558."; then
             echo "::warning::could not submit the required approving review on #$number; refusing to auto-merge."
             printf '%s\n' \
