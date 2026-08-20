@@ -9,6 +9,7 @@ import {
   isSniffImmune,
   rollSniffs,
   shouldGiveUpChase,
+  shouldRevertInvestigateToChase,
   SNIFF_APPROACH_MARGIN,
   SNIFF_IMMUNITY_TIME,
   stepFlankHold,
@@ -215,6 +216,36 @@ test('isSniffImmune is false if the player is not hidden, no matter the timer --
 
 test('isSniffImmune is false with neither condition met', () => {
   assert.equal(isSniffImmune(0, false), false);
+});
+
+// ---- shouldRevertInvestigateToChase (LUL-562) --------------------------------------
+
+test('shouldRevertInvestigateToChase is false for a freshly-entered "approach" phase even when not hidden -- the livelock fix', () => {
+  // This is the exact case that oscillated forever on main: every
+  // chase->investigate transition sets p.inv='approach', and the old
+  // unconditional `!hidden` gate flipped straight back to chase before
+  // 'approach' ever got to run its own movement code.
+  assert.equal(shouldRevertInvestigateToChase('approach', false), false);
+});
+
+test('shouldRevertInvestigateToChase is false for "approach" while hidden too', () => {
+  assert.equal(shouldRevertInvestigateToChase('approach', true), false);
+});
+
+test('shouldRevertInvestigateToChase is true for "sniff" when not hidden -- the close-range case the original gate is for', () => {
+  assert.equal(shouldRevertInvestigateToChase('sniff', false), true);
+});
+
+test('shouldRevertInvestigateToChase is true for "back" when not hidden', () => {
+  assert.equal(shouldRevertInvestigateToChase('back', false), true);
+});
+
+test('shouldRevertInvestigateToChase is false for "sniff" while still hidden', () => {
+  assert.equal(shouldRevertInvestigateToChase('sniff', true), false);
+});
+
+test('shouldRevertInvestigateToChase is false for "back" while still hidden', () => {
+  assert.equal(shouldRevertInvestigateToChase('back', true), false);
 });
 
 // ---- backOffPoint ---------------------------------------------------------------
