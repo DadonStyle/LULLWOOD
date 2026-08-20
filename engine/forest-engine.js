@@ -33,7 +33,21 @@ import {
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
 } from '@/lib/game/scent';
-import { coverKindBlocksPlayerMovement, distanceToCoverEdge, overlapsTreeCanopy, overlapsTreeTrunk } from '@/lib/game/cover';
+import {
+  coverKindBlocksPlayerMovement,
+  distanceToCoverEdge,
+  overlapsTreeCanopy,
+  overlapsTreeTrunk,
+  canopyRadiusAtEye,
+  rollCoverPropShape,
+  HIDE_KINDS,
+  CELL,
+  gridKey as key,
+  blockedR as geoBlockedR,
+  blocked as geoBlocked,
+  hasLOS as geoHasLOS,
+  findHideSpot as geoFindHideSpot,
+} from '@/lib/game/cover';
 import {
   isInBog,
   bogSpeedMultiplier,
@@ -287,9 +301,11 @@ const cone2Geo = new THREE.ConeGeometry(0.78, 1.9, 7);             cone2Geo.tran
 // per-tree value from the cone's actual (scaled) geometry instead of guessing
 // one coefficient for every tree size.
 const CONE1_APEX_Y = CONE1_Y + CONE1_HEIGHT/2;   // local apex height, before per-tree scale
-function canopyRadiusAtEye(s){
-  return Math.max(0, (CANOPY_R / CONE1_HEIGHT) * (CONE1_APEX_Y*s - CONFIG.eye));
-}
+// LUL-425: canopyRadiusAtEye() itself now lives in lib/game/cover.ts (pure,
+// unit-tested) -- this stays the single place that packages the Three.js
+// geometry constants it needs, so cover.ts can never silently drift from the
+// mesh those constants actually describe.
+const CANOPY_GEO = { canopyR: CANOPY_R, cone1Height: CONE1_HEIGHT, apexY: CONE1_APEX_Y };
 const trunkMat   = new THREE.MeshStandardMaterial({ color: CONFIG.trunk,   roughness: 1 });
 const foliageMat = new THREE.MeshStandardMaterial({ color: CONFIG.foliage, roughness: 1 });
 
@@ -357,8 +373,8 @@ Object.values(coverMeshes).forEach(m => { m.frustumCulled = false; scene.add(m);
 // no sound. That is the ticket's whole ask -- "hiding will only be in
 // specific places" -- narrowed to props that read as something a person
 // could actually climb into or behind, not just stand near.
-const HIDE_KINDS = { bramble: true, log: true };
-const HIDE_RADIUS = 2.2;   // proximity, beyond the prop's own footprint, to still count as "at" it
+// LUL-425: HIDE_KINDS itself now lives in lib/game/cover.ts, alongside
+// HIDE_RADIUS (used only inside findHideSpot(), which moved with it).
 
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
@@ -370,14 +386,15 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
                                  // crCanopy (canopyBlockedR() skips entries that lack it) and never
                                  // added to coverData/HIDE_KINDS -- these block movement, not LOS,
                                  // and aren't meant to be hiding spots.
-const CELL = 8;
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
 let coverGrid = new Map();     // same CELL keying as `grid`, built from coverData
 
 function inLake(x,z){ const dx=x-CONFIG.lake.x, dz=z-CONFIG.lake.z; return dx*dx+dz*dz < CONFIG.lake.clear**2; }
 function inSpawn(x,z){ return x*x+z*z < 40; }
-function key(cx,cz){ return cx+','+cz; }
+// LUL-425: CELL and key() (now gridKey) live in lib/game/cover.ts, imported
+// above -- single source of truth for the bucketing convention every
+// grid-querying function in this file and in cover.ts now shares.
 
 function buildGrid(){
   grid = new Map();
@@ -397,89 +414,21 @@ function buildGrid(){
     (grid.get(k) || grid.set(k, []).get(k)).push(l);
   }
 }
-function blockedR(x,z,pr){
-  const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
-  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
-    const arr = grid.get(key(gx,gz)); if(!arr) continue;
-    for(const t of arr){ const dx=x-t.x, dz=z-t.z, rr=t.cr+pr; if(dx*dx+dz*dz < rr*rr) return true; }
-  }
-  return false;
-}
-// LUL-211: cover props (logs, rocks, brambles) only ever blocked LOS; the
-// player could walk straight through them. AABB check against the same
-// coverGrid data hasLOS()/findHideSpot() already use (trees excluded --
-// they're the circle grid blockedR() above already handles).
-//
-// Deliberately NOT folded into blockedR() itself: predators call blockedR()
-// directly (not through blocked()) for their own movement, and their
-// avoidDir() steering isn't built to route around a solid box on the
-// straight-line paths several qa hooks and the scent-chase spec place them
-// on (qaHideBehindCoverKind, the scent stale-trail test) -- doing that
-// produced a stuck-predator freeze, the exact class of bug LUL-119 fixed.
-// Whether predators should also collide with cover is a real follow-up
-// question (LUL-222), just not one this fix's scope covers.
-//
-// LUL-268: props render rotated (layoutCoverMeshes sets dummy.rotation.set(0,
-// c.ry, 0)), so a world-space axis-aligned test against hx/hz is wrong for
-// any non-tree, non-square prop (logs are 7:1) -- same bug class as the
-// hasLOS() sign fix (systems/los-rotated-aabb-sign-bug). World->local needs
-// the *inverse* of Three's Y-rotation matrix, which works out to the same
-// (cos,sin) pair evaluated at +ry, not -ry: localX = dx*co - dz*si,
-// localZ = dx*si + dz*co.
-//
-// LUL-384: 'tree' was already skipped (its own circle-grid collision above
-// handles it); 'log' is now skipped too, via coverKindBlocksPlayerMovement()
-// (lib/game/cover.ts) -- a fallen log is the one cover prop a person
-// naturally steps/runs over rather than routes around, and predators already
-// ignore all cover-prop collision (see this function's own comment above).
-// LOS (hasLOS()) and hide-spot eligibility (findHideSpot()/HIDE_KINDS) both
-// read coverGrid independently of this function, so a log is still
-// sight-cover and still a valid hiding spot -- only the player's own
-// movement block is lifted. Rock/bramble/reed are unchanged, still solid.
-function coverBlockedR(x,z,pr){
-  const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
-  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
-    const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
-    for(const c of arr){
-      if(!coverKindBlocksPlayerMovement(c.kind)) continue;
-      const dx = x - c.x, dz = z - c.z;
-      const co = Math.cos(c.ry), si = Math.sin(c.ry);
-      const lx = dx*co - dz*si, lz = dx*si + dz*co;
-      if(Math.abs(lx) < c.hx + pr && Math.abs(lz) < c.hz + pr) return true;
-    }
-  }
-  return false;
-}
-// LUL-267: the visual foliage canopy (cone1Geo, base radius CANOPY_R*s) is
-// ~3.3x wider than the trunk movement-collision radius (t.cr = 0.35*s) above,
-// so the player could walk close enough for the camera to end up inside the
-// canopy mesh -- point-blank, unfogged foliage material fills the screen for
-// under a second until they walk through (LUL-266 root cause).
-//
-// Same split as coverBlockedR() just above, and for the same reason: predators
-// call blockedR() directly, not blocked(), for their own steering, and the
-// standing comment on coverBlockedR() already documents that touching the
-// shared movement-collision radius caused a stuck-predator regression
-// (LUL-119). Widening t.cr itself (the simpler fix) would change predator
-// pathing near every tree; this only ever affects the player's own movement
-// block, so predator behaviour near trees is unchanged.
-//
-// Tuning: before this, the player could approach to `t.cr+0.6` (0.85-1.44
-// units, tree-scale dependent) while the canopy reached out to `CANOPY_R*s`
-// (0.8-2.76 units) -- always past the canopy edge, worse on large trees.
-// `t.crCanopy` (== `canopyRadiusAtEye(s)`, see that function's comment for why
-// this isn't simply CANOPY_R*s) is the minimum radius that still guarantees
-// the camera can't end up inside the mesh while moving, without over-blocking
-// gaps between trees that were previously walkable.
-function canopyBlockedR(x,z){
-  const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
-  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
-    const arr = grid.get(key(gx,gz)); if(!arr) continue;
-    for(const t of arr){ const dx=x-t.x, dz=z-t.z, rr=t.crCanopy; if(dx*dx+dz*dz < rr*rr) return true; }
-  }
-  return false;
-}
-function blocked(x,z){ return blockedR(x,z,0.6) || coverBlockedR(x,z,0.6) || canopyBlockedR(x,z); }
+// LUL-425: blockedR/coverBlockedR/canopyBlockedR/blocked (the tree-circle,
+// rotated-cover-AABB, tree-canopy and composite movement-block checks) now
+// live in lib/game/cover.ts, unit-tested there -- see the module comment at
+// the top of that file's LUL-425 section. These are thin wrappers that just
+// inject the engine's own `grid`/`coverGrid` closure state; every call site
+// below (predators call blockedR() directly for their own movement, not
+// blocked() -- see cover.ts's own comment on why that split is load-bearing)
+// is unchanged. coverBlockedR/canopyBlockedR themselves stay in cover.ts
+// (not wrapped here individually, only via the composite blocked()) --
+// nothing outside blocked() called them directly. LUL-384's walkable-log
+// skip (coverKindBlocksPlayerMovement(), imported above) is preserved inside
+// cover.ts's own coverBlockedR(), so geoBlocked() below still treats 'log'
+// as non-blocking, same as release/next did before this extraction.
+function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid); }
+function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid); }
 
 function buildCoverGrid(){
   coverGrid = new Map();
@@ -537,11 +486,7 @@ function generateCover(){
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
     const roll = rng();
-    let kind, hx, hz, y;
-    if(roll < 0.4){ kind='log'; const long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25;
-      if(rng() < 0.5){ hx=long; hz=thin; } else { hx=thin; hz=long; } y=0.3; }
-    else if(roll < 0.75){ kind='rock'; const r = 0.9+rng()*0.9; hx=r; hz=r*(0.7+rng()*0.5); y=r*0.55; }
-    else { kind='bramble'; const r = 0.8+rng()*0.7; hx=r; hz=r; y=r*0.6; }
+    const { kind, hx, hz, y } = rollCoverPropShape(roll, rng);   // LUL-425: lib/game/cover.ts
     if(overlapsTreeTrunk(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
     if(!coverKindBlocksPlayerMovement(kind) && overlapsTreeCanopy(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
@@ -610,7 +555,7 @@ function generateBogTrees(){
     const x = rnd(-half+margin, half-margin), z = rnd(half+margin, zMax-margin);
     if(nearLandmarks(x, z, 2)) continue;
     const s = 0.6 + rng()*1.3;   // thinner cover -- same scatter shape, smaller sizes than the forest
-    bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s) });
+    bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
   layoutTreePool(bogParts, bogTreeData, BOG_TREES);
 }
@@ -669,7 +614,7 @@ function generateMap(seed){
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
     const s = 0.7 + rng()*1.7;
-    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s) });
+    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
   layoutTreePool(parts, treeData, CONFIG.trees);
   buildGrid();
@@ -1149,6 +1094,21 @@ function hearNoise(p){
 // a dedicated hiding-spot prop (findHideSpot(), below) -- this block's LOS
 // math is otherwise untouched, so cover still blocks sight for anyone
 // walking behind a rock or a tree exactly as before, hidden or not.
+// LUL-425: hasLOS/findHideSpot (and segRayVsAABB, which only hasLOS used)
+// now live in lib/game/cover.ts, unit-tested there. These are thin wrappers
+// that inject the engine's own coverGrid closure state -- every call site
+// below is unchanged.
+//
+// effectiveDetect()/canSee() deliberately stay engine-local, NOT wrapped
+// around cover.ts's own effectiveDetect()/canSee(): LUL-382 (mist veil,
+// landed on release/next after this wave-3 extraction was cut) replaced the
+// STILL_RAMP/STILL_DETECT_CUT/DIM_DETECT_MUL dimming multiplier those took
+// with a continuous veilDetectMul(veilAmount) ramp that cover.ts's pure
+// versions have no access to (see the module comment in cover.ts). Wrapping
+// them here would silently regress shipped, tester-confirmed veil detection
+// (LUL-40/LUL-382, LUL-525) back to the pre-veil dimming behaviour.
+function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid); }
+function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid); }
 const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
 // LUL-382: the mist veil shrinks sight-detect range by 65% at full ramp (see
@@ -1163,59 +1123,6 @@ const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range
 // smoke/flare tools as breaking line-of-sight tracking specifically, not detection
 // wholesale -- a predator can still scent-lock you through the veil, which keeps
 // scent-trail play (LUL-23/LUL-65) meaningful.
-function segRayVsAABB(x0,z0,x1,z1, cx,cz,hx,hz){
-  const minX=cx-hx, maxX=cx+hx, minZ=cz-hz, maxZ=cz+hz;
-  let tmin=0, tmax=1;
-  const dx=x1-x0, dz=z1-z0;
-  if(Math.abs(dx) < 1e-9){ if(x0 < minX || x0 > maxX) return false; }
-  else { let t0=(minX-x0)/dx, t1=(maxX-x0)/dx; if(t0>t1){ const s=t0; t0=t1; t1=s; }
-    tmin=Math.max(tmin,t0); tmax=Math.min(tmax,t1); if(tmin>tmax) return false; }
-  if(Math.abs(dz) < 1e-9){ if(z0 < minZ || z0 > maxZ) return false; }
-  else { let t0=(minZ-z0)/dz, t1=(maxZ-z0)/dz; if(t0>t1){ const s=t0; t0=t1; t1=s; }
-    tmin=Math.max(tmin,t0); tmax=Math.min(tmax,t1); if(tmin>tmax) return false; }
-  return true;
-}
-function hasLOS(x0,z0,x1,z1){
-  // Walk the segment in half-cell steps and only test cover registered in the
-  // cells it actually passes through -- never all cover, never all 1,300 trees.
-  const d = Math.hypot(x1-x0, z1-z0), steps = Math.max(1, Math.ceil(d / (CELL*0.5)));
-  const seen = new Set();
-  for(let i=0; i<=steps; i++){
-    const u = i/steps, cx = Math.floor((x0+(x1-x0)*u)/CELL), cz = Math.floor((z0+(z1-z0)*u)/CELL);
-    const k = key(cx,cz); if(seen.has(k)) continue; seen.add(k);
-    const arr = coverGrid.get(k); if(!arr) continue;
-    for(const c of arr){ const ry=c.ry??0,co=Math.cos(ry),si=Math.sin(ry),dx0=x0-c.x,dz0=z0-c.z,dx1=x1-c.x,dz1=z1-c.z; if(segRayVsAABB(dx0*co-dz0*si,dx0*si+dz0*co, dx1*co-dz1*si,dx1*si+dz1*co, 0,0,c.hx,c.hz)) return false; }
-  }
-  return true;
-}
-// LUL-212: is the player currently at a hiding spot (bush/hollow log, see
-// HIDE_KINDS)? Reuses the same coverGrid spatial hash blockedR()/hasLOS()
-// already walk -- no second data structure. Returns the nearest qualifying
-// prop within HIDE_RADIUS of its own edge, or null.
-//
-// LUL-405/LUL-430: this used to approximate a prop's edge as a circle of
-// radius Math.max(hx,hz) -- the *longer* half-extent, applied uniformly in
-// every direction -- which balloons the hide-trigger region on an elongated
-// log's thin side to several times the object's real thickness there. Now
-// uses distanceToCoverEdge() (lib/game/cover.ts) against the true,
-// rotation-aware rectangular footprint, same world->local convention as
-// coverBlockedR()/hasLOS() (systems/los-rotated-aabb-sign-bug).
-function findHideSpot(x, z){
-  const cx = Math.floor(x/CELL), cz = Math.floor(z/CELL);
-  let best = null, bestD = Infinity;
-  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
-    const arr = coverGrid.get(key(gx,gz)); if(!arr) continue;
-    for(const c of arr){
-      if(!HIDE_KINDS[c.kind]) continue;
-      const dx = x-c.x, dz = z-c.z;
-      const co = Math.cos(c.ry), si = Math.sin(c.ry);
-      const lx = dx*co - dz*si, lz = dx*si + dz*co;
-      const d = distanceToCoverEdge(lx, lz, c.hx, c.hz);
-      if(d < HIDE_RADIUS && d < bestD){ bestD = d; best = c; }
-    }
-  }
-  return best;
-}
 // Split out of canSee() so the LUL-144 cover-feedback scan below can test
 // "in range" separately from "has line of sight" for every predator, not
 // just stop at the first one that can see the player.
