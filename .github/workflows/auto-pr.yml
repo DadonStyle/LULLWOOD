@@ -97,11 +97,16 @@ jobs:
           fi
 
           # checkout@v4 only fetches the pushed ref, so main has to be asked for.
+          # Feature PRs target release/next when it exists (LUL-509), keeping
+          # main's strict check meaningful only for the version-cut PR (#96).
           git fetch --no-tags origin main
+          git fetch --no-tags origin release/next 2>/dev/null && BASE_BRANCH=release/next || BASE_BRANCH=main
+          BASE_REF="origin/$BASE_BRANCH"
+          echo "::notice::PR base branch is $BASE_BRANCH."
 
-          # Nothing to propose if the branch has no commits main lacks.
-          if [ "$(git rev-list --count FETCH_HEAD..HEAD)" = "0" ]; then
-            echo "::notice::$BRANCH is not ahead of main; no PR to open."
+          # Nothing to propose if the branch has no commits the base lacks.
+          if [ "$(git rev-list --count "$BASE_REF"..HEAD)" = "0" ]; then
+            echo "::notice::$BRANCH is not ahead of $BASE_BRANCH; no PR to open."
             exit 0
           fi
 
@@ -130,7 +135,7 @@ jobs:
               '(see `.github/scripts/ship-allowed.sh`).' > /tmp/pr-body.md
 
             gh_retry gh pr create \
-              --base main \
+              --base "$BASE_BRANCH" \
               --head "$BRANCH" \
               --title "$(git log -1 --pretty=%s)" \
               --body-file /tmp/pr-body.md
@@ -150,37 +155,36 @@ jobs:
           # bug was found. Intent has to be unambiguous to be intent.
           #
           # Read it from every commit this branch authored, not just the head
-          # commit (LUL-465). Backmerging main is the standard way to track main
-          # (decisions/0010-no-force-push) and pr-freshness.yml does it for us, so
-          # the head is routinely a merge commit that never carries the marker --
-          # which silently and permanently disarmed self-merge for any PR that
-          # outlived one main push. `--no-merges` drops those backmerge commits
-          # (they can never carry a marker anyway); `FETCH_HEAD..HEAD` excludes
-          # everything already on main. The regex below is unchanged and must
+          # commit (LUL-465). Backmerging is the standard way to track the base
+          # (decisions/0010-no-force-push) and pr-freshness.yml does it for us,
+          # so the head is routinely a merge commit that never carries the marker
+          # -- which silently and permanently disarmed self-merge for any PR that
+          # outlived one base push. `--no-merges` drops those backmerge commits
+          # (they can never carry a marker anyway); `BASE_REF..HEAD` excludes
+          # everything already on the base. The regex below is unchanged and must
           # stay byte-identical to automerge.yml's -- only the input widens.
-          messages="$(git log --no-merges FETCH_HEAD..HEAD --pretty=%B)"
+          messages="$(git log --no-merges "$BASE_REF"..HEAD --pretty=%B)"
           if printf '%s\n' "$messages" | grep -qE '^[[:space:]]*\[ship\][[:space:]]*$'; then
 
             # ...but intent is not authority. `[ship]` merges on green alone,
             # which skips the Code Reviewer, so it is scoped to diffs where
             # green really is the whole quality bar. See the script for why.
-            # Run MAIN's copy of the allowlist, never the branch's. The branch
-            # is the thing being judged; letting it supply its own rule is the
-            # whole bypass. (The script also refuses to ship changes to itself,
-            # so this is the second of two locks, not the only one.)
-            # Fail CLOSED if main has no allowlist -- e.g. before this change is
-            # itself merged, or if someone deletes it. No gate means no `[ship]`,
-            # never "no gate means ship anything".
-            if ! git show FETCH_HEAD:.github/scripts/ship-allowed.sh \
+            # Run the BASE branch's copy of the allowlist, never the branch's.
+            # The branch is the thing being judged; letting it supply its own
+            # rule is the whole bypass. (The script also refuses to ship changes
+            # to itself, so this is the second of two locks, not the only one.)
+            # Fail CLOSED if the base has no allowlist. No gate means no
+            # `[ship]`, never "no gate means ship anything".
+            if ! git show "$BASE_REF":.github/scripts/ship-allowed.sh \
                  > "$RUNNER_TEMP/ship-allowed.sh" 2>/dev/null; then
-              echo "::warning::no ship-allowed.sh on main; refusing to auto-merge #$number."
+              echo "::warning::no ship-allowed.sh on $BASE_BRANCH; refusing to auto-merge #$number."
               exit 0
             fi
             chmod +x "$RUNNER_TEMP/ship-allowed.sh"
 
             # Three dots: diff from the merge-base, so commits that landed on
-            # main since this branch forked are not counted as ours.
-            if ! blocked="$(git diff --name-only FETCH_HEAD...HEAD | "$RUNNER_TEMP/ship-allowed.sh")"; then
+            # the base since this branch forked are not counted as ours.
+            if ! blocked="$(git diff --name-only "$BASE_REF"...HEAD | "$RUNNER_TEMP/ship-allowed.sh")"; then
               echo "::warning::[ship] ignored on #$number — this diff needs the Code Reviewer."
 
               # Every push re-runs this workflow, so say it once per PR.
