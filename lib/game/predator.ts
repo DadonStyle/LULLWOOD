@@ -147,6 +147,38 @@ export function isSniffImmune(sniffImmuneT: number, hidden: boolean): boolean {
   return hidden && sniffImmuneT > 0;
 }
 
+// ---- investigate re-escalation gate (LUL-562) -------------------------------------
+// `investigate`'s `if(!hidden){ p.state='chase'; }` (main, line 1364) fired
+// for *any* `p.inv` sub-phase, including a freshly-entered 'approach' --  but
+// every `p.state='chase' -> 'investigate'` transition sets `p.inv='approach'`
+// fresh, and 'approach' hadn't run its own movement branch yet before this
+// check could flip it straight back. If the predator hasn't moved, `chase`'s
+// own re-entry condition (`scentLock<=0 && !canSee`) is still true a frame
+// later, and the two states volley forever at zero velocity -- the confirmed,
+// reproduced livelock in wiki game/lul223-chase-investigate-livelock (bear
+// r45, 159 alternating transitions over 51s, zero net movement). The
+// original comment at this gate is explicit that it's about the close-range
+// phases ("once a predator has closed to sniff range"), which is 'sniff' and
+// 'back', not 'approach' -- so restricting the instant revert to those two
+// sub-phases is the state-machine fix, not a threshold tweak: a freshly
+// entered 'approach' now always runs its own movement code (closing distance
+// toward the player) for at least one tick before it can be re-escalated,
+// which is enough for `chase`'s condition to stop holding once the predator
+// has actually moved.
+//
+// Known narrow gap, not closed by this function: if a chase loses LOS while
+// *already* within `hasReachedSniffRange` of the player (LOS blocked at
+// near-point-blank range), 'approach' can still transition straight to
+// 'sniff' on its first tick with no movement, and the oscillation reappears
+// one level down. Not fixed here -- no reproduction of that specific
+// geometry exists (every confirmed repro is a mid-range scentLock chase, see
+// the wiki page above), and closing it would mean touching the sniff/back
+// sub-loop's own timing, which the ticket is explicit about not retuning.
+// Flagged for the tester/VP R&D rather than built speculatively.
+export function shouldRevertInvestigateToChase(inv: string, hidden: boolean): boolean {
+  return !hidden && (inv === 'sniff' || inv === 'back');
+}
+
 // ---- backoff retreat point -------------------------------------------------------
 // `p.inv === 'sniff'`'s giving-up-a-sniff retreat point: `dist` units back
 // along the predator-to-player line, clamped to the map bounds the same way
