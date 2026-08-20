@@ -264,6 +264,7 @@ const vignetteEl = document.getElementById('vignette');
 const VIGNETTE_NORMAL = { inner: 45, outerAlpha: 0.60 };
 const VIGNETTE_DIMMED  = { inner: 18, outerAlpha: 0.92 };
 function applyVignette(amt){
+  if (!vignetteEl) return;
   const inner = VIGNETTE_NORMAL.inner + (VIGNETTE_DIMMED.inner - VIGNETTE_NORMAL.inner) * amt;
   const outerAlpha = VIGNETTE_NORMAL.outerAlpha + (VIGNETTE_DIMMED.outerAlpha - VIGNETTE_NORMAL.outerAlpha) * amt;
   vignetteEl.style.background = `radial-gradient(120% 90% at 50% 44%, transparent ${inner}%, rgba(0,0,0,${outerAlpha}) 100%)`;
@@ -396,23 +397,20 @@ function inSpawn(x,z){ return x*x+z*z < 40; }
 // above -- single source of truth for the bucketing convention every
 // grid-querying function in this file and in cover.ts now shares.
 
+function addAllToGrid(arr){
+  for(const t of arr){
+    const k = key(Math.floor(t.x/CELL), Math.floor(t.z/CELL));
+    (grid.get(k) || grid.set(k, []).get(k)).push(t);
+  }
+}
 function buildGrid(){
   grid = new Map();
-  for(const t of treeData){
-    const k = key(Math.floor(t.x/CELL), Math.floor(t.z/CELL));
-    (grid.get(k) || grid.set(k, []).get(k)).push(t);
-  }
-  for(const t of bogTreeData){
-    const k = key(Math.floor(t.x/CELL), Math.floor(t.z/CELL));
-    (grid.get(k) || grid.set(k, []).get(k)).push(t);
-  }
+  addAllToGrid(treeData);
+  addAllToGrid(bogTreeData);
   // LUL-374: landmarkData is only populated once placeLandmarks() has run
   // (empty on the first, pre-landmark call this function makes at map-gen
   // time -- see the third call right after placeLandmarks() below).
-  for(const l of landmarkData){
-    const k = key(Math.floor(l.x/CELL), Math.floor(l.z/CELL));
-    (grid.get(k) || grid.set(k, []).get(k)).push(l);
-  }
+  addAllToGrid(landmarkData);
 }
 // LUL-425: blockedR/coverBlockedR/canopyBlockedR/blocked (the tree-circle,
 // rotated-cover-AABB, tree-canopy and composite movement-block checks) now
