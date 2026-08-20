@@ -204,6 +204,39 @@ export function blockedR(x: number, z: number, pr: number, grid: SpatialGrid<Cir
   return false;
 }
 
+// ---- LUL-593 (wave 4 of LUL-277): predator obstacle-avoidance steering -----
+// `avoidDir()` on main: every predator's per-frame movement fallback when its
+// desired heading (desx/desz, whatever roam/chase/investigate/flank picked)
+// would walk it straight into a blocked() circle. Lives here, not in a new
+// module, because it is nothing but another blockedR() caller against the
+// same SpatialGrid<CircleCollider> this file already owns -- no separate
+// grid abstraction needed. Tries the raw heading first, then eight fallback
+// angles (order matters: nearest deflection first, so a predator prefers the
+// smallest course correction that actually clears the obstacle), and falls
+// back to the original heading unchanged if every angle is still blocked
+// (matches main: it doesn't stop, it just walks into whatever's there).
+const AVOID_ANGLES: readonly number[] = [0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.2, -2.2];
+
+export function pickAvoidDirection(
+  x: number,
+  z: number,
+  rad: number,
+  dx: number,
+  dz: number,
+  grid: SpatialGrid<CircleCollider>,
+  cell: number = CELL,
+  lookAhead: number = 2.4,
+): [number, number] {
+  const look = rad + lookAhead;
+  if (!blockedR(x + dx * look, z + dz * look, rad, grid, cell)) return [dx, dz];
+  for (const ang of AVOID_ANGLES) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    const rx = dx * c - dz * s, rz = dx * s + dz * c;
+    if (!blockedR(x + rx * look, z + rz * look, rad, grid, cell)) return [rx, rz];
+  }
+  return [dx, dz];
+}
+
 // ---- cover-prop rotated-AABB collision (LUL-211, LUL-268) -------------------
 // World->local rotation convention, shared with hasLOS() below and with
 // distanceToCoverEdge()'s callers: localX = dx*cos(ry) - dz*sin(ry),
