@@ -513,51 +513,76 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 
 **What it can do**
 - Uniformly fade all rendered fragments by camera distance
-  (`scene.fog = new THREE.FogExp2(0x0b1220, CONFIG.fog)`, L105,
-  `CONFIG.fog = 0.04`, L78).
-- Be adjusted live by the player via the settings panel (`setFog()`,
-  L2101) — a pure rendering parameter, `scene.fog.density`.
+  (`scene.fog = new THREE.FogExp2(0x0b1220, CONFIG.fog)`, L141,
+  `CONFIG.fog = 0.04`, L89).
+- Be adjusted live by the player via the settings panel (`setFog()`, L2460)
+  — sets `fogBase`, the baseline the mist veil (below) ramps from and back
+  to. Range on the slider itself is unchanged (0.02-0.11).
+- **As of `LUL-382`** ramp all the way up to `MIST_VEIL_FOG` (0.34 — roughly
+  3x the manual slider's own max, L224) while the mist veil is held, eased
+  by `veilAmount` over `VEIL_RAMP` (1.6s, L221) each direction via
+  `veilFogDensity()` (`lib/game/veil.ts`). `tick()` (L2657) is the single
+  writer of `scene.fog.density` now — `setFog()` no longer writes it
+  directly (L2454), only `fogBase`.
 
 **What it CANNOT do**
-- **Has no coupling to any detection math.** `effectiveDetect()` (predator
-  sight range) never reads `scene.fog` or `CONFIG.fog` — a predator's
-  mechanical sight range is fixed by species (`PSPEC.detect`) regardless of
-  how thick the fog is set, and the player's own ability to "notice" a
-  predator has no gameplay hook at all (informational only, via rendering).
-  This is a real, verified absence, not a gap in reading the code — worth
-  knowing before assuming "thicker fog = harder to be seen."
-- Does not affect scent, noise, or collision in any way.
+- `effectiveDetect()` (predator sight range) still never reads
+  `scene.fog`/`CONFIG.fog`/`fogBase` directly — the detection cut below
+  reads `veilAmount`, a separate state variable driven by the same `KeyF`
+  hold, not the actual fog density. In practice the two move in lockstep
+  (both eased off the same `lightDimmed` transition, `tick()` L2639-2657),
+  but a manual "Mist" slider change alone — no `KeyF` held — still has
+  **zero** effect on detection, same invariant as before `LUL-382`, just now
+  worth restating precisely: the correlation is real when the veil is
+  active, not general "thicker fog = harder to be seen."
+- Does not affect scent or noise in any way (see Follow-light below for the
+  veil's own sight-only scope).
 - Excluded from a handful of unfogged/always-visible effects on purpose
-  (`fog:false` on several materials — stars, moon, the win-burst particles,
-  L156-163, L568-576) so those read clearly regardless of density.
+  (`fog:false` on several materials — stars, moon, the win-burst particles)
+  so those read clearly regardless of density.
 
 **Behaviours & logic**
-- Single scalar (`density`), read once per frame by the renderer itself;
-  nothing in `forest-engine.js` re-derives anything from it per frame.
+- Single scalar (`density`), read once per frame by the renderer itself.
+  `forest-engine.js` now re-derives it every frame from `fogBase` +
+  `veilAmount` via `veilFogDensity()` (`lib/game/veil.ts`, called at L2657)
+  while the veil is in play — no longer a pure pass-through of whatever
+  `setFog()` last set.
 
 **Collision & physics profile**
 - N/A — not a spatial object, has no position or collider.
 
 ---
 
-### Follow-light (player point light)
+### Follow-light (player point light) / mist veil
 
 **What it can do**
 - Illuminate the area around the player, attached directly to the camera
   (`playerLight = new THREE.PointLight(...); camera.add(playerLight)`,
-  L166) — always exactly coincident with the player, not a separate
+  L203) — always exactly coincident with the player, not a separate
   tracked entity.
 - Switch between two fixed states, `LIGHT_NORMAL`/`LIGHT_DIMMED`
-  (intensity 0.7/0.18, distance 20/8, L172-173), toggled by holding `KeyF`
-  (`tick()` L2285-2294), paired with a screen vignette cue.
-- **As of `LUL-291` (merged to `main` 2026-08-18, pulled in by this ticket's
-  required backmerge — see handoff comment), dimming is also a real
-  detection multiplier**: `effectiveDetect()` (L896-899) now multiplies by
-  `DIM_DETECT_MUL` (0.75, L849) whenever `lightDimmed` is true, stacking
-  with the stillness cut. Previous revisions of this doc described this as
-  "deliberately dormant" — that was true against this branch's original base
-  (`fc2b51f`) but is **no longer true against current `main`**; see the
-  "CANNOT do" bullet below, corrected in the same pass.
+  (intensity 0.7/0.18, distance 20/8, L213-214), toggled by holding `KeyF`
+  (`tick()` L2639-2657), paired with a screen vignette cue.
+- **As of `LUL-382` (supersedes `LUL-291`'s dim-only detection wiring, see
+  decisions/0012-feature-impact-bar on the wiki)**, holding `KeyF` no longer
+  just dims the light — it triggers the **mist veil**, a bundled world state:
+  the light still dims (unchanged), `scene.fog.density` ramps to
+  `MIST_VEIL_FOG` (0.34, see Fog above), and `effectiveDetect()` (L1200)
+  multiplies predator sight range by up to `VEIL_DETECT_MUL` (0.35 — a 65%
+  cut, vs. LUL-291's 25%) via `veilDetectMul()`, scaled by the same
+  `veilAmount` ramp as the fog. Sight only — `p.spec.scent` is untouched,
+  same scope LUL-291 already had; a predator can still scent-lock the player
+  through the veil.
+- **Gated by a charge meter, not free** (`veilCharge`/`veilLocked`, engine
+  L222): `VEIL_MAX_HOLD` (5s) of continuous hold drains it to zero, which
+  force-drops the veil even with `KeyF` still held; it only regenerates
+  while inactive, at `VEIL_REGEN_MUL` (0.5x) the drain rate, and a full
+  drain locks the veil out until charge climbs back past
+  `VEIL_UNLOCK_CHARGE` (0.3). The state machine itself is pure logic, lifted
+  out to `lib/game/veil.ts` (`stepVeilCharge()`, unit tested — see
+  `lib/game/veil.test.ts`) rather than living inline in `forest-engine.js`,
+  per wiki systems/unit-testing-standard. Surfaced to the HUD as
+  `veilCharge`/`veilLocked` (components/Hud.tsx, `#veilState`).
 
 **What it CANNOT do**
 - Cannot be occluded by anything — **no shadow-casting exists anywhere in
@@ -565,11 +590,18 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
   light passes through trees, cover, and terrain equally; "dimming" changes
   its falloff distance/intensity, not what it can see through.
 - Cannot be independently positioned — always camera-local.
+- Cannot be held indefinitely — see the charge-meter bullet above; this is
+  the feature's cost, a founder-mandated condition for shipping it
+  (decisions/0012-feature-impact-bar).
 
 **Behaviours & logic**
 - Binary state only (no slider) — a deliberate choice per the LUL-40
   handoff, "a slider players set once and forget wouldn't be the
-  every-second decision the ticket wants."
+  every-second decision the ticket wants." Unchanged by `LUL-382`.
+- `veilAmount` (0..1, `tick()` L2656) eases `lightDimmed`'s boolean toward
+  its target over `VEIL_RAMP` (1.6s, L221) — slower than the vignette's own
+  ~0.5s ramp (`dimAmount`), so the light pool reacts first and the world's
+  mist visibly billows in behind it.
 
 **Collision & physics profile**
 - N/A — a light, not a collider. Unoccluded by all geometry (no shadow
