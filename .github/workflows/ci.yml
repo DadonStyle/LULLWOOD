@@ -61,6 +61,13 @@ jobs:
   unit:
     name: unit tests
     runs-on: ubuntu-latest
+    # LUL-485: no explicit timeout meant a hang inherited GitHub's 360-minute
+    # default and pinned a runner for hours instead of failing fast. Observed
+    # duration across 12 green runs on 2026-08-19: 15-24s, so 10 min is ~25x
+    # headroom, not a tight guess.
+    timeout-minutes: 10
+    # Same fork-scope guard as `build` — see the LUL-100 comment above `on:`.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v4
 
@@ -83,6 +90,12 @@ jobs:
   build:
     name: build, typecheck, lint
     runs-on: ubuntu-latest
+    # LUL-485: see the `unit` job's comment. Observed duration across 12 green
+    # runs on 2026-08-19: 26-40s, so 10 min is ~15x headroom.
+    timeout-minutes: 10
+    # See the LUL-100 comment above `on:` — same-repo branches are already
+    # covered by the push trigger; only a fork PR needs this event.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v4
 
@@ -113,7 +126,29 @@ jobs:
     name: playwright smoke suite
     needs: build
     runs-on: ubuntu-latest
+    # LUL-485: without this, a hung job inherited GitHub's 360-minute default
+    # and pinned a runner for hours (measured: two `workflow_dispatch` runs on
+    # superseded heads sat `in_progress` for 4h47m and 3h57m before being
+    # cancelled by hand). Root cause of both hangs, from job logs: `npx
+    # playwright install --with-deps chromium`'s internal `apt-get update`
+    # stalled fetching `noble-security InRelease` from archive.ubuntu.com —
+    # apt sets no read timeout, so a stalled TCP connection to a mirror hangs
+    # forever instead of erroring. That is a runner/network flake outside
+    # this repo's control; the cap here turns it into a bounded, visible
+    # failure instead of eliminating it.
+    #
+    # 30 min, not the 20 guessed when this was filed: 12 green runs on
+    # 2026-08-19 ranged 723-1138s (12-19min), so 20min would leave as little
+    # as ~1min of margin over the slowest legitimate run and risk flaking
+    # real passes. 30min keeps ~1.6x headroom over the observed max.
+    timeout-minutes: 30
+    # A job-level `if:` replaces the implicit `needs: success()` gate rather
+    # than adding to it (LUL-106), so the fork-scope condition alone would let
+    # this run even when `build` genuinely fails. `needs.build.result` restores
+    # that gate explicitly.
+    if: needs.build.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
     steps:
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
