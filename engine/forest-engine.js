@@ -14,6 +14,16 @@ import * as THREE from 'three';
 import { track } from '@/lib/analytics';
 import { jumpOffset, JUMP_DURATION } from '@/lib/game/jump';
 import {
+  freshRunState,
+  isPlaying,
+  canPickUp,
+  beginPickup,
+  completePickup,
+  canArriveHome,
+  arriveHome as outcomeArriveHome,
+  triggerDeath as outcomeTriggerDeath,
+} from '@/lib/game/outcome';
+import {
   shouldTriggerCharge,
   startCharge,
   stepCharge,
@@ -1469,6 +1479,13 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false;   // LUL-213: see beginJump() / tick()'s jumpY
+// LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
+// engine's own mutable locals (lib/game/outcome.ts is pure and holds no
+// state of its own) -- this snapshots them into the RunState shape the
+// module's pure functions read, on demand, right before each call.
+function runState(){
+  return { entered, won, dead, pickingUp, carrying, babyTaken: baby.taken };
+}
 // LUL-153: `game_start` fires once per page-load (first real pointer-lock
 // acquisition), not once per restart -- it feeds the page_view -> ... -> win
 // funnel, which measures "did this visitor ever reach gameplay," not run count.
@@ -1506,7 +1523,7 @@ function motionReduced(){ return reduce || reducedMotionSetting; }
 
 on(window, 'keydown', e => {
   keys[e.code] = true;
-  const playing = entered && !won && !dead && !pickingUp;
+  const playing = isPlaying(runState());
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
   // LUL-26: toggle-run edge-triggers off keydown (not keyup) so the very
   // press that would have started a hold-run also starts a toggle-run --
@@ -1556,7 +1573,7 @@ if(mode === 'desktop'){
       // lock; this is the browser actually granting it.
       if(entered && !gameStartFired){ gameStartFired = true; track({ event: 'game_start', seed: currentSeed }); }
     }
-    else if(entered && !won && !dead && !pickingUp) setPaused(true);     // Esc / released lock -> menu
+    else if(isPlaying(runState())) setPaused(true);     // Esc / released lock -> menu
   });
   on(document, 'pointerlockerror', () => { locked = false; });
   on(el, 'mousedown', () => {
@@ -2500,8 +2517,10 @@ const deathVideo = document.getElementById('deathVideo');
 const CUT_END = 3.7;   // death video length; reveal the loss text at the end
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
-  if(baby.taken || won || dead || pickingUp) return;
-  baby.taken = true; pickingUp = true; pickStart = clock.elapsedTime; hidden = false;
+  const next = beginPickup(runState());
+  if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
+  baby.taken = next.babyTaken; pickingUp = next.pickingUp;
+  pickStart = clock.elapsedTime; hidden = false;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found; carrying starts now
   pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
@@ -2516,7 +2535,8 @@ function finishPickup(){
   // along small and glowing until you arrive; see arriveHome(). Reset the
   // glow properties the cinematic left mid-transition (the "boomed" branch
   // above forces babyLight to 0 every frame while pickingUp).
-  pickingUp = false; carrying = true;
+  const next = completePickup(runState());
+  pickingUp = next.pickingUp; carrying = next.carrying;
   armsGroup.visible = false;
   document.body.style.cursor = '';
   babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
@@ -2524,7 +2544,8 @@ function finishPickup(){
   halo.material.opacity = 0.22; babyLight.intensity = 1.3;
 }
 function arriveHome(){
-  won = true; carrying = false;
+  const next = outcomeArriveHome(runState());
+  won = next.won; carrying = next.carrying;
   babyGroup.visible = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
@@ -2539,8 +2560,9 @@ function arriveHome(){
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
 }
 function triggerDeath(kind){
-  if(dead || won || pickingUp) return;
-  dead = true; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
+  const next = outcomeTriggerDeath(runState());
+  if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
+  dead = next.dead; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
@@ -2560,7 +2582,9 @@ function revealLoss(){ deathShown = true; document.body.style.cursor = ''; pushS
 function restart(){
   pushState({ winVisible: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
-  won = dead = pickingUp = carrying = hidden = false; hideTime = 0; hideKind = null; eyeH = CONFIG.eye; deathShown = false;
+  const fresh = freshRunState();
+  won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; baby.taken = fresh.babyTaken;
+  hidden = false; hideTime = 0; hideKind = null; eyeH = CONFIG.eye; deathShown = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
@@ -2757,7 +2781,7 @@ function tick(){
   if(jumping){ jumpElapsed += dt; if(jumpElapsed >= JUMP_DURATION){ jumping = false; jumpElapsed = 0; } }
   const jumpY = jumping ? jumpOffset(jumpElapsed) : 0;
 
-  const playing = entered && !paused && !won && !dead && !pickingUp;
+  const playing = isPlaying(runState()) && !paused;
 
   // LUL-40/LUL-382: hold KeyF for the mist veil. Read every frame like `running`
   // below rather than from the keydown/keyup handlers, so releasing F while e.g.
@@ -2859,7 +2883,10 @@ function tick(){
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
     const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
-    if(dh < CONFIG.home.r) arriveHome();
+    // LUL-596: canArriveHome() also requires !dead && !won -- this call site
+    // used to be the only thing keeping a dead player from winning (positional
+    // safety, not a precondition). Do not drop this guard.
+    if(canArriveHome(runState(), dh, CONFIG.home.r)) arriveHome();
   } else if(dead){
     // the death "cutscene" is a real video overlay (see #deathVideo); just reveal the loss text at the end
     if((clock.elapsedTime - deathStart) >= CUT_END && !deathShown) revealLoss();
@@ -2930,7 +2957,7 @@ function tick(){
 
   // objective + status HUD
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
-  canPickup = !baby.taken && distBaby < 3.6;
+  canPickup = canPickUp(runState(), distBaby, 3.6);
   const distHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);   // LUL-38
   if(playing){
     let statusVisible = false, statusText = '';
@@ -3091,11 +3118,11 @@ tick();
   function setTouchLook(x, y) { if(mode !== 'mobile') return; touchLook.x = x; touchLook.y = y; }
   function setTouchSprint(v)  { if(mode !== 'mobile') return; touchSprint = v; }
   function triggerTouchHide() {
-    const playing = entered && !won && !dead && !pickingUp;
+    const playing = isPlaying(runState());
     if(playing && !paused) toggleHidden();
   }
   function triggerTouchInteract() {
-    const playing = entered && !won && !dead && !pickingUp;
+    const playing = isPlaying(runState());
     if(canPickup && playing && !paused) pickup();
   }
 
