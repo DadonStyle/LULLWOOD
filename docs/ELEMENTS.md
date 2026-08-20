@@ -766,3 +766,10 @@ existing ones, not new logic to re-derive.
 `REVIEW: APPROVED`) already re-derived its determinism claims independently;
 this section only describes shape for forward-planning, it is not a second
 review pass.
+
+## LUL-536 probe note
+
+This paragraph is a throwaway, docs-only probe for LUL-536: proving a
+`[ship]`-tagged PR that gets backmerged after tagging still self-merges via
+`automerge.yml` (LUL-465's fix, re-verified live rather than assumed). Safe
+to ignore; it carries no game-behavior content.
