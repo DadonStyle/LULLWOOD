@@ -225,17 +225,35 @@ test.describe('LUL-384: log is walkable', () => {
     // (LUL-384 found that this specific window undershoots under CI's
     // rendering load -- same class of flake as LUL-421's charge-dodge
     // wall-clock assertions, wiki: systems/dt-clamp-vs-walltime).
+    //
+    // LUL-554: this used to be N *sequential, awaited* page.evaluate() calls,
+    // one per 0.2-unit step. Each round-trip pays the full CDP cost of
+    // waiting for the page's main thread (mid-render of the WebGL scene) to
+    // go idle -- fine in isolation, but on the combined release/next+main
+    // merge tree, two new spec files from main (blind-chase-cover.spec.ts,
+    // charge-dodge.spec.ts) run alphabetically before this one in the same
+    // single-worker, non-parallel session (playwright.config.ts: workers: 1,
+    // fullyParallel: false) and load the renderer enough that N sequential
+    // round-trips blew this test's explicit 45s budget -- confirmed by
+    // reproducing the actual merge tree locally (identical log candidate,
+    // same near/far face values as the original CI failure) and observing
+    // the failure only manifests under that heavier combined-suite ordering,
+    // not against release/next alone. Sampling inside a single evaluate()
+    // pays the round-trip cost once, independent of step count or session
+    // load, without changing what's being asserted.
     const sampleFromX = nearFaceX - 0.5;
     const sampleToX = farFaceX + 0.5;
     const step = 0.2;
-    const blockedSamples: { x: number; blocked: boolean }[] = [];
-    for (let x = sampleFromX; x <= sampleToX; x += step) {
-      const isBlocked = await page.evaluate(
-        ({ x, z }) => window.ForestEngine?.qaProbeBlocked?.(x, z),
-        { x, z: prop.z },
-      );
-      blockedSamples.push({ x, blocked: !!isBlocked });
-    }
+    const blockedSamples = await page.evaluate(
+      ({ fromX, toX, step, z }) => {
+        const samples: { x: number; blocked: boolean }[] = [];
+        for (let x = fromX; x <= toX; x += step) {
+          samples.push({ x, blocked: !!window.ForestEngine?.qaProbeBlocked?.(x, z) });
+        }
+        return samples;
+      },
+      { fromX: sampleFromX, toX: sampleToX, step, z: prop.z },
+    );
     const firstBlocked = blockedSamples.find((s) => s.blocked);
     expect(
       firstBlocked,
