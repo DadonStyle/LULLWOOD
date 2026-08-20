@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
+import OrientationGate from './OrientationGate';
 import SettingsPanel from './SettingsPanel';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
@@ -291,6 +292,8 @@ export default function Hud({
 
   return (
     <>
+      <OrientationGate />
+
       {mobile ? (
         <MobileControls actions={actions} entered={state.entered} />
       ) : (
@@ -381,16 +384,24 @@ export default function Hud({
           <div id="gateTitle">LULLWOOD</div>
           <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
           <div id="gateKeys">
-            <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run
-            <br />
-            <b>H</b> — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
-            <br />
-            <b>Space</b> — jump (also how you clear a charging wolf or lion)
-            <br />
-            <b>F</b> — hold for the mist veil (dims your light, floods the world in mist, and cuts
-            how far predators can see you) — limited, watch the Veil meter
-            <br />
-            <span style={{ fontSize: 11, opacity: 0.7 }}>on mobile: left stick — move &nbsp;·&nbsp; right stick — look &nbsp;·&nbsp; Hide / E buttons</span>
+            {mobile ? (
+              <>
+                <b>left stick</b> — move &nbsp;·&nbsp; <b>right stick</b> — look &nbsp;·&nbsp; push the left stick further to run
+                <br />
+                <b>Hide</b> button — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> button — lift the child
+              </>
+            ) : (
+              <>
+                <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run
+                <br />
+                <b>H</b> — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
+                <br />
+                <b>Space</b> — jump (also how you clear a charging wolf or lion)
+                <br />
+                <b>F</b> — hold for the mist veil (dims your light, floods the world in mist, and cuts
+                how far predators can see you) — limited, watch the Veil meter
+              </>
+            )}
           </div>
         </div>
       )}
