@@ -358,19 +358,39 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
   log knock" sound (`hollowLogSound()`, L1397-1418).
 - ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()` L416), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
+- **LUL-384: the player walks and runs over it, no route-around needed** —
+  `coverKindBlocksPlayerMovement('log')` is `false` (`lib/game/cover.ts`),
+  so `coverBlockedR()` no longer blocks the player here. The always-on jump
+  (LUL-213) already worked everywhere, including on/over a log; this just
+  means you're no longer stopped at its edge in the first place.
 
 **What it CANNOT do**
-- Same movement-blocking exemption as Rock: predators pass through it.
-- Not guaranteed clear of tree trunks at placement (see matrix).
+- Movement-blocking exemption now shared with the player too (LUL-384) —
+  Log is the only cover kind that blocks neither actor's movement. Rock and
+  Bramble are unchanged, still solid to the player.
+- Guaranteed clear of tree **trunks** at placement, same as every cover kind
+  (see matrix) — and, unlike Rock/Bramble, also guaranteed clear of tree
+  **canopies** (`overlapsTreeCanopy()`, `lib/game/cover.ts`, LUL-491): since
+  a log invites the player to walk its full span and `canopyBlockedR()`
+  blocks unconditionally within a tree's canopy radius regardless of what
+  cover prop sits there, `generateCover()` rejects a log candidate whose
+  footprint overlaps a nearby canopy circle even when it clears the trunk
+  circle. Rock/Bramble don't get this extra check — solid either way, so a
+  canopy-only overlap there changes nothing observable.
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
   between long-on-x / long-on-z (`generateCover()` L416-417).
 
 **Collision & physics profile**
-- Same as Rock: player-only rotated-AABB collider, LOS for both actors.
-- Additionally gates `findHideSpot()` (proximity search, `HIDE_RADIUS`=2.2u
-  beyond the prop's own edge, L908-922).
+- LOS-blocking for both actors, same as Rock (`hasLOS()`, unchanged).
+- **No movement collision for either actor** (LUL-384 removed the
+  player-only block; predators never had one). Catch resolves normally on
+  or beside a log — `isCaught()`/chase are proximity checks, never gated on
+  `blocked()`/`coverBlockedR()`, so a log is not a safe zone.
+- Still gates `findHideSpot()` (proximity search, `HIDE_RADIUS`=2.2u
+  beyond the prop's own edge, L908-922) — unaffected, that function reads
+  `coverGrid` directly and never calls `coverBlockedR()`.
 
 ---
 
@@ -493,51 +513,76 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 
 **What it can do**
 - Uniformly fade all rendered fragments by camera distance
-  (`scene.fog = new THREE.FogExp2(0x0b1220, CONFIG.fog)`, L105,
-  `CONFIG.fog = 0.04`, L78).
-- Be adjusted live by the player via the settings panel (`setFog()`,
-  L2101) — a pure rendering parameter, `scene.fog.density`.
+  (`scene.fog = new THREE.FogExp2(0x0b1220, CONFIG.fog)`, L141,
+  `CONFIG.fog = 0.04`, L89).
+- Be adjusted live by the player via the settings panel (`setFog()`, L2460)
+  — sets `fogBase`, the baseline the mist veil (below) ramps from and back
+  to. Range on the slider itself is unchanged (0.02-0.11).
+- **As of `LUL-382`** ramp all the way up to `MIST_VEIL_FOG` (0.34 — roughly
+  3x the manual slider's own max, L224) while the mist veil is held, eased
+  by `veilAmount` over `VEIL_RAMP` (1.6s, L221) each direction via
+  `veilFogDensity()` (`lib/game/veil.ts`). `tick()` (L2657) is the single
+  writer of `scene.fog.density` now — `setFog()` no longer writes it
+  directly (L2454), only `fogBase`.
 
 **What it CANNOT do**
-- **Has no coupling to any detection math.** `effectiveDetect()` (predator
-  sight range) never reads `scene.fog` or `CONFIG.fog` — a predator's
-  mechanical sight range is fixed by species (`PSPEC.detect`) regardless of
-  how thick the fog is set, and the player's own ability to "notice" a
-  predator has no gameplay hook at all (informational only, via rendering).
-  This is a real, verified absence, not a gap in reading the code — worth
-  knowing before assuming "thicker fog = harder to be seen."
-- Does not affect scent, noise, or collision in any way.
+- `effectiveDetect()` (predator sight range) still never reads
+  `scene.fog`/`CONFIG.fog`/`fogBase` directly — the detection cut below
+  reads `veilAmount`, a separate state variable driven by the same `KeyF`
+  hold, not the actual fog density. In practice the two move in lockstep
+  (both eased off the same `lightDimmed` transition, `tick()` L2639-2657),
+  but a manual "Mist" slider change alone — no `KeyF` held — still has
+  **zero** effect on detection, same invariant as before `LUL-382`, just now
+  worth restating precisely: the correlation is real when the veil is
+  active, not general "thicker fog = harder to be seen."
+- Does not affect scent or noise in any way (see Follow-light below for the
+  veil's own sight-only scope).
 - Excluded from a handful of unfogged/always-visible effects on purpose
-  (`fog:false` on several materials — stars, moon, the win-burst particles,
-  L156-163, L568-576) so those read clearly regardless of density.
+  (`fog:false` on several materials — stars, moon, the win-burst particles)
+  so those read clearly regardless of density.
 
 **Behaviours & logic**
-- Single scalar (`density`), read once per frame by the renderer itself;
-  nothing in `forest-engine.js` re-derives anything from it per frame.
+- Single scalar (`density`), read once per frame by the renderer itself.
+  `forest-engine.js` now re-derives it every frame from `fogBase` +
+  `veilAmount` via `veilFogDensity()` (`lib/game/veil.ts`, called at L2657)
+  while the veil is in play — no longer a pure pass-through of whatever
+  `setFog()` last set.
 
 **Collision & physics profile**
 - N/A — not a spatial object, has no position or collider.
 
 ---
 
-### Follow-light (player point light)
+### Follow-light (player point light) / mist veil
 
 **What it can do**
 - Illuminate the area around the player, attached directly to the camera
   (`playerLight = new THREE.PointLight(...); camera.add(playerLight)`,
-  L166) — always exactly coincident with the player, not a separate
+  L203) — always exactly coincident with the player, not a separate
   tracked entity.
 - Switch between two fixed states, `LIGHT_NORMAL`/`LIGHT_DIMMED`
-  (intensity 0.7/0.18, distance 20/8, L172-173), toggled by holding `KeyF`
-  (`tick()` L2285-2294), paired with a screen vignette cue.
-- **As of `LUL-291` (merged to `main` 2026-08-18, pulled in by this ticket's
-  required backmerge — see handoff comment), dimming is also a real
-  detection multiplier**: `effectiveDetect()` (L896-899) now multiplies by
-  `DIM_DETECT_MUL` (0.75, L849) whenever `lightDimmed` is true, stacking
-  with the stillness cut. Previous revisions of this doc described this as
-  "deliberately dormant" — that was true against this branch's original base
-  (`fc2b51f`) but is **no longer true against current `main`**; see the
-  "CANNOT do" bullet below, corrected in the same pass.
+  (intensity 0.7/0.18, distance 20/8, L213-214), toggled by holding `KeyF`
+  (`tick()` L2639-2657), paired with a screen vignette cue.
+- **As of `LUL-382` (supersedes `LUL-291`'s dim-only detection wiring, see
+  decisions/0012-feature-impact-bar on the wiki)**, holding `KeyF` no longer
+  just dims the light — it triggers the **mist veil**, a bundled world state:
+  the light still dims (unchanged), `scene.fog.density` ramps to
+  `MIST_VEIL_FOG` (0.34, see Fog above), and `effectiveDetect()` (L1200)
+  multiplies predator sight range by up to `VEIL_DETECT_MUL` (0.35 — a 65%
+  cut, vs. LUL-291's 25%) via `veilDetectMul()`, scaled by the same
+  `veilAmount` ramp as the fog. Sight only — `p.spec.scent` is untouched,
+  same scope LUL-291 already had; a predator can still scent-lock the player
+  through the veil.
+- **Gated by a charge meter, not free** (`veilCharge`/`veilLocked`, engine
+  L222): `VEIL_MAX_HOLD` (5s) of continuous hold drains it to zero, which
+  force-drops the veil even with `KeyF` still held; it only regenerates
+  while inactive, at `VEIL_REGEN_MUL` (0.5x) the drain rate, and a full
+  drain locks the veil out until charge climbs back past
+  `VEIL_UNLOCK_CHARGE` (0.3). The state machine itself is pure logic, lifted
+  out to `lib/game/veil.ts` (`stepVeilCharge()`, unit tested — see
+  `lib/game/veil.test.ts`) rather than living inline in `forest-engine.js`,
+  per wiki systems/unit-testing-standard. Surfaced to the HUD as
+  `veilCharge`/`veilLocked` (components/Hud.tsx, `#veilState`).
 
 **What it CANNOT do**
 - Cannot be occluded by anything — **no shadow-casting exists anywhere in
@@ -545,11 +590,18 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
   light passes through trees, cover, and terrain equally; "dimming" changes
   its falloff distance/intensity, not what it can see through.
 - Cannot be independently positioned — always camera-local.
+- Cannot be held indefinitely — see the charge-meter bullet above; this is
+  the feature's cost, a founder-mandated condition for shipping it
+  (decisions/0012-feature-impact-bar).
 
 **Behaviours & logic**
 - Binary state only (no slider) — a deliberate choice per the LUL-40
   handoff, "a slider players set once and forget wouldn't be the
-  every-second decision the ticket wants."
+  every-second decision the ticket wants." Unchanged by `LUL-382`.
+- `veilAmount` (0..1, `tick()` L2656) eases `lightDimmed`'s boolean toward
+  its target over `VEIL_RAMP` (1.6s, L221) — slower than the vignette's own
+  ~0.5s ramp (`dimAmount`), so the light pool reacts first and the world's
+  mist visibly billows in behind it.
 
 **Collision & physics profile**
 - N/A — a light, not a collider. Unoccluded by all geometry (no shadow
@@ -630,7 +682,7 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
 | | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | C+LOS+HIDE | C+LOS+HIDE | STAND | **U**⁴ | TRIG⁵ | – | ATT | TRIG⁶ |
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | **U**⁴ | TRIG⁵ | – | ATT | TRIG⁶ |
 | **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ |
 | **WO** Wolf | | | ·⁹ | **U**¹⁰ | **U**¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | **U**¹² | – | – | – | TRIG⁶ |
 | **BE** Bear | | | | –¹³ | **U**¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | **U**¹² | – | – | – | TRIG⁶ |
@@ -687,7 +739,16 @@ tree's trunk collision circle (`treesNear()` + `overlapsTreeTrunk()` in
 `lib/game/cover.ts`) before placing it, same as the `inLake()`/`inSpawn()`/
 `inBaby()` rejections already there. Previously unchecked — a prop could
 spawn overlapping a tree trunk, a possible unreachable/broken hide spot if
-it hit a `bramble`/`log`.
+it hit a `bramble`/`log`. **Log additionally checks canopy clearance
+(LUL-384/LUL-491):** `overlapsTreeCanopy()` (`lib/game/cover.ts`) rejects a
+log candidate whose footprint overlaps a nearby tree's wider *canopy*
+circle (`t.crCanopy`), even when the trunk circle is clear — needed because
+Log is walkable (`coverKindBlocksPlayerMovement('log') === false`) and
+`canopyBlockedR()` blocks the player unconditionally within the canopy
+radius regardless of what's on the ground; without this a log could spawn
+clear of every trunk yet still wedge the player mid-crossing at a canopy
+edge. Rock/Bramble stay trunk-only — solid either way, so a canopy-only
+overlap changes nothing observable for them.
 ¹⁵ Trees and cover props both reject `inLake()` spawn candidates
 (`generateMap()` L446, `generateCover()` L413) — defined, not undefined.
 ¹⁶ Both protected from home only indirectly, via the shared `inSpawn()`
@@ -704,6 +765,12 @@ first) — not filed as a separate ticket; noted for whoever next touches
 home at (0,0) r=3.6) — no code enforces their separation, but no seed can
 move either one, so there's nothing to verify per-seed. Defined by
 construction, not undefined.
+²⁰ **Changed, LUL-384.** Previously `C+LOS+HIDE` like Bramble. Log is now the
+one cover kind that doesn't block the player's movement either —
+`coverKindBlocksPlayerMovement('log')` is `false` (`lib/game/cover.ts`), read
+by `coverBlockedR()`. LOS and hide-spot eligibility are untouched (both read
+`coverGrid` independently of `coverBlockedR()`), so Log keeps `LOS+HIDE`;
+only the `C` is gone.
 
 ---
 

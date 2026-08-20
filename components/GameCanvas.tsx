@@ -76,7 +76,37 @@ const OVERLAY_STYLE = `
      for viewports isMobile() calls mobile that this query doesn't catch. */
   @media (max-width: 768px), (pointer: coarse) and (hover: none) {
     #panel { bottom: 240px; }
+    /* LUL-69: ~44px is the standard (WCAG 2.5.5 / Apple HIG / Material)
+       minimum touch-target side -- desktop's 6px/12px padding at 12px font
+       sits well under that, and the founder's own complaint was "HUD sized
+       for desktop". Bumping padding/font grows the box height comfortably
+       past 44px without a hardcoded min-height fighting the button's own
+       content. */
+    #panel button { padding: 13px 16px; font-size: 14px; }
+    #panel label, #panel span { font-size: 13px; }
+    #panel input[type="range"] { width: 64px; }
+    #gateTitle { font-size: 32px; }
+    #gateSub { font-size: 13px; }
+    #gateKeys { font-size: 13px; line-height: 2.1; }
+    /* Minimap stays legible at the same physical size rather than shrinking
+       further -- on a ~390px-wide phone it's already a larger fraction of
+       the screen than on desktop, which is the point (small map = useless
+       map): shrinking it to "save space" would fight the same "legible on a
+       phone screen" requirement this block exists for. */
   }
+
+  /* LUL-69: mobile-only, portrait-only -- see components/OrientationGate.tsx.
+     z-index 50 sits above every other overlay (#settingsPanel is the next
+     highest at 40) so it blocks input to the canvas, the gate, and
+     MobileControls' sticks/buttons underneath, without needing to unmount
+     any of them. */
+  #orientationGate { position: fixed; inset: 0; z-index: 50; display: flex;
+    flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+    background: rgba(6,9,15,0.94); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    text-align: center; padding: 24px; color: #d7e4f6; }
+  #orientationGateIcon { font-size: 48px; animation: rotateHint 1.6s ease-in-out infinite; }
+  #orientationGate p { margin: 0; font-size: 15px; letter-spacing: 0.04em; max-width: 280px; }
+  @keyframes rotateHint { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(-90deg); } }
 
   /* LUL-26: difficulty presets + accessibility dialog. The 9999px spread is
      the standard trick for a full-viewport dim without a second DOM node --

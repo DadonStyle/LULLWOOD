@@ -1,0 +1,221 @@
+name: Version cut
+
+# Implements LUL-492's step 4 (the version-cut workflow): batches everything
+# currently sitting on `release/next` into `main` on a cadence, instead of
+# every feature PR hitting `main` directly (systems/release-train).
+#
+# `release/next`'s ruleset has `strict_required_status_checks_policy: false`
+# (systems/release-train), so PRs land there in parallel and merging one no
+# longer invalidates every other open PR's checks. What that trades away --
+# "every change was tested against the exact final tree" -- is bought back
+# here: this workflow builds the real release/next+main merge tree and
+# re-runs the full suite against it before the cut PR is ever offered for
+# review. `main`'s required checks are SHA-scoped (this repo has no merge
+# queue), so left alone they'd just replay whatever last passed on
+# release/next's own tip -- not the combined result -- which is why this
+# can't be left to ci.yml's normal pull_request/push triggers.
+#
+# This workflow never merges anything into `main`. It only opens or refreshes
+# the cut PR and reports the combined-suite result on it. Merging needs a
+# full-version Code Reviewer pass scoped to cross-PR collisions (LUL-492
+# §3.4) -- ship-allowed.sh denies `.github/workflows/*` outright, and the same
+# bar applies to a PR that touches the whole tree at once. See
+# systems/release-train and playbooks/review-protocol in the shared wiki.
+
+on:
+  schedule:
+    # at least once a day, per LUL-492 §1
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Open a cut PR even if release/next has nothing new (for testing this workflow)'
+        type: boolean
+        default: false
+  push:
+    branches: [release/next]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: version-cut
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    name: decide whether to cut
+    runs-on: ubuntu-latest
+    if: github.repository == 'DadonStyle/LULLWOOD'
+    outputs:
+      should_cut: ${{ steps.check.outputs.should_cut }}
+      ahead_by: ${{ steps.check.outputs.ahead_by }}
+    steps:
+      - name: compare release/next against main
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+
+          ahead="$(gh api "repos/${{ github.repository }}/compare/main...release/next" --jq '.ahead_by // 0')"
+          echo "ahead_by=$ahead" >> "$GITHUB_OUTPUT"
+
+          # schedule/workflow_dispatch cut on anything new -- "at least once a
+          # day" is the point of the schedule. `push` (every merge landing on
+          # release/next) only cuts early once the lane is K=8 PRs ahead
+          # (LUL-492 §3.4); below that it's a near-free early-exit, no
+          # combined-suite run, so routine feature merges don't each cost a
+          # full playwright run.
+          should_cut=false
+          case "$EVENT" in
+            workflow_dispatch)
+              if [ "$FORCE" = "true" ] || [ "$ahead" -gt 0 ]; then should_cut=true; fi
+              ;;
+            schedule)
+              if [ "$ahead" -gt 0 ]; then should_cut=true; fi
+              ;;
+            push)
+              if [ "$ahead" -ge 8 ]; then should_cut=true; fi
+              ;;
+          esac
+          echo "should_cut=$should_cut" >> "$GITHUB_OUTPUT"
+          echo "::notice::ahead_by=$ahead event=$EVENT should_cut=$should_cut"
+
+  combined-suite:
+    name: build the merge tree and run the full suite
+    needs: decide
+    if: needs.decide.outputs.should_cut == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/next
+          fetch-depth: 0
+
+      # Live fetch, not a snapshot from the `decide` job -- release/next can
+      # keep taking feature merges the whole time this run is in flight, and
+      # this is the state the combined-suite result actually needs to speak
+      # for.
+      - name: build the combined tree (release/next merged with main)
+        run: |
+          set -euo pipefail
+          git config user.name  "lullwood-version-cut"
+          git config user.email "version-cut@lullwood.invalid"
+          git fetch --no-tags origin main
+          if ! git merge --no-ff --no-edit FETCH_HEAD; then
+            git merge --abort
+            echo "::error::release/next conflicts with main -- needs a manual backmerge before this cut can be tested."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: unit tests
+        run: npm test
+
+      - name: lint
+        run: npm run lint
+
+      # Next 16 injects generated route types; next-env.d.ts is gitignored
+      # and doesn't exist in a fresh checkout (same as ci.yml's build job).
+      - name: typegen
+        run: npx next typegen
+
+      - name: typecheck
+        run: npx tsc --noEmit
+
+      - name: build
+        run: npx next build
+
+      - name: install playwright browsers + system deps
+        run: npx playwright install --with-deps chromium
+
+      - name: playwright smoke suite
+        run: npx playwright test
+
+      - name: upload playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-cut-playwright-results
+          path: test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  open-or-refresh-cut-pr:
+    name: open or refresh the cut PR
+    needs: [decide, combined-suite]
+    # Runs even if combined-suite failed -- a silent red run nobody looks at
+    # is worse than a PR that says DO NOT MERGE in plain sight.
+    if: always() && needs.decide.outputs.should_cut == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: open or refresh the cut PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SUITE_RESULT: ${{ needs.combined-suite.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          number="$(gh pr list --repo "$REPO" --state open --base main --head release/next --json number --jq '.[0].number // empty')"
+
+          if [ -z "$number" ]; then
+            today="$(date -u +%Y.%m.%d)"
+
+            # N disambiguates same-day cuts. Count existing tags for today
+            # rather than trusting anything computed earlier in this run.
+            n=1
+            existing="$(gh api "repos/$REPO/git/matching-refs/tags/v${today}" --jq '. | length' 2>/dev/null || echo 0)"
+            if [ "$existing" -gt 0 ] 2>/dev/null; then
+              n=$((existing + 1))
+            fi
+            title="Release v${today}-${n}"
+
+            printf '%s\n' \
+              "Automated version cut (LUL-497): batches everything currently merged into" \
+              '`release/next` into `main`.' \
+              '' \
+              '**Before merging:**' \
+              "- confirm the combined-suite run is green (below) -- this PR's own" \
+              '  required checks reflect release/next'"'"'s last push, not the merge tree' \
+              '  tested there, so they alone do not prove the combined result is safe.' \
+              '- needs a full-version Code Reviewer pass scoped to cross-PR collisions' \
+              '  (duplicate identifiers, contradictory tuning, two PRs touching the same' \
+              '  system -- precedent: LUL-427). Open a Paperclip review child issue; this' \
+              '  workflow cannot do that part.' \
+              '- merge with a **merge commit**, not squash, so individual PR history' \
+              '  survives on `main`.' \
+              '' \
+              "Combined-suite run: $RUN_URL" \
+              '' \
+              'This PR does not auto-merge. See `systems/release-train` in the shared wiki.' \
+              > /tmp/cut-pr-body.md
+
+            gh pr create --repo "$REPO" \
+              --base main --head release/next \
+              --title "$title" \
+              --body-file /tmp/cut-pr-body.md
+
+            number="$(gh pr list --repo "$REPO" --state open --base main --head release/next --json number --jq '.[0].number')"
+            echo "::notice::opened cut PR #$number"
+          else
+            echo "::notice::cut PR #$number already open; not opening a duplicate."
+          fi
+
+          if [ "$SUITE_RESULT" = "success" ]; then
+            comment="Combined-suite passed against the release/next+main merge tree: $RUN_URL"
+          else
+            comment="**DO NOT MERGE** -- combined-suite result was \`$SUITE_RESULT\` against the release/next+main merge tree: $RUN_URL. Needs investigation before this cut can land."
+          fi
+          gh pr comment "$number" --repo "$REPO" --body "$comment"

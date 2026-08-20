@@ -90,15 +90,43 @@ jobs:
           set -euo pipefail
 
           gh pr list --repo "$REPO" --state open \
-            --json number,headRefName,mergeStateStatus \
-            --jq '.[] | select(.headRefName | startswith("lul-")) | [.number, .headRefName, .mergeStateStatus] | @tsv' \
-          | while IFS=$'\t' read -r number branch status; do
-              if [ "$status" != "BEHIND" ]; then
-                echo "::notice::#$number ($branch) is $status; skipping."
+            --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("lul-")) | [.number, .headRefName] | @tsv' \
+          | while IFS=$'\t' read -r number branch; do
+              # Staleness is measured with the compare API, NOT `mergeStateStatus`.
+              #
+              # LUL-380, measured 2026-08-19: across the 12 most recent runs of this
+              # workflow, `update-branch` was attempted exactly ZERO times -- it had
+              # never once done its job. Two independent reasons, both fixed here by
+              # not reading `mergeStateStatus` at all:
+              #
+              # 1. It is computed lazily. GitHub invalidates every open PR's merge
+              #    state on a push to `main` and recomputes on demand, so during the
+              #    `push: [main]` run -- the exact moment this workflow is designed to
+              #    fire -- every PR reports UNKNOWN. The old `!= BEHIND` test then
+              #    skipped all of them. The most recent run skipped all 9 open PRs
+              #    that way ("is UNKNOWN; skipping" x9).
+              # 2. It is a single enum, so it reports only the *first* problem. A PR
+              #    that is behind AND has a pending check reports BLOCKED; one that is
+              #    behind AND conflicted reports DIRTY. Both mask the staleness, so
+              #    even the scheduled run (which does see computed values) missed them:
+              #    PR #67 was 7 commits behind while reporting DIRTY.
+              #
+              # `compare/main...branch` is always computed, never UNKNOWN, and reports
+              # `behind_by` independently of review state and check state.
+              behind="$(gh api "repos/$REPO/compare/main...$branch" --jq '.behind_by' 2>/tmp/compare-err.log || true)"
+              if ! printf '%s' "$behind" | grep -qE '^[0-9]+$'; then
+                echo "::warning::#$number ($branch): could not read behind_by from the compare API; skipping this pass."
+                cat /tmp/compare-err.log
                 continue
               fi
 
-              echo "::notice::#$number ($branch) is BEHIND main; requesting update-branch."
+              if [ "$behind" -eq 0 ]; then
+                echo "::notice::#$number ($branch) is up to date with main; skipping."
+                continue
+              fi
+
+              echo "::notice::#$number ($branch) is $behind commit(s) BEHIND main; requesting update-branch."
               if gh api -X PUT "repos/$REPO/pulls/$number/update-branch" >/dev/null 2>/tmp/update-err.log; then
                 echo "::notice::#$number updated."
 
