@@ -8,6 +8,13 @@ name: Auto merge
 # Branch protection still adjudicates the merge: if either required check is
 # missing or red, the API call fails and the PR stays open. This workflow
 # cannot bypass the ruleset — GITHUB_TOKEN is not a bypass actor.
+#
+# The ruleset also requires one approving review with no bypass actor, which a
+# `[ship]` PR never has (skipping the Code Reviewer is the point of `[ship]`).
+# The merge step below submits that review itself, scoped to exactly the diff
+# ship-allowed.sh already permits, right before merging (LUL-558). Without
+# that review the merge call fails unconditionally, regardless of how green
+# CI is or how fresh the branch is.
 
 on:
   workflow_run:
@@ -138,6 +145,32 @@ jobs:
               'Policy: LUL-73. Allowlist: `.github/scripts/ship-allowed.sh`.' > /tmp/ship-denied.md
             comment_once 'SHIP_DENIED' /tmp/ship-denied.md
             exit 0
+          fi
+
+          # required_approving_review_count:1 has no bypass actor on this repo
+          # (bypass_actors: [], current_user_can_bypass: "never" for this same
+          # token) -- the merge call below fails unconditionally on a PR with
+          # zero reviews, no matter how green CI is or how fresh the branch is.
+          # `[ship]` PRs have zero reviews by design, since skipping the Code
+          # Reviewer is the whole point. This is not a code-quality review --
+          # it is the record that ship-allowed.sh vetted this exact file set,
+          # on this exact head, in this same step (never an earlier job's
+          # result: main and the PR can both have moved). See LUL-558 /
+          # systems/ship-never-merges-review-count-gap.
+          #
+          # Approve only, never approve-and-force -- every other blocking rule
+          # (checks, strict up-to-date) still applies below and must still
+          # block, loudly, on its own merits.
+          if ! gh pr review "$number" --approve \
+               --body "Auto-approved: \`[ship]\` + \`ship-allowed.sh\` passed for this exact head (\`$pr_head\`). Policy: LUL-558."; then
+            echo "::warning::could not submit the required approving review on #$number; refusing to auto-merge."
+            printf '%s\n' \
+              '<!-- SHIP_REVIEW_FAILED -->' \
+              '`[ship]` is valid, CI was green, and the allowlist passed, but submitting' \
+              'the required approving review itself failed, so this refuses to try an' \
+              'ungated merge. Check the "Auto merge" workflow run log. LUL-558.' > /tmp/ship-review-failed.md
+            comment_once 'SHIP_REVIEW_FAILED' /tmp/ship-review-failed.md
+            exit 1
           fi
 
           if gh pr merge "$number" --squash --delete-branch; then
