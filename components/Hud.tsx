@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
+import OrientationGate from './OrientationGate';
 import SettingsPanel from './SettingsPanel';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
@@ -66,9 +67,15 @@ export interface EngineHudState {
   pace: number;
   fog: number;
   soundOn: boolean;
-  // LUL-40: hold-to-dim follow-light, engine-driven (see engine/forest-engine.js
-  // tick()) -- read-only here, there's no setter because React never triggers it.
+  // LUL-40/LUL-382: hold-to-veil (mist ramp + follow-light dim + sight-detect cut),
+  // engine-driven (see engine/forest-engine.js tick()) -- read-only here, there's no
+  // setter because React never triggers it.
   lightDimmed: boolean;
+  // LUL-382: veil resource meter, 1 (full) .. 0 (drained). veilLocked is true from a
+  // full drain until charge regenerates back past VEIL_UNLOCK_CHARGE -- F does nothing
+  // while locked, even if held.
+  veilCharge: number;
+  veilLocked: boolean;
   // LUL-213: a wolf/lion is telegraphing a charge -- press Space within the
   // window or get caught. `chargeToken` only changes on a fresh charge (not
   // every frame one is active), so it can key the prompt element and retrigger
@@ -131,6 +138,8 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   fog: 0.04,
   soundOn: true,
   lightDimmed: false,
+  veilCharge: 1,
+  veilLocked: false,
   chargeVisible: false,
   chargeToken: 0,
   difficulty: 'night',
@@ -283,6 +292,8 @@ export default function Hud({
 
   return (
     <>
+      <OrientationGate />
+
       {mobile ? (
         <MobileControls actions={actions} entered={state.entered} />
       ) : (
@@ -322,9 +333,15 @@ export default function Hud({
         <button id="sound" onClick={() => actions?.toggleSound()}>
           Sound: {state.soundOn ? 'on' : 'off'}
         </button>
-        {/* LUL-40: readout only, not a control -- the engine drives this from the
+        {/* LUL-40/LUL-382: readout only, not a control -- the engine drives this from the
             held key (hold F), same one-directional emit path as pace/fog/soundOn. */}
         <span id="lightState">Light: {state.lightDimmed ? 'dimmed' : 'normal'}</span>
+        {/* LUL-382: veil charge meter -- the cost/limit on the mist veil (F). Empty
+            means F does nothing until it regenerates; "recharging" means a full drain
+            locked it out until charge climbs back past the unlock threshold. */}
+        <span id="veilState">
+          Veil: {Math.round(state.veilCharge * 100)}%{state.veilLocked ? ' (recharging)' : ''}
+        </span>
         <button id="regen" onClick={() => actions?.regenMap()}>
           New map
         </button>
@@ -367,15 +384,24 @@ export default function Hud({
           <div id="gateTitle">LULLWOOD</div>
           <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
           <div id="gateKeys">
-            <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run
-            <br />
-            <b>H</b> — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
-            <br />
-            <b>Space</b> — jump (also how you clear a charging wolf or lion)
-            <br />
-            <b>F</b> — hold to dim your light (smaller lit radius)
-            <br />
-            <span style={{ fontSize: 11, opacity: 0.7 }}>on mobile: left stick — move &nbsp;·&nbsp; right stick — look &nbsp;·&nbsp; Hide / E buttons</span>
+            {mobile ? (
+              <>
+                <b>left stick</b> — move &nbsp;·&nbsp; <b>right stick</b> — look &nbsp;·&nbsp; push the left stick further to run
+                <br />
+                <b>Hide</b> button — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> button — lift the child
+              </>
+            ) : (
+              <>
+                <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run
+                <br />
+                <b>H</b> — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
+                <br />
+                <b>Space</b> — jump (also how you clear a charging wolf or lion)
+                <br />
+                <b>F</b> — hold for the mist veil (dims your light, floods the world in mist, and cuts
+                how far predators can see you) — limited, watch the Veil meter
+              </>
+            )}
           </div>
         </div>
       )}

@@ -34,7 +34,9 @@ import {
   SCENT_TRACK_TIME,
 } from '@/lib/game/scent';
 import {
+  coverKindBlocksPlayerMovement,
   distanceToCoverEdge,
+  overlapsTreeCanopy,
   overlapsTreeTrunk,
   canopyRadiusAtEye,
   rollCoverPropShape,
@@ -45,18 +47,18 @@ import {
   blocked as geoBlocked,
   hasLOS as geoHasLOS,
   findHideSpot as geoFindHideSpot,
-  effectiveDetect as geoEffectiveDetect,
-  canSee as geoCanSee,
 } from '@/lib/game/cover';
 import {
   isInBog,
   bogSpeedMultiplier,
   bogNoiseMultiplier,
   pickHardBabyPosition,
+  clearOfLandmarks,
 } from '@/lib/game/bog';
 import {
   backOffPoint,
   canCatchInChase,
+  CATCH_MARGIN,
   hasReachedSniffRange,
   isCaught,
   isSniffImmune,
@@ -68,6 +70,7 @@ import {
   stepSniffLoop,
   tickTimers,
 } from '@/lib/game/predator';
+import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
 
 let activeDispose = null;
 
@@ -155,7 +158,15 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(CONFIG.bg);
 scene.fog = new THREE.FogExp2(0x0b1220, CONFIG.fog);
 
-const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 400);
+// LUL-69: a phone screen is usually narrower (portrait) or shorter (landscape)
+// than the 1280x720-ish desktop window this FOV was tuned for -- Three's
+// PerspectiveCamera `fov` is the *vertical* field of view, so horizontal
+// coverage (what a narrow/short aspect actually crops) is
+// `2*atan(tan(fov/2)*aspect)`. Widening the vertical FOV on mobile keeps more
+// of the scene visible on both aspect ratios without touching PLAYER_FOV_COS
+// below (a gameplay detection cone, unrelated to render FOV).
+const CAMERA_FOV = mode === 'mobile' ? 85 : 70;
+const camera = new THREE.PerspectiveCamera(CAMERA_FOV, innerWidth/innerHeight, 0.1, 400);
 camera.rotation.order = 'YXZ';
 camera.position.set(0, CONFIG.eye, 0);
 
@@ -215,14 +226,27 @@ moonGroup.add(
 );
 scene.add(moonGroup);
 const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playerLight);
-// LUL-40: player-controlled binary dim, hold KeyF. Two states only, on purpose --
-// a slider players set once and forget wouldn't be the every-second decision the
-// ticket wants. The lit radius shrinks along with intensity so dimming reads as
-// "smaller pool of light", not just "dimmer light in the same pool". Wired into
-// sight detection at effectiveDetect() via DIM_DETECT_MUL (LUL-291).
+// LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
+// LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
+// the light cut is kept (still a smaller lit pool) but it's now one piece of a bigger,
+// world-visible state: mist ramps to near-opaque (MIST_VEIL_FOG below) and predator
+// sight range drops hard while it's up (veilDetectMul(), lib/game/veil.ts, used from
+// effectiveDetect()). Binary hold, not a slider, for the same reason as before -- an
+// every-second decision, not a set-once knob. `lightDimmed` now names "is the veil
+// actually active" (it can be held down and denied by the charge meter -- see
+// stepVeilCharge(), lib/game/veil.ts -- so it's not just "is F held").
 const LIGHT_NORMAL = { intensity: 0.7, distance: 20 };
 const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
 let lightDimmed = false;
+// LUL-382: charge/lock state machine and the two multipliers it gates live in
+// lib/game/veil.ts (pure, unit tested -- see wiki systems/unit-testing-standard).
+// The engine only owns the rendering-side bits: how fast the mist visibly ramps
+// (VEIL_RAMP), how thick it gets at full ramp (MIST_VEIL_FOG), and the mutable
+// per-frame state itself.
+const VEIL_RAMP = 1.6;            // seconds for mist/detect-cut to ease fully in or out
+let veilCharge = 1, veilLocked = false, veilAmount = 0;
+let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
+const MIST_VEIL_FOG = 0.34;       // ~3x the manual Mist slider's own max (0.11) -- deliberately overshoots it so the veil reads as a distinct world state
 // LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
 // found the point-light radius/intensity cut above unreadable against this
 // scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
@@ -397,7 +421,12 @@ function buildGrid(){
 // inject the engine's own `grid`/`coverGrid` closure state; every call site
 // below (predators call blockedR() directly for their own movement, not
 // blocked() -- see cover.ts's own comment on why that split is load-bearing)
-// is unchanged.
+// is unchanged. coverBlockedR/canopyBlockedR themselves stay in cover.ts
+// (not wrapped here individually, only via the composite blocked()) --
+// nothing outside blocked() called them directly. LUL-384's walkable-log
+// skip (coverKindBlocksPlayerMovement(), imported above) is preserved inside
+// cover.ts's own coverBlockedR(), so geoBlocked() below still treats 'log'
+// as non-blocking, same as release/next did before this extraction.
 function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid); }
 function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid); }
 
@@ -422,6 +451,14 @@ function buildCoverGrid(){
 // generateCover() runs, see generateMap()) against overlapsTreeTrunk()
 // (lib/game/cover.ts), rather than a second parallel implementation of the
 // same circle-overlap math.
+//
+// LUL-384/LUL-491: walkable kinds (currently just 'log') get an extra check
+// against the wider canopy radius (overlapsTreeCanopy(), lib/game/cover.ts).
+// Trunk-only clearance is fine for solid props, but a log invites the player
+// to walk its full span, and canopyBlockedR() blocks unconditionally within
+// a tree's canopy circle regardless of what's on the ground -- without this,
+// a log could spawn clear of every trunk yet still clip a canopy circle
+// somewhere along its length and wedge the player mid-crossing.
 //
 // Deliberate consequence, not a bug: the new rejection branch below skips a
 // candidate's `ry` rng() draw when it fires (same short-circuit shape the
@@ -451,6 +488,7 @@ function generateCover(){
     const roll = rng();
     const { kind, hx, hz, y } = rollCoverPropShape(roll, rng);   // LUL-425: lib/game/cover.ts
     if(overlapsTreeTrunk(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
+    if(!coverKindBlocksPlayerMovement(kind) && overlapsTreeCanopy(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
     placed++;
   }
@@ -478,8 +516,30 @@ function layoutCoverMeshes(){
 }
 
 function nearLandmarks(x, z, pad){
-  for(const l of LANDMARKS){ if(Math.hypot(x-l.x, z-l.z) < l.clear+pad) return true; }
-  return false;
+  return !clearOfLandmarks(x, z, LANDMARKS, pad);
+}
+// LUL-375: shared by generateMap()'s forest-tree loop and generateBogTrees() --
+// same scatter-and-instance shape, differing only in which parts/data/count
+// triple they close over. Draw order per tree is rotation then brightness,
+// matching what both inlined copies did, since this feeds the seeded rng
+// stream (see the LUL-25 ordering comment above generateBogTrees()).
+function layoutTreePool(meshParts, data, count){
+  for(let i=0; i<count; i++){
+    if(i < data.length){
+      const t = data[i];
+      dummy.position.set(t.x, 0, t.z);
+      dummy.rotation.set(0, rng()*Math.PI*2, 0);
+      dummy.scale.setScalar(t.s);
+    } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
+    dummy.updateMatrix();
+    for(const p of meshParts) p.setMatrixAt(i, dummy.matrix);
+    const b = i < data.length ? 0.72 + rng()*0.5 : 1;
+    tintCol.setRGB(b*0.92, b, b*0.86);
+    meshParts[1].setColorAt(i, tintCol); meshParts[2].setColorAt(i, tintCol);
+  }
+  for(const p of meshParts) p.instanceMatrix.needsUpdate = true;
+  if(meshParts[1].instanceColor) meshParts[1].instanceColor.needsUpdate = true;
+  if(meshParts[2].instanceColor) meshParts[2].instanceColor.needsUpdate = true;
 }
 // ---- Bog map band (LUL-25) --------------------------------------------------
 // generateBogTrees()/generateReeds()/applyHardBabySpawn() are all called from
@@ -497,22 +557,7 @@ function generateBogTrees(){
     const s = 0.6 + rng()*1.3;   // thinner cover -- same scatter shape, smaller sizes than the forest
     bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
-  for(let i=0; i<BOG_TREES; i++){
-    if(i < bogTreeData.length){
-      const t = bogTreeData[i];
-      dummy.position.set(t.x, 0, t.z);
-      dummy.rotation.set(0, rng()*Math.PI*2, 0);
-      dummy.scale.setScalar(t.s);
-    } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
-    dummy.updateMatrix();
-    for(const p of bogParts) p.setMatrixAt(i, dummy.matrix);
-    const b = i < bogTreeData.length ? 0.72 + rng()*0.5 : 1;
-    tintCol.setRGB(b*0.92, b, b*0.86);
-    bogParts[1].setColorAt(i, tintCol); bogParts[2].setColorAt(i, tintCol);
-  }
-  for(const p of bogParts) p.instanceMatrix.needsUpdate = true;
-  if(bogParts[1].instanceColor) bogParts[1].instanceColor.needsUpdate = true;
-  if(bogParts[2].instanceColor) bogParts[2].instanceColor.needsUpdate = true;
+  layoutTreePool(bogParts, bogTreeData, BOG_TREES);
 }
 // Reeds: tall cover volumes, bog band only. Pushed into the same coverData
 // array log/rock/bramble use (see coverMeshes.reed above) so canSee()'s LOS
@@ -571,22 +616,7 @@ function generateMap(seed){
     const s = 0.7 + rng()*1.7;
     treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
-  for(let i=0; i<CONFIG.trees; i++){
-    if(i < treeData.length){
-      const t = treeData[i];
-      dummy.position.set(t.x, 0, t.z);
-      dummy.rotation.set(0, rng()*Math.PI*2, 0);
-      dummy.scale.setScalar(t.s);
-    } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
-    dummy.updateMatrix();
-    for(const p of parts) p.setMatrixAt(i, dummy.matrix);
-    const b = i < treeData.length ? 0.72 + rng()*0.5 : 1;      // per-tree brightness variation
-    tintCol.setRGB(b*0.92, b, b*0.86);
-    parts[1].setColorAt(i, tintCol); parts[2].setColorAt(i, tintCol);
-  }
-  for(const p of parts) p.instanceMatrix.needsUpdate = true;
-  if(parts[1].instanceColor) parts[1].instanceColor.needsUpdate = true;
-  if(parts[2].instanceColor) parts[2].instanceColor.needsUpdate = true;
+  layoutTreePool(parts, treeData, CONFIG.trees);
   buildGrid();
   drawMinimapStatic();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
@@ -1064,18 +1094,45 @@ function hearNoise(p){
 // a dedicated hiding-spot prop (findHideSpot(), below) -- this block's LOS
 // math is otherwise untouched, so cover still blocks sight for anyone
 // walking behind a rock or a tree exactly as before, hidden or not.
-// LUL-425: segRayVsAABB/hasLOS/findHideSpot/effectiveDetect/canSee (and the
-// STILL_RAMP/STILL_DETECT_CUT/DIM_DETECT_MUL constants they use) now live in
-// lib/game/cover.ts, unit-tested there. These are thin wrappers that inject
-// the engine's own coverGrid / hidden / hideTime / lightDimmed / difficulty
-// closure state -- every call site below is unchanged.
+// LUL-425: hasLOS/findHideSpot (and segRayVsAABB, which only hasLOS used)
+// now live in lib/game/cover.ts, unit-tested there. These are thin wrappers
+// that inject the engine's own coverGrid closure state -- every call site
+// below is unchanged.
+//
+// effectiveDetect()/canSee() deliberately stay engine-local, NOT wrapped
+// around cover.ts's own effectiveDetect()/canSee(): LUL-382 (mist veil,
+// landed on release/next after this wave-3 extraction was cut) replaced the
+// STILL_RAMP/STILL_DETECT_CUT/DIM_DETECT_MUL dimming multiplier those took
+// with a continuous veilDetectMul(veilAmount) ramp that cover.ts's pure
+// versions have no access to (see the module comment in cover.ts). Wrapping
+// them here would silently regress shipped, tester-confirmed veil detection
+// (LUL-40/LUL-382, LUL-525) back to the pre-veil dimming behaviour.
 function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid); }
 function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid); }
+const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
+const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
+// LUL-382: the mist veil shrinks sight-detect range by 65% at full ramp (see
+// veilDetectMul(), lib/game/veil.ts) -- supersedes LUL-291's DIM_DETECT_MUL (0.75, a
+// 25% cut); the founder judged that too small a lever (decisions/0012-feature-impact-bar).
+// Scaled by veilAmount (tick(), 0..1) so the cut ramps in/out with the visible mist
+// rather than snapping the instant F is pressed. Stacks multiplicatively with
+// stillness, same relationship as before: hiding still + veil is the strongest state,
+// proposed/unverified tuning for the Game Tester either way. Sight only -- p.spec.scent
+// is untouched. That's a deliberate scope choice, not an oversight: real mist/smoke
+// obscures sightlines, not scent, and genre precedent (LUL-215 search) treats
+// smoke/flare tools as breaking line-of-sight tracking specifically, not detection
+// wholesale -- a predator can still scent-lock you through the veil, which keeps
+// scent-trail play (LUL-23/LUL-65) meaningful.
+// Split out of canSee() so the LUL-144 cover-feedback scan below can test
+// "in range" separately from "has line of sight" for every predator, not
+// just stop at the first one that can see the player.
 function effectiveDetect(p){
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul, { hidden, hideTime, lightDimmed });
+  const stillness = hidden ? Math.min(1, hideTime / STILL_RAMP) : 0;
+  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT) * DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount);
 }
 function canSee(p, dist){
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul, { hidden, hideTime, lightDimmed }, p.x, p.z, player.x, player.z, coverGrid);
+  if(dist >= effectiveDetect(p)) return false;
+  return hasLOS(p.x, p.z, player.x, player.z);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -1154,10 +1211,18 @@ function updatePredators(dt, noiseRadius){
     if(p.charge){
       const cs = stepCharge(p.charge, dt, jumpPressed);
       if(cs.phase === 'caught'){
+        // LUL-421: persisted past the p.charge=null below so a QA hook can
+        // still read it after resolution -- see qaChargePhase's fallback.
+        p.lastCharge = { result: 'caught', overshootDuration: 0 };
         p.charge = null;
         endChargeHud();
         triggerDeath(p.kind);
       } else if(cs.phase === 'cleared'){
+        // stepCharge() (lib/game/charge.ts) zeroes overshootDuration on the
+        // 'cleared' state it returns, so read it off the *old* p.charge
+        // (still the value that governed this overshoot run) before it's
+        // gone -- see qaChargePhase's fallback for why this is kept at all.
+        p.lastCharge = { result: 'cleared', overshootDuration: p.charge.overshootDuration };
         p.charge = null; p.chargeCooldown = CHARGE_COOLDOWN;
         // "the animal continue... than continue normally": rejoin the
         // existing investigate/approach loop (LUL-22, not to be retuned)
@@ -1859,6 +1924,8 @@ let hudState = {
   survivedSeconds: 0,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
+  // LUL-382: mist veil resource meter -- 1 is full charge, 0 is fully drained.
+  veilCharge: 1, veilLocked: false,
   chargeVisible: false, chargeToken: 0,
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
@@ -1980,6 +2047,24 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaStageWalkIntoCover = function(kind){
     for(const c of coverData){
       if(c.kind !== kind) continue;
+      // LUL-388: tree cover entries carry no `ry` -- generateCover() only sets one
+      // for log/rock/bramble; a tree's coverData row is a synthetic LOS-only square
+      // (hx=hz=t.cr*1.4, see generateCover()) that coverBlockedR() explicitly skips
+      // (`if(c.kind==='tree') continue`). A tree's real MOVEMENT collision is the
+      // circular trunk radius t.cr via blockedR()'s own grid, unrelated to that
+      // square. Feeding `c.ry` (undefined) into Math.cos/sin below silently produced
+      // NaN positions for every caller of this hook with kind:'tree' -- caught by
+      // this ticket's interaction-matrix sweep, never previously exercised (no spec
+      // passed 'tree' before now). A circle needs no rotation at all, so this is a
+      // genuinely simpler case, not a special-cased rotation.
+      if(c.kind === 'tree'){
+        const r = c.hx / 1.4;
+        const standoff = r + 0.6 + 1;
+        const px = c.x - standoff, pz = c.z;
+        if(blocked(px, pz)) continue;
+        player.x = px; player.z = pz; player.yaw = -Math.PI/2;
+        return { prop: { x: c.x, z: c.z, hx: r, hz: r, ry: 0, kind: c.kind }, start: { x: px, z: pz } };
+      }
       const co = Math.cos(c.ry), si = Math.sin(c.ry);
       const standoff = Math.min((c.hx + 0.6) / Math.abs(co), (c.hz + 0.6) / Math.abs(si)) + 1;
       const px = c.x - standoff, pz = c.z;
@@ -1989,6 +2074,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     }
     return null;
   };
+
+  // LUL-384: exposes the exact predicate real player movement gates on
+  // (see the `blocked(nx, player.z)`/`blocked(player.x, nz)` calls in the
+  // tick loop below). Lets a test assert a whole span is collision-free by
+  // direct sampling instead of integrating real player movement over a fixed
+  // wall-clock window -- the latter ties the assertion to how many animation
+  // frames actually ran in that window, which is not stable under CI load
+  // (same class of flake as LUL-421's charge-dodge wall-clock assertions,
+  // wiki: systems/dt-clamp-vs-walltime). Movement is still driven by real
+  // keyboard input elsewhere in this spec; this only replaces the "did we
+  // travel far enough in 3 real seconds" assertion with something that
+  // doesn't depend on render throughput.
+  window.ForestEngine.qaProbeBlocked = function(x, z){ return blocked(x, z); };
 
   // Same idea for the death path. Reaching it naturally means standing still until
   // `sinceClose > 30` forces a hunt, then waiting for the animal to cross the map --
@@ -2210,9 +2308,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return spot.kind;
   };
 
+  // LUL-388: `dist`/`canSee` added. A caller racing this predator's blind-chase
+  // window against wall-clock time (e.g. "is it still blind 300ms after I
+  // staged it?") is racing the dt-clamp-vs-walltime hazard for no reason --
+  // canSee(p,dist) is the exact live gate the engine itself checks before a
+  // kill, so a test can just poll it directly and stop caring what wall time
+  // maps to what game time.
   window.ForestEngine.qaPredatorState = function(idx){
     const p = predators[idx];
-    return p ? { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls } : null;
+    if(!p) return null;
+    const dist = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist) };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
@@ -2238,12 +2344,156 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return idx;
   };
 
+  // LUL-373: exposes the live ChargeState.phase/t ('telegraph'/'charging'/
+  // 'overshoot'/'caught'/'cleared', and seconds elapsed in that phase -- game
+  // time, not wall time) for a predator mid-charge, or null if it has none.
+  // Exists so a test can poll for "well into the charging sub-phase" against
+  // the engine's own game-time clock instead of guessing a wall-clock wait --
+  // see wiki systems/dt-clamp-vs-walltime for why a fixed ms wait doesn't
+  // reliably land at the same game-time point across rigs of different frame
+  // rates.
+  //
+  // LUL-421: also returns overshootDuration, and falls back to the most
+  // recently resolved charge (p.lastCharge) once p.charge itself goes null
+  // on resolution -- lets a test read the LUL-323 overshoot-tracking value
+  // straight from engine state instead of inferring it from a wall-clock
+  // gap around the #chargePrompt HUD, which is the dt-clamp-vs-walltime trap
+  // this ticket exists to remove. `t` is 0 in the fallback case since the
+  // resolved ChargeState itself isn't kept, only the two fields the spec
+  // needs.
+  window.ForestEngine.qaChargePhase = function(idx){
+    const p = predators[idx];
+    if(!p) return null;
+    if(p.charge) return { phase: p.charge.phase, t: p.charge.t, overshootDuration: p.charge.overshootDuration };
+    if(p.lastCharge) return { phase: p.lastCharge.result, t: 0, overshootDuration: p.lastCharge.overshootDuration };
+    return null;
+  };
+
   // LUL-275: snapshot of the player's transform and detected input mode -- proves
   // which input branch init() actually bound at runtime, not just which the test
   // requested. See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
   window.ForestEngine.qaPlayerState = function(){
     return { x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode };
   };
+
+  // LUL-388: reproduces the exact LUL-387 regression shape live -- a predator
+  // mid-blind-scent-chase (scentLock > 0, so the 'chase' branch never falls
+  // through to the canSee()-gated investigate transition), within catch range
+  // of the player, with a real cover prop's rotated AABB sitting on the
+  // segment between them so canSee() is false. Pre-fix this died instantly
+  // (bare isCaught(dist, rad)); post-fix canCatchInChase() must keep gating
+  // the kill on canSee() too. Existing hooks (qaHideBehindCover(Kind)) place
+  // predator and player several units apart -- clear of the cover prop
+  // entirely -- which is right for the investigate/sniff cover tests they
+  // drive, but too far apart to ever reach isCaught()'s dist < rad+CATCH_MARGIN
+  // threshold, so they can't exercise this branch. This hook instead places
+  // both points close together, straddling only the prop's *thinner* local
+  // axis (mirroring coverBlockedR()'s own rotation convention -- LUL-268's
+  // localX = dx*co - dz*si, localZ = dx*si + dz*co, inverted here to go
+  // local -> world) so the total separation stays inside catch range while
+  // the prop still fully sits between the two points.
+  // LUL-388: shared by qaStageBlindChaseThroughCover and
+  // qaStageAndTraceBlindChase below -- see the latter's comment for why the
+  // staging and the first observed frame must happen in one synchronous
+  // call, not two separate page.evaluate() round trips.
+  function stageBlindChaseThroughCover(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    for(const c of coverData){
+      if(c.kind === 'tree') continue;
+      const thin = Math.min(c.hx, c.hz);
+      // Asymmetric on purpose: the predator (point A) never calls blocked()/
+      // coverBlockedR() for its own movement (LUL-119/211 -- the whole point of
+      // this hook), so it can sit right at the box's thin face. The player
+      // (point B) very much does -- blocked()'s coverBlockedR(x,z,0.6) call pads
+      // every prop by the player's own 0.6 radius -- so it needs to clear
+      // thin+0.6, not just thin, or qaProbePlayer/blocked() would reject its own
+      // staged position as "inside" the prop.
+      const offA = thin + 0.1, offB = thin + 0.6 + 0.1;
+      if(offA + offB >= p.rad + CATCH_MARGIN) continue;   // must land inside catch range
+      const co = Math.cos(c.ry), si = Math.sin(c.ry);
+      const thinIsZ = c.hz <= c.hx;
+      const lxA = thinIsZ ? 0 : -offA, lzA = thinIsZ ? -offA : 0;
+      const lxB = thinIsZ ? 0 : offB, lzB = thinIsZ ? offB : 0;
+      const ax = c.x + lxA*co + lzA*si, az = c.z - lxA*si + lzA*co;
+      const bx = c.x + lxB*co + lzB*si, bz = c.z - lxB*si + lzB*co;
+      if(blockedR(ax, az, p.rad) || blocked(bx, bz)) continue;
+      p.x = ax; p.z = az;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+      // A charge in flight (or freshly cooled down and re-triggerable) resolves
+      // on its own fixed 1s timer (stepCharge()'s 'caught' phase) with zero
+      // distance/LOS check at all -- by design (LUL-213: "dodgeable because it
+      // committed to a line"), but it would completely swamp this hook's own
+      // scentLock/canSee scenario if one happened to be in flight (or newly
+      // triggered en route, once the predator's approach re-enters the 7-16
+      // trigger band) when a caller polls for the outcome. Force it off so
+      // this hook tests exactly the branch it says it does.
+      p.charge = null; p.chargeCooldown = 999;
+      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+      player.x = bx; player.z = bz;
+      // Isolate: the player is being relocated to wherever this cover prop
+      // happens to be, which could easily land inside another (untouched)
+      // predator's own detect range -- nine animals roam independently, and
+      // `#deathKind` only reports species, not which individual caught you.
+      // Measured hitting this for real while building this hook: a *different*
+      // lion, not the staged one, legitimately spotted the relocated player
+      // and killed it in the open a couple of ticks in, which read as an
+      // apparent regression until traced back to the wrong animal. `inert`
+      // (LUL-26's difficulty-preset parking flag) is the existing, cheap way
+      // to take every other predator out of `updatePredators()`'s loop
+      // entirely (`if(p.inert) continue;`) for the rest of this page's life.
+      for(let i = 0; i < predators.length; i++) if(i !== idx) predators[i].inert = true;
+      return { idx, kind, dist: Math.hypot(ax-bx, az-bz) };
+    }
+    return null;
+  }
+  window.ForestEngine.qaStageBlindChaseThroughCover = function(kind){
+    return stageBlindChaseThroughCover(kind);
+  };
+
+  // LUL-388: records {t, dist, canSee, dead} once per rendered frame via its
+  // own rAF loop, entirely inside the page, until `dead` or `maxMs` elapses.
+  function traceBlindChase(idx, maxMs){
+    return new Promise(function(resolve){
+      const trace = [];
+      const t0 = performance.now();
+      function frame(){
+        const p = predators[idx];
+        if(!p){ resolve(trace); return; }
+        const d = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
+        trace.push({ t: performance.now()-t0, dist: d, canSee: canSee(p, d), dead: dead });
+        if(dead || performance.now()-t0 > maxMs){ resolve(trace); return; }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+
+  // LUL-388: stages, then starts tracing, in one synchronous call -- calling
+  // qaStageBlindChaseThroughCover and a separate trace hook as two
+  // page.evaluate() calls measured broken: the predator (staged only a
+  // little over a unit from the player, since it has to land inside catch
+  // range, and never collides with cover -- LUL-119/211) closed the entire
+  // gap into a genuine sightline during the wall-clock gap between the two
+  // Playwright IPC round trips, so the trace's own first frame already read
+  // canSee:true. Staging synchronously and requesting the first animation
+  // frame in the same call stack (rAF always defers to the next frame no
+  // matter when in the current one it's called) guarantees the trace starts
+  // from the position this function itself just set, not from wherever the
+  // predator ends up several ticks later.
+  window.ForestEngine.qaStageAndTraceBlindChase = function(kind, maxMs){
+    const staged = stageBlindChaseThroughCover(kind);
+    if(staged === null) return Promise.resolve(null);
+    return traceBlindChase(staged.idx, maxMs).then(function(trace){
+      return { idx: staged.idx, kind: staged.kind, dist: staged.dist, trace: trace };
+    });
+  };
+
+  // LUL-69: camera.fov is closure-local (created fresh per init(), see
+  // CAMERA_FOV above) -- nothing outside init() could otherwise confirm the
+  // mobile/desktop FOV split actually took effect.
+  window.ForestEngine.qaCameraFov = function(){ return camera.fov; };
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
@@ -2327,7 +2577,10 @@ function restart(){
 // LUL-34: these are now the engine's public action API (returned by init()
 // below) instead of DOM event listeners on elements the engine no longer owns.
 function setPace(v){ walk = v; pushState({ pace: v }); }
-function setFog(v){ scene.fog.density = v; pushState({ fog: v }); }
+// LUL-382: no longer writes scene.fog.density directly -- tick() is now the single
+// writer (it ramps between fogBase and MIST_VEIL_FOG off veilAmount every frame), so
+// this only updates the baseline the veil ramps from and back to.
+function setFog(v){ fogBase = v; pushState({ fog: v }); }
 function toggleSound(){
   soundOn = !soundOn;
   if(audio) audio.master.gain.setTargetAtTime(soundOn ? 0.6 : 0.0001, audio.ctx.currentTime, 0.1);
@@ -2508,10 +2761,14 @@ function tick(){
 
   const playing = entered && !paused && !won && !dead && !pickingUp;
 
-  // LUL-40: hold KeyF to dim. Read every frame like `running` below rather than
-  // from the keydown/keyup handlers, so releasing F while e.g. the pause menu is
-  // open (which stops updating `keys` mid-hold) can't strand the light dimmed.
-  const dimmed = playing && !!keys['KeyF'];
+  // LUL-40/LUL-382: hold KeyF for the mist veil. Read every frame like `running`
+  // below rather than from the keydown/keyup handlers, so releasing F while e.g.
+  // the pause menu is open (which stops updating `keys` mid-hold) can't strand
+  // the veil active.
+  const veilHeld = playing && !!keys['KeyF'];
+  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt);
+  veilCharge = veilStep.charge; veilLocked = veilStep.locked;
+  const dimmed = veilStep.active;
   if(dimmed !== lightDimmed){
     lightDimmed = dimmed;
     const cfg = dimmed ? LIGHT_DIMMED : LIGHT_NORMAL;
@@ -2521,6 +2778,13 @@ function tick(){
   }
   dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
   applyVignette(dimAmount);
+  // LUL-382: mist ramp is deliberately slower than the vignette above (VEIL_RAMP
+  // 1.6s vs. dimAmount's ~0.5s) -- the light pool reacts fast, the world's mist
+  // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
+  // the sight-detect cut ramps in step with what the player actually sees.
+  veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
+  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount);
+  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked });
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
   const playerInBog = inBog(player.x, player.z);   // LUL-25: shallow water -- half speed, louder splash

@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  coverKindBlocksPlayerMovement,
   distanceToCoverEdge,
+  overlapsTreeCanopy,
   overlapsTreeTrunk,
   CELL,
   gridKey,
@@ -159,6 +161,70 @@ test('overlapsTreeTrunk finds a match anywhere in a multi-tree list, not just th
   assert.equal(overlapsTreeTrunk(0, 0, 0.8, trees), true);
 });
 
+// ---- overlapsTreeCanopy (LUL-384/LUL-491) ----------------------------------
+
+test('overlapsTreeCanopy is false with no trees nearby', () => {
+  assert.equal(overlapsTreeCanopy(0, 0, 1.5, []), false);
+});
+
+test('overlapsTreeCanopy is false when every canopy is well clear', () => {
+  const trees = [{ x: 20, z: 20, crCanopy: 1.5 }, { x: -30, z: 5, crCanopy: 2.0 }];
+  assert.equal(overlapsTreeCanopy(0, 0, 1.5, trees), false);
+});
+
+test('overlapsTreeCanopy is true when a candidate\'s own footprint circle overlaps a canopy circle', () => {
+  const trees = [{ x: 1.9, z: 0, crCanopy: 0.5 }];
+  // propRadius 1.5 + canopy 0.5 = 2.0 combined radius; centers are 1.9 apart -> inside.
+  assert.equal(overlapsTreeCanopy(0, 0, 1.5, trees), true);
+});
+
+test('overlapsTreeCanopy catches a canopy-only overlap that overlapsTreeTrunk would miss', () => {
+  // This is the exact LUL-491 finding: a log's footprint can clear a tree's
+  // trunk radius (t.cr) but still fall inside its much wider canopy radius
+  // (t.crCanopy, ~3.3x the trunk per LUL-267) -- canopyBlockedR() blocks the
+  // player there regardless of what cover prop, if any, sits on the ground.
+  const tree = { x: 3, z: 0, cr: 0.5, crCanopy: 1.8 };
+  const propRadius = 1.5;
+  assert.equal(overlapsTreeTrunk(0, 0, propRadius, [tree]), false, 'sanity: trunk-only check misses this');
+  assert.equal(overlapsTreeCanopy(0, 0, propRadius, [tree]), true, 'canopy check must catch it');
+});
+
+test('overlapsTreeCanopy is false exactly at the combined-radius boundary (strict less-than)', () => {
+  const exact = [{ x: 2.0, z: 0, crCanopy: 0.5 }];
+  assert.equal(overlapsTreeCanopy(0, 0, 1.5, exact), false);
+});
+
+test('overlapsTreeCanopy finds a match anywhere in a multi-tree list, not just the first entry', () => {
+  const trees = [
+    { x: 50, z: 50, crCanopy: 0.4 },
+    { x: -50, z: -50, crCanopy: 0.4 },
+    { x: 0.5, z: 0, crCanopy: 0.3 },
+  ];
+  assert.equal(overlapsTreeCanopy(0, 0, 0.8, trees), true);
+});
+
+// ---- coverKindBlocksPlayerMovement (LUL-384) -------------------------------
+
+test('coverKindBlocksPlayerMovement is false for tree (own circle-grid collision handles it)', () => {
+  assert.equal(coverKindBlocksPlayerMovement('tree'), false);
+});
+
+test('coverKindBlocksPlayerMovement is false for log -- walkable, run/jump over it naturally', () => {
+  assert.equal(coverKindBlocksPlayerMovement('log'), false);
+});
+
+test('coverKindBlocksPlayerMovement is true for rock -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksPlayerMovement('rock'), true);
+});
+
+test('coverKindBlocksPlayerMovement is true for bramble -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksPlayerMovement('bramble'), true);
+});
+
+test('coverKindBlocksPlayerMovement is true for reed -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksPlayerMovement('reed'), true);
+});
+
 // ============================================================================
 // LUL-425 (wave 3 of LUL-277): cover/LOS geometry + hiding.
 
@@ -216,7 +282,7 @@ function worldToLocal(dx: number, dz: number, ry: number): [number, number] {
 }
 
 for (const ry of [Math.PI / 4, -Math.PI / 4]) {
-  test(`coverBlockedR: a point deep on a 7:1 log's long axis (ry=${ry.toFixed(4)}) blocks even though it is far outside the log's naive unrotated z-band -- LUL-91/LUL-268 regression class`, () => {
+  test(`coverBlockedR: a point deep on a 7:1 rock's long axis (ry=${ry.toFixed(4)}) blocks even though it is far outside the prop's naive unrotated z-band -- LUL-91/LUL-268 regression class`, () => {
     const hx = 2.4, hz = 0.35;
     const [wx, wz] = localToWorld(2.0, 0, ry);
     // sanity: this world point sits well outside the naive (unrotated)
@@ -225,23 +291,27 @@ for (const ry of [Math.PI / 4, -Math.PI / 4]) {
     const [lx, lz] = worldToLocal(wx, wz, ry);
     assert.ok(Math.abs(lx - 2.0) < 1e-9 && Math.abs(lz) < 1e-9, 'sanity: local coords recovered');
 
-    const correctGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'log', ry }]);
+    // kind 'rock' (not 'log'): LUL-384 made 'log' walkable/non-blocking in
+    // coverBlockedR (coverKindBlocksPlayerMovement), so a blocking fixture
+    // for this rotation test needs a kind that still blocks -- see the
+    // dedicated log-skip test below for that behaviour.
+    const correctGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'rock', ry }]);
     assert.equal(coverBlockedR(wx, wz, 0, correctGrid), true, 'inside the true rotated footprint must block');
 
     // wrong sign (the actual LUL-91/LUL-268 bug): must NOT also call this a
     // hit, or the test isn't actually pinning the sign.
-    const wrongSignGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'log', ry: -ry }]);
+    const wrongSignGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'rock', ry: -ry }]);
     assert.equal(coverBlockedR(wx, wz, 0, wrongSignGrid), false, 'the opposite rotation sign must not also block here');
 
     // naive axis-aligned (no rotation at all) must also miss -- this is the
-    // literal "axis-aligned test against a rotated log" failure mode.
-    const unrotatedGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'log', ry: 0 }]);
-    assert.equal(coverBlockedR(wx, wz, 0, unrotatedGrid), false, 'an axis-aligned box must not block a point only the rotated log covers');
+    // literal "axis-aligned test against a rotated prop" failure mode.
+    const unrotatedGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'rock', ry: 0 }]);
+    assert.equal(coverBlockedR(wx, wz, 0, unrotatedGrid), false, 'an axis-aligned box must not block a point only the rotated prop covers');
   });
 
   test(`coverBlockedR: the converse -- a point inside the naive world-AABB is NOT inside the true rotated footprint (ry=${ry.toFixed(4)})`, () => {
     const hx = 2.4, hz = 0.35;
-    // sign chosen so the point lands off the rotated log's long axis for
+    // sign chosen so the point lands off the rotated prop's long axis for
     // either rotation direction -- see worldToLocal: dx*si is what carries
     // the sign of ry into lz, so dz must carry the opposite sign to add
     // rather than cancel.
@@ -251,10 +321,10 @@ for (const ry of [Math.PI / 4, -Math.PI / 4]) {
     const [, lz] = worldToLocal(wx, wz, ry);
     assert.ok(Math.abs(lz) > hz, 'sanity: point must be outside the true rotated footprint');
 
-    const correctGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'log', ry }]);
+    const correctGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'rock', ry }]);
     assert.equal(coverBlockedR(wx, wz, 0, correctGrid), false, 'outside the true rotated footprint must not block');
 
-    const unrotatedGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'log', ry: 0 }]);
+    const unrotatedGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'rock', ry: 0 }]);
     assert.equal(coverBlockedR(wx, wz, 0, unrotatedGrid), true, 'sanity: the naive axis-aligned box really does falsely allow this');
   });
 }
@@ -264,8 +334,19 @@ test('coverBlockedR: skips kind === "tree" entries entirely, regardless of rotat
   assert.equal(coverBlockedR(0, 0, 0, coverGrid), false);
 });
 
-test('coverBlockedR: exactly on the face is not blocked (strict <, not <=)', () => {
+// LUL-384 (release/next, merged in under LUL-582): 'log' is walkable, so
+// coverBlockedR routes its skip through coverKindBlocksPlayerMovement()
+// rather than a literal kind === 'tree' check -- pin that a log no longer
+// blocks the player's own movement, even dead center, even though it is
+// still real LOS-blocking cover (see the hasLOS asymmetry test below) and
+// still a valid hiding spot (HIDE_KINDS).
+test('coverBlockedR: skips kind === "log" entirely (LUL-384, walkable) even dead center', () => {
   const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 2, hz: 1, kind: 'log', ry: 0 }]);
+  assert.equal(coverBlockedR(0, 0, 0, coverGrid), false);
+});
+
+test('coverBlockedR: exactly on the face is not blocked (strict <, not <=)', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 2, hz: 1, kind: 'rock', ry: 0 }]);
   assert.equal(coverBlockedR(2, 0, 0, coverGrid), false);   // exactly hx+pr away
   assert.equal(coverBlockedR(1.999, 0, 0, coverGrid), true); // just inside
 });
@@ -359,8 +440,14 @@ test('blocked: true from the tree-circle check alone', () => {
 
 test('blocked: true from the cover-AABB check alone', () => {
   const grid = makeGrid<CircleCollider>([]);
-  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'log', ry: 0 }]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
   assert.equal(blocked(0, 0, grid, coverGrid), true);
+});
+
+test('blocked: false from the cover-AABB check for a walkable log (LUL-384), even dead center', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'log', ry: 0 }]);
+  assert.equal(blocked(0, 0, grid, coverGrid), false);
 });
 
 test('blocked: true from the canopy check alone', () => {

@@ -54,6 +54,52 @@ export function overlapsTreeTrunk(x: number, z: number, propRadius: number, tree
   return false;
 }
 
+// ---- walkable-cover-vs-tree-canopy spawn clearance (LUL-384, LUL-491 review) -
+// overlapsTreeTrunk() above deliberately checks only the trunk's movement
+// radius (t.cr), not the wider canopy radius (t.crCanopy, LUL-267) -- fine
+// for rock/bramble, which stay solid either way, so a prop spawning inside a
+// canopy circle but outside the trunk circle changes nothing observable.
+// LUL-384 made 'log' walkable, which breaks that assumption: canopyBlockedR()
+// blocks the player unconditionally within crCanopy regardless of what's on
+// the ground there, so a log whose footprint overlaps a nearby canopy circle
+// (without overlapping the trunk circle -- overlapsTreeTrunk alone would miss
+// this) invites the player to walk across it and then wedges them at the
+// invisible canopy edge mid-crossing. Found by LUL-491's re-review via direct
+// blocked()-sampling across a log's full span in
+// e2e/lul211-founder-report.spec.ts. generateCover() only calls this for
+// walkable kinds (coverKindBlocksPlayerMovement() false); rock/bramble/reed
+// keep the cheaper trunk-only check, unchanged.
+export interface TreeCanopy {
+  x: number;
+  z: number;
+  crCanopy: number;
+}
+
+export function overlapsTreeCanopy(x: number, z: number, propRadius: number, trees: readonly TreeCanopy[]): boolean {
+  for (const t of trees) {
+    const dx = x - t.x, dz = z - t.z, rr = propRadius + t.crCanopy;
+    if (dx * dx + dz * dz < rr * rr) return true;
+  }
+  return false;
+}
+
+// ---- which cover kinds block the player's own movement (LUL-384) -----------
+// coverBlockedR() below already skipped 'tree' (its circle-grid collision via
+// blockedR()/grid is separate, so re-blocking it here would be a double
+// check, not new behaviour). This adds 'log' to that same skip list: a
+// fallen log is the one cover prop a person would naturally step/run over
+// rather than route around, and predators already ignore all cover-prop
+// collision entirely (LUL-119/LUL-211's "predators pass through" rule) --
+// making the player consistent with that for logs specifically, not for
+// rock/bramble/reed, which stay solid. LOS blocking (hasLOS()) and hide-spot
+// eligibility (findHideSpot()/HIDE_KINDS) both read coverGrid independently
+// of this function and are unchanged: a log is still sight-cover and still a
+// valid hiding spot, it just no longer stops you from walking or running
+// across it to get there.
+export function coverKindBlocksPlayerMovement(kind: string): boolean {
+  return kind !== 'tree' && kind !== 'log';
+}
+
 // ============================================================================
 // LUL-425 (wave 3 of LUL-277): cover/LOS geometry + hiding, lifted out of
 // init()'s closure in engine/forest-engine.js. This is the highest-value
@@ -63,10 +109,10 @@ export function overlapsTreeTrunk(x: number, z: number, propRadius: number, tree
 // was callable from a test. Everything below is a straight lift: the engine
 // still owns `grid`/`coverGrid`/`hidden`/`hideTime`/`lightDimmed` and passes
 // them in at the call site: see the thin same-name wrappers left in
-// forest-engine.js (`hasLOS`, `blockedR`, `blocked`, `findHideSpot`,
-// `effectiveDetect`, `canSee`), which just inject that closure state and
-// otherwise change nothing about any call site. Refactor, not retune --
-// the existing Playwright suite is unchanged and is the proof.
+// forest-engine.js (`hasLOS`, `blockedR`, `blocked`, `findHideSpot`), which
+// just inject that closure state and otherwise change nothing about any call
+// site. Refactor, not retune -- the existing Playwright suite is unchanged
+// and is the proof.
 //
 // Scoped out on purpose: mesh construction, layoutCoverMeshes(), and
 // generateCover()'s InstancedMesh writes all stay in the engine (Three.js
@@ -75,6 +121,18 @@ export function overlapsTreeTrunk(x: number, z: number, propRadius: number, tree
 // position) that isn't cover/LOS geometry. rollCoverPropShape() below lifts
 // the one piece of that loop's math that is pure: the roll -> kind/hx/hz/y
 // assignment.
+//
+// effectiveDetect()/canSee() below are exported and unit-tested (their
+// original wave-3 scope), but the engine does NOT wire up to them as of the
+// LUL-582 release/next merge: LUL-382 (mist veil, landed on release/next
+// after this wave-3 commit was cut) replaced the lightDimmed/DIM_DETECT_MUL
+// dimming multiplier these take with a continuous veilDetectMul(veilAmount)
+// ramp this module has no access to. forest-engine.js keeps its own
+// veil-aware effectiveDetect()/canSee() locally instead of delegating here,
+// so shipped veil detection (LUL-40/LUL-382, LUL-525) isn't regressed to the
+// pre-veil dimming behaviour these pure functions still model. Whether to
+// extend this extraction to take a veil multiplier is a follow-up decision,
+// not this merge's scope.
 
 export type RNG = () => number;
 
@@ -153,14 +211,17 @@ export function blockedR(x: number, z: number, pr: number, grid: SpatialGrid<Cir
 // matrix (systems/los-rotated-aabb-sign-bug; LUL-268 shipped the same sign
 // bug again in this exact function months after LUL-91 fixed it in hasLOS()).
 //
-// `kind === 'tree'` is skipped here -- tagged trees are still real cover for
-// LOS (see hasLOS() below, which does NOT skip them) but were deliberately
-// never made a movement collider by this function; trees already collide via
-// the circle grid (blockedR() above). This asymmetry is load-bearing, not a
-// bug -- see the required test below that pins it.
+// `kind === 'tree'` is always skipped (its own circle-grid collision via
+// blockedR() above already handles it); LUL-384 additionally skips 'log' via
+// coverKindBlocksPlayerMovement() -- a fallen log is the one cover prop a
+// person would naturally step/run over rather than route around, and
+// predators already ignore all cover-prop collision (LUL-119/LUL-211). LOS
+// (hasLOS() below, which does NOT skip either kind) and hide-spot
+// eligibility (findHideSpot()/HIDE_KINDS) both read coverGrid independently
+// of this function and are unchanged by either skip.
 export function coverBlockedR(x: number, z: number, pr: number, coverGrid: SpatialGrid<CoverAABB>, cell: number = CELL): boolean {
   for (const c of neighbourhood(coverGrid, x, z, cell)) {
-    if (c.kind === 'tree') continue;
+    if (!coverKindBlocksPlayerMovement(c.kind)) continue;
     const dx = x - c.x, dz = z - c.z;
     const ry = c.ry ?? 0;
     const co = Math.cos(ry), si = Math.sin(ry);
@@ -244,6 +305,10 @@ export function segRayVsAABB(
 // was never made a movement collider by this extraction's sibling function.
 // Untagged trees (`t.s <= 1.4`, see generateCover() in the engine) never
 // entered `coverData` at all, so they never reach this function regardless.
+// Sight-only: mist veil (LUL-382) shrinks the *detect range* the engine's
+// own effectiveDetect()/canSee() compare against, it does not touch LOS
+// itself, so this function needing no veil awareness is intentional, not a
+// gap.
 export function hasLOS(
   x0: number, z0: number, x1: number, z1: number,
   coverGrid: SpatialGrid<CoverAABB>,
@@ -311,7 +376,9 @@ export function findHideSpot(
 // caught), and again if the light is dimmed (KeyF). Split out of canSee()
 // (below) so the LUL-144 cover-feedback scan can test "in range" separately
 // from "has line of sight" for every predator, not just stop at the first
-// one that can see the player.
+// one that can see the player. See the module comment above: the engine
+// does not currently delegate to this pair, since it models the pre-veil
+// (LUL-291) dimming multiplier, not veil's veilDetectMul(veilAmount).
 export const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 export const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
 export const DIM_DETECT_MUL = 0.75;   // sight only -- scent is untouched by dimming
