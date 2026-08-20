@@ -1,0 +1,44 @@
+name: Review gap detector
+
+# LUL-549 (spec: LUL-523) -- a review verdict can land on Paperclip and never
+# reach GitHub natively (LUL-511/PR #86, tracked in LUL-519/LUL-523: a review
+# ticket closed `done` while the PR still had zero GitHub reviews, and nothing
+# caught it mechanically). See wiki playbooks/review-protocol.
+#
+# This is a standalone watchdog, NOT a required check on any ruleset. A red
+# run here means "go look," not "block a merge" -- it is not wired into
+# main's or release/next's branch protection. Cheap heuristic, not a full
+# cross-reference with Paperclip: CI has no Paperclip credentials and should
+# not be given any (LUL-523). Any open PR with zero GitHub reviews, open
+# longer than the threshold, is a gap.
+#
+# scripts/check-review-gap.mjs does the real work; this workflow just calls
+# it on a schedule. GITHUB_TOKEN (default Actions token) has read access to
+# pulls/reviews on this public repo -- no PAT/secret needed.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  pull-requests: read
+
+jobs:
+  detect:
+    name: scan open PRs for zero-review gaps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: check for review gaps
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/check-review-gap.mjs
