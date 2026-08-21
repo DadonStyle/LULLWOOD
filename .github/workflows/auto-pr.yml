@@ -20,6 +20,15 @@ name: Auto PR
 #
 # Runs as GITHUB_TOKEN, so it needs "Allow GitHub Actions to create and approve
 # pull requests" (Settings -> Actions -> General -> Workflow permissions).
+#
+# Arming native auto-merge (`--auto`, below) hits the same required-review gap
+# automerge.yml documents in its own header: required_approving_review_count:1
+# has no bypass actor, and this job's own GITHUB_TOKEN is the same identity
+# that authored the PR, so it cannot approve it. The `SHIP_REVIEW_PAT` secret
+# (a second, distinct identity) is required before arming --auto will ever
+# actually lead to a merge; until that secret is configured this step skips
+# arming and leaves it to automerge.yml, which will refuse for the same
+# reason and say so on the PR. LUL-558 / systems/ship-never-merges-review-count-gap.
 
 on:
   push:
@@ -58,6 +67,7 @@ jobs:
       - name: open or refresh the PR
         env:
           GH_TOKEN: ${{ github.token }}
+          SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
           BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
@@ -219,7 +229,20 @@ jobs:
               exit 0
             fi
 
-            if gh_retry gh pr merge "$number" --auto --squash --delete-branch; then
+            # required_approving_review_count:1 has no bypass actor on this
+            # repo's ruleset, so native auto-merge would otherwise sit armed
+            # forever waiting for a review a `[ship]` PR never gets by design.
+            # Submit it here, under a distinct identity from the PR author
+            # (github-actions[bot], same as this job) -- never GH_TOKEN, which
+            # IS that author and 422s approving its own PR. See LUL-558 /
+            # systems/ship-never-merges-review-count-gap and automerge.yml's
+            # matching step, which this must stay in sync with.
+            if [ -z "${SHIP_REVIEW_TOKEN:-}" ]; then
+              echo "::warning::SHIP_REVIEW_PAT secret is not configured; not arming auto-merge on #$number. automerge.yml will refuse it too until the secret exists (LUL-558)."
+            elif ! GH_TOKEN="$SHIP_REVIEW_TOKEN" gh_retry gh pr review "$number" --approve \
+                 --body "Auto-approved: \`[ship]\` + \`ship-allowed.sh\` passed for this exact head. Policy: LUL-558."; then
+              echo "::warning::could not submit the required approving review on #$number; not arming auto-merge. automerge.yml will get its own shot after CI."
+            elif gh_retry gh pr merge "$number" --auto --squash --delete-branch; then
               echo "::notice::auto-merge armed on #$number"
             else
               # "Allow auto-merge" may be off in repo settings; automerge.yml
