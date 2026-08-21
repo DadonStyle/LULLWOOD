@@ -3,5 +3,9 @@
   "auto-pr.yml": [
     "deployment-budget.sh",
     "ship-allowed.sh"
+  ],
+  "ci.yml": [
+    "check-git-remote-credentials.mjs",
+    "check-elements-citations.mjs"
   ]
 }
