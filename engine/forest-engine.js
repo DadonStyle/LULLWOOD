@@ -1485,13 +1485,6 @@ let gameStartFired = false;
 // player is stationary or hiding, instead of snapping to a stale default.
 let escX = 0, escZ = -1;
 
-// LUL-153: shared by the keyboard and touch (triggerTouchHide) hide toggles so
-// the feature_engagement('hide') event fires from one place, not two.
-function toggleHidden(){
-  hidden = !hidden;
-  if(hidden){ hideTime = 0; track({ event: 'feature_engagement', feature: 'hide', action: 'used' }); }
-}
-
 // LUL-213: always available while actually playing, not gated behind being
 // chased -- "add jump support all the time by pressing space" per the ticket.
 // Kept a plain function (not inlined in the keydown handler below) so the
@@ -1711,8 +1704,12 @@ function playHideSfx(kind, entering){ if(kind === 'log') hollowLogSound(entering
 // The three call sites (KeyH, the touch Hide button, and tick()'s
 // movement-breaks-cover check) all funnel through these so entering/exiting
 // always agree on `hidden`/`hideTime`/`hideKind` and always play the right
-// prop's sound -- no call site duplicates the bookkeeping.
-function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); }
+// prop's sound -- no call site duplicates the bookkeeping. LUL-391: this is
+// also the one place feature_engagement('hide') fires -- an earlier,
+// shadowed toggleHidden() carried that track() call but was dead code (a
+// later function declaration in the same scope wins in JS), so the event
+// never fired.
+function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used' }); }
 function exitHide(){ if(!hidden) return; playHideSfx(hideKind, false); hidden = false; hideKind = null; }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
