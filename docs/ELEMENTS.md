@@ -104,17 +104,15 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   (L372) — the **only** consumer of `canopyBlockedR()`/`coverBlockedR()` in
   the whole file; predators never call `blocked()`, only `blockedR()`
   directly (see Predator section — this is deliberate, LUL-119/LUL-211).
-- `toggleHidden()` is declared **twice** in the same closure scope (plain
-  `function` statements, not `const`): once at L1215-1218 (the original
-  LUL-153 version: unconditional `hidden=!hidden` + a `feature_engagement`
-  analytics `track()` call), and again at L1426-1430 (the LUL-212 rewrite:
-  gates entry on `findHideSpot()`, delegates exit to `exitHide()`). In
-  JavaScript, the later `function` declaration in the same scope wins — the
-  first definition, analytics call included, is **dead code, never
-  executed**. Practical effect: the `feature_engagement('hide')` analytics
-  event has not fired since LUL-212 shipped, silently. Filed as **LUL-391**
-  (see handoff comment) — not fixed here, out of this ticket's scope, but a
-  real finding this registry exists to surface.
+- **Fixed, LUL-391 (PR #117).** `toggleHidden()` used to be declared **twice**
+  in the same closure scope (plain `function` statements, not `const`) — the
+  earlier LUL-153 declaration carried the `feature_engagement` analytics
+  `track()` call and was silently shadowed by the later LUL-212 rewrite, so
+  the event never fired. The shadowed declaration is deleted; there is now a
+  single `toggleHidden()` (L1714), and the `track()` call moved into
+  `enterHide()` (L1712), which all three call sites (`KeyH`, the touch Hide
+  button, and `tick()`'s movement-breaks-cover check) already funnel
+  through, so `feature_engagement('hide')` fires on every hide entry again.
 - Eye height (`eyeH`) is damped toward `hidden ? 1.05 : CONFIG.eye` (2.2) at
   an ~0.3s time constant (`Math.min(1, dt*8)`, L2272), not snapped — see
   wiki `game/lul267-canopy-collision-fix` for a documented edge case where
@@ -782,9 +780,10 @@ plain child issue, not assigned to Code Review (nobody's claiming a fix here
 break a core mechanic (win/hide/catch all function), so none block this
 registry's own merge.
 
-- **LUL-391** — dead `toggleHidden()` analytics: `feature_engagement('hide')`
-  has never fired since LUL-212 shipped (function shadowing, see Player
-  section). P2 (analytics blind spot, not a gameplay break).
+- ~~**LUL-391**~~ — **Fixed, PR #117.** Dead `toggleHidden()` analytics
+  (`feature_engagement('hide')` never fired since LUL-212, function
+  shadowing) is resolved: the shadowed declaration is deleted and the
+  `track()` call now lives in `enterHide()`; see Player section.
 - **LUL-392** — Player has no collision or slow against the lake; walking
   into the water mesh does nothing. P2/P3 (visual/feel question for the
   Game Tester to weigh in on — is a walkable lake intended?).
