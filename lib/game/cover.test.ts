@@ -8,6 +8,7 @@ import {
   CELL,
   gridKey,
   blockedR,
+  pickAvoidDirection,
   coverBlockedR,
   canopyBlockedR,
   blocked,
@@ -420,6 +421,53 @@ test('blockedR: exactly at the combined radius is not blocked (strict <)', () =>
   const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 1 }]);
   assert.equal(blockedR(0, 0, 2, grid), false);   // dist 3 === cr(1)+pr(2)
   assert.equal(blockedR(0.001, 0, 2, grid), true); // just inside
+});
+
+// ---- pickAvoidDirection (LUL-593, predator obstacle-avoidance steering) ----
+
+test('pickAvoidDirection: open path returns the original heading unchanged', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  assert.equal(rx, 1);
+  assert.equal(rz, 0);
+});
+
+test('pickAvoidDirection: obstacle dead ahead but clear at the first fallback angle deflects to it', () => {
+  // tiny blocker exactly at the look-ahead point of the raw heading (0,0)+(1,0)*3
+  const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  assert.ok(Math.abs(rx - Math.cos(0.5)) < 1e-9);
+  assert.ok(Math.abs(rz - Math.sin(0.5)) < 1e-9);
+});
+
+test('pickAvoidDirection: when both +/-0.5 are equally clear, prefers +0.5 (angle-list order, not just any clear angle)', () => {
+  // blocks only the raw heading -- (3,0) -- leaving every fallback angle open
+  const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  // +0.5 is tried before -0.5 in AVOID_ANGLES -- confirm it's the one picked
+  const negRx = Math.cos(-0.5), negRz = Math.sin(-0.5);
+  assert.ok(!(Math.abs(rx - negRx) < 1e-9 && Math.abs(rz - negRz) < 1e-9));
+  assert.ok(Math.abs(rx - Math.cos(0.5)) < 1e-9);
+});
+
+test('pickAvoidDirection: every angle blocked falls back to the original heading (matches main -- it does not stop)', () => {
+  // a huge blocker centered on the predator itself: every look-ahead point,
+  // at any angle, is within `look` (3) of the origin, well inside rr (10.6)
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 10 }]);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  assert.equal(rx, 1);
+  assert.equal(rz, 0);
+});
+
+test('pickAvoidDirection: respects a custom lookAhead distance', () => {
+  // blocker sits exactly at the widened look-ahead point (look=rad+5.4=6),
+  // well past the default look-ahead point (look=rad+2.4=3)
+  const grid = makeGrid<CircleCollider>([{ x: 6, z: 0, cr: 0.3 }]);
+  const [rxDefault, rzDefault] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  assert.equal(rxDefault, 1); // default lookAhead doesn't reach the blocker
+  assert.equal(rzDefault, 0);
+  const [rxWide] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, CELL, 5.4); // look=6, lands right on it
+  assert.notEqual(rxWide, 1);
 });
 
 test('canopyBlockedR: true inside a tree\'s canopy radius', () => {
