@@ -1,0 +1,13 @@
+import { defineConfig } from "eslint/config";
+import js from "@eslint/js";
+
+export default defineConfig([
+  {
+    files: ["**/*.js"],
+    plugins: { js },
+    languageOptions: { ecmaVersion: 2022, sourceType: "module" },
+    rules: {
+      "no-redeclare": "error",
+    },
+  },
+]);
