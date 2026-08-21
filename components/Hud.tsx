@@ -106,6 +106,13 @@ export interface EngineActions {
   setTouchSprint: (v: boolean) => void;
   triggerTouchHide: () => void;
   triggerTouchInteract: () => void;
+  // LUL-529: mobile parity for jump/pause/mist-veil/toggle-run -- see
+  // MobileControls.tsx and forest-engine.js's triggerTouchJump/Pause/ToggleRun
+  // and setTouchVeil.
+  triggerTouchJump: () => void;
+  triggerTouchPause: () => void;
+  triggerTouchToggleRun: () => void;
+  setTouchVeil: (v: boolean) => void;
   // LUL-26: difficulty + accessibility
   setDifficulty: (d: 'lantern' | 'night' | 'blackout') => void;
   setRunMode: (m: 'hold' | 'toggle') => void;
@@ -295,7 +302,7 @@ export default function Hud({
       <OrientationGate />
 
       {mobile ? (
-        <MobileControls actions={actions} entered={state.entered} />
+        <MobileControls actions={actions} entered={state.entered} runMode={state.runMode} />
       ) : (
         <DesktopControls />
       )}
@@ -389,6 +396,12 @@ export default function Hud({
                 <b>left stick</b> — move &nbsp;·&nbsp; <b>right stick</b> — look &nbsp;·&nbsp; push the left stick further to run
                 <br />
                 <b>Hide</b> button — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> button — lift the child
+                <br />
+                <b>Jump</b> button — jump (also how you clear a charging wolf or lion) &nbsp;·&nbsp;{' '}
+                <b>Pause</b> button — pause / resume
+                <br />
+                <b>Veil</b> button — hold for the mist veil (dims your light, floods the world in mist, and cuts
+                how far predators can see you) — limited, watch the Veil meter
               </>
             ) : (
               <>
@@ -436,7 +449,7 @@ export default function Hud({
           value as a bare "1s" literal in the CSS; it's now the same constant. */}
       {state.chargeVisible && (
         <div id="chargePrompt" key={state.chargeToken}>
-          <span id="chargeKey">SPACE</span>
+          <span id="chargeKey">{mobile ? 'JUMP' : 'SPACE'}</span>
           <div id="chargeBarTrack">
             <div id="chargeBar" />
           </div>
