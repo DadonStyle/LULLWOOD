@@ -141,31 +141,37 @@ test.describe('scent acquisition behind cover (LUL-196)', () => {
     expect(staged, 'qaHideBehindCoverKind must find a valid cover placement').not.toBeNull();
     const { idx, playerX, playerZ } = staged!;
 
-    // Reset the predator to roam without relocating it. Returns the
-    // predator's real (x,z), which is what we need to place the scent point
-    // within its detect radius regardless of how far cover staging put it
-    // from the player.
+    // Reset the predator to roam without relocating it. Verify state before
+    // seeding scent so the check happens while no scent is active (predator
+    // cannot have transitioned away via scentOnto yet).
     const pos = await page.evaluate(
       (i) => window.ForestEngine?.qaSetPredatorRoam?.(i) ?? null,
       idx,
     );
     expect(pos, 'qaSetPredatorRoam must succeed for the staged predator').not.toBeNull();
 
-    // Verify the predator was not relocated (position unchanged to 4 sig-fig).
     const predAfterRoam = await page.evaluate(
       (i) => window.ForestEngine?.qaPredatorState?.(i) ?? null,
       idx,
     );
     expect(predAfterRoam?.state, 'predator must now be in roam').toBe('roam');
 
-    // Seed a fresh scent point exactly at the predator's real position
-    // (age=0): qaSeedScentPoint(dx, dz, age) offsets from the *player*, so
-    // the offset is the predator's position minus the player's. The player
-    // is still behind the cover prop and out of LOS -- only the scent point
-    // moves, not the player.
+    // Seed a fresh scent point exactly at the predator's real position.
+    // IMPORTANT: qaSetPredatorRoam and qaSeedScentPoint MUST run in a single
+    // page.evaluate — a single JS turn — so no game frame executes between
+    // reading the predator's current position and placing the scent there.
+    // If they are separate evaluate calls, the predator wanders toward its
+    // existing waypoint (up to 55 units away, at 2.3 u/s in roam) and the
+    // seeded point becomes stale before checkScent runs, causing the
+    // 15-second poll to time out with scentCalls=0. This was the root cause
+    // of the LUL-645 flake.
     await page.evaluate(
-      ({ dx, dz }) => window.ForestEngine?.qaSeedScentPoint?.(dx, dz, 0),
-      { dx: pos!.x - playerX, dz: pos!.z - playerZ },
+      ({ i, px, pz }) => {
+        const fresh = window.ForestEngine?.qaSetPredatorRoam?.(i) ?? null;
+        if (!fresh) return;
+        window.ForestEngine?.qaSeedScentPoint?.(fresh.x - px, fresh.z - pz, 0);
+      },
+      { i: idx, px: playerX, pz: playerZ },
     );
 
     // Wait for the predator's scentCalls to increment: checkScent() ran and
