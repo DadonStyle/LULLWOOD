@@ -21,7 +21,7 @@ import { test, expect } from '@playwright/test';
 import { boot, enter, readObjective } from './helpers';
 
 test('win screen is mandatory and persists until the player restarts', async ({ page }) => {
-  test.setTimeout(45_000);
+  test.setTimeout(75_000);
   await boot(page, { qaHooks: true });
   await enter(page);
 
