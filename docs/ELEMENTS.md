@@ -39,7 +39,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()` L1268, movement block in `tick()` L2296-2327.
 - Jump at any time while playing, not gated on being chased — `beginJump()`
-  L1225-1228, `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
+  L1493-1496, `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213).
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
@@ -52,7 +52,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   height (2.2→1.05, damped ~0.3s), silences footsteps/scent deposit, and
   shrinks predator detect range the longer it's held (`STILL_RAMP`=1.2s,
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
-  next to a predator still gets you caught — `effectiveDetect()` L896-899).
+  next to a predator still gets you caught — `effectiveDetect()` L1131-1134).
 - Dim the personal follow-light (hold `KeyF`) — `LIGHT_NORMAL`/`LIGHT_DIMMED`
   L172-173, applied in `tick()` L2285-2294; paired with a screen-edge
   vignette cue (`applyVignette()` L191-195), **and**, as of `LUL-291`, a real
@@ -62,7 +62,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 - Carry the child home; walking speed is multiplied by `CONFIG.carryPaceMul`
   (0.72) while carrying (`tick()` L2299).
 - Leave a scent trail while moving (not while hidden or standing still) —
-  `depositScent()` L771-774, deposited every `SCENT_DEPOSIT_INTERVAL` (0.3s).
+  `depositScent()` L1033-1036, deposited every `SCENT_DEPOSIT_INTERVAL` (0.3s).
 - Make audible footstep noise while moving — `NOISE_RADIUS_WALK`/`_RUN`
   (14/24 units), `checkNoise()` L816-819.
 - Dodge a telegraphed predator charge by jumping within the charge window —
@@ -105,9 +105,9 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   the whole file; predators never call `blocked()`, only `blockedR()`
   directly (see Predator section — this is deliberate, LUL-119/LUL-211).
 - `toggleHidden()` is declared **twice** in the same closure scope (plain
-  `function` statements, not `const`): once at L1215-1218 (the original
+  `function` statements, not `const`): once at L1490-1493 (the original
   LUL-153 version: unconditional `hidden=!hidden` + a `feature_engagement`
-  analytics `track()` call), and again at L1426-1430 (the LUL-212 rewrite:
+  analytics `track()` call), and again at L1717-1721 (the LUL-212 rewrite:
   gates entry on `findHideSpot()`, delegates exit to `exitHide()`). In
   JavaScript, the later `function` declaration in the same scope wins — the
   first definition, analytics call included, is **dead code, never
@@ -135,7 +135,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `blocked()`: `hasLOS()` (sight, rotated-AABB raycast, includes tagged
   trees `s>1.4`) and the distance-only scent/noise/catch/pickup/win checks
   above — geometry gates *sight only*; it never gates scent or hearing
-  (`checkScent()` L775-781 and `checkNoise()` L816-819 take no cover/LOS
+  (`checkScent()` L1037-1043 and `checkNoise()` L816-819 take no cover/LOS
   argument at all).
 
 ---
@@ -145,7 +145,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 **What it can do**
 - Sit at a fixed point drawn once per map (`baby.x/z`, `generateMap()`
   L432-435), glowing and idly bobbing, marked by ambient "wisp" particles
-  (`placeBabyWisps()` L547-551) so it's spottable through fog.
+  (`placeBabyWisps()` L813-817) so it's spottable through fog.
 - Be picked up once (`baby.taken`, `pickup()` L2025), triggering a scripted
   10s pickup cinematic (`tick()`'s `pickingUp` branch, L2329-2359) that ends
   in a sky-burst (`fireBoom()` L579-598).
@@ -192,8 +192,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 ### Wolf / Bear / Lion (predators)
 
 Three species sharing one state machine (`updatePredators()`, L955-1186) and
-one geometry builder (`makePredator()`, L638-696), differentiated by the
-`PSPEC` table (L611-619):
+one geometry builder (`makePredator()`, L904-962), differentiated by the
+`PSPEC` table (L877-885):
 
 | stat | wolf | bear | lion |
 |---|---|---|---|
@@ -209,8 +209,8 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 - Roam via random waypoints when nothing has noticed the player
   (`state==='roam'`, L1010-1019).
 - Detect the player through three independent channels: **sight**
-  (`canSee()`, LOS raycast + shrinking-with-stillness range, L900-903),
-  **scent** (`checkScent()`, radius+wind, no LOS check at all, L775-781),
+  (`canSee()`, LOS raycast + shrinking-with-stillness range, L1135-1138),
+  **scent** (`checkScent()`, radius+wind, no LOS check at all, L1037-1043),
   and **noise** (`checkNoise()`, pure distance + per-second chance while the
   player moves, L816-819). Any one channel alone triggers a chase.
 - Chase, losing/regaining track via `investigate`→`sniff`→`back` (LUL-22,
@@ -240,7 +240,8 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
   predators call `blockedR()` directly for movement, never `blocked()`, so
   `coverBlockedR()` (and player-only `canopyBlockedR()`) never run for them.
   **Deliberate**, not a gap: the standing comment at `coverBlockedR()`
-  (L308-320) says folding this in previously produced a stuck-predator
+  (`lib/game/cover.ts`, moved there by LUL-425) says folding this in
+  previously produced a stuck-predator
   freeze (LUL-119). LOS is still blocked by the same props via `hasLOS()` —
   only movement-collision is exempt.
 - Cannot collide with each other, or with the child — no code path checks
@@ -355,7 +356,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 **What it can do**
 - Everything Rock can do, **plus**: is a valid `hidden`-stance location
   (`HIDE_KINDS.log = true`) — entering/exiting plays a distinct "hollow
-  log knock" sound (`hollowLogSound()`, L1397-1418).
+  log knock" sound (`hollowLogSound()`, L1681-1702).
 - ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()` L416), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
 - **LUL-384: the player walks and runs over it, no route-around needed** —
@@ -399,7 +400,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
 **What it can do**
 - Everything Log can do (hiding-spot eligible, `HIDE_KINDS.bramble = true`),
   with a distinct "leaf rustle" enter/exit sound (`leafRustle()`,
-  L1376-1393) — researched against stealth/horror foley convention per the
+  L1660-1677) — researched against stealth/horror foley convention per the
   LUL-212 handoff (wiki `game/lul212-hiding-spots`).
 - ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()` L419).
 
@@ -499,7 +500,7 @@ one geometry builder (`makePredator()`, L638-696), differentiated by the
   rng draw"). If `CONFIG.home` ever moved off the spawn point, this
   protection would silently stop applying.
 - Is not drawn on the minimap (`drawMinimapStatic()` renders trees and the
-  lake only, L2141-2149 — home has no minimap marker).
+  lake only, L2631-2639 — home has no minimap marker).
 
 **Behaviours & logic**
 - Static, no RNG draw — same every seed, every restart.
@@ -628,7 +629,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
-  a patch when a value actually changed, L1647-1653).
+  a patch when a value actually changed, L1937-1943).
 - Send **actions back**, never state: the full returned API is `enter`,
   `restart`, `setPace`, `setFog`, `toggleSound`, `regenMap`, and five
   touch-control setters (`setTouchMove`/`setTouchLook`/`setTouchSprint`/
@@ -637,7 +638,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   difficulty setters exist in this object on `main`.
 - The minimap specifically reads and draws two other elements' live data:
   tree positions (`treeData`, every 4th tree) and the lake's position/radius
-  (`drawMinimapStatic()` L2141-2149) — not just player/child/predator state.
+  (`drawMinimapStatic()` L2631-2639) — not just player/child/predator state.
 
 **What it CANNOT do**
 - Cannot read engine internals directly — no reverse channel exists besides
@@ -654,7 +655,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 **Behaviours & logic**
 - `hudState` is a single flat object; `pushState()` diffs before emitting to
-  avoid redundant React re-renders (L1647-1653).
+  avoid redundant React re-renders (L1937-1943).
 
 **Collision & physics profile**
 - N/A — not a spatial/world object.
@@ -725,7 +726,8 @@ etc. can fully overlap in world space. Filed as **LUL-394** (bundles all
 predator-predator pairs — see handoff comment for why one ticket, not six).
 ¹¹ Predators never call `coverBlockedR()` — movement passes straight
 through rock/log/bramble. **Deliberate** (LUL-119/LUL-211 comment,
-`coverBlockedR()` L308-320), not `U`. LOS is still blocked normally.
+`coverBlockedR()` in `lib/game/cover.ts`), not `U`. LOS is still blocked
+normally.
 ¹² **Notable.** `placePredators()`'s spawn-rejection loop (L716) checks
 spawn-clearing, baby-distance, and `blockedR()`, but never `inLake()` —
 unlike the tree and child spawn loops. Whether a predator can spawn (or
@@ -754,7 +756,7 @@ overlap changes nothing observable for them.
 ¹⁶ Both protected from home only indirectly, via the shared `inSpawn()`
 check (home reuses the spawn coordinates) — see Home's "what it cannot do."
 ¹⁷ Rendered as a dot/circle on the minimap (`drawMinimapStatic()`,
-L2141-2149) — a read-only relationship, not physical.
+L2631-2639) — a read-only relationship, not physical.
 ¹⁸ Cover props are never checked against each other at placement — two
 props (e.g. a rock and a bramble) can overlap. Lower severity than ¹⁴ (both
 are already non-solid to predators and the overlap is cosmetic at most for

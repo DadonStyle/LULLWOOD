@@ -1,0 +1,80 @@
+name: Base branch guard
+
+# LUL-589. The release train (systems/release-train) only works if feature
+# PRs land on `release/next` and the one path to `main` is a version cut
+# (`release/next` -> `main`, LUL-497). Nothing enforced that before this --
+# PR #107 sat open with `base: main` for three hours, opened by a stale
+# copy of auto-pr.yml, caught only by a human reading PRs by hand
+# (systems/release-train-delivered "Trap 1"). Rule: base=main requires
+# head=release/next, or an explicit `emergency-hotfix` label (a loud,
+# opt-in escape hatch -- never the silent default).
+#
+# Two triggers, both driving .github/scripts/base-branch-guard.sh:
+#
+#   pull_request (branches: [main]): the direct, no-API-call path -- base,
+#   head and labels are already in the event payload. This is also why the
+#   trigger is scoped to `branches: [main]` rather than every PR: the rule
+#   only has an opinion once base=main.
+#
+#   BUT PRs auto-pr.yml opens use GITHUB_TOKEN, and GitHub suppresses
+#   `pull_request` runs an action's own GITHUB_TOKEN would trigger
+#   (recursion guard) -- so `opened` never fires for exactly the PRs this
+#   exists to catch (same fact ci.yml's push-trigger migration and
+#   workflow-guard-check.yml both cite). That is how PR #107 went
+#   unnoticed. `synchronize` (a real push, not GITHUB_TOKEN) fires
+#   normally, so a backmerge eventually surfaces it -- but "eventually" was
+#   the exact problem.
+#
+#   schedule (*/20 * * * *, same cadence as deployment-budget.yml): lists
+#   every open base:main PR directly and posts a commit status per head SHA
+#   under this same check's context ("base branch guard"), independent of
+#   whether `pull_request` ever fired for it. This is the path that
+#   actually closes the three-hour gap.
+#
+# Either trigger reports under the SAME context name, so `main`'s required
+# status checks only need to name it once.
+
+on:
+  pull_request:
+    types: [opened, reopened, edited, synchronize]
+    branches: [main]
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write   # sweep mode posts a commit status + a one-time comment on a violation
+
+concurrency:
+  group: base-branch-guard-${{ github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: true
+
+jobs:
+  single:
+    name: base branch guard
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: check this PR's base
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD: ${{ github.event.pull_request.head.ref }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: bash .github/scripts/base-branch-guard.sh
+
+  sweep:
+    name: sweep open base:main PRs
+    if: github.event_name != 'pull_request' && github.repository == 'DadonStyle/LULLWOOD'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: sweep every open PR targeting main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/base-branch-guard.sh

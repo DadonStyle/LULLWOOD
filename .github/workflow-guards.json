@@ -1,0 +1,11 @@
+{
+  "_comment": "LUL-589: named markers that must still appear in each workflow file after any PR touching .github/workflows/*. Read from main's copy by .github/scripts/workflow-guard-check.sh -- never from the branch being checked, same rule ship-allowed.sh follows. A missing marker means a guard got silently deleted (PR #108: a stale branch's copy of auto-pr.yml had zero references to deployment-budget.sh). Widen this list whenever a new guard lands; do not narrow it without board sign-off.",
+  "auto-pr.yml": [
+    "deployment-budget.sh",
+    "ship-allowed.sh"
+  ],
+  "ci.yml": [
+    "check-git-remote-credentials.mjs",
+    "check-elements-citations.mjs"
+  ]
+}

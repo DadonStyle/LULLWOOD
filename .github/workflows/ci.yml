@@ -76,6 +76,17 @@ jobs:
       - name: git remote credential guard
         run: node scripts/check-git-remote-credentials.mjs --repo .
 
+      # LUL-588: docs/ELEMENTS.md cites engine line numbers that go stale on
+      # every engine edit; they had been re-derived by hand three times and
+      # were measured wrong 82/82 on release/next @ af0c995. This fails the
+      # build on any citation that drifts off its anchor symbol and is not
+      # already listed in scripts/elements-citations-baseline.json. No
+      # `|| true` and no ::warning:: downgrade -- a NEW drifted citation is a
+      # hard failure, and the baseline may shrink but never grow. Needs no
+      # node_modules, so it runs before `npm ci` like the guard above.
+      - name: ELEMENTS.md citation guard
+        run: node scripts/check-elements-citations.mjs
+
       - run: npm ci
 
       - name: unit tests

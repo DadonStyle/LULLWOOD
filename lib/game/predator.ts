@@ -19,9 +19,19 @@ export type RNG = () => number;
 // ---- sniff-count rolls ------------------------------------------------------
 // `1 + Math.floor(Math.random() * N)` on main, at five call sites. **N is not
 // consistent**: 4 at the hearNoise/hunt-giveup/chase-giveup sites, 3 at the
-// charge-cleared/flank-entry sites. Unknown whether that's deliberate
-// per-trigger tuning or copy-paste drift -- preserved exactly per call site,
-// not normalised (see wiki systems/unit-testing-standard, LUL-345 section).
+// charge-cleared/flank-entry sites. Preserved exactly per call site, not
+// normalised (see wiki systems/unit-testing-standard, LUL-345 section).
+//
+// LUL-360: read as deliberate, not copy-paste, and kept as-is. The N=4 sites
+// are all "the predator just had a real signal on you" (heard a noise, or
+// gave up a hunt/chase where it had direct sight/scent lock) -- a longer
+// search makes sense off strong evidence. The N=3 sites have weaker or no
+// signal: charge-cleared is momentum carrying the predator past you with
+// nothing re-acquired yet, and flank-arrival is a pack predator reaching a
+// blind ambush point it was routed to, not a point it detected anything at.
+// The split is consistent across all five sites with no exceptions, which
+// argues against copy-paste (drift from copy-paste is rarely that clean).
+// Treat as tuning: if it needs to change, that's a design call, not a nit.
 export function rollSniffs(rng: RNG, max: number): number {
   return 1 + Math.floor(rng() * max);
 }
