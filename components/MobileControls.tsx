@@ -145,7 +145,13 @@ function ActionBtn({ label, onTap }: ActionBtnProps) {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    touchAction: 'manipulation',
+    // LUL-653: was 'manipulation'. That still leaves the browser to decide,
+    // on first contact, whether this gesture might be a pan (it permits
+    // panning) -- Stick right next to this button already uses 'none' for
+    // the same reason. A discrete tap target has no gesture to disambiguate,
+    // so committing to 'none' up front removes that decision from the path
+    // between pointerdown and this handler running.
+    touchAction: 'none',
     userSelect: 'none',
     WebkitUserSelect: 'none',
     cursor: 'pointer',
