@@ -93,7 +93,9 @@ declare global {
       /** Snapshot of one predator's state machine, or null if `idx` doesn't resolve.
        * LUL-388: `dist`/`canSee` are the exact live values the engine's own kill
        * check uses this tick -- poll these instead of racing wall-clock time
-       * against game time (see wiki: systems/dt-clamp-vs-walltime). */
+       * against game time (see wiki: systems/dt-clamp-vs-walltime).
+       * LUL-659: `x`/`z` are the predator's raw world position, for tracing
+       * lateral movement (e.g. avoidDir() steering around cover) over time. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
         state: string;
@@ -102,6 +104,8 @@ declare global {
         scentCalls: number;
         dist: number;
         canSee: boolean;
+        x: number;
+        z: number;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
