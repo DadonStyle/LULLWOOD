@@ -72,13 +72,13 @@ import {
   backOffPoint,
   canCatchInChase,
   CATCH_MARGIN,
-  hasReachedSniffRange,
   isCaught,
   isSniffImmune,
   rollSniffs,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
   SNIFF_IMMUNITY_TIME,
+  stepApproach,
   stepFlankHold,
   stepSniffLoop,
   tickTimers,
@@ -1326,9 +1326,15 @@ function updatePredators(dt, noiseRadius){
       // wiki game/lul223-chase-investigate-livelock for the confirmed repro.
       if(shouldRevertInvestigateToChase(p.inv, hidden)){ p.state='chase'; }
       else if(p.inv === 'approach'){
+        // LUL-658: always report this tick's movement, even when it's also the
+        // tick that reaches sniff range -- see stepApproach()'s comment in
+        // lib/game/predator.ts for why skipping movement on the transition tick
+        // let the chase<->investigate/sniff bounce (LUL-562) freeze bear solid
+        // at point-blank range instead of resolving into a real chase.
         facePlayer = true;
-        if(hasReachedSniffRange(dist, p.rad)){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
-        else { desx=ux; desz=uz; speed=p.spec.speed*0.45; }
+        const step = stepApproach(ux, uz, p.spec.speed, dist, p.rad);
+        desx = step.desx; desz = step.desz; speed = step.speed;
+        if(step.enterSniff){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
       } else if(p.inv === 'sniff'){
         facePlayer = true; p.sniffTimer -= dt;
         const sniffOutcome = stepSniffLoop(p.sniffTimer, p.sniffsLeft);
