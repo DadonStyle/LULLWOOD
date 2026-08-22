@@ -23,10 +23,10 @@ import {
   rollCoverPropShape,
   STILL_RAMP,
   STILL_DETECT_CUT,
-  DIM_DETECT_MUL,
   PLAYER_COLLISION_RADIUS,
 } from './cover.ts';
 import type { SpatialGrid, CircleCollider, CoverAABB, DetectionState } from './cover.ts';
+import { veilDetectMul, VEIL_DETECT_MUL } from './veil.ts';
 
 // Builds a spatial grid the same way the engine's buildGrid()/buildCoverGrid()
 // do: bucket every entry by floor(x/CELL),floor(z/CELL).
@@ -560,55 +560,76 @@ test('findHideSpot: on an exact-distance tie, the first-encountered candidate in
   assert.equal(spot, a, 'first-pushed candidate must win the tie');
 });
 
-// ---- effectiveDetect (LUL-43, LUL-291) -------------------------------------
+// ---- effectiveDetect (LUL-43, LUL-291, LUL-382, LUL-641) -------------------
+// LUL-641: this is now the shipped copy (forest-engine.js imports it
+// directly), so these cases exercise the live formula including the
+// veilDetectMul() ramp the engine folds into `detectMul`, not the old
+// binary lightDimmed/DIM_DETECT_MUL model.
 
 test('effectiveDetect: not hidden -> stillness contributes nothing, regardless of hideTime', () => {
-  const state: DetectionState = { hidden: false, hideTime: 999, lightDimmed: false };
+  const state: DetectionState = { hidden: false, hideTime: 999 };
   assert.equal(effectiveDetect(10, 1, state), 10);
 });
 
 test('effectiveDetect: hidden with hideTime=0 -> stillness is 0 (matches not-hidden)', () => {
-  const state: DetectionState = { hidden: true, hideTime: 0, lightDimmed: false };
+  const state: DetectionState = { hidden: true, hideTime: 0 };
   assert.equal(effectiveDetect(10, 1, state), 10);
 });
 
 test('effectiveDetect: hidden with hideTime exactly at STILL_RAMP -> full stillness cut applied', () => {
-  const state: DetectionState = { hidden: true, hideTime: STILL_RAMP, lightDimmed: false };
+  const state: DetectionState = { hidden: true, hideTime: STILL_RAMP };
   assert.equal(effectiveDetect(10, 1, state), 10 * (1 - STILL_DETECT_CUT));
 });
 
 test('effectiveDetect: hidden well past STILL_RAMP clamps at the same full cut, does not keep shrinking', () => {
-  const atRamp: DetectionState = { hidden: true, hideTime: STILL_RAMP, lightDimmed: false };
-  const wayPast: DetectionState = { hidden: true, hideTime: STILL_RAMP * 50, lightDimmed: false };
+  const atRamp: DetectionState = { hidden: true, hideTime: STILL_RAMP };
+  const wayPast: DetectionState = { hidden: true, hideTime: STILL_RAMP * 50 };
   assert.equal(effectiveDetect(10, 1, wayPast), effectiveDetect(10, 1, atRamp));
 });
 
-test('effectiveDetect: lightDimmed multiplies on top of stillness, and applies even when not hidden', () => {
-  const state: DetectionState = { hidden: false, hideTime: 0, lightDimmed: true };
-  assert.equal(effectiveDetect(10, 1, state), 10 * DIM_DETECT_MUL);
+test('effectiveDetect: difficulty detectMul scales the base detect range', () => {
+  const state: DetectionState = { hidden: false, hideTime: 0 };
+  assert.equal(effectiveDetect(10, 0.7, state), 7);
 });
 
-test('effectiveDetect: difficulty detectMul scales the base detect range', () => {
-  const state: DetectionState = { hidden: false, hideTime: 0, lightDimmed: false };
-  assert.equal(effectiveDetect(10, 0.7, state), 7);
+test('effectiveDetect: veilAmount=0 -> veilDetectMul is a no-op, matches no-veil range', () => {
+  const state: DetectionState = { hidden: false, hideTime: 0 };
+  assert.equal(effectiveDetect(10, 1 * veilDetectMul(0), state), 10);
+});
+
+test('effectiveDetect: veilAmount=1 (full ramp) -> full VEIL_DETECT_MUL cut, not the old 25% DIM_DETECT_MUL', () => {
+  const state: DetectionState = { hidden: false, hideTime: 0 };
+  assert.equal(effectiveDetect(10, 1 * veilDetectMul(1), state), 10 * VEIL_DETECT_MUL);
+});
+
+test('effectiveDetect: veilAmount mid-ramp -> a partial cut strictly between full and none', () => {
+  const state: DetectionState = { hidden: false, hideTime: 0 };
+  const mid = effectiveDetect(10, 1 * veilDetectMul(0.5), state);
+  assert.ok(mid < 10 && mid > 10 * VEIL_DETECT_MUL, `expected 10 > ${mid} > ${10 * VEIL_DETECT_MUL}`);
+});
+
+test('effectiveDetect: veil stacks multiplicatively with full stillness, same as the engine composes detectMul', () => {
+  const state: DetectionState = { hidden: true, hideTime: STILL_RAMP };
+  const detectMul = veilDetectMul(1);
+  assert.equal(effectiveDetect(10, detectMul, state), 10 * (1 - STILL_DETECT_CUT) * VEIL_DETECT_MUL);
 });
 
 // ---- canSee (composition) ---------------------------------------------------
 
 test('canSee: false once dist reaches effectiveDetect, even with a clear line (>= is exclusive of "seen")', () => {
-  const state: DetectionState = { hidden: false, hideTime: 0, lightDimmed: false };
+  const state: DetectionState = { hidden: false, hideTime: 0 };
   const coverGrid = makeGrid<CoverAABB>([]);
   assert.equal(canSee(10, 10, 1, state, 0, 0, 10, 0, coverGrid), false);
 });
 
 test('canSee: in range but LOS blocked -> false', () => {
-  const state: DetectionState = { hidden: false, hideTime: 0, lightDimmed: false };
+  const state: DetectionState = { hidden: false, hideTime: 0 };
   const coverGrid = makeGrid<CoverAABB>([{ x: 5, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
   assert.equal(canSee(9, 10, 1, state, 0, 0, 10, 0, coverGrid), false);
 });
 
 test('canSee: in range and LOS clear -> true', () => {
-  const state: DetectionState = { hidden: false, hideTime: 0, lightDimmed: false };
+  const state: DetectionState = { hidden: false, hideTime: 0 };
   const coverGrid = makeGrid<CoverAABB>([]);
   assert.equal(canSee(9, 10, 1, state, 0, 0, 10, 0, coverGrid), true);
 });

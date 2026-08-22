@@ -58,6 +58,8 @@ import {
   blocked as geoBlocked,
   hasLOS as geoHasLOS,
   findHideSpot as geoFindHideSpot,
+  effectiveDetect as geoEffectiveDetect,
+  canSee as geoCanSee,
 } from '@/lib/game/cover';
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
@@ -1101,40 +1103,25 @@ function hearNoise(p){
 // that inject the engine's own coverGrid closure state -- every call site
 // below is unchanged.
 //
-// effectiveDetect()/canSee() deliberately stay engine-local, NOT wrapped
-// around cover.ts's own effectiveDetect()/canSee(): LUL-382 (mist veil,
-// landed on release/next after this wave-3 extraction was cut) replaced the
-// STILL_RAMP/STILL_DETECT_CUT/DIM_DETECT_MUL dimming multiplier those took
-// with a continuous veilDetectMul(veilAmount) ramp that cover.ts's pure
-// versions have no access to (see the module comment in cover.ts). Wrapping
-// them here would silently regress shipped, tester-confirmed veil detection
-// (LUL-40/LUL-382, LUL-525) back to the pre-veil dimming behaviour.
+// LUL-641: effectiveDetect()/canSee() now delegate to cover.ts's copy --
+// the mist-veil ramp that used to force an engine-local fork (LUL-382:
+// veilDetectMul(veilAmount) has no equivalent in the old lightDimmed/
+// DIM_DETECT_MUL model) is now just another factor the caller folds into
+// `detectMul` before calling, same as DIFFICULTY_PRESETS[difficulty]
+// .detectMul already was. Stacks multiplicatively with stillness, same
+// relationship as before: hiding still + veil is the strongest state.
+// Sight only -- p.spec.scent is untouched, a deliberate scope choice (real
+// mist/smoke obscures sightlines, not scent; genre precedent LUL-215
+// search treats smoke/flare tools as breaking line-of-sight specifically) --
+// a predator can still scent-lock you through the veil, keeping scent-trail
+// play (LUL-23/LUL-65) meaningful.
 function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid); }
 function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid); }
-const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
-const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
-// LUL-382: the mist veil shrinks sight-detect range by 65% at full ramp (see
-// veilDetectMul(), lib/game/veil.ts) -- supersedes LUL-291's DIM_DETECT_MUL (0.75, a
-// 25% cut); the founder judged that too small a lever (decisions/0012-feature-impact-bar).
-// Scaled by veilAmount (tick(), 0..1) so the cut ramps in/out with the visible mist
-// rather than snapping the instant F is pressed. Stacks multiplicatively with
-// stillness, same relationship as before: hiding still + veil is the strongest state,
-// proposed/unverified tuning for the Game Tester either way. Sight only -- p.spec.scent
-// is untouched. That's a deliberate scope choice, not an oversight: real mist/smoke
-// obscures sightlines, not scent, and genre precedent (LUL-215 search) treats
-// smoke/flare tools as breaking line-of-sight tracking specifically, not detection
-// wholesale -- a predator can still scent-lock you through the veil, which keeps
-// scent-trail play (LUL-23/LUL-65) meaningful.
-// Split out of canSee() so the LUL-144 cover-feedback scan below can test
-// "in range" separately from "has line of sight" for every predator, not
-// just stop at the first one that can see the player.
 function effectiveDetect(p){
-  const stillness = hidden ? Math.min(1, hideTime / STILL_RAMP) : 0;
-  return p.spec.detect * (1 - stillness * STILL_DETECT_CUT) * DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount);
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount), { hidden, hideTime });
 }
 function canSee(p, dist){
-  if(dist >= effectiveDetect(p)) return false;
-  return hasLOS(p.x, p.z, player.x, player.z);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount), { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
