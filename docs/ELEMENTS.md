@@ -39,7 +39,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()` L1268, movement block in `tick()` L2296-2327.
 - Jump at any time while playing, not gated on being chased — `beginJump()`
-  L1493-1496, `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
+  L1499-1502, `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213).
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
@@ -356,7 +356,7 @@ one geometry builder (`makePredator()`, L904-962), differentiated by the
 **What it can do**
 - Everything Rock can do, **plus**: is a valid `hidden`-stance location
   (`HIDE_KINDS.log = true`) — entering/exiting plays a distinct "hollow
-  log knock" sound (`hollowLogSound()`, L1681-1702).
+  log knock" sound (`hollowLogSound()`, L1687-1708).
 - ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()` L416), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
 - **LUL-384: the player walks and runs over it, no route-around needed** —
@@ -400,7 +400,7 @@ one geometry builder (`makePredator()`, L904-962), differentiated by the
 **What it can do**
 - Everything Log can do (hiding-spot eligible, `HIDE_KINDS.bramble = true`),
   with a distinct "leaf rustle" enter/exit sound (`leafRustle()`,
-  L1660-1677) — researched against stealth/horror foley convention per the
+  L1666-1683) — researched against stealth/horror foley convention per the
   LUL-212 handoff (wiki `game/lul212-hiding-spots`).
 - ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()` L419).
 
@@ -500,7 +500,7 @@ one geometry builder (`makePredator()`, L904-962), differentiated by the
   rng draw"). If `CONFIG.home` ever moved off the spawn point, this
   protection would silently stop applying.
 - Is not drawn on the minimap (`drawMinimapStatic()` renders trees and the
-  lake only, L2631-2639 — home has no minimap marker).
+  lake only, L2637-2645 — home has no minimap marker).
 
 **Behaviours & logic**
 - Static, no RNG draw — same every seed, every restart.
@@ -629,7 +629,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
-  a patch when a value actually changed, L1937-1943).
+  a patch when a value actually changed, L1943-1949).
 - Send **actions back**, never state: the full returned API is `enter`,
   `restart`, `setPace`, `setFog`, `toggleSound`, `regenMap`, and five
   touch-control setters (`setTouchMove`/`setTouchLook`/`setTouchSprint`/
@@ -638,7 +638,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   difficulty setters exist in this object on `main`.
 - The minimap specifically reads and draws two other elements' live data:
   tree positions (`treeData`, every 4th tree) and the lake's position/radius
-  (`drawMinimapStatic()` L2631-2639) — not just player/child/predator state.
+  (`drawMinimapStatic()` L2637-2645) — not just player/child/predator state.
 
 **What it CANNOT do**
 - Cannot read engine internals directly — no reverse channel exists besides
@@ -655,7 +655,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 **Behaviours & logic**
 - `hudState` is a single flat object; `pushState()` diffs before emitting to
-  avoid redundant React re-renders (L1937-1943).
+  avoid redundant React re-renders (L1943-1949).
 
 **Collision & physics profile**
 - N/A — not a spatial/world object.
@@ -756,7 +756,7 @@ overlap changes nothing observable for them.
 ¹⁶ Both protected from home only indirectly, via the shared `inSpawn()`
 check (home reuses the spawn coordinates) — see Home's "what it cannot do."
 ¹⁷ Rendered as a dot/circle on the minimap (`drawMinimapStatic()`,
-L2631-2639) — a read-only relationship, not physical.
+L2637-2645) — a read-only relationship, not physical.
 ¹⁸ Cover props are never checked against each other at placement — two
 props (e.g. a rock and a bramble) can overlap. Lower severity than ¹⁴ (both
 are already non-solid to predators and the overlap is cosmetic at most for
