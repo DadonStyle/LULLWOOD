@@ -12,6 +12,7 @@ import {
   shouldRevertInvestigateToChase,
   SNIFF_APPROACH_MARGIN,
   SNIFF_IMMUNITY_TIME,
+  stepApproach,
   stepFlankHold,
   stepSniffLoop,
   tickTimers,
@@ -246,6 +247,42 @@ test('shouldRevertInvestigateToChase is false for "sniff" while still hidden', (
 
 test('shouldRevertInvestigateToChase is false for "back" while still hidden', () => {
   assert.equal(shouldRevertInvestigateToChase('back', true), false);
+});
+
+// ---- stepApproach (LUL-658) -------------------------------------------------------
+
+test('stepApproach reports movement toward the player when still outside sniff range', () => {
+  const step = stepApproach(1, 0, 10, 100, 1);
+  assert.equal(step.desx, 1);
+  assert.equal(step.desz, 0);
+  assert.equal(step.speed, 4.5); // 10 * 0.45
+  assert.equal(step.enterSniff, false);
+});
+
+test('stepApproach still reports the same movement on the tick it also enters sniff range -- the point-blank livelock fix', () => {
+  // On main, the engine's `if(hasReachedSniffRange){enter sniff} else {move}`
+  // gating meant the exact tick that crossed the threshold applied zero
+  // movement. Every chase<->investigate bounce re-enters 'approach' at that
+  // same frozen distance and re-fires the same zero-movement transition,
+  // forever, when the crossing tick lands short of the distance canSee
+  // clears (LUL-658/LUL-659's traced bear stall). stepApproach must report
+  // movement unconditionally, whether or not enterSniff also fires this tick.
+  const dist = 1 + SNIFF_APPROACH_MARGIN - 0.001; // a hair inside sniff range
+  const step = stepApproach(1, 0, 10, dist, 1);
+  assert.equal(step.enterSniff, true);
+  assert.equal(step.desx, 1);
+  assert.equal(step.desz, 0);
+  assert.equal(step.speed, 4.5);
+});
+
+test('stepApproach enterSniff is false exactly at the sniff-range boundary (strict less-than, matching hasReachedSniffRange)', () => {
+  const step = stepApproach(1, 0, 10, 1 + SNIFF_APPROACH_MARGIN, 1);
+  assert.equal(step.enterSniff, false);
+});
+
+test('stepApproach scales speed by the fixed 0.45 approach multiplier regardless of species speed', () => {
+  assert.equal(stepApproach(0, 1, 6.8, 100, 1.5).speed, 3.06); // bear
+  assert.equal(stepApproach(0, 1, 8.5, 100, 0.8).speed, 3.825); // wolf
 });
 
 // ---- backOffPoint ---------------------------------------------------------------
