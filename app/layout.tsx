@@ -1,6 +1,24 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, GOOGLE_SITE_VERIFICATION } from "../lib/site";
+
+// LUL-529: two things this repo had zero of before.
+// - `viewportFit: 'cover'` is what makes every `env(safe-area-inset-*)` in
+//   components/MobileControls.tsx (and anywhere else) resolve to a real
+//   value instead of silently falling back to 0 on a notched/rounded-corner
+//   phone -- without this line those rules are dead code.
+// - `maximumScale`/`userScalable: false` stop iOS/Android's double-tap and
+//   pinch zoom from firing mid-run (twin-stick drags read as pinch gestures
+//   on some Android WebViews otherwise) -- this is a real-time 3D scene, not
+//   a page of text, so there's nothing on-screen a player legitimately wants
+//   to pinch-zoom into.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+};
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
