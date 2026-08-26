@@ -63,12 +63,24 @@ function Stick({ onMove, onSprint, testId }: StickProps) {
   function handlePointerDown(e: React.PointerEvent) {
     if (ptIdRef.current !== null) return;  // only one pointer per stick
     ptIdRef.current = e.pointerId;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     stateRef.current.active = true;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top  + rect.height / 2;
     update(e.clientX - cx, e.clientY - cy);
+    // LUL-702: same shape as LUL-643's HoldBtn fix -- pointer capture is
+    // best-effort robustness (keeps the drag tracking if the finger drifts
+    // off the element) and must never gate the move/look state written
+    // above. setPointerCapture throws NotFoundError for any pointerId the
+    // browser doesn't recognise as currently active, which a synthetically
+    // dispatched PointerEvent always is; without the try/catch that throw
+    // aborted this handler before update() ran, so a stick tap with no
+    // follow-up pointermove never registered.
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // no active pointer to capture -- state above already updated.
+    }
   }
 
   function handlePointerMove(e: React.PointerEvent) {
