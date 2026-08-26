@@ -196,7 +196,22 @@ function HoldBtn({ label, onHold, testId }: { label: string; onHold: (v: boolean
     <div
       style={style}
       data-testid={testId}
-      onPointerDown={(e) => { e.preventDefault(); (e.target as HTMLElement).setPointerCapture(e.pointerId); onHold(true); }}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        onHold(true);
+        // Pointer capture is best-effort robustness (keeps the hold alive if
+        // the finger drifts off the element) -- it must never gate onHold
+        // itself. setPointerCapture throws NotFoundError for any pointerId
+        // the browser doesn't recognise as currently active, which a
+        // synthetically dispatched PointerEvent (e2e/mobile/veil.spec.ts)
+        // always is; without the try/catch that throw aborted this handler
+        // before onHold(true) ran, so the veil never actually engaged.
+        try {
+          (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        } catch {
+          // no active pointer to capture -- onHold(true) above already fired.
+        }
+      }}
       onPointerUp={() => onHold(false)}
       onPointerCancel={() => onHold(false)}
     >

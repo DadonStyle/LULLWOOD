@@ -1999,7 +1999,14 @@ function enter(){
   setPaused(false);
   if(!started){ startAudio(); started = true; }
   else if(audio){ audio.ctx.resume(); }
-  requestLock();
+  // LUL-643: requestLock() is meaningless on a touch device and, worse, a
+  // stray el.requestPointerLock() call still succeeds in a mobile-emulated
+  // Chromium context -- it locked the canvas as the pointer target and
+  // silently ate every later Playwright mouse-driven click (e.g. the
+  // Settings button), which is what e2e/mobile/toggle-run.spec.ts caught.
+  // Every other pointer-lock call site is already gated on `mode ===
+  // 'desktop'` (LUL-276); this one was missed when that split happened.
+  if(mode === 'desktop') requestLock();
   hint.style.opacity = '0.85';
   later(() => { hint.style.opacity = '0'; }, 5000);
 }
