@@ -54,6 +54,7 @@
 // run -- see above). Exit 1: at least one RED alarm found (and filed, if
 // --post). Exit 2: the run itself errored (network, auth, ...).
 import { pathToFileURL } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { ghFetch } from './lib/github-fetch.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
@@ -200,11 +201,51 @@ async function fetchOpenIssuesForDedup(apiBase, companyId, apiKey) {
   return [...todo, ...inProgress];
 }
 
-async function fetchSelfAgentId(apiBase, apiKey) {
+// Read the durable CLI token from ~/.paperclip/auth.json when PAPERCLIP_API_KEY
+// is absent or expired (LUL-770). Under cron the run JWT is dead; this token is
+// what the watchdog family uses for all unattended Paperclip API calls.
+function durableToken(apiBase) {
+  try {
+    const raw = readFileSync(new URL('file://' + process.env.HOME + '/.paperclip/auth.json'));
+    const creds = JSON.parse(raw).credentials || {};
+    // Try the exact base, then with/without trailing slash, then fallback to sole entry
+    const entry =
+      creds[apiBase] ||
+      creds[apiBase.replace(/\/$/, '')] ||
+      creds[apiBase + '/'] ||
+      (Object.keys(creds).length === 1 ? Object.values(creds)[0] : null);
+    return (entry || {}).token || null;
+  } catch {
+    return null;
+  }
+}
+
+// Try /api/agents/me (works with a run JWT); tolerate a 401 under the durable
+// token (LUL-770 credential scope trap). Falls back to WATCHDOG_ASSIGNEE_AGENT_ID
+// or a lookup by name from /api/companies/{id}/agents.
+async function resolveAssigneeId(apiBase, companyId, apiKey) {
+  if (process.env.WATCHDOG_ASSIGNEE_AGENT_ID) {
+    return process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+  }
   const res = await fetch(`${apiBase}/api/agents/me`, { headers: { Authorization: `Bearer ${apiKey}` } });
-  if (!res.ok) throw new Error(`GET /api/agents/me -> HTTP ${res.status}: ${await res.text()}`);
-  const me = await res.json();
-  return me.id;
+  if (res.ok) {
+    const me = await res.json();
+    return me.id;
+  }
+  // /api/agents/me returned 401 (durable token) — fall back to company agents list
+  // and look for VP R&D or Ops by name, or return null (unassigned ticket is fine).
+  try {
+    const r2 = await fetch(`${apiBase}/api/companies/${companyId}/agents`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (r2.ok) {
+      const agents = await r2.json();
+      const list = Array.isArray(agents) ? agents : (agents.agents || []);
+      const vp = list.find((a) => /vp r&d|ops|watchdog/i.test(a.name || ''));
+      return vp ? vp.id : null;
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 async function createWakeIssue(apiBase, companyId, apiKey, { title, description, assigneeAgentId }) {
@@ -220,12 +261,19 @@ async function createWakeIssue(apiBase, companyId, apiKey, { title, description,
 }
 
 async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIssues) {
-  const selfId = await fetchSelfAgentId(apiBase, apiKey);
+  // Resolve the assignee lazily — after the dedup check — so quiet runs never
+  // touch /api/agents/me at all (LUL-770).
+  let assigneeId = null;
   const filed = [];
 
   for (const watchdog of redWatchdogs) {
     const marker = watchdogWakeMarker(watchdog);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
+    if (assigneeId === undefined) {
+      // already resolved (null = unassigned is acceptable)
+    } else if (assigneeId === null) {
+      assigneeId = await resolveAssigneeId(apiBase, companyId, apiKey);
+    }
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-685 detector)`,
       description:
@@ -235,9 +283,9 @@ async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIss
         `once it's addressed. Closing it re-arms this detector: a later red run of the same ` +
         `workflow will file a fresh ticket only after this one is no longer open. See wiki ` +
         `game/lul685-watchdog-wake-router.`,
-      assigneeAgentId: selfId,
+      assigneeAgentId: assigneeId,
     });
-    filed.push({ kind: 'watchdog-red', name: watchdog.name, assigneeAgentId: selfId });
+    filed.push({ kind: 'watchdog-red', name: watchdog.name, assigneeAgentId: assigneeId });
   }
 
   return filed;
@@ -264,11 +312,14 @@ async function main() {
 
   if (shouldPost && red.length > 0) {
     const apiBase = (process.env.PAPERCLIP_API_URL || '').replace(/\/api\/?$/, '').replace(/\/$/, '');
-    const apiKey = process.env.PAPERCLIP_API_KEY;
     const companyId = process.env.PAPERCLIP_COMPANY_ID;
+    // Accept the run JWT when present; fall back to the durable CLI token so
+    // cron can file tickets after all agent sessions are dead (LUL-770).
+    const apiKey = process.env.PAPERCLIP_API_KEY || durableToken(apiBase);
     if (!apiBase || !apiKey || !companyId) {
       throw new Error(
-        'PAPERCLIP_API_URL, PAPERCLIP_API_KEY and PAPERCLIP_COMPANY_ID must all be set for --post.',
+        'Cannot resolve Paperclip credentials for --post. ' +
+        'Need PAPERCLIP_API_URL + PAPERCLIP_COMPANY_ID + (PAPERCLIP_API_KEY or ~/.paperclip/auth.json).',
       );
     }
     const openIssues = await fetchOpenIssuesForDedup(apiBase, companyId, apiKey);
