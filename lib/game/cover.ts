@@ -122,17 +122,13 @@ export function coverKindBlocksPlayerMovement(kind: string): boolean {
 // the one piece of that loop's math that is pure: the roll -> kind/hx/hz/y
 // assignment.
 //
-// effectiveDetect()/canSee() below are exported and unit-tested (their
-// original wave-3 scope), but the engine does NOT wire up to them as of the
-// LUL-582 release/next merge: LUL-382 (mist veil, landed on release/next
-// after this wave-3 commit was cut) replaced the lightDimmed/DIM_DETECT_MUL
-// dimming multiplier these take with a continuous veilDetectMul(veilAmount)
-// ramp this module has no access to. forest-engine.js keeps its own
-// veil-aware effectiveDetect()/canSee() locally instead of delegating here,
-// so shipped veil detection (LUL-40/LUL-382, LUL-525) isn't regressed to the
-// pre-veil dimming behaviour these pure functions still model. Whether to
-// extend this extraction to take a veil multiplier is a follow-up decision,
-// not this merge's scope.
+// effectiveDetect()/canSee() below are exported, unit-tested, and (as of
+// LUL-641) imported by forest-engine.js -- this is the one shipped copy.
+// They take the sight multiplier as a plain `detectMul` value rather than a
+// `lightDimmed` boolean specifically so a caller can compose more than one
+// multiplier into it; the engine passes DIFFICULTY_PRESETS[difficulty]
+// .detectMul * veilDetectMul(veilAmount) (lib/game/veil.ts), the continuous
+// mist-veil ramp that superseded LUL-291's flat dimming cut.
 
 export type RNG = () => number;
 
@@ -403,28 +399,31 @@ export function findHideSpot(
   return best;
 }
 
-// ---- sight detection range (LUL-43, LUL-291) ---------------------------------
+// ---- sight detection range (LUL-43, LUL-291, LUL-382, LUL-641) ---------------
 // Detection range shrinks the longer the player has held still (never to
 // zero -- standing still in the open next to a predator still gets you
-// caught), and again if the light is dimmed (KeyF). Split out of canSee()
-// (below) so the LUL-144 cover-feedback scan can test "in range" separately
-// from "has line of sight" for every predator, not just stop at the first
-// one that can see the player. See the module comment above: the engine
-// does not currently delegate to this pair, since it models the pre-veil
-// (LUL-291) dimming multiplier, not veil's veilDetectMul(veilAmount).
+// caught). Split out of canSee() (below) so the LUL-144 cover-feedback scan
+// can test "in range" separately from "has line of sight" for every
+// predator, not just stop at the first one that can see the player.
+//
+// `detectMul` is the caller's sight multiplier as a plain value, not a
+// boolean flag -- LUL-641 collapsed the engine's own copy of this pair back
+// into this one. The engine passes DIFFICULTY_PRESETS[difficulty].detectMul
+// * veilDetectMul(veilAmount) (lib/game/veil.ts): a continuous mist-veil
+// ramp, not the old binary LUL-291 dimming cut, which is why this no longer
+// takes a `lightDimmed` boolean -- the caller composes whatever multipliers
+// apply and hands over the single product.
 export const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 export const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
-export const DIM_DETECT_MUL = 0.75;   // sight only -- scent is untouched by dimming
 
 export interface DetectionState {
   hidden: boolean;
   hideTime: number;
-  lightDimmed: boolean;
 }
 
 export function effectiveDetect(detect: number, detectMul: number, state: DetectionState): number {
   const stillness = state.hidden ? Math.min(1, state.hideTime / STILL_RAMP) : 0;
-  return detect * (1 - stillness * STILL_DETECT_CUT) * detectMul * (state.lightDimmed ? DIM_DETECT_MUL : 1);
+  return detect * (1 - stillness * STILL_DETECT_CUT) * detectMul;
 }
 
 // ---- can a predator see the player? ------------------------------------------
