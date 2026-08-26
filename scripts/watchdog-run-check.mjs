@@ -41,12 +41,18 @@
 //              back `failure`. This is what LUL-685 is actually about, and
 //              is the only class this script wake-tickets.
 //
+// The roster of watchdogs is DERIVED from the repo's own workflow files on
+// both the default branch and the release-train branch, never hand-listed --
+// see deriveWatchdogs below for why.
+//
 // Dedup is on the ALARM (one marker per watchdog), not the run: 99
 // consecutive red runs of the same workflow must produce one ticket, not 99.
 // Re-arm is a property of scoping the dedup check to OPEN issues only (same
 // as board-integrity-check.mjs): once a wake ticket is closed by whoever
 // fixes the underlying workflow, the next red run finds no open ticket
-// carrying the marker and files a fresh one. No auto-close logic here --
+// carrying the marker and files a fresh one. "Open" there means every
+// non-terminal status including `blocked` and `in_review`, not just the two
+// active ones -- see OPEN_STATUSES. No auto-close logic here --
 // verifying the fix and closing the ticket is a human/agent judgment call,
 // same as every other wake ticket in this family.
 //
@@ -59,27 +65,91 @@ import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
 
-// Every scheduled watchdog this studio runs, per LUL-685's own list ("the
-// five named above" plus review-gap-detector itself). `mixedTrigger: true`
-// means the runs endpoint must be filtered to event=schedule -- a
-// pull_request-triggered run of that same workflow already has its own wake
-// path (it blocks that PR's checks) and is not this ticket's gap.
-const WATCHDOGS = [
-  { name: 'Review gap detector', file: 'review-gap-detector.yml', mixedTrigger: false },
-  { name: 'Base branch guard', file: 'base-branch-guard.yml', mixedTrigger: true },
-  { name: 'Deployment budget', file: 'deployment-budget.yml', mixedTrigger: false },
-  { name: 'PR freshness', file: 'pr-freshness.yml', mixedTrigger: true },
-  { name: 'Version cut', file: 'version-cut.yml', mixedTrigger: false },
-  { name: 'Merge gap detector', file: 'merge-gap-detector.yml', mixedTrigger: false },
-];
+// The branch the release train opens PRs against. A workflow can carry a
+// `schedule:` here and not yet exist on the default branch -- that is the
+// INERT class, and it is why both refs get scanned rather than just one.
+const TRAIN_BRANCH = process.env.WATCHDOG_TRAIN_BRANCH || 'release/next';
 
 // ---- pure logic (unit-tested against fixtures, no network) ---------------
 
+// The set of watchdogs used to be a hand-maintained literal of six names.
+// That list rotted immediately: `daily-report.yml` shipped with a `schedule:`
+// and was never added, so nothing watched it (measured 2026-08-27 -- it had
+// zero scheduled runs ever and no alarm anywhere said so). A watchdog roster
+// that has to be edited by hand every time a cron is added is the same
+// looks-like-coverage failure LUL-685 exists to close, one level up. So the
+// roster is derived from the repo itself on every run.
+//
+// yaml: the raw text of a .github/workflows/*.yml file. Deliberately not a
+// full YAML parse -- this only needs to answer "does the `on:` block contain
+// a schedule: key", and the repo's workflows are all conventionally
+// formatted. A false positive costs one wasted API read; a false negative is
+// caught by the roster diff being visible in the report.
+function hasScheduleTrigger(yaml) {
+  if (!yaml) return false;
+  const lines = yaml.split('\n');
+  let inOn = false;
+  let onIndent = 0;
+  for (const line of lines) {
+    if (/^\s*#/.test(line) || line.trim() === '') continue;
+    const indent = line.length - line.trimStart().length;
+    if (!inOn) {
+      // `on:` at top level, either `on:` or the YAML 1.1 `true:` normalisation.
+      if (indent === 0 && /^(on|true|"on"|'on'):/.test(line.trim())) {
+        // Inline form: `on: schedule` is not valid for cron, so only block
+        // form can carry one -- but `on: [push, schedule]` is, so check it.
+        if (/:\s*\[.*\bschedule\b.*\]/.test(line)) return true;
+        inOn = true;
+        onIndent = indent;
+      }
+      continue;
+    }
+    if (indent <= onIndent) break; // left the `on:` block
+    if (/^\s*schedule:/.test(line)) return true;
+  }
+  return false;
+}
+
+// Turn a workflow filename into the display name used in the wake-ticket
+// marker. Prefers the workflow's own `name:`; falls back to the filename so
+// the marker is still stable and greppable.
+function workflowDisplayName(file, yaml) {
+  const match = (yaml ?? '').match(/^name:\s*(.+?)\s*$/m);
+  return match ? match[1].replace(/^['"]|['"]$/g, '') : file;
+}
+
+// defaultBranchFiles / trainBranchFiles: arrays of { file, yaml } for every
+// .github/workflows/* on that ref. Returns one watchdog per file that carries
+// a schedule: on either ref, sorted for stable output, flagged with whether
+// it exists on the default branch (schedule: only fires from there).
+function deriveWatchdogs(defaultBranchFiles, trainBranchFiles) {
+  const byFile = new Map();
+  const add = (entry, onDefaultBranch) => {
+    if (!hasScheduleTrigger(entry.yaml)) return;
+    const existing = byFile.get(entry.file);
+    if (existing) {
+      existing.onDefaultBranch = existing.onDefaultBranch || onDefaultBranch;
+      return;
+    }
+    byFile.set(entry.file, {
+      name: workflowDisplayName(entry.file, entry.yaml),
+      file: entry.file,
+      onDefaultBranch,
+    });
+  };
+  for (const entry of defaultBranchFiles ?? []) add(entry, true);
+  for (const entry of trainBranchFiles ?? []) add(entry, false);
+  return [...byFile.values()].sort((a, b) => a.file.localeCompare(b.file));
+}
+
 // runs: the `workflow_runs` array from GET .../runs?event=schedule&per_page=1
 // (already filtered/paged by the caller -- this just reads the first entry).
+// A run that has not finished yet carries `conclusion: null`; that is
+// "nothing concluded to judge", which is deliberately the same answer as "no
+// runs at all" for the caller, but must not be mistaken for a green run.
 function latestScheduledConclusion(runs) {
   if (!runs || runs.length === 0) return null;
-  return runs[0].conclusion;
+  return runs[0].conclusion ?? null;
 }
 
 // watchdog: one entry of WATCHDOGS. resolvesOnDefault: bool (contents API
@@ -152,52 +222,93 @@ function watchdogWakeMarker(watchdog) {
 
 // ---- live fetchers ---------------------------------------------------------
 
-async function fetchResolvesOnDefault(repo, defaultBranch, file, token) {
-  const res = await fetch(
-    `https://api.github.com/repos/${repo}/contents/.github/workflows/${file}?ref=${encodeURIComponent(defaultBranch)}`,
-    {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    },
+// Every .github/workflows/* on one ref, as { file, yaml }. A ref that does
+// not exist (or has no workflows dir) is an empty list, not an error --
+// TRAIN_BRANCH is allowed to be absent on a fork or a fresh clone.
+async function fetchWorkflowFiles(repo, ref, token) {
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+  const listRes = await fetch(
+    `https://api.github.com/repos/${repo}/contents/.github/workflows?ref=${encodeURIComponent(ref)}`,
+    { headers },
   );
-  return res.ok;
+  if (!listRes.ok) return [];
+  const entries = await listRes.json();
+  const files = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (entry.type !== 'file' || !/\.ya?ml$/.test(entry.name)) continue;
+    const res = await fetch(entry.download_url, { headers });
+    files.push({ file: entry.name, yaml: res.ok ? await res.text() : '' });
+  }
+  return files;
 }
 
-async function fetchLatestScheduledRuns(repo, file, mixedTrigger, token) {
-  const eventFilter = mixedTrigger ? '&event=schedule' : '';
+// Always filtered to event=schedule. The old code carried a hand-maintained
+// `mixedTrigger` flag deciding whether to apply that filter, and it was
+// already wrong: version-cut.yml was marked `mixedTrigger: false` but is
+// pushed to constantly, so the unfiltered per_page=1 returned an in-progress
+// *push* run and the watchdog was reported as "never ran on schedule" while
+// it had six green scheduled runs. Unfiltered is never what this script
+// wants -- a red push/pull_request run already gates its own PR and is not
+// LUL-685's gap -- so the flag is gone and the filter is unconditional.
+async function fetchLatestScheduledRuns(repo, file, token) {
   const data = await ghFetch(
-    `https://api.github.com/repos/${repo}/actions/workflows/${file}/runs?per_page=1${eventFilter}`,
+    `https://api.github.com/repos/${repo}/actions/workflows/${file}/runs?per_page=1&event=schedule`,
     token,
   );
   return data.workflow_runs ?? [];
 }
 
 async function classifyAllWatchdogs(repo, defaultBranch, token) {
+  const [defaultFiles, trainFiles] = await Promise.all([
+    fetchWorkflowFiles(repo, defaultBranch, token),
+    defaultBranch === TRAIN_BRANCH
+      ? Promise.resolve([])
+      : fetchWorkflowFiles(repo, TRAIN_BRANCH, token),
+  ]);
+  const watchdogs = deriveWatchdogs(defaultFiles, trainFiles);
+
   const results = [];
-  for (const watchdog of WATCHDOGS) {
-    const resolvesOnDefault = await fetchResolvesOnDefault(repo, defaultBranch, watchdog.file, token);
-    const runs = resolvesOnDefault
-      ? await fetchLatestScheduledRuns(repo, watchdog.file, watchdog.mixedTrigger, token)
+  for (const watchdog of watchdogs) {
+    // onDefaultBranch already answers what a per-file contents probe used to
+    // cost an extra request each to find out.
+    const runs = watchdog.onDefaultBranch
+      ? await fetchLatestScheduledRuns(repo, watchdog.file, token)
       : [];
-    results.push(classifyWatchdog(watchdog, resolvesOnDefault, runs));
+    results.push(classifyWatchdog(watchdog, watchdog.onDefaultBranch, runs));
   }
   return results;
 }
+
+// Every status that means "this alarm still has a ticket someone could act
+// on". `blocked` and `in_review` were missing and that is a live ticket-flood
+// bug, not a theoretical one: LUL-721 -- the very wake ticket this detector
+// filed -- was moved to `blocked` by terminal-run recovery on 2026-08-26,
+// and for that whole window the 30-minute cron saw no open ticket carrying
+// the marker and would have filed a duplicate on every tick. Dedup must
+// track "not closed", not "actively being worked".
+const OPEN_STATUSES = ['todo', 'in_progress', 'blocked', 'in_review'];
 
 async function fetchOpenIssuesForDedup(apiBase, companyId, apiKey) {
   const headers = { Authorization: `Bearer ${apiKey}` };
   const get = async (url) => {
     const res = await fetch(url, { headers });
     if (!res.ok) throw new Error(`GET ${url} -> HTTP ${res.status}: ${await res.text()}`);
-    return res.json();
+    const body = await res.json();
+    // Bare array today (verified 2026-08-27 against ?status=todo). Tolerating
+    // the { issues } envelope too is cheap insurance: if this endpoint ever
+    // gains one, the array assumption fails open -- zero issues means zero
+    // dedup matches, which refiles every ticket every 30 minutes.
+    return Array.isArray(body) ? body : (body.issues ?? []);
   };
-  const [todo, inProgress] = await Promise.all([
-    get(`${apiBase}/api/companies/${companyId}/issues?status=todo&limit=200`),
-    get(`${apiBase}/api/companies/${companyId}/issues?status=in_progress&limit=200`),
-  ]);
-  return [...todo, ...inProgress];
+  const pages = await Promise.all(
+    OPEN_STATUSES.map((status) =>
+      get(`${apiBase}/api/companies/${companyId}/issues?status=${status}&limit=200`),
+    ),
+  );
+  return pages.flat();
 }
 
 async function fetchSelfAgentId(apiBase, apiKey) {
@@ -291,7 +402,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
 }
 
 export {
-  WATCHDOGS,
+  OPEN_STATUSES,
+  hasScheduleTrigger,
+  workflowDisplayName,
+  deriveWatchdogs,
   latestScheduledConclusion,
   classifyWatchdog,
   findRedWatchdogs,
