@@ -37,6 +37,7 @@
 // downgrade -- standalone watchdog, not a required check on any ruleset; a
 // red run here means "go look," never "block a merge".
 import { pathToFileURL } from 'node:url';
+import { ghFetch } from './lib/github-fetch.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
 const DEFAULT_THRESHOLD_MINUTES = 60;
@@ -97,19 +98,6 @@ function findMergeGaps(openPrs, reviewsByPrNumber, nowMs, thresholdMinutes) {
   return gaps.sort((a, b) => b.ageMinutes - a.ageMinutes);
 }
 
-async function fetchJson(url, token) {
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`GET ${url} -> HTTP ${res.status}: ${await res.text()}`);
-  }
-  return res.json();
-}
-
 // A rate-limited or error reply can still parse as valid JSON that is not an
 // array (e.g. a message object), and an unguarded `for` loop over that
 // reports success on an empty body -- a green run that checked nothing.
@@ -123,13 +111,13 @@ function assertArray(data, url) {
 
 async function fetchOpenPrsWithDetail(repo, token) {
   const listUrl = `https://api.github.com/repos/${repo}/pulls?state=open&per_page=100`;
-  const list = assertArray(await fetchJson(listUrl, token), listUrl);
+  const list = assertArray(await ghFetch(listUrl, token), listUrl);
 
   const detailed = [];
   for (const pr of list) {
     // The list endpoint does not include mergeable_state; only the
     // single-PR endpoint computes and returns it.
-    detailed.push(await fetchJson(`https://api.github.com/repos/${repo}/pulls/${pr.number}`, token));
+    detailed.push(await ghFetch(`https://api.github.com/repos/${repo}/pulls/${pr.number}`, token));
   }
   return detailed;
 }
@@ -140,7 +128,7 @@ async function fetchMergeGapData(repo, token) {
   const reviewsByPrNumber = new Map();
   for (const pr of openPrs) {
     const url = `https://api.github.com/repos/${repo}/pulls/${pr.number}/reviews?per_page=100`;
-    reviewsByPrNumber.set(pr.number, assertArray(await fetchJson(url, token), url));
+    reviewsByPrNumber.set(pr.number, assertArray(await ghFetch(url, token), url));
   }
 
   return { openPrs, reviewsByPrNumber };
