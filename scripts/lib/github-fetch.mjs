@@ -1,9 +1,7 @@
 // Shared authed-GitHub-GET helper. Extracted from board-integrity-check.mjs
-// and check-review-gap.mjs, which each hand-rolled the same fetch-and-throw
-// wrapper (flagged as a DRY hit on LUL-672's review, wiki
-// game/lul672-board-integrity-detector). Every scripts/*-check.mjs detector
-// that only needs a read-only GitHub REST call should use this instead of a
-// fourth copy.
+// and check-review-gap.mjs (LUL-672); check-merge-gap.mjs migrated in LUL-742.
+// All scripts/*-check.mjs detectors that need a read-only GitHub REST call
+// should import from here.
 
 async function fetchJson(url, headers) {
   const res = await fetch(url, { headers });
