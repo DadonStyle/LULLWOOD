@@ -21,9 +21,9 @@ name: Workflow guard check
 # checks are matched to the PR by head SHA regardless of which event
 # produced them (same reasoning as ci.yml, systems/ci-double-run).
 #
-# `pull_request` stays too, scoped to forks the same way ci.yml scopes it:
-# a fork's push never reaches Actions on this repo, so that's the one case
-# the push trigger structurally cannot cover.
+# `pull_request` stays too, for forks: a fork's push never reaches Actions on
+# this repo, so that's the one case the push trigger structurally cannot
+# cover.
 #
 # LUL-610: no `paths:` filter, deliberately -- this check used to be scoped
 # to `paths: ['.github/workflows/**']`, which meant it never ran (no run at
@@ -47,12 +47,10 @@ on:
 permissions:
   contents: read
 
-# Keyed on event name + head SHA, same reasoning as ci.yml -- without the
-# event name prefix, a pull_request run shares this group with the push run
-# for the same commit and can cancel it via cancel-in-progress, then itself
-# resolve to `skipped` under the fork-scope `if:` below -- leaving a SKIPPED
-# (i.e. passing, for required-status-check purposes) conclusion on the SHA
-# without workflow-guard-check.sh ever having run. See systems/ci-double-run.
+# Keyed on event name + head SHA so a pull_request run never shares a group
+# with (and cannot cancel-in-progress) the push run for the same commit.
+# Unlike ci.yml, there is no fork-scope `if:` below to worry about racing
+# into a skip -- see LUL-681/systems/skipped-satisfies-required-check.
 concurrency:
   group: workflow-guard-check-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
@@ -62,8 +60,30 @@ jobs:
     name: workflow guard check
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Same fork-scope guard ci.yml uses -- see the `on:` comment above.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    # LUL-681: deliberately NO fork-scope `if:` here, unlike ci.yml. ci.yml
+    # needs one because its jobs are expensive (a full Playwright suite) and
+    # skipping the redundant same-repo pull_request run is worth the
+    # tradeoff. That tradeoff turned out to have a sharp edge, measured live
+    # on PR #137 (systems/skipped-satisfies-required-check, LUL-719): a job
+    # skipped by an `if:` still posts a check run under the job's `name:`,
+    # with conclusion `skipped` -- and branch protection resolves a required
+    # context to the LATEST check run of that name at the head SHA, treating
+    # `skipped` as satisfying it. So a same-repo PR's redundant
+    # pull_request-triggered instance, if gated with `if:`, can post
+    # `skipped` *after* the push-triggered instance already posted `success`,
+    # silently downgrading a required context that actually ran and passed
+    # into one that was never really evaluated for that instance -- exactly
+    # the "required check that certifies nothing" failure mode this ticket
+    # exists to close.
+    #
+    # This job is a few `grep`s (see the `on:` comment above) -- running it
+    # a second time for a same-repo PR costs a few seconds of cheap CI, not
+    # a duplicated test suite. Removing the `if:` means every instance that
+    # posts under this name actually runs workflow-guard-check.sh, so every
+    # instance is `success` or a real `failure`, never a vacuous `skipped`.
+    # Do not reintroduce a fork-scope guard here without also solving the
+    # skip-clobber problem (see LUL-719 for the general fix shape: gate at
+    # the workflow level, or give the skip path a distinct job name).
     steps:
       - uses: actions/checkout@v4
         with:
