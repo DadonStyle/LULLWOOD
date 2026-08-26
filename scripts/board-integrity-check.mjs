@@ -37,6 +37,7 @@
 // Exit 0: ran cleanly, no alarms. Exit 1: alarms found (and filed, if
 // --post). Exit 2: the run itself errored (network, auth, ...).
 import { pathToFileURL } from 'node:url';
+import { fetchJson, ghFetch } from './lib/github-fetch.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
 
@@ -140,21 +141,6 @@ function hasOpenWakeTicket(openIssues, marker) {
 }
 
 // ---- live fetchers ---------------------------------------------------------
-
-async function fetchJson(url, headers) {
-  const res = await fetch(url, { headers });
-  if (!res.ok) {
-    throw new Error(`GET ${url} -> HTTP ${res.status}: ${await res.text()}`);
-  }
-  return res.json();
-}
-
-function ghFetch(url, token) {
-  return fetchJson(url, {
-    Accept: 'application/vnd.github+json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  });
-}
 
 function pcFetch(url, apiKey) {
   return fetchJson(url, { Authorization: `Bearer ${apiKey}` });
