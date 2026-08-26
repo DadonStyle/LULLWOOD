@@ -1,0 +1,59 @@
+name: Merge gap detector
+
+# LUL-684 (spec: LUL-628 part 2) -- sibling to review-gap-detector.yml. That
+# one catches a review that never reached GitHub; this one catches the
+# opposite: a PR that IS clean and IS approved (at head) natively on GitHub,
+# and nobody merged it. See wiki systems/lul549-review-gap-detector.
+#
+# Standalone watchdog, NOT a required check on any ruleset. A red run here
+# means "go look," not "block a merge". Cheap heuristic, not a full
+# cross-reference with Paperclip: CI has no Paperclip credentials and should
+# not be given any (LUL-523).
+#
+# scripts/check-merge-gap.mjs does the real work; this workflow just calls it
+# on a schedule. GITHUB_TOKEN (default Actions token) has read access to
+# pulls/reviews on this public repo -- no PAT/secret needed.
+#
+# `contents: read` is included alongside `pull-requests: read` even though a
+# restrictive permissions block would otherwise be enough for the script
+# itself -- omitting it breaks actions/checkout on a schedule/dispatch-only
+# workflow with no PR event to inherit permissions from (found reviewing
+# review-gap-detector.yml, wiki systems/permissions-contents-checkout-trap).
+#
+# `threshold_minutes` on workflow_dispatch exists to prove this detector can
+# actually go red without weakening the `clean` check: point it at a
+# throwaway approved-and-clean PR and dispatch with threshold_minutes: '0'.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      threshold_minutes:
+        description: 'Override MERGE_GAP_THRESHOLD_MINUTES for this run (e.g. 0 to prove the detector fires)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  detect:
+    name: scan open PRs for clean-and-approved-but-unmerged gaps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: check for merge gaps
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MERGE_GAP_THRESHOLD_MINUTES: ${{ inputs.threshold_minutes }}
+        run: node scripts/check-merge-gap.mjs

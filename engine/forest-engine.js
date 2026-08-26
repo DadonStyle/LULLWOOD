@@ -1567,6 +1567,10 @@ if(mode === 'desktop'){
 const touchMove = { x: 0, z: 0 };   // normalised direction [-1..1]
 const touchLook = { x: 0, y: 0 };   // stick offset [-1..1] → yaw/pitch rate
 let touchSprint = false;
+// LUL-529: touch analogue of holding KeyF (mist veil) -- read every frame
+// alongside keys['KeyF'] below, same "hold" semantics, fed by a hold-button
+// in MobileControls rather than a synthesized KeyboardEvent.
+let touchVeil = false;
 
 // ---- Procedural audio (built on first entry) -----------------------------
 let audio = null, started = false, soundOn = true;
@@ -1985,7 +1989,14 @@ function enter(){
   setPaused(false);
   if(!started){ startAudio(); started = true; }
   else if(audio){ audio.ctx.resume(); }
-  requestLock();
+  // LUL-643: requestLock() is meaningless on a touch device and, worse, a
+  // stray el.requestPointerLock() call still succeeds in a mobile-emulated
+  // Chromium context -- it locked the canvas as the pointer target and
+  // silently ate every later Playwright mouse-driven click (e.g. the
+  // Settings button), which is what e2e/mobile/toggle-run.spec.ts caught.
+  // Every other pointer-lock call site is already gated on `mode ===
+  // 'desktop'` (LUL-276); this one was missed when that split happened.
+  if(mode === 'desktop') requestLock();
   hint.style.opacity = '0.85';
   later(() => { hint.style.opacity = '0'; }, 5000);
 }
@@ -2367,7 +2378,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // which input branch init() actually bound at runtime, not just which the test
   // requested. See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
   window.ForestEngine.qaPlayerState = function(){
-    return { x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode };
+    // LUL-529: jumping/paused/toggleRunOn/veilHeld appended so mobile e2e specs
+    // can assert the engine-visible effect of a touch control (a button that
+    // renders and is tappable but wired to nothing would still pass a
+    // DOM-presence-only test) instead of only the transform fields above.
+    return {
+      x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode,
+      jumping: jumping, paused: paused, toggleRunOn: toggleRunOn,
+      veilHeld: (entered && !won && !dead && !pickingUp) && (!!keys['KeyF'] || touchVeil),
+    };
   };
 
   // LUL-388: reproduces the exact LUL-387 regression shape live -- a predator
@@ -2766,7 +2785,7 @@ function tick(){
   // below rather than from the keydown/keyup handlers, so releasing F while e.g.
   // the pause menu is open (which stops updating `keys` mid-hold) can't strand
   // the veil active.
-  const veilHeld = playing && !!keys['KeyF'];
+  const veilHeld = playing && (!!keys['KeyF'] || touchVeil);
   const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt);
   veilCharge = veilStep.charge; veilLocked = veilStep.locked;
   const dimmed = veilStep.active;
@@ -3096,6 +3115,8 @@ tick();
   function setTouchMove(x, z) { if(mode !== 'mobile') return; touchMove.x = x; touchMove.z = z; }
   function setTouchLook(x, y) { if(mode !== 'mobile') return; touchLook.x = x; touchLook.y = y; }
   function setTouchSprint(v)  { if(mode !== 'mobile') return; touchSprint = v; }
+  // LUL-529: hold-button analogue of holding KeyF -- see touchVeil above.
+  function setTouchVeil(v) { if(mode !== 'mobile') return; touchVeil = v; }
   function triggerTouchHide() {
     const playing = isPlaying(runState());
     if(playing && !paused) toggleHidden();
@@ -3104,9 +3125,43 @@ tick();
     const playing = isPlaying(runState());
     if(canPickup && playing && !paused) pickup();
   }
+  // LUL-529: touch analogue of the Space keydown handler (forest-engine.js
+  // keydown listener above) -- same guards, same beginJump()/jumpPressed
+  // sequence, minus the e.repeat check (a tap is already a single discrete
+  // event). Per LUL-213, jump is the only way to clear a charging wolf/lion,
+  // so this is survival-critical, not cosmetic.
+  function triggerTouchJump() {
+    const playing = entered && !won && !dead && !pickingUp;
+    if(!playing || paused) return;
+    if(hidden) exitHide();
+    beginJump();
+    jumpPressed = true;
+  }
+  // LUL-529: touch analogue of Escape. Desktop's Escape only ever pauses --
+  // resuming happens by re-acquiring pointer lock (a mousedown handler that's
+  // desktop-only, see the `mode === 'desktop'` block above), which has no
+  // touch equivalent. So this toggles both directions: a phone player has no
+  // other way back into a paused run.
+  function triggerTouchPause() {
+    const playing = entered && !won && !dead && !pickingUp;
+    if(!playing) return;
+    setPaused(!paused);
+  }
+  // LUL-529: touch analogue of the ShiftLeft/ShiftRight toggle-run edge in the
+  // keydown handler above -- only meaningful when the accessibility setting
+  // runMode === 'toggle' is on (MobileControls only renders the control in
+  // that case). Without this, a mobile player who picked toggle-run for
+  // accessibility reasons still had to hold the stick past the 0.75 sprint
+  // threshold the whole time, same as hold-mode -- the setting did nothing.
+  function triggerTouchToggleRun() {
+    const playing = entered && !won && !dead && !pickingUp;
+    if(runMode !== 'toggle' || !playing || paused) return;
+    toggleRunOn = !toggleRunOn;
+  }
 
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
-           setTouchMove, setTouchLook, setTouchSprint, triggerTouchHide, triggerTouchInteract,
+           setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchInteract,
+           triggerTouchJump, triggerTouchPause, triggerTouchToggleRun,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions };
 }
 
