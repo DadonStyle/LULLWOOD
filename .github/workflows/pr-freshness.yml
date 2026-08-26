@@ -134,12 +134,24 @@ jobs:
                 # no push/pull_request CI run (see LUL-439 comment at top of
                 # file). workflow_dispatch is exempt from that suppression --
                 # use it to get CI onto the new head.
-                if gh api -X POST "repos/$REPO/actions/workflows/ci.yml/dispatches" -f "ref=$branch" >/tmp/dispatch-err.log 2>&1; then
-                  echo "::notice::CI dispatched on $branch for the refreshed head."
-                else
-                  echo "::warning::workflow_dispatch failed for #$number ($branch); required checks will read MISSING on the new head until a manual dispatch or real push covers it:"
-                  cat /tmp/dispatch-err.log
-                fi
+                #
+                # LUL-743: workflow-guard-check.yml is dispatched here too,
+                # not just ci.yml. It isn't a required check on main yet
+                # (LUL-610), but it declares workflow_dispatch: and runs on
+                # every push already (LUL-610 dropped its paths filter), so
+                # dispatching it now costs nothing and closes the gap ahead
+                # of the ruleset flip: once LUL-610 lands, a backmerged head
+                # would otherwise have CI green but "workflow guard check"
+                # permanently MISSING -- the exact blind spot LUL-439 fixed
+                # for ci.yml, reintroduced for this check.
+                for workflow in ci.yml workflow-guard-check.yml; do
+                  if gh api -X POST "repos/$REPO/actions/workflows/$workflow/dispatches" -f "ref=$branch" >/tmp/dispatch-err.log 2>&1; then
+                    echo "::notice::$workflow dispatched on $branch for the refreshed head."
+                  else
+                    echo "::warning::workflow_dispatch of $workflow failed for #$number ($branch); its required checks (if any) will read MISSING on the new head until a manual dispatch or real push covers it:"
+                    cat /tmp/dispatch-err.log
+                  fi
+                done
               else
                 echo "::warning::update-branch failed for #$number -- likely a real merge conflict, needs a manual backmerge:"
                 cat /tmp/update-err.log
