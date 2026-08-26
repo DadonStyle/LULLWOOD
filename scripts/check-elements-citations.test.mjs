@@ -2,14 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
-  ANCHOR_FLOOR,
+  RESOLVED_SYMBOLS_FLOOR,
   anchorIdentifier,
   baselineKey,
   blankLiterals,
   checkCitations,
+  checkResolvedSymbols,
   classify,
   declarationSpans,
   diffAgainstBaseline,
+  loadResolvedSymbols,
   parseCitations,
 } from './check-elements-citations.mjs';
 
@@ -188,32 +190,77 @@ test('a baselined citation that no longer reproduces is reported stale, not fail
   assert.deepEqual(stale, ['40:tick']);
 });
 
+// ---- resolved symbols (LUL-682) --------------------------------------------
+//
+// LUL-682 converted every L<n> citation that resolved to a whole symbol span
+// (81 of 116) to a symbol-only citation with no line number at all, so the
+// remaining L<n> population in the real doc is now deliberately ~0 anchored
+// (all 35 are `unverifiable`, by construction -- see docs/ELEMENTS.md). The
+// non-vacuity guarantee that used to live on that population (ANCHOR_FLOOR)
+// now lives on scripts/elements-resolved-symbols.json instead.
+
+test('loadResolvedSymbols reads the symbols array', () => {
+  const json = JSON.stringify({ symbols: ['tick', 'depositScent'] });
+  assert.deepEqual(loadResolvedSymbols(json), ['tick', 'depositScent']);
+});
+
+const RSPANS = new Map([
+  ['tick', { start: 2740, end: 3051 }],
+  ['depositScent', { start: 1033, end: 1036 }],
+  ['dup', null],
+]);
+
+test('checkResolvedSymbols passes every symbol that resolves to exactly one span', () => {
+  const { broken, checked } = checkResolvedSymbols(['tick', 'depositScent'], RSPANS);
+  assert.deepEqual(broken, []);
+  assert.equal(checked, 2);
+});
+
+test('checkResolvedSymbols reports a removed symbol as missing', () => {
+  const { broken } = checkResolvedSymbols(['tick', 'goneNow'], RSPANS);
+  assert.deepEqual(broken, [{ symbol: 'goneNow', reason: 'missing' }]);
+});
+
+test('checkResolvedSymbols reports a duplicate-declared symbol as ambiguous, not silently ok', () => {
+  // Mirrors the toggleHidden() shadowing trap the doc itself warns about --
+  // a symbol-only citation must not go quiet just because *a* declaration
+  // exists; it has to be the only one.
+  const { broken } = checkResolvedSymbols(['dup'], RSPANS);
+  assert.deepEqual(broken, [{ symbol: 'dup', reason: 'ambiguous' }]);
+});
+
 // ---- end-to-end against the real files ------------------------------------
 
 test('the gate actually asserts something on the real doc -- it is not vacuously green', () => {
-  // "Green can mean nothing ran": if the anchor resolution ever silently
-  // breaks, every citation becomes unverifiable and the gate passes while
-  // checking nothing. This is the assertion that catches that.
+  // "Green can mean nothing ran": if symbol resolution ever silently breaks,
+  // every resolved-symbol citation would pass by default and the gate would
+  // check nothing. This is the assertion that catches that.
   const doc = fs.readFileSync('docs/ELEMENTS.md', 'utf8');
   const engine = fs.readFileSync('engine/forest-engine.js', 'utf8');
+  const resolvedSymbols = loadResolvedSymbols(
+    fs.readFileSync('scripts/elements-resolved-symbols.json', 'utf8'));
   const r = checkCitations(doc, engine);
-  assert.ok(r.total > 100, `expected >100 citations, got ${r.total}`);
-  assert.ok(r.anchored >= ANCHOR_FLOOR,
-    `only ${r.anchored} citations resolve to a symbol (floor ${ANCHOR_FLOOR})`);
-  assert.ok(r.ok.length > 0, 'no citation verified -- resolution is broken');
+  const spans = declarationSpans(engine);
+  const resCheck = checkResolvedSymbols(resolvedSymbols, spans);
+
+  assert.ok(r.total > 30, `expected >30 remaining L<n> citations, got ${r.total}`);
+  assert.ok(resolvedSymbols.length >= RESOLVED_SYMBOLS_FLOOR,
+    `only ${resolvedSymbols.length} resolved-symbol citations (floor ${RESOLVED_SYMBOLS_FLOOR})`);
+  assert.equal(resCheck.broken.length, 0, 'a resolved-symbol citation is broken on the real doc/engine');
 });
 
-test('injecting drift into a verified citation is caught', () => {
-  // The fail-on-purpose proof, run every CI pass rather than once by hand:
-  // take a citation the gate currently accepts, move it off the symbol, and
-  // assert the gate notices.
+test('injecting drift into a still-L<n>-cited citation is caught', () => {
+  // The fail-on-purpose proof for the surviving L<n> population, run every
+  // CI pass rather than once by hand: manufacture a citation the gate
+  // currently accepts, move it off the symbol, and assert the gate notices.
   const doc = fs.readFileSync('docs/ELEMENTS.md', 'utf8');
   const engine = fs.readFileSync('engine/forest-engine.js', 'utf8');
-  const before = checkCitations(doc, engine);
-  const victim = before.ok.find((c) => c.start !== c.end);
-  assert.ok(victim, 'expected at least one verified range citation to perturb');
+  const injected = doc + '\n\n`depositScent()` L1035-1038 test fixture only.\n';
+  const before = checkCitations(injected, engine);
+  const victim = before.ok.find((c) => c.symbol === 'depositScent');
+  assert.ok(victim, 'expected the injected depositScent citation to verify clean first');
 
-  const lines = doc.split('\n');
+  const lines = injected.split('\n');
   const idx = lines[victim.docLine - 1].indexOf(victim.raw);
   lines[victim.docLine - 1] =
     lines[victim.docLine - 1].slice(0, idx) + 'L9001-9002' +
@@ -225,14 +272,35 @@ test('injecting drift into a verified citation is caught', () => {
   assert.equal(after.ok.length, before.ok.length - 1);
 });
 
-test('renaming a cited function in the engine is caught as an unknown symbol', () => {
-  const doc = fs.readFileSync('docs/ELEMENTS.md', 'utf8');
+test('renaming a cited function in the engine is caught as an unknown symbol (surviving L<n> population)', () => {
+  const doc = fs.readFileSync('docs/ELEMENTS.md', 'utf8') + '\n\n`inSpawn()` L290 test fixture only.\n';
   const engine = fs.readFileSync('engine/forest-engine.js', 'utf8');
   const before = checkCitations(doc, engine);
-  const renamed = engine.replace(/\bfunction depositScent\b/, 'function depositScentRenamed');
-  assert.notEqual(renamed, engine, 'expected depositScent to exist in the engine');
+  const renamed = engine.replace(/\binSpawn\b(?=\s*\()/, 'inSpawnRenamed');
+  assert.notEqual(renamed, engine, 'expected inSpawn to exist in the engine');
 
   const after = checkCitations(doc, renamed);
   assert.ok(after.unknown.length > before.unknown.length,
     'a cited function that no longer exists must be reported');
+});
+
+test('renaming a resolved (line-number-free) symbol in the engine is caught by checkResolvedSymbols', () => {
+  // This is the LUL-682 equivalent of the test above, for the 81 citations
+  // that no longer carry an L<n> at all -- see scripts/elements-resolved-symbols.json.
+  // depositScent is whitelisted there and is nowhere in this file's own
+  // RSPANS fixture, so this exercises the real engine text end to end.
+  const engine = fs.readFileSync('engine/forest-engine.js', 'utf8');
+  const resolvedSymbols = loadResolvedSymbols(
+    fs.readFileSync('scripts/elements-resolved-symbols.json', 'utf8'));
+  assert.ok(resolvedSymbols.includes('depositScent'),
+    'expected depositScent in the resolved-symbols whitelist');
+
+  const before = checkResolvedSymbols(resolvedSymbols, declarationSpans(engine));
+  assert.equal(before.broken.length, 0);
+
+  const renamed = engine.replace(/\bfunction depositScent\b/, 'function depositScentRenamed');
+  assert.notEqual(renamed, engine, 'expected depositScent to exist in the engine');
+
+  const after = checkResolvedSymbols(resolvedSymbols, declarationSpans(renamed));
+  assert.deepEqual(after.broken, [{ symbol: 'depositScent', reason: 'missing' }]);
 });

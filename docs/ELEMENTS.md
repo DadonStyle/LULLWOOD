@@ -39,13 +39,13 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `runMode==='toggle'` accessibility setting is on, `ShiftLeft`/`ShiftRight`
   edge-detect at L1506-1507 flips `toggleRunOn`),
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
-  `applyLook()` L1268, movement block in `tick()` L2296-2327,
+  `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
   `triggerTouchToggleRun()` (L3156-3160, gated on the same
   `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
-- Jump at any time while playing, not gated on being chased — `beginJump()`
-  L1486-1489, `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
+- Jump at any time while playing, not gated on being chased — `beginJump()`,
+  `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
   `triggerTouchJump()` (L3133-3139, same guards as the desktop `Space`
   keydown handler, minus the `e.repeat` check since a tap is already
@@ -56,8 +56,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
-  rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`
-  L908-922, edge distance via `distanceToCoverEdge()` in `lib/game/cover.ts`,
+  rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
+  edge distance via `distanceToCoverEdge()` in `lib/game/cover.ts`,
   LUL-405/LUL-430 fix — previously approximated the edge as a
   `Math.max(hx,hz)` circle, which over-extended the trigger several times
   past the object's real thickness on an elongated log's thin side). Hiding
@@ -65,23 +65,23 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   height (2.2→1.05, damped ~0.3s), silences footsteps/scent deposit, and
   shrinks predator detect range the longer it's held (`STILL_RAMP`=1.2s,
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
-  next to a predator still gets you caught — `effectiveDetect()` L1120-1122).
+  next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
   button via `setTouchVeil()` L3119 — `veilHeld` reads `keys['KeyF'] ||
   touchVeil` at L2788, mirrored the same way in `qaPlayerState()`'s return
   object, so the two inputs are equivalent, not independent) —
-  `LIGHT_NORMAL`/`LIGHT_DIMMED`
-  L172-173, applied in `tick()` L2285-2294; paired with a screen-edge
-  vignette cue (`applyVignette()` L191-195), **and**, as of `LUL-291`, a real
+  `LIGHT_NORMAL`/`LIGHT_DIMMED`,
+  applied in `tick()`; paired with a screen-edge
+  vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
 - Pick up the child (`KeyE` / touch Interact) within 3.6 units, once
-  (`canPickup`, `pickup()` L2025-2035).
+  (`canPickup`, `pickup()`).
 - Carry the child home; walking speed is multiplied by `CONFIG.carryPaceMul`
-  (0.72) while carrying (`tick()` L2299).
+  (0.72) while carrying (`tick()`).
 - Leave a scent trail while moving (not while hidden or standing still) —
-  `depositScent()` L1035-1038, deposited every `SCENT_DEPOSIT_INTERVAL` (0.3s).
+  `depositScent()`, deposited every `SCENT_DEPOSIT_INTERVAL` (0.3s).
 - Make audible footstep noise while moving — `NOISE_RADIUS_WALK`/`_RUN`
-  (14/24 units), `checkNoise()` L816-819.
+  (14/24 units), `checkNoise()`.
 - Dodge a telegraphed predator charge by jumping within the charge window —
   `stepCharge()` in `lib/game/charge.ts`.
 - **NOT live on `main`** — accessibility/difficulty settings (run mode
@@ -126,8 +126,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   earlier LUL-153 declaration carried the `feature_engagement` analytics
   `track()` call and was silently shadowed by the later LUL-212 rewrite, so
   the event never fired. The shadowed declaration is deleted; there is now a
-  single `toggleHidden()` (L1711), and the `track()` call moved into
-  `enterHide()` (L1709), which all three call sites (`KeyH`, the touch Hide
+  single `toggleHidden()`, and the `track()` call moved into
+  `enterHide()`, which all three call sites (`KeyH`, the touch Hide
   button, and `tick()`'s movement-breaks-cover check) already funnel
   through, so `feature_engagement('hide')` fires on every hide entry again.
 - Eye height (`eyeH`) is damped toward `hidden ? 1.05 : CONFIG.eye` (2.2) at
@@ -136,7 +136,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   this damping outlives the `hidden` flag for a few frames.
 - Player FOV for "can the player see the charging predator" gating is ~130°
   total (`PLAYER_FOV_COS`, `cos(65°)`, L1679) — independent of the render
-  camera's own 70° vertical FOV (`camera` L107); this is a gameplay cone, not
+  camera's own 70° vertical FOV (`camera`); this is a gameplay cone, not
   the literal viewport.
 
 **Collision & physics profile**
@@ -150,7 +150,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `blocked()`: `hasLOS()` (sight, rotated-AABB raycast, includes tagged
   trees `s>1.4`) and the distance-only scent/noise/catch/pickup/win checks
   above — geometry gates *sight only*; it never gates scent or hearing
-  (`checkScent()` L1039-1045 and `checkNoise()` L816-819 take no cover/LOS
+  (`checkScent()` and `checkNoise()` take no cover/LOS
   argument at all).
 
 ---
@@ -158,16 +158,16 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 ### Child (the lost, glowing objective)
 
 **What it can do**
-- Sit at a fixed point drawn once per map (`baby.x/z`, `generateMap()`
-  L432-435), glowing and idly bobbing, marked by ambient "wisp" particles
-  (`placeBabyWisps()` L815-819) so it's spottable through fog.
-- Be picked up once (`baby.taken`, `pickup()` L2025), triggering a scripted
+- Sit at a fixed point drawn once per map (`baby.x/z`, `generateMap()`),
+  glowing and idly bobbing, marked by ambient "wisp" particles
+  (`placeBabyWisps()`) so it's spottable through fog.
+- Be picked up once (`baby.taken`, `pickup()`), triggering a scripted
   10s pickup cinematic (`tick()`'s `pickingUp` branch, L2329-2359) that ends
-  in a sky-burst (`fireBoom()` L579-598).
+  in a sky-burst (`fireBoom()`).
 - Ride along at the player's position while carried, small and glowing
-  (`carrying` branch, `tick()` L2359-2368), until the player crosses
+  (`carrying` branch, `tick()`), until the player crosses
   `CONFIG.home.r` (3.6u) of the home landmark, which wins the run
-  (`arriveHome()` L2049-2063).
+  (`arriveHome()`).
 - **NOT live on `main`** — idle/carry glow intensity scaled by a difficulty
   preset's `glowMul` was built on the unmerged LUL-26 branch
   (`DIFFICULTY_PRESETS`); `engine/forest-engine.js` on `main` has no
@@ -181,7 +181,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 - Cannot be found or interacted with by anything except the player — no
   predator state, roam waypoint, or detection check ever reads `baby.x/z`
   at runtime (only at **spawn time**, to keep predators from spawning on top
-  of it — `Math.hypot(x-baby.x,z-baby.z)<26` in `placePredators()` L716).
+  of it — `Math.hypot(x-baby.x,z-baby.z)<26` in `placePredators()`).
   Once the map is generated, a predator can stand directly on the
   un-collected child with zero effect. `UNDEFINED` — see matrix.
 - Cannot be dropped, lost, or re-hidden once picked up — `baby.taken` only
@@ -189,7 +189,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 - Cannot collide with anything (no collider function reads its position).
 
 **Behaviours & logic**
-- Placement: `generateMap()` L432-435 — polar draw, `d = half*(0.5+rng()*0.3)`
+- Placement: `generateMap()` — polar draw, `d = half*(0.5+rng()*0.3)`
   from origin, rejected while `inLake(baby.x,baby.z)` is true (only spawn
   guard on the child; no guard against landing near a tree/cover cluster).
 - Home is a **fixed reuse of the spawn point** (`CONFIG.home = {x:0,z:0,...}`,
@@ -200,15 +200,15 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 - No collider. Visual scale/position only (`babyGroup`, a `THREE.Group` of
   two spheres + a halo + a point light, L526-539). Placement-time-only
   clearance from the lake (`inLake`) and from trees/cover (`inBaby()`,
-  L524, used symmetrically by *their* placement loops, not the child's own).
+  used symmetrically by *their* placement loops, not the child's own).
 
 ---
 
 ### Wolf / Bear / Lion (predators)
 
-Three species sharing one state machine (`updatePredators()`, L955-1186) and
-one geometry builder (`makePredator()`, L906-964), differentiated by the
-`PSPEC` table (L879-887):
+Three species sharing one state machine (`updatePredators()`) and
+one geometry builder (`makePredator()`), differentiated by the
+`PSPEC` table:
 
 | stat | wolf | bear | lion |
 |---|---|---|---|
@@ -224,18 +224,18 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 - Roam via random waypoints when nothing has noticed the player
   (`state==='roam'`, L1010-1019).
 - Detect the player through three independent channels: **sight**
-  (`canSee()`, LOS raycast + shrinking-with-stillness range, L1123-1125),
-  **scent** (`checkScent()`, radius+wind, no LOS check at all, L1039-1045),
+  (`canSee()`, LOS raycast + shrinking-with-stillness range),
+  **scent** (`checkScent()`, radius+wind, no LOS check at all),
   and **noise** (`checkNoise()`, pure distance + per-second chance while the
-  player moves, L816-819). Any one channel alone triggers a chase.
+  player moves). Any one channel alone triggers a chase.
 - Chase, losing/regaining track via `investigate`→`sniff`→`back` (LUL-22,
   explicitly "not to be retuned").
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
   nearest predator switches straight to `hunt` (relentless, ignores LOS
-  break) — `tick()` L2402-2404.
+  break) — `tick()`.
 - **Wolf only**: coordinate as a pack. The instant one wolf chases, the other
   two path to flanking points ±60° off the
-  player's last movement heading (`updateWolfPack()`, L919-946).
+  player's last movement heading (`updateWolfPack()`).
 - **Wolf and lion only**: telegraph-and-charge at 7-16 units range
   (`CHARGE_TRIGGER_MIN/MAX`, `lib/game/charge.ts`), dodgeable by a
   well-timed jump. Bear deliberately excluded — "the slow unavoidable
@@ -268,7 +268,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
   player's max sprint, `RUN = CONFIG.walk*1.8 = 10.8`, all three final
   speeds exceed it — L623-624).
 - Cannot spawn inside the spawn clearing, too close to the child, or inside
-  another collider (`placePredators()`'s rejection loop, L716) — **but
+  another collider (`placePredators()`'s rejection loop) — **but
   this loop does not check `inLake()`**, unlike the tree and child spawn
   loops. `UNVERIFIED`/`UNDEFINED` whether a predator can spawn inside the
   lake's clear radius on some seeds — see matrix.
@@ -282,7 +282,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 - Charge state machine (`telegraph`→`charging`→`overshoot`→`caught`/`cleared`)
   lives in `lib/game/charge.ts`, unit-tested, imported into the engine —
   the engine only owns *when* one can start (`p.chargeCooldown<=0`,
-  `CHARGE_COOLDOWN`=10s, L953) and the resulting movement.
+  `CHARGE_COOLDOWN`=10s) and the resulting movement.
 - Stuck detection: if a predator's actual movement falls under 35% of its
   intended speed for >3s while trying to move, it backs up along its last 6
   trail points then picks a fresh random waypoint (`p.stuckT`, L1121-1129).
@@ -309,9 +309,9 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
   the full derivation and its known residual close-up-foliage limitation.
 - Block line of sight for **both** player and predators, but only if
   `s > 1.4` ("large" trees get tagged into `coverData` as `kind:'tree'`,
-  `generateCover()` L407).
+  `generateCover()`).
 - Render with per-instance brightness variation and random rotation
-  (`generateMap()` L450-462).
+  (`generateMap()`).
 
 **What it CANNOT do**
 - Small/mid trees (`s <= 1.4`) never block LOS, only movement — there is no
@@ -326,8 +326,8 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 
 **Behaviours & logic**
 - 1,300 instances (`CONFIG.trees`), one instanced trunk cylinder + two
-  instanced foliage cones (`trunkGeo`/`cone1Geo`/`cone2Geo`, L200-202),
-  scale `s = 0.7 + rng()*1.7` drawn per tree (`generateMap()` L447).
+  instanced foliage cones (`trunkGeo`/`cone1Geo`/`cone2Geo`),
+  scale `s = 0.7 + rng()*1.7` drawn per tree (`generateMap()`).
 - Visual canopy radius (`CANOPY_R*s = 1.15*s`, 0.8-2.76u) is **~3.29× wider**
   than the trunk collision radius (`0.35*s`, 0.245-0.84u) at every scale —
   this ratio is the root cause LUL-266 documented and LUL-267 partially
@@ -348,7 +348,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 - Block LOS for both player and predators (`hasLOS()`).
 - Render as one of three cover-prop kinds (`DodecahedronGeometry`, L251),
   ~35% of the 220 `COVER_PROPS` roll (`roll < 0.75 && roll >= 0.4`,
-  `generateCover()` L418).
+  `generateCover()`).
 
 **What it CANNOT do**
 - Cannot block predator movement (predators never call `coverBlockedR()`).
@@ -358,7 +358,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 
 **Behaviours & logic**
 - `hx=r, hz=r*(0.7+rng()*0.5)`, `r=0.9+rng()*0.9`, random rotation `ry`
-  (`generateCover()` L418, L420).
+  (`generateCover()`).
 
 **Collision & physics profile**
 - Player-only rotated-AABB collider (half-extents `hx,hz`, rotation `ry`).
@@ -371,8 +371,8 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 **What it can do**
 - Everything Rock can do, **plus**: is a valid `hidden`-stance location
   (`HIDE_KINDS.log = true`) — entering/exiting plays a distinct "hollow
-  log knock" sound (`hollowLogSound()`, L1678-1699).
-- ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()` L416), long/thin
+  log knock" sound (`hollowLogSound()`).
+- ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()`), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
 - **LUL-384: the player walks and runs over it, no route-around needed** —
   `coverKindBlocksPlayerMovement('log')` is `false` (`lib/game/cover.ts`),
@@ -396,7 +396,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
-  between long-on-x / long-on-z (`generateCover()` L416-417).
+  between long-on-x / long-on-z (`generateCover()`).
 
 **Collision & physics profile**
 - LOS-blocking for both actors, same as Rock (`hasLOS()`, unchanged).
@@ -414,10 +414,10 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 
 **What it can do**
 - Everything Log can do (hiding-spot eligible, `HIDE_KINDS.bramble = true`),
-  with a distinct "leaf rustle" enter/exit sound (`leafRustle()`,
-  L1657-1674) — researched against stealth/horror foley convention per the
+  with a distinct "leaf rustle" enter/exit sound (`leafRustle()`)
+  — researched against stealth/horror foley convention per the
   LUL-212 handoff (wiki `game/lul212-hiding-spots`).
-- ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()` L419).
+- ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()`).
 
 **What it CANNOT do**
 - Same as Log: no predator movement collision; not guaranteed clear of tree
@@ -425,7 +425,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 
 **Behaviours & logic**
 - `r = 0.8+rng()*0.7`, `hx=hz=r` (roughly round footprint,
-  `generateCover()` L419).
+  `generateCover()`).
 
 **Collision & physics profile**
 - Same as Log: player-only rotated-AABB collider, LOS for both actors,
@@ -466,10 +466,10 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
   it, and a point light (L476-505).
 - Keep other elements clear of itself **at placement time only**: trees,
   cover props, and the child all reject spawn candidates inside
-  `CONFIG.lake.clear` (22 units, `inLake()` L289, used at L393 (cover),
-  L446 (trees), L435 (child)).
+  `CONFIG.lake.clear` (22 units, `inLake()`, used for cover, tree, and child
+  spawn placement).
 - Bias the ambient "twinkle" chime to play brighter/more often when the
-  player is near it (`distLake < CONFIG.lake.r*3`, `tick()` L2491-2493).
+  player is near it (`distLake < CONFIG.lake.r*3`, `tick()`).
 
 **What it CANNOT do**
 - **Cannot block, slow, or otherwise affect player movement at all.**
@@ -479,7 +479,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
   a missing feature (shallow-water slow, or a hard block) rather than an
   intentional "walkable lake."
 - Does not keep **predators** clear of itself at spawn — `placePredators()`'s
-  rejection loop (L716) checks spawn-clearing distance, baby distance,
+  rejection loop checks spawn-clearing distance, baby distance,
   and `blockedR()`, but never `inLake()`. `UNVERIFIED`/`UNDEFINED` whether a
   predator can spawn standing in the lake on some seeds.
 - Does not affect scent or noise propagation (both are pure radius+wind /
@@ -487,7 +487,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 
 **Behaviours & logic**
 - `CONFIG.lake = { x:34, z:-28, r:15, clear:22, glow:0x86b8ff }` (L84).
-- Ambient wisp particles loop 0.2→4.5 units and reset (`tick()` L2505-2507).
+- Ambient wisp particles loop 0.2→4.5 units and reset (`tick()`).
 
 **Collision & physics profile**
 - **None for movement, for anyone.** Purely a placement-time exclusion zone
@@ -501,9 +501,9 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 - Mark the win destination: a point light + additive ring at
   `CONFIG.home = {x:0, z:0, r:3.6, glow:0xffd9b0}` (L85, L492-497).
 - Trigger the win condition when the player, while `carrying`, comes within
-  `CONFIG.home.r` of it (`arriveHome()`, `tick()` L2367-2368).
+  `CONFIG.home.r` of it (`arriveHome()`, `tick()`).
 - Breathe (opacity pulse) continuously regardless of game state
-  (`tick()` L2501).
+  (`tick()`).
 
 **What it CANNOT do**
 - Has no collider of any kind — the win check is a plain distance compare,
@@ -515,7 +515,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
   rng draw"). If `CONFIG.home` ever moved off the spawn point, this
   protection would silently stop applying.
 - Is not drawn on the minimap (`drawMinimapStatic()` renders trees and the
-  lake only, L2643-2651 — home has no minimap marker).
+  lake only — home has no minimap marker).
 
 **Behaviours & logic**
 - Static, no RNG draw — same every seed, every restart.
@@ -531,22 +531,22 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 - Uniformly fade all rendered fragments by camera distance
   (`scene.fog = new THREE.FogExp2(0x0b1220, CONFIG.fog)`, L141,
   `CONFIG.fog = 0.04`, L89).
-- Be adjusted live by the player via the settings panel (`setFog()`, L2460)
+- Be adjusted live by the player via the settings panel (`setFog()`)
   — sets `fogBase`, the baseline the mist veil (below) ramps from and back
   to. Range on the slider itself is unchanged (0.02-0.11).
 - **As of `LUL-382`** ramp all the way up to `MIST_VEIL_FOG` (0.34 — roughly
-  3x the manual slider's own max, L224) while the mist veil is held, eased
-  by `veilAmount` over `VEIL_RAMP` (1.6s, L221) each direction via
-  `veilFogDensity()` (`lib/game/veil.ts`). `tick()` (L2657) is the single
+  3x the manual slider's own max) while the mist veil is held, eased
+  by `veilAmount` over `VEIL_RAMP` (1.6s) each direction via
+  `veilFogDensity()` (`lib/game/veil.ts`). `tick()` is the single
   writer of `scene.fog.density` now — `setFog()` no longer writes it
-  directly (L2454), only `fogBase`.
+  directly, only `fogBase`.
 
 **What it CANNOT do**
 - `effectiveDetect()` (predator sight range) still never reads
   `scene.fog`/`CONFIG.fog`/`fogBase` directly — the detection cut below
   reads `veilAmount`, a separate state variable driven by the same `KeyF`
   hold, not the actual fog density. In practice the two move in lockstep
-  (both eased off the same `lightDimmed` transition, `tick()` L2639-2657),
+  (both eased off the same `lightDimmed` transition, `tick()`),
   but a manual "Mist" slider change alone — no `KeyF` held — still has
   **zero** effect on detection, same invariant as before `LUL-382`, just now
   worth restating precisely: the correlation is real when the veil is
@@ -577,13 +577,13 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
   L203) — always exactly coincident with the player, not a separate
   tracked entity.
 - Switch between two fixed states, `LIGHT_NORMAL`/`LIGHT_DIMMED`
-  (intensity 0.7/0.18, distance 20/8, L213-214), toggled by holding `KeyF`
-  (`tick()` L2639-2657), paired with a screen vignette cue.
+  (intensity 0.7/0.18, distance 20/8), toggled by holding `KeyF`
+  (`tick()`), paired with a screen vignette cue.
 - **As of `LUL-382` (supersedes `LUL-291`'s dim-only detection wiring, see
   decisions/0012-feature-impact-bar on the wiki)**, holding `KeyF` no longer
   just dims the light — it triggers the **mist veil**, a bundled world state:
   the light still dims (unchanged), `scene.fog.density` ramps to
-  `MIST_VEIL_FOG` (0.34, see Fog above), and `effectiveDetect()` (L1200)
+  `MIST_VEIL_FOG` (0.34, see Fog above), and `effectiveDetect()`
   multiplies predator sight range by up to `VEIL_DETECT_MUL` (0.35 — a 65%
   cut, vs. LUL-291's 25%) via `veilDetectMul()`, scaled by the same
   `veilAmount` ramp as the fog. Sight only — `p.spec.scent` is untouched,
@@ -614,8 +614,8 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 - Binary state only (no slider) — a deliberate choice per the LUL-40
   handoff, "a slider players set once and forget wouldn't be the
   every-second decision the ticket wants." Unchanged by `LUL-382`.
-- `veilAmount` (0..1, `tick()` L2656) eases `lightDimmed`'s boolean toward
-  its target over `VEIL_RAMP` (1.6s, L221) — slower than the vignette's own
+- `veilAmount` (0..1, `tick()`) eases `lightDimmed`'s boolean toward
+  its target over `VEIL_RAMP` (1.6s) — slower than the vignette's own
   ~0.5s ramp (`dimAmount`), so the light pool reacts first and the world's
   mist visibly billows in behind it.
 
@@ -635,7 +635,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   `drawMinimap()`/`drawMinimapStatic()`), `#hint`, `#pausePrompt`,
   `#deathVideo`.
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
-  `hudState`/`pushState()`/`emitState()` (L1631-1653): objective text,
+  `hudState`/`pushState()`/`emitState()`: objective text,
   hiding status, win/death screens, charge-dodge prompt, the post-run recap
   (`#runRecap`). **Not** difficulty/accessibility controls or captions —
   those were built on the unmerged LUL-26 branch; see the Player section's
@@ -644,7 +644,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
-  a patch when a value actually changed, L1934-1940).
+  a patch when a value actually changed).
 - Send **actions back**, never state: the full API `init()` returns
   (L3162-3165) is `enter`, `restart`, `setPace`, `setFog`, `toggleSound`,
   `regenMap`, and nine touch-control setters (`setTouchMove`/`setTouchLook`/
@@ -655,7 +655,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   No LUL-26 accessibility/difficulty setters exist in this object on `main`.
 - The minimap specifically reads and draws two other elements' live data:
   tree positions (`treeData`, every 4th tree) and the lake's position/radius
-  (`drawMinimapStatic()` L2643-2651) — not just player/child/predator state.
+  (`drawMinimapStatic()`) — not just player/child/predator state.
 
 **What it CANNOT do**
 - Cannot read engine internals directly — no reverse channel exists besides
@@ -672,7 +672,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 **Behaviours & logic**
 - `hudState` is a single flat object; `pushState()` diffs before emitting to
-  avoid redundant React re-renders (L1934-1940).
+  avoid redundant React re-renders.
 
 **Collision & physics profile**
 - N/A — not a spatial/world object.
@@ -732,7 +732,7 @@ text, death/win screens) but never collides with or is collided into.
 child's — only a spawn-time clearance (`placePredators()`). A predator can
 stand on an un-collected child indefinitely with no reaction from either
 side. Filed as **LUL-393**.
-⁸ Child's spawn draw rejects `inLake()` positions (`generateMap()` L432-435)
+⁸ Child's spawn draw rejects `inLake()` positions (`generateMap()`)
 — defined, not undefined; the child itself has no runtime lake interaction
 because it never moves.
 ⁹ Wolves-vs-wolves: coordinate via `updateWolfPack()` (flank targeting reads
@@ -745,14 +745,14 @@ predator-predator pairs — see handoff comment for why one ticket, not six).
 through rock/log/bramble. **Deliberate** (LUL-119/LUL-211 comment,
 `coverBlockedR()` in `lib/game/cover.ts`), not `U`. LOS is still blocked
 normally.
-¹² **Notable.** `placePredators()`'s spawn-rejection loop (L716) checks
+¹² **Notable.** `placePredators()`'s spawn-rejection loop checks
 spawn-clearing, baby-distance, and `blockedR()`, but never `inLake()` —
 unlike the tree and child spawn loops. Whether a predator can spawn (or
 later roam into) the lake is unresolved by source. Filed as **LUL-395**.
 ¹³ Bears and lions are explicitly solitary — no pack coordination exists for
 either species (LUL-24 comment: "bears stay solitary... the contrast is the
 point"). Defined absence, not undefined.
-¹⁴ **Fixed, LUL-396/LUL-450.** `generateCover()` (L405-424) now rejects a
+¹⁴ **Fixed, LUL-396/LUL-450.** `generateCover()` now rejects a
 candidate rock/log/bramble whose own footprint circle overlaps a nearby
 tree's trunk collision circle (`treesNear()` + `overlapsTreeTrunk()` in
 `lib/game/cover.ts`) before placing it, same as the `inLake()`/`inSpawn()`/
@@ -769,11 +769,11 @@ clear of every trunk yet still wedge the player mid-crossing at a canopy
 edge. Rock/Bramble stay trunk-only — solid either way, so a canopy-only
 overlap changes nothing observable for them.
 ¹⁵ Trees and cover props both reject `inLake()` spawn candidates
-(`generateMap()` L446, `generateCover()` L413) — defined, not undefined.
+(`generateMap()`, `generateCover()`) — defined, not undefined.
 ¹⁶ Both protected from home only indirectly, via the shared `inSpawn()`
 check (home reuses the spawn coordinates) — see Home's "what it cannot do."
-¹⁷ Rendered as a dot/circle on the minimap (`drawMinimapStatic()`,
-L2643-2651) — a read-only relationship, not physical.
+¹⁷ Rendered as a dot/circle on the minimap (`drawMinimapStatic()`)
+— a read-only relationship, not physical.
 ¹⁸ Cover props are never checked against each other at placement — two
 props (e.g. a rock and a bramble) can overlap. Lower severity than ¹⁴ (both
 are already non-solid to predators and the overlap is cosmetic at most for
