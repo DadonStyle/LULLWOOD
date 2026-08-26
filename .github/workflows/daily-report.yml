@@ -97,7 +97,13 @@ jobs:
       - name: check for changes
         id: diff
         run: |
-          if git diff --quiet HEAD -- DAILY_REPORTS/; then
+          # `git diff` only sees changes to already-tracked files. The
+          # generator's whole job is writing DAILY_REPORTS/<new-day>.md,
+          # which is untracked on first write, so `git diff --quiet HEAD --`
+          # reports "nothing changed" even when two brand-new report files
+          # just landed on disk (found live 2026-08-26, LUL-534). `git
+          # status --porcelain` covers untracked and modified paths alike.
+          if [ -z "$(git status --porcelain -- DAILY_REPORTS/)" ]; then
             echo "empty=true"  >> "$GITHUB_OUTPUT"
           else
             echo "empty=false" >> "$GITHUB_OUTPUT"
