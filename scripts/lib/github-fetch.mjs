@@ -22,6 +22,32 @@ function ghFetch(url, token) {
   });
 }
 
+// GraphQL companion to ghFetch -- needed for anything the REST API can't
+// answer, e.g. a PR's statusCheckRollup with isRequired(pullRequestNumber),
+// which is the only field that reflects what `PUT /pulls/{n}/merge` actually
+// evaluates (LUL-762: the REST check-runs endpoint shows a workflow_dispatch
+// run as a green, name-matched, app-matched success, but that run is
+// invisible to this rollup and cannot satisfy a required check).
+async function ghGraphQL(query, variables, token) {
+  const res = await fetch('https://api.github.com/graphql', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) {
+    throw new Error(`POST graphql -> HTTP ${res.status}: ${await res.text()}`);
+  }
+  const body = await res.json();
+  if (body.errors) {
+    throw new Error(`graphql errors: ${JSON.stringify(body.errors)}`);
+  }
+  return body.data;
+}
+
 // LUL-736: `GITHUB_TOKEN` is not actually in any agent's environment -- no
 // script here runs under GitHub Actions, which is the only thing that sets
 // it automatically -- so every "optional token, unauthenticated reads still
@@ -84,4 +110,4 @@ function resolveGithubToken({
   return null;
 }
 
-export { fetchJson, ghFetch, resolveGithubToken, GITHUB_TOKEN_CHAIN_DESCRIPTION };
+export { fetchJson, ghFetch, ghGraphQL, resolveGithubToken, GITHUB_TOKEN_CHAIN_DESCRIPTION };
