@@ -53,16 +53,47 @@ function isBlockerLive(blocker) {
   return blocker.status !== 'done' && blocker.status !== 'cancelled';
 }
 
+// `in_review` has the identical no-wake-path failure mode as `blocked` (wiki
+// process/in-review-tombstone-class, LUL-139: status in_review, blockedBy [],
+// no reviewer, no interaction -- nothing will ever move it, and a
+// blocked-only scan reports it as healthy work-in-flight).
+const TOMBSTONE_STATUSES = new Set(['blocked', 'in_review']);
+
+// A recovery action object can persist with a non-"active" status and still
+// be truthy -- check the field the platform itself uses, not just presence
+// (wiki systems/recovery-action-wake-path documents the real shape, which
+// always carries `status: "active"` on a live one).
+function hasActiveRecoveryAction(issue) {
+  const action = issue.activeRecoveryAction;
+  return Boolean(action) && action.status === 'active';
+}
+
+// LUL-677/LUL-680: a pending interaction with continuationPolicy
+// "wake_assignee" resumes the assignee on response and is a fully live
+// fourth wake edge, same as blockedBy/activeRecoveryAction/successfulRunHandoff.
+// LUL-399 had exactly this (an ask_user_questions interaction parked on the
+// founder) and the detector flagged it as a tombstone anyway -- a real
+// false positive. `continuationPolicy: "none"` wakes nobody and is
+// indistinguishable from `wake_assignee` at a glance, so check the field.
+function hasLiveInteraction(interactions) {
+  return (interactions ?? []).some(
+    (i) => i.status === 'pending' && i.continuationPolicy === 'wake_assignee',
+  );
+}
+
 // issue: the shape of `GET /api/issues/{id}` (blockedBy/activeRecoveryAction/
 // successfulRunHandoff are only present on the per-issue read, not the list
 // endpoint -- see wiki systems/recovery-action-wake-path and the ticket's
-// own implementation note about blockedBy).
+// own implementation note about blockedBy), with `interactions` attached
+// separately from `GET /api/issues/{id}/interactions` (not part of the
+// issue payload itself).
 function isTombstone(issue) {
-  if (issue.status !== 'blocked') return false;
+  if (!TOMBSTONE_STATUSES.has(issue.status)) return false;
   const blockedBy = issue.blockedBy ?? [];
   if (blockedBy.some(isBlockerLive)) return false;
-  if (issue.activeRecoveryAction) return false;
+  if (hasActiveRecoveryAction(issue)) return false;
   if (issue.successfulRunHandoff?.hasLiveContinuation) return false;
+  if (hasLiveInteraction(issue.interactions)) return false;
   return true;
 }
 
@@ -108,7 +139,11 @@ function formatReport(tombstones, unownedPrs, repo) {
   if (tombstones.length === 0 && unownedPrs.length === 0) return null;
   const lines = ['board-integrity detector: ALARM'];
   if (tombstones.length > 0) {
-    lines.push('', `${tombstones.length} tombstoned issue(s) -- blocked, no live blocker, no recovery action:`);
+    lines.push(
+      '',
+      `${tombstones.length} tombstoned issue(s) -- blocked/in_review, no live blocker, no active ` +
+        'recovery action, no pending wake_assignee interaction:',
+    );
     for (const t of tombstones) {
       lines.push(`  - ${t.identifier ?? t.id}: "${t.title}" (assignee ${t.assigneeAgentId ?? 'none'})`);
     }
@@ -185,16 +220,33 @@ async function fetchOpenIssuesForOwnershipCheck(apiBase, companyId, apiKey) {
 }
 
 // LIST omits blockedBy/activeRecoveryAction/successfulRunHandoff, so a
-// list-based tombstone count over-counts -- fetch each blocked issue
+// list-based tombstone count over-counts -- fetch each candidate issue
 // individually (see the ticket's own implementation note; only ever a
-// handful of issues are `blocked` at once, so this is cheap).
-async function fetchBlockedIssuesFull(apiBase, companyId, apiKey) {
-  const summaries = await pcFetch(`${apiBase}/api/companies/${companyId}/issues?status=blocked&limit=200`, apiKey);
+// handful of issues are `blocked`/`in_review` at once, so this is cheap).
+async function fetchIssuesFullByStatus(apiBase, companyId, apiKey, status) {
+  const summaries = await pcFetch(`${apiBase}/api/companies/${companyId}/issues?status=${status}&limit=200`, apiKey);
   const full = [];
   for (const s of summaries) {
     full.push(await pcFetch(`${apiBase}/api/issues/${s.id}`, apiKey));
   }
   return full;
+}
+
+// LUL-677/LUL-680: pending interactions are not on the issue payload at all
+// -- a separate `GET /api/issues/{id}/interactions` per candidate, attached
+// as `.interactions` so isTombstone stays a pure function of one object.
+async function fetchTombstoneCandidates(apiBase, companyId, apiKey) {
+  const [blocked, inReview] = await Promise.all([
+    fetchIssuesFullByStatus(apiBase, companyId, apiKey, 'blocked'),
+    fetchIssuesFullByStatus(apiBase, companyId, apiKey, 'in_review'),
+  ]);
+  const candidates = [...blocked, ...inReview];
+  await Promise.all(
+    candidates.map(async (issue) => {
+      issue.interactions = await pcFetch(`${apiBase}/api/issues/${issue.id}/interactions`, apiKey);
+    }),
+  );
+  return candidates;
 }
 
 async function fetchSelfAgentId(apiBase, apiKey) {
@@ -226,10 +278,11 @@ async function fileWakeTickets(apiBase, companyId, apiKey, tombstones, unownedPr
       title: `${marker} (LUL-672 detector)`,
       description:
         `Detected by scripts/board-integrity-check.mjs: ${issue.identifier ?? issue.id} ` +
-        `("${issue.title}") is status \`blocked\` with no live blocker and no recovery ` +
-        `action -- nothing will ever wake it automatically. Re-check it: advance/close it, ` +
-        `or record why it is genuinely still blocked (and give it a real blockedBy edge or ` +
-        `recovery path if so). See wiki process/review-to-land-wake-gap.`,
+        `("${issue.title}") is status \`${issue.status}\` with no live blocker, no active ` +
+        `recovery action, and no pending wake_assignee interaction -- nothing will ever wake ` +
+        `it automatically. Re-check it: advance/close it, or record why it is genuinely still ` +
+        `stuck (and give it a real blockedBy edge, recovery path, or interaction if so). See ` +
+        `wiki process/review-to-land-wake-gap and game/lul672-board-integrity-detector.`,
       assigneeAgentId,
       priority: 'high',
     });
@@ -271,9 +324,9 @@ async function main() {
     );
   }
 
-  const [openPrs, blockedIssuesFull, openIssuesForOwnership] = await Promise.all([
+  const [openPrs, tombstoneCandidates, openIssuesForOwnership] = await Promise.all([
     ghFetch(`https://api.github.com/repos/${repo}/pulls?state=open&per_page=100`, ghToken),
-    fetchBlockedIssuesFull(apiBase, companyId, apiKey),
+    fetchTombstoneCandidates(apiBase, companyId, apiKey),
     fetchOpenIssuesForOwnershipCheck(apiBase, companyId, apiKey),
   ]);
 
@@ -282,13 +335,13 @@ async function main() {
     prContexts.push(await fetchPrContext(repo, prSummary.number, ghToken));
   }
 
-  const tombstones = findTombstones(blockedIssuesFull);
+  const tombstones = findTombstones(tombstoneCandidates);
   const unownedPrs = findUnownedPrs(prContexts, openIssuesForOwnership);
   const report = formatReport(tombstones, unownedPrs, repo);
 
   if (!report) {
     console.log(
-      `board-integrity detector: OK (${blockedIssuesFull.length} blocked issue(s), ${openPrs.length} open PR(s) on ${repo}, no alarms)`,
+      `board-integrity detector: OK (${tombstoneCandidates.length} blocked/in_review candidate(s), ${openPrs.length} open PR(s) on ${repo}, no alarms)`,
     );
     return;
   }
@@ -316,6 +369,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
 
 export {
   isTombstone,
+  hasActiveRecoveryAction,
+  hasLiveInteraction,
   findTombstones,
   issueReferencesPr,
   isPrMergeReady,

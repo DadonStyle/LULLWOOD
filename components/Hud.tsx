@@ -446,9 +446,23 @@ export default function Hud({
           (see lib/game/charge.ts) rather than passed here as engine state --
           it's a fixed, learnable window by design, not a per-frame tunable
           the HUD needs to stay in sync with. LUL-304: this used to restate the
-          value as a bare "1s" literal in the CSS; it's now the same constant. */}
+          value as a bare "1s" literal in the CSS; it's now the same constant.
+          LUL-617: on mobile the pill reads "JUMP" but #chargePrompt's CSS is
+          `pointer-events: none` (it's a caption on desktop, not a control) --
+          that made it a false affordance once the label became actionable
+          text. Override pointer-events + wire the same triggerTouchJump the
+          bottom-left Jump button uses, `onPointerDown` like ActionBtn (LUL-653:
+          avoids the browser's pan-gesture disambiguation on tap targets). The
+          bottom-left button stays too -- removing it is a UX call for the
+          Game Tester, not a code-correctness one. */}
       {state.chargeVisible && (
-        <div id="chargePrompt" key={state.chargeToken}>
+        <div
+          id="chargePrompt"
+          key={state.chargeToken}
+          style={mobile ? { pointerEvents: 'auto', touchAction: 'none', cursor: 'pointer' } : undefined}
+          onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchJump(); } : undefined}
+          data-testid={mobile ? 'chargePromptTap' : undefined}
+        >
           <span id="chargeKey">{mobile ? 'JUMP' : 'SPACE'}</span>
           <div id="chargeBarTrack">
             <div id="chargeBar" />
