@@ -26,6 +26,7 @@
 // about this; this workflow is a standalone watchdog, not a required check,
 // so a red run here means "go look," not "block a merge").
 import { pathToFileURL } from 'node:url';
+import { ghFetch } from './lib/github-fetch.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
 const DEFAULT_THRESHOLD_MINUTES = 60;
@@ -61,28 +62,15 @@ function findReviewGaps(openPrs, reviewsByPrNumber, nowMs, thresholdMinutes) {
   return gaps.sort((a, b) => b.ageMinutes - a.ageMinutes);
 }
 
-async function fetchJson(url, token) {
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
-  if (!res.ok) {
-    throw new Error(`GET ${url} -> HTTP ${res.status}: ${await res.text()}`);
-  }
-  return res.json();
-}
-
 async function fetchOpenPrsAndReviews(repo, token) {
-  const openPrs = await fetchJson(
+  const openPrs = await ghFetch(
     `https://api.github.com/repos/${repo}/pulls?state=open&per_page=100`,
     token,
   );
 
   const reviewsByPrNumber = new Map();
   for (const pr of openPrs) {
-    const reviews = await fetchJson(
+    const reviews = await ghFetch(
       `https://api.github.com/repos/${repo}/pulls/${pr.number}/reviews?per_page=100`,
       token,
     );
