@@ -24,8 +24,9 @@ name: Required-check gap detector
 #
 # `grace_minutes` on workflow_dispatch exists to prove this detector can
 # actually go red: point it at a known-bad open PR (one with a
-# workflow_dispatch-only head, e.g. a fresh pr-freshness backmerge) and
-# dispatch with grace_minutes: '0'.
+# workflow_dispatch-only head -- LUL-778 removed the automated source of
+# these, `pr-freshness.yml`'s backmerge, so producing one now means manually
+# dispatching a workflow on a branch) and dispatch with grace_minutes: '0'.
 
 on:
   schedule:

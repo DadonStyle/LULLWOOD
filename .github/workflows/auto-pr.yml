@@ -174,7 +174,9 @@ jobs:
           #
           # Read it from every commit this branch authored, not just the head
           # commit (LUL-465). Backmerging main is the standard way to track main
-          # (decisions/0010-no-force-push) and pr-freshness.yml does it for us, so
+          # (decisions/0010-no-force-push), done by hand with a real credential
+          # (LUL-778 removed the automated `pr-freshness.yml` version -- it was
+          # never required, see systems/ci-github-token-blind-spot), so
           # the head is routinely a merge commit that never carries the marker --
           # which silently and permanently disarmed self-merge for any PR that
           # outlived one main push. `--no-merges` drops those backmerge commits

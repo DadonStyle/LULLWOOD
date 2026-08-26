@@ -1,0 +1,95 @@
+name: Approve parked CI runs
+
+# LUL-778: this workflow used to be `pr-freshness.yml` and its main job was
+# backmerging `main` into every stale open PR via `PUT /pulls/{n}/update-branch`
+# under GITHUB_TOKEN. That step is gone. Why:
+#
+# The backmerge existed to satisfy what its old header called "main's ruleset
+# requires branches to be strictly up to date before they can merge"
+# (LUL-380). That claim was never actually read from the API and is false --
+# measured 2026-08-27 (LUL-768):
+#
+#   gh api repos/$REPO/rulesets/20886790 \
+#     --jq '.rules[]|select(.type=="required_status_checks")|.parameters.strict_required_status_checks_policy'
+#   # -> false, in every version of the `main` ruleset since 2026-08-15
+#   gh api repos/$REPO/rulesets/21050378 --jq '...same...'   # -> false (release/next)
+#   gh api repos/$REPO/branches/main/protection               # -> 404, not protected
+#
+# Independent behavioural control: 7 of the last 8 merged PRs at the time of
+# that measurement (#147-#154) landed with a head 1-7 commits BEHIND base.
+# Being behind has never once blocked a merge in this repo. Full write-up:
+# wiki systems/ci-github-token-blind-spot, ADDENDUM 2026-08-27.
+#
+# So the backmerge bought nothing, and cost a lot: GitHub does not emit
+# `push`/`pull_request` events for GITHUB_TOKEN-authored commits (recursion
+# guard), so every backmerged head got zero automatic CI coverage. The
+# `workflow_dispatch` rescue LUL-439 added on top looked like a fix but
+# wasn't one -- a `workflow_dispatch` check-run attaches to the commit but
+# never enters the PR's `statusCheckRollup`, which is the only thing
+# `PUT /pulls/{n}/merge` evaluates (wiki systems/ci-github-token-blind-spot,
+# MAJOR CORRECTION 2026-08-27). Every PR the backmerge "refreshed" became
+# permanently unmergeable until a human or agent pushed a real commit on top.
+# That is the LUL-762 P0 this workflow's rename resolves.
+#
+# Routine staleness is now simply a no-op: nothing re-stales an open PR just
+# because `main` moved, because nothing here needs it to be up to date. A
+# branch that genuinely needs a backmerge -- a real merge conflict, or one
+# old enough to be semantically stale -- still gets one by hand with the
+# studio PAT (AGENTS.md), which pushes with a real credential and is
+# unaffected by any of the above.
+#
+# What's left, below, is the one part of the old workflow that was always
+# load-bearing and still is: `github-actions[bot]` is permanently classified
+# a first-time contributor (Settings -> Actions -> fork PR approval ==
+# "first_time_contributors"), and every PR here is opened by that bot
+# (auto-pr.yml). So the `pull_request`-triggered run for every PR lands
+# `action_required` -- parked, waiting on a human to click "Approve and
+# run" -- and a parked run still counts as owing its required contexts, so
+# a PR can sit blocked even once the real push/workflow_dispatch run already
+# posted `success` on every required name (LUL-463). Auto-approving clears
+# that parking, restricted to same-repo branches only -- `head_repository`
+# can never equal `github.repository` for a fork PR, so a fork's parked run
+# is left exactly as gated as GitHub's own fork-PR policy already makes it.
+# That restriction is the only thing standing between this workflow and
+# handing arbitrary-code-execution-on-our-runners to any fork PR; do not
+# loosen it.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Fallback cadence in case the push trigger is missed (e.g. a merge that
+    # landed while this workflow itself was mid-update).
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: approve-parked-runs
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    name: approve parked action_required runs (same-repo branches only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: approve parked action_required runs (same-repo branches only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
+          | jq -r --arg repo "$REPO" \
+              '.workflow_runs[] | select(.event == "pull_request" and (.head_repository.full_name // "") == $repo) | "\(.id)\t\(.head_branch)"' \
+          | while IFS=$'\t' read -r run_id branch; do
+              echo "::notice::approving parked run $run_id on same-repo branch $branch"
+              if ! gh api -X POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>/tmp/approve-err.log; then
+                echo "::warning::could not approve run $run_id ($branch):"
+                cat /tmp/approve-err.log
+              fi
+            done

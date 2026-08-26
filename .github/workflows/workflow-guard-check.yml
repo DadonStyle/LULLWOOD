@@ -26,8 +26,9 @@ name: Workflow guard check
 # `pull_request` used to stay too, scoped to forks the same way ci.yml
 # scoped it via a job-level `if:`. LUL-719 measured live on PR #137 (head
 # `b07aa589`) that this is a required-status-check bypass, not just a
-# wasteful duplicate: `pr-freshness.yml` unparks the bot-authored
-# `pull_request` run's `action_required` gate (LUL-463) at an unpredictable
+# wasteful duplicate: `approve-parked-runs.yml` (formerly `pr-freshness.yml`)
+# unparks the bot-authored `pull_request` run's `action_required` gate
+# (LUL-463) at an unpredictable
 # later time, and branch protection resolves a required check by its LATEST
 # instance, treating `skipped` as passing -- so a late `skipped` instance
 # from a same-repo `pull_request` run can land on top of an EARLIER real

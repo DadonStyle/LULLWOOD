@@ -38,15 +38,24 @@ permissions:
 jobs:
   merge:
     name: merge if green and shipped
-    # A backmerged head (pr-freshness.yml, decisions/0010-no-force-push) never gets a
-    # `push` run -- GitHub suppresses push/pull_request events for GITHUB_TOKEN-authored
-    # commits, so pr-freshness explicitly workflow_dispatches CI on the new head instead
-    # (systems/ci-github-token-blind-spot, LUL-439). A push-only guard here silently skips
-    # every one of those, which is a standing cause of "APPROVED + green + nobody merged
-    # it" (LUL-692). Accept a workflow_dispatch green too, but only when github-actions[bot]
-    # triggered it -- that is the exact signature of the pr-freshness remedy and nothing
-    # else. A human/agent manually dispatching CI on a red branch must not be able to paint
-    # it green this way (playbooks/ci-green-from-workflow-dispatch).
+    # A GITHUB_TOKEN-authored backmerge head never gets a `push` run --
+    # GitHub suppresses push/pull_request events for GITHUB_TOKEN-authored
+    # commits. The old `pr-freshness.yml` used to produce heads like that and
+    # explicitly `workflow_dispatch`ed CI on them as a rescue
+    # (systems/ci-github-token-blind-spot, LUL-439); the `workflow_dispatch`
+    # branch below accepts that shape, restricted to github-actions[bot] as
+    # trigger so a human/agent can't manually dispatch CI on a red branch and
+    # paint it green this way (playbooks/ci-green-from-workflow-dispatch).
+    #
+    # LUL-778 (2026-08-27) deleted that backmerge step -- it turned out
+    # `workflow_dispatch` check-runs never enter the PR's `statusCheckRollup`
+    # regardless of provenance, so this branch's merge attempt would still
+    # 405 even when it fires (systems/ci-github-token-blind-spot, MAJOR
+    # CORRECTION 2026-08-27) -- and nothing left in the repo dispatches CI as
+    # github-actions[bot], so this branch is now dormant rather than merely
+    # narrow. Left in place rather than removed: it is harmless (the ruleset
+    # still adjudicates the actual merge) and revives correctly if a future
+    # workflow ever needs the same GITHUB_TOKEN-backmerge-plus-dispatch shape.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       startsWith(github.event.workflow_run.head_branch, 'lul-') &&
@@ -120,8 +129,10 @@ jobs:
           #
           # Read it from EVERY commit in the PR, not just the head commit (LUL-465).
           # Backmerging main into the branch is the standard way to track main
-          # (decisions/0010-no-force-push) and pr-freshness.yml does it automatically,
-          # so the head commit is routinely a "Merge branch 'main' into ..." commit
+          # (decisions/0010-no-force-push), done by hand with a real credential
+          # (LUL-778 removed the automated `pr-freshness.yml` version -- it was
+          # never required, see systems/ci-github-token-blind-spot), so the head
+          # commit can still routinely be a "Merge branch 'main' into ..." commit
           # that never carries the marker. Reading only the head silently and
           # permanently disarmed self-merge for any PR that outlived one main push.
           # The PR's own commit list is exactly main..HEAD; backmerge commits come
