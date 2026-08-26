@@ -49,7 +49,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
   `triggerTouchJump()` (L3135-3141, same guards as the desktop `Space`
   keydown handler, minus the `e.repeat` check since a tap is already
-  discrete; `MobileControls.tsx`'s `touchJump` button).
+  discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
+  charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
+  target on mobile, wired to the same `triggerTouchJump()` — it used to
+  render "JUMP" with `pointer-events: none`, a false affordance during the
+  one-second dodge window; the bottom-left button is unchanged and still
+  works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
   (L3147-3151, `MobileControls.tsx`'s `touchPause` button) toggles both
