@@ -189,6 +189,48 @@ export function shouldRevertInvestigateToChase(inv: string, hidden: boolean): bo
   return !hidden && (inv === 'sniff' || inv === 'back');
 }
 
+// ---- investigate approach step (LUL-658) ------------------------------------------
+// On main, `investigate`'s 'approach' sub-phase was gated
+// `if(hasReachedSniffRange(dist,rad)){ enter sniff } else { move }` -- the exact
+// tick that crossed the sniff-range threshold applied *zero* movement, since the
+// branch that sets desx/desz/speed only ran in the `else`. Usually harmless (one
+// skipped tick), but it compounds with LUL-562's fix: every
+// chase<->investigate/approach<->sniff bounce (confirmed repro:
+// wiki game/lul658-point-blank-livelock-confirmed) re-enters 'approach' at
+// whatever distance the predator was last frozen at. If that distance is already
+// inside sniff range -- true every time around the bounce, since nothing moved
+// last cycle either -- 'approach' re-fires the same zero-movement transition
+// immediately, forever. For most species/geometries the tick where the threshold
+// is crossed lands past the point where canSee() would also clear (LUL-659's
+// trace: wolf/lion's approach step overshoots the whole gap in one tick), so the
+// bounce resolves into a real chase before it can lock. Bear's slower approach
+// speed and larger `rad` (farther sniff-entry distance) mean its crossing tick
+// can land inside the "dead zone" between the sniff-range threshold and the
+// distance canSee actually clears -- and then, with the old gating, it never
+// moves again.
+//
+// Fix: 'approach' always reports its movement, even on the tick it also reports
+// reaching sniff range -- so every bounce cycle contributes one real step
+// instead of zero, and the dead zone closes over repeated cycles instead of
+// pinning there permanently. This does not touch bear's approach speed
+// multiplier, SNIFF_APPROACH_MARGIN, or give the 'sniff' sub-phase its own
+// movement -- it only stops 'approach' from skipping the movement it was
+// already entitled to on its own transition tick.
+export interface ApproachStep {
+  desx: number;
+  desz: number;
+  speed: number;
+  enterSniff: boolean;
+}
+export function stepApproach(ux: number, uz: number, speciesSpeed: number, dist: number, rad: number): ApproachStep {
+  return {
+    desx: ux,
+    desz: uz,
+    speed: speciesSpeed * 0.45,
+    enterSniff: hasReachedSniffRange(dist, rad),
+  };
+}
+
 // ---- backoff retreat point -------------------------------------------------------
 // `p.inv === 'sniff'`'s giving-up-a-sniff retreat point: `dist` units back
 // along the predator-to-player line, clamped to the map bounds the same way

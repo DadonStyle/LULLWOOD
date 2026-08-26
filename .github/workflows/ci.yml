@@ -76,6 +76,29 @@ jobs:
       - name: git remote credential guard
         run: node scripts/check-git-remote-credentials.mjs --repo .
 
+      # LUL-588: docs/ELEMENTS.md cites engine line numbers that go stale on
+      # every engine edit; they had been re-derived by hand three times and
+      # were measured wrong 82/82 on release/next @ af0c995. This fails the
+      # build on any citation that drifts off its anchor symbol and is not
+      # already listed in scripts/elements-citations-baseline.json. No
+      # `|| true` and no ::warning:: downgrade -- a NEW drifted citation is a
+      # hard failure, and the baseline may shrink but never grow. Needs no
+      # node_modules, so it runs before `npm ci` like the guard above.
+      - name: ELEMENTS.md citation guard
+        run: node scripts/check-elements-citations.mjs
+
+      # LUL-641 (LUL-277 wave 7, final): effectiveDetect()/canSee()/
+      # STILL_RAMP/STILL_DETECT_CUT existed twice -- once in lib/game/cover.ts
+      # (tested) and once, independently, in engine/forest-engine.js
+      # (shipped) -- and nine green tests were exercising the copy the game
+      # never ran. Fails when an identifier is declared at engine top level
+      # AND exported by a lib/game/*.ts module AND not imported by the
+      # engine (aliased imports still count), unless it's in the dated
+      # ALLOWLIST at the top of the script. No node_modules needed, so this
+      # runs before `npm ci` like the two guards above.
+      - name: duplicate-logic guard
+        run: node scripts/check-duplicate-logic.mjs
+
       - run: npm ci
 
       - name: unit tests
