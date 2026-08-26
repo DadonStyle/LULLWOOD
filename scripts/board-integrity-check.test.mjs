@@ -12,6 +12,13 @@ import {
   tombstoneWakeMarker,
   unownedPrWakeMarker,
   hasOpenWakeTicket,
+  extractPrNumbers,
+  referencedPrNumbers,
+  classifyDisposition,
+  classifyTombstones,
+  sortTombstonesStrandedFirst,
+  tombstoneWakeTitle,
+  tombstoneWakeDescription,
 } from './board-integrity-check.mjs';
 
 // ---- isTombstone / findTombstones ------------------------------------------
@@ -329,13 +336,182 @@ test('formatReport returns null when both lists are empty (silence on a healthy 
 
 test('formatReport names every tombstone and every unowned PR', () => {
   const report = formatReport(
-    [{ identifier: 'LUL-399', title: 'M0 gap', assigneeAgentId: 'abc' }],
+    [{ issue: { identifier: 'LUL-399', title: 'M0 gap', assigneeAgentId: 'abc' }, disposition: 'STRANDED', mergedPrs: [] }],
     [{ number: 126, title: 'fix thing', html_url: 'https://x/126' }],
     'DadonStyle/LULLWOOD',
   );
   assert.match(report, /LUL-399/);
   assert.match(report, /#126/);
   assert.match(report, /fix thing/);
+});
+
+test('formatReport marks a SHIPPED tombstone with its merge commit and a close-it action', () => {
+  const report = formatReport(
+    [
+      {
+        issue: { identifier: 'LUL-677', title: 'x' },
+        disposition: 'SHIPPED',
+        mergedPrs: [{ number: 144, merged: true, merge_commit_sha: 'bd72134' }],
+      },
+    ],
+    [],
+    'DadonStyle/LULLWOOD',
+  );
+  assert.match(report, /SHIPPED/);
+  assert.match(report, /#144/);
+  assert.match(report, /bd72134/);
+  assert.match(report, /close the ticket/);
+});
+
+test('formatReport sorts STRANDED tombstones before SHIPPED ones', () => {
+  const shipped = { issue: { identifier: 'LUL-A' }, disposition: 'SHIPPED', mergedPrs: [{ number: 1, merged: true }] };
+  const stranded = { issue: { identifier: 'LUL-B' }, disposition: 'STRANDED', mergedPrs: [] };
+  const report = formatReport([shipped, stranded], [], 'DadonStyle/LULLWOOD');
+  assert.ok(report.indexOf('LUL-B') < report.indexOf('LUL-A'), 'expected STRANDED (LUL-B) to be listed before SHIPPED (LUL-A)');
+});
+
+// ---- extractPrNumbers / referencedPrNumbers --------------------------------
+
+test('extractPrNumbers pulls every #<n> token out of free text', () => {
+  assert.deepEqual(extractPrNumbers('shipped in #144, superseded #138 earlier'), [144, 138]);
+});
+
+test('extractPrNumbers returns empty for missing/empty text', () => {
+  assert.deepEqual(extractPrNumbers(undefined), []);
+  assert.deepEqual(extractPrNumbers(''), []);
+});
+
+test('referencedPrNumbers scans title, description, and every comment body, deduped and sorted', () => {
+  const issue = {
+    title: 'LUL-677: something',
+    description: 'see #144',
+    comments: [{ body: 'merged as #144' }, { body: 'earlier attempt #138' }],
+  };
+  assert.deepEqual(referencedPrNumbers(issue), [138, 144]);
+});
+
+test('referencedPrNumbers handles an issue with no comments field', () => {
+  assert.deepEqual(referencedPrNumbers({ title: 'no refs here', description: '' }), []);
+});
+
+// ---- classifyDisposition ----------------------------------------------------
+//
+// LUL-736: the LUL-673 hand sweep found 4 of 5 Alarm B hits were stale status
+// on already-merged work, not stranded work -- LUL-677 (PR #144 merged),
+// LUL-682 (PR #138 merged), LUL-702 (PR #142 merged) vs. LUL-725 (genuinely
+// stranded, no PR could even be approved -- GitHub's self-approval ban).
+// These fixtures are that real shape, not invented.
+
+test('LUL-677 shape: references one PR, already merged -> SHIPPED', () => {
+  const issue = { identifier: 'LUL-677', title: 'x', description: 'closed via #144' };
+  const prByNumber = new Map([[144, { number: 144, merged: true, state: 'closed', merge_commit_sha: 'bd72134' }]]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
+  assert.deepEqual(result.mergedPrs, [{ number: 144, merged: true, state: 'closed', merge_commit_sha: 'bd72134' }]);
+});
+
+test('LUL-725 shape: references a PR that is still open -> STRANDED', () => {
+  const issue = { identifier: 'LUL-725', title: 'x', description: 'blocked on #145' };
+  const prByNumber = new Map([[145, { number: 145, merged: false, state: 'open' }]]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'STRANDED');
+});
+
+test('no PR reference at all -> STRANDED', () => {
+  const issue = { identifier: 'LUL-719', title: 'settled in thread', description: '' };
+  const result = classifyDisposition(issue, new Map());
+  assert.equal(result.disposition, 'STRANDED');
+  assert.deepEqual(result.referencedPrs, []);
+});
+
+test('every referenced PR closed without merging -> STRANDED, not SHIPPED', () => {
+  const issue = { identifier: 'LUL-X', title: 'x', description: 'tried #10, abandoned' };
+  const prByNumber = new Map([[10, { number: 10, merged: false, state: 'closed' }]]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'STRANDED');
+});
+
+// The ambiguous case the ticket calls out explicitly: multiple referenced
+// PRs, only some merged -- STRANDED, since something referenced by this same
+// ticket is still open and the work as a whole is not done.
+test('multiple referenced PRs, only some merged and one still open -> STRANDED', () => {
+  const issue = { identifier: 'LUL-Y', title: 'x', description: 'part 1 #20, part 2 #21' };
+  const prByNumber = new Map([
+    [20, { number: 20, merged: true, state: 'closed' }],
+    [21, { number: 21, merged: false, state: 'open' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'STRANDED');
+});
+
+test('multiple referenced PRs, one merged and the other closed-unmerged (not open) -> SHIPPED', () => {
+  const issue = { identifier: 'LUL-Z', title: 'x', description: 'attempt #30, landed as #31' };
+  const prByNumber = new Map([
+    [30, { number: 30, merged: false, state: 'closed' }],
+    [31, { number: 31, merged: true, state: 'closed' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
+});
+
+test('a referenced number that does not resolve to any PR (404) is ignored, not treated as open', () => {
+  const issue = { identifier: 'LUL-W', title: 'x', description: 'see #999 and #144' };
+  const prByNumber = new Map([[144, { number: 144, merged: true, state: 'closed' }]]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
+});
+
+test('classifyTombstones maps a list of issues through classifyDisposition', () => {
+  const issues = [
+    { identifier: 'A', description: '#1' },
+    { identifier: 'B', description: 'no refs' },
+  ];
+  const prByNumber = new Map([[1, { number: 1, merged: true, state: 'closed' }]]);
+  const result = classifyTombstones(issues, prByNumber);
+  assert.equal(result[0].disposition, 'SHIPPED');
+  assert.equal(result[1].disposition, 'STRANDED');
+});
+
+test('sortTombstonesStrandedFirst orders STRANDED before SHIPPED, stable within each group', () => {
+  const shipped1 = { issue: { identifier: 'S1' }, disposition: 'SHIPPED' };
+  const stranded1 = { issue: { identifier: 'T1' }, disposition: 'STRANDED' };
+  const shipped2 = { issue: { identifier: 'S2' }, disposition: 'SHIPPED' };
+  const stranded2 = { issue: { identifier: 'T2' }, disposition: 'STRANDED' };
+  const sorted = sortTombstonesStrandedFirst([shipped1, stranded1, shipped2, stranded2]);
+  assert.deepEqual(
+    sorted.map((c) => c.issue.identifier),
+    ['T1', 'T2', 'S1', 'S2'],
+  );
+});
+
+// ---- wake-ticket text carries the disposition ------------------------------
+
+test('tombstoneWakeTitle reads "close it" for SHIPPED and "needs work" for STRANDED', () => {
+  assert.match(tombstoneWakeTitle('Board-integrity: LUL-677 is a tombstone', 'SHIPPED'), /SHIPPED, close it/);
+  assert.match(tombstoneWakeTitle('Board-integrity: LUL-725 is a tombstone', 'STRANDED'), /STRANDED, needs work/);
+});
+
+test('tombstoneWakeDescription for SHIPPED names the PR number and merge commit, and says to close', () => {
+  const description = tombstoneWakeDescription({
+    issue: { identifier: 'LUL-677', title: 'x', status: 'blocked' },
+    disposition: 'SHIPPED',
+    mergedPrs: [{ number: 144, merged: true, merge_commit_sha: 'bd72134' }],
+  });
+  assert.match(description, /#144/);
+  assert.match(description, /bd72134/);
+  assert.match(description, /MERGED/);
+  assert.match(description, /Close the ticket/);
+  assert.doesNotMatch(description, /stranded/i);
+});
+
+test('tombstoneWakeDescription for STRANDED does not claim anything shipped', () => {
+  const description = tombstoneWakeDescription({
+    issue: { identifier: 'LUL-725', title: 'x', status: 'blocked' },
+    disposition: 'STRANDED',
+    mergedPrs: [],
+  });
+  assert.doesNotMatch(description, /MERGED/);
+  assert.match(description, /Re-check it/);
 });
 
 // ---- wake-ticket dedup (the authorization-boundary redesign) --------------
