@@ -35,12 +35,25 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 ### Player
 
 **What it can do**
-- Move (WASD/arrows), walk or run (`Shift`),
+- Move (WASD/arrows), walk or run (`Shift`, hold by default; toggle if the
+  `runMode==='toggle'` accessibility setting is on, `ShiftLeft`/`ShiftRight`
+  edge-detect at L1506-1507 flips `toggleRunOn`),
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
-  `applyLook()`, movement block in `tick()`.
+  `applyLook()`, movement block in `tick()`,
+  `running` derivation at L2802. In toggle mode, touch's analogue is
+  `triggerTouchToggleRun()` (L3156-3160, gated on the same
+  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
-  arc is the predator-charge dodge (LUL-213).
+  arc is the predator-charge dodge (LUL-213). Touch equivalent is
+  `triggerTouchJump()` (L3133-3139, same guards as the desktop `Space`
+  keydown handler, minus the `e.repeat` check since a tap is already
+  discrete; `MobileControls.tsx`'s `touchJump` button).
+- Pause the run (`Escape`, desktop-only key) or resume it — touch has no
+  pointer-lock re-acquire to resume with, so `triggerTouchPause()`
+  (L3145-3148, `MobileControls.tsx`'s `touchPause` button) toggles both
+  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -53,7 +66,11 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   shrinks predator detect range the longer it's held (`STILL_RAMP`=1.2s,
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
-- Dim the personal follow-light (hold `KeyF`) — `LIGHT_NORMAL`/`LIGHT_DIMMED`,
+- Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
+  button via `setTouchVeil()` L3119 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L2788, mirrored the same way in `qaPlayerState()`'s return
+  object, so the two inputs are equivalent, not independent) —
+  `LIGHT_NORMAL`/`LIGHT_DIMMED`,
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
@@ -628,12 +645,14 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
   a patch when a value actually changed).
-- Send **actions back**, never state: the full returned API is `enter`,
-  `restart`, `setPace`, `setFog`, `toggleSound`, `regenMap`, and five
-  touch-control setters (`setTouchMove`/`setTouchLook`/`setTouchSprint`/
-  `triggerTouchHide`/`triggerTouchInteract`) — these are the
-  *only* way React code can affect the world. No LUL-26 accessibility/
-  difficulty setters exist in this object on `main`.
+- Send **actions back**, never state: the full API `init()` returns
+  (L3162-3165) is `enter`, `restart`, `setPace`, `setFog`, `toggleSound`,
+  `regenMap`, and nine touch-control setters (`setTouchMove`/`setTouchLook`/
+  `setTouchSprint`/`triggerTouchHide`/`triggerTouchInteract`/
+  `triggerTouchJump`/`triggerTouchPause`/`triggerTouchToggleRun`/
+  `setTouchVeil`, LUL-529) — these are the *only* way React code can affect
+  the world.
+  No LUL-26 accessibility/difficulty setters exist in this object on `main`.
 - The minimap specifically reads and draws two other elements' live data:
   tree positions (`treeData`, every 4th tree) and the lake's position/radius
   (`drawMinimapStatic()`) — not just player/child/predator state.
