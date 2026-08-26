@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  WATCHDOGS,
+  OPEN_STATUSES,
+  hasScheduleTrigger,
+  workflowDisplayName,
+  deriveWatchdogs,
   latestScheduledConclusion,
   classifyWatchdog,
   findRedWatchdogs,
@@ -11,6 +14,21 @@ import {
   watchdogWakeMarker,
 } from './watchdog-run-check.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
+
+function cronWorkflow(name, extraTriggers = '') {
+  return `name: ${name}\n\non:\n  schedule:\n    - cron: '*/30 * * * *'\n${extraTriggers}\njobs:\n  check:\n    runs-on: ubuntu-latest\n`;
+}
+
+// The roster is derived, not hand-listed, so the tests derive theirs too --
+// from fixture yaml shaped like the repo's real workflows.
+const WATCHDOGS = deriveWatchdogs(
+  [
+    { file: 'base-branch-guard.yml', yaml: cronWorkflow('Base branch guard', '  pull_request:\n') },
+    { file: 'review-gap-detector.yml', yaml: cronWorkflow('Review gap detector') },
+    { file: 'version-cut.yml', yaml: cronWorkflow('Version cut', '  push:\n    branches: [main]\n') },
+  ],
+  [{ file: 'merge-gap-detector.yml', yaml: cronWorkflow('Merge gap detector') }],
+);
 
 // LUL-685's own measured shape, live 2026-08-26: review-gap-detector.yml red
 // 99/102 scheduled runs straight, same offender (PR #128) every time. This
@@ -69,9 +87,17 @@ test('resolves on default branch but has never run -> "no-runs", not "red"', () 
 
 test('a mixed-trigger watchdog (base-branch-guard) classifies the same way once runs are pre-filtered', () => {
   const baseBranchGuard = WATCHDOGS.find((w) => w.file === 'base-branch-guard.yml');
-  assert.equal(baseBranchGuard.mixedTrigger, true);
   const result = classifyWatchdog(baseBranchGuard, true, [redRun()]);
   assert.equal(result.alarm, 'red');
+});
+
+// version-cut.yml was hand-flagged `mixedTrigger: false`, so its runs were
+// fetched unfiltered and the newest one was an unfinished *push* run. A null
+// conclusion must not read as green, and must not read as red either.
+test('an unfinished latest run (conclusion: null) is not green and not red', () => {
+  const inProgress = { id: 7, conclusion: null, html_url: 'https://example.invalid/runs/7' };
+  assert.equal(latestScheduledConclusion([inProgress]), null);
+  assert.equal(classifyWatchdog(REVIEW_GAP_DETECTOR, true, [inProgress]).alarm, 'no-runs');
 });
 
 // ---- findRedWatchdogs / findInertWatchdogs / findNoRunWatchdogs ------------
@@ -127,9 +153,9 @@ test('dedup: 99 consecutive red runs -> hasOpenWakeTicket is true after the firs
 
 test('re-arm: once the wake ticket is done (no longer in the open-issues list), a fresh red run can file again', () => {
   const marker = watchdogWakeMarker(REVIEW_GAP_DETECTOR);
-  // The open-issues fetch only ever pulls status=todo/in_progress (see
-  // fetchOpenIssuesForDedup), so a `done` ticket is absent from this list --
-  // that absence IS the re-arm, no separate mechanism needed.
+  // The open-issues fetch only pulls the non-terminal statuses (see
+  // OPEN_STATUSES), so a `done` ticket is absent from this list -- that
+  // absence IS the re-arm, no separate mechanism needed.
   const openIssuesAfterTicketClosed = [];
   assert.equal(hasOpenWakeTicket(openIssuesAfterTicketClosed, marker), false);
 });
@@ -139,4 +165,81 @@ test('dedup does not cross-match a different watchdog\'s marker', () => {
   const versionCutMarker = watchdogWakeMarker(WATCHDOGS.find((w) => w.file === 'version-cut.yml'));
   const openIssues = [{ title: `${versionCutMarker} (LUL-685 detector)`, status: 'todo' }];
   assert.equal(hasOpenWakeTicket(openIssues, reviewGapMarker), false);
+});
+
+// The dedup fetch used to pull status=todo and status=in_progress only.
+// LUL-721 -- this detector's own first wake ticket -- was moved to `blocked`
+// by terminal-run recovery, which made it invisible to that query while it
+// was still very much open, so the 30-minute cron would refile it forever.
+test('dedup counts a ticket parked in `blocked` or `in_review` as still open (LUL-721 flood shape)', () => {
+  // hasOpenWakeTicket matches on title alone, so the status filter that
+  // actually decides this lives in the fetch: whatever OPEN_STATUSES does
+  // not name is invisible to dedup and gets refiled on the next tick.
+  for (const status of ['todo', 'in_progress', 'blocked', 'in_review']) {
+    assert.ok(OPEN_STATUSES.includes(status), `${status} must be fetched for dedup, or the alarm refiles`);
+  }
+  // Terminal statuses must stay out -- that absence is what re-arms the alarm.
+  for (const status of ['done', 'cancelled']) {
+    assert.equal(OPEN_STATUSES.includes(status), false, `${status} must not suppress a refile`);
+  }
+
+  const marker = watchdogWakeMarker(REVIEW_GAP_DETECTOR);
+  const parked = [{ title: `${marker} (LUL-685 detector)`, status: 'blocked' }];
+  assert.equal(hasOpenWakeTicket(parked, marker), true);
+});
+
+// ---- deriving the roster from the repo (replaces the hand-listed WATCHDOGS) -
+
+test('hasScheduleTrigger finds a cron in the on: block, block form and inline list', () => {
+  assert.equal(hasScheduleTrigger(cronWorkflow('Review gap detector')), true);
+  assert.equal(hasScheduleTrigger('name: X\non: [push, schedule]\njobs: {}\n'), true);
+});
+
+test('hasScheduleTrigger does not fire on a workflow with no cron', () => {
+  assert.equal(hasScheduleTrigger('name: CI\n\non:\n  pull_request:\n  push:\n\njobs: {}\n'), false);
+  assert.equal(hasScheduleTrigger(''), false);
+});
+
+test('hasScheduleTrigger ignores a `schedule:` that is not a trigger', () => {
+  // A job step or env key called schedule sits below the on: block and must
+  // not enrol a non-cron workflow into the roster.
+  const yaml = 'name: CI\n\non:\n  push:\n\njobs:\n  build:\n    env:\n      schedule: nightly\n';
+  assert.equal(hasScheduleTrigger(yaml), false);
+});
+
+test('workflowDisplayName prefers the workflow name:, falling back to the filename', () => {
+  assert.equal(workflowDisplayName('daily-report.yml', 'name: Daily report\non: {}\n'), 'Daily report');
+  assert.equal(workflowDisplayName('daily-report.yml', 'on: {}\n'), 'daily-report.yml');
+});
+
+// The regression this whole change exists for: daily-report.yml shipped with
+// a schedule: and was never added to the hand-maintained list, so nothing
+// watched it. Deriving the roster picks it up with no edit at all.
+test('deriveWatchdogs enrols a newly-added cron workflow with no hand edit (daily-report shape)', () => {
+  const roster = deriveWatchdogs(
+    [
+      { file: 'ci.yml', yaml: 'name: CI\non:\n  pull_request:\njobs: {}\n' },
+      { file: 'daily-report.yml', yaml: cronWorkflow('Daily report') },
+    ],
+    [],
+  );
+  assert.deepEqual(
+    roster.map((w) => w.file),
+    ['daily-report.yml'],
+  );
+  assert.equal(roster[0].name, 'Daily report');
+  assert.equal(roster[0].onDefaultBranch, true);
+});
+
+test('deriveWatchdogs flags a train-branch-only cron as not on the default branch (LUL-628 inert shape)', () => {
+  const roster = deriveWatchdogs([], [{ file: 'merge-gap-detector.yml', yaml: cronWorkflow('Merge gap detector') }]);
+  assert.equal(roster[0].onDefaultBranch, false);
+  assert.equal(classifyWatchdog(roster[0], roster[0].onDefaultBranch, []).alarm, 'inert');
+});
+
+test('deriveWatchdogs does not double-count a workflow present on both refs', () => {
+  const onBoth = { file: 'review-gap-detector.yml', yaml: cronWorkflow('Review gap detector') };
+  const roster = deriveWatchdogs([onBoth], [onBoth]);
+  assert.equal(roster.length, 1);
+  assert.equal(roster[0].onDefaultBranch, true);
 });
