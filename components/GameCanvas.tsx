@@ -161,6 +161,21 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #status.hiding { color: #baffcf; border-color: #6fe89a; }
   body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
 
+  /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
+     high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
+     Default OFF hides the tuning/dev HUD (#panel's pace/mist/sound/regen/fullscreen
+     controls, plus #minimap); ON is today's behaviour, unchanged.
+     #settingsBtn lives inside #panel but is deliberately exempted here -- hiding
+     it along with the rest of #panel would strand a player who just turned admin
+     mode off with no way to reopen Settings and turn it back on. Flagged as a
+     declared deviation from the literal "hide id=panel" ticket wording; see the
+     LUL-650 PR body.
+     #minimap needs !important: the engine writes its own inline
+     mm.style.display (blackout difficulty preset, forest-engine.js), which
+     beats a plain rule. */
+  body[data-admin-mode="0"] #panel > *:not(#settingsBtn) { display: none !important; }
+  body[data-admin-mode="0"] #minimap { display: none !important; }
+
   /* shown when pointer lock is released — visual only, never blocks the panel */
   #pausePrompt { position: fixed; inset: 0; z-index: 15; display: none;
     align-items: center; justify-content: center; pointer-events: none;
