@@ -45,6 +45,32 @@
 // that is already known-bad, and that must not read as a new defect and turn
 // CI red on an unrelated PR.
 //
+// LUL-682: L<n> ITSELF WAS THE CONFLICT SOURCE -- MOST OF IT IS GONE NOW
+//
+// The baseline above made drift explicit, but it could not stop the citations
+// from being a merge-conflict magnet: docs/ELEMENTS.md:40 and every other
+// cited line moves whenever ANYTHING above it in forest-engine.js does, so
+// two branches that both touch the engine (nearly all of them) collide on the
+// exact same doc line. Measured 2026-08-26: two open PRs, zero semantic
+// overlap, one conflicted file each -- docs/ELEMENTS.md, nothing else.
+//
+// Of the 116 citations measured that day, 81 resolved to a whole symbol span
+// (18 ok + 63 drift). For those, the line number was never adding proof the
+// symbol name didn't already carry -- `depositScent()` says exactly as much
+// with or without `L1035-1038`. So those 81 sites now cite the symbol alone,
+// with no `L<n>` at all, and are permanently insensitive to engine line
+// shifts: see scripts/elements-resolved-symbols.json and
+// checkResolvedSymbols() below. The other 35 (bare expressions, usage sites,
+// ambiguous/imported names -- the REFUSED tail, see the method note in
+// game/elements-registry on the wiki) keep their line numbers untouched,
+// because nothing proves a symbol-only citation would still mean the same
+// thing for them.
+//
+// This is a ratchet in the other direction from the baseline: the resolved-
+// symbols list only grows by a human proving a NEW citation resolves
+// (`--report`, then hand-add it here and drop its `L<n>` in the same PR) --
+// never by a script guessing which bare expressions are "close enough".
+//
 // Usage:
 //   node scripts/check-elements-citations.mjs              # gate; exit 1 on NEW bad citations
 //   node scripts/check-elements-citations.mjs --report      # full table, always exit 0
@@ -57,14 +83,23 @@ import { pathToFileURL } from 'node:url';
 const DOC = 'docs/ELEMENTS.md';
 const ENGINE = 'engine/forest-engine.js';
 const BASELINE = 'scripts/elements-citations-baseline.json';
+const RESOLVED_SYMBOLS = 'scripts/elements-resolved-symbols.json';
 
-// ANCHOR FLOOR. A green run must never be able to mean "nothing was checked".
-// If the count of citations that resolve to a symbol falls below this, the
-// gate fails and asks for a deliberate decision, on the assumption that the
-// doc or the engine was restructured rather than that the debt evaporated.
-// Set from the 82 measured on release/next @ af0c995, with slack for
-// citations legitimately removed by an edit.
-export const ANCHOR_FLOOR = 60;
+// RESOLVED-SYMBOLS FLOOR. A green run must never be able to mean "nothing was
+// checked". If the whitelist in scripts/elements-resolved-symbols.json falls
+// below this, the gate fails and asks for a deliberate decision, on the
+// assumption the file was truncated/corrupted rather than that 38 citations
+// legitimately stopped being resolvable. Set from the 38 measured on
+// release/next @ addca24 (LUL-682), with slack for symbols legitimately
+// removed by a future edit.
+//
+// This replaces the old ANCHOR_FLOOR (60), which guarded the same "green
+// means nothing ran" failure mode for the L<n>-anchored population. That
+// population is now ~0 by design -- the 81 citations it used to count are the
+// ones converted to symbol-only citations above -- so a floor on it would
+// fail forever, not protect anything. The non-vacuity guarantee now lives
+// here instead.
+export const RESOLVED_SYMBOLS_FLOOR = 25;
 
 // ---- engine lexing --------------------------------------------------------
 
@@ -376,6 +411,29 @@ export function diffAgainstBaseline(bad, baselineKeys) {
   return { fresh, stale };
 }
 
+// ---- resolved symbols (LUL-682) --------------------------------------------
+
+// Load the hand-maintained whitelist. Never auto-generated -- adding an entry
+// means a human ran --report, confirmed a citation resolves, and is
+// deliberately removing its L<n> in the same PR (see the header comment).
+export function loadResolvedSymbols(jsonText) {
+  return JSON.parse(jsonText).symbols ?? [];
+}
+
+// Every symbol here is a citation docs/ELEMENTS.md makes with no line number
+// at all -- the doc's claim is just "this exists". Verify each still resolves
+// to exactly one declaration. Unlike the L<n> baseline, nothing here is ever
+// grandfathered: every entry was proven resolvable the day it was added, so
+// any entry that stops resolving is a fresh, real defect, not debt.
+export function checkResolvedSymbols(symbols, spans) {
+  const broken = [];
+  for (const name of symbols) {
+    if (!spans.has(name)) broken.push({ symbol: name, reason: 'missing' });
+    else if (spans.get(name) === null) broken.push({ symbol: name, reason: 'ambiguous' });
+  }
+  return { broken, checked: symbols.length };
+}
+
 // ---- cli ------------------------------------------------------------------
 
 function fmt(r) {
@@ -391,8 +449,9 @@ function main(argv) {
   const docPath = path.join(root, DOC);
   const enginePath = path.join(root, ENGINE);
   const baselinePath = path.join(root, BASELINE);
+  const resolvedSymbolsPath = path.join(root, RESOLVED_SYMBOLS);
 
-  for (const p of [docPath, enginePath]) {
+  for (const p of [docPath, enginePath, resolvedSymbolsPath]) {
     if (!fs.existsSync(p)) {
       console.error(`check-elements-citations: missing ${path.relative(root, p)}`);
       return 1;
@@ -401,6 +460,7 @@ function main(argv) {
 
   let docText = fs.readFileSync(docPath, 'utf8');
   const engineText = fs.readFileSync(enginePath, 'utf8');
+  const resolvedSymbols = loadResolvedSymbols(fs.readFileSync(resolvedSymbolsPath, 'utf8'));
   let r = checkCitations(docText, engineText);
 
   if (fix) {
@@ -443,11 +503,16 @@ function main(argv) {
     return 0;
   }
 
+  const spans = declarationSpans(engineText);
+  const resCheck = checkResolvedSymbols(resolvedSymbols, spans);
+
   console.log(
     `check-elements-citations: ${r.total} citations in ${DOC}; ` +
     `${r.anchored} anchored to a resolvable symbol; ` +
     `${r.ok.length} ok, ${r.drift.length} drifted, ${r.unknown.length} unknown symbol, ` +
-    `${r.ambiguous.length} ambiguous, ${r.unverifiable.length} unverifiable.`);
+    `${r.ambiguous.length} ambiguous, ${r.unverifiable.length} unverifiable; ` +
+    `${resolvedSymbols.length} symbol-only citation(s) in ${RESOLVED_SYMBOLS} ` +
+    `(${resCheck.broken.length} broken).`);
 
   if (report) {
     for (const status of ['drift', 'unknown', 'ambiguous', 'unverifiable']) {
@@ -455,15 +520,36 @@ function main(argv) {
       console.log(`\n${status.toUpperCase()} (${r[status].length}):`);
       for (const row of r[status]) console.log(fmt(row));
     }
+    if (resCheck.broken.length) {
+      console.log(`\nRESOLVED-SYMBOLS BROKEN (${resCheck.broken.length}):`);
+      for (const b of resCheck.broken) {
+        console.log(`  ${RESOLVED_SYMBOLS}: \`${b.symbol}\` is ${b.reason} in ${ENGINE}`);
+      }
+    }
     return 0;
   }
 
-  if (r.anchored < ANCHOR_FLOOR) {
+  if (resolvedSymbols.length < RESOLVED_SYMBOLS_FLOOR) {
     console.error(
-      `\ncheck-elements-citations: FAIL -- only ${r.anchored} citations resolve to a symbol,\n` +
-      `below the floor of ${ANCHOR_FLOOR}. Either ${DOC} lost its source citations or the\n` +
-      `anchor format changed; a run that asserts nothing must not report green. If this is\n` +
-      `real, re-measure and lower ANCHOR_FLOOR deliberately.`);
+      `\ncheck-elements-citations: FAIL -- only ${resolvedSymbols.length} entries in\n` +
+      `${RESOLVED_SYMBOLS}, below the floor of ${RESOLVED_SYMBOLS_FLOOR}. A run that asserts\n` +
+      `nothing must not report green. If this is real (symbols legitimately removed), ` +
+      `re-measure\nand lower RESOLVED_SYMBOLS_FLOOR deliberately.`);
+    return 1;
+  }
+
+  if (resCheck.broken.length) {
+    console.error(`\ncheck-elements-citations: FAIL -- ${resCheck.broken.length} resolved-symbol citation(s) broke:`);
+    for (const b of resCheck.broken) {
+      console.error(
+        `  \`${b.symbol}\` is ${b.reason} in ${ENGINE} -- ${DOC} cites it by name\n` +
+        `  with no line number (see ${RESOLVED_SYMBOLS}). Grep ${DOC} for it and fix the\n` +
+        `  claim, or remove the entry from ${RESOLVED_SYMBOLS} if it no longer applies.`);
+    }
+    console.error(
+      `\nUnlike drifted L<n> citations, this is never baselined -- every entry in\n` +
+      `${RESOLVED_SYMBOLS} was proven resolvable the day it was added, so a break here is\n` +
+      `always a fresh defect.`);
     return 1;
   }
 
@@ -499,7 +585,8 @@ function main(argv) {
 
   console.log(
     `check-elements-citations: OK -- ${r.ok.length} verified, ` +
-    `${bad.length} known-bad (baselined), 0 new.`);
+    `${bad.length} known-bad (baselined), 0 new; ` +
+    `${resolvedSymbols.length} resolved-symbol citation(s) clean.`);
   return 0;
 }
 
