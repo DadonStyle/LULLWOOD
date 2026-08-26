@@ -42,10 +42,18 @@ name: Workflow guard check
 # .github/workflows/** loses automatic coverage from this check; fall back
 # to a manual `workflow_dispatch` against the fork's head ref. Zero fork PRs
 # received in this repo's history as of this writing.
+#
+# LUL-610: no `paths:` filter, deliberately -- this check used to be scoped
+# to `paths: ['.github/workflows/**']`, which meant it never ran (no run at
+# all, not even a skipped one) on any push/PR that didn't touch a workflow
+# file. That's fine for an optional check, but it's a *required* status check
+# on main, and a required check with no run ever posts leaves the PR stuck
+# "Expected -- waiting for status to be reported" forever. The job is cheap
+# (a few `grep`s), so running unconditionally costs nothing worth scoping
+# around. (LUL-610 removed paths; LUL-729 then removed pull_request entirely.)
 on:
   push:
     branches: ['**']
-    paths: ['.github/workflows/**']
   workflow_dispatch:
 
 permissions:
