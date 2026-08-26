@@ -22,6 +22,7 @@ import { CHARGE_WINDOW } from '@/lib/game/charge';
 // harder to diff against the original CSS.
 const OVERLAY_STYLE = `
   html, body { height: 100%; margin: 0; background: #0a0e15; overflow: hidden;
+    overscroll-behavior: none; touch-action: manipulation;
     font-family: ui-sans-serif, system-ui, sans-serif; color: #b9c8dd; }
   canvas { display: block; }
 
@@ -85,6 +86,10 @@ const OVERLAY_STYLE = `
     #panel button { padding: 13px 16px; font-size: 14px; }
     #panel label, #panel span { font-size: 13px; }
     #panel input[type="range"] { width: 64px; }
+    /* LUL-529: same 44px rationale as #panel button above -- 10px/24px at
+       15px font sits well under it, and this is the only tap a player has on
+       the win/death screen. */
+    .restartBtn { padding: 15px 24px; font-size: 16px; }
     #gateTitle { font-size: 32px; }
     #gateSub { font-size: 13px; }
     #gateKeys { font-size: 13px; line-height: 2.1; }
@@ -114,6 +119,13 @@ const OVERLAY_STYLE = `
      backdrop. */
   #settingsPanel { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 40;
     width: min(420px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto;
+    /* LUL-529: 100vh is the *largest* possible viewport on mobile Safari/Chrome
+       (toolbar collapsed) -- while the toolbar is showing, a dialog sized off
+       it can size taller than what's actually visible, pushing its own top
+       edge (this box is centered via top:50%) off-screen. 100dvh tracks the
+       real, current visible height; the 100vh rule above stays as the
+       fallback for browsers with no dvh support. */
+    max-height: calc(100dvh - 48px);
     padding: 20px 22px; border-radius: 14px;
     background: rgba(14,19,29,0.94); border: 1px solid rgba(150,175,215,0.22);
     box-shadow: 0 0 0 9999px rgba(6,9,15,0.72), 0 20px 60px rgba(0,0,0,0.5);
@@ -248,19 +260,30 @@ const OVERLAY_STYLE = `
 
 // Elements still owned directly by the engine (getElementById, out of LUL-34's
 // scope) -- everything else from the original overlay now lives in <Hud>.
-const OVERLAY_MARKUP = `
+// LUL-529: `#hint`/`#pausePrompt` text referenced mouse/click actions
+// unconditionally, even on mobile where there's no mouse and no pointer lock
+// to "click" back into -- built as a function of the same mode decision
+// GameCanvas already makes below, rather than a static template string.
+function overlayMarkup(mobile: boolean) {
+  const hint = mobile ? 'drag the right stick to look &nbsp;·&nbsp; left stick to walk' : 'move the mouse to look &nbsp;·&nbsp; WASD to walk';
+  const pausePrompt = mobile ? 'paused — tap the Pause button to resume' : 'click to look around';
+  return `
 <div id="vignette"></div>
 <div id="spotFlash"></div>
 <div id="flash"></div>
 <canvas id="minimap" width="160" height="160"></canvas>
-<div id="hint">move the mouse to look &nbsp;·&nbsp; WASD to walk</div>
-<div id="pausePrompt">click to look around</div>
+<div id="hint">${hint}</div>
+<div id="pausePrompt">${pausePrompt}</div>
 <video id="deathVideo" muted playsinline preload="auto" src="/death.mp4"></video>
 `;
+}
 
 export default function GameCanvas() {
   const [hud, setHud] = useState<EngineHudState>(INITIAL_HUD_STATE);
   const [actions, setActions] = useState<EngineActions | null>(null);
+  // LUL-276/LUL-529: decided once, same as Hud.tsx's `mobile` -- a device
+  // doesn't switch control schemes mid-session.
+  const mobile = useState(() => isMobile())[0];
 
   // LUL-153: page_view + session_length are independent of whether the engine
   // module ever finishes loading, so they get their own effect rather than
@@ -296,7 +319,7 @@ export default function GameCanvas() {
       // LUL-276: also takes an explicit inputMode so desktop mouse-look and
       // mobile touch input bind disjoint listeners inside the engine instead
       // of both being live and writing player.yaw/pitch at once.
-      setActions(init(setHud, isMobile() ? 'mobile' : 'desktop'));
+      setActions(init(setHud, mobile ? 'mobile' : 'desktop'));
       disposeEngine = dispose;
     });
 
@@ -309,12 +332,15 @@ export default function GameCanvas() {
         setHud(INITIAL_HUD_STATE);
       }
     };
-  }, []);
+    // `mobile` is a useState initializer value, never reassigned after mount,
+    // so listing it here can't cause a second init() -- it just satisfies
+    // exhaustive-deps without lying about what this effect reads.
+  }, [mobile]);
 
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: OVERLAY_STYLE }} />
-      <div dangerouslySetInnerHTML={{ __html: OVERLAY_MARKUP }} />
+      <div dangerouslySetInnerHTML={{ __html: overlayMarkup(mobile) }} />
       <Hud state={hud} actions={actions} />
     </>
   );

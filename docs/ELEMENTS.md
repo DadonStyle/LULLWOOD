@@ -35,12 +35,25 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 ### Player
 
 **What it can do**
-- Move (WASD/arrows), walk or run (`Shift`),
+- Move (WASD/arrows), walk or run (`Shift`, hold by default; toggle if the
+  `runMode==='toggle'` accessibility setting is on, `ShiftLeft`/`ShiftRight`
+  edge-detect at L1506-1507 flips `toggleRunOn`),
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
-  `applyLook()` L1268, movement block in `tick()` L2296-2327.
+  `applyLook()` L1268, movement block in `tick()` L2296-2327,
+  `running` derivation at L2802. In toggle mode, touch's analogue is
+  `triggerTouchToggleRun()` (L3156-3160, gated on the same
+  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`
   L1486-1489, `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
-  arc is the predator-charge dodge (LUL-213).
+  arc is the predator-charge dodge (LUL-213). Touch equivalent is
+  `triggerTouchJump()` (L3133-3139, same guards as the desktop `Space`
+  keydown handler, minus the `e.repeat` check since a tap is already
+  discrete; `MobileControls.tsx`'s `touchJump` button).
+- Pause the run (`Escape`, desktop-only key) or resume it — touch has no
+  pointer-lock re-acquire to resume with, so `triggerTouchPause()`
+  (L3145-3148, `MobileControls.tsx`'s `touchPause` button) toggles both
+  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`
@@ -53,7 +66,11 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   shrinks predator detect range the longer it's held (`STILL_RAMP`=1.2s,
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()` L1120-1122).
-- Dim the personal follow-light (hold `KeyF`) — `LIGHT_NORMAL`/`LIGHT_DIMMED`
+- Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
+  button via `setTouchVeil()` L3119 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L2788, mirrored the same way in `qaPlayerState()`'s return
+  object, so the two inputs are equivalent, not independent) —
+  `LIGHT_NORMAL`/`LIGHT_DIMMED`
   L172-173, applied in `tick()` L2285-2294; paired with a screen-edge
   vignette cue (`applyVignette()` L191-195), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
@@ -109,8 +126,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   earlier LUL-153 declaration carried the `feature_engagement` analytics
   `track()` call and was silently shadowed by the later LUL-212 rewrite, so
   the event never fired. The shadowed declaration is deleted; there is now a
-  single `toggleHidden()` (L1707), and the `track()` call moved into
-  `enterHide()` (L1705), which all three call sites (`KeyH`, the touch Hide
+  single `toggleHidden()` (L1711), and the `track()` call moved into
+  `enterHide()` (L1709), which all three call sites (`KeyH`, the touch Hide
   button, and `tick()`'s movement-breaks-cover check) already funnel
   through, so `feature_engagement('hide')` fires on every hide entry again.
 - Eye height (`eyeH`) is damped toward `hidden ? 1.05 : CONFIG.eye` (2.2) at
@@ -354,7 +371,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 **What it can do**
 - Everything Rock can do, **plus**: is a valid `hidden`-stance location
   (`HIDE_KINDS.log = true`) — entering/exiting plays a distinct "hollow
-  log knock" sound (`hollowLogSound()`, L1674-1695).
+  log knock" sound (`hollowLogSound()`, L1678-1699).
 - ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()` L416), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
 - **LUL-384: the player walks and runs over it, no route-around needed** —
@@ -398,7 +415,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
 **What it can do**
 - Everything Log can do (hiding-spot eligible, `HIDE_KINDS.bramble = true`),
   with a distinct "leaf rustle" enter/exit sound (`leafRustle()`,
-  L1653-1670) — researched against stealth/horror foley convention per the
+  L1657-1674) — researched against stealth/horror foley convention per the
   LUL-212 handoff (wiki `game/lul212-hiding-spots`).
 - ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()` L419).
 
@@ -498,7 +515,7 @@ one geometry builder (`makePredator()`, L906-964), differentiated by the
   rng draw"). If `CONFIG.home` ever moved off the spawn point, this
   protection would silently stop applying.
 - Is not drawn on the minimap (`drawMinimapStatic()` renders trees and the
-  lake only, L2624-2632 — home has no minimap marker).
+  lake only, L2643-2651 — home has no minimap marker).
 
 **Behaviours & logic**
 - Static, no RNG draw — same every seed, every restart.
@@ -627,16 +644,18 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
-  a patch when a value actually changed, L1930-1936).
-- Send **actions back**, never state: the full returned API is `enter`,
-  `restart`, `setPace`, `setFog`, `toggleSound`, `regenMap`, and five
-  touch-control setters (`setTouchMove`/`setTouchLook`/`setTouchSprint`/
-  `triggerTouchHide`/`triggerTouchInteract`) (L2605-2607) — these are the
-  *only* way React code can affect the world. No LUL-26 accessibility/
-  difficulty setters exist in this object on `main`.
+  a patch when a value actually changed, L1934-1940).
+- Send **actions back**, never state: the full API `init()` returns
+  (L3162-3165) is `enter`, `restart`, `setPace`, `setFog`, `toggleSound`,
+  `regenMap`, and nine touch-control setters (`setTouchMove`/`setTouchLook`/
+  `setTouchSprint`/`triggerTouchHide`/`triggerTouchInteract`/
+  `triggerTouchJump`/`triggerTouchPause`/`triggerTouchToggleRun`/
+  `setTouchVeil`, LUL-529) — these are the *only* way React code can affect
+  the world.
+  No LUL-26 accessibility/difficulty setters exist in this object on `main`.
 - The minimap specifically reads and draws two other elements' live data:
   tree positions (`treeData`, every 4th tree) and the lake's position/radius
-  (`drawMinimapStatic()` L2624-2632) — not just player/child/predator state.
+  (`drawMinimapStatic()` L2643-2651) — not just player/child/predator state.
 
 **What it CANNOT do**
 - Cannot read engine internals directly — no reverse channel exists besides
@@ -653,7 +672,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 **Behaviours & logic**
 - `hudState` is a single flat object; `pushState()` diffs before emitting to
-  avoid redundant React re-renders (L1930-1936).
+  avoid redundant React re-renders (L1934-1940).
 
 **Collision & physics profile**
 - N/A — not a spatial/world object.
@@ -754,7 +773,7 @@ overlap changes nothing observable for them.
 ¹⁶ Both protected from home only indirectly, via the shared `inSpawn()`
 check (home reuses the spawn coordinates) — see Home's "what it cannot do."
 ¹⁷ Rendered as a dot/circle on the minimap (`drawMinimapStatic()`,
-L2624-2632) — a read-only relationship, not physical.
+L2643-2651) — a read-only relationship, not physical.
 ¹⁸ Cover props are never checked against each other at placement — two
 props (e.g. a rock and a bramble) can overlap. Lower severity than ¹⁴ (both
 are already non-solid to predators and the overlap is cosmetic at most for
