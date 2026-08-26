@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isTombstone,
+  hasActiveRecoveryAction,
+  hasLiveInteraction,
   findTombstones,
   issueReferencesPr,
   isPrMergeReady,
@@ -80,9 +82,22 @@ test('empty blockedBy but a live activeRecoveryAction -> not a tombstone (platfo
   const issue = {
     status: 'blocked',
     blockedBy: [],
-    activeRecoveryAction: { kind: 'stranded_assigned_issue', wakePolicy: { type: 'wake_owner' } },
+    activeRecoveryAction: { kind: 'stranded_assigned_issue', status: 'active', wakePolicy: { type: 'wake_owner' } },
   };
   assert.equal(isTombstone(issue), false);
+});
+
+// LUL-680: a recovery action object can persist with a non-"active" status
+// and still be truthy on the field -- only `status: "active"` counts as a
+// live wake path (wiki systems/recovery-action-wake-path documents the real
+// shape, which always carries an explicit `status`).
+test('activeRecoveryAction present but not status "active" -> tombstone (stale, not live)', () => {
+  const issue = {
+    status: 'blocked',
+    blockedBy: [],
+    activeRecoveryAction: { kind: 'stranded_assigned_issue', status: 'resolved' },
+  };
+  assert.equal(isTombstone(issue), true);
 });
 
 test('empty blockedBy but successfulRunHandoff.hasLiveContinuation -> not a tombstone', () => {
@@ -95,9 +110,105 @@ test('empty blockedBy but successfulRunHandoff.hasLiveContinuation -> not a tomb
   assert.equal(isTombstone(issue), false);
 });
 
-test('non-blocked status is never a tombstone regardless of blockedBy', () => {
-  const issue = { status: 'in_review', blockedBy: [], activeRecoveryAction: null };
+test('a status outside {blocked, in_review} is never a tombstone regardless of blockedBy', () => {
+  const issue = { status: 'todo', blockedBy: [], activeRecoveryAction: null };
   assert.equal(isTombstone(issue), false);
+});
+
+// LUL-680/process/in-review-tombstone-class: `in_review` has the identical
+// no-wake-path failure mode as `blocked` and a blocked-only scan misses it
+// entirely -- LUL-139 was exactly this shape (status in_review, blockedBy
+// [], no reviewer, no interaction).
+test('in_review with empty blockedBy and no other live path -> tombstone (LUL-139 shape)', () => {
+  const issue = {
+    identifier: 'LUL-139',
+    status: 'in_review',
+    blockedBy: [],
+    activeRecoveryAction: null,
+    successfulRunHandoff: null,
+  };
+  assert.equal(isTombstone(issue), true);
+});
+
+test('in_review with a live blocker -> not a tombstone', () => {
+  const issue = {
+    status: 'in_review',
+    blockedBy: [{ status: 'todo' }],
+    activeRecoveryAction: null,
+  };
+  assert.equal(isTombstone(issue), false);
+});
+
+// ---- hasLiveInteraction / the LUL-399 false positive -----------------------
+//
+// Real interaction shape, redacted from the actual live pending interaction
+// on LUL-399 (id 3f7441f7-fa34-4f32-a5ff-c30654b60b8a, GET
+// /api/issues/{id}/interactions -- LUL-677/LUL-680). The detector as first
+// built flagged LUL-399 as a tombstone despite this interaction: `blockedBy`
+// pointed at an already-done issue, so clause 1 alone doesn't save it -- the
+// interaction is the only thing that does.
+
+function lul399Interaction() {
+  return {
+    id: '3f7441f7-fa34-4f32-a5ff-c30654b60b8a',
+    kind: 'ask_user_questions',
+    status: 'pending',
+    continuationPolicy: 'wake_assignee',
+    payload: { version: 1, questions: [{ id: 'q1', prompt: 'pick a number', selectionMode: 'single', options: [] }] },
+  };
+}
+
+test('LUL-399 shape: blockedBy resolved, but a pending wake_assignee interaction -> not a tombstone', () => {
+  const issue = {
+    identifier: 'LUL-399',
+    status: 'blocked',
+    blockedBy: [{ identifier: 'LUL-381', status: 'done' }],
+    activeRecoveryAction: null,
+    successfulRunHandoff: null,
+    interactions: [lul399Interaction()],
+  };
+  assert.equal(isTombstone(issue), false);
+});
+
+test('hasLiveInteraction is true for a pending interaction with continuationPolicy wake_assignee', () => {
+  assert.equal(hasLiveInteraction([lul399Interaction()]), true);
+});
+
+test('a resolved interaction (status not pending) does not count as live, even with wake_assignee', () => {
+  const resolved = { ...lul399Interaction(), status: 'resolved' };
+  assert.equal(hasLiveInteraction([resolved]), false);
+});
+
+// continuationPolicy: "none" wakes nobody and looks identical to
+// wake_assignee at a glance in the raw payload -- the whole point of this
+// fix is that the two must not be treated the same.
+test('a pending interaction with continuationPolicy "none" does not count as live -- still a tombstone', () => {
+  const deadInteraction = { ...lul399Interaction(), continuationPolicy: 'none' };
+  assert.equal(hasLiveInteraction([deadInteraction]), false);
+
+  const issue = {
+    status: 'blocked',
+    blockedBy: [],
+    activeRecoveryAction: null,
+    successfulRunHandoff: null,
+    interactions: [deadInteraction],
+  };
+  assert.equal(isTombstone(issue), true);
+});
+
+test('no interactions field at all -> treated as no live interaction, same as before this fix', () => {
+  assert.equal(hasLiveInteraction(undefined), false);
+});
+
+// ---- hasActiveRecoveryAction ------------------------------------------------
+
+test('hasActiveRecoveryAction is false when the field is null', () => {
+  assert.equal(hasActiveRecoveryAction({ activeRecoveryAction: null }), false);
+});
+
+test('hasActiveRecoveryAction is true only when status is exactly "active"', () => {
+  assert.equal(hasActiveRecoveryAction({ activeRecoveryAction: { status: 'active' } }), true);
+  assert.equal(hasActiveRecoveryAction({ activeRecoveryAction: { status: 'resolved' } }), false);
 });
 
 test('findTombstones filters a mixed list down to the true tombstones, preserving order', () => {

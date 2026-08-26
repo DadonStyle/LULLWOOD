@@ -129,7 +129,12 @@ declare global {
       /** LUL-275: snapshot of the player's transform and detected input mode --
        * this init() actually bound -- proves which input branch bound at runtime,
        * not just which the test requested. See wiki: game/lul274-input-mode-separation. */
-      qaPlayerState?: () => { x: number; z: number; yaw: number; pitch: number; mode: 'desktop' | 'mobile' };
+      /** LUL-529: jumping/paused/toggleRunOn/veilHeld added so mobile e2e specs can
+       * assert a touch control's engine-visible effect, not just DOM presence. */
+      qaPlayerState?: () => {
+        x: number; z: number; yaw: number; pitch: number; mode: 'desktop' | 'mobile';
+        jumping: boolean; paused: boolean; toggleRunOn: boolean; veilHeld: boolean;
+      };
       /** LUL-388: places `kind` in a blind scent-chase (state='chase', scentLock=SCENT_TRACK_TIME)
        * within catch range (dist < rad+CATCH_MARGIN) of the player, with a real cover prop's
        * rotated AABB straddling the segment between them so canSee() reads false -- the exact

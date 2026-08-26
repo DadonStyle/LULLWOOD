@@ -24,12 +24,24 @@ name: Workflow guard check
 # `pull_request` stays too, scoped to forks the same way ci.yml scopes it:
 # a fork's push never reaches Actions on this repo, so that's the one case
 # the push trigger structurally cannot cover.
+#
+# LUL-610: no `paths:` filter, deliberately -- this check used to be scoped
+# to `paths: ['.github/workflows/**']`, which meant it never ran (no run at
+# all, not even a skipped one) on any push/PR that didn't touch a workflow
+# file. That's fine for an optional check, but LUL-610 needs to add this as
+# a *required* status check on main, and a required check with no run ever
+# posts leaves the PR stuck "Expected -- waiting for status to be reported"
+# forever for the overwhelming majority of PRs that never touch
+# .github/workflows/**. Verified empirically against PR #130 (touches none
+# of .github/workflows/**) before this fix: no "workflow guard check" run
+# appears on its head SHA at all. Dropped the paths filter to match ci.yml's
+# shape exactly -- every push/PR runs it, same as every other required
+# check. The job itself is cheap (a few `grep`s), so running it
+# unconditionally costs nothing worth scoping around.
 on:
   push:
     branches: ['**']
-    paths: ['.github/workflows/**']
   pull_request:
-    paths: ['.github/workflows/**']
   workflow_dispatch:
 
 permissions:
