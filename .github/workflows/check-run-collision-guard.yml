@@ -1,0 +1,75 @@
+name: Check-run collision guard
+
+# LUL-729 (spec: LUL-719, parent LUL-610) -- regression guard for the
+# required-status-check bypass measured live on PR #137 (head b07aa589):
+# branch protection resolves a required check by its LATEST instance per
+# context name and treats `skipped` as satisfying it, so a workflow that
+# ever publishes a real instance and then a later `skipped` instance under
+# the same check-run name lets the skip silently supersede the real result
+# -- including a real `failure`. See wiki systems/ci-double-run.
+#
+# LUL-729's root-cause fix removed the `pull_request` trigger that produced
+# this shape from ci.yml and workflow-guard-check.yml. This workflow is the
+# defense-in-depth watchdog: it re-checks every head that CI or the workflow
+# guard check runs against, so if the pattern is ever reintroduced (as it
+# was once already, via a stale backmerge -- see systems/ci-double-run's
+# 2026-08-26 section) it gets caught mechanically instead of rediscovered
+# live on a real PR.
+#
+# `workflow_run`, not `pull_request`/`push` directly: this has to run AFTER
+# every check-run instance for a head has actually posted, and the collision
+# this looks for is by definition spread across two separate workflow runs
+# on the same head. Triggering on completion of either guarded workflow
+# means both the "just posted a real result" run and the "just posted a
+# late skip" run each re-trigger this check, so whichever one is later
+# always gets a fresh look at the full picture.
+#
+# This is a standalone watchdog, NOT a required check on any ruleset --
+# review-gap-detector.yml's same reasoning applies: it structurally cannot
+# run before the collision it detects exists, so it cannot gate the merge
+# that already happened. A red run here means "go look and consider making
+# it a required context," not "a merge was just blocked."
+on:
+  workflow_run:
+    workflows: ['CI', 'Workflow guard check']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Head commit SHA to check (defaults to the triggering workflow_run head, or is required for a manual run)'
+        required: false
+
+permissions:
+  contents: read
+  checks: read
+  actions: read
+
+jobs:
+  detect:
+    name: scan a head for required-check name collisions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: resolve head sha
+        id: sha
+        run: |
+          SHA="${{ inputs.sha || github.event.workflow_run.head_sha }}"
+          if [ -z "$SHA" ]; then
+            echo "::error::no sha available -- pass workflow_dispatch input 'sha' for a manual run"
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: check for check-run collisions
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CHECK_RUN_COLLISION_SHA: ${{ steps.sha.outputs.sha }}
+        run: node scripts/check-check-run-collisions.mjs
