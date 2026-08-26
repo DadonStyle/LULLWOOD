@@ -1,6 +1,8 @@
 name: CI
 
-# The branch-push trigger is the load-bearing one, and it is new here.
+# push + workflow_dispatch only. NO `pull_request` trigger -- this is
+# deliberate, not an oversight, and it must not be re-added without reading
+# LUL-729 and LUL-719 in the wiki (systems/ci-double-run) first.
 #
 # Pull requests opened by GITHUB_TOKEN (see auto-pr.yml) do not start
 # `pull_request` workflow runs — GitHub suppresses them so workflows cannot
@@ -8,45 +10,50 @@ name: CI
 # checks on `main`, so for agent-opened PRs, CI has to attach to the branch push
 # instead. Branch protection resolves required checks against the head SHA no
 # matter which event produced them, so the ruleset is satisfied either way.
+# Every `lul-*` branch and every same-repo PR (100% of PRs in this repo's
+# history) is push-covered and gets exactly one run.
 #
-# `pull_request` stays for two reasons: it is the fallback if Actions is ever
-# not permitted to open PRs (a human-opened PR still gets its checks), and
-# dropping it would deadlock this very change — the PR introducing it would be
-# evaluated against its own workflow file and never run a check at all.
+# LUL-719/LUL-729 (2026-08-26): `pull_request` used to stay as a fork-PR
+# fallback, gated by a job-level `if: ... head.repo.full_name != ...` so the
+# same-repo case would just "skip". That was proven unsafe, not merely
+# wasteful: LUL-719 measured live on PR #137 (head `b07aa589`) that branch
+# protection resolves a required check by its LATEST instance and treats
+# `skipped` as passing. `pr-freshness.yml`'s "approve parked action_required
+# runs" step (LUL-463) unparks the bot-authored `pull_request` run some time
+# after the real push/workflow_dispatch run already posted a `success` — so a
+# later `skipped` instance can land on top of an EARLIER real instance under
+# the identical required-check name, with no ordering guarantee. On #137 the
+# earlier instance happened to be a genuine success, so nothing broke, but
+# the same mechanism would just as easily let a later skip paper over an
+# earlier real `failure`. That is a required-status-check bypass, not a
+# flake, and job-level `if:` cannot fix it: GitHub still publishes a
+# `skipped` check-run under the job's static name even when the job body
+# never executes (see also systems/ci-jobname-expr-literal -- a conditional
+# `name:` doesn't evaluate for a skipped job either, so renaming the
+# collision away isn't an option). The only structural fix is to never let a
+# same-repo `pull_request` event produce a check-run under a required name at
+# all, which means not triggering on `pull_request` in the first place.
 #
-# LUL-100: for any branch that lives in THIS repo, the push trigger above
-# already covers it, so the pull_request trigger is pure duplication — same
-# head SHA, two full runs (including two Playwright suites), racing each
-# other under different concurrency groups (`refs/heads/<branch>` vs
-# `refs/pull/N/merge`) that never cancel each other. When the runner is slow,
-# both runs draw against the same wall-clock-sensitive assertions
-# (scent.spec.ts:63, smoke.spec.ts:132) and doubling the draws doubles the
-# odds one instance comes back red — and one red instance on the head SHA is
-# enough to hold `mergeable_state: blocked`, even though the *other* instance
-# (the more meaningful one, base-merged) is green. See wiki
-# systems/ci-double-run.
-#
-# A same-SHA concurrency group with cancel-in-progress does not fix this: a
-# required check that gets cancelled reports conclusion `cancelled`, which
-# GitHub does not treat as passing, so the cancelled duplicate would still
-# block the merge it was meant to stop blocking. So this is a scope filter,
-# not a race — `pull_request` runs only when the PR's head repo differs from
-# this one, i.e. only for an external fork, which is the one case the push
-# trigger structurally cannot cover (a fork's push never reaches Actions on
-# this repo). Every `lul-*` branch and every same-repo human-opened PR is
-# push-covered and gets exactly one run.
+# Named, deliberate consequence (same one LUL-508 already accepted once):
+# a genuine fork PR loses automatic required-check coverage, since `push`
+# can't see a fork's commits. Fallback: a manual
+# `workflow_dispatch` against the fork's head ref -- the same mechanism
+# `pr-freshness.yml` already uses to get CI onto GITHUB_TOKEN-authored
+# backmerge commits, and the same mechanism that produced the real `success`
+# instance on PR #137 itself. Zero fork PRs received in this repo's history
+# as of this writing.
 on:
   push:
     branches: ['**']
-  pull_request:
   workflow_dispatch:
 
-# Cancel superseded runs on the same PR/branch. Keyed on event name + head SHA
-# so that a `pull_request` run (which is skipped for same-repo branches via
-# the `if:` guards below) does not share a concurrency group with the `push`
-# run and therefore cannot cancel it via cancel-in-progress.
-# Without the event name prefix, the pull_request run would cancel the push
-# run and then immediately be skipped itself, leaving no CI run for the commit.
+# Cancel superseded runs on the same branch (e.g. two pushes in quick
+# succession). Keyed on event name + head SHA -- kept even though `push` and
+# `workflow_dispatch` are now the only events, so a manual dispatch never
+# races a concurrent push to the same head. `github.event.pull_request...`
+# is dead weight now that `pull_request` isn't a trigger, but left as `||
+# github.sha` is harmless and matches workflow-guard-check.yml's identical
+# group key.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
@@ -60,8 +67,6 @@ jobs:
     # duration across 12 green runs on 2026-08-19: 15-24s, so 10 min is ~25x
     # headroom, not a tight guess.
     timeout-minutes: 10
-    # Same fork-scope guard as `build` — see the LUL-100 comment above `on:`.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v4
 
@@ -110,9 +115,6 @@ jobs:
     # LUL-485: see the `unit` job's comment. Observed duration across 12 green
     # runs on 2026-08-19: 26-40s, so 10 min is ~15x headroom.
     timeout-minutes: 10
-    # See the LUL-100 comment above `on:` — same-repo branches are already
-    # covered by the push trigger; only a fork PR needs this event.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v4
 
@@ -160,10 +162,10 @@ jobs:
     # real passes. 30min keeps ~1.6x headroom over the observed max.
     timeout-minutes: 30
     # A job-level `if:` replaces the implicit `needs: success()` gate rather
-    # than adding to it (LUL-106), so the fork-scope condition alone would let
-    # this run even when `build` genuinely fails. `needs.build.result` restores
-    # that gate explicitly.
-    if: needs.build.result == 'success' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    # than adding to it (LUL-106) -- `needs.build.result` restores that gate
+    # explicitly. (No fork-scope half here anymore: `pull_request` is gone
+    # from `on:` above, see that block's comment.)
+    if: needs.build.result == 'success'
     steps:
 
       - uses: actions/checkout@v4
