@@ -12,8 +12,10 @@ name: Workflow guard check
 # check.sh fails if one doesn't. See that script and manifest for the full
 # reasoning -- this file is only the trigger/scaffold.
 #
-# `on: push`, not `pull_request`, for the same reason ci.yml switched:
-# agent-opened PRs are opened by auto-pr.yml using GITHUB_TOKEN, and GitHub
+# `on: push`, not `pull_request`. NO `pull_request` trigger at all -- see
+# LUL-729/LUL-719 (systems/ci-double-run) before re-adding one.
+#
+# Agent-opened PRs are opened by auto-pr.yml using GITHUB_TOKEN, and GitHub
 # suppresses `pull_request` runs an action's own GITHUB_TOKEN would have
 # caused (recursion guard) -- so `pull_request: opened` never fires for the
 # PRs this check exists to gate. The branch push itself uses the studio's
@@ -21,26 +23,37 @@ name: Workflow guard check
 # checks are matched to the PR by head SHA regardless of which event
 # produced them (same reasoning as ci.yml, systems/ci-double-run).
 #
-# `pull_request` stays too, scoped to forks the same way ci.yml scopes it:
-# a fork's push never reaches Actions on this repo, so that's the one case
-# the push trigger structurally cannot cover.
+# `pull_request` used to stay too, scoped to forks the same way ci.yml
+# scoped it via a job-level `if:`. LUL-719 measured live on PR #137 (head
+# `b07aa589`) that this is a required-status-check bypass, not just a
+# wasteful duplicate: `pr-freshness.yml` unparks the bot-authored
+# `pull_request` run's `action_required` gate (LUL-463) at an unpredictable
+# later time, and branch protection resolves a required check by its LATEST
+# instance, treating `skipped` as passing -- so a late `skipped` instance
+# from a same-repo `pull_request` run can land on top of an EARLIER real
+# instance (including a real `failure`) under the identical required-check
+# name. `workflow guard check` was the sharpest case measured: on #137 it
+# had NO successful instance at all, only the skipped one -- the gate was
+# fully vacuous for that context. A job-level `if:` cannot fix this because
+# GitHub still publishes a `skipped` check-run under the job's static name
+# even when the job body never executes, and a conditional `name:` doesn't
+# evaluate for a skipped job either (systems/ci-jobname-expr-literal). Same
+# named, deliberate consequence as ci.yml: a genuine fork PR touching
+# .github/workflows/** loses automatic coverage from this check; fall back
+# to a manual `workflow_dispatch` against the fork's head ref. Zero fork PRs
+# received in this repo's history as of this writing.
 on:
   push:
     branches: ['**']
-    paths: ['.github/workflows/**']
-  pull_request:
     paths: ['.github/workflows/**']
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Keyed on event name + head SHA, same reasoning as ci.yml -- without the
-# event name prefix, a pull_request run shares this group with the push run
-# for the same commit and can cancel it via cancel-in-progress, then itself
-# resolve to `skipped` under the fork-scope `if:` below -- leaving a SKIPPED
-# (i.e. passing, for required-status-check purposes) conclusion on the SHA
-# without workflow-guard-check.sh ever having run. See systems/ci-double-run.
+# Keyed on event name + head SHA. Kept even though `push` and
+# `workflow_dispatch` are the only events now, so a manual dispatch never
+# races a concurrent push to the same head.
 concurrency:
   group: workflow-guard-check-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
@@ -50,8 +63,6 @@ jobs:
     name: workflow guard check
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Same fork-scope guard ci.yml uses -- see the `on:` comment above.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@v4
         with:
