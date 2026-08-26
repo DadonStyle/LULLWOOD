@@ -82,6 +82,7 @@ import {
   SNIFF_IMMUNITY_TIME,
   stepApproach,
   stepFlankHold,
+  stepSniffCreep,
   stepSniffLoop,
   tickTimers,
 } from '@/lib/game/predator';
@@ -1323,6 +1324,17 @@ function updatePredators(dt, noiseRadius){
         desx = step.desx; desz = step.desz; speed = step.speed;
         if(step.enterSniff){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
       } else if(p.inv === 'sniff'){
+        // LUL-640: residual creep, species-agnostic. 'sniff' otherwise applies a
+        // hard zero-movement freeze; on a player who never presses `H`, the
+        // chase<->investigate/sniff bounce above only moves on 'approach's own
+        // transition tick (LUL-658), and bear's slower/farther-starting approach
+        // traced to asymptote short of the distance canSee clears -- see wiki
+        // game/lul658-point-blank-livelock-confirmed and lul659-cover-stall-
+        // position-trace. Does not add a catch check here (LUL-387's
+        // no-catch-through-cover guard is untouched, chase/hunt still gate the
+        // kill); this only ever closes distance while blind.
+        const creep = stepSniffCreep(canSee(p, dist), dist, p.rad, ux, uz, p.spec.speed);
+        desx = creep.desx; desz = creep.desz; speed = creep.speed;
         facePlayer = true; p.sniffTimer -= dt;
         const sniffOutcome = stepSniffLoop(p.sniffTimer, p.sniffsLeft);
         if(sniffOutcome.done){

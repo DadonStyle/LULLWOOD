@@ -11,9 +11,11 @@ import {
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
   SNIFF_APPROACH_MARGIN,
+  SNIFF_CREEP_SPEED_MUL,
   SNIFF_IMMUNITY_TIME,
   stepApproach,
   stepFlankHold,
+  stepSniffCreep,
   stepSniffLoop,
   tickTimers,
 } from './predator.ts';
@@ -283,6 +285,31 @@ test('stepApproach enterSniff is false exactly at the sniff-range boundary (stri
 test('stepApproach scales speed by the fixed 0.45 approach multiplier regardless of species speed', () => {
   assert.equal(stepApproach(0, 1, 6.8, 100, 1.5).speed, 3.06); // bear
   assert.equal(stepApproach(0, 1, 8.5, 100, 0.8).speed, 3.825); // wolf
+});
+
+// ---- stepSniffCreep (LUL-640) -----------------------------------------------------
+
+test('stepSniffCreep closes toward the player at a small fraction of species speed when blind and outside catch range', () => {
+  const step = stepSniffCreep(false, 10, 1, 1, 0, 10);
+  assert.equal(step.desx, 1);
+  assert.equal(step.desz, 0);
+  assert.equal(step.speed, 10 * SNIFF_CREEP_SPEED_MUL);
+});
+
+test('stepSniffCreep is zero movement once the predator can see the player -- sniff still has no catch check of its own', () => {
+  const step = stepSniffCreep(true, 10, 1, 1, 0, 10);
+  assert.equal(step.desx, 0);
+  assert.equal(step.desz, 0);
+  assert.equal(step.speed, 0);
+});
+
+test('stepSniffCreep is zero movement once already within catch range -- does not creep past where hunt/chase would already resolve it', () => {
+  const step = stepSniffCreep(false, 1 + CATCH_MARGIN - 0.001, 1, 1, 0, 10);
+  assert.equal(step.speed, 0);
+});
+
+test('stepSniffCreep the residual fraction is well below approach speed, preserving "mostly holding still" while sniffing', () => {
+  assert.ok(SNIFF_CREEP_SPEED_MUL < 0.45);
 });
 
 // ---- backOffPoint ---------------------------------------------------------------

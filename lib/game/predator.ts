@@ -231,6 +231,40 @@ export function stepApproach(ux: number, uz: number, speciesSpeed: number, dist:
   };
 }
 
+// ---- sniff residual creep (LUL-640) ------------------------------------------------
+// `p.inv === 'sniff'`'s own branch applies a hard freeze -- `facePlayer=true` and a
+// timer countdown, no desx/desz/speed -- which LUL-658's "approach always moves" fix
+// (stepApproach above) does not reach: that fix only stops the *transition into*
+// sniff from skipping its own tick, it does not touch what happens once inside
+// 'sniff' itself. Traced (wiki game/lul658-point-blank-livelock-confirmed,
+// game/lul659-cover-stall-position-trace): a player who never presses `H` keeps
+// `shouldRevertInvestigateToChase` true every tick 'sniff' is entered, so the state
+// bounces chase->investigate/approach->sniff->chase->... and only the single
+// 'approach' tick in each cycle contributes movement -- slow, and for bear
+// specifically (smaller approach speed, larger `rad` pushing its sniff-entry
+// distance further out) traced to asymptote around 2.25u and stop closing the
+// remaining gap to `canSee` at all within an 8s window.
+//
+// Fix (VP R&D design call, LUL-640, chosen over widening SNIFF_APPROACH_MARGIN):
+// give 'sniff' itself a small residual creep toward the player whenever it can't
+// see them and hasn't yet reached catch range, instead of a hard zero. Deliberately
+// species-agnostic (no per-species tuning) and deliberately *not* a catch check --
+// 'sniff'/'back' still have no catch condition of their own, so LUL-387's
+// no-catch-through-cover guard is untouched; this only ever closes distance, it
+// never resolves a hunt on its own. `!isCaught` guards against creeping past the
+// point contact would already be triggered by the states that do check it (hunt,
+// chase), avoiding a jitter right at that boundary.
+export const SNIFF_CREEP_SPEED_MUL = 0.12;
+export interface SniffCreepStep {
+  desx: number;
+  desz: number;
+  speed: number;
+}
+export function stepSniffCreep(canSeePlayer: boolean, dist: number, rad: number, ux: number, uz: number, speciesSpeed: number): SniffCreepStep {
+  if (canSeePlayer || isCaught(dist, rad)) return { desx: 0, desz: 0, speed: 0 };
+  return { desx: ux, desz: uz, speed: speciesSpeed * SNIFF_CREEP_SPEED_MUL };
+}
+
 // ---- backoff retreat point -------------------------------------------------------
 // `p.inv === 'sniff'`'s giving-up-a-sniff retreat point: `dist` units back
 // along the predator-to-player line, clamped to the map bounds the same way
