@@ -87,6 +87,18 @@ jobs:
       - name: ELEMENTS.md citation guard
         run: node scripts/check-elements-citations.mjs
 
+      # LUL-641 (LUL-277 wave 7, final): effectiveDetect()/canSee()/
+      # STILL_RAMP/STILL_DETECT_CUT existed twice -- once in lib/game/cover.ts
+      # (tested) and once, independently, in engine/forest-engine.js
+      # (shipped) -- and nine green tests were exercising the copy the game
+      # never ran. Fails when an identifier is declared at engine top level
+      # AND exported by a lib/game/*.ts module AND not imported by the
+      # engine (aliased imports still count), unless it's in the dated
+      # ALLOWLIST at the top of the script. No node_modules needed, so this
+      # runs before `npm ci` like the two guards above.
+      - name: duplicate-logic guard
+        run: node scripts/check-duplicate-logic.mjs
+
       - run: npm ci
 
       - name: unit tests

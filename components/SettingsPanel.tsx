@@ -20,6 +20,12 @@ interface PersistedSettings {
   reducedMotion: boolean;
   captionsOn: boolean;
   highContrast: boolean;
+  // LUL-650: dev/tuning HUD (the #panel pace/mist/sound/regen/fullscreen
+  // controls, plus #minimap). Same presentation-only shape as highContrast --
+  // no engine action, applied via a document.body dataset flag. Defaults to
+  // OFF (see readSettings() below): a player shouldn't see dev GUI unless
+  // they opt in.
+  adminMode: boolean;
 }
 
 function readSettings(): Partial<PersistedSettings> {
@@ -57,6 +63,8 @@ export default function SettingsPanel({
   // below like the other settings do -- there's no engine action for it to
   // wait for.
   const [highContrast, setHighContrast] = useState(() => !!readSettings().highContrast);
+  // LUL-650: defaults OFF (`!!undefined` on a never-persisted key is `false`).
+  const [adminMode, setAdminMode] = useState(() => !!readSettings().adminMode);
 
   // Apply persisted settings once the engine is ready to receive them (mirrors
   // the rest of the codebase's `actions != null` readiness check -- see
@@ -80,6 +88,10 @@ export default function SettingsPanel({
     document.body.dataset.highContrast = highContrast ? '1' : '0';
   }, [highContrast]);
 
+  useEffect(() => {
+    document.body.dataset.adminMode = adminMode ? '1' : '0';
+  }, [adminMode]);
+
   // Persist whenever any of these actually change -- after the apply-on-ready
   // effect above, so a mount with a stored `sensitivity: 1.4` doesn't get
   // immediately re-written as the engine's own default before it applies.
@@ -92,8 +104,9 @@ export default function SettingsPanel({
       reducedMotion: state.reducedMotion,
       captionsOn: state.captionsOn,
       highContrast,
+      adminMode,
     });
-  }, [state.difficulty, state.runMode, state.sensitivity, state.invertY, state.reducedMotion, state.captionsOn, highContrast]);
+  }, [state.difficulty, state.runMode, state.sensitivity, state.invertY, state.reducedMotion, state.captionsOn, highContrast, adminMode]);
 
   if (!open) return null;
 
@@ -166,6 +179,10 @@ export default function SettingsPanel({
         <label className="radioRow">
           <input type="checkbox" checked={highContrast} onChange={(e) => setHighContrast(e.target.checked)} />
           High-contrast HUD
+        </label>
+        <label className="radioRow">
+          <input type="checkbox" checked={adminMode} onChange={(e) => setAdminMode(e.target.checked)} />
+          Admin mode (show pace/mist panel &amp; minimap)
         </label>
         {/* Fog density already has an adjustable control -- the "Mist" slider
             in the main #panel (components/Hud.tsx) -- which is exactly the
