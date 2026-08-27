@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   isTombstone,
   hasActiveRecoveryAction,
@@ -26,6 +29,10 @@ import {
   findStaleConfirmations,
   isStaleConfirmationSuppressed,
   STALE_CONFIRMATION_DAYS,
+  authJsonPath,
+  durableToken,
+  resolveSelfAgentId,
+  fileWakeTickets,
 } from './board-integrity-check.mjs';
 
 // ---- isTombstone / findTombstones ------------------------------------------
@@ -774,4 +781,304 @@ test('isStaleConfirmationSuppressed: does not cross-match a different issue\'s m
     { title: 'Board-integrity: LUL-438 has a stale request_confirmation (LUL-810 detector)', updatedAt: '2026-08-26T00:00:00.000Z' },
   ];
   assert.equal(isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, NOW_MS), false);
+});
+
+// ---- durableToken / authJsonPath (LUL-770 credential trap, mirrored from ---
+// ---- scripts/watchdog-run-check.mjs) ---------------------------------------
+//
+// os.homedir() honours $HOME on POSIX (unlike raw process.env.HOME, which
+// string-concatenates to the literal "undefined" when unset), so these tests
+// point HOME at a scratch auth.json rather than touching the real one.
+
+function withFakeHome(authJsonContents, fn) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'lul879-home-'));
+  const prevHome = process.env.HOME;
+  try {
+    mkdirSync(path.join(dir, '.paperclip'));
+    writeFileSync(path.join(dir, '.paperclip', 'auth.json'), authJsonContents);
+    process.env.HOME = dir;
+    return fn();
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('durableToken resolves an exact apiBase match', () => {
+  const creds = JSON.stringify({
+    credentials: { 'http://100.85.231.17:3100': { token: 'exact-match-token' } },
+  });
+  withFakeHome(creds, () => {
+    assert.equal(durableToken('http://100.85.231.17:3100'), 'exact-match-token');
+  });
+});
+
+test('durableToken falls back to the sole credential entry when the apiBase key does not match', () => {
+  const creds = JSON.stringify({
+    credentials: { 'http://some-other-host:9999': { token: 'sole-entry-token' } },
+  });
+  withFakeHome(creds, () => {
+    assert.equal(durableToken('http://100.85.231.17:3100'), 'sole-entry-token');
+  });
+});
+
+test('durableToken returns null (not a throw) when auth.json is missing', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'lul879-home-empty-'));
+  const prevHome = process.env.HOME;
+  try {
+    process.env.HOME = dir; // no auth.json written
+    assert.equal(durableToken('http://100.85.231.17:3100'), null);
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('durableToken returns null (not a throw) when auth.json is malformed JSON', () => {
+  withFakeHome('not valid json{{{', () => {
+    assert.equal(durableToken('http://100.85.231.17:3100'), null);
+  });
+});
+
+test('authJsonPath does not degrade to the literal "undefined" segment when HOME is absent (env -i shape)', () => {
+  const prevHome = process.env.HOME;
+  try {
+    delete process.env.HOME;
+    const p = authJsonPath();
+    assert.doesNotMatch(p.href, /undefined/);
+    assert.match(p.pathname, /\/\.paperclip\/auth\.json$/);
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+  }
+});
+
+// ---- resolveSelfAgentId (LUL-879: fetchSelfAgentId used to throw on a -----
+// ---- non-ok /api/agents/me, which took --post down with it) ---------------
+//
+// Verified live against the real API before writing this fix (2026-08-27/28):
+//   curl -H "Authorization: Bearer <durable>" $PAPERCLIP_API_URL/api/agents/me
+//   -> HTTP 401 {"error":"Agent authentication required"}
+// These tests fake that exact shape rather than re-hitting the real API.
+
+test('resolveSelfAgentId honours BOARD_INTEGRITY_SELF_AGENT_ID before ever calling fetch', async () => {
+  const prevEnv = process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+  const prevFetch = globalThis.fetch;
+  try {
+    process.env.BOARD_INTEGRITY_SELF_AGENT_ID = 'env-pinned-agent-id';
+    globalThis.fetch = async () => {
+      throw new Error('resolveSelfAgentId must not call fetch when the env override is set');
+    };
+    const id = await resolveSelfAgentId('http://api.invalid', 'company-1', 'token');
+    assert.equal(id, 'env-pinned-agent-id');
+  } finally {
+    if (prevEnv === undefined) delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+    else process.env.BOARD_INTEGRITY_SELF_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('resolveSelfAgentId returns the id straight from /api/agents/me when it is ok (run JWT case)', async () => {
+  const prevEnv = process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+  const prevFetch = globalThis.fetch;
+  try {
+    delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+    globalThis.fetch = async (url) => {
+      assert.ok(String(url).endsWith('/api/agents/me'));
+      return { ok: true, json: async () => ({ id: 'run-jwt-agent-id' }) };
+    };
+    const id = await resolveSelfAgentId('http://api.invalid', 'company-1', 'run-jwt');
+    assert.equal(id, 'run-jwt-agent-id');
+  } finally {
+    if (prevEnv === undefined) delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+    else process.env.BOARD_INTEGRITY_SELF_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('resolveSelfAgentId tolerates a 401 from /api/agents/me (durable token) and falls through to the company agents list, matched by name', async () => {
+  const prevEnv = process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+  const prevFetch = globalThis.fetch;
+  try {
+    delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/api/agents/me')) {
+        return { ok: false, status: 401 };
+      }
+      if (String(url).endsWith('/agents')) {
+        return { ok: true, json: async () => [{ id: 'other-agent-id', name: 'Game Tester' }, { id: 'vp-agent-id', name: 'VP R&D' }] };
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const id = await resolveSelfAgentId('http://api.invalid', 'company-1', 'durable-token');
+    assert.equal(id, 'vp-agent-id');
+  } finally {
+    if (prevEnv === undefined) delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+    else process.env.BOARD_INTEGRITY_SELF_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('resolveSelfAgentId returns null (not a throw) when the 401 fallback finds no name match', async () => {
+  const prevEnv = process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+  const prevFetch = globalThis.fetch;
+  try {
+    delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/api/agents/me')) return { ok: false, status: 401 };
+      if (String(url).endsWith('/agents')) return { ok: true, json: async () => [{ id: 'x', name: 'Founding Engineer' }] };
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const id = await resolveSelfAgentId('http://api.invalid', 'company-1', 'durable-token');
+    assert.equal(id, null);
+  } finally {
+    if (prevEnv === undefined) delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+    else process.env.BOARD_INTEGRITY_SELF_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('resolveSelfAgentId returns null (not a throw) when the company-agents fallback request itself errors', async () => {
+  const prevEnv = process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+  const prevFetch = globalThis.fetch;
+  try {
+    delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/api/agents/me')) return { ok: false, status: 401 };
+      // pcFetch (via fetchJson) throws on a non-ok response -- resolveSelfAgentId
+      // must swallow that, not let it propagate and take --post down again.
+      return { ok: false, status: 500, text: async () => 'server error' };
+    };
+    const id = await resolveSelfAgentId('http://api.invalid', 'company-1', 'durable-token');
+    assert.equal(id, null);
+  } finally {
+    if (prevEnv === undefined) delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+    else process.env.BOARD_INTEGRITY_SELF_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+// ---- fileWakeTickets under the durable-token 401 (the actual --post repro) -
+
+test('fileWakeTickets does not throw on a 401 from /api/agents/me -- files the tombstone wake ticket unassigned instead of exiting 2', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) return { ok: false, status: 401 };
+      if (u.endsWith('/agents')) return { ok: true, json: async () => [] }; // no name match -> null, and that's fine
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const classifiedTombstones = [
+      {
+        issue: { id: 'issue-1', identifier: 'LUL-999', title: 'stranded ticket', status: 'blocked', assigneeAgentId: null },
+        disposition: 'STRANDED',
+        referencedPrs: [],
+        mergedPrs: [],
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      classifiedTombstones,
+      [],
+      [],
+      { alarm: false },
+      [],
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].kind, 'tombstone');
+    assert.equal(filed[0].assigneeAgentId, null);
+    assert.ok(postedIssue, 'expected a POST to /issues');
+    assert.equal(postedIssue.assigneeAgentId, null);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets resolves the self id once per run, not once per alarm, even when resolution legitimately returns null', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let meCalls = 0;
+    let agentsCalls = 0;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) {
+        meCalls += 1;
+        return { ok: false, status: 401 };
+      }
+      if (u.endsWith('/agents')) {
+        agentsCalls += 1;
+        return { ok: true, json: async () => [] };
+      }
+      if (u.includes('/issues') && opts?.method === 'POST') {
+        return { ok: true, json: async () => ({ id: 'wake-issue' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const classifiedTombstones = [
+      { issue: { id: 'i1', identifier: 'LUL-1', title: 't1', status: 'blocked', assigneeAgentId: null }, disposition: 'STRANDED', referencedPrs: [], mergedPrs: [] },
+      { issue: { id: 'i2', identifier: 'LUL-2', title: 't2', status: 'blocked', assigneeAgentId: null }, disposition: 'STRANDED', referencedPrs: [], mergedPrs: [] },
+    ];
+    const unownedPrs = [{ number: 42, title: 'unowned', html_url: 'https://example.invalid/42' }];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      classifiedTombstones,
+      unownedPrs,
+      [],
+      { alarm: true, availableAgentCount: 1 },
+      [],
+    );
+
+    // zero-pullable-work + 2 tombstones + 1 unowned-pr = 4 filed tickets, all
+    // sharing the one cached (null) resolution.
+    assert.equal(filed.length, 4);
+    assert.ok(filed.every((f) => f.assigneeAgentId === null));
+    assert.equal(meCalls, 1);
+    assert.equal(agentsCalls, 1);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets never touches /api/agents/me when every alarm already has an open wake ticket (quiet-run laziness)', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      throw new Error(`fileWakeTickets must not call fetch at all when nothing new needs filing: ${url}`);
+    };
+    const issue = { id: 'i1', identifier: 'LUL-1', title: 't1', status: 'blocked', assigneeAgentId: null };
+    const marker = tombstoneWakeMarker(issue);
+    const openIssues = [{ title: `${marker} (LUL-672 detector) -- STRANDED, needs work` }];
+    const classifiedTombstones = [{ issue, disposition: 'STRANDED', referencedPrs: [], mergedPrs: [] }];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      classifiedTombstones,
+      [],
+      openIssues,
+      { alarm: false },
+      [],
+    );
+    assert.equal(filed.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
 });
