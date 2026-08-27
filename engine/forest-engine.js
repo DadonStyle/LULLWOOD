@@ -2417,10 +2417,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // can assert the engine-visible effect of a touch control (a button that
     // renders and is tappable but wired to nothing would still pass a
     // DOM-presence-only test) instead of only the transform fields above.
+    //
+    // LUL-224: `hidden` appended so a test that presses KeyH somewhere chosen
+    // for an unrelated geometric property (e.g. qaOpenHideNearLion's
+    // guaranteed-cover-free spawn clearing) can assert whether the press
+    // actually entered the hold-still stance, instead of assuming it either
+    // did or didn't from the placement alone -- LUL-212's HIDE_RADIUS gate on
+    // enterHide() means "placed somewhere" no longer implies "KeyH works
+    // here".
     return {
       x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode,
       jumping: jumping, paused: paused, toggleRunOn: toggleRunOn,
       veilHeld: (entered && !won && !dead && !pickingUp) && (!!keys['KeyF'] || touchVeil),
+      hidden: hidden,
     };
   };
 
