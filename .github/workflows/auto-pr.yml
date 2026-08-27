@@ -29,6 +29,11 @@ name: Auto PR
 # actually lead to a merge; until that secret is configured this step skips
 # arming and leaves it to automerge.yml, which will refuse for the same
 # reason and say so on the PR. LUL-558 / systems/ship-never-merges-review-count-gap.
+#
+# NOTE: This self-approval constraint applies here because GITHUB_TOKEN IS the
+# PR author (auto-pr.yml opens every PR as github-actions[bot]). For PRs
+# authored by a human user, GITHUB_TOKEN is a distinct identity and CAN approve
+# without a separate PAT. See bot-approve.yml (LUL-797/LUL-807).
 
 on:
   push:
@@ -174,8 +179,9 @@ jobs:
           #
           # Read it from every commit this branch authored, not just the head
           # commit (LUL-465). Backmerging main is the standard way to track main
-          # (decisions/0010-no-force-push) and pr-freshness.yml does it for us, so
-          # the head is routinely a merge commit that never carries the marker --
+          # (decisions/0010-no-force-push); an agent runs it by hand (LUL-778 deleted
+          # the workflow that used to do this automatically), so
+          # the head is often a merge commit that never carries the marker --
           # which silently and permanently disarmed self-merge for any PR that
           # outlived one main push. `--no-merges` drops those backmerge commits
           # (they can never carry a marker anyway); `FETCH_HEAD..HEAD` excludes

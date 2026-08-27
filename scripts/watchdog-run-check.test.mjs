@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   OPEN_STATUSES,
   hasScheduleTrigger,
@@ -12,6 +15,10 @@ import {
   findNoRunWatchdogs,
   formatReport,
   watchdogWakeMarker,
+  authJsonPath,
+  durableToken,
+  resolveAssigneeId,
+  fetchWorkflowFiles,
 } from './watchdog-run-check.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
@@ -134,6 +141,67 @@ test('formatReport names the red watchdog and its run URL, and separates inert f
   assert.match(report, /Merge gap detector/);
 });
 
+test('formatReport surfaces failed file downloads even when every classified watchdog is healthy', () => {
+  const classified = WATCHDOGS.map((w) => classifyWatchdog(w, true, [greenRun()]));
+  const report = formatReport(classified, 'DadonStyle/LULLWOOD', ['flaky-workflow.yml']);
+  assert.match(report, /1 workflow file\(s\) could not be read this run, roster may be incomplete/);
+  assert.match(report, /flaky-workflow\.yml/);
+});
+
+test('formatReport omits the failed-file line entirely when nothing failed (no false alarm)', () => {
+  const classified = WATCHDOGS.map((w) => classifyWatchdog(w, true, [greenRun()]));
+  assert.equal(formatReport(classified, 'DadonStyle/LULLWOOD', []), null);
+});
+
+// ---- fetchWorkflowFiles: a failed per-file download must not be silently ---
+// coerced to yaml: '' (LUL-776) -- hasScheduleTrigger('') is indistinguishable
+// from "this workflow genuinely has no schedule:", so a transient GET failure
+// would otherwise drop a real cron watchdog off the roster with no trace.
+
+test('fetchWorkflowFiles reports a failed per-file download in failedFiles, not as an empty-yaml entry', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('/contents/.github/workflows')) {
+        return {
+          ok: true,
+          json: async () => [
+            { type: 'file', name: 'good.yml', download_url: 'https://example.invalid/good.yml' },
+            { type: 'file', name: 'flaky.yml', download_url: 'https://example.invalid/flaky.yml' },
+          ],
+        };
+      }
+      if (String(url).endsWith('/good.yml')) {
+        return { ok: true, text: async () => cronWorkflow('Good') };
+      }
+      if (String(url).endsWith('/flaky.yml')) {
+        return { ok: false, status: 502 };
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const { files, failedFiles } = await fetchWorkflowFiles('DadonStyle/LULLWOOD', 'main', 'token');
+    assert.deepEqual(
+      files.map((f) => f.file),
+      ['good.yml'],
+    );
+    assert.deepEqual(failedFiles, ['flaky.yml']);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fetchWorkflowFiles: a ref with no workflows dir is an empty result, not a failure (fork/fresh-clone shape)', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({ ok: false, status: 404 });
+    const { files, failedFiles } = await fetchWorkflowFiles('DadonStyle/LULLWOOD', 'some-fork', 'token');
+    assert.deepEqual(files, []);
+    assert.deepEqual(failedFiles, []);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
 // ---- dedup marker + re-arm (reusing board-integrity-check.mjs's own dedup) -
 
 test('watchdogWakeMarker is stable per watchdog name, distinguishable across watchdogs', () => {
@@ -242,4 +310,128 @@ test('deriveWatchdogs does not double-count a workflow present on both refs', ()
   const roster = deriveWatchdogs([onBoth], [onBoth]);
   assert.equal(roster.length, 1);
   assert.equal(roster[0].onDefaultBranch, true);
+});
+
+// ---- durableToken (LUL-770 credential trap, LUL-781 regression) -----------
+//
+// os.homedir() honours $HOME on POSIX (unlike raw process.env.HOME, which
+// string-concatenates to the literal "undefined" when unset), so these tests
+// point HOME at a scratch auth.json rather than touching the real one.
+
+function withFakeHome(authJsonContents, fn) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'lul770-home-'));
+  const prevHome = process.env.HOME;
+  try {
+    mkdirSync(path.join(dir, '.paperclip'));
+    writeFileSync(path.join(dir, '.paperclip', 'auth.json'), authJsonContents);
+    process.env.HOME = dir;
+    return fn();
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('durableToken resolves an exact apiBase match', () => {
+  const creds = JSON.stringify({
+    credentials: { 'http://100.85.231.17:3100': { token: 'exact-match-token' } },
+  });
+  withFakeHome(creds, () => {
+    assert.equal(durableToken('http://100.85.231.17:3100'), 'exact-match-token');
+  });
+});
+
+test('durableToken falls back to the sole credential entry when the apiBase key does not match', () => {
+  const creds = JSON.stringify({
+    credentials: { 'http://some-other-host:9999': { token: 'sole-entry-token' } },
+  });
+  withFakeHome(creds, () => {
+    // Mirrors the real fleet shape (LUL-781): exactly one entry in the map,
+    // under a different apiBase than the one the caller passes.
+    assert.equal(durableToken('http://100.85.231.17:3100'), 'sole-entry-token');
+  });
+});
+
+test('durableToken returns null (not a throw) when auth.json is missing', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'lul770-home-empty-'));
+  const prevHome = process.env.HOME;
+  try {
+    process.env.HOME = dir; // no auth.json written
+    assert.equal(durableToken('http://100.85.231.17:3100'), null);
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('durableToken returns null (not a throw) when auth.json is malformed JSON', () => {
+  withFakeHome('not valid json{{{', () => {
+    assert.equal(durableToken('http://100.85.231.17:3100'), null);
+  });
+});
+
+// The LUL-781 regression itself: under `env -i` (the shape cron actually
+// runs under) HOME is absent from the environment entirely. The old code
+// read `process.env.HOME` directly, which is `undefined`, string-concatenated
+// into the literal path `file://undefined/.paperclip/auth.json`. That throw
+// was invisible from the outside -- durableToken's own try/catch swallows it
+// either way, on both the broken and fixed code -- so this asserts on the
+// constructed path itself (authJsonPath), not on whether durableToken threw.
+test('authJsonPath does not degrade to the literal "undefined" segment when HOME is absent (env -i shape)', () => {
+  const prevHome = process.env.HOME;
+  try {
+    delete process.env.HOME;
+    const p = authJsonPath();
+    // The literal string lands in the URL's hostname, not its pathname, when
+    // homedir() is bypassed -- assert on href so that mistake can't hide.
+    assert.doesNotMatch(p.href, /undefined/);
+    assert.match(p.pathname, /\/\.paperclip\/auth\.json$/);
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+  }
+});
+
+// ---- resolveAssigneeId (LUL-770 credential scope trap) --------------------
+
+test('resolveAssigneeId honours WATCHDOG_ASSIGNEE_AGENT_ID before ever calling fetch', async () => {
+  const prevEnv = process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+  const prevFetch = globalThis.fetch;
+  try {
+    process.env.WATCHDOG_ASSIGNEE_AGENT_ID = 'env-pinned-agent-id';
+    globalThis.fetch = async () => {
+      throw new Error('resolveAssigneeId must not call fetch when the env override is set');
+    };
+    const id = await resolveAssigneeId('http://api.invalid', 'company-1', 'token');
+    assert.equal(id, 'env-pinned-agent-id');
+  } finally {
+    if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('resolveAssigneeId tolerates a 401 from /api/agents/me (durable token) and falls through to the company agents list', async () => {
+  const prevEnv = process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+  const prevFetch = globalThis.fetch;
+  try {
+    delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/api/agents/me')) {
+        return { ok: false, status: 401 };
+      }
+      if (String(url).includes('/agents')) {
+        return { ok: true, json: async () => [{ id: 'vp-agent-id', name: 'VP R&D' }] };
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const id = await resolveAssigneeId('http://api.invalid', 'company-1', 'durable-token');
+    assert.equal(id, 'vp-agent-id');
+  } finally {
+    if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
 });

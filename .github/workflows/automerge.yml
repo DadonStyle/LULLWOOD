@@ -25,6 +25,12 @@ name: Auto merge
 # this step. `gh pr merge` and everything else in this job stays on
 # `github.token`. See systems/ship-never-merges-review-count-gap, 2026-08-20
 # CHANGES REQUESTED entry (LUL-584) for the incident this fixes.
+#
+# NOTE: This self-approval constraint is specific to BOT-authored PRs. For
+# human-authored PRs (e.g. authored by `DadonStyle`), GITHUB_TOKEN is a
+# distinct identity and CAN submit an approving review. See bot-approve.yml,
+# which uses this exact mechanism (LUL-797/LUL-807). No extra PAT is needed
+# for that path.
 
 on:
   workflow_run:
@@ -38,15 +44,21 @@ permissions:
 jobs:
   merge:
     name: merge if green and shipped
-    # A backmerged head (pr-freshness.yml, decisions/0010-no-force-push) never gets a
-    # `push` run -- GitHub suppresses push/pull_request events for GITHUB_TOKEN-authored
-    # commits, so pr-freshness explicitly workflow_dispatches CI on the new head instead
-    # (systems/ci-github-token-blind-spot, LUL-439). A push-only guard here silently skips
-    # every one of those, which is a standing cause of "APPROVED + green + nobody merged
-    # it" (LUL-692). Accept a workflow_dispatch green too, but only when github-actions[bot]
-    # triggered it -- that is the exact signature of the pr-freshness remedy and nothing
-    # else. A human/agent manually dispatching CI on a red branch must not be able to paint
-    # it green this way (playbooks/ci-green-from-workflow-dispatch).
+    # A GITHUB_TOKEN-authored backmerge head never gets a `push` run -- GitHub
+    # suppresses push/pull_request events for GITHUB_TOKEN-authored commits, so the
+    # now-deleted `pr-freshness.yml` backmerge step used to explicitly workflow_dispatch
+    # CI on the new head instead (systems/ci-github-token-blind-spot, LUL-439). A
+    # push-only guard here silently skipped every one of those, which was a standing
+    # cause of "APPROVED + green + nobody merged it" (LUL-692). This branch of the
+    # condition accepts that workflow_dispatch green too, but only when
+    # github-actions[bot] triggered it -- that was the exact signature of the
+    # pr-freshness remedy and nothing else. LUL-778 (2026-08-27) deleted the backmerge
+    # step itself (it bought mergeability the repo never needed, per that ticket), so
+    # this branch is now dormant rather than removed -- routine staleness no longer
+    # produces a GITHUB_TOKEN head to rescue, but a future automated dispatch in this
+    # same shape would still need this path. A human/agent manually dispatching CI on a
+    # red branch must not be able to paint it green this way
+    # (playbooks/ci-green-from-workflow-dispatch).
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       startsWith(github.event.workflow_run.head_branch, 'lul-') &&
@@ -120,12 +132,14 @@ jobs:
           #
           # Read it from EVERY commit in the PR, not just the head commit (LUL-465).
           # Backmerging main into the branch is the standard way to track main
-          # (decisions/0010-no-force-push) and pr-freshness.yml does it automatically,
-          # so the head commit is routinely a "Merge branch 'main' into ..." commit
-          # that never carries the marker. Reading only the head silently and
-          # permanently disarmed self-merge for any PR that outlived one main push.
-          # The PR's own commit list is exactly main..HEAD; backmerge commits come
-          # along and are harmlessly ignored by the exact-line regex.
+          # (decisions/0010-no-force-push); an agent runs it by hand (LUL-778 deleted
+          # the workflow that used to do this automatically, since routine staleness
+          # never actually blocked a merge here), so the head commit is often a
+          # "Merge branch 'main' into ..." commit that never carries the marker.
+          # Reading only the head silently and permanently disarmed self-merge for any
+          # PR that outlived one main push. The PR's own commit list is exactly
+          # main..HEAD; backmerge commits come along and are harmlessly ignored by the
+          # exact-line regex.
           messages="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number/commits" --paginate --jq '.[].commit.message')"
           if ! printf '%s\n' "$messages" | grep -qE '^[[:space:]]*\[ship\][[:space:]]*$'; then
             echo "::notice::#$number has no [ship] marker; leaving it open."

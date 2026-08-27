@@ -11,6 +11,8 @@ import {
   formatReport,
   tombstoneWakeMarker,
   unownedPrWakeMarker,
+  zeroPullableWorkWakeMarker,
+  staleConfirmationWakeMarker,
   hasOpenWakeTicket,
   extractPrNumbers,
   referencedPrNumbers,
@@ -19,6 +21,10 @@ import {
   sortTombstonesStrandedFirst,
   tombstoneWakeTitle,
   tombstoneWakeDescription,
+  isAvailableAgent,
+  zeroPullableWorkAlarm,
+  findStaleConfirmations,
+  STALE_CONFIRMATION_DAYS,
 } from './board-integrity-check.mjs';
 
 // ---- isTombstone / findTombstones ------------------------------------------
@@ -546,4 +552,141 @@ test('hasOpenWakeTicket does not cross-match a different identifier\'s marker', 
   const markerB = tombstoneWakeMarker({ identifier: 'LUL-653' });
   const openIssues = [{ title: `${markerB} (LUL-672 detector)` }];
   assert.equal(hasOpenWakeTicket(openIssues, markerA), false);
+});
+
+// ---- Alarm C: zero pullable work (LUL-810) ----------------------------------
+//
+// The studio stalled 2026-08-27 with 0 todo/in_progress and 6 available agents.
+// These tests confirm the check fires on that state and stays silent when the
+// board has work or no available agents.
+
+test('isAvailableAgent: running and idle agents are available, paused are not', () => {
+  assert.equal(isAvailableAgent({ status: 'running' }), true);
+  assert.equal(isAvailableAgent({ status: 'idle' }), true);
+  assert.equal(isAvailableAgent({ status: 'paused' }), false);
+});
+
+test('zeroPullableWorkAlarm fires when todo+in_progress is empty and agents are available', () => {
+  const agents = [{ status: 'running' }, { status: 'idle' }, { status: 'paused' }];
+  const result = zeroPullableWorkAlarm([], agents);
+  assert.equal(result.alarm, true);
+  assert.equal(result.availableAgentCount, 2);
+  assert.equal(result.openCount, 0);
+});
+
+test('zeroPullableWorkAlarm does not fire when there is open work', () => {
+  const agents = [{ status: 'running' }];
+  const result = zeroPullableWorkAlarm([{ status: 'todo' }], agents);
+  assert.equal(result.alarm, false);
+});
+
+test('zeroPullableWorkAlarm does not fire when all agents are paused (nobody to pull work)', () => {
+  const result = zeroPullableWorkAlarm([], [{ status: 'paused' }]);
+  assert.equal(result.alarm, false);
+});
+
+test('zeroPullableWorkAlarm does not fire when agent list is empty', () => {
+  assert.equal(zeroPullableWorkAlarm([], []).alarm, false);
+});
+
+test('formatReport includes Alarm C text when zeroPullableWorkAlarm fires', () => {
+  const alarm = { alarm: true, availableAgentCount: 6, openCount: 0 };
+  const report = formatReport([], [], 'DadonStyle/LULLWOOD', alarm, []);
+  assert.match(report, /ALARM C/);
+  assert.match(report, /6 available agent/);
+  assert.match(report, /studio is stopped/);
+});
+
+test('formatReport still returns null when zeroPullableWorkAlarm is false and no other alarms', () => {
+  const alarm = { alarm: false, availableAgentCount: 6, openCount: 3 };
+  assert.equal(formatReport([], [], 'DadonStyle/LULLWOOD', alarm, []), null);
+});
+
+test('zeroPullableWorkWakeMarker is stable and starts with Board-integrity:', () => {
+  const marker = zeroPullableWorkWakeMarker();
+  assert.equal(marker, 'Board-integrity: board has zero pullable work');
+});
+
+// ---- Alarm D: stale request_confirmation (LUL-810) --------------------------
+//
+// LUL-438 had a pending request_confirmation since 2026-08-19 (8 days) with
+// no surface in any alarm. These fixtures use a pinned nowMs so the age is
+// deterministic.
+
+const NOW_MS = new Date('2026-08-27T07:00:00Z').getTime();
+
+function confirmationInteraction(createdAt, kind = 'request_confirmation') {
+  return { id: 'ix-1', kind, status: 'pending', continuationPolicy: 'wake_assignee', createdAt };
+}
+
+test('findStaleConfirmations returns a request_confirmation older than the threshold', () => {
+  const issue = {
+    identifier: 'LUL-438',
+    title: 'SECURITY: PAT leaked',
+    assigneeAgentId: 'agent-1',
+    interactions: [confirmationInteraction('2026-08-19T01:07:47.862Z')],
+  };
+  const hits = findStaleConfirmations([issue], NOW_MS, 7);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].issue.identifier, 'LUL-438');
+  assert.ok(hits[0].ageDays >= 7, 'expected ageDays >= 7');
+});
+
+test('findStaleConfirmations ignores a fresh confirmation (under threshold)', () => {
+  const issue = {
+    identifier: 'LUL-500',
+    interactions: [confirmationInteraction('2026-08-26T12:00:00Z')],
+  };
+  assert.deepEqual(findStaleConfirmations([issue], NOW_MS, 7), []);
+});
+
+test('findStaleConfirmations ignores non-request_confirmation interactions', () => {
+  const issue = {
+    identifier: 'LUL-501',
+    interactions: [{ ...confirmationInteraction('2026-08-01T00:00:00Z'), kind: 'ask_user_questions' }],
+  };
+  assert.deepEqual(findStaleConfirmations([issue], NOW_MS, 7), []);
+});
+
+test('findStaleConfirmations ignores a resolved confirmation', () => {
+  const issue = {
+    identifier: 'LUL-502',
+    interactions: [{ ...confirmationInteraction('2026-08-01T00:00:00Z'), status: 'resolved' }],
+  };
+  assert.deepEqual(findStaleConfirmations([issue], NOW_MS, 7), []);
+});
+
+test('findStaleConfirmations sorts oldest first', () => {
+  const issueA = { identifier: 'A', interactions: [confirmationInteraction('2026-08-10T00:00:00Z')] };
+  const issueB = { identifier: 'B', interactions: [confirmationInteraction('2026-08-15T00:00:00Z')] };
+  const hits = findStaleConfirmations([issueA, issueB], NOW_MS, 7);
+  assert.equal(hits[0].issue.identifier, 'A', 'oldest should be first');
+});
+
+test('findStaleConfirmations with no interactions field on an issue does not throw', () => {
+  assert.deepEqual(findStaleConfirmations([{ identifier: 'X' }], NOW_MS, 7), []);
+});
+
+test('formatReport includes Alarm D text when stale confirmations exist', () => {
+  const stale = [
+    {
+      issue: { identifier: 'LUL-438', title: 'PAT leak', assigneeAgentId: 'agent-1' },
+      interaction: { id: 'ix-1', createdAt: '2026-08-19T01:07:47.862Z' },
+      ageDays: 8.2,
+    },
+  ];
+  const report = formatReport([], [], 'DadonStyle/LULLWOOD', null, stale);
+  assert.match(report, /LUL-438/);
+  assert.match(report, /stale request_confirmation/);
+  assert.match(report, /8d/);
+  assert.match(report, /2026-08-19/);
+});
+
+test('staleConfirmationWakeMarker is stable', () => {
+  const marker = staleConfirmationWakeMarker({ identifier: 'LUL-438' });
+  assert.equal(marker, 'Board-integrity: LUL-438 has a stale request_confirmation');
+});
+
+test('STALE_CONFIRMATION_DAYS is exported and equals 7', () => {
+  assert.equal(STALE_CONFIRMATION_DAYS, 7);
 });

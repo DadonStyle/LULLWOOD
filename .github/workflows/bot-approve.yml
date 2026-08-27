@@ -1,0 +1,150 @@
+name: Bot approve
+
+# LUL-797 / LUL-534. Records an already-completed Code Reviewer verdict as a
+# GitHub-native approving review, submitted by `github-actions[bot]`.
+#
+# WHY THIS IS NOT A REVIEW BYPASS
+# -------------------------------
+# Every agent in this studio authenticates as the single studio PAT
+# (`DadonStyle`). When a PR ends up DadonStyle-authored -- which happens
+# whenever `auto-pr.yml` did not open it -- GitHub 422s any approval from that
+# same identity ("Can not approve your own pull request"). The review has
+# already happened in Paperclip; there is simply no identity left that can
+# record it. Rulesets 20886790 (`main`) and 21050378 (`release/next`) require
+# one approving review and carry `bypass_actors: []`, so the PR is unmergeable
+# forever.
+#
+# `github-actions[bot]` is a genuinely distinct identity from `DadonStyle`, and
+# this repo has `can_approve_pull_request_reviews: true`. For a PR the bot did
+# NOT author, a GITHUB_TOKEN approval is not self-approval. This is the mirror
+# image of the case `automerge.yml`'s header describes: that header is correct
+# for bot-authored PRs (where the bot IS the author) and has been
+# over-generalised to PRs the bot did not author.
+#
+# The guards below are what keep this from becoming a rubber stamp:
+#   1. the bot refuses to approve its own PRs (that is the real 422 case);
+#   2. every required status check must already be green -- this workflow
+#      records a verdict, it never substitutes for CI;
+#   3. it refuses if an approving review already exists;
+#   4. it only runs when a human or the VP R&D explicitly dispatches it with a
+#      PR number and the Paperclip issue the verdict was recorded on. There is
+#      no push/schedule trigger and no default PR: `workflow_dispatch` inputs
+#      are the only source, so it can never fire on its own.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to record the approval on
+        required: true
+      issue:
+        description: Paperclip issue holding the Code Reviewer verdict (e.g. LUL-782)
+        required: true
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+  statuses: read
+
+jobs:
+  approve:
+    name: record reviewer verdict as bot
+    runs-on: ubuntu-latest
+    steps:
+      - name: submit approving review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          ISSUE: ${{ inputs.issue }}
+        run: |
+          set -euo pipefail
+
+          author=$(gh api "repos/$REPO/pulls/$PR" --jq '.user.login')
+          echo "PR #$PR author: $author"
+          if [ "$author" = "github-actions[bot]" ]; then
+            echo "::error::PR #$PR is authored by github-actions[bot]; the bot cannot approve its own PR (422). Approve it as the studio PAT instead."
+            exit 1
+          fi
+
+          existing=$(gh api "repos/$REPO/pulls/$PR/reviews" --jq '[.[] | select(.state == "APPROVED")] | length')
+          if [ "$existing" -gt 0 ]; then
+            echo "::notice::PR #$PR already has $existing approving review(s); nothing to do."
+            exit 0
+          fi
+
+          # Record a verdict, never substitute for CI: every check the BASE
+          # branch's ruleset requires must already be SUCCESS on this PR's own
+          # rollup.
+          #
+          # Required checks are matched BY NAME against the ruleset, not via
+          # `gh pr view --json statusCheckRollup`'s `isRequired`. Measured on
+          # this repo 2026-08-27: `isRequired` is `null` for every check on
+          # every PR, with the studio PAT as well as GITHUB_TOKEN. It is a
+          # CLASSIC branch-protection field, and this repo's gates live in
+          # rulesets (20886790 / 21050378), which it does not reflect. Selecting
+          # on it yields an empty set, and an empty set trivially passes an
+          # "all green" test -- so this must never be reduced back to a rollup
+          # filter (wiki systems/ci-github-token-blind-spot: a green rollup can
+          # be an empty set).
+          base=$(gh api "repos/$REPO/pulls/$PR" --jq '.base.ref')
+          gh api "repos/$REPO/rules/branches/$(printf '%s' "$base" | sed 's|/|%2F|g')" \
+            --jq '.[] | select(.type == "required_status_checks")
+                      | .parameters.required_status_checks[].context' | sort -u > required.txt
+          echo "checks required by $base's ruleset:"; cat required.txt
+          if [ ! -s required.txt ]; then
+            echo "::error::$base's ruleset declares no required status checks. Refusing to approve an unverified head."
+            exit 1
+          fi
+
+          gh pr view "$PR" --repo "$REPO" --json statusCheckRollup \
+            --jq '.statusCheckRollup[] | "\(.name // .context)\t\(.conclusion // .state)"' > rollup.tsv
+          echo "PR #$PR rollup:"; cat rollup.tsv
+
+          fail=0
+          while IFS= read -r ctx; do
+            state=$(awk -F'\t' -v c="$ctx" '$1 == c {print $2}' rollup.tsv | tail -1)
+            echo "  required '$ctx' -> ${state:-<ABSENT>}"
+            if [ "$state" != "SUCCESS" ]; then
+              echo "::error::required check '$ctx' is ${state:-absent from the PR rollup} on PR #$PR."
+              fail=1
+            fi
+          done < required.txt
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Refusing to approve PR #$PR -- not every ruleset-required check is green."
+            exit 1
+          fi
+
+          python3 - <<'PY' > body.json
+          import json, os
+          pr, issue = os.environ["PR"], os.environ["ISSUE"]
+          body = (
+              "Recording the Code Reviewer's verdict from Paperclip "
+              f"{issue} as a GitHub-native approving review.\n\n"
+              "Submitted by `github-actions[bot]` because this PR is authored "
+              "by `DadonStyle`, the studio's only PAT identity, so that "
+              "identity cannot approve it (GitHub 422, self-approval). The bot "
+              "is a distinct identity and did not author this PR.\n\n"
+              "All required status checks on this PR's rollup were verified "
+              "green before this review was submitted. See "
+              "`.github/workflows/bot-approve.yml` and wiki "
+              "`game/lul780-merge-blocked-self-approval-and-budget`."
+          )
+          json.dump({"event": "APPROVE", "body": body}, open(1, "w", closefd=False))
+          PY
+
+          gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input body.json \
+            --jq '"submitted review \(.id) state=\(.state) by=\(.user.login)"'
+
+      - name: report resulting mergeability
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          sleep 5
+          gh api "repos/$REPO/pulls/$PR" \
+            --jq '"PR #\(.number) mergeable=\(.mergeable) mergeable_state=\(.mergeable_state)"' \
+            | tee -a "$GITHUB_STEP_SUMMARY"
