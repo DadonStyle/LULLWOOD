@@ -182,13 +182,20 @@ function findNoRunWatchdogs(classified) {
   return classified.filter((w) => w.alarm === 'no-runs');
 }
 
-function formatReport(classified, repo) {
+function formatReport(classified, repo, failedFiles = []) {
   const red = findRedWatchdogs(classified);
   const inert = findInertWatchdogs(classified);
   const noRuns = findNoRunWatchdogs(classified);
-  if (red.length === 0 && inert.length === 0 && noRuns.length === 0) return null;
+  if (red.length === 0 && inert.length === 0 && noRuns.length === 0 && failedFiles.length === 0) return null;
 
   const lines = ['watchdog-run-check: ALARM'];
+  if (failedFiles.length > 0) {
+    lines.push(
+      '',
+      `${failedFiles.length} workflow file(s) could not be read this run, roster may be incomplete: ` +
+        failedFiles.join(', '),
+    );
+  }
   if (red.length > 0) {
     lines.push('', `${red.length} scheduled watchdog(s) on ${repo} with a RED latest scheduled run:`);
     for (const w of red) {
@@ -227,6 +234,13 @@ function watchdogWakeMarker(watchdog) {
 // Every .github/workflows/* on one ref, as { file, yaml }. A ref that does
 // not exist (or has no workflows dir) is an empty list, not an error --
 // TRAIN_BRANCH is allowed to be absent on a fork or a fresh clone.
+//
+// A failed per-file download is NOT folded into yaml: '' -- that would be
+// indistinguishable from "this workflow genuinely has no schedule:" and
+// silently narrow the derived roster (LUL-776). Instead the file is left out
+// of the returned list entirely and its name collected in `failedFiles`, so
+// the caller can surface it as a loud "roster may be incomplete" line rather
+// than a silent miss.
 async function fetchWorkflowFiles(repo, ref, token) {
   const headers = {
     Accept: 'application/vnd.github+json',
@@ -236,15 +250,20 @@ async function fetchWorkflowFiles(repo, ref, token) {
     `https://api.github.com/repos/${repo}/contents/.github/workflows?ref=${encodeURIComponent(ref)}`,
     { headers },
   );
-  if (!listRes.ok) return [];
+  if (!listRes.ok) return { files: [], failedFiles: [] };
   const entries = await listRes.json();
   const files = [];
+  const failedFiles = [];
   for (const entry of Array.isArray(entries) ? entries : []) {
     if (entry.type !== 'file' || !/\.ya?ml$/.test(entry.name)) continue;
     const res = await fetch(entry.download_url, { headers });
-    files.push({ file: entry.name, yaml: res.ok ? await res.text() : '' });
+    if (!res.ok) {
+      failedFiles.push(entry.name);
+      continue;
+    }
+    files.push({ file: entry.name, yaml: await res.text() });
   }
-  return files;
+  return { files, failedFiles };
 }
 
 // Always filtered to event=schedule. The old code carried a hand-maintained
@@ -264,13 +283,14 @@ async function fetchLatestScheduledRuns(repo, file, token) {
 }
 
 async function classifyAllWatchdogs(repo, defaultBranch, token) {
-  const [defaultFiles, trainFiles] = await Promise.all([
+  const [defaultResult, trainResult] = await Promise.all([
     fetchWorkflowFiles(repo, defaultBranch, token),
     defaultBranch === TRAIN_BRANCH
-      ? Promise.resolve([])
+      ? Promise.resolve({ files: [], failedFiles: [] })
       : fetchWorkflowFiles(repo, TRAIN_BRANCH, token),
   ]);
-  const watchdogs = deriveWatchdogs(defaultFiles, trainFiles);
+  const watchdogs = deriveWatchdogs(defaultResult.files, trainResult.files);
+  const failedFiles = [...defaultResult.failedFiles, ...trainResult.failedFiles];
 
   const results = [];
   for (const watchdog of watchdogs) {
@@ -281,7 +301,7 @@ async function classifyAllWatchdogs(repo, defaultBranch, token) {
       : [];
     results.push(classifyWatchdog(watchdog, watchdog.onDefaultBranch, runs));
   }
-  return results;
+  return { results, failedFiles };
 }
 
 // Every status that means "this alarm still has a ticket someone could act
@@ -422,9 +442,9 @@ async function main() {
   const repoInfo = await ghFetch(`https://api.github.com/repos/${repo}`, ghToken);
   const defaultBranch = repoInfo.default_branch;
 
-  const classified = await classifyAllWatchdogs(repo, defaultBranch, ghToken);
+  const { results: classified, failedFiles } = await classifyAllWatchdogs(repo, defaultBranch, ghToken);
   const red = findRedWatchdogs(classified);
-  const report = formatReport(classified, repo);
+  const report = formatReport(classified, repo, failedFiles);
 
   if (!report) {
     console.log(`watchdog-run-check: OK (${classified.length} watchdog(s) checked on ${repo}, no alarms)`);
@@ -479,5 +499,6 @@ export {
   authJsonPath,
   durableToken,
   resolveAssigneeId,
+  fetchWorkflowFiles,
 };
 
