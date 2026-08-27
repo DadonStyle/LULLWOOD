@@ -7,11 +7,32 @@ name: CI
 # Pull requests opened by GITHUB_TOKEN (see auto-pr.yml) do not start
 # `pull_request` workflow runs — GitHub suppresses them so workflows cannot
 # recurse. A PR whose checks never start can never satisfy the required status
-# checks on `main`, so for agent-opened PRs, CI has to attach to the branch push
-# instead. Branch protection resolves required checks against the head SHA no
-# matter which event produced them, so the ruleset is satisfied either way.
-# Every `lul-*` branch and every same-repo PR (100% of PRs in this repo's
-# history) is push-covered and gets exactly one run.
+# checks on `release/next`/`main`, so for agent-opened PRs, CI has to attach to
+# the branch push instead.
+#
+# CORRECTED 2026-08-26 (LUL-762): the claim that used to sit here --
+# "branch protection resolves required checks against the head SHA no matter
+# which event produced them, so the ruleset is satisfied either way" -- is
+# FALSE for `workflow_dispatch`, measured live on PR #148/#149/#150. A
+# `workflow_dispatch` run's check-runs attach to the commit (they show up on
+# `GET /commits/{sha}/check-runs`, name-matched, app-matched, `success`) but
+# they never enter the PULL REQUEST's `statusCheckRollup` -- which is what
+# `PUT /pulls/{n}/merge` actually evaluates. A PR whose only CI run on its head
+# is `workflow_dispatch` reads "3 of 3 required status checks are expected"
+# forever, no matter how green the commit looks from the REST check-runs
+# endpoint. Only a real `push` (or a same-repo `pull_request`, which we don't
+# trigger on, see below) enters the rollup. See wiki
+# playbooks/ci-green-from-workflow-dispatch and systems/ci-github-token-blind-spot
+# for the full history of why `workflow_dispatch` was ever treated as
+# equivalent -- it was never actually verified against the rollup until now.
+#
+# Practical effect: `push` is the ONLY event that can satisfy a required
+# check for merge purposes on this repo. Every `lul-*` branch pushed by a real
+# credential (deploy key or PAT) is push-covered and gets exactly one
+# satisfying run. A branch whose head is a GITHUB_TOKEN-authored commit (e.g.
+# `pr-freshness.yml`'s backmerge) is NOT covered by anything in this file --
+# `workflow_dispatch` was believed to be the rescue and is not. See
+# `pr-freshness.yml`'s own header comment for the current state of that gap.
 #
 # LUL-719/LUL-729 (2026-08-26): `pull_request` used to stay as a fork-PR
 # fallback, gated by a job-level `if: ... head.repo.full_name != ...` so the
@@ -36,12 +57,12 @@ name: CI
 #
 # Named, deliberate consequence (same one LUL-508 already accepted once):
 # a genuine fork PR loses automatic required-check coverage, since `push`
-# can't see a fork's commits. Fallback: a manual
-# `workflow_dispatch` against the fork's head ref -- the same mechanism
-# `pr-freshness.yml` already uses to get CI onto GITHUB_TOKEN-authored
-# backmerge commits, and the same mechanism that produced the real `success`
-# instance on PR #137 itself. Zero fork PRs received in this repo's history
-# as of this writing.
+# can't see a fork's commits. A manual `workflow_dispatch` against the fork's
+# head ref gets a green check-run on the commit, but per the LUL-762
+# correction above that green does NOT enter the PR's rollup and does NOT
+# satisfy the ruleset -- a fork PR (or any GITHUB_TOKEN-authored head) needs
+# an actual push from a real credential to become mergeable, full stop.
+# Zero fork PRs received in this repo's history as of this writing.
 on:
   push:
     branches: ['**']
