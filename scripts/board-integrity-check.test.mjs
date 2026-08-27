@@ -19,6 +19,17 @@ import {
   sortTombstonesStrandedFirst,
   tombstoneWakeTitle,
   tombstoneWakeDescription,
+  isBoardStalled,
+  formatStallAlarm,
+  stallWakeTitle,
+  stallWakeDescription,
+  confirmationAgeDays,
+  isStalePendingConfirmation,
+  findStaleConfirmations,
+  formatStaleConfirmationAlarm,
+  staleConfirmationWakeMarker,
+  staleConfirmationWakeTitle,
+  staleConfirmationWakeDescription,
 } from './board-integrity-check.mjs';
 
 // ---- isTombstone / findTombstones ------------------------------------------
@@ -546,4 +557,183 @@ test('hasOpenWakeTicket does not cross-match a different identifier\'s marker', 
   const markerB = tombstoneWakeMarker({ identifier: 'LUL-653' });
   const openIssues = [{ title: `${markerB} (LUL-672 detector)` }];
   assert.equal(hasOpenWakeTicket(openIssues, markerA), false);
+});
+
+// ---- isBoardStalled / formatStallAlarm (LUL-810 Alarm C) -------------------
+//
+// LUL-810's own ticket body is the real incident, measured 2026-08-27T07:00Z:
+// "0 issues in todo or in_progress ... 6 agents idle/running-capable, every
+// one of them with nothing to pull." That is the true-positive fixture. The
+// true-negative is live board state captured while building this fix
+// (same day, same company): 4 todo + 4 in_progress = 8 pullable, with the
+// Game Tester and Mobile Developer idle -- healthy, not stalled.
+
+function idleAgent(name, id = name) {
+  return { id, name, status: 'idle' };
+}
+
+test('LUL-810 fixture: 0 pullable, 6 idle agents -> stalled', () => {
+  const agents = ['Game Tester', 'Code Reviewer', 'Game Engineer', 'VP R&D', 'Founding Engineer', 'Mobile Developer'].map(
+    idleAgent,
+  );
+  assert.equal(isBoardStalled(0, agents), true);
+});
+
+test('live fixture 2026-08-27: 8 pullable, 2 idle agents -> not stalled', () => {
+  const agents = [
+    idleAgent('Game Tester', '8eea66ab-7f58-4ff7-997f-37ac62386af0'),
+    { id: '524aa88a-7c1a-4135-8109-5d69696bf60c', name: 'Code Reviewer', status: 'running' },
+    idleAgent('Mobile Developer', '616ac0c9-263e-4bed-83d3-0edd67e78b5a'),
+  ];
+  assert.equal(isBoardStalled(8, agents), false);
+});
+
+test('0 pullable but every agent running/paused (no idle capacity) -> not stalled', () => {
+  const agents = [
+    { id: '1', name: 'A', status: 'running' },
+    { id: '2', name: 'B', status: 'paused' },
+  ];
+  assert.equal(isBoardStalled(0, agents), false);
+});
+
+test('some pullable work, agents idle -> not stalled regardless of idle count', () => {
+  assert.equal(isBoardStalled(1, [idleAgent('A')]), false);
+});
+
+test('formatStallAlarm is null when the board is not stalled', () => {
+  assert.equal(formatStallAlarm(8, [idleAgent('Game Tester')]), null);
+  assert.equal(formatStallAlarm(0, [{ id: '1', name: 'A', status: 'running' }]), null);
+});
+
+test('formatStallAlarm names every idle agent when the board is stalled', () => {
+  const report = formatStallAlarm(0, [idleAgent('Game Tester'), idleAgent('Mobile Developer')]);
+  assert.match(report, /ALARM/);
+  assert.match(report, /BOARD STALL/);
+  assert.match(report, /Game Tester/);
+  assert.match(report, /Mobile Developer/);
+});
+
+test('stallWakeTitle and stallWakeDescription name the idle agents and cite the recovery playbook', () => {
+  assert.match(stallWakeTitle(), /board stalled, zero pullable work/);
+  const description = stallWakeDescription(0, [idleAgent('Game Tester')]);
+  assert.match(description, /Game Tester/);
+  assert.match(description, /session-limit-issue-recovery/);
+});
+
+// ---- confirmationAgeDays / isStalePendingConfirmation / findStaleConfirmations (LUL-810 Alarm D) --
+//
+// Real interaction payloads off LUL-438 (GET /api/issues/{id}/interactions,
+// captured 2026-08-27 while building this fix -- not invented). The first is
+// the actual 8-day-stale confirmation the ticket calls out by name; the
+// second is a fresh one created by this same morning's recovery sweep, real
+// data for the "not yet stale" side of the same predicate.
+
+const NOW = Date.parse('2026-08-27T07:09:11.196Z');
+
+function lul438StaleConfirmation() {
+  return {
+    id: 'bd2ff99a-1158-4999-ae40-b5692e86c8c8',
+    kind: 'request_confirmation',
+    status: 'pending',
+    continuationPolicy: 'wake_assignee',
+    createdAt: '2026-08-19T01:07:47.862Z',
+  };
+}
+
+function lul438FreshConfirmation() {
+  return {
+    id: 'adbe1e75-b0c5-474b-87d1-5090e1f277d8',
+    kind: 'request_confirmation',
+    status: 'pending',
+    continuationPolicy: 'wake_assignee',
+    createdAt: '2026-08-27T07:09:11.196Z',
+  };
+}
+
+test('confirmationAgeDays computes the real ~8-day gap on the LUL-438 stale interaction', () => {
+  const age = confirmationAgeDays(lul438StaleConfirmation(), NOW);
+  assert.ok(age > 8 && age < 9, `expected ~8 days, got ${age}`);
+});
+
+test('confirmationAgeDays is 0 for an interaction created at "now"', () => {
+  assert.equal(confirmationAgeDays(lul438FreshConfirmation(), NOW), 0);
+});
+
+test('confirmationAgeDays is null for an unparseable createdAt', () => {
+  assert.equal(confirmationAgeDays({ createdAt: 'not-a-date' }, NOW), null);
+});
+
+test('LUL-438 shape: pending request_confirmation older than 3 days -> stale', () => {
+  assert.equal(isStalePendingConfirmation(lul438StaleConfirmation(), NOW), true);
+});
+
+test('a fresh pending request_confirmation (created at "now") -> not stale', () => {
+  assert.equal(isStalePendingConfirmation(lul438FreshConfirmation(), NOW), false);
+});
+
+test('a resolved confirmation does not count as stale even if old', () => {
+  const resolved = { ...lul438StaleConfirmation(), status: 'resolved' };
+  assert.equal(isStalePendingConfirmation(resolved, NOW), false);
+});
+
+test('a pending interaction of a different kind (not request_confirmation) does not count', () => {
+  const askQuestions = { ...lul438StaleConfirmation(), kind: 'ask_user_questions' };
+  assert.equal(isStalePendingConfirmation(askQuestions, NOW), false);
+});
+
+test('a custom threshold is honored -- 8-day-old interaction is not stale at a 10-day threshold', () => {
+  assert.equal(isStalePendingConfirmation(lul438StaleConfirmation(), NOW, 10), false);
+});
+
+test('findStaleConfirmations scans every issue and every interaction, flagging only the stale ones', () => {
+  const issues = [
+    { identifier: 'LUL-438', title: 'PAT rotation', interactions: [lul438StaleConfirmation(), lul438FreshConfirmation()] },
+    { identifier: 'LUL-1', title: 'unrelated', interactions: [] },
+    { identifier: 'LUL-2', title: 'no interactions field' },
+  ];
+  const hits = findStaleConfirmations(issues, NOW);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].issue.identifier, 'LUL-438');
+  assert.equal(hits[0].interaction.id, lul438StaleConfirmation().id);
+  assert.ok(hits[0].ageDays > 8);
+});
+
+test('formatStaleConfirmationAlarm is null for an empty hit list', () => {
+  assert.equal(formatStaleConfirmationAlarm([]), null);
+});
+
+test('formatStaleConfirmationAlarm names the issue, age, and assignee', () => {
+  const hits = findStaleConfirmations(
+    [
+      {
+        identifier: 'LUL-438',
+        title: 'PAT rotation',
+        assigneeAgentId: '6b780916-2a67-453b-852d-ceeb3d1ed4df',
+        interactions: [lul438StaleConfirmation()],
+      },
+    ],
+    NOW,
+  );
+  const report = formatStaleConfirmationAlarm(hits);
+  assert.match(report, /ALARM/);
+  assert.match(report, /LUL-438/);
+  assert.match(report, /8 day/);
+  assert.match(report, /6b780916-2a67-453b-852d-ceeb3d1ed4df/);
+});
+
+test('staleConfirmationWakeMarker is stable and keyed by issue + interaction id', () => {
+  const marker = staleConfirmationWakeMarker({ identifier: 'LUL-438' }, { id: 'bd2ff99a' });
+  assert.equal(marker, 'Board-integrity: LUL-438 confirmation bd2ff99a is stale');
+});
+
+test('staleConfirmationWakeTitle and staleConfirmationWakeDescription carry the age and creation date', () => {
+  const marker = staleConfirmationWakeMarker({ identifier: 'LUL-438' }, lul438StaleConfirmation());
+  assert.match(staleConfirmationWakeTitle(marker), /LUL-438/);
+  const description = staleConfirmationWakeDescription({
+    issue: { identifier: 'LUL-438', title: 'PAT rotation' },
+    interaction: lul438StaleConfirmation(),
+    ageDays: confirmationAgeDays(lul438StaleConfirmation(), NOW),
+  });
+  assert.match(description, /8 day/);
+  assert.match(description, /2026-08-19T01:07:47.862Z/);
 });
