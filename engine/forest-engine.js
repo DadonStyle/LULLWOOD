@@ -86,6 +86,12 @@ import {
   tickTimers,
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
+import {
+  inLakeWater,
+  inLakeClearance,
+  lakeSpeedMultiplier,
+  pushOutOfLakeClearance,
+} from '@/lib/game/lake';
 
 let activeDispose = null;
 
@@ -406,7 +412,7 @@ let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
 let coverGrid = new Map();     // same CELL keying as `grid`, built from coverData
 
-function inLake(x,z){ const dx=x-CONFIG.lake.x, dz=z-CONFIG.lake.z; return dx*dx+dz*dz < CONFIG.lake.clear**2; }
+function inLake(x,z){ return inLakeClearance(x, z, CONFIG.lake); }
 function inSpawn(x,z){ return x*x+z*z < 40; }
 // LUL-425: CELL and key() (now gridKey) live in lib/game/cover.ts, imported
 // above -- single source of truth for the bucketing convention every
@@ -979,9 +985,19 @@ function placePredators(){
     p.inert = p.speciesIdx >= preset.activePerSpecies;
     p.g.visible = !p.inert;
     if(p.inert){ p.x = p.z = -9999; continue; }   // parked off-map; both scan loops also skip on p.inert
+    // LUL-395: the reject condition never checked the lake, so a predator
+    // could spawn in or right at the edge of the water -- unlike the tree,
+    // baby and cover spawn loops (generateMap()/generateCover()), which all
+    // reject inLake() already. Same bounded budget (tries<60) as before, the
+    // lake check just joins the other reject reasons. If the budget still
+    // exhausts on a lake candidate (every draw in the wedge landed in the
+    // water), pushOutOfLakeClearance() deterministically relocates it just
+    // past the lake's clearance ring rather than silently spawning it in the
+    // water -- see lib/game/lake.ts.
     let x, z, tries = 0;
     do { const ang=rng()*Math.PI*2, d=half*(0.42+rng()*0.45); x=Math.cos(ang)*d; z=Math.sin(ang)*d; tries++; }
-    while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 26 || blockedR(x, z, p.rad+0.5)) && tries < 60);
+    while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 26 || blockedR(x, z, p.rad+0.5) || inLake(x,z)) && tries < 60);
+    if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
@@ -2810,9 +2826,18 @@ function tick(){
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
   const playerInBog = inBog(player.x, player.z);   // LUL-25: shallow water -- half speed, louder splash
+  // LUL-791/LUL-392: the lake used to be pure render -- no collision, no slow,
+  // walkable like dry ground. `inLakeWater` (the visible water radius `r`,
+  // not the wider `clear` spawn-clearance ring the spawn checks use) so the
+  // slow starts exactly where the water mesh does, not several units of dry
+  // shore early. A wade-slow, not a wall, per the ticket: the lake reads as
+  // an atmospheric hazard, and a hard invisible wall in a fog-heavy horror
+  // game reads as a bug even when intentional -- and it plays into the core
+  // hiding loop (risk the slow crossing, or go around).
+  const playerInLake = inLakeWater(player.x, player.z, CONFIG.lake);
   if(playing && !hidden){
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
-    const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerInBog);
+    const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerInBog) * lakeSpeedMultiplier(playerInLake);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
