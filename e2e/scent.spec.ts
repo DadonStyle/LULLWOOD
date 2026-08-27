@@ -164,33 +164,79 @@ test.describe('scent acquisition behind cover (LUL-196)', () => {
     // existing waypoint (up to 55 units away, at 2.3 u/s in roam) and the
     // seeded point becomes stale before checkScent runs, causing the
     // 15-second poll to time out with scentCalls=0. This was the root cause
-    // of the LUL-645 flake.
-    await page.evaluate(
-      ({ i, px, pz }) => {
-        const fresh = window.ForestEngine?.qaSetPredatorRoam?.(i) ?? null;
-        if (!fresh) return;
-        window.ForestEngine?.qaSeedScentPoint?.(fresh.x - px, fresh.z - pz, 0);
-      },
-      { i: idx, px: playerX, pz: playerZ },
-    );
+    // of the LUL-645 flake, and this atomic-evaluate shape is still correct
+    // — do not revert it.
+    //
+    // LUL-882: that fix closed the *inter-evaluate* race but not a second,
+    // narrower one: SCENT_RADIUS_WALK (2.2u, lib/game/scent.ts) is smaller
+    // than roam speed (2.3u/s, engine/forest-engine.js's roam movement
+    // branch). Once seeded, the point does not move but the predator does —
+    // so detection has well under one game-second to land before the
+    // predator's own roam waypoint carries it permanently out of pickup
+    // range (the point just sits there, undetectable, until it decays out
+    // 14s later). Anything that eats that first window — a residual
+    // sniffImmuneT left over from an earlier investigate/sniff cycle
+    // (LUL-437's grace timer; qaSetPredatorRoam resets scentLock/scentCalls/
+    // hunt/alert/sniffsLeft but not sniffImmuneT) or simply a frame not
+    // landing before the roam step runs under loaded CI — fails the test
+    // permanently, not just late. That is consistent with this exact
+    // assertion recurring on three unrelated PRs (see wiki
+    // game/lul196-scent-behind-cover-geometry) that touched nothing in the
+    // scent path: a single seed attempt is a coin flip against a race the
+    // single-evaluate fix does not close.
+    //
+    // Fix: re-seed at the predator's *current* position on a bounded retry
+    // loop instead of a single attempt. Each attempt reads a fresh position
+    // and gets its own short sub-timeout to be detected before the next
+    // reseed — so whatever suppressed detection on one attempt (residual
+    // immunity, a missed frame) cannot survive several independent ones
+    // inside the same overall deadline. The headline assertion
+    // (`scentCalls > 0`) and its 15s overall budget are unchanged; this only
+    // gives the QA seeding step, not the mechanic under test, more than one
+    // chance to land.
+    const RESEED_INTERVAL_MS = 3_000;
+    const OVERALL_TIMEOUT_MS = 15_000;
+    const deadline = Date.now() + OVERALL_TIMEOUT_MS;
+    let scentCalls = 0;
+    do {
+      await page.evaluate(
+        ({ i, px, pz }) => {
+          const fresh = window.ForestEngine?.qaSetPredatorRoam?.(i) ?? null;
+          if (!fresh) return;
+          window.ForestEngine?.qaSeedScentPoint?.(fresh.x - px, fresh.z - pz, 0);
+        },
+        { i: idx, px: playerX, pz: playerZ },
+      );
 
-    // Wait for the predator's scentCalls to increment: checkScent() ran and
-    // scentOnto() accepted the trail despite the player being behind cover.
-    // Poll by index (not by kind) to target the exact predator staged above.
-    await expect
-      .poll(
-        async () => {
-          const s = await page.evaluate(
-            (i) => window.ForestEngine?.qaPredatorState?.(i) ?? null,
-            idx,
-          );
-          return s?.scentCalls ?? 0;
-        },
-        {
-          message: 'scentCalls never incremented — checkScent/scentOnto did not fire while in roam (predator may have left roam before scent ran)',
-          timeout: 15_000,
-        },
-      )
-      .toBeGreaterThan(0);
+      // Wait for the predator's scentCalls to increment: checkScent() ran
+      // and scentOnto() accepted the trail despite the player being behind
+      // cover. Poll by index (not by kind) to target the exact predator
+      // staged above.
+      try {
+        await expect
+          .poll(
+            async () => {
+              const s = await page.evaluate(
+                (i) => window.ForestEngine?.qaPredatorState?.(i) ?? null,
+                idx,
+              );
+              scentCalls = s?.scentCalls ?? 0;
+              return scentCalls;
+            },
+            { timeout: Math.min(RESEED_INTERVAL_MS, Math.max(1, deadline - Date.now())) },
+          )
+          .toBeGreaterThan(0);
+        break;
+      } catch {
+        // Sub-timeout expired without detection — loop condition below
+        // re-seeds and tries again as long as the overall deadline hasn't
+        // passed yet.
+      }
+    } while (scentCalls === 0 && Date.now() < deadline);
+
+    expect(
+      scentCalls,
+      'scentCalls never incremented — checkScent/scentOnto did not fire while in roam, even after re-seeding the point at the predator\'s current position on a bounded retry loop (predator may genuinely not be reachable via scent while behind this cover)',
+    ).toBeGreaterThan(0);
   });
 });
