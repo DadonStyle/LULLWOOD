@@ -26,10 +26,16 @@ name: Base branch guard
 #   the exact problem.
 #
 #   schedule (*/20 * * * *, same cadence as deployment-budget.yml): lists
-#   every open base:main PR directly and posts a commit status per head SHA
-#   under this same check's context ("base branch guard"), independent of
-#   whether `pull_request` ever fired for it. This is the path that
-#   actually closes the three-hour gap.
+#   EVERY open PR (not just base:main -- LUL-841) directly and posts a
+#   commit status per head SHA under this same check's context ("base
+#   branch guard"), independent of whether `pull_request` ever fired for
+#   it. This is the path that actually closes the three-hour gap, and
+#   (LUL-841) also the path that revisits a PR retargeted off `main` --
+#   the `pull_request` trigger above can't re-fire for that (its own
+#   `branches: [main]` filter no longer matches once base != main), so a
+#   PR that was briefly base:main and got a real FAILURE posted, then
+#   retargeted to `release/next`, had no path back to green until the
+#   sweep started looking at more than just base:main PRs.
 #
 # Either trigger reports under the SAME context name, so `main`'s required
 # status checks only need to name it once.
@@ -67,13 +73,13 @@ jobs:
         run: bash .github/scripts/base-branch-guard.sh
 
   sweep:
-    name: sweep open base:main PRs
+    name: sweep open PRs
     if: github.event_name != 'pull_request' && github.repository == 'DadonStyle/LULLWOOD'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: sweep every open PR targeting main
+      - name: sweep every open PR (base:main violations, plus retargeted-off-main revisits)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

@@ -79,6 +79,63 @@ run_sweep "labelled hotfix does not trip the sweep" '[
   {"number":4,"baseRefName":"main","headRefName":"lul-4-hotfix","labels":[{"name":"emergency-hotfix"}]}
 ]' 0
 
+# --- LUL-841: retargeted-off-main revisit ------------------------------------
+# #173/#162's exact shape: the PR was briefly base:main, `single` posted a
+# real FAILURE CheckRun for that head SHA, then the PR was retargeted to
+# release/next. Before LUL-841 the real sweep's `gh pr list --base main`
+# filter dropped the PR from its input the moment it left main, so nobody
+# ever revisited that head SHA and the FAILURE sat there forever even
+# though decide_one has always said "ok" for base!=main. Assert the sweep
+# actually notices and decides to clear it (via the "post:" line it logs
+# even in fixture/dry-run mode) -- not just that the exit code is 0, which
+# was already true before this fix and would not have caught the bug.
+run_sweep_grep() {
+  local name="$1" fixture_json="$2" expect_exit="$3" grep_pattern="$4" expect_present="$5"
+  local fixture="$tmp/$name.json"
+  printf '%s' "$fixture_json" > "$fixture"
+  local actual_exit=0
+  local out
+  out="$(BASE_BRANCH_GUARD_FIXTURE="$fixture" bash "$script" 2>&1)" || actual_exit=$?
+  if [ "$actual_exit" != "$expect_exit" ]; then
+    echo "FAIL: sweep/$name -- expected exit $expect_exit, got $actual_exit" >&2
+    echo "$out" | sed 's/^/    /' >&2
+    fail=1
+    return
+  fi
+  local found=0
+  echo "$out" | grep -qF "$grep_pattern" && found=1
+  if [ "$found" != "$expect_present" ]; then
+    echo "FAIL: sweep/$name -- expected grep '$grep_pattern' present=$expect_present, got present=$found" >&2
+    echo "$out" | sed 's/^/    /' >&2
+    fail=1
+    return
+  fi
+  echo "ok: sweep/$name -> exit $actual_exit, grep present=$found as expected"
+}
+
+run_sweep_grep "PR #173 shape: retargeted off main, stale FAILURE CheckRun gets revisited" '[
+  {"number":173,"baseRefName":"release/next","headRefName":"lul-173-thing","labels":[],
+   "headRefOid":"deadbeef173","statusCheckRollup":[
+     {"__typename":"CheckRun","name":"base branch guard","conclusion":"FAILURE",
+      "startedAt":"2026-08-27T02:00:00Z","completedAt":"2026-08-27T02:00:30Z","status":"COMPLETED"}
+   ]}
+]' 0 'post: state=success context='"'"'base branch guard'"'"' sha=deadbeef173 desc="base=lul-173-thing, retargeted off main"' 1
+
+run_sweep_grep "retargeted PR that never had a base branch guard failure gets no post" '[
+  {"number":83,"baseRefName":"release/next","headRefName":"lul-83-thing","labels":[],
+   "headRefOid":"deadbeef83","statusCheckRollup":[]}
+]' 0 'sha=deadbeef83' 0
+
+run_sweep_grep "retargeted PR already fixed by an earlier sweep cycle is not reposted" '[
+  {"number":174,"baseRefName":"release/next","headRefName":"lul-174-thing","labels":[],
+   "headRefOid":"deadbeef174","statusCheckRollup":[
+     {"__typename":"CheckRun","name":"base branch guard","conclusion":"FAILURE",
+      "startedAt":"2026-08-27T02:00:00Z","completedAt":"2026-08-27T02:00:30Z","status":"COMPLETED"},
+     {"__typename":"StatusContext","context":"base branch guard","state":"SUCCESS",
+      "startedAt":"2026-08-27T02:20:00Z"}
+   ]}
+]' 0 'sha=deadbeef174' 0
+
 if [ "$fail" != "0" ]; then
   echo
   echo "FAIL: at least one base-branch-guard case did not behave as expected." >&2
