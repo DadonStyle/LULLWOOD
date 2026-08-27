@@ -255,7 +255,7 @@ test('injecting drift into a still-L<n>-cited citation is caught', () => {
   // currently accepts, move it off the symbol, and assert the gate notices.
   const doc = fs.readFileSync('docs/ELEMENTS.md', 'utf8');
   const engine = fs.readFileSync('engine/forest-engine.js', 'utf8');
-  const injected = doc + '\n\n`depositScent()` L1035-1038 test fixture only.\n';
+  const injected = doc + '\n\n`depositScent()` L1037-1040 test fixture only.\n';
   const before = checkCitations(injected, engine);
   const victim = before.ok.find((c) => c.symbol === 'depositScent');
   assert.ok(victim, 'expected the injected depositScent citation to verify clean first');
