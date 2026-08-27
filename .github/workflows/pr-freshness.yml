@@ -36,6 +36,25 @@ name: PR freshness
 # github.event_name != 'pull_request') to run against the new head, with no
 # new PAT/secret required.
 #
+# CORRECTED 2026-08-26 (LUL-762): the paragraph above describes what this
+# step DOES, accurately, but the conclusion the repo drew from it -- that
+# dispatching `ci.yml` on the refreshed head makes the PR mergeable again --
+# is FALSE and was never actually verified against the thing that matters.
+# `workflow_dispatch` check-runs attach to the commit (visible on
+# `GET /commits/{sha}/check-runs`) but never enter the PULL REQUEST's
+# `statusCheckRollup`, which is what `PUT /pulls/{n}/merge` evaluates. So
+# every `update-branch` call this step makes produces a head that is
+# STRUCTURALLY UNMERGEABLE until something else (a real push, from a real
+# credential) lands on top of it -- measured live on PR #148/#149/#150,
+# see wiki playbooks/ci-green-from-workflow-dispatch's 2026-08-26 addendum
+# and ci.yml's own header comment. This step is not a fix; it is dead code
+# that produces a convincing-looking false green. Do not extend this pattern
+# (e.g. to workflow-guard-check.yml) until the underlying credential problem
+# is actually solved -- see LUL-762 for the open decision (a real-push
+# credential needs to become available to this workflow, which is a
+# secrets-store change and a founder approval gate, not something to add
+# silently here).
+#
 # LUL-463: `github-actions[bot]` is permanently classified a first-time
 # contributor (Settings -> Actions -> fork-pr-contributor-approval ==
 # "first_time_contributors"), and every PR in this repo is opened by that
