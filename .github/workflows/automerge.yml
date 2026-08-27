@@ -25,6 +25,12 @@ name: Auto merge
 # this step. `gh pr merge` and everything else in this job stays on
 # `github.token`. See systems/ship-never-merges-review-count-gap, 2026-08-20
 # CHANGES REQUESTED entry (LUL-584) for the incident this fixes.
+#
+# NOTE: This self-approval constraint is specific to BOT-authored PRs. For
+# human-authored PRs (e.g. authored by `DadonStyle`), GITHUB_TOKEN is a
+# distinct identity and CAN submit an approving review. See bot-approve.yml,
+# which uses this exact mechanism (LUL-797/LUL-807). No extra PAT is needed
+# for that path.
 
 on:
   workflow_run:
