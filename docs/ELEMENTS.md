@@ -41,13 +41,13 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3203-3207, gated on the same
+  `triggerTouchToggleRun()` (L3234-3238, gated on the same
   `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3180-3186, same guards as the desktop `Space`
+  `triggerTouchJump()` (L3211-3217, same guards as the desktop `Space`
   keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
@@ -57,7 +57,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3192-3196, `MobileControls.tsx`'s `touchPause` button) toggles both
+  (L3223-3227, `MobileControls.tsx`'s `touchPause` button) toggles both
   directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
@@ -72,8 +72,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3166 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L2835, mirrored the same way in `qaPlayerState()`'s return
+  button via `setTouchVeil()` L3197 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L2857, mirrored the same way in `qaPlayerState()`'s return
   object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED`,
   applied in `tick()`; paired with a screen-edge
@@ -481,32 +481,40 @@ one geometry builder (`makePredator()`), differentiated by the
   it, and a point light (L476-505).
 - Keep other elements clear of itself **at placement time only**: trees,
   cover props, and the child all reject spawn candidates inside
-  `CONFIG.lake.clear` (22 units, `inLake()`, used for cover, tree, and child
-  spawn placement).
+  `CONFIG.lake.clear` (22 units, `inLake()`, used for cover, tree, child,
+  and — as of LUL-791/LUL-395 — predator spawn placement).
+- Slow the player: `lakeSpeedMultiplier()` (`lib/game/lake.ts`) halves
+  `maxSpd` while `inLakeWater()` is true — the visible water radius
+  `CONFIG.lake.r` (15), a tighter circle than the `clear` ring spawn checks
+  use, so the slow starts exactly where the water mesh does. LUL-791/LUL-392.
 - Bias the ambient "twinkle" chime to play brighter/more often when the
   player is near it (`distLake < CONFIG.lake.r*3`, `tick()`).
 
 **What it CANNOT do**
-- **Cannot block, slow, or otherwise affect player movement at all.**
-  `inLake()` is never called from `blocked()`/`blockedR()`/`coverBlockedR()`
-  — a player can walk straight into and through the water mesh with zero
-  mechanical consequence. `UNDEFINED` — see matrix; this reads exactly like
-  a missing feature (shallow-water slow, or a hard block) rather than an
-  intentional "walkable lake."
-- Does not keep **predators** clear of itself at spawn — `placePredators()`'s
-  rejection loop checks spawn-clearing distance, baby distance,
-  and `blockedR()`, but never `inLake()`. `UNVERIFIED`/`UNDEFINED` whether a
-  predator can spawn standing in the lake on some seeds.
+- **Still cannot block player movement, by design.** Deliberately a wade
+  (half speed, `LAKE_SPEED_MULTIPLIER`=0.5, same shape as the bog's
+  `BOG_SPEED_MULTIPLIER`), not a hard wall — see ⁴. Nothing currently reads
+  the lake as anything deeper than ankle/waist depth (no drown state, no
+  stamina drain, no audio change beyond the existing proximity chime bias).
+- Does not stop a predator that spawned clear of the lake from later
+  **roaming into it** — `updatePredators()`'s roam-waypoint selection never
+  checks `inLake()`. Spawn placement only, per ¹² — a known residual gap,
+  not filed as a ticket yet.
 - Does not affect scent or noise propagation (both are pure radius+wind /
   radius+chance functions with no lake awareness).
 
 **Behaviours & logic**
-- `CONFIG.lake = { x:34, z:-28, r:15, clear:22, glow:0x86b8ff }` (L84).
+- `CONFIG.lake = { x:34, z:-28, r:15, clear:22, glow:0x86b8ff }`.
 - Ambient wisp particles loop 0.2→4.5 units and reset (`tick()`).
+- `pushOutOfLakeClearance()` (`lib/game/lake.ts`) is the deterministic
+  fallback `placePredators()` applies if its 60-try spawn-retry budget
+  exhausts on a candidate still inside `clear` — relocates radially outward
+  to just past the ring, same angle as the rejected candidate.
 
 **Collision & physics profile**
-- **None for movement, for anyone.** Purely a placement-time exclusion zone
-  for trees/cover/child, and a purely visual landmark otherwise.
+- **Slow-only for the player** (`SLOW`, water radius `r`), **placement-time
+  exclusion only for everyone else** (`clear` radius: trees, cover, child,
+  predators). No hard collider anywhere.
 
 ---
 
@@ -707,7 +715,8 @@ columns. Directional gameplay relationships that aren't physical collisions
 instead of forced into collision/LOS codes.
 
 Legend: `C` = collides (blocks movement) · `LOS` = blocks line of sight ·
-`HIDE` = enables the player's hidden-stance · `STAND` = implicit/visual only,
+`HIDE` = enables the player's hidden-stance · `SLOW` = reduces movement
+speed without blocking it · `STAND` = implicit/visual only,
 not physically derived · `TRIG` = proximity/distance trigger, not a
 collider · `ATT` = permanently attached/coincident · `–` = no interaction,
 verified in source · **`U`** = **UNDEFINED — no source resolves this**.
@@ -715,11 +724,11 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
 | | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | **U**⁴ | TRIG⁵ | – | ATT | TRIG⁶ |
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ |
 | **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ |
-| **WO** Wolf | | | ·⁹ | **U**¹⁰ | **U**¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | **U**¹² | – | – | – | TRIG⁶ |
-| **BE** Bear | | | | –¹³ | **U**¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | **U**¹² | – | – | – | TRIG⁶ |
-| **LI** Lion | | | | | –¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | **U**¹² | – | – | – | TRIG⁶ |
+| **WO** Wolf | | | ·⁹ | **U**¹⁰ | **U**¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
+| **BE** Bear | | | | –¹³ | **U**¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
+| **LI** Lion | | | | | –¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
 | **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ |
 | **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
 | **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
@@ -737,8 +746,13 @@ player's while carrying) — proximity, not collision.
 predators never call `blocked()`/`blockedR()` against each other.
 ³ Only trees tagged `s>1.4` (`coverData`); smaller trees block movement but
 not sight.
-⁴ **Notable.** Nothing gates player movement against the lake at all —
-walking into the water mesh has zero mechanical effect. Filed as **LUL-392**.
+⁴ **Fixed, LUL-791/LUL-392.** The player wades: `lakeSpeedMultiplier()`
+(`lib/game/lake.ts`) halves `maxSpd` while `inLakeWater()` is true (the
+visible water radius `CONFIG.lake.r`, not the wider `clear` spawn-clearance
+ring ¹² uses). Deliberately a slow, not a hard wall — a fog-heavy horror
+game reading a lake as an invisible wall feels like a bug even when
+intentional, and the slow plays into the core hiding loop (risk the slow
+crossing, or go around). Previously zero mechanical effect at all.
 ⁵ Win trigger (`dh<CONFIG.home.r`), gated on `carrying===true` — proximity,
 not collision.
 ⁶ HUD reflects state derived from this element (objective/status/caption
@@ -760,10 +774,18 @@ predator-predator pairs — see handoff comment for why one ticket, not six).
 through rock/log/bramble. **Deliberate** (LUL-119/LUL-211 comment,
 `coverBlockedR()` in `lib/game/cover.ts`), not `U`. LOS is still blocked
 normally.
-¹² **Notable.** `placePredators()`'s spawn-rejection loop checks
-spawn-clearing, baby-distance, and `blockedR()`, but never `inLake()` —
-unlike the tree and child spawn loops. Whether a predator can spawn (or
-later roam into) the lake is unresolved by source. Filed as **LUL-395**.
+¹² **Fixed, LUL-791/LUL-395.** `placePredators()`'s spawn-rejection loop
+now also rejects `inLake()` (the `clear`-radius ring, same predicate as the
+tree/cover/child spawn loops), same bounded budget (`tries<60`). If the
+budget exhausts on a lake candidate, `pushOutOfLakeClearance()`
+(`lib/game/lake.ts`) deterministically relocates it just past the clearance
+ring rather than silently spawning it in the water. **Residual, deliberately
+out of this ticket's scope:** nothing stops a predator that spawned clear of
+the lake from later roaming into it — `updatePredators()`'s waypoint
+selection (`p.wpx`/`p.wpz`, both roam-waypoint sites) never checks
+`inLake()` either. That is runtime pathing/AI behaviour, not placement, and
+carries the same gameplay-tuning risk the ticket explicitly kept LUL-393/394
+out for. Flagged, not filed as a numbered ticket yet.
 ¹³ Bears and lions are explicitly solitary — no pack coordination exists for
 either species (LUL-24 comment: "bears stay solitary... the contrast is the
 point"). Defined absence, not undefined.
