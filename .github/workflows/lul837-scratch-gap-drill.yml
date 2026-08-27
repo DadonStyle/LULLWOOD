@@ -1,0 +1,38 @@
+name: LUL-837 scratch gap drill (throwaway)
+
+# One-shot, disposable. Exists only on branch lul-837-gap-drill to
+# reproduce the LUL-762 gap shape for real so required-check-gap-detector.yml
+# can be proven to go red on purpose (LUL-837). Deleted with the branch
+# after the drill -- never merges to main.
+#
+# What it does: makes a SECOND commit on this same branch, pushed with the
+# default GITHUB_TOKEN. GitHub suppresses push/pull_request events for
+# GITHUB_TOKEN-authored pushes (recursion guard), so that second commit
+# becomes the PR head with ZERO check-runs and ZERO statusCheckRollup
+# contexts -- the exact structural gap required-check-gap-detector.yml
+# exists to catch. See wiki systems/ci-github-token-blind-spot.
+
+on:
+  push:
+    branches: ['lul-837-gap-drill']
+
+permissions:
+  contents: write
+
+jobs:
+  make-ungapped-head-ungapped:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: lul-837-gap-drill
+
+      - name: make a GITHUB_TOKEN-authored commit (no push CI will fire on it)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "LUL-837 drill commit, $(date -u +%FT%TZ)" >> NOAM_MDS/lul837-drill-scratch.txt
+          git add NOAM_MDS/lul837-drill-scratch.txt
+          git commit -m "LUL-837 drill: GITHUB_TOKEN-authored commit, expect zero rollup contexts"
+          git push origin HEAD:lul-837-gap-drill

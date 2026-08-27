@@ -1,0 +1,3 @@
+LUL-837 scratch drill marker file. This branch and PR are throwaway -- created
+to prove required-check-gap-detector.yml actually goes red on a real
+zero-required-context head, then deleted. See LUL-837.
