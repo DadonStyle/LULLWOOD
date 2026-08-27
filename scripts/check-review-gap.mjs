@@ -1,14 +1,28 @@
 #!/usr/bin/env node
-// LUL-549 (spec: LUL-523): detector for review verdicts that landed on
-// Paperclip but never reached GitHub natively. LUL-511/PR #86 shipped with a
-// `done` Paperclip review ticket and zero GitHub-native reviews, and nothing
-// caught it mechanically -- see wiki playbooks/review-protocol and LUL-519.
+// LUL-549 (spec: LUL-523): built to catch review verdicts that landed on
+// Paperclip but never reached GitHub natively -- LUL-511/PR #86 shipped with
+// a `done` Paperclip review ticket and zero GitHub-native reviews, and
+// nothing caught it mechanically (see wiki playbooks/review-protocol and
+// LUL-519).
+//
+// LUL-780 retune: that original defect is now structurally impossible. Both
+// `main` and `release/next` carry a branch ruleset with
+// `required_approving_review_count: 1` and no bypass actors, so a PR cannot
+// merge with zero native reviews at all -- measured 0 of the last 40 merged
+// PRs did. The detector stayed useful for a different, real signal: a PR
+// that has been open a long time with no first review and nobody owns it
+// (the PR #128 shape, 87.8h to first review). It was red 99 of 102 runs
+// because the 60-minute threshold sat below normal review turnaround --
+// measured 12 of the last 33 merged PRs (36%) took over 60m to their first
+// review, and all 12 merged fine. See wiki game/lul685-watchdog-wake-router
+// for the measurement and game/lul780-review-gap-retune for this retune.
 //
 // This is deliberately a cheap heuristic, not a Paperclip cross-reference:
 // CI has no Paperclip credentials and should not be given any (per LUL-523).
-// Heuristic the ticket sanctions: any OPEN pull request with ZERO GitHub
-// reviews that has been open longer than a threshold (default 60 minutes)
-// is a gap worth a human look.
+// Heuristic: any OPEN pull request with ZERO GitHub reviews that has been
+// open longer than a threshold (default 360 minutes / 6 hours) is a gap
+// worth a human look -- at that threshold, only the genuinely stalled PRs
+// in the measured population (#123, #131, #128) would have fired.
 //
 // Usage:
 //   node scripts/check-review-gap.mjs
@@ -18,7 +32,7 @@
 //                                  (default Actions token has read access on
 //                                  this public repo -- no PAT/secret needed)
 //   GITHUB_REPOSITORY             "owner/repo", defaults to DadonStyle/LULLWOOD
-//   REVIEW_GAP_THRESHOLD_MINUTES  defaults to 60
+//   REVIEW_GAP_THRESHOLD_MINUTES  defaults to 360
 //
 // Exits non-zero (and prints every offending PR) if any gap is found. Exits
 // 0 with a one-line summary otherwise. No `|| true`, no `::warning::`
@@ -29,7 +43,7 @@ import { pathToFileURL } from 'node:url';
 import { ghFetch } from './lib/github-fetch.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
-const DEFAULT_THRESHOLD_MINUTES = 60;
+const DEFAULT_THRESHOLD_MINUTES = 360;
 
 function reviewsFor(reviewsByPrNumber, prNumber) {
   if (reviewsByPrNumber instanceof Map) return reviewsByPrNumber.get(prNumber) ?? [];
@@ -102,7 +116,7 @@ async function main() {
       console.error(`  - #${gap.number} "${gap.title}" -- open ${formatAge(gap.ageMinutes)} -- ${gap.url}`);
     }
     console.error(
-      'A review verdict may have only reached Paperclip and not GitHub natively -- see wiki playbooks/review-protocol.',
+      'No first review past the threshold -- the review ticket for this PR is likely missing or unassigned. See wiki game/lul685-watchdog-wake-router.',
     );
     process.exit(1);
   }
@@ -120,4 +134,4 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   });
 }
 
-export { findReviewGaps, fetchOpenPrsAndReviews };
+export { findReviewGaps, fetchOpenPrsAndReviews, DEFAULT_THRESHOLD_MINUTES };

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findReviewGaps } from './check-review-gap.mjs';
+import { findReviewGaps, DEFAULT_THRESHOLD_MINUTES } from './check-review-gap.mjs';
 
 const NOW = Date.parse('2026-08-20T12:00:00Z');
 
@@ -33,13 +33,13 @@ test('does not flag a PR with at least one GitHub review, however old', () => {
 
 test('does not flag a zero-review PR still under the threshold', () => {
   const pr = prOpenedMinutesAgo(91, 10);
-  const gaps = findReviewGaps([pr], {}, NOW, 60);
+  const gaps = findReviewGaps([pr], {}, NOW, 360);
   assert.deepEqual(gaps, []);
 });
 
 test('a PR exactly at the threshold is not yet a gap (boundary is exclusive)', () => {
-  const pr = prOpenedMinutesAgo(92, 60);
-  const gaps = findReviewGaps([pr], {}, NOW, 60);
+  const pr = prOpenedMinutesAgo(92, 360);
+  const gaps = findReviewGaps([pr], {}, NOW, 360);
   assert.deepEqual(gaps, []);
 });
 
@@ -65,4 +65,24 @@ test('a mixed batch only returns the actual gaps, not the clean PRs', () => {
   const reviewsByPrNumber = { 11: [{ id: 1, state: 'APPROVED' }] };
   const gaps = findReviewGaps(prs, reviewsByPrNumber, NOW, 60);
   assert.deepEqual(gaps.map((g) => g.number), [10]);
+});
+
+// ---- LUL-780: pinning the measured review-turnaround distribution --------
+// 12 of the last 33 merged PRs (36%) took longer than 60m to get a first
+// review and all 12 merged fine -- that population must not fire at the
+// production default. PR #128 (87.8h to first review) was genuinely stalled
+// and must still fire. These use the module's real default, not a literal,
+// so a regression to the old 60m value turns this red.
+
+test('does not flag a zero-review PR at 250 minutes -- normal turnaround, not a gap at the production default', () => {
+  const pr = prOpenedMinutesAgo(200, 250, 'normal turnaround');
+  const gaps = findReviewGaps([pr], {}, NOW, DEFAULT_THRESHOLD_MINUTES);
+  assert.deepEqual(gaps, []);
+});
+
+test('flags a zero-review PR at 5273 minutes -- the PR #128 shape, genuinely stalled', () => {
+  const pr = prOpenedMinutesAgo(128, 5273, 'PR #128 shape');
+  const gaps = findReviewGaps([pr], {}, NOW, DEFAULT_THRESHOLD_MINUTES);
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].number, 128);
 });

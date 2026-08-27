@@ -1,0 +1,104 @@
+name: Approve parked CI runs
+
+# LUL-778: this workflow used to also backmerge `main` into stale open PRs
+# ("pr-freshness.yml", LUL-380). That step is deleted, not just renamed away
+# from. Measured 2026-08-27, both rulesets, live:
+#
+#   gh api repos/$REPO/rulesets/20886790 --jq '...strict_required_status_checks_policy'   # false (main)
+#   gh api repos/$REPO/rulesets/21050378 --jq '...strict_required_status_checks_policy'   # false (release/next)
+#   gh api repos/$REPO/branches/main/protection                                            # 404, not protected
+#
+# `main`'s ruleset does NOT require branches to be strictly up to date --
+# despite this file's own header having claimed that since 2026-08-15. Being
+# behind has never once blocked a merge here: 7 of the last 8 merged PRs
+# (#147-#154) landed 1-7 commits behind base. So the backmerge bought
+# mergeability it never needed to buy, at a real cost: `update-branch`'s
+# merge commit is GITHUB_TOKEN-authored, and GitHub suppresses push/
+# pull_request events for GITHUB_TOKEN-authored commits (LUL-439), so the
+# refreshed head got no real CI coverage -- `workflow_dispatch` was believed
+# to be a rescue for that gap and was proven NOT to be (LUL-762): dispatched
+# runs attach to the commit but never enter the PR's `statusCheckRollup`,
+# which is what `PUT /pulls/{n}/merge` actually evaluates. Every backmerge
+# this step ever made left its PR structurally unmergeable until a real push
+# landed on top -- the opposite of what it was for. It also burned Vercel
+# preview-deploy budget for nothing (14 of 94 previews in one trailing-24h
+# window were bare `Merge branch 'release/next' into ...` commits, LUL-789).
+#
+# Full writeup: wiki systems/ci-github-token-blind-spot (ADDENDUM
+# 2026-08-27) and game/lul610-ruleset-wiring-findings.
+#
+# Routine staleness is now a no-op -- nothing needs to happen for a PR that
+# is merely behind. A branch that genuinely needs a backmerge (a real
+# conflict, or content that's semantically stale enough to matter) gets one
+# by hand with the studio deploy key, per systems/github-access /
+# decisions/0010-no-force-push: `git fetch origin main && git merge
+# FETCH_HEAD` (never rebase, never force-push), resolve, push. That path is
+# unchanged.
+#
+# Do NOT re-add a `pull_request` trigger to ci.yml to compensate -- that
+# re-arms the LUL-719/LUL-729 required-check bypass (a same-repo PR's
+# `pull_request` run can post a late `skipped` on top of an earlier real
+# `success`, and branch protection resolves a required check by its LATEST
+# instance). Do NOT flip `strict_required_status_checks_policy` on either
+# ruleset either -- that's the only thing that would bring a real backmerge
+# requirement back, and it re-creates the LUL-380 treadmill. The merge queue
+# (LUL-359) is the intended way to get a build tested against a current base.
+#
+# LUL-463: `github-actions[bot]` is permanently classified a first-time
+# contributor (Settings -> Actions -> fork-pr-contributor-approval ==
+# "first_time_contributors"), and every PR in this repo is opened by that
+# bot (auto-pr.yml). So the `pull_request`-triggered CI run for every PR
+# lands `action_required` -- parked, waiting for a human to click "Approve
+# and run" -- and a parked run is not a skipped run and not an absent run:
+# the ruleset still counts it as owing the required contexts, so the PR
+# sits `blocked` forever even when every context already has a `success`
+# instance from the push run (measured live in wiki
+# systems/main-branch-merge-gate, 2026-08-19 LUL-450 section). This step is
+# the fix, and it is unchanged by the LUL-778 deletion above.
+#
+# The safe fix is not loosening `approval_policy` -- that setting is the
+# only thing stopping an actual fork PR from running arbitrary code on our
+# runners, and this repo is public. Instead: auto-approve the parked run,
+# but only when its head branch lives in THIS repository (i.e. it was
+# pushed by us, not opened from a fork). `head_repository.full_name` on
+# the run object is exactly the signal ci.yml's own job `if:` guards
+# already use to draw this same line (see the LUL-100 comment in ci.yml).
+# A fork's head repository can never equal `github.repository`, so a fork
+# PR's parked run is never touched here and stays exactly as gated as
+# GitHub's own policy already makes it.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Fallback cadence in case the push trigger is missed (e.g. a merge that
+    # landed while this workflow itself was mid-update). Same 30-minute
+    # ballpark as the checks this feeds.
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+
+jobs:
+  approve:
+    name: approve parked action_required runs
+    runs-on: ubuntu-latest
+    steps:
+      - name: approve parked action_required runs (same-repo branches only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          gh api "repos/$REPO/actions/runs?status=action_required&per_page=100" \
+          | jq -r --arg repo "$REPO" \
+              '.workflow_runs[] | select(.event == "pull_request" and (.head_repository.full_name // "") == $repo) | "\(.id)\t\(.head_branch)"' \
+          | while IFS=$'\t' read -r run_id branch; do
+              echo "::notice::approving parked run $run_id on same-repo branch $branch"
+              if ! gh api -X POST "repos/$REPO/actions/runs/$run_id/approve" >/dev/null 2>/tmp/approve-err.log; then
+                echo "::warning::could not approve run $run_id ($branch):"
+                cat /tmp/approve-err.log
+              fi
+            done
