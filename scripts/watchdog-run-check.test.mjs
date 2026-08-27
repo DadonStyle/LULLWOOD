@@ -19,6 +19,7 @@ import {
   durableToken,
   resolveAssigneeId,
   fetchWorkflowFiles,
+  fileWakeTickets,
 } from './watchdog-run-check.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
@@ -429,6 +430,45 @@ test('resolveAssigneeId tolerates a 401 from /api/agents/me (durable token) and 
     };
     const id = await resolveAssigneeId('http://api.invalid', 'company-1', 'durable-token');
     assert.equal(id, 'vp-agent-id');
+  } finally {
+    if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+// ---- fileWakeTickets (LUL-779: cache a resolved-to-null assignee too) -----
+
+test('fileWakeTickets resolves the assignee once per run, not once per red watchdog, even when resolution legitimately returns null', async () => {
+  const prevEnv = process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+  const prevFetch = globalThis.fetch;
+  try {
+    delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    let resolutionCalls = 0;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) {
+        resolutionCalls += 1;
+        return { ok: false, status: 401 };
+      }
+      if (u.endsWith('/agents')) {
+        resolutionCalls += 1;
+        return { ok: true, json: async () => [] }; // no name match -> null is legitimate
+      }
+      if (u.includes('/issues') && opts && opts.method === 'POST') {
+        return { ok: true, json: async () => ({ id: 'issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+    const two = [
+      { ...REVIEW_GAP_DETECTOR, name: 'Review gap detector' },
+      { ...WATCHDOGS.find((w) => w.file === 'base-branch-guard.yml'), name: 'Base branch guard' },
+    ];
+    const filed = await fileWakeTickets('http://api.invalid', 'company-1', 'durable-token', two, []);
+    assert.equal(filed.length, 2);
+    assert.ok(filed.every((f) => f.assigneeAgentId === null));
+    // One /api/agents/me + one /agents fallback = 2 calls total, not 4 (one pair per watchdog).
+    assert.equal(resolutionCalls, 2);
   } finally {
     if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
     else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
