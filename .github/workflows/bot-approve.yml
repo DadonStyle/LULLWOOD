@@ -30,6 +30,36 @@ name: Bot approve
 #      PR number and the Paperclip issue the verdict was recorded on. There is
 #      no push/schedule trigger and no default PR: `workflow_dispatch` inputs
 #      are the only source, so it can never fire on its own.
+#
+# GUARD 2 READS THE ROLLUP AND ONLY THE ROLLUP (LUL-826)
+# ------------------------------------------------------
+# LUL-826 was filed proposing that guard 2 fall back to REST
+# `GET /commits/{sha}/check-runs` whenever the rollup is "missing" a required
+# context, on the strength of PR #166: the rollup showed 2 contexts while REST
+# showed all 5 completed/success, each carrying `pull_requests: [166]` at run
+# AND suite level. That reads exactly like a GraphQL/REST inconsistency.
+#
+# It is not one, and the fallback would have been a merge-gate bypass.
+# Measured on #166 at the same moment, `PUT /pulls/166/merge` returned:
+#
+#     Repository rule violations found
+#     At least 1 approving review is required by reviewers with write access.
+#     3 of 3 required status checks are expected.
+#
+# GitHub's own merge engine agreed with the rollup. Those three green
+# check-runs came from `workflow_dispatch` runs, and a non-PR-event check-run
+# attaches to the COMMIT, never to the PULL REQUEST -- it can never satisfy a
+# required status check however green it looks (LUL-762, wiki
+# `systems/ci-github-token-blind-spot`). Approving on REST evidence would have
+# recorded approvals on PRs GitHub still refuses to merge, turning a loud stop
+# into a silent one. The rollup stays the sole source of credit.
+#
+# What was genuinely missing was the explanation. "absent from the PR rollup"
+# is ambiguous across four causes with four different remedies, and that
+# ambiguity cost two agents ~2h on #166 before anyone attempted the merge and
+# read the rule-violation body. `scripts/diagnose-required-check-absence.mjs`
+# now names the cause and the lever on the refusal path. It is diagnostic
+# only: it grants no credit and cannot change this job's conclusion.
 
 on:
   workflow_dispatch:
@@ -51,6 +81,15 @@ jobs:
     name: record reviewer verdict as bot
     runs-on: ubuntu-latest
     steps:
+      # Only needed for the refusal-path diagnostic below. Kept unconditional
+      # rather than hidden behind an `if:` so the script is guaranteed present
+      # at the moment it is wanted -- the refusal path is exactly when nobody
+      # wants a second failure to debug.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: submit approving review
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,6 +150,16 @@ jobs:
             fi
           done < required.txt
           if [ "$fail" -ne 0 ]; then
+            # Say WHY, not just THAT. See the LUL-826 note in this file's
+            # header: a bare "absent from the PR rollup" is ambiguous between
+            # "CI never ran", "still running", "red", and "green but produced
+            # by a non-PR event and therefore uncreditable" -- and only the
+            # last one is unfixable by waiting or re-dispatching. The script
+            # reads REST for EXPLANATION ONLY; the verdict above already
+            # stands, and `|| true` keeps a diagnostic hiccup from masking it.
+            head_sha=$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')
+            GITHUB_REPOSITORY="$REPO" HEAD_SHA="$head_sha" REQUIRED_FILE=required.txt \
+              node scripts/diagnose-required-check-absence.mjs || true
             echo "::error::Refusing to approve PR #$PR -- not every ruleset-required check is green."
             exit 1
           fi
