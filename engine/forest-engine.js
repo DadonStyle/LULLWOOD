@@ -998,15 +998,21 @@ function placePredators(){
     // LUL-395: the reject condition never checked the lake, so a predator
     // could spawn in or right at the edge of the water -- unlike the tree,
     // baby and cover spawn loops (generateMap()/generateCover()), which all
-    // reject inLake() already. Same bounded budget (tries<60) as before, the
-    // lake check just joins the other reject reasons. If the budget still
-    // exhausts on a lake candidate (every draw in the wedge landed in the
-    // water), pushOutOfLakeClearance() deterministically relocates it just
-    // past the lake's clearance ring rather than silently spawning it in the
-    // water -- see lib/game/lake.ts.
+    // reject inLake() already. LUL-791/LUL-794 P1: `inLake(x,z)` must NOT
+    // join this loop's own while-condition -- that would change how many
+    // rng() draws this loop makes on any seed where a candidate lands in the
+    // lake, and generateMap() calls placePredators() before generateCover()
+    // against one shared rng stream, so a draw-count change here silently
+    // reshuffles every prop generateCover() places afterward (reproduced the
+    // LUL-491 canopy-overlap bug on a log, see
+    // wiki:game/lul791-lake-predator-spawn-rng-shift). The retry loop below
+    // is byte-for-byte the pre-LUL-791 loop (same conditions, same rng()
+    // call count on every seed); the lake is handled entirely after it, by
+    // the deterministic, non-rng pushOutOfLakeClearance() -- unconditionally,
+    // not just when the retry budget exhausts.
     let x, z, tries = 0;
     do { const ang=rng()*Math.PI*2, d=half*(0.42+rng()*0.45); x=Math.cos(ang)*d; z=Math.sin(ang)*d; tries++; }
-    while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 26 || blockedR(x, z, p.rad+0.5) || inLake(x,z)) && tries < 60);
+    while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 26 || blockedR(x, z, p.rad+0.5)) && tries < 60);
     if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
