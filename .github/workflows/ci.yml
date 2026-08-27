@@ -30,16 +30,21 @@ name: CI
 # check for merge purposes on this repo. Every `lul-*` branch pushed by a real
 # credential (deploy key or PAT) is push-covered and gets exactly one
 # satisfying run. A branch whose head is a GITHUB_TOKEN-authored commit (e.g.
-# `pr-freshness.yml`'s backmerge) is NOT covered by anything in this file --
-# `workflow_dispatch` was believed to be the rescue and is not. See
-# `pr-freshness.yml`'s own header comment for the current state of that gap.
+# `update-branch`'s merge commit, run by hand or by a GitHub Actions job) is
+# NOT covered by anything in this file -- `workflow_dispatch` was believed to
+# be the rescue and is not. This blind spot was also this repo's own routine
+# case until LUL-778 (2026-08-27) deleted the automatic backmerge step that
+# used to live in `pr-freshness.yml` (now `approve-parked-runs.yml`) for
+# exactly this reason -- see that file's header for the full history and
+# wiki systems/ci-github-token-blind-spot.
 #
 # LUL-719/LUL-729 (2026-08-26): `pull_request` used to stay as a fork-PR
 # fallback, gated by a job-level `if: ... head.repo.full_name != ...` so the
 # same-repo case would just "skip". That was proven unsafe, not merely
 # wasteful: LUL-719 measured live on PR #137 (head `b07aa589`) that branch
 # protection resolves a required check by its LATEST instance and treats
-# `skipped` as passing. `pr-freshness.yml`'s "approve parked action_required
+# `skipped` as passing. `approve-parked-runs.yml`'s (formerly
+# `pr-freshness.yml`, LUL-778) "approve parked action_required
 # runs" step (LUL-463) unparks the bot-authored `pull_request` run some time
 # after the real push/workflow_dispatch run already posted a `success` — so a
 # later `skipped` instance can land on top of an EARLIER real instance under
