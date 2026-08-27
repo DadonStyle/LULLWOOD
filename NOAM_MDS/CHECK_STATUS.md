@@ -2,6 +2,17 @@
 
 Written by the Game Tester, 2026-08-18, in response to LUL-380 ("open pr's").
 
+**Superseded 2026-08-27 (LUL-778):** the `pr-freshness.yml` automatic backmerge this
+report describes throughout was deleted, not fixed — `main`'s ruleset never actually
+required branches to be strictly up to date (measured live, every ruleset version since
+2026-08-15), so the backmerge bought mergeability the repo never needed, while leaving
+every refreshed head structurally unmergeable (LUL-762) and burning Vercel preview
+budget (LUL-789). The renamed `approve-parked-runs.yml` keeps only the LUL-463
+parked-run-approval step this report also documents. See wiki
+`systems/ci-github-token-blind-spot` (2026-08-27 ADDENDUM) for the full history. The
+rest of this document is kept as-is for the historical record of the investigation —
+read it as "as of 2026-08-18/19", not as current behavior.
+
 ## The problem the founder reported
 
 `main`'s branch ruleset requires a PR to be **strictly up to date** with `main` before it
