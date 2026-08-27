@@ -61,6 +61,7 @@
 // --post). Exit 2: the run itself errored (network, auth, ...).
 import { pathToFileURL } from 'node:url';
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { ghFetch } from './lib/github-fetch.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
@@ -153,8 +154,8 @@ function latestScheduledConclusion(runs) {
   return runs[0].conclusion ?? null;
 }
 
-// watchdog: one entry of WATCHDOGS. resolvesOnDefault: bool (contents API
-// 200/404 on the default branch). runs: workflow_runs array as above.
+// watchdog: one entry from deriveWatchdogs. resolvesOnDefault: bool (contents
+// API 200/404 on the default branch). runs: workflow_runs array as above.
 function classifyWatchdog(watchdog, resolvesOnDefault, runs) {
   if (!resolvesOnDefault) {
     return { ...watchdog, alarm: 'inert' };
@@ -312,12 +313,23 @@ async function fetchOpenIssuesForDedup(apiBase, companyId, apiKey) {
   return pages.flat();
 }
 
+// Split out from durableToken so a regression like LUL-781 (process.env.HOME
+// used directly, which is `undefined` under `env -i` and string-concatenates
+// into the literal path ".../undefined/.paperclip/auth.json") is directly
+// unit-testable without touching the real filesystem or the real credential
+// file. os.homedir() -- unlike a raw process.env.HOME read -- falls back to
+// the OS user database when HOME is absent from the environment, which is
+// exactly the shape cron runs under.
+function authJsonPath() {
+  return new URL('file://' + homedir() + '/.paperclip/auth.json');
+}
+
 // Read the durable CLI token from ~/.paperclip/auth.json when PAPERCLIP_API_KEY
 // is absent or expired (LUL-770). Under cron the run JWT is dead; this token is
 // what the watchdog family uses for all unattended Paperclip API calls.
 function durableToken(apiBase) {
   try {
-    const raw = readFileSync(new URL('file://' + process.env.HOME + '/.paperclip/auth.json'));
+    const raw = readFileSync(authJsonPath());
     const creds = JSON.parse(raw).credentials || {};
     // Try the exact base, then with/without trailing slash, then fallback to sole entry
     const entry =
@@ -464,5 +476,8 @@ export {
   findNoRunWatchdogs,
   formatReport,
   watchdogWakeMarker,
+  authJsonPath,
+  durableToken,
+  resolveAssigneeId,
 };
 
