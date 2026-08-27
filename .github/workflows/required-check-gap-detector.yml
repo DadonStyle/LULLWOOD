@@ -1,0 +1,62 @@
+name: Required-check gap detector
+
+# LUL-762 -- sibling to merge-gap-detector.yml. That one catches a PR that's
+# clean-and-approved-but-unmerged; this one catches an open PR that can NEVER
+# become clean, because its head never got an event that GitHub actually
+# counts toward the ruleset. Measured live on #148/#149/#150: a
+# workflow_dispatch run posts a green, name-matched, app-matched check-run on
+# the commit, and still never appears in the PR's own statusCheckRollup --
+# the thing PUT /pulls/{n}/merge evaluates. `mergeable_state` reads `blocked`
+# either way, so nothing else in this repo's tooling told them apart.
+#
+# Standalone watchdog, NOT a required check on any ruleset. A red run here
+# means "go look," not "block a merge".
+#
+# scripts/check-required-check-gap.mjs does the real work; this workflow just
+# calls it on a schedule. GITHUB_TOKEN (default Actions token) has read
+# access to pulls/the GraphQL rollup on this public repo -- no PAT/secret
+# needed.
+#
+# `contents: read` is included alongside `pull-requests: read` for the same
+# reason merge-gap-detector.yml includes it: actions/checkout on a
+# schedule/dispatch-only workflow has no PR event to inherit permissions
+# from otherwise (wiki systems/permissions-contents-checkout-trap).
+#
+# `grace_minutes` on workflow_dispatch exists to prove this detector can
+# actually go red: point it at a known-bad open PR (one with a
+# workflow_dispatch-only head, e.g. a fresh pr-freshness backmerge) and
+# dispatch with grace_minutes: '0'.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      grace_minutes:
+        description: 'Override REQUIRED_CHECK_GAP_GRACE_MINUTES for this run (e.g. 0 to prove the detector fires)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  detect:
+    name: scan open PRs for zero-required-context rollup gaps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: check for required-check gaps
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REQUIRED_CHECK_GAP_GRACE_MINUTES: ${{ inputs.grace_minutes }}
+        run: node scripts/check-required-check-gap.mjs
