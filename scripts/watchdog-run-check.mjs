@@ -406,16 +406,18 @@ async function createWakeIssue(apiBase, companyId, apiKey, { title, description,
 async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIssues) {
   // Resolve the assignee lazily — after the dedup check — so quiet runs never
   // touch /api/agents/me at all (LUL-770).
-  let assigneeId = null;
+  let assigneeId;
+  let resolved = false;
   const filed = [];
 
   for (const watchdog of redWatchdogs) {
     const marker = watchdogWakeMarker(watchdog);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
-    if (assigneeId === undefined) {
-      // already resolved (null = unassigned is acceptable)
-    } else if (assigneeId === null) {
+    if (!resolved) {
+      // null is a legitimate outcome (unassigned is acceptable) — cache it too,
+      // so a run with 2+ red watchdogs doesn't re-run the resolution chain.
       assigneeId = await resolveAssigneeId(apiBase, companyId, apiKey);
+      resolved = true;
     }
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-685 detector)`,
@@ -500,5 +502,6 @@ export {
   durableToken,
   resolveAssigneeId,
   fetchWorkflowFiles,
+  fileWakeTickets,
 };
 
