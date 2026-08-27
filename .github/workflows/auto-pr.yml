@@ -29,6 +29,11 @@ name: Auto PR
 # actually lead to a merge; until that secret is configured this step skips
 # arming and leaves it to automerge.yml, which will refuse for the same
 # reason and say so on the PR. LUL-558 / systems/ship-never-merges-review-count-gap.
+#
+# NOTE: This self-approval constraint applies here because GITHUB_TOKEN IS the
+# PR author (auto-pr.yml opens every PR as github-actions[bot]). For PRs
+# authored by a human user, GITHUB_TOKEN is a distinct identity and CAN approve
+# without a separate PAT. See bot-approve.yml (LUL-797/LUL-807).
 
 on:
   push:
