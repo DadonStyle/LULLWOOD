@@ -1,5 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   SECTIONS,
   classifyShape,
@@ -7,6 +11,7 @@ import {
   dayKeyInTz,
   extractTicketIds,
   renderDay,
+  buildEntriesByDay,
   FIRST_COMPANY_DAY,
 } from './daily-report.mjs';
 
@@ -174,7 +179,7 @@ test('every section in the taxonomy is reachable and titled', () => {
 test('renderDay: a day with zero entries still gets a file with the fixed empty-day body', () => {
   const md = renderDay('2026-09-01', []);
   assert.match(md, /^# Daily Report — 2026-09-01/);
-  assert.match(md, /No changes landed on `main` this day\./);
+  assert.match(md, /No changes landed on `release\/next` this day\./);
   assert.doesNotMatch(md, /\*\*Tickets:\*\*/);
 });
 
@@ -198,4 +203,86 @@ test('renderDay: sections render only when non-empty, in SECTIONS config order',
   assert.doesNotMatch(md, /## Bug fixes/);
   assert.match(md, /\*\*Tickets:\*\* LUL-1, LUL-2/);
   assert.match(md, /\*\*PRs:\*\* #5/);
+});
+
+// ---- buildEntriesByDay: LUL-801 day-attribution fix ------------------------
+//
+// The bug: under the release train, `main` receives only periodic version-cut
+// merges, so walking `main` attributes a whole day's real work to whatever
+// day the *next cut* happens to land on -- see wiki systems/daily-reports.
+// Repointing at `release/next` (spec change, this ticket) fixes the
+// attribution, but release/next's own first-parent history contains
+// empty-diff sync-back merges from `main` (measured on the real repo: `Sync
+// release/next after v2026.08.22-1 (#133)`, `Merge pull request #151 from
+// DadonStyle/main`, `LUL-572: backmerge main into release/next` -- three
+// different title shapes, all empty-diff) that must not themselves render as
+// shipped content. This builds a real throwaway repo shaped like that so
+// both halves are exercised end-to-end, not just asserted against fixtures.
+//
+// Before the `paths.length === 0` guard landed, this test failed: the sync
+// commit rendered as a spurious entry (section 'other', since its empty path
+// list matches no section pattern).
+
+function gitIn(cwd, args, env) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+}
+
+function commitOn(cwd, { message, date, files = {} }) {
+  for (const [file, content] of Object.entries(files)) {
+    const filePath = path.join(cwd, file);
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, content);
+    gitIn(cwd, ['add', file]);
+  }
+  const env = { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date };
+  gitIn(cwd, ['commit', '-q', '--allow-empty', '-m', message], env);
+  return gitIn(cwd, ['rev-parse', 'HEAD']).trim();
+}
+
+function makeReleaseTrainFixtureRepo() {
+  const repo = mkdtempSync(path.join(os.tmpdir(), 'lul801-'));
+  gitIn(repo, ['init', '-q', '-b', 'release-next']);
+  gitIn(repo, ['config', 'user.email', 'test@example.com']);
+  gitIn(repo, ['config', 'user.name', 'Test']);
+
+  commitOn(repo, { message: 'init', date: '2026-08-21T10:00:00+03:00', files: { 'README.md': 'x' } });
+  commitOn(repo, {
+    message: 'LUL-900: add a real feature (#900)',
+    date: '2026-08-22T10:00:00+03:00',
+    files: { 'engine/thing.js': 'content' },
+  });
+
+  // A branch identical to release-next's tip, then merged back with --no-ff:
+  // a real 2-parent commit whose diff against its first parent is empty,
+  // shaped exactly like a release-train sync-back from `main`.
+  gitIn(repo, ['branch', 'main-cut']);
+  const mergeEnv = { GIT_AUTHOR_DATE: '2026-08-23T09:00:00+03:00', GIT_COMMITTER_DATE: '2026-08-23T09:00:00+03:00' };
+  gitIn(
+    repo,
+    ['merge', '--no-ff', '-m', 'Sync release/next after v2026.08.22-1 (#133)', 'main-cut'],
+    mergeEnv,
+  );
+
+  return repo;
+}
+
+test('buildEntriesByDay: an empty-diff sync-back merge is excluded, a real commit on the same ref is not', () => {
+  const repo = makeReleaseTrainFixtureRepo();
+  try {
+    const byDay = buildEntriesByDay('release-next', repo);
+    const allText = [...byDay.values()].flat().map((e) => e.text);
+    assert.ok(
+      !allText.some((t) => /Sync release\/next after v/.test(t)),
+      `sync-back merge rendered as content: ${JSON.stringify(allText)}`,
+    );
+    assert.ok(
+      allText.some((t) => /add a real feature/.test(t)),
+      `real commit missing from output: ${JSON.stringify(allText)}`,
+    );
+    assert.equal(byDay.get('2026-08-23'), undefined, 'the sync day has no entries at all, not an empty array');
+    const featureEntry = byDay.get('2026-08-22')?.find((e) => /add a real feature/.test(e.text));
+    assert.equal(featureEntry?.sectionKey, 'game-features');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

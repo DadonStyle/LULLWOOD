@@ -1,11 +1,16 @@
 #!/usr/bin/env node
-// DAILY_REPORTS generator — LUL-533/LUL-531. Spec: wiki systems/daily-reports.
+// DAILY_REPORTS generator — LUL-533/LUL-531/LUL-801. Spec: wiki systems/daily-reports.
 // Do not re-derive the decisions there; this implements them.
 //
 // One file per calendar day, DAILY_REPORTS/YYYY-MM-DD.md, day boundary
 // 00:00-23:59 Asia/Jerusalem. Source of truth is `git log --first-parent`
-// on `main` -- see the wiki page for why (reproducible, no secrets, "landed
-// on main" is the honest definition of shipped).
+// on `release/next` (LUL-801; was `main` under LUL-531/533) -- under the
+// release train (wiki systems/release-train), `main` only receives periodic
+// version cuts, so a day's real delivery integrates onto `release/next` and
+// shows up on `main` only when the next cut happens to land, attributed to
+// the cut's date rather than the work's. `release/next` is where work is
+// actually reproducible-and-honestly "shipped" now. See the wiki page for
+// the full option comparison and why this one won.
 //
 // Usage:
 //   node scripts/daily-report.mjs --backfill
@@ -122,8 +127,11 @@ const SECTION_BY_TITLE = new Map(SECTIONS.map((s) => [s.title.toLowerCase(), s])
 // ---------------------------------------------------------------------------
 // git plumbing
 
-function git(args) {
-  return execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+// `cwd` defaults to this script's own repo; tests pass a synthetic temp repo
+// instead so buildEntriesByDay is exercisable against fixture commits rather
+// than only against pure functions (see daily-report.test.mjs).
+function git(args, cwd = REPO_ROOT) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -131,11 +139,11 @@ const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 // One record per first-parent commit on `ref`. Uses \x1f/\x1e as field/record
 // separators so commit bodies (which may contain anything but those bytes)
 // don't break parsing.
-export function listFirstParentCommits(ref) {
+export function listFirstParentCommits(ref, cwd = REPO_ROOT) {
   const FIELD = '\x1f';
   const RECORD = '\x1e';
   const format = ['%H', '%P', '%aI', '%s', '%b'].join(FIELD) + RECORD;
-  const raw = git(['log', '--first-parent', `--pretty=format:${format}`, ref]);
+  const raw = git(['log', '--first-parent', `--pretty=format:${format}`, ref], cwd);
   if (!raw) return [];
   return raw
     .split(RECORD)
@@ -153,16 +161,16 @@ export function listFirstParentCommits(ref) {
     });
 }
 
-export function changedPaths(commit) {
+export function changedPaths(commit, cwd = REPO_ROOT) {
   const parent1 = commit.parents[0] ?? EMPTY_TREE_SHA;
-  const raw = git(['diff', '--name-only', parent1, commit.sha]);
+  const raw = git(['diff', '--name-only', parent1, commit.sha], cwd);
   return raw.split('\n').filter(Boolean);
 }
 
-function secondParentSubject(commit) {
+function secondParentSubject(commit, cwd = REPO_ROOT) {
   if (commit.parents.length < 2) return null;
   try {
-    return git(['log', '-1', '--format=%s', commit.parents[1]]).trim();
+    return git(['log', '-1', '--format=%s', commit.parents[1]], cwd).trim();
   } catch {
     // Unresolvable second parent (e.g. a shallow fetch) -- fall through to
     // the merge commit's own subject rather than crashing the whole run.
@@ -301,10 +309,10 @@ export function renderDay(dateStr, entries) {
     return lines.join('\n');
   }
 
-  lines.push(`_Asia/Jerusalem, 00:00–23:59 · ${entries.length} changes landed on \`main\`_`, '');
+  lines.push(`_Asia/Jerusalem, 00:00–23:59 · ${entries.length} changes landed on \`release/next\`_`, '');
 
   if (entries.length === 0) {
-    lines.push('No changes landed on `main` this day.', '');
+    lines.push('No changes landed on `release/next` this day.', '');
     return lines.join('\n');
   }
 
@@ -347,15 +355,26 @@ export function renderDay(dateStr, entries) {
 // ---------------------------------------------------------------------------
 // Building the entry set for a real (post-repo) day
 
-export function buildEntriesByDay(ref) {
-  const commits = listFirstParentCommits(ref);
+export function buildEntriesByDay(ref, cwd = REPO_ROOT) {
+  const commits = listFirstParentCommits(ref, cwd);
   const byDay = new Map();
   // git log is newest-first; walk oldest-first so entries render chronologically.
   for (const commit of [...commits].reverse()) {
     const day = dayKeyInTz(commit.authorDate);
     const shape = classifyShape(commit);
     if (shape.excluded) continue;
-    const paths = changedPaths(commit);
+    const paths = changedPaths(commit, cwd);
+    // A first-parent commit whose tree is identical to its first parent's
+    // ships nothing, no matter what its subject/body claims (LUL-801). On
+    // `release/next` this is exactly the shape of a release-train sync-back
+    // merge from `main` -- e.g. "Sync release/next after v2026.08.22-1
+    // (#133)" and "Merge pull request #151 from DadonStyle/main" both carry
+    // an empty diff, because `main` never has content `release/next` didn't
+    // already have. Catching it by diff emptiness (rather than pattern-
+    // matching the sync workflow's current title wording) survives that
+    // wording changing later, and is what stops a release merge from ever
+    // rendering as a game feature or any other section.
+    if (paths.length === 0) continue;
     const sectionKey = classifySection(commit, paths);
     if (!byDay.has(day)) byDay.set(day, []);
     byDay.get(day).push({
@@ -396,7 +415,7 @@ function yesterdayInTz() {
 
 export function generateRange(since, until) {
   if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true });
-  const byDay = buildEntriesByDay('origin/main');
+  const byDay = buildEntriesByDay('origin/release/next');
   const written = [];
   for (const day of enumerateDays(since, until)) {
     const entries = byDay.get(day) ?? [];

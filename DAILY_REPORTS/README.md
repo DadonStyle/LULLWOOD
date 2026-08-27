@@ -1,8 +1,9 @@
 # DAILY_REPORTS
 
 One markdown file per calendar day, `YYYY-MM-DD.md`, summarizing what landed on
-`main` that day. Founder request, **LUL-531**. Full decided spec, including the
-measured facts behind every choice below: wiki `systems/daily-reports`.
+`release/next` that day. Founder request, **LUL-531**. Full decided spec,
+including the measured facts behind every choice below: wiki
+`systems/daily-reports`.
 
 ## Day boundary
 
@@ -12,12 +13,23 @@ no reader has to guess or assume UTC.
 
 ## Source of truth
 
-`git log --first-parent origin/main`, bucketed by each commit's **author**
-date converted to Asia/Jerusalem. `--first-parent` is mandatory: this repo
-mixes squash merges with real merge commits, and without it every PR's
-internal commits would double-count.
+`git log --first-parent origin/release/next`, bucketed by each commit's
+**author** date converted to Asia/Jerusalem. `--first-parent` is mandatory:
+this repo mixes squash merges with real merge commits, and without it every
+PR's internal commits would double-count.
 
-Three commit shapes get distinct handling:
+**Why `release/next`, not `main` (LUL-801):** under the release train (wiki
+`systems/release-train`), `main` only receives periodic version-cut merges —
+a day's real delivery integrates onto `release/next` continuously and shows
+up on `main` only when the next cut happens, attributed to the cut's date
+rather than the work's. Walking `release/next` is the same "reproducible, no
+secrets, honest definition of shipped" reasoning the original choice of
+`main` used, just pointed at the branch that's actually the studio's day-to-
+day integration branch now. See wiki `systems/daily-reports` for the full
+option comparison (union of both branches; expanding release-cut commits back
+into their constituent PRs) and why they lost to this one on complexity.
+
+Four commit shapes get distinct handling:
 
 1. **Squash merge** (the common case, e.g. `LUL-485: add timeout-minutes to CI
    jobs (#80)`) — the subject is the entry, `(#80)` is the PR link.
@@ -28,6 +40,16 @@ Three commit shapes get distinct handling:
 3. **Backmerge with no shipped content** (`Merge branch 'main' into
    lul-34-hud-react`) — excluded entirely; it ships nothing and would inflate
    every day's count.
+4. **Empty-diff merge** — any first-parent commit whose tree is identical to
+   its first parent's, excluded regardless of subject wording. On
+   `release/next` this is what a release-train sync-back from `main` looks
+   like (`Sync release/next after v2026.08.22-1 (#133)`, `Merge pull request
+   #151 from DadonStyle/main`, `LUL-572: backmerge main into release/next` —
+   three different title shapes, all measured empty-diff) — `main` never has
+   content `release/next` didn't already have, so these carry no new work.
+   Catching this by diff emptiness rather than pattern-matching current
+   title wording is also what stops a release/sync merge from ever rendering
+   as a game feature or any other section.
 
 ## Sections
 
