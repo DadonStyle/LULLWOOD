@@ -17,8 +17,23 @@
 //   node scripts/board-integrity-check.mjs [--post]
 //
 // Env:
-//   GITHUB_TOKEN           optional; unauthenticated reads work on this
-//                          public repo, a token just raises the rate limit
+//   GITHUB_TOKEN / GH_TOKEN   NOT optional in practice, despite what earlier
+//                             comments here claimed. No script in this repo
+//                             runs under GitHub Actions -- the only thing
+//                             that sets GITHUB_TOKEN automatically -- so an
+//                             agent invoking this by hand goes out fully
+//                             unauthenticated, and the studio's shared NAT
+//                             egress IP burns through GitHub's 60/hr
+//                             unauthenticated budget in a handful of
+//                             `/check-runs` calls (LUL-736, measured: the
+//                             documented invocation died with a raw 403 rate
+//                             -limit body on call #7). If neither var is
+//                             set, falls back to `~/.lullwood/gh_token`, then
+//                             `gh auth token` (see scripts/lib/github-fetch.mjs
+//                             resolveGithubToken). If every link in that
+//                             chain comes up empty, exits 2 immediately with
+//                             the chain named in the message -- before
+//                             burning a single GitHub call.
 //   GITHUB_REPOSITORY      "owner/repo", defaults to DadonStyle/LULLWOOD
 //   PAPERCLIP_API_URL      required (this agent's own env already has it)
 //   PAPERCLIP_API_KEY      required
@@ -37,7 +52,7 @@
 // Exit 0: ran cleanly, no alarms. Exit 1: alarms found (and filed, if
 // --post). Exit 2: the run itself errored (network, auth, ...).
 import { pathToFileURL } from 'node:url';
-import { fetchJson, ghFetch } from './lib/github-fetch.mjs';
+import { fetchJson, ghFetch, resolveGithubToken, GITHUB_TOKEN_CHAIN_DESCRIPTION } from './lib/github-fetch.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
 
@@ -101,6 +116,65 @@ function findTombstones(blockedIssues) {
   return blockedIssues.filter(isTombstone);
 }
 
+// ---- Alarm B disposition: SHIPPED (already landed) vs STRANDED (real work) -
+//
+// LUL-736: the LUL-673 hand sweep hit 5 tombstones and found 4 were stale
+// status on already-merged work (the owning run merged its PR then died on
+// the session limit before the closing PATCH -- wiki
+// a-limit-killed-run-may-have-landed-the-work) and only 1 was genuinely
+// stranded work. A flat "tombstone" report can't tell those apart, so acting
+// on it means either hand-triaging every hit every sweep, or burning a paid
+// agent run per false "needs work" ticket. The detector already fetches
+// everything needed to resolve this itself.
+
+const PR_NUMBER_RE = /#(\d+)/g;
+
+function extractPrNumbers(text) {
+  if (!text) return [];
+  return [...text.matchAll(PR_NUMBER_RE)].map((m) => Number(m[1]));
+}
+
+// issue.comments: array of { body }, the shape of GET /api/issues/{id}/comments
+// -- attached the same way LUL-677/LUL-680 attached .interactions, i.e. not
+// part of the base issue payload.
+function referencedPrNumbers(issue) {
+  const texts = [issue.title, issue.description, ...(issue.comments ?? []).map((c) => c.body)];
+  const nums = new Set();
+  for (const text of texts) for (const n of extractPrNumbers(text)) nums.add(n);
+  return [...nums].sort((a, b) => a - b);
+}
+
+// prByNumber: Map<number, pr> where pr is the shape of
+// GET /repos/{repo}/pulls/{number} (needs `merged`, `state`, `merge_commit_sha`).
+// A referenced number absent from the map (the lookup 404'd, or was never
+// attempted) resolves to neither merged nor open -- it can't manufacture a
+// SHIPPED verdict, but a genuinely merged sibling reference still can.
+//
+// A mix of "one merged, one still open" stays STRANDED: something referenced
+// by this same ticket has not landed yet, so the work as a whole is not done
+// (this is the one non-obvious case LUL-736 calls out explicitly).
+function classifyDisposition(issue, prByNumber) {
+  const referencedPrs = referencedPrNumbers(issue);
+  const resolved = referencedPrs.map((n) => prByNumber.get(n)).filter(Boolean);
+  const mergedPrs = resolved.filter((pr) => pr.merged);
+  const stillOpenPrs = resolved.filter((pr) => pr.state === 'open');
+  if (mergedPrs.length > 0 && stillOpenPrs.length === 0) {
+    return { issue, disposition: 'SHIPPED', referencedPrs, mergedPrs };
+  }
+  return { issue, disposition: 'STRANDED', referencedPrs, mergedPrs };
+}
+
+function classifyTombstones(tombstones, prByNumber) {
+  return tombstones.map((issue) => classifyDisposition(issue, prByNumber));
+}
+
+// STRANDED first: that is the half of the report that actually needs a human
+// or an agent to do work. SHIPPED entries are three-line PATCHes.
+function sortTombstonesStrandedFirst(classified) {
+  const rank = { STRANDED: 0, SHIPPED: 1 };
+  return [...classified].sort((a, b) => rank[a.disposition] - rank[b.disposition]);
+}
+
 // Match on the PR number, not the title (wiki: titles drift and duplicate).
 // Looks for "#123" as a whole token in the issue's title or description so
 // "#1234" does not false-match PR #123.
@@ -135,17 +209,25 @@ function findUnownedPrs(prContexts, openIssues) {
   return gaps;
 }
 
-function formatReport(tombstones, unownedPrs, repo) {
-  if (tombstones.length === 0 && unownedPrs.length === 0) return null;
+// classifiedTombstones: [{ issue, disposition, referencedPrs, mergedPrs }],
+// the shape classifyTombstones() produces.
+function formatReport(classifiedTombstones, unownedPrs, repo) {
+  if (classifiedTombstones.length === 0 && unownedPrs.length === 0) return null;
   const lines = ['board-integrity detector: ALARM'];
-  if (tombstones.length > 0) {
+  if (classifiedTombstones.length > 0) {
     lines.push(
       '',
-      `${tombstones.length} tombstoned issue(s) -- blocked/in_review, no live blocker, no active ` +
+      `${classifiedTombstones.length} tombstoned issue(s) -- blocked/in_review, no live blocker, no active ` +
         'recovery action, no pending wake_assignee interaction:',
     );
-    for (const t of tombstones) {
-      lines.push(`  - ${t.identifier ?? t.id}: "${t.title}" (assignee ${t.assigneeAgentId ?? 'none'})`);
+    for (const { issue: t, disposition, mergedPrs } of sortTombstonesStrandedFirst(classifiedTombstones)) {
+      const suffix =
+        disposition === 'SHIPPED'
+          ? ` -- SHIPPED, PR #${mergedPrs[0].number} merged${
+              mergedPrs[0].merge_commit_sha ? ` (${mergedPrs[0].merge_commit_sha})` : ''
+            }, close the ticket`
+          : ' -- STRANDED, needs work';
+      lines.push(`  - ${t.identifier ?? t.id}: "${t.title}" (assignee ${t.assigneeAgentId ?? 'none'})${suffix}`);
     }
   }
   if (unownedPrs.length > 0) {
@@ -235,6 +317,10 @@ async function fetchIssuesFullByStatus(apiBase, companyId, apiKey, status) {
 // LUL-677/LUL-680: pending interactions are not on the issue payload at all
 // -- a separate `GET /api/issues/{id}/interactions` per candidate, attached
 // as `.interactions` so isTombstone stays a pure function of one object.
+// LUL-736: comments are fetched the same way, attached as `.comments`, so
+// classifyDisposition() can scan them for `#<n>` PR references alongside the
+// title/description -- LUL-677/682/702's PR references were in a comment,
+// not the issue body.
 async function fetchTombstoneCandidates(apiBase, companyId, apiKey) {
   const [blocked, inReview] = await Promise.all([
     fetchIssuesFullByStatus(apiBase, companyId, apiKey, 'blocked'),
@@ -243,10 +329,34 @@ async function fetchTombstoneCandidates(apiBase, companyId, apiKey) {
   const candidates = [...blocked, ...inReview];
   await Promise.all(
     candidates.map(async (issue) => {
-      issue.interactions = await pcFetch(`${apiBase}/api/issues/${issue.id}/interactions`, apiKey);
+      const [interactions, comments] = await Promise.all([
+        pcFetch(`${apiBase}/api/issues/${issue.id}/interactions`, apiKey),
+        pcFetch(`${apiBase}/api/issues/${issue.id}/comments`, apiKey),
+      ]);
+      issue.interactions = interactions;
+      issue.comments = comments;
     }),
   );
   return candidates;
+}
+
+// LUL-736: resolves every PR number referenced by any tombstone candidate in
+// one deduped batch. A referenced number that isn't really a PR (typo, wrong
+// repo) 404s -- logged and left out of the map rather than aborting the
+// whole run, since classifyDisposition() already treats an unresolved
+// reference as neither merged nor open.
+async function fetchPrLookup(repo, prNumbers, token) {
+  const map = new Map();
+  await Promise.all(
+    [...new Set(prNumbers)].map(async (number) => {
+      try {
+        map.set(number, await ghFetch(`https://api.github.com/repos/${repo}/pulls/${number}`, token));
+      } catch (err) {
+        console.error(`board-integrity detector: could not resolve #${number} as a PR: ${err.message}`);
+      }
+    }),
+  );
+  return map;
 }
 
 async function fetchSelfAgentId(apiBase, apiKey) {
@@ -266,27 +376,55 @@ async function createWakeIssue(apiBase, companyId, apiKey, { title, description,
   return res.json();
 }
 
-async function fileWakeTickets(apiBase, companyId, apiKey, tombstones, unownedPrs, openIssues) {
+// LUL-736: the wake ticket text itself must say which disposition fired --
+// "close this, here is the merge commit" for SHIPPED, not the generic
+// "this is stranded" text every tombstone got before.
+function tombstoneWakeTitle(marker, disposition) {
+  return disposition === 'SHIPPED' ? `${marker} (LUL-672 detector) -- SHIPPED, close it` : `${marker} (LUL-672 detector) -- STRANDED, needs work`;
+}
+
+function tombstoneWakeDescription({ issue, disposition, mergedPrs }) {
+  if (disposition === 'SHIPPED') {
+    const pr = mergedPrs[0];
+    return (
+      `Detected by scripts/board-integrity-check.mjs: ${issue.identifier ?? issue.id} ` +
+      `("${issue.title}") is status \`${issue.status}\` with no live blocker, no active ` +
+      `recovery action, and no pending wake_assignee interaction -- but it references PR ` +
+      `#${pr.number}, which is already MERGED` +
+      (pr.merge_commit_sha ? ` (merge commit ${pr.merge_commit_sha})` : '') +
+      `. This looks like stale status on already-landed work (LUL-736 -- the owning run likely ` +
+      `merged and died before the closing PATCH). Close the ticket; no implementation is needed. ` +
+      `See wiki game/lul672-board-integrity-detector.`
+    );
+  }
+  return (
+    `Detected by scripts/board-integrity-check.mjs: ${issue.identifier ?? issue.id} ` +
+    `("${issue.title}") is status \`${issue.status}\` with no live blocker, no active ` +
+    `recovery action, and no pending wake_assignee interaction -- nothing will ever wake ` +
+    `it automatically, and no referenced PR has merged. Re-check it: advance/close it, or ` +
+    `record why it is genuinely still stuck (and give it a real blockedBy edge, recovery ` +
+    `path, or interaction if so). See wiki process/review-to-land-wake-gap and ` +
+    `game/lul672-board-integrity-detector.`
+  );
+}
+
+// classifiedTombstones: [{ issue, disposition, referencedPrs, mergedPrs }]
+async function fileWakeTickets(apiBase, companyId, apiKey, classifiedTombstones, unownedPrs, openIssues) {
   const selfId = await fetchSelfAgentId(apiBase, apiKey);
   const filed = [];
 
-  for (const issue of tombstones) {
+  for (const classified of classifiedTombstones) {
+    const { issue, disposition } = classified;
     const marker = tombstoneWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
     const assigneeAgentId = issue.assigneeAgentId ?? selfId;
     await createWakeIssue(apiBase, companyId, apiKey, {
-      title: `${marker} (LUL-672 detector)`,
-      description:
-        `Detected by scripts/board-integrity-check.mjs: ${issue.identifier ?? issue.id} ` +
-        `("${issue.title}") is status \`${issue.status}\` with no live blocker, no active ` +
-        `recovery action, and no pending wake_assignee interaction -- nothing will ever wake ` +
-        `it automatically. Re-check it: advance/close it, or record why it is genuinely still ` +
-        `stuck (and give it a real blockedBy edge, recovery path, or interaction if so). See ` +
-        `wiki process/review-to-land-wake-gap and game/lul672-board-integrity-detector.`,
+      title: tombstoneWakeTitle(marker, disposition),
+      description: tombstoneWakeDescription(classified),
       assigneeAgentId,
       priority: 'high',
     });
-    filed.push({ kind: 'tombstone', identifier: issue.identifier ?? issue.id, assigneeAgentId });
+    filed.push({ kind: 'tombstone', identifier: issue.identifier ?? issue.id, disposition, assigneeAgentId });
   }
 
   for (const pr of unownedPrs) {
@@ -310,7 +448,6 @@ async function fileWakeTickets(apiBase, companyId, apiKey, tombstones, unownedPr
 
 async function main() {
   const repo = process.env.GITHUB_REPOSITORY || DEFAULT_REPO;
-  const ghToken = process.env.GITHUB_TOKEN;
   const apiBase = (process.env.PAPERCLIP_API_URL || '').replace(/\/api\/?$/, '').replace(/\/$/, '');
   const apiKey = process.env.PAPERCLIP_API_KEY;
   const companyId = process.env.PAPERCLIP_COMPANY_ID;
@@ -324,6 +461,21 @@ async function main() {
     );
   }
 
+  // LUL-736 preflight: fail before burning a single GitHub call, not after
+  // call #7 comes back a raw 403 rate-limit body that looks like a GitHub
+  // outage rather than a config gap (which is exactly what happened running
+  // this undocumented).
+  const resolvedToken = resolveGithubToken();
+  if (!resolvedToken) {
+    throw new Error(
+      `no GitHub token found -- checked ${GITHUB_TOKEN_CHAIN_DESCRIPTION} in order and none ` +
+        'resolved. This detector needs an authenticated GitHub read: the studio shares one NAT ' +
+        "egress IP, and unauthenticated reads exhaust GitHub's 60/hr budget in a handful of " +
+        'PRs worth of /check-runs calls. See scripts/lib/github-fetch.mjs resolveGithubToken.',
+    );
+  }
+  const ghToken = resolvedToken.token;
+
   const [openPrs, tombstoneCandidates, openIssuesForOwnership] = await Promise.all([
     ghFetch(`https://api.github.com/repos/${repo}/pulls?state=open&per_page=100`, ghToken),
     fetchTombstoneCandidates(apiBase, companyId, apiKey),
@@ -336,8 +488,11 @@ async function main() {
   }
 
   const tombstones = findTombstones(tombstoneCandidates);
+  const referencedNumbers = tombstones.flatMap((issue) => referencedPrNumbers(issue));
+  const prByNumber = await fetchPrLookup(repo, referencedNumbers, ghToken);
+  const classifiedTombstones = classifyTombstones(tombstones, prByNumber);
   const unownedPrs = findUnownedPrs(prContexts, openIssuesForOwnership);
-  const report = formatReport(tombstones, unownedPrs, repo);
+  const report = formatReport(classifiedTombstones, unownedPrs, repo);
 
   if (!report) {
     console.log(
@@ -349,7 +504,7 @@ async function main() {
   console.error(report);
 
   if (shouldPost) {
-    const filed = await fileWakeTickets(apiBase, companyId, apiKey, tombstones, unownedPrs, openIssuesForOwnership);
+    const filed = await fileWakeTickets(apiBase, companyId, apiKey, classifiedTombstones, unownedPrs, openIssuesForOwnership);
     if (filed.length === 0) {
       console.error('--post: every alarm already has an open wake ticket, filed nothing new.');
     } else {
@@ -379,4 +534,11 @@ export {
   tombstoneWakeMarker,
   unownedPrWakeMarker,
   hasOpenWakeTicket,
+  extractPrNumbers,
+  referencedPrNumbers,
+  classifyDisposition,
+  classifyTombstones,
+  sortTombstonesStrandedFirst,
+  tombstoneWakeTitle,
+  tombstoneWakeDescription,
 };
