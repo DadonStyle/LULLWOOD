@@ -51,6 +51,7 @@ on:
 permissions:
   contents: read
   pull-requests: write   # sweep mode posts a commit status + a one-time comment on a violation
+  statuses: write   # LUL-851: pull-requests: write does not cover the statuses endpoint the sweep posts to
 
 concurrency:
   group: base-branch-guard-${{ github.event.pull_request.number || 'sweep' }}

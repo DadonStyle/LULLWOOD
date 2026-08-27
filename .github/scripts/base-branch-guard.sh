@@ -90,6 +90,7 @@ run_sweep_from_json() {
   local prs_file="$1"
   local post_status="$2"  # "1" to post commit statuses (real sweep), "0" for fixture/offline
   local any_violation=0
+  local any_post_failure=0
 
   # \x1f (unit separator), not a tab: bash's `read` squashes runs of IFS
   # *whitespace* (space/tab/newline) into one delimiter and drops empty
@@ -121,10 +122,18 @@ run_sweep_from_json() {
         if [ -n "$desc" ]; then
           echo "  post: state=success context='base branch guard' sha=$sha desc=\"$desc\""
           if [ "$post_status" = "1" ]; then
-            gh api "repos/${REPO:?}/statuses/$sha" \
+            # LUL-851: a missing `statuses: write` scope makes this call
+            # 404 (GitHub's shape for a GITHUB_TOKEN missing a permission
+            # on this endpoint, not 403) -- it was previously piped to
+            # /dev/null with no exit-code check, so the sweep posted
+            # nothing and still exited 0. Loud on purpose now.
+            if ! gh api "repos/${REPO:?}/statuses/$sha" \
               -f state=success \
               -f context='base branch guard' \
-              -f description="$desc" > /dev/null
+              -f description="$desc" > /dev/null; then
+              echo "::error::base-branch-guard: failed to post success status for PR #$number sha=$sha via gh api repos/${REPO}/statuses/$sha" >&2
+              any_post_failure=1
+            fi
           fi
         fi
         ;;
@@ -133,10 +142,13 @@ run_sweep_from_json() {
         msg="${result#violation: }"
         echo "PR #$number ($base <- $head): VIOLATION -- $msg"
         if [ "$post_status" = "1" ]; then
-          gh api "repos/${REPO:?}/statuses/$sha" \
+          if ! gh api "repos/${REPO:?}/statuses/$sha" \
             -f state=failure \
             -f context='base branch guard' \
-            -f description="base=main requires head=release/next or the emergency-hotfix label" > /dev/null
+            -f description="base=main requires head=release/next or the emergency-hotfix label" > /dev/null; then
+            echo "::error::base-branch-guard: failed to post failure status for PR #$number sha=$sha via gh api repos/${REPO}/statuses/$sha" >&2
+            any_post_failure=1
+          fi
           # Best-effort, once per PR -- same de-dup convention auto-pr.yml
           # uses for SHIP_DENIED/SHIP_MALFORMED.
           if ! gh pr view "$number" --repo "${REPO:?}" --json comments \
@@ -187,7 +199,10 @@ for pr in prs:
     print(pr["number"], base, pr["headRefName"], labels, sha, revisit, sep="\x1f")
 ' "$prs_file")
 
-  return "$any_violation"
+  if [ "$any_violation" = "1" ] || [ "$any_post_failure" = "1" ]; then
+    return 1
+  fi
+  return 0
 }
 
 if [ -n "${PR_NUMBER:-}" ]; then
@@ -232,7 +247,7 @@ else
   rc=$?
   set -e
   if [ "$rc" != "0" ]; then
-    echo "::error::base-branch-guard: at least one open PR targets main directly without release/next as head or an emergency-hotfix label." >&2
+    echo "::error::base-branch-guard: sweep found at least one base:main violation or a commit-status post that failed (see ::error:: lines above for which)." >&2
   fi
   exit "$rc"
 fi
