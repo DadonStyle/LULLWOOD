@@ -594,18 +594,27 @@ function generateReeds(){
   }
   buildCoverGrid();
 }
-// LUL-25: 'normal' | 'hard' -- no UI yet (LUL-26, difficulty presets, hasn't
-// landed), set only via qaSetDifficulty(). Normal never calls
-// pickHardBabyPosition, so its rng stream is byte-identical to before this
-// ticket; hard draws its extra point after every other generateMap() draw.
+// LUL-25: 'normal' | 'hard'. Driven by setDifficulty() below (LUL-372) --
+// 'blackout', the hardest DIFFICULTY_PRESETS tier, maps to 'hard'; the other
+// two map to 'normal'. Also settable directly via qaSetDifficulty() for
+// tests. Normal never calls pickHardBabyPosition, so its rng stream is
+// byte-identical to before this ticket; hard draws its extra point after
+// every other generateMap() draw.
 // Named distinctly from LUL-26's `difficulty` (DIFFICULTY_PRESETS, below) --
 // they are two unrelated concepts (baby spawn placement vs. the real
 // lantern/night/blackout preset) that collided on the same identifier during
 // a backmerge; see LUL-427.
 let babySpawnDifficulty = 'normal';
+// The "other side" position drawn at the top of generateMap(), captured
+// there (see below) before applyHardBabySpawn() can override it -- LUL-799:
+// applyHardBabySpawn() must be able to restore this when babySpawnDifficulty
+// flips hard -> normal without a fresh generateMap()/rng draw (setDifficulty()
+// can be called pre-entry, any number of times, in either direction).
+let babyNormalSpawn = { x: 0, z: 0 };
 function applyHardBabySpawn(){
-  if(babySpawnDifficulty !== 'hard') return;
-  const pos = pickHardBabyPosition(rng, { half, zMax }, half, LANDMARKS);
+  const pos = babySpawnDifficulty === 'hard'
+    ? pickHardBabyPosition(rng, { half, zMax }, half, LANDMARKS)
+    : babyNormalSpawn;
   baby.x = pos.x; baby.z = pos.z;
   babyGroup.position.set(baby.x, 0, baby.z);
   placeBabyWisps();
@@ -621,6 +630,7 @@ function generateMap(seed){
     const ang = rng()*Math.PI*2, d = half*(0.5 + rng()*0.3);
     baby.x = Math.cos(ang)*d; baby.z = Math.sin(ang)*d;
   } while(inLake(baby.x, baby.z));
+  babyNormalSpawn = { x: baby.x, z: baby.z };
   baby.taken = false;
   babyGroup.visible = true;
   babyGroup.position.set(baby.x, 0, baby.z);
@@ -2035,9 +2045,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaTeleportHome = function(){ player.x = CONFIG.home.x; player.z = CONFIG.home.z; };
 
   // LUL-25: sets difficulty for the *next* generateMap() call (restart/regen
-  // -- the current map doesn't retroactively move the child). No UI wires
-  // this yet (LUL-26 hasn't landed); it exists so hard mode's "child spawns
-  // beyond the bog" is actually testable before that UI exists.
+  // -- the current map doesn't retroactively move the child). The real path
+  // is setDifficulty('blackout') via the settings panel (LUL-372); this hook
+  // lets a test pin the 'hard' baby-spawn seam directly, without also
+  // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
   window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
 
@@ -2632,11 +2643,17 @@ function regenMap(){ generateMap((Math.random()*1e9)>>>0); }
 function setDifficulty(d){
   if(!DIFFICULTY_PRESETS[d]) return;
   difficulty = d;
+  // LUL-372: thread the real difficulty choice down to LUL-25's hard-baby-
+  // spawn seam -- 'blackout' (the hardest preset: full roster, already
+  // hunting, no minimap) is the only tier that also pushes the child beyond
+  // the bog; 'lantern'/'night' keep the child at its normal spawn.
+  babySpawnDifficulty = d === 'blackout' ? 'hard' : 'normal';
   // Repositioning/parking predators mid-chase would be jarring and could pop
   // one in on top of the player, so a live difficulty change only re-applies
   // immediately before the player has entered; otherwise it takes effect on
-  // the next restart() (which already calls placePredators() itself).
-  if(!entered) placePredators();
+  // the next restart() (which already calls placePredators() itself and,
+  // via generateMap(), applyHardBabySpawn()).
+  if(!entered) { placePredators(); applyHardBabySpawn(); }
   pushState({ difficulty: d });
 }
 function setRunMode(m){

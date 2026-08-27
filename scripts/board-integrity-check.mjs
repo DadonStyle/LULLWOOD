@@ -209,11 +209,77 @@ function findUnownedPrs(prContexts, openIssues) {
   return gaps;
 }
 
+// ---- Alarm C: zero pullable work -------------------------------------------
+//
+// LUL-810: the studio stalled for ~4 hours on 2026-08-27 with 0 issues in
+// todo/in_progress and 6 agents capable of running -- no alarm fired. This is
+// the cheapest possible signal: if no agent can pull work, the whole studio is
+// stopped, regardless of what else is happening on the board.
+
+// "available" = not paused; running agents are already active, idle ones can
+// pull new work. A "paused" agent is explicitly suspended and does not count.
+function isAvailableAgent(agent) {
+  return agent.status !== 'paused';
+}
+
+// openIssues: array from fetchOpenIssuesForOwnershipCheck (todo + in_progress).
+// agents: array from GET /api/companies/{id}/agents.
+// Returns { alarm: boolean, availableAgentCount, openCount }.
+function zeroPullableWorkAlarm(openIssues, agents) {
+  const availableAgentCount = agents.filter(isAvailableAgent).length;
+  const openCount = openIssues.length;
+  return { alarm: openCount === 0 && availableAgentCount > 0, availableAgentCount, openCount };
+}
+
+// ---- Alarm D: stale request_confirmation -----------------------------------
+//
+// LUL-810: LUL-438 had a pending request_confirmation since 2026-08-19 (8
+// days). Nothing surfaced it. A confirmation that sits for more than
+// STALE_CONFIRMATION_DAYS with no response is a board gap: either the
+// founder/user never saw it, or the issue needs to be re-routed.
+
+const STALE_CONFIRMATION_DAYS = 7;
+
+// candidates: array of issues with `.interactions` attached (from
+// fetchTombstoneCandidates, which now covers blocked + in_review + in_progress).
+// nowMs: Date.now() -- injected so tests don't depend on wall clock.
+// staleDays: threshold in days (default STALE_CONFIRMATION_DAYS).
+// Returns: [{ issue, interaction, ageDays }], sorted oldest first.
+function findStaleConfirmations(candidates, nowMs, staleDays = STALE_CONFIRMATION_DAYS) {
+  const result = [];
+  for (const issue of candidates) {
+    for (const ix of issue.interactions ?? []) {
+      if (ix.kind !== 'request_confirmation') continue;
+      if (ix.status !== 'pending') continue;
+      const ageMs = nowMs - new Date(ix.createdAt).getTime();
+      const ageDays = ageMs / (1000 * 60 * 60 * 24);
+      if (ageDays >= staleDays) {
+        result.push({ issue, interaction: ix, ageDays });
+      }
+    }
+  }
+  result.sort((a, b) => b.ageDays - a.ageDays);
+  return result;
+}
+
 // classifiedTombstones: [{ issue, disposition, referencedPrs, mergedPrs }],
 // the shape classifyTombstones() produces.
-function formatReport(classifiedTombstones, unownedPrs, repo) {
-  if (classifiedTombstones.length === 0 && unownedPrs.length === 0) return null;
+// zeroPullable: the result of zeroPullableWorkAlarm(), or null to skip Alarm C.
+// staleConfirmations: the result of findStaleConfirmations(), or [] to skip Alarm D.
+function formatReport(classifiedTombstones, unownedPrs, repo, zeroPullable = null, staleConfirmations = []) {
+  const hasAlarms =
+    classifiedTombstones.length > 0 ||
+    unownedPrs.length > 0 ||
+    zeroPullable?.alarm ||
+    staleConfirmations.length > 0;
+  if (!hasAlarms) return null;
   const lines = ['board-integrity detector: ALARM'];
+  if (zeroPullable?.alarm) {
+    lines.push(
+      '',
+      `ALARM C: board has 0 todo/in_progress issues with ${zeroPullable.availableAgentCount} available agent(s) -- studio is stopped`,
+    );
+  }
   if (classifiedTombstones.length > 0) {
     lines.push(
       '',
@@ -236,6 +302,17 @@ function formatReport(classifiedTombstones, unownedPrs, repo) {
       lines.push(`  - #${pr.number} "${pr.title}" -- ${pr.html_url}`);
     }
   }
+  if (staleConfirmations.length > 0) {
+    lines.push(
+      '',
+      `${staleConfirmations.length} stale request_confirmation(s) -- pending for >${STALE_CONFIRMATION_DAYS} days with no response:`,
+    );
+    for (const { issue, interaction, ageDays } of staleConfirmations) {
+      lines.push(
+        `  - ${issue.identifier ?? issue.id}: "${issue.title}" -- confirmation pending ${Math.floor(ageDays)}d (since ${interaction.createdAt.slice(0, 10)}, assignee ${issue.assigneeAgentId ?? 'none'})`,
+      );
+    }
+  }
   return lines.join('\n');
 }
 
@@ -251,6 +328,14 @@ function tombstoneWakeMarker(issue) {
 
 function unownedPrWakeMarker(pr) {
   return `${WAKE_MARKER_PREFIX} PR #${pr.number} has no owning ticket`;
+}
+
+function zeroPullableWorkWakeMarker() {
+  return `${WAKE_MARKER_PREFIX} board has zero pullable work`;
+}
+
+function staleConfirmationWakeMarker(issue) {
+  return `${WAKE_MARKER_PREFIX} ${issue.identifier ?? issue.id} has a stale request_confirmation`;
 }
 
 function hasOpenWakeTicket(openIssues, marker) {
@@ -314,6 +399,10 @@ async function fetchIssuesFullByStatus(apiBase, companyId, apiKey, status) {
   return full;
 }
 
+async function fetchAgents(apiBase, companyId, apiKey) {
+  return pcFetch(`${apiBase}/api/companies/${companyId}/agents`, apiKey);
+}
+
 // LUL-677/LUL-680: pending interactions are not on the issue payload at all
 // -- a separate `GET /api/issues/{id}/interactions` per candidate, attached
 // as `.interactions` so isTombstone stays a pure function of one object.
@@ -321,14 +410,18 @@ async function fetchIssuesFullByStatus(apiBase, companyId, apiKey, status) {
 // classifyDisposition() can scan them for `#<n>` PR references alongside the
 // title/description -- LUL-677/682/702's PR references were in a comment,
 // not the issue body.
+// LUL-810: in_progress issues are included so findStaleConfirmations (Alarm D)
+// also covers stale confirmations on active issues, not only blocked/in_review.
 async function fetchTombstoneCandidates(apiBase, companyId, apiKey) {
-  const [blocked, inReview] = await Promise.all([
+  const [blocked, inReview, inProgress] = await Promise.all([
     fetchIssuesFullByStatus(apiBase, companyId, apiKey, 'blocked'),
     fetchIssuesFullByStatus(apiBase, companyId, apiKey, 'in_review'),
+    fetchIssuesFullByStatus(apiBase, companyId, apiKey, 'in_progress'),
   ]);
-  const candidates = [...blocked, ...inReview];
+  const tombstoneCandidates = [...blocked, ...inReview];
+  const allCandidates = [...tombstoneCandidates, ...inProgress];
   await Promise.all(
-    candidates.map(async (issue) => {
+    allCandidates.map(async (issue) => {
       const [interactions, comments] = await Promise.all([
         pcFetch(`${apiBase}/api/issues/${issue.id}/interactions`, apiKey),
         pcFetch(`${apiBase}/api/issues/${issue.id}/comments`, apiKey),
@@ -337,7 +430,7 @@ async function fetchTombstoneCandidates(apiBase, companyId, apiKey) {
       issue.comments = comments;
     }),
   );
-  return candidates;
+  return { tombstoneCandidates, allCandidates };
 }
 
 // LUL-736: resolves every PR number referenced by any tombstone candidate in
@@ -409,9 +502,57 @@ function tombstoneWakeDescription({ issue, disposition, mergedPrs }) {
 }
 
 // classifiedTombstones: [{ issue, disposition, referencedPrs, mergedPrs }]
-async function fileWakeTickets(apiBase, companyId, apiKey, classifiedTombstones, unownedPrs, openIssues) {
+// zeroPullable: result of zeroPullableWorkAlarm() -- { alarm, availableAgentCount, openCount }
+// staleConfirmations: result of findStaleConfirmations()
+async function fileWakeTickets(
+  apiBase,
+  companyId,
+  apiKey,
+  classifiedTombstones,
+  unownedPrs,
+  openIssues,
+  zeroPullable,
+  staleConfirmations,
+) {
   const selfId = await fetchSelfAgentId(apiBase, apiKey);
   const filed = [];
+
+  if (zeroPullable?.alarm) {
+    const marker = zeroPullableWorkWakeMarker();
+    if (!hasOpenWakeTicket(openIssues, marker)) {
+      await createWakeIssue(apiBase, companyId, apiKey, {
+        title: `${marker} (LUL-810 detector)`,
+        description:
+          `Detected by scripts/board-integrity-check.mjs: the board has 0 issues in ` +
+          `todo/in_progress while ${zeroPullable.availableAgentCount} agent(s) are available ` +
+          `(not paused). The studio is stopped. Common causes: all work is blocked/in_review ` +
+          `with no resolution path, or runs died on the session limit after landing their PRs ` +
+          `without closing their tickets. Run the board sweep (node scripts/board-integrity-check.mjs --post) ` +
+          `and check for tombstones. See wiki playbooks/session-limit-issue-recovery.`,
+        assigneeAgentId: selfId,
+        priority: 'critical',
+      });
+      filed.push({ kind: 'zero-pullable-work', availableAgentCount: zeroPullable.availableAgentCount, assigneeAgentId: selfId });
+    }
+  }
+
+  for (const { issue, interaction, ageDays } of staleConfirmations ?? []) {
+    const marker = staleConfirmationWakeMarker(issue);
+    if (hasOpenWakeTicket(openIssues, marker)) continue;
+    const assigneeAgentId = issue.assigneeAgentId ?? selfId;
+    await createWakeIssue(apiBase, companyId, apiKey, {
+      title: `${marker} (LUL-810 detector)`,
+      description:
+        `Detected by scripts/board-integrity-check.mjs: ${issue.identifier ?? issue.id} ` +
+        `("${issue.title}") has a \`request_confirmation\` (id ${interaction.id}) that has ` +
+        `been \`pending\` for ${Math.floor(ageDays)} days (since ${interaction.createdAt.slice(0, 10)}). ` +
+        `Either the founder/user has not seen it, or the issue needs to be re-routed or closed. ` +
+        `Re-check the issue and either advance it or cancel the stale confirmation.`,
+      assigneeAgentId,
+      priority: 'high',
+    });
+    filed.push({ kind: 'stale-confirmation', identifier: issue.identifier ?? issue.id, ageDays: Math.floor(ageDays), assigneeAgentId });
+  }
 
   for (const classified of classifiedTombstones) {
     const { issue, disposition } = classified;
@@ -476,10 +617,11 @@ async function main() {
   }
   const ghToken = resolvedToken.token;
 
-  const [openPrs, tombstoneCandidates, openIssuesForOwnership] = await Promise.all([
+  const [openPrs, { tombstoneCandidates, allCandidates }, openIssuesForOwnership, agents] = await Promise.all([
     ghFetch(`https://api.github.com/repos/${repo}/pulls?state=open&per_page=100`, ghToken),
     fetchTombstoneCandidates(apiBase, companyId, apiKey),
     fetchOpenIssuesForOwnershipCheck(apiBase, companyId, apiKey),
+    fetchAgents(apiBase, companyId, apiKey),
   ]);
 
   const prContexts = [];
@@ -492,7 +634,9 @@ async function main() {
   const prByNumber = await fetchPrLookup(repo, referencedNumbers, ghToken);
   const classifiedTombstones = classifyTombstones(tombstones, prByNumber);
   const unownedPrs = findUnownedPrs(prContexts, openIssuesForOwnership);
-  const report = formatReport(classifiedTombstones, unownedPrs, repo);
+  const zeroPullable = zeroPullableWorkAlarm(openIssuesForOwnership, agents);
+  const staleConfirmations = findStaleConfirmations(allCandidates, Date.now());
+  const report = formatReport(classifiedTombstones, unownedPrs, repo, zeroPullable, staleConfirmations);
 
   if (!report) {
     console.log(
@@ -504,7 +648,16 @@ async function main() {
   console.error(report);
 
   if (shouldPost) {
-    const filed = await fileWakeTickets(apiBase, companyId, apiKey, classifiedTombstones, unownedPrs, openIssuesForOwnership);
+    const filed = await fileWakeTickets(
+      apiBase,
+      companyId,
+      apiKey,
+      classifiedTombstones,
+      unownedPrs,
+      openIssuesForOwnership,
+      zeroPullable,
+      staleConfirmations,
+    );
     if (filed.length === 0) {
       console.error('--post: every alarm already has an open wake ticket, filed nothing new.');
     } else {
@@ -533,6 +686,8 @@ export {
   formatReport,
   tombstoneWakeMarker,
   unownedPrWakeMarker,
+  zeroPullableWorkWakeMarker,
+  staleConfirmationWakeMarker,
   hasOpenWakeTicket,
   extractPrNumbers,
   referencedPrNumbers,
@@ -541,4 +696,8 @@ export {
   sortTombstonesStrandedFirst,
   tombstoneWakeTitle,
   tombstoneWakeDescription,
+  isAvailableAgent,
+  zeroPullableWorkAlarm,
+  findStaleConfirmations,
+  STALE_CONFIRMATION_DAYS,
 };

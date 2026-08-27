@@ -18,6 +18,7 @@ import {
   authJsonPath,
   durableToken,
   resolveAssigneeId,
+  fetchWorkflowFiles,
 } from './watchdog-run-check.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
@@ -138,6 +139,67 @@ test('formatReport names the red watchdog and its run URL, and separates inert f
   assert.match(report, /runs\/42/);
   assert.match(report, /do not resolve on the default branch/);
   assert.match(report, /Merge gap detector/);
+});
+
+test('formatReport surfaces failed file downloads even when every classified watchdog is healthy', () => {
+  const classified = WATCHDOGS.map((w) => classifyWatchdog(w, true, [greenRun()]));
+  const report = formatReport(classified, 'DadonStyle/LULLWOOD', ['flaky-workflow.yml']);
+  assert.match(report, /1 workflow file\(s\) could not be read this run, roster may be incomplete/);
+  assert.match(report, /flaky-workflow\.yml/);
+});
+
+test('formatReport omits the failed-file line entirely when nothing failed (no false alarm)', () => {
+  const classified = WATCHDOGS.map((w) => classifyWatchdog(w, true, [greenRun()]));
+  assert.equal(formatReport(classified, 'DadonStyle/LULLWOOD', []), null);
+});
+
+// ---- fetchWorkflowFiles: a failed per-file download must not be silently ---
+// coerced to yaml: '' (LUL-776) -- hasScheduleTrigger('') is indistinguishable
+// from "this workflow genuinely has no schedule:", so a transient GET failure
+// would otherwise drop a real cron watchdog off the roster with no trace.
+
+test('fetchWorkflowFiles reports a failed per-file download in failedFiles, not as an empty-yaml entry', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('/contents/.github/workflows')) {
+        return {
+          ok: true,
+          json: async () => [
+            { type: 'file', name: 'good.yml', download_url: 'https://example.invalid/good.yml' },
+            { type: 'file', name: 'flaky.yml', download_url: 'https://example.invalid/flaky.yml' },
+          ],
+        };
+      }
+      if (String(url).endsWith('/good.yml')) {
+        return { ok: true, text: async () => cronWorkflow('Good') };
+      }
+      if (String(url).endsWith('/flaky.yml')) {
+        return { ok: false, status: 502 };
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const { files, failedFiles } = await fetchWorkflowFiles('DadonStyle/LULLWOOD', 'main', 'token');
+    assert.deepEqual(
+      files.map((f) => f.file),
+      ['good.yml'],
+    );
+    assert.deepEqual(failedFiles, ['flaky.yml']);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fetchWorkflowFiles: a ref with no workflows dir is an empty result, not a failure (fork/fresh-clone shape)', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => ({ ok: false, status: 404 });
+    const { files, failedFiles } = await fetchWorkflowFiles('DadonStyle/LULLWOOD', 'some-fork', 'token');
+    assert.deepEqual(files, []);
+    assert.deepEqual(failedFiles, []);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
 });
 
 // ---- dedup marker + re-arm (reusing board-integrity-check.mjs's own dedup) -
