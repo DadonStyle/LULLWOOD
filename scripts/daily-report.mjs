@@ -4,8 +4,9 @@
 //
 // One file per calendar day, DAILY_REPORTS/YYYY-MM-DD.md, day boundary
 // 00:00-23:59 Asia/Jerusalem. Source of truth is `git log --first-parent`
-// on `main` -- see the wiki page for why (reproducible, no secrets, "landed
-// on main" is the honest definition of shipped).
+// on `release/next` -- see the wiki page for why (LUL-801: the studio ships
+// continuously to release/next; main only receives version cuts, so main
+// produces empty days while work is actually landing).
 //
 // Usage:
 //   node scripts/daily-report.mjs --backfill
@@ -122,8 +123,8 @@ const SECTION_BY_TITLE = new Map(SECTIONS.map((s) => [s.title.toLowerCase(), s])
 // ---------------------------------------------------------------------------
 // git plumbing
 
-function git(args) {
-  return execFileSync('git', args, { cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+function git(args, cwd = REPO_ROOT) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -131,11 +132,11 @@ const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 // One record per first-parent commit on `ref`. Uses \x1f/\x1e as field/record
 // separators so commit bodies (which may contain anything but those bytes)
 // don't break parsing.
-export function listFirstParentCommits(ref) {
+export function listFirstParentCommits(ref, cwd = REPO_ROOT) {
   const FIELD = '\x1f';
   const RECORD = '\x1e';
   const format = ['%H', '%P', '%aI', '%s', '%b'].join(FIELD) + RECORD;
-  const raw = git(['log', '--first-parent', `--pretty=format:${format}`, ref]);
+  const raw = git(['log', '--first-parent', `--pretty=format:${format}`, ref], cwd);
   if (!raw) return [];
   return raw
     .split(RECORD)
@@ -153,16 +154,16 @@ export function listFirstParentCommits(ref) {
     });
 }
 
-export function changedPaths(commit) {
+export function changedPaths(commit, cwd = REPO_ROOT) {
   const parent1 = commit.parents[0] ?? EMPTY_TREE_SHA;
-  const raw = git(['diff', '--name-only', parent1, commit.sha]);
+  const raw = git(['diff', '--name-only', parent1, commit.sha], cwd);
   return raw.split('\n').filter(Boolean);
 }
 
-function secondParentSubject(commit) {
+function secondParentSubject(commit, cwd = REPO_ROOT) {
   if (commit.parents.length < 2) return null;
   try {
-    return git(['log', '-1', '--format=%s', commit.parents[1]]).trim();
+    return git(['log', '-1', '--format=%s', commit.parents[1]], cwd).trim();
   } catch {
     // Unresolvable second parent (e.g. a shallow fetch) -- fall through to
     // the merge commit's own subject rather than crashing the whole run.
@@ -301,10 +302,10 @@ export function renderDay(dateStr, entries) {
     return lines.join('\n');
   }
 
-  lines.push(`_Asia/Jerusalem, 00:00–23:59 · ${entries.length} changes landed on \`main\`_`, '');
+  lines.push(`_Asia/Jerusalem, 00:00–23:59 · ${entries.length} changes landed on \`release/next\`_`, '');
 
   if (entries.length === 0) {
-    lines.push('No changes landed on `main` this day.', '');
+    lines.push('No changes landed on `release/next` this day.', '');
     return lines.join('\n');
   }
 
@@ -347,15 +348,15 @@ export function renderDay(dateStr, entries) {
 // ---------------------------------------------------------------------------
 // Building the entry set for a real (post-repo) day
 
-export function buildEntriesByDay(ref) {
-  const commits = listFirstParentCommits(ref);
+export function buildEntriesByDay(ref, cwd = REPO_ROOT) {
+  const commits = listFirstParentCommits(ref, cwd);
   const byDay = new Map();
   // git log is newest-first; walk oldest-first so entries render chronologically.
   for (const commit of [...commits].reverse()) {
     const day = dayKeyInTz(commit.authorDate);
     const shape = classifyShape(commit);
     if (shape.excluded) continue;
-    const paths = changedPaths(commit);
+    const paths = changedPaths(commit, cwd);
     const sectionKey = classifySection(commit, paths);
     if (!byDay.has(day)) byDay.set(day, []);
     byDay.get(day).push({
@@ -394,14 +395,19 @@ function yesterdayInTz() {
   return addDaysToDateStr(todayStr, -1);
 }
 
-export function generateRange(since, until) {
-  if (!existsSync(REPORTS_DIR)) mkdirSync(REPORTS_DIR, { recursive: true });
-  const byDay = buildEntriesByDay('origin/main');
+// SOURCE_BRANCH is the integration branch whose first-parent history is the
+// daily source of truth. Under the release train, delivery flows through
+// release/next; main only receives version cuts. (LUL-801)
+export const SOURCE_BRANCH = 'origin/release/next';
+
+export function generateRange(since, until, { cwd = REPO_ROOT, outputDir = REPORTS_DIR } = {}) {
+  if (!existsSync(outputDir)) mkdirSync(outputDir, { recursive: true });
+  const byDay = buildEntriesByDay(SOURCE_BRANCH, cwd);
   const written = [];
   for (const day of enumerateDays(since, until)) {
     const entries = byDay.get(day) ?? [];
     const md = renderDay(day, entries);
-    const filePath = path.join(REPORTS_DIR, `${day}.md`);
+    const filePath = path.join(outputDir, `${day}.md`);
     writeFileSync(filePath, md);
     written.push(filePath);
   }
