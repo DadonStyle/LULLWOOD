@@ -120,7 +120,7 @@ function init(onStateChange, inputMode) {
 
 // ---- Knobs ---------------------------------------------------------------
 const CONFIG = {
-  seed:    20260718,
+  seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
   mapSize: 240,          // the forest is a fixed square this many units across
   bogDepth: 120,         // LUL-25: the bog band appended past the forest's +z edge
   trees:   1300,
@@ -166,6 +166,21 @@ const LANDMARKS = [
 // ---- Seeded RNG (so a given map is a real, repeatable place) --------------
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
   t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+// LUL-83: every player used to get the byte-identical forest (CONFIG.seed was
+// the only seed ever used). The FIRST map now draws a fresh seed per page
+// load so a second playthrough isn't the nine spawn points you've already
+// learned; `?seed=` pins an exact layout for QA/manual repro (e.g. `?seed=20260718`
+// reproduces today's fixed layout byte-for-byte). Only the seed *source*
+// changes -- generateMap() below still draws from the same mulberry32 stream
+// either way, so LUL-25's append-order determinism note is untouched.
+function resolveInitialSeed(){
+  const pinned = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('seed')
+    : null;
+  const n = pinned === null ? NaN : Number(pinned);
+  if(Number.isFinite(n)) return n >>> 0;
+  return (Math.random() * 0x100000000) >>> 0;
+}
 let rng = mulberry32(CONFIG.seed);
 // LUL-153: the seed actually in play -- generateMap() below is called with a
 // fresh random seed on every restart()/regenMap(), so CONFIG.seed alone only
@@ -414,6 +429,18 @@ let coverGrid = new Map();     // same CELL keying as `grid`, built from coverDa
 
 function inLake(x,z){ return inLakeClearance(x, z, CONFIG.lake); }
 function inSpawn(x,z){ return x*x+z*z < 40; }
+// LUL-857: a roam/stuck-recovery waypoint that lands in the water reads
+// identically to any other -- predators have no notion of "wet" -- so a
+// wander target inside `inLakeWater()` (the visible water radius `r`, not
+// the wider spawn-clearance `clear` LUL-395 uses) gets deflected to just
+// past the shore instead. Reuses `pushOutOfLakeClearance()` against a
+// `{...CONFIG.lake, clear:r}` view so "just past `clear`" means "just past
+// the water's edge" here, same deterministic O(1) push LUL-791 already
+// established for spawn candidates -- no new math, no retry loop.
+function keepWaypointOffLake(x, z){
+  if(!inLakeWater(x, z, CONFIG.lake)) return {x, z};
+  return pushOutOfLakeClearance(x, z, {...CONFIG.lake, clear: CONFIG.lake.r}, 2);
+}
 // LUL-425: CELL and key() (now gridKey) live in lib/game/cover.ts, imported
 // above -- single source of truth for the bucketing convention every
 // grid-querying function in this file and in cover.ts now shares.
@@ -1285,7 +1312,9 @@ function updatePredators(dt, noiseRadius){
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){ const a=Math.random()*Math.PI*2, r=15+Math.random()*40;
-          p.wpx=clamp(p.x+Math.cos(a)*r,-half+4,half-4); p.wpz=clamp(p.z+Math.sin(a)*r,-half+4,zMax-4); }
+          let nwx=clamp(p.x+Math.cos(a)*r,-half+4,half-4), nwz=clamp(p.z+Math.sin(a)*r,-half+4,zMax-4);
+          const kept = keepWaypointOffLake(nwx, nwz);
+          p.wpx=clamp(kept.x,-half+4,half-4); p.wpz=clamp(kept.z,-half+4,zMax-4); }
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
       }
     } else if(p.state === 'chase'){
@@ -1416,8 +1445,12 @@ function updatePredators(dt, noiseRadius){
       if(p.stuckT > 3){                              // go back along the trail, then a different way
         const back = p.trail[0] || [p.x - ux*6, p.z - uz*6];
         p.rrX = back[0]; p.rrZ = back[1]; p.reroute = 1.4; p.stuckT = 0;
-        p.wpx = clamp(p.x + (Math.random()-0.5)*40, -half+4, half-4);   // fresh, different waypoint
-        p.wpz = clamp(p.z + (Math.random()-0.5)*40, -half+4, zMax-4);
+        // fresh, different waypoint (LUL-857: kept off the water same as the roam pick above)
+        const freshx = clamp(p.x + (Math.random()-0.5)*40, -half+4, half-4);
+        const freshz = clamp(p.z + (Math.random()-0.5)*40, -half+4, zMax-4);
+        const freshKept = keepWaypointOffLake(freshx, freshz);
+        p.wpx = clamp(freshKept.x, -half+4, half-4);
+        p.wpz = clamp(freshKept.z, -half+4, zMax-4);
       }
     }
 
@@ -2057,6 +2090,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
   window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
+
+  // LUL-83: proves resolveInitialSeed() actually drives the generated layout --
+  // `?seed=N` should reproduce this byte-identically across loads, and no
+  // `?seed=` should vary it. Trees/predators are read back from the same
+  // arrays generateMap() populated, not re-derived.
+  window.ForestEngine.qaProbeMapSeed = function(){
+    return {
+      seed: currentSeed,
+      baby: { x: baby.x, z: baby.z },
+      trees: treeData.map(function(t){ return { x: t.x, z: t.z }; }),
+      predators: predators.map(function(p){ return { kind: p.kind, x: p.x, z: p.z }; }),
+    };
+  };
 
   // LUL-211: the cover-collision fix (coverBlockedR, folded into blocked())
   // was unprovable from a test -- nothing outside the closure could read where
@@ -2782,7 +2828,7 @@ function adaptResolution(dt, t){
 function applyRes(){ if(usePost) makeTargets(); else { renderer.setPixelRatio(RES); renderer.setSize(innerWidth, innerHeight); } }
 
 // ---- Build the first map, then run ---------------------------------------
-generateMap(CONFIG.seed);
+generateMap(resolveInitialSeed());
 const clock = new THREE.Clock();
 let bobPhase = 0;
 let rafId = null;
