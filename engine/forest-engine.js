@@ -599,9 +599,16 @@ function generateReeds(){
 // lantern/night/blackout preset) that collided on the same identifier during
 // a backmerge; see LUL-427.
 let babySpawnDifficulty = 'normal';
+// The "other side" position drawn at the top of generateMap(), captured
+// there (see below) before applyHardBabySpawn() can override it -- LUL-799:
+// applyHardBabySpawn() must be able to restore this when babySpawnDifficulty
+// flips hard -> normal without a fresh generateMap()/rng draw (setDifficulty()
+// can be called pre-entry, any number of times, in either direction).
+let babyNormalSpawn = { x: 0, z: 0 };
 function applyHardBabySpawn(){
-  if(babySpawnDifficulty !== 'hard') return;
-  const pos = pickHardBabyPosition(rng, { half, zMax }, half, LANDMARKS);
+  const pos = babySpawnDifficulty === 'hard'
+    ? pickHardBabyPosition(rng, { half, zMax }, half, LANDMARKS)
+    : babyNormalSpawn;
   baby.x = pos.x; baby.z = pos.z;
   babyGroup.position.set(baby.x, 0, baby.z);
   placeBabyWisps();
@@ -617,6 +624,7 @@ function generateMap(seed){
     const ang = rng()*Math.PI*2, d = half*(0.5 + rng()*0.3);
     baby.x = Math.cos(ang)*d; baby.z = Math.sin(ang)*d;
   } while(inLake(baby.x, baby.z));
+  babyNormalSpawn = { x: baby.x, z: baby.z };
   baby.taken = false;
   babyGroup.visible = true;
   babyGroup.position.set(baby.x, 0, baby.z);
