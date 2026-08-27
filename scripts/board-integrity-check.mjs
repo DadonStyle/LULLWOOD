@@ -240,6 +240,16 @@ function zeroPullableWorkAlarm(openIssues, agents) {
 
 const STALE_CONFIRMATION_DAYS = 7;
 
+// LUL-827 defect 1: a re-ask (a second, fresh `request_confirmation` on the
+// same issue) never cleared the alarm, because each pending confirmation on
+// an issue was aged and reported independently. Live case: LUL-438 had one
+// pending since 2026-08-19 (8d) *and* a fresh re-ask created 2026-08-27 --
+// someone had already done the remedy the alarm asks for, and the alarm
+// still fired on the stale first one. An older pending confirmation
+// superseded by a newer pending confirmation on the same issue is not
+// independently stale -- age each issue by its NEWEST pending confirmation
+// only.
+//
 // candidates: array of issues with `.interactions` attached (from
 // fetchTombstoneCandidates, which now covers blocked + in_review + in_progress).
 // nowMs: Date.now() -- injected so tests don't depend on wall clock.
@@ -248,18 +258,46 @@ const STALE_CONFIRMATION_DAYS = 7;
 function findStaleConfirmations(candidates, nowMs, staleDays = STALE_CONFIRMATION_DAYS) {
   const result = [];
   for (const issue of candidates) {
-    for (const ix of issue.interactions ?? []) {
-      if (ix.kind !== 'request_confirmation') continue;
-      if (ix.status !== 'pending') continue;
-      const ageMs = nowMs - new Date(ix.createdAt).getTime();
-      const ageDays = ageMs / (1000 * 60 * 60 * 24);
-      if (ageDays >= staleDays) {
-        result.push({ issue, interaction: ix, ageDays });
-      }
+    const pending = (issue.interactions ?? []).filter(
+      (ix) => ix.kind === 'request_confirmation' && ix.status === 'pending',
+    );
+    if (pending.length === 0) continue;
+    const newest = pending.reduce((a, b) => (new Date(b.createdAt) > new Date(a.createdAt) ? b : a));
+    const ageMs = nowMs - new Date(newest.createdAt).getTime();
+    const ageDays = ageMs / (1000 * 60 * 60 * 24);
+    if (ageDays >= staleDays) {
+      result.push({ issue, interaction: newest, ageDays });
     }
   }
   result.sort((a, b) => b.ageDays - a.ageDays);
   return result;
+}
+
+// LUL-827 defect 2: closing the wake ticket does not clear the underlying
+// pending confirmation -- if a human genuinely hasn't answered, the very
+// next sweep re-files the identical ticket, forever. Give the alarm a
+// suppression path: if the most recently closed wake ticket for this exact
+// confirmation (matched by marker, and only counted if it was closed AFTER
+// the confirmation started -- i.e. it was closed with this confirmation
+// already in view, not a stale leftover from a since-superseded one) is
+// still within the re-alarm cooldown, don't refile yet.
+//
+// closedWakeIssues: done/cancelled issues (title + updatedAt is all this needs).
+// nowMs: Date.now() -- injected so tests don't depend on wall clock.
+// reAlarmDays: cooldown after a close before the same confirmation can be
+// refiled (default STALE_CONFIRMATION_DAYS, i.e. "another 7 days").
+function isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, nowMs, reAlarmDays = STALE_CONFIRMATION_DAYS) {
+  const marker = staleConfirmationWakeMarker(issue);
+  const confirmationCreatedMs = new Date(interaction.createdAt).getTime();
+  let mostRecentCloseMs = -Infinity;
+  for (const closed of closedWakeIssues ?? []) {
+    if (!(closed.title ?? '').startsWith(marker)) continue;
+    const closedMs = new Date(closed.updatedAt).getTime();
+    if (closedMs > mostRecentCloseMs) mostRecentCloseMs = closedMs;
+  }
+  if (mostRecentCloseMs < confirmationCreatedMs) return false;
+  const daysSinceClose = (nowMs - mostRecentCloseMs) / (1000 * 60 * 60 * 24);
+  return daysSinceClose < reAlarmDays;
 }
 
 // classifiedTombstones: [{ issue, disposition, referencedPrs, mergedPrs }],
@@ -403,6 +441,17 @@ async function fetchAgents(apiBase, companyId, apiKey) {
   return pcFetch(`${apiBase}/api/companies/${companyId}/agents`, apiKey);
 }
 
+// LUL-827: closed (done/cancelled) issues, so Alarm D can tell "this wake
+// ticket was closed while the confirmation was still pending" (a human-gated
+// item, suppress for the re-alarm cooldown) from "never filed one" (file it).
+async function fetchClosedIssuesForSuppressionCheck(apiBase, companyId, apiKey) {
+  const [done, cancelled] = await Promise.all([
+    pcFetch(`${apiBase}/api/companies/${companyId}/issues?status=done&limit=200`, apiKey),
+    pcFetch(`${apiBase}/api/companies/${companyId}/issues?status=cancelled&limit=200`, apiKey),
+  ]);
+  return [...done, ...cancelled];
+}
+
 // LUL-677/LUL-680: pending interactions are not on the issue payload at all
 // -- a separate `GET /api/issues/{id}/interactions` per candidate, attached
 // as `.interactions` so isTombstone stays a pure function of one object.
@@ -504,6 +553,7 @@ function tombstoneWakeDescription({ issue, disposition, mergedPrs }) {
 // classifiedTombstones: [{ issue, disposition, referencedPrs, mergedPrs }]
 // zeroPullable: result of zeroPullableWorkAlarm() -- { alarm, availableAgentCount, openCount }
 // staleConfirmations: result of findStaleConfirmations()
+// closedWakeIssues: done/cancelled issues, for Alarm D's re-alarm cooldown (LUL-827)
 async function fileWakeTickets(
   apiBase,
   companyId,
@@ -513,6 +563,8 @@ async function fileWakeTickets(
   openIssues,
   zeroPullable,
   staleConfirmations,
+  closedWakeIssues = [],
+  nowMs = Date.now(),
 ) {
   const selfId = await fetchSelfAgentId(apiBase, apiKey);
   const filed = [];
@@ -539,6 +591,7 @@ async function fileWakeTickets(
   for (const { issue, interaction, ageDays } of staleConfirmations ?? []) {
     const marker = staleConfirmationWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
+    if (isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, nowMs)) continue;
     const assigneeAgentId = issue.assigneeAgentId ?? selfId;
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-810 detector)`,
@@ -617,25 +670,28 @@ async function main() {
   }
   const ghToken = resolvedToken.token;
 
-  const [openPrs, { tombstoneCandidates, allCandidates }, openIssuesForOwnership, agents] = await Promise.all([
-    ghFetch(`https://api.github.com/repos/${repo}/pulls?state=open&per_page=100`, ghToken),
-    fetchTombstoneCandidates(apiBase, companyId, apiKey),
-    fetchOpenIssuesForOwnershipCheck(apiBase, companyId, apiKey),
-    fetchAgents(apiBase, companyId, apiKey),
-  ]);
+  const [openPrs, { tombstoneCandidates, allCandidates }, openIssuesForOwnership, agents, closedWakeIssues] =
+    await Promise.all([
+      ghFetch(`https://api.github.com/repos/${repo}/pulls?state=open&per_page=100`, ghToken),
+      fetchTombstoneCandidates(apiBase, companyId, apiKey),
+      fetchOpenIssuesForOwnershipCheck(apiBase, companyId, apiKey),
+      fetchAgents(apiBase, companyId, apiKey),
+      fetchClosedIssuesForSuppressionCheck(apiBase, companyId, apiKey),
+    ]);
 
   const prContexts = [];
   for (const prSummary of openPrs) {
     prContexts.push(await fetchPrContext(repo, prSummary.number, ghToken));
   }
 
+  const nowMs = Date.now();
   const tombstones = findTombstones(tombstoneCandidates);
   const referencedNumbers = tombstones.flatMap((issue) => referencedPrNumbers(issue));
   const prByNumber = await fetchPrLookup(repo, referencedNumbers, ghToken);
   const classifiedTombstones = classifyTombstones(tombstones, prByNumber);
   const unownedPrs = findUnownedPrs(prContexts, openIssuesForOwnership);
   const zeroPullable = zeroPullableWorkAlarm(openIssuesForOwnership, agents);
-  const staleConfirmations = findStaleConfirmations(allCandidates, Date.now());
+  const staleConfirmations = findStaleConfirmations(allCandidates, nowMs);
   const report = formatReport(classifiedTombstones, unownedPrs, repo, zeroPullable, staleConfirmations);
 
   if (!report) {
@@ -657,6 +713,8 @@ async function main() {
       openIssuesForOwnership,
       zeroPullable,
       staleConfirmations,
+      closedWakeIssues,
+      nowMs,
     );
     if (filed.length === 0) {
       console.error('--post: every alarm already has an open wake ticket, filed nothing new.');
@@ -699,5 +757,6 @@ export {
   isAvailableAgent,
   zeroPullableWorkAlarm,
   findStaleConfirmations,
+  isStaleConfirmationSuppressed,
   STALE_CONFIRMATION_DAYS,
 };

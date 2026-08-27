@@ -24,6 +24,7 @@ import {
   isAvailableAgent,
   zeroPullableWorkAlarm,
   findStaleConfirmations,
+  isStaleConfirmationSuppressed,
   STALE_CONFIRMATION_DAYS,
 } from './board-integrity-check.mjs';
 
@@ -689,4 +690,88 @@ test('staleConfirmationWakeMarker is stable', () => {
 
 test('STALE_CONFIRMATION_DAYS is exported and equals 7', () => {
   assert.equal(STALE_CONFIRMATION_DAYS, 7);
+});
+
+// ---- LUL-827 defect 1: a re-ask must clear the alarm -----------------------
+//
+// Live case: LUL-438 had a confirmation pending since 2026-08-19 (8d) *and*
+// a fresh re-ask created 2026-08-27T07:09:11Z, 9 minutes before this sweep's
+// pinned NOW_MS. Someone had already done the remedy the alarm asks for --
+// the detector must age the issue by the newest pending confirmation, not
+// the oldest, so the re-ask actually silences it.
+
+test('findStaleConfirmations: a fresh re-ask silences an older stale confirmation on the same issue', () => {
+  const issue = {
+    identifier: 'LUL-438',
+    interactions: [
+      { id: 'ix-old', kind: 'request_confirmation', status: 'pending', createdAt: '2026-08-19T01:07:47.862Z' },
+      { id: 'ix-new', kind: 'request_confirmation', status: 'pending', createdAt: '2026-08-27T06:51:00.000Z' },
+    ],
+  };
+  assert.deepEqual(findStaleConfirmations([issue], NOW_MS, 7), []);
+});
+
+test('findStaleConfirmations: two pending confirmations, both stale -- reports the newest one, once', () => {
+  const issue = {
+    identifier: 'LUL-438',
+    interactions: [
+      { id: 'ix-old', kind: 'request_confirmation', status: 'pending', createdAt: '2026-08-01T00:00:00.000Z' },
+      { id: 'ix-newer', kind: 'request_confirmation', status: 'pending', createdAt: '2026-08-15T00:00:00.000Z' },
+    ],
+  };
+  const hits = findStaleConfirmations([issue], NOW_MS, 7);
+  assert.equal(hits.length, 1, 'one issue should produce exactly one hit, not one per pending confirmation');
+  assert.equal(hits[0].interaction.id, 'ix-newer');
+  assert.ok(hits[0].ageDays < 13, `expected age from the newer confirmation, got ${hits[0].ageDays}`);
+});
+
+// ---- LUL-827 defect 2: a closed wake ticket must not re-file on the very ---
+// ---- next sweep for a confirmation still genuinely pending on a human ------
+//
+// Live case: a wake ticket closed while the confirmation it was about is
+// still `pending` (the founder simply hasn't answered -- a legitimate human
+// gate) must not be refiled on the next sweep. It should come back only
+// after a re-alarm cooldown.
+
+test('isStaleConfirmationSuppressed: no closed wake ticket at all -> not suppressed', () => {
+  const issue = { identifier: 'LUL-481' };
+  const interaction = { createdAt: '2026-08-19T00:00:00.000Z' };
+  assert.equal(isStaleConfirmationSuppressed([], issue, interaction, NOW_MS), false);
+});
+
+test('isStaleConfirmationSuppressed: closed wake ticket predates the confirmation -- stale leftover, not suppressed', () => {
+  const issue = { identifier: 'LUL-481' };
+  const interaction = { createdAt: '2026-08-19T00:00:00.000Z' };
+  const closedWakeIssues = [
+    { title: 'Board-integrity: LUL-481 has a stale request_confirmation (LUL-810 detector)', updatedAt: '2026-08-10T00:00:00.000Z' },
+  ];
+  assert.equal(isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, NOW_MS), false);
+});
+
+test('isStaleConfirmationSuppressed: closed just after the confirmation, within cooldown -> suppressed', () => {
+  const issue = { identifier: 'LUL-481' };
+  const interaction = { createdAt: '2026-08-19T00:00:00.000Z' };
+  const closedWakeIssues = [
+    { title: 'Board-integrity: LUL-481 has a stale request_confirmation (LUL-810 detector)', updatedAt: '2026-08-25T00:00:00.000Z' },
+  ];
+  assert.equal(isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, NOW_MS, 7), true);
+});
+
+test('isStaleConfirmationSuppressed: closed after the confirmation but the re-alarm cooldown has elapsed -> refiles', () => {
+  const issue = { identifier: 'LUL-481' };
+  const interaction = { createdAt: '2026-08-19T00:00:00.000Z' };
+  const closedWakeIssues = [
+    { title: 'Board-integrity: LUL-481 has a stale request_confirmation (LUL-810 detector)', updatedAt: '2026-08-19T12:00:00.000Z' },
+  ];
+  // NOW_MS is 2026-08-27T07:00:00Z, well over 7 days past the 08-19 close.
+  assert.equal(isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, NOW_MS, 7), false);
+});
+
+test('isStaleConfirmationSuppressed: does not cross-match a different issue\'s marker', () => {
+  const issue = { identifier: 'LUL-481' };
+  const interaction = { createdAt: '2026-08-19T00:00:00.000Z' };
+  const closedWakeIssues = [
+    { title: 'Board-integrity: LUL-438 has a stale request_confirmation (LUL-810 detector)', updatedAt: '2026-08-26T00:00:00.000Z' },
+  ];
+  assert.equal(isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, NOW_MS), false);
 });

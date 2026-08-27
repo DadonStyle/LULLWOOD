@@ -1,12 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
 import {
   SECTIONS,
+  SOURCE_BRANCH,
   classifyShape,
   classifySection,
   dayKeyInTz,
   extractTicketIds,
   renderDay,
+  buildEntriesByDay,
+  generateRange,
   FIRST_COMPANY_DAY,
 } from './daily-report.mjs';
 
@@ -174,7 +181,7 @@ test('every section in the taxonomy is reachable and titled', () => {
 test('renderDay: a day with zero entries still gets a file with the fixed empty-day body', () => {
   const md = renderDay('2026-09-01', []);
   assert.match(md, /^# Daily Report — 2026-09-01/);
-  assert.match(md, /No changes landed on `main` this day\./);
+  assert.match(md, /No changes landed on `release\/next` this day\./);
   assert.doesNotMatch(md, /\*\*Tickets:\*\*/);
 });
 
@@ -198,4 +205,89 @@ test('renderDay: sections render only when non-empty, in SECTIONS config order',
   assert.doesNotMatch(md, /## Bug fixes/);
   assert.match(md, /\*\*Tickets:\*\* LUL-1, LUL-2/);
   assert.match(md, /\*\*PRs:\*\* #5/);
+});
+
+// ---- SOURCE_BRANCH and integration: synthetic git repo --------------------
+
+test('SOURCE_BRANCH is origin/release/next, not origin/main (LUL-801)', () => {
+  assert.equal(SOURCE_BRANCH, 'origin/release/next');
+});
+
+// Build a minimal synthetic git repo so we can drive buildEntriesByDay and
+// generateRange against real git output without touching the studio repo.
+function makeSyntheticRepo() {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'lul-801-test-'));
+  const g = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', env: {
+    ...process.env,
+    GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@test', GIT_AUTHOR_DATE: '2026-08-22T10:00:00+03:00',
+    GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@test', GIT_COMMITTER_DATE: '2026-08-22T10:00:00+03:00',
+  }});
+  const gAt = (isoDate, ...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', env: {
+    ...process.env,
+    GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@test', GIT_AUTHOR_DATE: isoDate,
+    GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@test', GIT_COMMITTER_DATE: isoDate,
+  }});
+  g('init', '-q', '-b', 'main');
+  writeFileSync(path.join(dir, 'README.md'), 'init');
+  g('add', '.');
+  g('commit', '-q', '-m', 'initial commit');
+  // Create release/next from main
+  g('checkout', '-q', '-b', 'release/next');
+  return { dir, g, gAt };
+}
+
+test('buildEntriesByDay: reads from release/next (LUL-801 day-attribution fix)', () => {
+  const { dir, g, gAt } = makeSyntheticRepo();
+  // Add a feature commit on 2026-08-22 to release/next
+  writeFileSync(path.join(dir, 'feature.txt'), 'hello');
+  g('add', '.');
+  gAt('2026-08-22T11:00:00+03:00', 'commit', '-q', '-m', 'LUL-99: add feature (#5)');
+
+  // Nothing on main since the initial commit (simulates the real repo state)
+  // Rename release/next to origin/release/next via a bare-clone trick
+  const bareDir = mkdtempSync(path.join(os.tmpdir(), 'lul-801-bare-'));
+  execFileSync('git', ['clone', '--bare', dir, bareDir], { encoding: 'utf8' });
+
+  // In a bare clone the branch is available as 'release/next' (no remote prefix).
+  // We pass it directly to prove the function reads the right history.
+  const byDay = buildEntriesByDay('release/next', bareDir);
+  // The feature must appear on 08-22
+  const entries22 = byDay.get('2026-08-22') ?? [];
+  assert.ok(entries22.length > 0, 'expected at least one entry for 2026-08-22 from release/next');
+  assert.ok(entries22.some((e) => e.text.includes('add feature')), 'expected the feature commit');
+});
+
+test('generateRange: backmerges from main into release/next are excluded (merge commit shape)', () => {
+  const { dir, g, gAt } = makeSyntheticRepo();
+  // We are on release/next. Add a feature commit.
+  writeFileSync(path.join(dir, 'real.txt'), 'real work');
+  g('add', '.');
+  gAt('2026-08-22T12:00:00+03:00', 'commit', '-q', '-m', 'LUL-100: real feature (#6)');
+
+  // Switch to main and add a commit so main diverges, then merge it back into
+  // release/next — producing a real 2-parent backmerge commit.
+  g('checkout', '-q', 'main');
+  writeFileSync(path.join(dir, 'main-only.txt'), 'main hotfix');
+  g('add', '.');
+  gAt('2026-08-22T12:30:00+03:00', 'commit', '-q', '-m', 'main-only hotfix');
+  g('checkout', '-q', 'release/next');
+  // Merge main in (this is a real 2-parent merge, which is what the studio produces).
+  execFileSync('git', ['merge', '--no-edit', 'main'], { cwd: dir, encoding: 'utf8', env: {
+    ...process.env,
+    GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@test', GIT_AUTHOR_DATE: '2026-08-22T13:00:00+03:00',
+    GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@test', GIT_COMMITTER_DATE: '2026-08-22T13:00:00+03:00',
+  }});
+
+  const bareDir = mkdtempSync(path.join(os.tmpdir(), 'lul-801-bare2-'));
+  execFileSync('git', ['clone', '--bare', dir, bareDir], { encoding: 'utf8' });
+
+  const byDay = buildEntriesByDay('release/next', bareDir);
+  const entries22 = byDay.get('2026-08-22') ?? [];
+  // The backmerge subject must NOT appear
+  assert.ok(
+    !entries22.some((e) => e.text && e.text.includes("Merge branch 'main'")),
+    'backmerge commit must be excluded',
+  );
+  // But the real feature must still show
+  assert.ok(entries22.some((e) => e.text.includes('real feature')), 'real feature commit must be present');
 });
