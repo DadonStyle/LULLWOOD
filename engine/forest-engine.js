@@ -114,7 +114,7 @@ function init(onStateChange, inputMode) {
 
 // ---- Knobs ---------------------------------------------------------------
 const CONFIG = {
-  seed:    20260718,
+  seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
   mapSize: 240,          // the forest is a fixed square this many units across
   bogDepth: 120,         // LUL-25: the bog band appended past the forest's +z edge
   trees:   1300,
@@ -160,6 +160,21 @@ const LANDMARKS = [
 // ---- Seeded RNG (so a given map is a real, repeatable place) --------------
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
   t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+// LUL-83: every player used to get the byte-identical forest (CONFIG.seed was
+// the only seed ever used). The FIRST map now draws a fresh seed per page
+// load so a second playthrough isn't the nine spawn points you've already
+// learned; `?seed=` pins an exact layout for QA/manual repro (e.g. `?seed=20260718`
+// reproduces today's fixed layout byte-for-byte). Only the seed *source*
+// changes -- generateMap() below still draws from the same mulberry32 stream
+// either way, so LUL-25's append-order determinism note is untouched.
+function resolveInitialSeed(){
+  const pinned = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('seed')
+    : null;
+  const n = pinned === null ? NaN : Number(pinned);
+  if(Number.isFinite(n)) return n >>> 0;
+  return (Math.random() * 0x100000000) >>> 0;
+}
 let rng = mulberry32(CONFIG.seed);
 // LUL-153: the seed actually in play -- generateMap() below is called with a
 // fresh random seed on every restart()/regenMap(), so CONFIG.seed alone only
@@ -2036,6 +2051,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
   window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
 
+  // LUL-83: proves resolveInitialSeed() actually drives the generated layout --
+  // `?seed=N` should reproduce this byte-identically across loads, and no
+  // `?seed=` should vary it. Trees/predators are read back from the same
+  // arrays generateMap() populated, not re-derived.
+  window.ForestEngine.qaProbeMapSeed = function(){
+    return {
+      seed: currentSeed,
+      baby: { x: baby.x, z: baby.z },
+      trees: treeData.map(function(t){ return { x: t.x, z: t.z }; }),
+      predators: predators.map(function(p){ return { kind: p.kind, x: p.x, z: p.z }; }),
+    };
+  };
+
   // LUL-211: the cover-collision fix (coverBlockedR, folded into blocked())
   // was unprovable from a test -- nothing outside the closure could read where
   // the player ended up, so "you can walk through a boulder" could only ever be
@@ -2760,7 +2788,7 @@ function adaptResolution(dt, t){
 function applyRes(){ if(usePost) makeTargets(); else { renderer.setPixelRatio(RES); renderer.setSize(innerWidth, innerHeight); } }
 
 // ---- Build the first map, then run ---------------------------------------
-generateMap(CONFIG.seed);
+generateMap(resolveInitialSeed());
 const clock = new THREE.Clock();
 let bobPhase = 0;
 let rafId = null;
