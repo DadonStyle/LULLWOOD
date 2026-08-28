@@ -41,6 +41,13 @@
 //              back `failure`. This is what LUL-685 is actually about, and
 //              is the only class this script wake-tickets.
 //
+//   RECOVERED -- a RED as above, but a later workflow_dispatch run of the
+//              same workflow on the default branch succeeded. The cron
+//              simply has not run again yet (GitHub throttles `schedule:`
+//              hard -- 4-12h gaps measured here, LUL-866), so runs[0] is a
+//              dead run whose cause is already fixed. Not wake-ticketed, but
+//              always printed. LUL-913, see classifyWatchdog.
+//
 // The roster of watchdogs is DERIVED from the repo's own workflow files on
 // both the default branch and the release-train branch, never hand-listed --
 // see deriveWatchdogs below for why.
@@ -175,9 +182,51 @@ function latestScheduledConclusion(runs) {
   return runs[0].conclusion ?? null;
 }
 
+// LUL-913: a red *scheduled* run stays runs[0] until the next cron tick, and
+// GitHub throttles `schedule:` hard -- measured gaps of 4-12h on this repo
+// (LUL-866). So "the latest scheduled run is red" keeps reporting an alarm
+// for hours after the underlying cause is already fixed, and the fixer's
+// natural proof-of-fix -- re-running the watchdog by hand -- is invisible to
+// this script, which only ever looks at event=schedule.
+//
+// That is not a cosmetic lag. It filed real tickets: run 33116516805 (red,
+// 21:05Z, offender PR #179) was fixed at 22:32Z by merging #179 and
+// re-verified by a successful workflow_dispatch at 03:08Z -- and the router
+// still filed LUL-897 and LUL-913 for that same dead run afterwards. The
+// LUL-897 run-id ledger suppresses the *duplicate*; this suppresses the
+// *false alarm*, which is the better place to fix it (the ledger only helps
+// once a run has already cost one ticket).
+//
+// Only `workflow_dispatch` on the default branch counts as clearing, not any
+// green run:
+//   - a `pull_request`/`push` run of a mixed-trigger watchdog (base-branch-
+//     guard) checks one PR, not the repo-wide scan the cron path does --
+//     green there proves nothing about the scheduled predicate;
+//   - a manual dispatch on the default branch runs byte-identical code with
+//     byte-identical inputs to the cron run (these workflows carry no
+//     per-event guard inside the job -- `on:` is not the trigger condition,
+//     the job body is, so this was checked, not assumed).
+// A dispatch that is still in flight (conclusion null) or itself failed does
+// NOT clear: only a concluded `success` strictly newer than the red run does.
+function clearingDispatchRun(redRun, dispatchRuns) {
+  if (!redRun?.created_at) return null;
+  const redAt = Date.parse(redRun.created_at);
+  if (Number.isNaN(redAt)) return null;
+  for (const run of dispatchRuns ?? []) {
+    if (run?.conclusion !== 'success' || !run.created_at) continue;
+    const at = Date.parse(run.created_at);
+    if (!Number.isNaN(at) && at > redAt) return run;
+  }
+  return null;
+}
+
 // watchdog: one entry from deriveWatchdogs. resolvesOnDefault: bool (contents
 // API 200/404 on the default branch). runs: workflow_runs array as above.
-function classifyWatchdog(watchdog, resolvesOnDefault, runs) {
+// dispatchRuns: workflow_runs from the same workflow filtered to
+// event=workflow_dispatch on the default branch, only fetched when `runs`
+// is red (see classifyAllWatchdogs) -- empty is always a safe default and
+// preserves the pre-LUL-913 behaviour.
+function classifyWatchdog(watchdog, resolvesOnDefault, runs, dispatchRuns = []) {
   if (!resolvesOnDefault) {
     return { ...watchdog, alarm: 'inert' };
   }
@@ -186,6 +235,17 @@ function classifyWatchdog(watchdog, resolvesOnDefault, runs) {
     return { ...watchdog, alarm: 'no-runs' };
   }
   if (conclusion === 'failure') {
+    const clearedBy = clearingDispatchRun(runs[0], dispatchRuns);
+    if (clearedBy) {
+      return {
+        ...watchdog,
+        alarm: 'recovered',
+        runUrl: runs[0].html_url,
+        runId: runs[0].id,
+        clearedByUrl: clearedBy.html_url,
+        clearedByRunId: clearedBy.id,
+      };
+    }
     return { ...watchdog, alarm: 'red', runUrl: runs[0].html_url, runId: runs[0].id };
   }
   return { ...watchdog, alarm: null };
@@ -201,6 +261,13 @@ function findInertWatchdogs(classified) {
 
 function findNoRunWatchdogs(classified) {
   return classified.filter((w) => w.alarm === 'no-runs');
+}
+
+// Deliberately NOT folded into `alarm: null`. A suppression nobody can see is
+// how a real jam hides: if this logic ever clears a red it should not have,
+// the only way anyone finds out is a line in the log naming both run ids.
+function findRecoveredWatchdogs(classified) {
+  return classified.filter((w) => w.alarm === 'recovered');
 }
 
 function formatReport(classified, repo, failedFiles = []) {
@@ -240,6 +307,26 @@ function formatReport(classified, repo, failedFiles = []) {
     }
   }
   return lines.join('\n');
+}
+
+// Separate from formatReport on purpose: a recovered watchdog is NOT an
+// alarm (it must not push the process to exit 1 or add an "ALARM" banner to
+// a clean tick), but it must still be printed every tick, because it is the
+// only record that this script chose not to file a ticket it otherwise would
+// have. Returns null when nothing was suppressed, so a quiet board stays
+// quiet.
+function formatRecoveryNotes(classified) {
+  const recovered = findRecoveredWatchdogs(classified);
+  if (recovered.length === 0) return null;
+  return recovered
+    .map(
+      (w) =>
+        `watchdog-run-check: "${w.name}" (${w.file}) latest SCHEDULED run ${w.runId} is red ` +
+        `(${w.runUrl}), but workflow_dispatch run ${w.clearedByRunId} on the default branch ` +
+        `succeeded afterwards (${w.clearedByUrl}). Treating as recovered, not filing a wake ` +
+        'ticket -- the cron has simply not run again yet (LUL-913).',
+    )
+    .join('\n');
 }
 
 // A stable, greppable marker in the wake ticket's own title, one per
@@ -303,6 +390,20 @@ async function fetchLatestScheduledRuns(repo, file, token) {
   return data.workflow_runs ?? [];
 }
 
+// LUL-913's clearing signal. Pinned to the default branch because that is the
+// ref `schedule:` fires from -- a dispatch someone ran against a feature
+// branch proves nothing about the cron path. Only issued for watchdogs
+// already classified red, so a green board still costs exactly the same
+// number of API reads it did before.
+async function fetchLatestDispatchRuns(repo, file, token, defaultBranch) {
+  const data = await ghFetch(
+    `https://api.github.com/repos/${repo}/actions/workflows/${file}/runs` +
+      `?per_page=1&event=workflow_dispatch&branch=${encodeURIComponent(defaultBranch)}`,
+    token,
+  );
+  return data.workflow_runs ?? [];
+}
+
 async function classifyAllWatchdogs(repo, defaultBranch, token) {
   const [defaultResult, trainResult] = await Promise.all([
     fetchWorkflowFiles(repo, defaultBranch, token),
@@ -320,7 +421,15 @@ async function classifyAllWatchdogs(repo, defaultBranch, token) {
     const runs = watchdog.onDefaultBranch
       ? await fetchLatestScheduledRuns(repo, watchdog.file, token)
       : [];
-    results.push(classifyWatchdog(watchdog, watchdog.onDefaultBranch, runs));
+    // Classify once with no clearing evidence; only pay for the extra read
+    // on the watchdogs that actually came back red.
+    const first = classifyWatchdog(watchdog, watchdog.onDefaultBranch, runs);
+    if (first.alarm !== 'red') {
+      results.push(first);
+      continue;
+    }
+    const dispatchRuns = await fetchLatestDispatchRuns(repo, watchdog.file, token, defaultBranch);
+    results.push(classifyWatchdog(watchdog, watchdog.onDefaultBranch, runs, dispatchRuns));
   }
   return { results, failedFiles };
 }
@@ -537,6 +646,11 @@ async function main() {
   const red = findRedWatchdogs(classified);
   const report = formatReport(classified, repo, failedFiles);
 
+  // Printed before the report and regardless of it: a suppressed alarm is the
+  // one line that explains why an obviously-red workflow produced no ticket.
+  const recoveryNotes = formatRecoveryNotes(classified);
+  if (recoveryNotes) console.log(recoveryNotes);
+
   if (!report) {
     console.log(`watchdog-run-check: OK (${classified.length} watchdog(s) checked on ${repo}, no alarms)`);
     return;
@@ -593,7 +707,10 @@ export {
   findRedWatchdogs,
   findInertWatchdogs,
   findNoRunWatchdogs,
+  findRecoveredWatchdogs,
+  clearingDispatchRun,
   formatReport,
+  formatRecoveryNotes,
   watchdogWakeMarker,
   authJsonPath,
   durableToken,
