@@ -104,24 +104,47 @@ function hasLiveInteraction(interactions) {
   );
 }
 
+// LUL-934, playbooks/lul494-tombstone-sweep Finding #2: LUL-482 was flagged
+// STRANDED while its assignee (Founding Engineer) had a heartbeat seconds
+// old, actively driving its own live in-review PR #199 -- a real run mid-turn
+// on the ticket right now. The blockedBy/activeRecoveryAction/interaction
+// checks above are all read from a DB snapshot and cannot see "someone is
+// executing against this exact ticket this instant"; a fresh heartbeat on the
+// assignee is a fifth, independent live signal. Deliberately narrow: `status
+// !== 'running'` or a heartbeat older than HEARTBEAT_FRESH_MS does NOT count
+// as live (per the wiki's own correction on this same finding, `updatedAt`
+// staleness is not proof of anything -- but an agent whose process is
+// running right now, seconds ago, is not something a static-signal detector
+// should ever contradict).
+const HEARTBEAT_FRESH_MS = 2 * 60 * 1000;
+
+function hasFreshHeartbeat(issue, agentsById, nowMs) {
+  const agent = agentsById.get(issue.assigneeAgentId);
+  if (!agent || agent.status !== 'running' || !agent.lastHeartbeatAt) return false;
+  return nowMs - new Date(agent.lastHeartbeatAt).getTime() < HEARTBEAT_FRESH_MS;
+}
+
 // issue: the shape of `GET /api/issues/{id}` (blockedBy/activeRecoveryAction/
 // successfulRunHandoff are only present on the per-issue read, not the list
 // endpoint -- see wiki systems/recovery-action-wake-path and the ticket's
 // own implementation note about blockedBy), with `interactions` attached
 // separately from `GET /api/issues/{id}/interactions` (not part of the
 // issue payload itself).
-function isTombstone(issue) {
+// agentsById: Map<id, agent> (status, lastHeartbeatAt), defaults to empty so
+// every existing single-arg call site/test keeps working unchanged.
+function isTombstone(issue, agentsById = new Map(), nowMs = Date.now()) {
   if (!TOMBSTONE_STATUSES.has(issue.status)) return false;
   const blockedBy = issue.blockedBy ?? [];
   if (blockedBy.some(isBlockerLive)) return false;
   if (hasActiveRecoveryAction(issue)) return false;
   if (issue.successfulRunHandoff?.hasLiveContinuation) return false;
   if (hasLiveInteraction(issue.interactions)) return false;
+  if (hasFreshHeartbeat(issue, agentsById, nowMs)) return false;
   return true;
 }
 
-function findTombstones(blockedIssues) {
-  return blockedIssues.filter(isTombstone);
+function findTombstones(blockedIssues, agentsById = new Map(), nowMs = Date.now()) {
+  return blockedIssues.filter((issue) => isTombstone(issue, agentsById, nowMs));
 }
 
 // ---- Alarm B disposition: SHIPPED (already landed) vs STRANDED (real work) -
@@ -152,20 +175,48 @@ function referencedPrNumbers(issue) {
   return [...nums].sort((a, b) => a - b);
 }
 
+// LUL-934: referencedPrNumbers() pulls every "#NNN" out of every comment ever
+// posted on the issue -- including PR numbers mentioned only in passing about
+// *other* tickets (LUL-27's dispatch comment linked LUL-83's PR #179 purely
+// as "use this seed helper", never claiming #179 shipped LUL-27). Sorting
+// those numbers and taking mergedPrs[0] then cited #179's merge commit as
+// "evidence" LUL-27 shipped -- a real bug: the emitted commit belonged to a
+// different ticket. A referenced PR only counts as evidence for *this* issue
+// if the PR's own title actually names this issue's ticket id -- with word
+// boundaries, so "LUL-27" cannot match inside "LUL-271"/"LUL-279". Squash
+// merges (this repo's only merge method, see AGENTS.md) copy the PR title
+// into the merge commit message verbatim (GitHub appends " (#N)"), so
+// checking pr.title is equivalent to checking the cited commit's own message.
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function prTitleReferencesIssue(pr, issue) {
+  const id = issue.identifier;
+  if (!id) return false;
+  const re = new RegExp(`(?:^|[^0-9A-Za-z-])${escapeRegExp(id)}(?:[^0-9]|$)`, 'i');
+  return re.test(pr.title ?? '');
+}
+
 // prByNumber: Map<number, pr> where pr is the shape of
-// GET /repos/{repo}/pulls/{number} (needs `merged`, `state`, `merge_commit_sha`).
-// A referenced number absent from the map (the lookup 404'd, or was never
-// attempted) resolves to neither merged nor open -- it can't manufacture a
-// SHIPPED verdict, but a genuinely merged sibling reference still can.
+// GET /repos/{repo}/pulls/{number} (needs `merged`, `state`, `merge_commit_sha`,
+// `title`). A referenced number absent from the map (the lookup 404'd, or was
+// never attempted) resolves to neither merged nor open -- it can't manufacture
+// a SHIPPED verdict, but a genuinely merged, correctly-attributed sibling
+// reference still can. A referenced PR whose title does not name this issue's
+// own ticket id is dropped before either merged/open bucket -- see
+// prTitleReferencesIssue above.
 //
-// A mix of "one merged, one still open" stays STRANDED: something referenced
-// by this same ticket has not landed yet, so the work as a whole is not done
-// (this is the one non-obvious case LUL-736 calls out explicitly).
+// A mix of "one merged, one still open" (among the attributed set) stays
+// STRANDED: something referenced by this same ticket has not landed yet, so
+// the work as a whole is not done (this is the one non-obvious case LUL-736
+// calls out explicitly).
 function classifyDisposition(issue, prByNumber) {
   const referencedPrs = referencedPrNumbers(issue);
   const resolved = referencedPrs.map((n) => prByNumber.get(n)).filter(Boolean);
-  const mergedPrs = resolved.filter((pr) => pr.merged);
-  const stillOpenPrs = resolved.filter((pr) => pr.state === 'open');
+  const attributed = resolved.filter((pr) => prTitleReferencesIssue(pr, issue));
+  const mergedPrs = attributed.filter((pr) => pr.merged);
+  const stillOpenPrs = attributed.filter((pr) => pr.state === 'open');
   if (mergedPrs.length > 0 && stillOpenPrs.length === 0) {
     return { issue, disposition: 'SHIPPED', referencedPrs, mergedPrs };
   }
@@ -764,7 +815,8 @@ async function main() {
   }
 
   const nowMs = Date.now();
-  const tombstones = findTombstones(tombstoneCandidates);
+  const agentsById = new Map(agents.map((a) => [a.id, a]));
+  const tombstones = findTombstones(tombstoneCandidates, agentsById, nowMs);
   const referencedNumbers = tombstones.flatMap((issue) => referencedPrNumbers(issue));
   const prByNumber = await fetchPrLookup(repo, referencedNumbers, ghToken);
   const classifiedTombstones = classifyTombstones(tombstones, prByNumber);
@@ -816,6 +868,7 @@ export {
   isTombstone,
   hasActiveRecoveryAction,
   hasLiveInteraction,
+  hasFreshHeartbeat,
   findTombstones,
   issueReferencesPr,
   isPrMergeReady,
@@ -828,6 +881,7 @@ export {
   hasOpenWakeTicket,
   extractPrNumbers,
   referencedPrNumbers,
+  prTitleReferencesIssue,
   classifyDisposition,
   classifyTombstones,
   sortTombstonesStrandedFirst,

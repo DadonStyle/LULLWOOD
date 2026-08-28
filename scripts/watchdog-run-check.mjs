@@ -83,6 +83,19 @@
 // No auto-close logic here -- verifying the fix and closing the ticket is a
 // human/agent judgment call, same as every other wake ticket in this family.
 //
+// LUL-858: a red run is a statement about the code at that run's head_sha,
+// not about the default branch right now -- and under the release train the
+// two diverge routinely, not exceptionally (a fix lands on release/next and
+// only reaches main at the next release-PR merge, wiki
+// systems/scheduled-workflow-default-branch-trap). Measured live on LUL-849:
+// review-gap-detector.yml was red at head_sha b296b030 because the 360m
+// retune (LUL-780) had squash-merged to release/next but not yet reached
+// main; by the time an agent read the filed ticket, 3 of 5 named PRs had
+// merged and a fresh workflow_dispatch on main came back green. That is the
+// 5th ticket in a row filed and then closed as "already fixed" (LUL-721,
+// -771, -821, -832, -849) -- see verifyRedWatchdog below, which runs before
+// every filing decision now.
+//
 // Exit 0: ran cleanly, no RED alarms (INERT alarms alone do not fail the
 // run -- see above). Exit 1: at least one RED alarm found (and filed, if
 // --post). Exit 2: the run itself errored (network, auth, ...).
@@ -90,7 +103,7 @@ import { pathToFileURL } from 'node:url';
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { ghFetch } from './lib/github-fetch.mjs';
+import { ghFetch, resolveGithubToken } from './lib/github-fetch.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
@@ -140,6 +153,35 @@ function hasScheduleTrigger(yaml) {
   return false;
 }
 
+// Like hasScheduleTrigger, but for workflow_dispatch: -- LUL-858 needs to
+// know, per watchdog, whether a red run can even be re-verified by
+// dispatching a fresh one. Unlike schedule: (which requires a cron: list and
+// so can never be a bare scalar), `on: workflow_dispatch` alone IS valid
+// YAML, so that scalar form is checked here too.
+function hasWorkflowDispatchTrigger(yaml) {
+  if (!yaml) return false;
+  const lines = yaml.split('\n');
+  let inOn = false;
+  let onIndent = 0;
+  for (const line of lines) {
+    if (/^\s*#/.test(line) || line.trim() === '') continue;
+    const indent = line.length - line.trimStart().length;
+    if (!inOn) {
+      if (indent === 0 && /^(on|true|"on"|'on'):/.test(line.trim())) {
+        const trimmed = line.trim();
+        if (/:\s*\[.*\bworkflow_dispatch\b.*\]/.test(trimmed)) return true;
+        if (/^(on|true|"on"|'on'):\s*workflow_dispatch\s*$/.test(trimmed)) return true;
+        inOn = true;
+        onIndent = indent;
+      }
+      continue;
+    }
+    if (indent <= onIndent) break;
+    if (/^\s*workflow_dispatch:/.test(line)) return true;
+  }
+  return false;
+}
+
 // Turn a workflow filename into the display name used in the wake-ticket
 // marker. Prefers the workflow's own `name:`; falls back to the filename so
 // the marker is still stable and greppable.
@@ -165,6 +207,7 @@ function deriveWatchdogs(defaultBranchFiles, trainBranchFiles) {
       name: workflowDisplayName(entry.file, entry.yaml),
       file: entry.file,
       onDefaultBranch,
+      hasDispatchTrigger: hasWorkflowDispatchTrigger(entry.yaml),
     });
   };
   for (const entry of defaultBranchFiles ?? []) add(entry, true);
@@ -242,11 +285,12 @@ function classifyWatchdog(watchdog, resolvesOnDefault, runs, dispatchRuns = []) 
         alarm: 'recovered',
         runUrl: runs[0].html_url,
         runId: runs[0].id,
+        headSha: runs[0].head_sha,
         clearedByUrl: clearedBy.html_url,
         clearedByRunId: clearedBy.id,
       };
     }
-    return { ...watchdog, alarm: 'red', runUrl: runs[0].html_url, runId: runs[0].id };
+    return { ...watchdog, alarm: 'red', runUrl: runs[0].html_url, runId: runs[0].id, headSha: runs[0].head_sha };
   }
   return { ...watchdog, alarm: null };
 }
@@ -573,6 +617,173 @@ async function resolveAssigneeId(apiBase, companyId, apiKey) {
   return null;
 }
 
+// ---- LUL-858: re-verify a red run before it becomes a wake ticket ---------
+//
+// A `GET .../compare/{base}...{head}` with `ahead_by === 0 && behind_by ===
+// 0` means head and base are the same commit -- the default branch has not
+// moved since the run's head_sha, so the red run is still current evidence.
+// Any other value means the default branch has advanced (or diverged) since
+// that run, so the run alone is not proof of anything happening *now*.
+function isEvidenceCurrent(compare) {
+  return (compare?.ahead_by ?? 0) === 0 && (compare?.behind_by ?? 0) === 0;
+}
+
+async function fetchDefaultBranchSha(repo, ref, token) {
+  const data = await ghFetch(`https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}`, token);
+  return data.sha;
+}
+
+async function fetchCompare(repo, base, head, token) {
+  return ghFetch(`https://api.github.com/repos/${repo}/compare/${base}...${head}`, token);
+}
+
+// GitHub's dispatch endpoint accepts the workflow FILE name in place of a
+// numeric id, and returns 204 with no body -- there is no run id to read
+// back, which is why pollForFreshRun below has to go looking for it instead.
+async function dispatchWorkflow(repo, file, ref, token) {
+  const res = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${file}/dispatches`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ ref }),
+  });
+  if (!res.ok) {
+    throw new Error(`POST dispatch ${repo}/${file} -> HTTP ${res.status}: ${await res.text()}`);
+  }
+}
+
+async function fetchWorkflowDispatchRuns(repo, file, token, perPage = 5) {
+  const data = await ghFetch(
+    `https://api.github.com/repos/${repo}/actions/workflows/${file}/runs?per_page=${perPage}&event=workflow_dispatch`,
+    token,
+  );
+  return data.workflow_runs ?? [];
+}
+
+function defaultSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const POLL_INTERVAL_MS = 5000;
+const POLL_MAX_ATTEMPTS = 24; // ~2 minutes total at the default interval
+
+// Finds "the run we just caused" by looking for a completed workflow_dispatch
+// run created at/after the moment this script dispatched one -- the dispatch
+// endpoint itself gives back no run id to poll directly. fetchRuns/sleep are
+// injectable so this is testable without real timers or network.
+async function pollForFreshRun(repo, file, token, sinceMs, opts = {}) {
+  const {
+    fetchRuns = fetchWorkflowDispatchRuns,
+    sleep = defaultSleep,
+    intervalMs = POLL_INTERVAL_MS,
+    maxAttempts = POLL_MAX_ATTEMPTS,
+  } = opts;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const runs = await fetchRuns(repo, file, token);
+    const candidate = runs.find((r) => r.status === 'completed' && Date.parse(r.created_at) >= sinceMs);
+    if (candidate) return candidate;
+    if (attempt < maxAttempts - 1) await sleep(intervalMs);
+  }
+  return null;
+}
+
+// Verdicts:
+//   current            -- default branch has not moved past the run's
+//                          commit; the original run is still valid evidence.
+//   stale-confirmed     -- default branch moved on, but a freshly dispatched
+//                          run on it also came back red.
+//   stale-resolved      -- default branch moved on, and the fresh run is
+//                          green -- the alarm was already fixed. Do not file.
+//   no-dispatch-trigger -- default branch moved on, but the workflow has no
+//                          workflow_dispatch trigger to re-verify with.
+//   no-token            -- default branch moved on, but no GitHub token with
+//                          dispatch permission was available.
+//   poll-timeout        -- dispatched a fresh run but it did not finish
+//                          inside the poll window.
+// The last three fall back to filing the original run as-is (per the
+// ticket's point 3) -- `deps` defaults to the real network functions above so
+// production call sites need not wire anything, while tests inject fakes.
+async function verifyRedWatchdog(watchdog, { repo, defaultBranch, token, deps = {} } = {}) {
+  const {
+    fetchDefaultBranchSha: fetchSha = fetchDefaultBranchSha,
+    fetchCompare: compare = fetchCompare,
+    dispatchWorkflow: dispatch = dispatchWorkflow,
+    pollForFreshRun: poll = pollForFreshRun,
+  } = deps;
+
+  const defaultSha = await fetchSha(repo, defaultBranch, token);
+  const cmp = await compare(repo, watchdog.headSha, defaultSha, token);
+
+  if (isEvidenceCurrent(cmp)) {
+    return { verdict: 'current', defaultSha };
+  }
+  if (!watchdog.hasDispatchTrigger) {
+    return { verdict: 'no-dispatch-trigger', defaultSha };
+  }
+  if (!token) {
+    return { verdict: 'no-token', defaultSha };
+  }
+
+  const dispatchedAtMs = Date.now();
+  await dispatch(repo, watchdog.file, defaultBranch, token);
+  const freshRun = await poll(repo, watchdog.file, token, dispatchedAtMs);
+
+  if (!freshRun) {
+    return { verdict: 'poll-timeout', defaultSha };
+  }
+  return freshRun.conclusion === 'failure'
+    ? { verdict: 'stale-confirmed', defaultSha, freshRun }
+    : { verdict: 'stale-resolved', defaultSha, freshRun };
+}
+
+// States, in the ticket body, exactly which run the alarm was verified
+// against -- a reader should never have to re-derive whether this ticket is
+// chasing a red that had already resolved itself on the default branch
+// (LUL-721/771/821/832/849's shared failure). '' when verification did not
+// run at all (no verifyContext was supplied -- see fileWakeTickets).
+function describeVerification(watchdog, verification) {
+  switch (verification.verdict) {
+    case 'current':
+      return (
+        `Re-verified before filing (LUL-858): the default branch has not moved past this run's commit ` +
+        `(${watchdog.headSha}), so the evidence is current -- verified against ${watchdog.runUrl}.`
+      );
+    case 'stale-confirmed':
+      return (
+        `Re-verified before filing (LUL-858): the default branch had advanced past this run's commit ` +
+        `(${watchdog.headSha}), so a fresh run was dispatched on the default branch -- it also came back red: ` +
+        `${verification.freshRun.html_url}. Verified against that FRESH run, not the stale one linked above.`
+      );
+    case 'no-dispatch-trigger':
+      return (
+        `Could not re-verify (LUL-858): .github/workflows/${watchdog.file} has no workflow_dispatch trigger, so ` +
+        `no fresh run could be dispatched to confirm this is still red. Filed against the original run as-is.`
+      );
+    case 'no-token':
+      return (
+        `Could not re-verify (LUL-858): no GitHub token with permission to dispatch a fresh run was available. ` +
+        `Filed against the original run as-is.`
+      );
+    case 'poll-timeout':
+      return (
+        `Re-verification was attempted (LUL-858): a fresh run was dispatched on the default branch but did not ` +
+        `finish within the poll window. Filed against the original run as-is -- check ` +
+        `.github/workflows/${watchdog.file}'s recent workflow_dispatch runs for the one this script triggered.`
+      );
+    case 'verify-error':
+      return (
+        `Could not re-verify (LUL-932): re-verification threw a transient error (e.g. a GitHub rate limit or ` +
+        `5xx) instead of returning a verdict. Filed against the original run as-is -- re-verification will be ` +
+        `retried on the next tick.`
+      );
+    default:
+      return '';
+  }
+}
+
 async function createWakeIssue(apiBase, companyId, apiKey, { title, description, assigneeAgentId }) {
   const res = await fetch(`${apiBase}/api/companies/${companyId}/issues`, {
     method: 'POST',
@@ -585,13 +796,19 @@ async function createWakeIssue(apiBase, companyId, apiKey, { title, description,
   return res.json();
 }
 
-async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIssues, stateDir) {
+// verifyContext: { repo, defaultBranch, token, deps } -- omitted entirely
+// (undefined, or missing repo/defaultBranch) skips re-verification and files
+// on the red run alone, same as before LUL-858. Every real --post run wires
+// this (see main); tests that are not exercising the re-verify path itself
+// can omit it and keep working unchanged.
+async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIssues, stateDir, verifyContext) {
   // Resolve the assignee lazily — after the dedup check — so quiet runs never
   // touch /api/agents/me at all (LUL-770).
   let assigneeId;
   let resolved = false;
   const filed = [];
   let ticketedRuns = readTicketedRuns(stateDir);
+  const canVerify = Boolean(verifyContext && verifyContext.repo && verifyContext.defaultBranch);
 
   for (const watchdog of redWatchdogs) {
     const marker = watchdogWakeMarker(watchdog);
@@ -606,12 +823,42 @@ async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIss
       );
       continue;
     }
+
+    // LUL-858: re-verify before spending a ticket. `current` and every
+    // fallback verdict still file (just with different wording); only
+    // `stale-resolved` -- the default branch moved on AND a fresh run came
+    // back green -- means this alarm is already fixed.
+    // LUL-932: verifyRedWatchdog does up to ~26 fetches, any of which can throw
+    // on a transient GitHub error (rate limit, 5xx). Left unguarded, that throw
+    // would abort this whole loop and silently drop every remaining red
+    // watchdog's ticket for the tick -- the same failure shape as LUL-770.
+    // Degrade to filing as-is instead, same as the no-token/poll-timeout paths.
+    let verification;
+    if (!canVerify) {
+      verification = { verdict: 'unverified' };
+    } else {
+      try {
+        verification = await verifyRedWatchdog(watchdog, verifyContext);
+      } catch (err) {
+        console.error(`LUL-932: re-verification of "${watchdog.name}" threw -- filing as-is. ${err.message}`);
+        verification = { verdict: 'verify-error' };
+      }
+    }
+    if (verification.verdict === 'stale-resolved') {
+      console.error(
+        `LUL-858: "${watchdog.name}" run ${watchdog.runId} is stale -- the default branch has moved on and a ` +
+        `freshly dispatched run came back green (${verification.freshRun.html_url}). Not filing.`,
+      );
+      continue;
+    }
+
     if (!resolved) {
       // null is a legitimate outcome (unassigned is acceptable) — cache it too,
       // so a run with 2+ red watchdogs doesn't re-run the resolution chain.
       assigneeId = await resolveAssigneeId(apiBase, companyId, apiKey);
       resolved = true;
     }
+    const verifiedNote = describeVerification(watchdog, verification);
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-685 detector)`,
       description:
@@ -620,7 +867,8 @@ async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIss
         `${watchdog.runUrl}. Read the run log, fix the underlying cause, and close this ticket ` +
         `once it's addressed. Closing it re-arms this detector, but only for a NEWER red run: ` +
         `this run (${watchdog.runId}) is now recorded as routed, so closing this ticket will not ` +
-        `produce another copy of it on the next tick. See wiki game/lul685-watchdog-wake-router.`,
+        `produce another copy of it on the next tick. See wiki game/lul685-watchdog-wake-router.` +
+        (verifiedNote ? ` ${verifiedNote}` : ''),
       assigneeAgentId: assigneeId,
     });
     // Record only after the POST succeeded — createWakeIssue throws on a
@@ -628,7 +876,13 @@ async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIss
     // suppress the alarm entirely.
     ticketedRuns = recordTicketedRun(ticketedRuns, watchdog);
     writeTicketedRuns(stateDir, ticketedRuns);
-    filed.push({ kind: 'watchdog-red', name: watchdog.name, runId: watchdog.runId, assigneeAgentId: assigneeId });
+    filed.push({
+      kind: 'watchdog-red',
+      name: watchdog.name,
+      runId: watchdog.runId,
+      assigneeAgentId: assigneeId,
+      verdict: verification.verdict,
+    });
   }
 
   return filed;
@@ -679,7 +933,19 @@ async function main() {
       );
     }
     const openIssues = await fetchOpenIssuesForDedup(apiBase, companyId, apiKey);
-    const filed = await fileWakeTickets(apiBase, companyId, apiKey, red, openIssues, stateDir);
+    // Re-verifying a stale red (LUL-858) may need to dispatch a fresh run,
+    // which -- unlike every read in this script -- requires real write auth,
+    // not just the rate-limit bump GITHUB_TOKEN gives the reads above. Resolve
+    // it here, lazily, only once there is actually a red to maybe file; a
+    // dispatch-incapable token just means verifyRedWatchdog falls back to
+    // 'no-token' and files as-is (see its own fallback rules), it does not
+    // abort the run the way board-integrity-check.mjs's hard preflight does.
+    const dispatchToken = resolveGithubToken()?.token ?? ghToken;
+    const filed = await fileWakeTickets(apiBase, companyId, apiKey, red, openIssues, stateDir, {
+      repo,
+      defaultBranch,
+      token: dispatchToken,
+    });
     if (filed.length === 0) {
       console.error('--post: every red watchdog is already routed (open ticket, or this run id already filed), filed nothing new.');
     } else {
@@ -700,6 +966,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
 export {
   OPEN_STATUSES,
   hasScheduleTrigger,
+  hasWorkflowDispatchTrigger,
   workflowDisplayName,
   deriveWatchdogs,
   latestScheduledConclusion,
@@ -722,5 +989,13 @@ export {
   writeTicketedRuns,
   alreadyTicketedRun,
   recordTicketedRun,
+  isEvidenceCurrent,
+  fetchDefaultBranchSha,
+  fetchCompare,
+  dispatchWorkflow,
+  fetchWorkflowDispatchRuns,
+  pollForFreshRun,
+  verifyRedWatchdog,
+  describeVerification,
 };
 
