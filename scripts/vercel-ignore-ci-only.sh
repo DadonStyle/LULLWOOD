@@ -5,7 +5,7 @@
 # LUL-854: widened from .github/+scripts/ only, after LUL-848 measured 4 of 9
 # post-LUL-789 previews building for commits that touched no app code at all
 # -- DAILY_REPORTS/ (written nightly, so this recurs daily), NOAM_MDS/ and
-# GAMES_REPLAY/ (agent scratch/replay dirs), e2e/ (test specs), and
+# QA_REGRESSION/ (agent scratch/replay dirs), e2e/ (test specs), and
 # root-level *.md (AGENTS.md, CLAUDE.md, README.md). Verified before adding:
 # app/, components/, lib/, engine/, next.config.ts, tsconfig.json and
 # package.json contain no imports from any of these -- every grep hit was a
@@ -18,7 +18,7 @@
 # LUL-47's status first.
 #
 # Paths that never affect the built app:
-CI_ONLY_PATTERN='^(\.github/|scripts/|DAILY_REPORTS/|NOAM_MDS/|GAMES_REPLAY/|e2e/)|^[^/]+\.md$'
+CI_ONLY_PATTERN='^(\.github/|scripts/|DAILY_REPORTS/|NOAM_MDS/|QA_REGRESSION/|e2e/)|^[^/]+\.md$'
 
 changed=$(git diff HEAD~1 HEAD --name-only 2>/dev/null)
 if [ -z "$changed" ]; then

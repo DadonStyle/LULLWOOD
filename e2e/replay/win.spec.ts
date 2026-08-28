@@ -1,4 +1,4 @@
-// LUL-216: records a GAMES_REPLAY/ clip of the win path. Not a correctness
+// LUL-216: records a QA_REGRESSION/ clip of the win path. Not a correctness
 // check -- e2e/smoke.spec.ts already asserts this mechanic; this spec exists
 // so `--project=replay` (playwright.config.ts) produces a real, playing video
 // of it. Same qaTeleportNearBaby/qaTeleportHome hooks as the smoke test, for
