@@ -156,7 +156,14 @@ jobs:
             exit 0
           fi
 
-          number="$(gh pr create \
+          # `gh pr create` does NOT accept --json/--jq -- unlike `gh pr list`
+          # just above, which does. It prints the new PR's URL on stdout, so
+          # the number is the last path segment. Passing --json here made this
+          # step die with "unknown flag: --json" on the very first run that
+          # ever reached it (LUL-534, run 33032851122): until the untracked-file
+          # fix landed, step 7 always reported "empty" and steps 8-11 skipped,
+          # so this line had never once executed.
+          url="$(gh pr create \
             --base main \
             --head "$BRANCH" \
             --title "LUL-534: daily reports $UNTIL" \
@@ -165,8 +172,18 @@ jobs:
           Changes: \`DAILY_REPORTS/*.md\` only — qualifies for \`[ship]\`.
           See \`.github/scripts/ship-allowed.sh\`.
 
-          **Mobile:** docs-only, no gameplay or UI changes." \
-            --json number --jq '.number')"
+          **Mobile:** docs-only, no gameplay or UI changes.")"
+
+          number="${url##*/}"
+
+          # Fail closed: an empty or non-numeric parse would otherwise be handed
+          # to the merge step, which would approve and merge the wrong PR.
+          case "$number" in
+            ''|*[!0-9]*)
+              echo "::error::could not parse a PR number from gh pr create output: '$url'"
+              exit 1
+              ;;
+          esac
 
           echo "number=$number" >> "$GITHUB_OUTPUT"
           echo "::notice::opened PR #$number for $BRANCH"

@@ -45,7 +45,7 @@ on:
     types: [opened, reopened, edited, synchronize]
     branches: [main]
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '9,29,49 * * * *'
   workflow_dispatch:
 
 permissions:

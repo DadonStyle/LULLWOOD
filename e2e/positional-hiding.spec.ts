@@ -34,6 +34,19 @@
 // kinds now, so the KeyH presses below still succeed. The LOS math these
 // tests actually assert on (canSee/hasLOS against the coverGrid) is
 // unchanged; rock and tagged trees still block sight exactly as before.
+//
+// LUL-224: the open-lion case below is the exception -- qaOpenHideNearLion
+// places the player at (0,0), deep inside `inSpawn` (r<~6.32), which
+// generateCover() keeps entirely free of cover props on purpose (that's what
+// makes the clearing useful for *this* test: guaranteed no LOS-blocking prop
+// between player and lion). But HIDE_RADIUS (2.2) means no HIDE_KINDS prop
+// can ever be close enough to (0,0) to enter `hidden` from there either --
+// the same emptiness that makes the clearing a good LOS test makes the KeyH
+// press below a guaranteed no-op. That's asserted directly via
+// qaPlayerState().hidden rather than left implicit, so a future change to
+// either radius that quietly lets this test start entering `hidden` gets
+// caught here instead of silently changing what "still gets you caught" is
+// proving. See wiki: game/qa-precondition-drift-lesson.
 import { test, expect } from '@playwright/test';
 import { assertInViewport, boot, enter } from './helpers';
 
@@ -55,12 +68,19 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
       throw new Error('qaOpenHideNearLion returned null -- no lion was found in `predators` for this seed');
     }
 
-    // Hold still. This is the whole point of the assertion: `hidden` now only
-    // buys eye-height/footstep concealment and a shrunk detect range, capped
-    // by STILL_DETECT_CUT at 0.82 of the lion's 48-unit detect -- effective
-    // detect never drops below ~8.6, and the lion is 4 units away in the
-    // open. Holding still must NOT prevent the catch.
+    // Press KeyH anyway -- LUL-224: this is expected to be a no-op (see the
+    // file-header comment above), and that expectation is exactly what needs
+    // proving, not assumed. If it ever *does* enter `hidden` here, the rest
+    // of this test would silently stop being "open ground + clear LOS still
+    // catches you" and start being an (untuned, accidental) test of
+    // STILL_DETECT_CUT instead -- assert the precondition so that drift is
+    // loud, not silent.
     await page.keyboard.press('KeyH');
+    const stateAfterHoldStill = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
+    expect(
+      stateAfterHoldStill?.hidden,
+      'KeyH should not be able to enter `hidden` this far from any hiding-spot prop -- if it did, this test is no longer exercising the open/no-cover case its name claims',
+    ).toBe(false);
 
     // Real death surface (matches e2e/smoke.spec.ts's predator catch/death
     // case): #deathScreen only mounts once `triggerDeath()` -> pushState

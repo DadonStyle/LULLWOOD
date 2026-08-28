@@ -26,7 +26,7 @@ name: Merge gap detector
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '23,53 * * * *'
   workflow_dispatch:
     inputs:
       threshold_minutes:
