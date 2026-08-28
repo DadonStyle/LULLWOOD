@@ -303,5 +303,19 @@ jobs:
             # only the explanation, so it stays retried-but-non-fatal.
             gh_retry gh pr comment "$number" --body-file /tmp/ship-malformed.md || true
           else
-            echo "::notice::no [ship] marker on any commit in #$number; leaving it for review."
+            # Founder directive (2026-08-28): every PR into release/next arms native
+            # GitHub auto-merge, marker or not -- "Allow auto-merge" is already on for
+            # this repo (org-level setting, unrelated to ship-allowed.sh). Arming does
+            # NOT supply a review or bypass anything: the ruleset's required checks and
+            # required_approving_review_count still gate the actual merge exactly as
+            # before. This only removes the manual "click merge" step once whatever
+            # legitimate review this PR needs (self-review under the current policy, or
+            # a human/Code Reviewer approval while required_approving_review_count > 0)
+            # has actually landed.
+            echo "::notice::no [ship] marker on #$number; arming auto-merge anyway (founder directive 2026-08-28) -- merges once required review + checks are satisfied, whenever that happens."
+            if gh_retry gh pr merge "$number" --auto --squash --delete-branch; then
+              echo "::notice::auto-merge armed on #$number"
+            else
+              echo "::warning::could not arm auto-merge on #$number (already merged/closed, or the repo setting is off); leaving it for manual merge."
+            fi
           fi
