@@ -91,6 +91,7 @@ import {
   inLakeClearance,
   lakeSpeedMultiplier,
   pushOutOfLakeClearance,
+  keepWaypointOffLake,
 } from '@/lib/game/lake';
 import {
   FOG_TIDE_CONFIG,
@@ -450,18 +451,8 @@ let coverGrid = new Map();     // same CELL keying as `grid`, built from coverDa
 
 function inLake(x,z){ return inLakeClearance(x, z, CONFIG.lake); }
 function inSpawn(x,z){ return x*x+z*z < 40; }
-// LUL-857: a roam/stuck-recovery waypoint that lands in the water reads
-// identically to any other -- predators have no notion of "wet" -- so a
-// wander target inside `inLakeWater()` (the visible water radius `r`, not
-// the wider spawn-clearance `clear` LUL-395 uses) gets deflected to just
-// past the shore instead. Reuses `pushOutOfLakeClearance()` against a
-// `{...CONFIG.lake, clear:r}` view so "just past `clear`" means "just past
-// the water's edge" here, same deterministic O(1) push LUL-791 already
-// established for spawn candidates -- no new math, no retry loop.
-function keepWaypointOffLake(x, z){
-  if(!inLakeWater(x, z, CONFIG.lake)) return {x, z};
-  return pushOutOfLakeClearance(x, z, {...CONFIG.lake, clear: CONFIG.lake.r}, 2);
-}
+// LUL-873: keepWaypointOffLake() extracted to lib/game/lake.ts (pure,
+// CONFIG.lake passed in explicitly) -- imported above.
 // LUL-425: CELL and key() (now gridKey) live in lib/game/cover.ts, imported
 // above -- single source of truth for the bucketing convention every
 // grid-querying function in this file and in cover.ts now shares.
@@ -1340,7 +1331,7 @@ function updatePredators(dt, noiseRadius){
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){ const a=Math.random()*Math.PI*2, r=15+Math.random()*40;
           let nwx=clamp(p.x+Math.cos(a)*r,-half+4,half-4), nwz=clamp(p.z+Math.sin(a)*r,-half+4,zMax-4);
-          const kept = keepWaypointOffLake(nwx, nwz);
+          const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
           p.wpx=clamp(kept.x,-half+4,half-4); p.wpz=clamp(kept.z,-half+4,zMax-4); }
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
       }
@@ -1475,7 +1466,7 @@ function updatePredators(dt, noiseRadius){
         // fresh, different waypoint (LUL-857: kept off the water same as the roam pick above)
         const freshx = clamp(p.x + (Math.random()-0.5)*40, -half+4, half-4);
         const freshz = clamp(p.z + (Math.random()-0.5)*40, -half+4, zMax-4);
-        const freshKept = keepWaypointOffLake(freshx, freshz);
+        const freshKept = keepWaypointOffLake(freshx, freshz, CONFIG.lake);
         p.wpx = clamp(freshKept.x, -half+4, half-4);
         p.wpz = clamp(freshKept.z, -half+4, zMax-4);
       }

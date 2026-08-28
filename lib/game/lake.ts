@@ -64,3 +64,20 @@ export function pushOutOfLakeClearance(
   const scale = targetDist / dist;
   return { x: lake.x + dx * scale, z: lake.z + dz * scale };
 }
+
+// LUL-857: a roam/stuck-recovery waypoint that lands in the water reads
+// identically to any other -- predators have no notion of "wet" -- so a
+// wander target inside `inLakeWater()` (the visible water radius `r`, not
+// the wider spawn-clearance `clear` LUL-395 uses) gets deflected to just
+// past the shore instead. Reuses `pushOutOfLakeClearance()` against a
+// `{...lake, clear: r}` view so "just past `clear`" means "just past the
+// water's edge" here, same deterministic O(1) push LUL-791 already
+// established for spawn candidates -- no new math, no retry loop.
+export function keepWaypointOffLake(
+  x: number,
+  z: number,
+  lake: LakeConfig,
+): { x: number; z: number } {
+  if (!inLakeWater(x, z, lake)) return { x, z };
+  return pushOutOfLakeClearance(x, z, { ...lake, clear: lake.r }, 2);
+}

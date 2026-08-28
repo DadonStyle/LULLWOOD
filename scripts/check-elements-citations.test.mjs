@@ -253,9 +253,15 @@ test('injecting drift into a still-L<n>-cited citation is caught', () => {
   // The fail-on-purpose proof for the surviving L<n> population, run every
   // CI pass rather than once by hand: manufacture a citation the gate
   // currently accepts, move it off the symbol, and assert the gate notices.
+  // The fixture's L<n> range is derived from depositScent's real span, not
+  // hardcoded -- a hardcoded range drifts (and fails this test for an
+  // unrelated reason) the moment any earlier edit shifts line counts in
+  // engine/forest-engine.js.
   const doc = fs.readFileSync('docs/ELEMENTS.md', 'utf8');
   const engine = fs.readFileSync('engine/forest-engine.js', 'utf8');
-  const injected = doc + '\n\n`depositScent()` L1116-1119 test fixture only.\n';
+  const span = declarationSpans(engine).get('depositScent');
+  assert.ok(span, 'expected depositScent to still resolve to a declaration span');
+  const injected = doc + `\n\n\`depositScent()\` L${span.start}-${span.end} test fixture only.\n`;
   const before = checkCitations(injected, engine);
   const victim = before.ok.find((c) => c.symbol === 'depositScent');
   assert.ok(victim, 'expected the injected depositScent citation to verify clean first');
