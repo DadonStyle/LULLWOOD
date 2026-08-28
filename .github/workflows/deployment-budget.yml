@@ -19,9 +19,21 @@ name: Deployment budget
 # Actions without waiting for 90 real deployments. Leave it empty for a
 # real run.
 
+# LUL-860: this and every other scheduled watchdog in this repo used a
+# round-number cron (`*/20 * * * *`, `*/30 * * * *`, `0 8 * * *`), which
+# collides with the top-of-hour load spike GitHub's own docs warn causes
+# `schedule` runs to be delayed or dropped entirely (docs.github.com/actions
+# -- "events that trigger workflows" -> schedule). Measured live 2026-08-27:
+# every scheduled workflow in this repo (deployment-budget, review-gap-
+# detector, base-branch-guard, merge-gap-detector, version-cut) had gaps of
+# 3-30+ hours between scheduled runs despite push-triggered CI firing
+# continuously in the same window -- the schedule wasn't broken, it just
+# never got dispatched. Offsetting off the round minute is GitHub's own
+# stated mitigation.
+
 on:
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '7,27,47 * * * *'
   workflow_dispatch:
     inputs:
       fixture_count:

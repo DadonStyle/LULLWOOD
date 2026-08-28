@@ -25,6 +25,15 @@ export const VIEW_Y = 360;
 // too short on a bad one.
 const ENGINE_READY_TIMEOUT = 30_000;
 
+// LUL-83: every load used to get the byte-identical CONFIG.seed forest, so the
+// whole suite was implicitly written against this one layout (predators/cover/
+// hiding-spot positions all seed-derived). Now that the engine draws a fresh
+// seed per load by default, `boot()` pins every spec back to that same layout
+// via `?seed=` unless a spec explicitly opts out with `seed: null` -- that
+// keeps the suite passing unmodified instead of making every terrain-dependent
+// spec flaky. See engine/forest-engine.js's `resolveInitialSeed()`.
+export const QA_PINNED_SEED = 20260718;
+
 /** Collect console/page errors. Must be called before `boot()` to catch load-time errors. */
 export function trackConsoleErrors(page: Page) {
   const consoleErrors: string[] = [];
@@ -46,9 +55,19 @@ export function expectNoConsoleErrors({
 /**
  * Navigate to the game and wait until the engine has mounted and drawn.
  * `qaHooks` opts into the engine's `?qaHooks=1` test hooks (teleports, remount).
+ * `seed` (LUL-83) pins the generated map layout via `?seed=`; defaults to
+ * `QA_PINNED_SEED` so every spec keeps exercising the known layout it was
+ * written against. Pass `seed: null` to get the real fresh-per-load default.
  */
-export async function boot(page: Page, { qaHooks = false }: { qaHooks?: boolean } = {}) {
-  await page.goto(qaHooks ? '/?qaHooks=1' : '/', { waitUntil: 'networkidle', timeout: 60_000 });
+export async function boot(
+  page: Page,
+  { qaHooks = false, seed = QA_PINNED_SEED }: { qaHooks?: boolean; seed?: number | null } = {},
+) {
+  const params = new URLSearchParams();
+  if (qaHooks) params.set('qaHooks', '1');
+  if (seed !== null) params.set('seed', String(seed));
+  const query = params.toString();
+  await page.goto(query ? `/?${query}` : '/', { waitUntil: 'networkidle', timeout: 60_000 });
   // Both canvases exist = the engine's WebGL canvas joined the minimap canvas
   // that ships in the static overlay markup, i.e. init() has actually run.
   await page.waitForFunction(

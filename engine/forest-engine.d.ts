@@ -39,6 +39,15 @@ declare global {
       qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
       /** LUL-25: the child's world position and whether it's past the forest/bog seam. */
       qaProbeBaby?: () => { x: number; z: number; inBog: boolean };
+      /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
+       * positions it produced -- diff two loads' output to prove `?seed=` pins an
+       * exact layout and no `?seed=` varies it. */
+      qaProbeMapSeed?: () => {
+        seed: number;
+        baby: { x: number; z: number };
+        trees: { x: number; z: number }[];
+        predators: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number }[];
+      };
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
       /** Same as qaLurePredator, filtered to the given species. Returns the
