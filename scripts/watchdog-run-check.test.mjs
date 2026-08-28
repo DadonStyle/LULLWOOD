@@ -997,6 +997,56 @@ test('LUL-858 DoD 3: no workflow_dispatch trigger falls back to filing as-is and
   });
 });
 
+test('LUL-932: a transient throw from verifyRedWatchdog degrades to filing as-is instead of aborting the loop and dropping later watchdogs', async () => {
+  await withStateDir(async (stateDir) => {
+    const prevFetch = globalThis.fetch;
+    const prevEnv = process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    const postedBodies = [];
+    try {
+      process.env.WATCHDOG_ASSIGNEE_AGENT_ID = 'pinned-agent';
+      globalThis.fetch = async (url, opts) => {
+        if (String(url).includes('/issues')) {
+          postedBodies.push(JSON.parse(opts.body));
+          return { ok: true, json: async () => ({ id: 'created' }) };
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      };
+      let calls = 0;
+      const deps = {
+        fetchDefaultBranchSha: async () => {
+          calls += 1;
+          if (calls === 1) throw new Error('simulated GitHub 502');
+          return 'aaaaaaa';
+        },
+        fetchCompare: async () => ({ ahead_by: 0, behind_by: 0 }),
+        dispatchWorkflow: async () => { throw new Error('must not dispatch'); },
+        pollForFreshRun: async () => { throw new Error('must not poll'); },
+      };
+      const red = [
+        makeRedWatchdog({ name: 'Review gap detector', runId: 111, headSha: 'aaa' }),
+        makeRedWatchdog({ name: 'Merge gap detector', runId: 222, headSha: 'bbb' }),
+      ];
+      const filed = await fileWakeTickets(
+        'http://api.invalid', 'company-1', 'token',
+        red, [], stateDir,
+        { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: 'gh-token', deps },
+      );
+      // Both must file: the first degrades to verify-error on the thrown fetch,
+      // the second still gets a real "current" verdict -- the throw must not
+      // abort the loop and silently drop it.
+      assert.equal(filed.length, 2);
+      assert.equal(filed[0].verdict, 'verify-error');
+      assert.equal(filed[1].verdict, 'current');
+      assert.equal(postedBodies.length, 2);
+      assert.match(postedBodies[0].description, /transient error/);
+    } finally {
+      if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+      else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
+      globalThis.fetch = prevFetch;
+    }
+  });
+});
+
 test('LUL-858: omitting verifyContext entirely skips re-verification and files on the red run alone (back-compat)', async () => {
   await withStateDir(async (stateDir) => {
     const prevFetch = globalThis.fetch;

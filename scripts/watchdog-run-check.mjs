@@ -663,6 +663,12 @@ function describeVerification(watchdog, verification) {
         `finish within the poll window. Filed against the original run as-is -- check ` +
         `.github/workflows/${watchdog.file}'s recent workflow_dispatch runs for the one this script triggered.`
       );
+    case 'verify-error':
+      return (
+        `Could not re-verify (LUL-932): re-verification threw a transient error (e.g. a GitHub rate limit or ` +
+        `5xx) instead of returning a verdict. Filed against the original run as-is -- re-verification will be ` +
+        `retried on the next tick.`
+      );
     default:
       return '';
   }
@@ -712,7 +718,22 @@ async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIss
     // fallback verdict still file (just with different wording); only
     // `stale-resolved` -- the default branch moved on AND a fresh run came
     // back green -- means this alarm is already fixed.
-    const verification = canVerify ? await verifyRedWatchdog(watchdog, verifyContext) : { verdict: 'unverified' };
+    // LUL-932: verifyRedWatchdog does up to ~26 fetches, any of which can throw
+    // on a transient GitHub error (rate limit, 5xx). Left unguarded, that throw
+    // would abort this whole loop and silently drop every remaining red
+    // watchdog's ticket for the tick -- the same failure shape as LUL-770.
+    // Degrade to filing as-is instead, same as the no-token/poll-timeout paths.
+    let verification;
+    if (!canVerify) {
+      verification = { verdict: 'unverified' };
+    } else {
+      try {
+        verification = await verifyRedWatchdog(watchdog, verifyContext);
+      } catch (err) {
+        console.error(`LUL-932: re-verification of "${watchdog.name}" threw -- filing as-is. ${err.message}`);
+        verification = { verdict: 'verify-error' };
+      }
+    }
     if (verification.verdict === 'stale-resolved') {
       console.error(
         `LUL-858: "${watchdog.name}" run ${watchdog.runId} is stale -- the default branch has moved on and a ` +
