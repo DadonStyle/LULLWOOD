@@ -140,9 +140,13 @@ declare global {
        * not just which the test requested. See wiki: game/lul274-input-mode-separation. */
       /** LUL-529: jumping/paused/toggleRunOn/veilHeld added so mobile e2e specs can
        * assert a touch control's engine-visible effect, not just DOM presence. */
+      /** LUL-224: `hidden` added so a test can confirm whether a KeyH press actually
+       * entered the hold-still stance, since LUL-212 gated that on proximity to a
+       * hiding-spot prop -- placement alone no longer implies the press worked. */
       qaPlayerState?: () => {
         x: number; z: number; yaw: number; pitch: number; mode: 'desktop' | 'mobile';
         jumping: boolean; paused: boolean; toggleRunOn: boolean; veilHeld: boolean;
+        hidden: boolean;
       };
       /** LUL-388: places `kind` in a blind scent-chase (state='chase', scentLock=SCENT_TRACK_TIME)
        * within catch range (dist < rad+CATCH_MARGIN) of the player, with a real cover prop's

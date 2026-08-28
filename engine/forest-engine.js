@@ -92,6 +92,20 @@ import {
   lakeSpeedMultiplier,
   pushOutOfLakeClearance,
 } from '@/lib/game/lake';
+import {
+  FOG_TIDE_CONFIG,
+  FOG_TIDE_RAMP,
+  FOG_TIDE_AUDIO_RAMP,
+  fogTidePhase,
+  fogTideBuildAmount,
+  fogTideActiveTarget,
+  fogTideDetectMul,
+  fogTideGlowMul,
+  fogTideGlowRangeMul,
+  fogTideFogBoost,
+  fogTideDroneGainMul,
+  fogTideWindGainMul,
+} from '@/lib/game/fogTide';
 
 let activeDispose = null;
 
@@ -283,6 +297,13 @@ const VEIL_RAMP = 1.6;            // seconds for mist/detect-cut to ease fully i
 let veilCharge = 1, veilLocked = false, veilAmount = 0;
 let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
 const MIST_VEIL_FOG = 0.34;       // ~3x the manual Mist slider's own max (0.11) -- deliberately overshoots it so the veil reads as a distinct world state
+
+// LUL-27: Fog Tide, the first recurring world event (lib/game/eventScheduler.ts
+// + lib/game/fogTide.ts own the pure phase/multiplier math; the engine only
+// owns the mutable per-frame state and how the effect actually renders/plays,
+// same split as the veil above). `fogTideClock` only advances while `playing`
+// (see tick()) -- that's the whole "pausable" requirement, no separate flag.
+let fogTideClock = 0, fogTideAmount = 0, fogTideBuild = 0, fogTideActive = false;
 // LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
 // found the point-light radius/intensity cut above unreadable against this
 // scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
@@ -845,7 +866,8 @@ babyHead.position.y = 0.8;
 const halo = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 12),
   new THREE.MeshBasicMaterial({ color: WARM, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false }));
 halo.position.y = 0.55;
-const babyLight = new THREE.PointLight(WARM, 1.1, 28, 2); babyLight.position.set(0, 1.3, 0);
+const BABY_LIGHT_DISTANCE = 28;   // LUL-27: named so Fog Tide's "glow carries further" can scale it at runtime, see tick()
+const babyLight = new THREE.PointLight(WARM, 1.1, BABY_LIGHT_DISTANCE, 2); babyLight.position.set(0, 1.3, 0);
 babyGroup.add(bundle, babyHead, halo, babyLight);
 scene.add(babyGroup);
 
@@ -1176,11 +1198,16 @@ function hearNoise(p){
 // play (LUL-23/LUL-65) meaningful.
 function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid); }
 function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid); }
+// LUL-27: fogTideDetectMul(fogTideAmount) stacks the same way veilDetectMul
+// already does -- multiplicatively, sight only. A player who's also holding
+// the veil during a tide gets both cuts; that's intended, not a double-count
+// bug (the two systems represent different things -- a spent resource vs. a
+// free world event -- and nothing says they shouldn't compound).
 function effectiveDetect(p){
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount), { hidden, hideTime });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount), { hidden, hideTime });
 }
 function canSee(p, dist){
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount), { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount), { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -2463,10 +2490,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // can assert the engine-visible effect of a touch control (a button that
     // renders and is tappable but wired to nothing would still pass a
     // DOM-presence-only test) instead of only the transform fields above.
+    //
+    // LUL-224: `hidden` appended so a test that presses KeyH somewhere chosen
+    // for an unrelated geometric property (e.g. qaOpenHideNearLion's
+    // guaranteed-cover-free spawn clearing) can assert whether the press
+    // actually entered the hold-still stance, instead of assuming it either
+    // did or didn't from the placement alone -- LUL-212's HIDE_RADIUS gate on
+    // enterHide() means "placed somewhere" no longer implies "KeyH works
+    // here".
     return {
       x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode,
       jumping: jumping, paused: paused, toggleRunOn: toggleRunOn,
       veilHeld: (entered && !won && !dead && !pickingUp) && (!!keys['KeyF'] || touchVeil),
+      hidden: hidden,
     };
   };
 
@@ -2890,8 +2926,30 @@ function tick(){
   // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
   // the sight-detect cut ramps in step with what the player actually sees.
   veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
-  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount);
+  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmount);
   pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked });
+
+  // LUL-27: Fog Tide. The clock only advances while `playing` -- same gate
+  // the veil above reads -- so the pause menu freezes the cycle exactly like
+  // it freezes everything else. Deterministic by construction: driven off
+  // the dt-clamped game clock, not a new RNG draw (see lib/game/fogTide.ts
+  // for why this deliberately doesn't touch the map's seeded rng() stream).
+  if(playing) fogTideClock = (fogTideClock + dt) % FOG_TIDE_CONFIG.period;
+  const fogTidePhaseNow = fogTidePhase(fogTideClock);
+  // audio telegraph: no inertia baked into the raw signal (see
+  // eventCycleBuildAmount's doc comment), so ease it here at its own rate --
+  // faster than the world-effect ramp below, the drone should feel responsive.
+  fogTideBuild += (fogTideBuildAmount(fogTideClock) - fogTideBuild) * Math.min(1, dt / FOG_TIDE_AUDIO_RAMP);
+  // world effect: same "reacts fast, billows in behind it" relationship
+  // VEIL_RAMP already has to dimAmount above, just slower (fog *thickens*).
+  fogTideAmount += (fogTideActiveTarget(fogTideClock) - fogTideAmount) * Math.min(1, dt / FOG_TIDE_RAMP);
+  if(fogTidePhaseNow === 'active' && !fogTideActive){
+    fogTideActive = true;
+    track({ event: 'feature_engagement', feature: 'fog_tide', action: 'start' });
+  } else if(fogTidePhaseNow !== 'active' && fogTideActive){
+    fogTideActive = false;
+    track({ event: 'feature_engagement', feature: 'fog_tide', action: 'end' });
+  }
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
   const playerInBog = inBog(player.x, player.z);   // LUL-25: shallow water -- half speed, louder splash
@@ -2972,8 +3030,9 @@ function tick(){
     // LUL-38: carrying phase — child rides at the player's feet, glowing
     babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = (0.20 + Math.sin(t*1.8)*0.04) * DIFFICULTY_PRESETS[difficulty].glowMul;
-    babyLight.intensity = (1.2 + Math.sin(t*1.8)*0.2) * DIFFICULTY_PRESETS[difficulty].glowMul;
+    halo.material.opacity = (0.20 + Math.sin(t*1.8)*0.04) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    babyLight.intensity = (1.2 + Math.sin(t*1.8)*0.2) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
     const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
@@ -3075,8 +3134,9 @@ function tick(){
   if(!baby.taken){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = (0.11 + Math.sin(t*1.8) * 0.05) * DIFFICULTY_PRESETS[difficulty].glowMul;
-    babyLight.intensity = (1.0 + Math.sin(t*1.8) * 0.25) * DIFFICULTY_PRESETS[difficulty].glowMul;
+    halo.material.opacity = (0.11 + Math.sin(t*1.8) * 0.05) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    babyLight.intensity = (1.0 + Math.sin(t*1.8) * 0.25) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
     const bp = bwisps.geometry.attributes.position.array;
     for(let i=0;i<BW;i++){ bp[i*3+1] += dt*0.4; if(bp[i*3+1] > 3.4) bp[i*3+1] = 0.2; }
     bwisps.geometry.attributes.position.needsUpdate = true;
@@ -3098,9 +3158,15 @@ function tick(){
       audio.wg.gain.setTargetAtTime(0.0001, now, 0.3);
       audio.dg.gain.setTargetAtTime(0.0001, now, 0.3);
     } else {
-      audio.wg.gain.setTargetAtTime(0.05 + move01*0.10, now, 0.3);
+      // LUL-27: Fog Tide signposting -- the drone builds (fogTideBuild, off
+      // the raw 10s-lead telegraph) before the tide is actually active, and
+      // wind ducks as the tide itself ramps in, so "ambient falls to a low
+      // drone" reads as the tide arriving, not the drone just getting louder.
+      // Only applied in the calm bed, same as everything else in this branch --
+      // a chase already wins the audio mix outright (see the `hunting` branch above).
+      audio.wg.gain.setTargetAtTime((0.05 + move01*0.10) * fogTideWindGainMul(fogTideAmount), now, 0.3);
       audio.wf.frequency.setTargetAtTime(320 + move01*900, now, 0.3);
-      audio.dg.gain.setTargetAtTime(0.05, now, 0.3);
+      audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuild), now, 0.3);
       audio.twinkle -= dt;
       if(audio.twinkle <= 0){
         const near = distLake < CONFIG.lake.r*3;

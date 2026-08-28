@@ -10,27 +10,39 @@ name: Auto merge
 # cannot bypass the ruleset — GITHUB_TOKEN is not a bypass actor.
 #
 # The ruleset also requires one approving review with no bypass actor, which a
-# `[ship]` PR never has (skipping the Code Reviewer is the point of `[ship]`).
-# The merge step below submits that review itself, scoped to exactly the diff
-# ship-allowed.sh already permits, right before merging (LUL-558). Without
-# that review the merge call fails unconditionally, regardless of how green
-# CI is or how fresh the branch is.
+# `[ship]` PR never has *from the Code Reviewer* (skipping the Code Reviewer
+# is the point of `[ship]`) -- but by the time this job runs, something else
+# has usually already supplied one: bot-approve.yml (LUL-797), or the Code
+# Reviewer approving directly under the studio PAT, which is not a
+# self-approval collision for a bot-authored PR (PAT and github-actions[bot]
+# are distinct identities). The merge step below checks the PR's existing
+# reviews FIRST, matched to the exact head sha CI just tested, and only
+# submits a review of its own -- scoped to exactly the diff ship-allowed.sh
+# already permits (LUL-558) -- when none exists (LUL-912). Without some
+# approving review at the current head, the merge call fails unconditionally,
+# regardless of how green CI is or how fresh the branch is.
 #
-# That review MUST be submitted under a different identity than the PR author,
-# or GitHub 422s with "Review Can not approve your own pull request"
-# (systems/github-access "Self-approval"). Every `[ship]` PR on the self-serve
-# path is authored by `github-actions[bot]` (auto-pr.yml uses `github.token`
-# too), so the review step below cannot reuse `github.token` -- it needs the
-# studio PAT, wired in as the `SHIP_REVIEW_PAT` repo secret specifically for
-# this step. `gh pr merge` and everything else in this job stays on
-# `github.token`. See systems/ship-never-merges-review-count-gap, 2026-08-20
-# CHANGES REQUESTED entry (LUL-584) for the incident this fixes.
+# The self-submitted fallback review MUST come from a different identity than
+# the PR author, or GitHub 422s with "Review Can not approve your own pull
+# request" (systems/github-access "Self-approval"). Every `[ship]` PR on the
+# self-serve path is authored by `github-actions[bot]` (auto-pr.yml uses
+# `github.token` too), so that fallback step cannot reuse `github.token` -- it
+# needs the studio PAT, wired in as the `SHIP_REVIEW_PAT` repo secret
+# specifically for this step. That secret has never been configured on this
+# repo (systems/ship-never-merges-review-count-gap), so in practice the
+# pre-existing-review check above is what actually lets a `[ship]` PR merge
+# today; the SHIP_REVIEW_PAT path exists as the fail-closed fallback for the
+# rare PR that reaches this job with no review at all yet. `gh pr merge` and
+# everything else in this job stays on `github.token`. See
+# systems/ship-never-merges-review-count-gap, 2026-08-20 CHANGES REQUESTED
+# entry (LUL-584) for the incident this fixes, and LUL-912 for why the
+# fallback alone was never enough.
 #
-# NOTE: This self-approval constraint is specific to BOT-authored PRs. For
-# human-authored PRs (e.g. authored by `DadonStyle`), GITHUB_TOKEN is a
-# distinct identity and CAN submit an approving review. See bot-approve.yml,
-# which uses this exact mechanism (LUL-797/LUL-807). No extra PAT is needed
-# for that path.
+# NOTE: This self-approval constraint on the fallback step is specific to
+# BOT-authored PRs. For human-authored PRs (e.g. authored by `DadonStyle`),
+# GITHUB_TOKEN is a distinct identity and CAN submit an approving review. See
+# bot-approve.yml, which uses this exact mechanism (LUL-797/LUL-807). No
+# extra PAT is needed for that path.
 
 on:
   workflow_run:
@@ -191,42 +203,75 @@ jobs:
           # (bypass_actors: [], current_user_can_bypass: "never" for this same
           # token) -- the merge call below fails unconditionally on a PR with
           # zero reviews, no matter how green CI is or how fresh the branch is.
-          # `[ship]` PRs have zero reviews by design, since skipping the Code
-          # Reviewer is the whole point. This is not a code-quality review --
-          # it is the record that ship-allowed.sh vetted this exact file set,
-          # on this exact head, in this same step (never an earlier job's
-          # result: main and the PR can both have moved). See LUL-558 /
-          # systems/ship-never-merges-review-count-gap.
+          # `[ship]` PRs have zero reviews *from the Code Reviewer* by design,
+          # since skipping the Code Reviewer is the whole point -- but that
+          # does not mean zero reviews outright. bot-approve.yml (LUL-797) and
+          # the Code Reviewer's own PAT-authored `gh pr review --approve` (the
+          # normal path for a bot-authored PR, which every self-serve `[ship]`
+          # PR is -- PAT and github-actions[bot] are distinct identities, so
+          # that is not self-approval) can both already have supplied one
+          # before this job ever runs. LUL-912: check for that first, and only
+          # fall through to submitting our own review -- gated on the
+          # never-configured SHIP_REVIEW_PAT secret -- when none exists.
           #
-          # Approve only, never approve-and-force -- every other blocking rule
-          # (checks, strict up-to-date) still applies below and must still
-          # block, loudly, on its own merits.
-          #
-          # Must run under SHIP_REVIEW_TOKEN (the studio PAT), never GH_TOKEN --
-          # GH_TOKEN is github.token, the same identity that authored this PR
-          # (auto-pr.yml opens it under github.token too), and GitHub 422s an
-          # identity approving its own PR unconditionally. See the file header.
-          if [ -z "${SHIP_REVIEW_TOKEN:-}" ]; then
-            echo "::warning::SHIP_REVIEW_PAT secret is not configured; refusing to auto-merge #$number."
-            printf '%s\n' \
-              '<!-- SHIP_REVIEW_FAILED -->' \
-              '`[ship]` is valid, CI was green, and the allowlist passed, but this repo has' \
-              'no `SHIP_REVIEW_PAT` secret configured, so there is no identity available to' \
-              'submit the required approving review that is distinct from this PR'"'"'s' \
-              'author (`github-actions[bot]`). Refusing to try an ungated merge. LUL-558.' > /tmp/ship-review-failed.md
-            comment_once 'SHIP_REVIEW_FAILED' /tmp/ship-review-failed.md
-            exit 1
-          fi
-          if ! GH_TOKEN="$SHIP_REVIEW_TOKEN" gh pr review "$number" --approve \
-               --body "Auto-approved: \`[ship]\` + \`ship-allowed.sh\` passed for this exact head (\`$pr_head\`). Policy: LUL-558."; then
-            echo "::warning::could not submit the required approving review on #$number; refusing to auto-merge."
-            printf '%s\n' \
-              '<!-- SHIP_REVIEW_FAILED -->' \
-              '`[ship]` is valid, CI was green, and the allowlist passed, but submitting' \
-              'the required approving review itself failed, so this refuses to try an' \
-              'ungated merge. Check the "Auto merge" workflow run log. LUL-558.' > /tmp/ship-review-failed.md
-            comment_once 'SHIP_REVIEW_FAILED' /tmp/ship-review-failed.md
-            exit 1
+          # Match on commit_id == pr_head, not merely "has an approval": a
+          # stale approval from an earlier head must not unlock a merge (the
+          # branch could have changed materially since that review, even if
+          # this exact CI run was on the current head).
+          fresh_approval="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number/reviews" --paginate \
+            | jq --arg sha "$pr_head" '[.[] | select(.state == "APPROVED" and .commit_id == $sha)] | length')"
+
+          if [ "$fresh_approval" -gt 0 ]; then
+            echo "::notice::#$number already has an APPROVED review at head $pr_head (from bot-approve.yml or the Code Reviewer); skipping self-review."
+          else
+            # required_approving_review_count:1 has no bypass actor on this repo
+            # (bypass_actors: [], current_user_can_bypass: "never" for this same
+            # token) -- the merge call below fails unconditionally on a PR with
+            # zero reviews, no matter how green CI is or how fresh the branch is.
+            # This is not a code-quality review -- it is the record that
+            # ship-allowed.sh vetted this exact file set, on this exact head,
+            # in this same step (never an earlier job's result: main and the
+            # PR can both have moved). See LUL-558 /
+            # systems/ship-never-merges-review-count-gap.
+            #
+            # Approve only, never approve-and-force -- every other blocking rule
+            # (checks, strict up-to-date) still applies below and must still
+            # block, loudly, on its own merits.
+            #
+            # Must run under SHIP_REVIEW_TOKEN (the studio PAT), never GH_TOKEN --
+            # GH_TOKEN is github.token, the same identity that authored this PR
+            # (auto-pr.yml opens it under github.token too), and GitHub 422s an
+            # identity approving its own PR unconditionally. See the file header.
+            #
+            # SHIP_REVIEW_PAT has never been configured on this repo
+            # (systems/ship-never-merges-review-count-gap) and this path is
+            # therefore expected to fail closed here every time until it is --
+            # which is why comment_once was dropped for this marker (LUL-912):
+            # deduping "once per PR" made every recurrence after the first
+            # completely silent, and this refusal recurs on every CI run.
+            if [ -z "${SHIP_REVIEW_TOKEN:-}" ]; then
+              echo "::warning::SHIP_REVIEW_PAT secret is not configured, and #$number has no pre-existing APPROVED review at head $pr_head; refusing to auto-merge."
+              printf '%s\n' \
+                '<!-- SHIP_REVIEW_FAILED -->' \
+                '`[ship]` is valid, CI was green, and the allowlist passed, but this PR has' \
+                'no APPROVED review at head `'"$pr_head"'` yet (from `bot-approve.yml` or the' \
+                'Code Reviewer), and this repo has no `SHIP_REVIEW_PAT` secret configured, so' \
+                'there is no identity available to submit one itself, distinct from this PR'"'"'s' \
+                'author (`github-actions[bot]`). Refusing to try an ungated merge. LUL-558 / LUL-912.' > /tmp/ship-review-failed.md
+              gh pr comment "$number" --body-file /tmp/ship-review-failed.md || true
+              exit 1
+            fi
+            if ! GH_TOKEN="$SHIP_REVIEW_TOKEN" gh pr review "$number" --approve \
+                 --body "Auto-approved: \`[ship]\` + \`ship-allowed.sh\` passed for this exact head (\`$pr_head\`). Policy: LUL-558."; then
+              echo "::warning::could not submit the required approving review on #$number; refusing to auto-merge."
+              printf '%s\n' \
+                '<!-- SHIP_REVIEW_FAILED -->' \
+                '`[ship]` is valid, CI was green, and the allowlist passed, but submitting' \
+                'the required approving review itself failed, so this refuses to try an' \
+                'ungated merge. Check the "Auto merge" workflow run log. LUL-558 / LUL-912.' > /tmp/ship-review-failed.md
+              gh pr comment "$number" --body-file /tmp/ship-review-failed.md || true
+              exit 1
+            fi
           fi
 
           if gh pr merge "$number" --squash --delete-branch; then
