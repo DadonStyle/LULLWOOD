@@ -180,6 +180,16 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `glowMul`/`DIFFICULTY_PRESETS` identifier at all (verified by grep,
   2026-08-18). See the Player section's accessibility-settings note above —
   same root cause, not a separate finding.
+- **As of `LUL-27`**, the **Fog Tide** (see Fog above) scales the idle/carry
+  glow further while active, on top of the difficulty preset's own
+  `glowMul`: `fogTideGlowMul(fogTideAmount)` multiplies `halo.material.
+  opacity` and `babyLight.intensity` by up to `FOG_TIDE_GLOW_MUL` (1.5x at
+  full tide), and `fogTideGlowRangeMul(fogTideAmount)` separately multiplies
+  `babyLight.distance` by up to `FOG_TIDE_GLOW_RANGE_MUL` (1.35x). "Carries
+  further" is deliberately a range increase, not just brightness, so the
+  glow stays legible through the tide's own added fog density (Fog above) —
+  the two effects (denser fog, longer-reaching glow) are meant to roughly
+  offset, not one cancel the other out unintentionally.
 
 **What it CANNOT do**
 - Cannot move on its own, ever, outside the two scripted transitions above —
@@ -566,6 +576,22 @@ one geometry builder (`makePredator()`), differentiated by the
   `veilFogDensity()` (`lib/game/veil.ts`). `tick()` is the single
   writer of `scene.fog.density` now — `setFog()` no longer writes it
   directly, only `fogBase`.
+- **As of `LUL-27`**, an additive top-up from the **Fog Tide**: a recurring
+  world event on a fixed ~90s cadence (`FOG_TIDE_CONFIG` in
+  `lib/game/fogTide.ts` — `period: 90`, `activeDuration: 20`, `leadIn: 10`,
+  i.e. a 10s signposted build-up before each 20s active window), driven by
+  the generic three-phase calm/signpost/active cycle in
+  `lib/game/eventScheduler.ts`. At full tide, `fogTideFogBoost(fogTideAmount)`
+  adds `FOG_TIDE_FOG_BOOST` (0.1) to `scene.fog.density` **on top of**
+  whatever `veilFogDensity()` already produced (base + mist veil) — the two
+  stack additively, the tide never overrides the veil's own density. Eased
+  over `FOG_TIDE_RAMP` (4s — the same "thickens gradually, never snaps" feel
+  as the veil's own ramp) toward the cycle's current target, computed in
+  `tick()` regardless of whether the veil is held. Not seeded — a pure
+  function of the dt-clamped game clock, deliberately not drawing from the
+  map's `rng()` stream (see wiki `game/lul27-fog-tide` for the full
+  reasoning). See Follow-light and Child below for the tide's other two
+  effect surfaces (detect radius, child glow).
 
 **What it CANNOT do**
 - `effectiveDetect()` (predator sight range) still never reads
@@ -625,6 +651,24 @@ one geometry builder (`makePredator()`), differentiated by the
   `lib/game/veil.test.ts`) rather than living inline in `forest-engine.js`,
   per wiki systems/unit-testing-standard. Surfaced to the HUD as
   `veilCharge`/`veilLocked` (components/Hud.tsx, `#veilState`).
+- **As of `LUL-27`**, the **Fog Tide** (see Fog above) cuts predator sight
+  range on its own recurring cadence, independent of whether the veil is
+  held: `effectiveDetect()`/`canSee()` multiply by `fogTideDetectMul
+  (fogTideAmount)` (floor `FOG_TIDE_DETECT_MUL` 0.65 — a further 35% cut at
+  full tide) in the same product as `veilDetectMul(veilAmount)` and the
+  difficulty preset's own `detectMul` — all three stack multiplicatively.
+  Deliberate, not a double-count bug: a spent resource (the veil, gated by
+  its charge meter above) and a free recurring world event compounding is
+  fine. Sight-only, same scope as the veil — `p.spec.scent` is untouched, so
+  a predator can still scent-lock the player straight through a tide.
+  Signposted ~10s ahead of the active window: the raw telegraph signal eases
+  into `fogTideDroneGainMul(fogTideBuild)`, raising the ambient drone gain,
+  while `fogTideWindGainMul(fogTideAmount)` ducks the wind bed by up to
+  `FOG_TIDE_WIND_DUCK` (0.7) once the tide is active — audio eases over
+  `FOG_TIDE_AUDIO_RAMP` (2s), faster than the world-effect ramp above so the
+  cue reads as responsive. Only applied to this calm-bed audio mix — a
+  chase already wins the audio outright, so the tide never fights the hunt
+  cue.
 
 **What it CANNOT do**
 - Cannot be occluded by anything — **no shadow-casting exists anywhere in
