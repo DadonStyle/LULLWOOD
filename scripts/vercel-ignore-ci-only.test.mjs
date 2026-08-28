@@ -161,10 +161,10 @@ test('docs/-only commit -> build (exit 1) -- pins the deliberate docs/ exclusion
 
 // ---- the other newly-widened paths, not covered by the four real commits --
 
-test('GAMES_REPLAY/-only commit -> skip (exit 0)', () => {
+test('QA_REGRESSION/-only commit -> skip (exit 0)', () => {
   const repo = makeRepo();
   try {
-    commit(repo, { 'GAMES_REPLAY/run-42.json': '{}\n' }, 'replay capture');
+    commit(repo, { 'QA_REGRESSION/run-42.json': '{}\n' }, 'replay capture');
     const result = runScript(repo);
     assert.equal(result.status, 0, `stderr: ${result.stderr}`);
   } finally {

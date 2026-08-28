@@ -1,8 +1,8 @@
-// LUL-216: records a GAMES_REPLAY/ clip of the death path. Not a correctness
+// LUL-216: records a QA_REGRESSION/ clip of the death path. Not a correctness
 // check -- e2e/smoke.spec.ts's per-species loop already asserts this
 // mechanic; this spec exists so `--project=replay` produces a real, playing
 // video of it. Picks one species (wolf) rather than looping all three --
-// see GAMES_REPLAY/README.md, one death clip is enough to show the mechanic
+// see QA_REGRESSION/README.md, one death clip is enough to show the mechanic
 // and looping would triple the recorded (and committed) video for no new
 // signal this clip is meant to carry.
 import { test, expect } from '@playwright/test';

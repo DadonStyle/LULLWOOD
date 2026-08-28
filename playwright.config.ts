@@ -64,7 +64,7 @@ export default defineConfig({
       // the same way, not doubled up.
       testIgnore: ['**/replay/**', '**/mobile/**'],
     },
-    // LUL-216: dedicated project for recording GAMES_REPLAY/ clips. Kept separate
+    // LUL-216: dedicated project for recording QA_REGRESSION/ clips. Kept separate
     // from the `chromium` smoke project so CI's per-run/per-shard smoke suite
     // never pays for a video (which is `retain-on-failure` above, i.e. off on a
     // green run) -- only `npx playwright test --project=replay` records anything,
@@ -76,7 +76,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         viewport: { width: 1280, height: 720 },
         // Matches the game canvas's own aspect ratio (16:9) at a size that keeps
-        // committed .webm files small -- see GAMES_REPLAY/README.md for the
+        // committed .webm files small -- see QA_REGRESSION/README.md for the
         // repo-weight budget these clips are curated against.
         video: { mode: 'on', size: { width: 960, height: 540 } },
       },
