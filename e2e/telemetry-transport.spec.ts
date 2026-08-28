@@ -37,7 +37,7 @@ test.describe('telemetry transport — fire-and-forget guarantee', () => {
       await route.fulfill({ status: 204, body: '' });
     });
 
-    await boot(page);
+    await boot(page, { qaHooks: true });
     await enter(page);
 
     // Lure the nearest predator into catch range. qaLurePredatorKind puts the
@@ -60,7 +60,7 @@ test.describe('telemetry transport — fire-and-forget guarantee', () => {
       await route.fulfill({ status: 204, body: '' });
     });
 
-    await boot(page);
+    await boot(page, { qaHooks: true });
     await enter(page);
 
     // Teleport near the baby then home — the same path smoke.spec.ts uses.
