@@ -247,9 +247,21 @@ jobs:
           fi
           echo "::notice::tracking CI run $run_id"
 
-          # ── wait for completion (up to 25 min, poll every 30 s) ─────────────
+          # ── wait for completion (up to 50 min, poll every 30 s) ─────────────
+          # LUL-534: this budget was 25 min (50 × 30 s) and was structurally too
+          # short -- it could never succeed, on any run. CI's "playwright smoke
+          # suite" job alone takes ~26 min (measured over three consecutive
+          # green runs: 33156322203 = 25.8, 33156660086 = 26.2, 33157020332 =
+          # 25.8), and the whole CI run wall-clock is ~27 min. Run 33156610173
+          # gave up at 09:11:45 on a CI run that went green at 09:13:33 -- 108
+          # seconds early -- and reported "did not complete within the time
+          # limit", which reads exactly like a hung or broken CI rather than a
+          # wait that was simply too impatient. Budget 50 min so a slower-than-
+          # usual suite still lands; the job has no timeout-minutes, so the
+          # 360 min GitHub default is the real ceiling and this stays well under
+          # it. Raise this if the playwright suite's runtime grows again.
           status=""; conclusion=""
-          for i in $(seq 1 50); do
+          for i in $(seq 1 100); do
             sleep 30
             result="$(gh api "repos/$REPO/actions/runs/$run_id" \
                         --jq '[.status, (.conclusion // "")] | join(":")')"
