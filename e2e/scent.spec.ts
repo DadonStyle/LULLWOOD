@@ -156,41 +156,63 @@ test.describe('scent acquisition behind cover (LUL-196)', () => {
     );
     expect(predAfterRoam?.state, 'predator must now be in roam').toBe('roam');
 
-    // Seed a fresh scent point exactly at the predator's real position.
-    // IMPORTANT: qaSetPredatorRoam and qaSeedScentPoint MUST run in a single
-    // page.evaluate — a single JS turn — so no game frame executes between
-    // reading the predator's current position and placing the scent there.
-    // If they are separate evaluate calls, the predator wanders toward its
-    // existing waypoint (up to 55 units away, at 2.3 u/s in roam) and the
-    // seeded point becomes stale before checkScent runs, causing the
-    // 15-second poll to time out with scentCalls=0. This was the root cause
-    // of the LUL-645 flake.
-    await page.evaluate(
-      ({ i, px, pz }) => {
-        const fresh = window.ForestEngine?.qaSetPredatorRoam?.(i) ?? null;
-        if (!fresh) return;
-        window.ForestEngine?.qaSeedScentPoint?.(fresh.x - px, fresh.z - pz, 0);
-      },
-      { i: idx, px: playerX, pz: playerZ },
-    );
+    // Seed a fresh scent point exactly at the predator's real position, then
+    // wait for scentCalls to register. IMPORTANT: qaSetPredatorRoam and
+    // qaSeedScentPoint MUST run in a single page.evaluate — a single JS turn —
+    // so no game frame executes between reading the predator's current
+    // position and placing the scent there. If they are separate evaluate
+    // calls, the predator wanders toward its existing waypoint (up to 55
+    // units away, at 2.3 u/s in roam) and the seeded point becomes stale
+    // before checkScent runs, causing the poll to time out with
+    // scentCalls=0. This was the root cause of the LUL-645 flake.
+    //
+    // LUL-882: that single-evaluate fix (2026-08-22) closed the *inter-
+    // evaluate* race but this assertion still timed out three separate times
+    // on PRs that touched nothing in the scent path (LUL-817/LUL-795 on PR
+    // #162, then again on PR #184) -- i.e. something inside the same JS turn
+    // still occasionally loses the race under real CI load (wiki:
+    // game/lul196-scent-behind-cover-geometry). A single seed-then-poll
+    // attempt can't tell "the mechanic is broken" apart from "this one
+    // attempt got unlucky", so retry the seed itself, bounded, instead of
+    // trusting one shot: each attempt re-reads the predator's live position
+    // and reseeds fresh (qaSetPredatorRoam is side-effect-free on position,
+    // confirmed repeatable -- wiki above) before polling with a shorter
+    // per-attempt timeout. A real break in checkScent()/scentOnto() still
+    // fails every attempt and the test still goes red; a one-off timing loss
+    // gets a clean second (or third) try instead of flaking the whole suite.
+    const SEED_ATTEMPTS = 3;
+    const PER_ATTEMPT_TIMEOUT_MS = 6_000;
+    for (let attempt = 1; attempt <= SEED_ATTEMPTS; attempt++) {
+      await page.evaluate(
+        ({ i, px, pz }) => {
+          const fresh = window.ForestEngine?.qaSetPredatorRoam?.(i) ?? null;
+          if (!fresh) return;
+          window.ForestEngine?.qaSeedScentPoint?.(fresh.x - px, fresh.z - pz, 0);
+        },
+        { i: idx, px: playerX, pz: playerZ },
+      );
 
-    // Wait for the predator's scentCalls to increment: checkScent() ran and
-    // scentOnto() accepted the trail despite the player being behind cover.
-    // Poll by index (not by kind) to target the exact predator staged above.
-    await expect
-      .poll(
-        async () => {
-          const s = await page.evaluate(
-            (i) => window.ForestEngine?.qaPredatorState?.(i) ?? null,
-            idx,
-          );
-          return s?.scentCalls ?? 0;
-        },
-        {
-          message: 'scentCalls never incremented — checkScent/scentOnto did not fire while in roam (predator may have left roam before scent ran)',
-          timeout: 15_000,
-        },
-      )
-      .toBeGreaterThan(0);
+      try {
+        await expect
+          .poll(
+            async () => {
+              const s = await page.evaluate(
+                (i) => window.ForestEngine?.qaPredatorState?.(i) ?? null,
+                idx,
+              );
+              return s?.scentCalls ?? 0;
+            },
+            {
+              message: `scentCalls never incremented on attempt ${attempt}/${SEED_ATTEMPTS} — checkScent/scentOnto did not fire while in roam (predator may have left roam before scent ran)`,
+              timeout: PER_ATTEMPT_TIMEOUT_MS,
+            },
+          )
+          .toBeGreaterThan(0);
+        return; // registered -- done, don't burn the remaining attempts
+      } catch (err) {
+        if (attempt === SEED_ATTEMPTS) throw err; // exhausted every reseed -- a real break, not a one-off timing loss
+        // else: reseed and try again on the next loop iteration.
+      }
+    }
   });
 });
