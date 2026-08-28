@@ -13,7 +13,10 @@ import {
   findRedWatchdogs,
   findInertWatchdogs,
   findNoRunWatchdogs,
+  findRecoveredWatchdogs,
+  clearingDispatchRun,
   formatReport,
+  formatRecoveryNotes,
   watchdogWakeMarker,
   authJsonPath,
   durableToken,
@@ -110,6 +113,87 @@ test('an unfinished latest run (conclusion: null) is not green and not red', () 
   const inProgress = { id: 7, conclusion: null, html_url: 'https://example.invalid/runs/7' };
   assert.equal(latestScheduledConclusion([inProgress]), null);
   assert.equal(classifyWatchdog(REVIEW_GAP_DETECTOR, true, [inProgress]).alarm, 'no-runs');
+});
+
+// ---- LUL-913: a stale scheduled red cleared by a newer manual dispatch -----
+//
+// The measured incident these are written from, all real ids on this repo:
+// scheduled run 33116516805 went red at 2026-08-27T21:05:51Z naming PR #179;
+// #179 was merged at 22:32Z (cause fixed); an agent re-verified by hand with
+// workflow_dispatch run 33138009679, success, 2026-08-28T03:08:14Z. The next
+// scheduled run had still not happened hours later, so runs[0] was unchanged
+// -- and the router filed LUL-897 and then LUL-913 for that same dead run.
+const RED_33116516805 = {
+  id: 33116516805,
+  conclusion: 'failure',
+  created_at: '2026-08-27T21:05:51Z',
+  html_url: 'https://github.com/DadonStyle/LULLWOOD/actions/runs/33116516805',
+};
+const DISPATCH_33138009679 = {
+  id: 33138009679,
+  conclusion: 'success',
+  created_at: '2026-08-28T03:08:14Z',
+  html_url: 'https://github.com/DadonStyle/LULLWOOD/actions/runs/33138009679',
+};
+
+test('LUL-913 regression: a newer successful workflow_dispatch clears a stale scheduled red', () => {
+  const result = classifyWatchdog(REVIEW_GAP_DETECTOR, true, [RED_33116516805], [DISPATCH_33138009679]);
+  assert.equal(result.alarm, 'recovered');
+  assert.equal(result.clearedByRunId, 33138009679);
+  // Still carries the red run's identity, so the run-id ledger and the log
+  // line can both name exactly which run was suppressed.
+  assert.equal(result.runId, 33116516805);
+  assert.equal(findRedWatchdogs([result]).length, 0);
+  assert.equal(findRecoveredWatchdogs([result]).length, 1);
+});
+
+test('LUL-913: a dispatch OLDER than the red run does not clear it', () => {
+  const stale = { ...DISPATCH_33138009679, id: 1, created_at: '2026-08-27T12:57:56Z' };
+  assert.equal(classifyWatchdog(REVIEW_GAP_DETECTOR, true, [RED_33116516805], [stale]).alarm, 'red');
+});
+
+test('LUL-913: a newer dispatch that itself FAILED does not clear the red', () => {
+  const failed = { ...DISPATCH_33138009679, conclusion: 'failure' };
+  assert.equal(classifyWatchdog(REVIEW_GAP_DETECTOR, true, [RED_33116516805], [failed]).alarm, 'red');
+});
+
+test('LUL-913: a newer dispatch still in flight (conclusion null) does not clear the red', () => {
+  const inFlight = { ...DISPATCH_33138009679, conclusion: null };
+  assert.equal(classifyWatchdog(REVIEW_GAP_DETECTOR, true, [RED_33116516805], [inFlight]).alarm, 'red');
+});
+
+test('LUL-913: no dispatch runs at all leaves the pre-LUL-913 behaviour untouched', () => {
+  assert.equal(classifyWatchdog(REVIEW_GAP_DETECTOR, true, [RED_33116516805], []).alarm, 'red');
+  assert.equal(classifyWatchdog(REVIEW_GAP_DETECTOR, true, [RED_33116516805]).alarm, 'red');
+});
+
+test('LUL-913: a red run with no created_at cannot be cleared (fails closed, keeps the alarm)', () => {
+  const noTimestamp = { ...RED_33116516805, created_at: undefined };
+  assert.equal(clearingDispatchRun(noTimestamp, [DISPATCH_33138009679]), null);
+  assert.equal(classifyWatchdog(REVIEW_GAP_DETECTOR, true, [noTimestamp], [DISPATCH_33138009679]).alarm, 'red');
+});
+
+test('LUL-913: a recovered watchdog is never wake-ticketed but is always logged', async () => {
+  const recovered = classifyWatchdog(REVIEW_GAP_DETECTOR, true, [RED_33116516805], [DISPATCH_33138009679]);
+  // fileWakeTickets is only ever handed findRedWatchdogs' output, so the
+  // suppression is structural -- assert that, then assert it is not silent.
+  const filed = await fileWakeTickets('http://api.invalid', 'co', 'k', findRedWatchdogs([recovered]), [], null);
+  assert.deepEqual(filed, []);
+  const notes = formatRecoveryNotes([recovered]);
+  assert.match(notes, /33116516805/);
+  assert.match(notes, /33138009679/);
+});
+
+test('LUL-913: formatRecoveryNotes is null when nothing was suppressed (a quiet board stays quiet)', () => {
+  assert.equal(formatRecoveryNotes(WATCHDOGS.map((w) => classifyWatchdog(w, true, [greenRun()]))), null);
+  assert.equal(formatRecoveryNotes([classifyWatchdog(REVIEW_GAP_DETECTOR, true, [RED_33116516805])]), null);
+});
+
+// A recovered watchdog is NOT an alarm: it must not add an ALARM banner or
+// push main() to exit 1, or the router's cron pages on a healthy board.
+test('LUL-913: a recovered watchdog does not make formatReport produce an ALARM', () => {
+  const recovered = classifyWatchdog(REVIEW_GAP_DETECTOR, true, [RED_33116516805], [DISPATCH_33138009679]);
+  assert.equal(formatReport([recovered], 'DadonStyle/LULLWOOD'), null);
 });
 
 // ---- findRedWatchdogs / findInertWatchdogs / findNoRunWatchdogs ------------
