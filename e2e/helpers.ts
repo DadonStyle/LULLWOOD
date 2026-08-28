@@ -87,6 +87,35 @@ export async function readObjective(page: Page) {
   return (await page.locator('#objective').textContent()) ?? '';
 }
 
+type QaHooks = NonNullable<Window['ForestEngine']>;
+// `init`/`dispose`/`threeRevision` live on the same object but aren't `qa*`
+// test hooks -- excluding non-function members keeps qaHook() from being
+// called with something Parameters<> can't apply to.
+type QaHookName = {
+  [K in keyof QaHooks]: QaHooks[K] extends ((...a: any[]) => any) | undefined ? K : never;
+}[keyof QaHooks];
+
+/**
+ * Call an already-installed `qa*` hook by name, throwing if it's missing
+ * instead of silently no-opping the way `window.ForestEngine?.hook?.()`
+ * does. A missing hook almost always means the page wasn't booted with
+ * `{ qaHooks: true }` -- with the optional-chained form that produces a
+ * downstream `element(s) not found` that reads like a UI bug, not a boot
+ * mistake (wiki: game/qa-hooks-silent-noop, PR #199 / LUL-482).
+ */
+export function qaHook<K extends QaHookName>(page: Page, name: K, ...args: any[]): Promise<any> {
+  return page.evaluate(
+    (evalArgs: { name: string; args: unknown[] }) => {
+      const fn = (window.ForestEngine as any)?.[evalArgs.name];
+      if (typeof fn !== 'function') {
+        throw new Error(`${evalArgs.name} missing on window.ForestEngine — did you boot with { qaHooks: true }?`);
+      }
+      return fn(...evalArgs.args);
+    },
+    { name, args } as { name: string; args: unknown[] },
+  );
+}
+
 /**
  * `toBeVisible()` only checks that an element isn't `display:none` and has a
  * non-zero bounding box -- it does not check the box is inside the viewport

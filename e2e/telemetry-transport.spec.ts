@@ -15,22 +15,8 @@
 // deferred to LUL-481 (founder step, BLOB_READ_WRITE_TOKEN). The no-token path
 // returns 204 so the route answers even in CI; what we verify here is that a
 // blocked or slow route never stalls the game loop.
-import { test, expect, type Page } from '@playwright/test';
-import { boot, enter, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
-
-// Throws if the QA hook is absent — prevents ?.() from silently no-oping
-// when a spec forgot qaHooks:true or the engine changed its hook name.
-async function callQaHook(page: Page, name: string, ...args: unknown[]): Promise<void> {
-  await page.evaluate(
-    ([n, a]: [string, unknown[]]) => {
-      const engine = window.ForestEngine as Record<string, ((...x: unknown[]) => unknown) | undefined> | undefined;
-      const fn = engine?.[n];
-      if (!fn) throw new Error(`QA hook window.ForestEngine.${n} is undefined — boot with qaHooks:true`);
-      fn(...a);
-    },
-    [name, args] as [string, unknown[]],
-  );
-}
+import { test, expect } from '@playwright/test';
+import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, readObjective } from './helpers';
 
 // How long we block the telemetry route — long enough to confirm the game
 // doesn't wait for it, but short enough not to bloat the suite.
@@ -57,7 +43,7 @@ test.describe('telemetry transport — fire-and-forget guarantee', () => {
     // Lure the nearest predator into catch range. qaLurePredatorKind puts the
     // nearest predator of the given species into hunt mode, it closes the
     // distance, and the catch + triggerDeath paths run normally.
-    await callQaHook(page, 'qaLurePredatorKind', 'wolf');
+    await qaHook(page, 'qaLurePredatorKind', 'wolf');
 
     const deathScreen = page.locator('#deathScreen');
     // If telemetry were awaited, this would time out while the route is blocked.
@@ -77,16 +63,21 @@ test.describe('telemetry transport — fire-and-forget guarantee', () => {
     await boot(page, { qaHooks: true });
     await enter(page);
 
-    // Teleport near the baby then home — the same path smoke.spec.ts uses.
-    await callQaHook(page, 'qaTeleportNearBaby');
-    // Give the engine a tick to register proximity, then confirm pickup is offered.
-    await page.waitForTimeout(300);
-    const objective = await page.locator('#objective').textContent();
-    expect(objective ?? '', 'qaTeleportNearBaby did not land within pickup range').toContain('Press');
+    // Teleport near the baby then home — the same path smoke.spec.ts and
+    // mobile/win-persist.spec.ts use.
+    await qaHook(page, 'qaTeleportNearBaby');
+    // Give the engine a tick to register proximity, then confirm the
+    // teleport actually landed in pickup range before pressing E -- a miss
+    // here would otherwise no-op the pickup and fail later at #winScreen in
+    // a way that looks like a UI bug (see mobile/win-persist.spec.ts).
+    await page.waitForTimeout(500);
+    await expect
+      .poll(() => readObjective(page), { message: 'qaTeleportNearBaby did not land within pickup range' })
+      .toContain('Press');
     await page.keyboard.press('KeyE');
     await page.waitForTimeout(500);
     // Teleport home to complete the escort.
-    await callQaHook(page, 'qaTeleportHome');
+    await qaHook(page, 'qaTeleportHome');
 
     const winScreen = page.locator('#winScreen');
     await expect(winScreen).toBeVisible({ timeout: WIN_LOSS_TIMEOUT_MS });
