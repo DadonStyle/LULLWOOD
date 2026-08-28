@@ -74,14 +74,30 @@ on:
   workflow_dispatch:
 
 # Cancel superseded runs on the same branch (e.g. two pushes in quick
-# succession). Keyed on event name + head SHA -- kept even though `push` and
-# `workflow_dispatch` are now the only events, so a manual dispatch never
-# races a concurrent push to the same head. `github.event.pull_request...`
-# is dead weight now that `pull_request` isn't a trigger, but left as `||
-# github.sha` is harmless and matches workflow-guard-check.yml's identical
-# group key.
+# succession). LUL-894: the key used to be event name + head SHA, which
+# cannot do this -- two pushes in quick succession have different SHAs, so
+# they land in different concurrency groups and neither cancels the other.
+# A per-SHA group only dedupes a re-dispatch of the identical commit.
+# Measured live: 42/100 runs superseded while still running, only 3
+# `cancelled`, ~24% of all CI wall-time burned on dead commits (wiki
+# systems/ci-concurrency-key-outlived-premise). Keyed on `github.ref` instead
+# -- this correctly collapses successive pushes to the same branch. The SHA
+# half of the old key existed only to collapse a same-commit `push` run
+# against a same-commit `pull_request` run (LUL-100/PR#12); LUL-719/LUL-729
+# (2026-08-26) deleted the `pull_request` trigger above, so that collision
+# can no longer happen and SHA buys nothing. `github.event_name` stays in the
+# key so a manual `workflow_dispatch` still never races a concurrent push to
+# the same ref (LUL-107). This is the same shape auto-pr.yml already uses
+# (`auto-pr-${{ github.ref }}`).
+#
+# A superseded run cannot cost a required check: branch protection resolves
+# required checks by name against the head SHA, and a superseded run is by
+# definition on a non-head SHA -- its check-runs were never consulted for the
+# PR's rollup. `github.ref` still separates branches and `github.event_name`
+# still separates push from dispatch, so nothing can collide on one SHA that
+# couldn't before (the LUL-719 hazard is unrelated and untouched by this).
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
