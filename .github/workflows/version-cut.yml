@@ -186,20 +186,25 @@ jobs:
               "Automated version cut (LUL-497): batches everything currently merged into" \
               '`release/next` into `main`.' \
               '' \
-              '**Before merging:**' \
-              "- confirm the combined-suite run is green (below) -- this PR's own" \
-              '  required checks reflect release/next'"'"'s last push, not the merge tree' \
-              '  tested there, so they alone do not prove the combined result is safe.' \
+              '**Before this lands:**' \
+              "- the combined-suite run must be green (below) -- this PR's own required" \
+              '  checks reflect release/next'"'"'s last push, not the merge tree tested here,' \
+              '  so they alone do not prove the combined result is safe.' \
               '- needs a full-version Code Reviewer pass scoped to cross-PR collisions' \
               '  (duplicate identifiers, contradictory tuning, two PRs touching the same' \
               '  system -- precedent: LUL-427). Open a Paperclip review child issue; this' \
               '  workflow cannot do that part.' \
-              '- merge with a **merge commit**, not squash, so individual PR history' \
-              '  survives on `main`.' \
               '' \
               "Combined-suite run: $RUN_URL" \
               '' \
-              'This PR does not auto-merge. See `systems/release-train` in the shared wiki.' \
+              '**Auto-merge (founder directive, 2026-08-28):** if the combined-suite run' \
+              'above is green, this workflow arms native GitHub auto-merge with a' \
+              '**merge commit** (not squash, so individual PR history survives on `main`)' \
+              '-- it merges itself the moment the Code Reviewer'"'"'s required approval lands' \
+              'and every required check is green, no manual click needed. A red' \
+              'combined-suite never gets auto-merge armed, regardless of review state --' \
+              'see the DO NOT MERGE comment below if that'"'"'s the case here. See' \
+              '`systems/release-train` in the shared wiki.' \
               > /tmp/cut-pr-body.md
 
             gh pr create --repo "$REPO" \
@@ -219,3 +224,19 @@ jobs:
             comment="**DO NOT MERGE** -- combined-suite result was \`$SUITE_RESULT\` against the release/next+main merge tree: $RUN_URL. Needs investigation before this cut can land."
           fi
           gh pr comment "$number" --repo "$REPO" --body "$comment"
+
+          # Founder directive (2026-08-28): arm auto-merge on the cut PR, but ONLY when
+          # the combined-suite genuinely passed. This never bypasses the Code Reviewer --
+          # main's ruleset still requires their approval before an armed auto-merge can
+          # actually fire -- it only removes the manual "click merge" step once that
+          # approval lands. A merge commit, never squash, per LUL-492 §3.4 (individual PR
+          # history must survive on main).
+          if [ "$SUITE_RESULT" = "success" ]; then
+            if gh pr merge "$number" --repo "$REPO" --auto --merge; then
+              echo "::notice::auto-merge armed on cut PR #$number (merge commit, pending Code Reviewer approval)"
+            else
+              echo "::warning::could not arm auto-merge on cut PR #$number -- it stays open for a manual merge once reviewed."
+            fi
+          else
+            echo "::notice::combined-suite is $SUITE_RESULT; NOT arming auto-merge on #$number."
+          fi

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
 import { track, startSessionTracking } from '@/lib/analytics';
+import { initTelemetryTransport } from '@/lib/telemetry-transport';
 import { isMobile } from '@/lib/input-mode';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
 
@@ -294,6 +295,7 @@ export default function GameCanvas() {
   // module ever finishes loading, so they get their own effect rather than
   // living inside the dynamic-import one below.
   useEffect(() => {
+    initTelemetryTransport();
     track({ event: 'page_view' });
     return startSessionTracking();
   }, []);

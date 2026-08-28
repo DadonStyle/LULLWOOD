@@ -7,6 +7,7 @@ import {
   isTombstone,
   hasActiveRecoveryAction,
   hasLiveInteraction,
+  hasFreshHeartbeat,
   findTombstones,
   issueReferencesPr,
   isPrMergeReady,
@@ -19,6 +20,7 @@ import {
   hasOpenWakeTicket,
   extractPrNumbers,
   referencedPrNumbers,
+  prTitleReferencesIssue,
   classifyDisposition,
   classifyTombstones,
   sortTombstonesStrandedFirst,
@@ -221,6 +223,66 @@ test('no interactions field at all -> treated as no live interaction, same as be
   assert.equal(hasLiveInteraction(undefined), false);
 });
 
+// ---- hasFreshHeartbeat / the LUL-482 false positive (LUL-934) --------------
+//
+// Real board state: LUL-482 (in_review, assigned Founding Engineer) was
+// flagged STRANDED while the Founding Engineer had a heartbeat seconds old,
+// actively driving its own live in-review PR #199 (wiki
+// playbooks/lul494-tombstone-sweep Finding #2). isTombstone()'s existing
+// four clauses are all read from a DB snapshot and have no way to see "a run
+// is executing against this exact ticket right now" -- a fresh heartbeat on
+// the assignee is a fifth, independent live signal. Must fail without it.
+
+test('LUL-482 shape: a tombstone by every other signal, but assignee heartbeat is seconds old -> not a tombstone', () => {
+  const nowMs = new Date('2026-08-28T12:00:00.000Z').getTime();
+  const issue = {
+    identifier: 'LUL-482',
+    status: 'in_review',
+    blockedBy: [],
+    activeRecoveryAction: null,
+    successfulRunHandoff: null,
+    interactions: [],
+    assigneeAgentId: 'founding-engineer',
+  };
+  const agentsById = new Map([
+    ['founding-engineer', { id: 'founding-engineer', status: 'running', lastHeartbeatAt: '2026-08-28T11:59:50.000Z' }],
+  ]);
+  assert.equal(isTombstone(issue, agentsById, nowMs), false);
+});
+
+test('hasFreshHeartbeat is false once the heartbeat is older than the freshness window', () => {
+  const nowMs = new Date('2026-08-28T12:00:00.000Z').getTime();
+  const issue = { assigneeAgentId: 'agent-1' };
+  const agentsById = new Map([
+    ['agent-1', { status: 'running', lastHeartbeatAt: '2026-08-28T11:50:00.000Z' }],
+  ]);
+  assert.equal(hasFreshHeartbeat(issue, agentsById, nowMs), false);
+});
+
+test('hasFreshHeartbeat is false for a fresh heartbeat if the agent is not "running" (e.g. paused)', () => {
+  const nowMs = new Date('2026-08-28T12:00:00.000Z').getTime();
+  const issue = { assigneeAgentId: 'agent-1' };
+  const agentsById = new Map([
+    ['agent-1', { status: 'paused', lastHeartbeatAt: '2026-08-28T11:59:59.000Z' }],
+  ]);
+  assert.equal(hasFreshHeartbeat(issue, agentsById, nowMs), false);
+});
+
+test('hasFreshHeartbeat is false when the assignee is not in the agents map at all', () => {
+  assert.equal(hasFreshHeartbeat({ assigneeAgentId: 'ghost' }, new Map(), Date.now()), false);
+});
+
+test('isTombstone with no agentsById/nowMs args (default params) behaves exactly as before this fix', () => {
+  const issue = {
+    identifier: 'LUL-653',
+    status: 'blocked',
+    blockedBy: [],
+    activeRecoveryAction: null,
+    successfulRunHandoff: null,
+  };
+  assert.equal(isTombstone(issue), true);
+});
+
 // ---- hasActiveRecoveryAction ------------------------------------------------
 
 test('hasActiveRecoveryAction is false when the field is null', () => {
@@ -418,15 +480,19 @@ test('referencedPrNumbers handles an issue with no comments field', () => {
 
 test('LUL-677 shape: references one PR, already merged -> SHIPPED', () => {
   const issue = { identifier: 'LUL-677', title: 'x', description: 'closed via #144' };
-  const prByNumber = new Map([[144, { number: 144, merged: true, state: 'closed', merge_commit_sha: 'bd72134' }]]);
+  const prByNumber = new Map([
+    [144, { number: 144, title: 'LUL-677: fix', merged: true, state: 'closed', merge_commit_sha: 'bd72134' }],
+  ]);
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'SHIPPED');
-  assert.deepEqual(result.mergedPrs, [{ number: 144, merged: true, state: 'closed', merge_commit_sha: 'bd72134' }]);
+  assert.deepEqual(result.mergedPrs, [
+    { number: 144, title: 'LUL-677: fix', merged: true, state: 'closed', merge_commit_sha: 'bd72134' },
+  ]);
 });
 
 test('LUL-725 shape: references a PR that is still open -> STRANDED', () => {
   const issue = { identifier: 'LUL-725', title: 'x', description: 'blocked on #145' };
-  const prByNumber = new Map([[145, { number: 145, merged: false, state: 'open' }]]);
+  const prByNumber = new Map([[145, { number: 145, title: 'LUL-725: work', merged: false, state: 'open' }]]);
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'STRANDED');
 });
@@ -440,7 +506,7 @@ test('no PR reference at all -> STRANDED', () => {
 
 test('every referenced PR closed without merging -> STRANDED, not SHIPPED', () => {
   const issue = { identifier: 'LUL-X', title: 'x', description: 'tried #10, abandoned' };
-  const prByNumber = new Map([[10, { number: 10, merged: false, state: 'closed' }]]);
+  const prByNumber = new Map([[10, { number: 10, title: 'LUL-X: attempt', merged: false, state: 'closed' }]]);
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'STRANDED');
 });
@@ -451,8 +517,8 @@ test('every referenced PR closed without merging -> STRANDED, not SHIPPED', () =
 test('multiple referenced PRs, only some merged and one still open -> STRANDED', () => {
   const issue = { identifier: 'LUL-Y', title: 'x', description: 'part 1 #20, part 2 #21' };
   const prByNumber = new Map([
-    [20, { number: 20, merged: true, state: 'closed' }],
-    [21, { number: 21, merged: false, state: 'open' }],
+    [20, { number: 20, title: 'LUL-Y: part 1', merged: true, state: 'closed' }],
+    [21, { number: 21, title: 'LUL-Y: part 2', merged: false, state: 'open' }],
   ]);
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'STRANDED');
@@ -461,8 +527,8 @@ test('multiple referenced PRs, only some merged and one still open -> STRANDED',
 test('multiple referenced PRs, one merged and the other closed-unmerged (not open) -> SHIPPED', () => {
   const issue = { identifier: 'LUL-Z', title: 'x', description: 'attempt #30, landed as #31' };
   const prByNumber = new Map([
-    [30, { number: 30, merged: false, state: 'closed' }],
-    [31, { number: 31, merged: true, state: 'closed' }],
+    [30, { number: 30, title: 'LUL-Z: attempt', merged: false, state: 'closed' }],
+    [31, { number: 31, title: 'LUL-Z: landed', merged: true, state: 'closed' }],
   ]);
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'SHIPPED');
@@ -470,7 +536,7 @@ test('multiple referenced PRs, one merged and the other closed-unmerged (not ope
 
 test('a referenced number that does not resolve to any PR (404) is ignored, not treated as open', () => {
   const issue = { identifier: 'LUL-W', title: 'x', description: 'see #999 and #144' };
-  const prByNumber = new Map([[144, { number: 144, merged: true, state: 'closed' }]]);
+  const prByNumber = new Map([[144, { number: 144, title: 'LUL-W: fix', merged: true, state: 'closed' }]]);
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'SHIPPED');
 });
@@ -480,10 +546,63 @@ test('classifyTombstones maps a list of issues through classifyDisposition', () 
     { identifier: 'A', description: '#1' },
     { identifier: 'B', description: 'no refs' },
   ];
-  const prByNumber = new Map([[1, { number: 1, merged: true, state: 'closed' }]]);
+  const prByNumber = new Map([[1, { number: 1, title: 'A: fix', merged: true, state: 'closed' }]]);
   const result = classifyTombstones(issues, prByNumber);
   assert.equal(result[0].disposition, 'SHIPPED');
   assert.equal(result[1].disposition, 'STRANDED');
+});
+
+// ---- LUL-934: attribution bug ----------------------------------------------
+//
+// Real board state, 2026-08-28: the detector flagged LUL-27 as SHIPPED and
+// cited merge commit `ee956c52` -- which actually belongs to PR #179
+// (LUL-83, "session-varied map seed"). LUL-27's own dispatch comment had
+// mentioned "#179" only in passing ("LUL-83 just landed ... in PR #179, use
+// it rather than adding a second seed source"), never claiming #179 shipped
+// LUL-27. Sorting referenced numbers (#179 < #190, LUL-27's real PR) and
+// taking mergedPrs[0] cited the wrong commit as evidence. This must fail
+// without the prTitleReferencesIssue() attribution filter in
+// classifyDisposition.
+
+test('LUL-27 fixture: a merged PR mentioned only in passing is not evidence -- SHIPPED cites the PR that actually names the ticket', () => {
+  const issue = {
+    identifier: 'LUL-27',
+    title: 'Event system + the first recurring event: the Fog Tide',
+    description: '',
+    comments: [
+      { body: 'note LUL-83 just landed resolveInitialSeed() / ?seed= in PR #179, use it rather than adding a second seed source' },
+      { body: '**PR opened: https://github.com/DadonStyle/LULLWOOD/pull/190** (`lul-27-fog-tide-event` -> `release/next`)' },
+      { body: 'Backmerge complete and pushed. PR #190 all green.' },
+    ],
+  };
+  const prByNumber = new Map([
+    [179, { number: 179, title: 'LUL-83: session-varied map seed, pinned via ?seed= for QA', merged: true, state: 'closed', merge_commit_sha: 'ee956c52' }],
+    [190, { number: 190, title: 'LUL-27: event scheduler infra + Fog Tide, the first recurring event', merged: true, state: 'closed', merge_commit_sha: 'a7e3d412' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
+  assert.equal(result.mergedPrs.length, 1);
+  assert.equal(result.mergedPrs[0].number, 190);
+  assert.equal(result.mergedPrs[0].merge_commit_sha, 'a7e3d412');
+});
+
+test('prTitleReferencesIssue anchors on word boundaries: LUL-27 does not match inside LUL-271/LUL-279 titles', () => {
+  assert.equal(
+    prTitleReferencesIssue({ title: 'LUL-271: unrelated fix' }, { identifier: 'LUL-27' }),
+    false,
+  );
+  assert.equal(
+    prTitleReferencesIssue({ title: 'LUL-279: another unrelated fix' }, { identifier: 'LUL-27' }),
+    false,
+  );
+  assert.equal(prTitleReferencesIssue({ title: 'LUL-27: the real one' }, { identifier: 'LUL-27' }), true);
+});
+
+test('an issue with no identifier can never attribute a merged PR (avoids a false SHIPPED on missing data)', () => {
+  const issue = { title: 'x', description: 'closed via #144' };
+  const prByNumber = new Map([[144, { number: 144, title: 'LUL-677: fix', merged: true, state: 'closed' }]]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'STRANDED');
 });
 
 test('sortTombstonesStrandedFirst orders STRANDED before SHIPPED, stable within each group', () => {
