@@ -6,6 +6,7 @@ import path from 'node:path';
 import {
   OPEN_STATUSES,
   hasScheduleTrigger,
+  hasWorkflowDispatchTrigger,
   workflowDisplayName,
   deriveWatchdogs,
   latestScheduledConclusion,
@@ -24,6 +25,10 @@ import {
   writeTicketedRuns,
   alreadyTicketedRun,
   recordTicketedRun,
+  isEvidenceCurrent,
+  pollForFreshRun,
+  verifyRedWatchdog,
+  describeVerification,
 } from './watchdog-run-check.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
@@ -658,4 +663,363 @@ test('fileWakeTickets resolves the assignee once per run, not once per red watch
     else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
     globalThis.fetch = prevFetch;
   }
+});
+
+// ---- LUL-858: re-verify a red run before filing a wake ticket -------------
+//
+// Filed from LUL-849: watchdog-run-check.mjs filed a ticket from a red run
+// whose head_sha was 9 hours stale (the fix had landed on release/next but
+// not yet reached main), and by the time an agent read it the alarm had
+// already resolved itself. Five tickets in that shape in a row
+// (LUL-721/771/821/832/849) is the regression this section guards against.
+
+test('hasWorkflowDispatchTrigger finds it in block form, inline list, and the bare scalar form', () => {
+  assert.equal(
+    hasWorkflowDispatchTrigger('name: X\non:\n  workflow_dispatch:\n  schedule:\n    - cron: "0 * * * *"\njobs: {}\n'),
+    true,
+  );
+  assert.equal(hasWorkflowDispatchTrigger('name: X\non: [push, workflow_dispatch]\njobs: {}\n'), true);
+  assert.equal(hasWorkflowDispatchTrigger('name: X\non: workflow_dispatch\njobs: {}\n'), true);
+});
+
+test('hasWorkflowDispatchTrigger is false for a schedule-only workflow (most of this repo\'s crons)', () => {
+  assert.equal(hasWorkflowDispatchTrigger(cronWorkflow('Review gap detector')), false);
+  assert.equal(hasWorkflowDispatchTrigger(''), false);
+});
+
+test('deriveWatchdogs carries hasDispatchTrigger through from the workflow yaml', () => {
+  const roster = deriveWatchdogs(
+    [
+      { file: 'a.yml', yaml: cronWorkflow('A', '  workflow_dispatch:\n') },
+      { file: 'b.yml', yaml: cronWorkflow('B') },
+    ],
+    [],
+  );
+  assert.equal(roster.find((w) => w.file === 'a.yml').hasDispatchTrigger, true);
+  assert.equal(roster.find((w) => w.file === 'b.yml').hasDispatchTrigger, false);
+});
+
+test('classifyWatchdog captures head_sha on a red run so it can be re-verified later', () => {
+  const run = { id: 5, conclusion: 'failure', html_url: 'https://x/runs/5', head_sha: 'deadbeef' };
+  const result = classifyWatchdog(REVIEW_GAP_DETECTOR, true, [run]);
+  assert.equal(result.headSha, 'deadbeef');
+});
+
+test('isEvidenceCurrent is true only when both ahead_by and behind_by are 0', () => {
+  assert.equal(isEvidenceCurrent({ ahead_by: 0, behind_by: 0 }), true);
+  assert.equal(isEvidenceCurrent({ ahead_by: 1, behind_by: 0 }), false);
+  assert.equal(isEvidenceCurrent({ ahead_by: 0, behind_by: 1 }), false);
+  assert.equal(isEvidenceCurrent(undefined), true);
+});
+
+// ---- pollForFreshRun --------------------------------------------------------
+
+test('pollForFreshRun finds a completed run created at/after dispatch time and ignores an earlier one', async () => {
+  const sinceMs = 1_000_000;
+  let calls = 0;
+  const fetchRuns = async () => {
+    calls += 1;
+    return [
+      { id: 1, created_at: new Date(sinceMs - 5000).toISOString(), status: 'completed', conclusion: 'success' },
+      { id: 2, created_at: new Date(sinceMs + 10).toISOString(), status: 'completed', conclusion: 'failure' },
+    ];
+  };
+  const run = await pollForFreshRun('DadonStyle/LULLWOOD', 'x.yml', 'token', sinceMs, {
+    fetchRuns,
+    sleep: async () => { throw new Error('must not sleep when a candidate is found on the first poll'); },
+  });
+  assert.equal(run.id, 2);
+  assert.equal(calls, 1);
+});
+
+test('pollForFreshRun ignores an in-progress run and keeps polling until it completes', async () => {
+  const sinceMs = 1_000_000;
+  let call = 0;
+  const fetchRuns = async () => {
+    call += 1;
+    if (call < 3) {
+      return [{ id: 9, created_at: new Date(sinceMs + 1).toISOString(), status: 'in_progress', conclusion: null }];
+    }
+    return [{ id: 9, created_at: new Date(sinceMs + 1).toISOString(), status: 'completed', conclusion: 'success' }];
+  };
+  const sleeps = [];
+  const run = await pollForFreshRun('DadonStyle/LULLWOOD', 'x.yml', 'token', sinceMs, {
+    fetchRuns,
+    sleep: async (ms) => { sleeps.push(ms); },
+    intervalMs: 10,
+    maxAttempts: 5,
+  });
+  assert.equal(run.id, 9);
+  assert.equal(call, 3);
+  assert.equal(sleeps.length, 2);
+});
+
+test('pollForFreshRun gives up after maxAttempts and returns null rather than hanging forever', async () => {
+  let calls = 0;
+  const fetchRuns = async () => {
+    calls += 1;
+    return [];
+  };
+  const run = await pollForFreshRun('DadonStyle/LULLWOOD', 'x.yml', 'token', 1000, {
+    fetchRuns,
+    sleep: async () => {},
+    intervalMs: 1,
+    maxAttempts: 4,
+  });
+  assert.equal(run, null);
+  assert.equal(calls, 4);
+});
+
+// ---- verifyRedWatchdog (pure orchestration, deps injected -- no network) --
+
+function verifyDeps(overrides = {}) {
+  return {
+    fetchDefaultBranchSha: async () => { throw new Error('unexpected fetchDefaultBranchSha call'); },
+    fetchCompare: async () => { throw new Error('unexpected fetchCompare call'); },
+    dispatchWorkflow: async () => { throw new Error('must not dispatch for this verdict'); },
+    pollForFreshRun: async () => { throw new Error('must not poll for this verdict'); },
+    ...overrides,
+  };
+}
+
+test('verifyRedWatchdog: default branch has not moved past the run -> "current", never touches dispatch/poll', async () => {
+  const watchdog = { file: 'review-gap-detector.yml', hasDispatchTrigger: true, headSha: 'aaaaaaa', runUrl: 'https://x/runs/111' };
+  const deps = verifyDeps({
+    fetchDefaultBranchSha: async () => 'aaaaaaa',
+    fetchCompare: async (repo, base, head) => {
+      assert.equal(base, 'aaaaaaa');
+      assert.equal(head, 'aaaaaaa');
+      return { ahead_by: 0, behind_by: 0 };
+    },
+  });
+  const result = await verifyRedWatchdog(watchdog, { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: 'gh-token', deps });
+  assert.equal(result.verdict, 'current');
+});
+
+test('verifyRedWatchdog: default branch advanced + dispatch trigger + fresh run red -> "stale-confirmed", citing the fresh run', async () => {
+  const watchdog = { file: 'review-gap-detector.yml', hasDispatchTrigger: true, headSha: 'aaaaaaa', runUrl: 'https://x/runs/111' };
+  let dispatched = null;
+  const deps = verifyDeps({
+    fetchDefaultBranchSha: async () => 'bbbbbbb',
+    fetchCompare: async () => ({ ahead_by: 4, behind_by: 0 }),
+    dispatchWorkflow: async (repo, file, ref) => { dispatched = { repo, file, ref }; },
+    pollForFreshRun: async () => ({ id: 222, conclusion: 'failure', html_url: 'https://x/runs/222' }),
+  });
+  const result = await verifyRedWatchdog(watchdog, { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: 'gh-token', deps });
+  assert.equal(result.verdict, 'stale-confirmed');
+  assert.equal(result.freshRun.id, 222);
+  assert.deepEqual(dispatched, { repo: 'DadonStyle/LULLWOOD', file: 'review-gap-detector.yml', ref: 'main' });
+});
+
+test('verifyRedWatchdog: default branch advanced + fresh run green -> "stale-resolved" (the LUL-849 shape)', async () => {
+  const watchdog = { file: 'review-gap-detector.yml', hasDispatchTrigger: true, headSha: 'aaaaaaa' };
+  const deps = verifyDeps({
+    fetchDefaultBranchSha: async () => 'bbbbbbb',
+    fetchCompare: async () => ({ ahead_by: 9, behind_by: 0 }),
+    dispatchWorkflow: async () => {},
+    pollForFreshRun: async () => ({ id: 333, conclusion: 'success', html_url: 'https://x/runs/333' }),
+  });
+  const result = await verifyRedWatchdog(watchdog, { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: 'gh-token', deps });
+  assert.equal(result.verdict, 'stale-resolved');
+});
+
+test('verifyRedWatchdog: default branch advanced but no workflow_dispatch trigger -> "no-dispatch-trigger", never dispatches', async () => {
+  const watchdog = { file: 'no-dispatch.yml', hasDispatchTrigger: false, headSha: 'aaaaaaa' };
+  const deps = verifyDeps({
+    fetchDefaultBranchSha: async () => 'bbbbbbb',
+    fetchCompare: async () => ({ ahead_by: 2, behind_by: 0 }),
+  });
+  const result = await verifyRedWatchdog(watchdog, { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: 'gh-token', deps });
+  assert.equal(result.verdict, 'no-dispatch-trigger');
+});
+
+test('verifyRedWatchdog: default branch advanced but no token available -> "no-token", never dispatches', async () => {
+  const watchdog = { file: 'review-gap-detector.yml', hasDispatchTrigger: true, headSha: 'aaaaaaa' };
+  const deps = verifyDeps({
+    fetchDefaultBranchSha: async () => 'bbbbbbb',
+    fetchCompare: async () => ({ ahead_by: 1, behind_by: 0 }),
+  });
+  const result = await verifyRedWatchdog(watchdog, { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: null, deps });
+  assert.equal(result.verdict, 'no-token');
+});
+
+test('verifyRedWatchdog: dispatched but poll times out -> "poll-timeout", files as-is rather than hanging', async () => {
+  const watchdog = { file: 'review-gap-detector.yml', hasDispatchTrigger: true, headSha: 'aaaaaaa' };
+  const deps = verifyDeps({
+    fetchDefaultBranchSha: async () => 'bbbbbbb',
+    fetchCompare: async () => ({ ahead_by: 1, behind_by: 0 }),
+    dispatchWorkflow: async () => {},
+    pollForFreshRun: async () => null,
+  });
+  const result = await verifyRedWatchdog(watchdog, { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: 'gh-token', deps });
+  assert.equal(result.verdict, 'poll-timeout');
+});
+
+// ---- describeVerification: the ticket body must say what it was verified against
+
+test('describeVerification cites the original run for "current" and the fresh run for "stale-confirmed"', () => {
+  const watchdog = { file: 'review-gap-detector.yml', headSha: 'aaaaaaa', runUrl: 'https://x/runs/111' };
+  assert.match(describeVerification(watchdog, { verdict: 'current' }), /runs\/111/);
+  assert.match(
+    describeVerification(watchdog, { verdict: 'stale-confirmed', freshRun: { html_url: 'https://x/runs/222' } }),
+    /runs\/222/,
+  );
+});
+
+test('describeVerification names the concrete reason for each fallback verdict', () => {
+  const watchdog = { file: 'review-gap-detector.yml' };
+  assert.match(describeVerification(watchdog, { verdict: 'no-dispatch-trigger' }), /no workflow_dispatch trigger/);
+  assert.match(describeVerification(watchdog, { verdict: 'no-token' }), /no GitHub token/);
+  assert.match(describeVerification(watchdog, { verdict: 'poll-timeout' }), /did not/);
+});
+
+test('describeVerification returns empty string for an unrecognised verdict (defensive default)', () => {
+  assert.equal(describeVerification({ file: 'x.yml' }, { verdict: 'unverified' }), '');
+});
+
+// ---- fileWakeTickets end-to-end with verifyContext wired (the DoD's own three cases) --
+
+function makeRedWatchdog(overrides = {}) {
+  return {
+    name: 'Review gap detector',
+    file: 'review-gap-detector.yml',
+    onDefaultBranch: true,
+    hasDispatchTrigger: true,
+    alarm: 'red',
+    runUrl: 'https://github.com/DadonStyle/LULLWOOD/actions/runs/111',
+    runId: 111,
+    headSha: 'aaaaaaa',
+    ...overrides,
+  };
+}
+
+test('LUL-858 DoD 1: a stale red whose fresh dispatch comes back green files NO ticket', async () => {
+  await withStateDir(async (stateDir) => {
+    const prevFetch = globalThis.fetch;
+    let issuePosted = false;
+    try {
+      globalThis.fetch = async (url) => {
+        if (String(url).includes('/issues')) {
+          issuePosted = true;
+          return { ok: true, json: async () => ({ id: 'should-not-be-created' }) };
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      };
+      const deps = {
+        fetchDefaultBranchSha: async () => 'bbbbbbb',
+        fetchCompare: async () => ({ ahead_by: 3, behind_by: 0 }),
+        dispatchWorkflow: async () => {},
+        pollForFreshRun: async () => ({ conclusion: 'success', html_url: 'https://github.com/.../runs/222' }),
+      };
+      const filed = await fileWakeTickets(
+        'http://api.invalid', 'company-1', 'token',
+        [makeRedWatchdog()], [], stateDir,
+        { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: 'gh-token', deps },
+      );
+      assert.deepEqual(filed, []);
+      assert.equal(issuePosted, false);
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+});
+
+test('LUL-858 DoD 2: a current red still files exactly one ticket, citing the run it was verified against', async () => {
+  await withStateDir(async (stateDir) => {
+    const prevFetch = globalThis.fetch;
+    const prevEnv = process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    const postedBodies = [];
+    try {
+      process.env.WATCHDOG_ASSIGNEE_AGENT_ID = 'pinned-agent';
+      globalThis.fetch = async (url, opts) => {
+        if (String(url).includes('/issues')) {
+          postedBodies.push(JSON.parse(opts.body));
+          return { ok: true, json: async () => ({ id: 'created' }) };
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      };
+      const deps = {
+        fetchDefaultBranchSha: async () => 'aaaaaaa',
+        fetchCompare: async () => ({ ahead_by: 0, behind_by: 0 }),
+        dispatchWorkflow: async () => { throw new Error('must not dispatch when evidence is current'); },
+        pollForFreshRun: async () => { throw new Error('must not poll when evidence is current'); },
+      };
+      const filed = await fileWakeTickets(
+        'http://api.invalid', 'company-1', 'token',
+        [makeRedWatchdog()], [], stateDir,
+        { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: 'gh-token', deps },
+      );
+      assert.equal(filed.length, 1);
+      assert.equal(filed[0].verdict, 'current');
+      assert.equal(postedBodies.length, 1);
+      assert.match(postedBodies[0].description, /runs\/111/);
+    } finally {
+      if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+      else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
+      globalThis.fetch = prevFetch;
+    }
+  });
+});
+
+test('LUL-858 DoD 3: no workflow_dispatch trigger falls back to filing as-is and says so in the ticket body', async () => {
+  await withStateDir(async (stateDir) => {
+    const prevFetch = globalThis.fetch;
+    const prevEnv = process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    const postedBodies = [];
+    try {
+      process.env.WATCHDOG_ASSIGNEE_AGENT_ID = 'pinned-agent';
+      globalThis.fetch = async (url, opts) => {
+        if (String(url).includes('/issues')) {
+          postedBodies.push(JSON.parse(opts.body));
+          return { ok: true, json: async () => ({ id: 'created' }) };
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      };
+      const deps = {
+        fetchDefaultBranchSha: async () => 'bbbbbbb',
+        fetchCompare: async () => ({ ahead_by: 2, behind_by: 0 }),
+        dispatchWorkflow: async () => { throw new Error('must not dispatch with no workflow_dispatch trigger'); },
+        pollForFreshRun: async () => { throw new Error('must not poll with no workflow_dispatch trigger'); },
+      };
+      const filed = await fileWakeTickets(
+        'http://api.invalid', 'company-1', 'token',
+        [makeRedWatchdog({ hasDispatchTrigger: false })], [], stateDir,
+        { repo: 'DadonStyle/LULLWOOD', defaultBranch: 'main', token: 'gh-token', deps },
+      );
+      assert.equal(filed.length, 1);
+      assert.equal(filed[0].verdict, 'no-dispatch-trigger');
+      assert.match(postedBodies[0].description, /no workflow_dispatch trigger/);
+    } finally {
+      if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+      else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
+      globalThis.fetch = prevFetch;
+    }
+  });
+});
+
+test('LUL-858: omitting verifyContext entirely skips re-verification and files on the red run alone (back-compat)', async () => {
+  await withStateDir(async (stateDir) => {
+    const prevFetch = globalThis.fetch;
+    const prevEnv = process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    try {
+      process.env.WATCHDOG_ASSIGNEE_AGENT_ID = 'pinned-agent';
+      globalThis.fetch = async (url) => {
+        if (String(url).includes('/issues')) {
+          return { ok: true, json: async () => ({ id: 'created' }) };
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      };
+      const filed = await fileWakeTickets(
+        'http://api.invalid', 'company-1', 'token',
+        [makeRedWatchdog()], [], stateDir,
+        // no verifyContext at all
+      );
+      assert.equal(filed.length, 1);
+      assert.equal(filed[0].verdict, 'unverified');
+    } finally {
+      if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+      else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
+      globalThis.fetch = prevFetch;
+    }
+  });
 });
