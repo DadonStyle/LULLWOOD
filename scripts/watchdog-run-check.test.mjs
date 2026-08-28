@@ -19,6 +19,11 @@ import {
   durableToken,
   resolveAssigneeId,
   fetchWorkflowFiles,
+  fileWakeTickets,
+  readTicketedRuns,
+  writeTicketedRuns,
+  alreadyTicketedRun,
+  recordTicketedRun,
 } from './watchdog-run-check.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
@@ -256,6 +261,186 @@ test('dedup counts a ticket parked in `blocked` or `in_review` as still open (LU
   assert.equal(hasOpenWakeTicket(parked, marker), true);
 });
 
+// ---- LUL-897: dedup axis (2), on the run id --------------------------------
+//
+// Axis (1) re-arms on the ticket being CLOSED, but the promise in the ticket
+// text is "a later red run files a fresh ticket". Those are not the same
+// thing while the router cron (every 30min) ticks faster than the watched
+// cron (every 1-4h): for hours after a close, the latest scheduled run is
+// still the same red one that was already routed. Measured on
+// review-gap-detector before this fix -- nine tickets for five distinct runs,
+// with run 33065636602 alone producing LUL-849, -861, -871 and -881.
+
+// A --post harness: counts POSTs to /issues so "filed nothing new" is proven
+// by the absence of a call, not by a return value that could lie.
+function postHarness() {
+  const posts = [];
+  return {
+    posts,
+    fetch: async (url, opts = {}) => {
+      const u = String(url);
+      if (u.endsWith('/issues') && opts.method === 'POST') {
+        posts.push(JSON.parse(opts.body));
+        return { ok: true, status: 201, json: async () => ({ id: `issue-${posts.length}` }) };
+      }
+      if (u.includes('/agents/me')) {
+        return { ok: true, json: async () => ({ id: 'agent-vp' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    },
+  };
+}
+
+function withStateDir(fn) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'watchdog-state-'));
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const RED_RUN_ID = 33065636602;
+
+test('LUL-897 regression: a closed ticket does NOT re-file while the latest red run is the same one already routed', async () => {
+  await withStateDir(async (stateDir) => {
+    const harness = postHarness();
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+    try {
+      const red = [classifyWatchdog(REVIEW_GAP_DETECTOR, true, [redRun(RED_RUN_ID)])];
+
+      // Tick 1: nothing open, nothing recorded -> files the ticket.
+      const first = await fileWakeTickets('https://api.invalid', 'co', 'key', red, [], stateDir);
+      assert.equal(first.length, 1);
+      assert.equal(harness.posts.length, 1);
+
+      // An agent reads it, fixes/triages, closes it. `done` is not in
+      // OPEN_STATUSES, so axis (1) sees an empty open-issues list again --
+      // exactly the state that produced the duplicate before this fix.
+      // The workflow's own cron has not ticked yet, so the run id is unchanged.
+      const second = await fileWakeTickets('https://api.invalid', 'co', 'key', red, [], stateDir);
+      assert.deepEqual(second, [], 'must not re-file a run id that was already ticketed');
+      assert.equal(harness.posts.length, 1, 'a second POST here is the nine-tickets bug');
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+});
+
+test('LUL-897: re-arm still works -- a NEWER red run of the same watchdog files a fresh ticket', async () => {
+  await withStateDir(async (stateDir) => {
+    const harness = postHarness();
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+    try {
+      const older = [classifyWatchdog(REVIEW_GAP_DETECTOR, true, [redRun(RED_RUN_ID)])];
+      await fileWakeTickets('https://api.invalid', 'co', 'key', older, [], stateDir);
+
+      // The watched cron ticks again and goes red again: a different run id.
+      const newer = [classifyWatchdog(REVIEW_GAP_DETECTOR, true, [redRun(RED_RUN_ID + 1)])];
+      const filed = await fileWakeTickets('https://api.invalid', 'co', 'key', newer, [], stateDir);
+      assert.equal(filed.length, 1, 'suppressing a genuinely new red is worse than a duplicate');
+      assert.equal(harness.posts.length, 2);
+      assert.match(harness.posts[1].description, new RegExp(String(RED_RUN_ID + 1)));
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+});
+
+test('LUL-897: axis (2) never overrides axis (1) -- an open ticket still suppresses, even for a new run id', async () => {
+  await withStateDir(async (stateDir) => {
+    const harness = postHarness();
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+    try {
+      const marker = watchdogWakeMarker(REVIEW_GAP_DETECTOR);
+      const openIssues = [{ title: `${marker} (LUL-685 detector)`, status: 'todo' }];
+      const red = [classifyWatchdog(REVIEW_GAP_DETECTOR, true, [redRun(RED_RUN_ID + 7)])];
+      const filed = await fileWakeTickets('https://api.invalid', 'co', 'key', red, openIssues, stateDir);
+      assert.deepEqual(filed, [], '99 red runs must still produce one open ticket, not 99');
+      assert.equal(harness.posts.length, 0);
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+});
+
+test('LUL-897: fails OPEN -- with no state dir the run-id check is skipped and the red still routes', async () => {
+  const harness = postHarness();
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = harness.fetch;
+  try {
+    const red = [classifyWatchdog(REVIEW_GAP_DETECTOR, true, [redRun(RED_RUN_ID)])];
+    // stateDir null is what an ad-hoc invocation without WATCHDOG_STATE_DIR
+    // gets. A red that routes to nobody is the bug LUL-685 exists to prevent;
+    // a duplicate ticket is merely the old status quo. Prefer the duplicate.
+    await fileWakeTickets('https://api.invalid', 'co', 'key', red, [], null);
+    await fileWakeTickets('https://api.invalid', 'co', 'key', red, [], null);
+    assert.equal(harness.posts.length, 2);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('LUL-897: the filed ticket names the run id it recorded, so the next reader can see why a close will not re-file', async () => {
+  await withStateDir(async (stateDir) => {
+    const harness = postHarness();
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+    try {
+      const red = [classifyWatchdog(REVIEW_GAP_DETECTOR, true, [redRun(RED_RUN_ID)])];
+      await fileWakeTickets('https://api.invalid', 'co', 'key', red, [], stateDir);
+      assert.match(harness.posts[0].description, new RegExp(String(RED_RUN_ID)));
+      assert.equal(readTicketedRuns(stateDir)['review-gap-detector.yml'], String(RED_RUN_ID));
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+});
+
+test('alreadyTicketedRun compares as strings -- a number/string mismatch must not silently re-file', () => {
+  const w = { file: 'review-gap-detector.yml', runId: RED_RUN_ID };
+  assert.equal(alreadyTicketedRun({ 'review-gap-detector.yml': String(RED_RUN_ID) }, w), true);
+  assert.equal(alreadyTicketedRun({ 'review-gap-detector.yml': RED_RUN_ID }, w), true);
+  assert.equal(alreadyTicketedRun({ 'review-gap-detector.yml': String(RED_RUN_ID + 1) }, w), false);
+  assert.equal(alreadyTicketedRun({}, w), false, 'an empty map must never suppress');
+});
+
+test('run-id state is keyed per watchdog file -- routing one does not suppress another', () => {
+  const reviewGap = { file: 'review-gap-detector.yml', runId: 1 };
+  const versionCut = { file: 'version-cut.yml', runId: 1 };
+  const state = recordTicketedRun({}, reviewGap);
+  assert.equal(alreadyTicketedRun(state, reviewGap), true);
+  assert.equal(alreadyTicketedRun(state, versionCut), false, 'same run id, different workflow');
+});
+
+test('readTicketedRuns returns {} (never throws, never suppresses) for missing, malformed and wrong-shaped state', () => {
+  withStateDir((dir) => {
+    assert.deepEqual(readTicketedRuns(dir), {}, 'missing file');
+    assert.deepEqual(readTicketedRuns(null), {}, 'no state dir configured');
+    assert.deepEqual(readTicketedRuns(path.join(dir, 'nope')), {}, 'missing dir');
+
+    writeFileSync(path.join(dir, 'ticketed-runs.json'), '{not json');
+    assert.deepEqual(readTicketedRuns(dir), {}, 'malformed JSON must fail open, not throw');
+
+    // An array parses as JSON but `state[file]` on it is always undefined --
+    // harmless here, but normalising keeps the type honest for writers.
+    writeFileSync(path.join(dir, 'ticketed-runs.json'), '["33065636602"]');
+    assert.deepEqual(readTicketedRuns(dir), {}, 'wrong top-level shape');
+  });
+});
+
+test('writeTicketedRuns round-trips and survives being called for a dir that does not exist yet', () => {
+  withStateDir((dir) => {
+    const nested = path.join(dir, 'state');
+    assert.equal(writeTicketedRuns(nested, { 'a.yml': '1' }), true);
+    assert.deepEqual(readTicketedRuns(nested), { 'a.yml': '1' });
+    assert.equal(writeTicketedRuns(null, { 'a.yml': '1' }), false, 'no dir configured is a no-op, not a throw');
+  });
+});
+
 // ---- deriving the roster from the repo (replaces the hand-listed WATCHDOGS) -
 
 test('hasScheduleTrigger finds a cron in the on: block, block form and inline list', () => {
@@ -429,6 +614,45 @@ test('resolveAssigneeId tolerates a 401 from /api/agents/me (durable token) and 
     };
     const id = await resolveAssigneeId('http://api.invalid', 'company-1', 'durable-token');
     assert.equal(id, 'vp-agent-id');
+  } finally {
+    if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+// ---- fileWakeTickets (LUL-779: cache a resolved-to-null assignee too) -----
+
+test('fileWakeTickets resolves the assignee once per run, not once per red watchdog, even when resolution legitimately returns null', async () => {
+  const prevEnv = process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+  const prevFetch = globalThis.fetch;
+  try {
+    delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
+    let resolutionCalls = 0;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) {
+        resolutionCalls += 1;
+        return { ok: false, status: 401 };
+      }
+      if (u.endsWith('/agents')) {
+        resolutionCalls += 1;
+        return { ok: true, json: async () => [] }; // no name match -> null is legitimate
+      }
+      if (u.includes('/issues') && opts && opts.method === 'POST') {
+        return { ok: true, json: async () => ({ id: 'issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+    const two = [
+      { ...REVIEW_GAP_DETECTOR, name: 'Review gap detector' },
+      { ...WATCHDOGS.find((w) => w.file === 'base-branch-guard.yml'), name: 'Base branch guard' },
+    ];
+    const filed = await fileWakeTickets('http://api.invalid', 'company-1', 'durable-token', two, []);
+    assert.equal(filed.length, 2);
+    assert.ok(filed.every((f) => f.assigneeAgentId === null));
+    // One /api/agents/me + one /agents fallback = 2 calls total, not 4 (one pair per watchdog).
+    assert.equal(resolutionCalls, 2);
   } finally {
     if (prevEnv === undefined) delete process.env.WATCHDOG_ASSIGNEE_AGENT_ID;
     else process.env.WATCHDOG_ASSIGNEE_AGENT_ID = prevEnv;

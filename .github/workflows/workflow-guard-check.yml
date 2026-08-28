@@ -60,11 +60,15 @@ on:
 permissions:
   contents: read
 
-# Keyed on event name + head SHA. Kept even though `push` and
-# `workflow_dispatch` are the only events now, so a manual dispatch never
-# races a concurrent push to the same head.
+# LUL-894: was keyed on event name + head SHA, which cannot cancel a
+# superseded run -- two pushes in quick succession have different SHAs, so
+# they land in different concurrency groups. See ci.yml's concurrency
+# comment and wiki systems/ci-concurrency-key-outlived-premise for the full
+# measurement and rationale (identical defect and identical fix, shared with
+# ci.yml). Keyed on `github.ref` instead; `github.event_name` stays so a
+# manual `workflow_dispatch` never races a concurrent push to the same ref.
 concurrency:
-  group: workflow-guard-check-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+  group: workflow-guard-check-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -36,8 +36,14 @@
 //                             burning a single GitHub call.
 //   GITHUB_REPOSITORY      "owner/repo", defaults to DadonStyle/LULLWOOD
 //   PAPERCLIP_API_URL      required (this agent's own env already has it)
-//   PAPERCLIP_API_KEY      required
+//   PAPERCLIP_API_KEY      falls back to the durable token at
+//                          ~/.paperclip/auth.json when absent (LUL-770/879),
+//                          so this runs unattended under a host crontab too.
 //   PAPERCLIP_COMPANY_ID   required
+//   BOARD_INTEGRITY_SELF_AGENT_ID  optional override for the wake-ticket
+//                          assignee when /api/agents/me 401s under the
+//                          durable token (which carries no bound agent
+//                          identity). Recommended for an unattended cron.
 //
 // --post files a new `todo` wake ticket per alarm, NOT a comment on a shared
 // "standing" issue. Paperclip's write boundary follows the assignee: an
@@ -52,6 +58,8 @@
 // Exit 0: ran cleanly, no alarms. Exit 1: alarms found (and filed, if
 // --post). Exit 2: the run itself errored (network, auth, ...).
 import { pathToFileURL } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { fetchJson, ghFetch, resolveGithubToken, GITHUB_TOKEN_CHAIN_DESCRIPTION } from './lib/github-fetch.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
@@ -501,9 +509,61 @@ async function fetchPrLookup(repo, prNumbers, token) {
   return map;
 }
 
-async function fetchSelfAgentId(apiBase, apiKey) {
-  const me = await pcFetch(`${apiBase}/api/agents/me`, apiKey);
-  return me.id;
+// Mirrors scripts/watchdog-run-check.mjs's authJsonPath/durableToken (LUL-770,
+// LUL-781 regression on process.env.HOME under `env -i`): duplicated rather
+// than imported so this detector's diff and test scope stay self-contained,
+// same call this repo already made for hasOpenWakeTicket living the other
+// direction (watchdog-run-check.test.mjs imports it from here).
+function authJsonPath() {
+  return new URL('file://' + homedir() + '/.paperclip/auth.json');
+}
+
+function durableToken(apiBase) {
+  try {
+    const raw = readFileSync(authJsonPath());
+    const creds = JSON.parse(raw).credentials || {};
+    const entry =
+      creds[apiBase] ||
+      creds[apiBase.replace(/\/$/, '')] ||
+      creds[apiBase + '/'] ||
+      (Object.keys(creds).length === 1 ? Object.values(creds)[0] : null);
+    return (entry || {}).token || null;
+  } catch {
+    return null;
+  }
+}
+
+// LUL-879: fetchSelfAgentId used to call /api/agents/me directly and let a
+// non-ok response throw, which took the whole --post run down with it (the
+// route 401s under the durable CLI token every host cron uses -- it carries
+// no bound agent identity, only a company scope). Mirrors
+// scripts/watchdog-run-check.mjs's resolveAssigneeId: env override first
+// (no HTTP call at all), then /api/agents/me (works under a run JWT), then a
+// name match against the company agents list, then null. null is a
+// legitimate, safe outcome for the two alarms (tombstone, stale-confirmation)
+// that fall back to the issue's own assigneeAgentId -- see fileWakeTickets.
+// The zero-pullable-work and unowned-pr alarms hard-depend on a real id, so
+// an unattended cron should set BOARD_INTEGRITY_SELF_AGENT_ID to guarantee
+// those wake someone.
+async function resolveSelfAgentId(apiBase, companyId, apiKey) {
+  if (process.env.BOARD_INTEGRITY_SELF_AGENT_ID) {
+    return process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
+  }
+  const res = await fetch(`${apiBase}/api/agents/me`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  if (res.ok) {
+    const me = await res.json();
+    return me.id;
+  }
+  // Non-ok (401 under the durable token) -- fall back to the company agents
+  // list and match by name, rather than throwing.
+  try {
+    const agents = await pcFetch(`${apiBase}/api/companies/${companyId}/agents`, apiKey);
+    const list = Array.isArray(agents) ? agents : (agents.agents ?? []);
+    const vp = list.find((a) => /vp r&d|ops|watchdog/i.test(a.name || ''));
+    return vp ? vp.id : null;
+  } catch {
+    return null;
+  }
 }
 
 async function createWakeIssue(apiBase, companyId, apiKey, { title, description, assigneeAgentId, priority }) {
@@ -566,12 +626,25 @@ async function fileWakeTickets(
   closedWakeIssues = [],
   nowMs = Date.now(),
 ) {
-  const selfId = await fetchSelfAgentId(apiBase, apiKey);
+  // Resolve lazily and cache -- a quiet run (no alarms) should never touch
+  // /api/agents/me at all, and a run with several alarms should only resolve
+  // once (LUL-779 pattern, mirrored from watchdog-run-check.mjs). A
+  // resolved-to-null outcome is legitimate and must be cached too.
+  let selfId;
+  let selfResolved = false;
+  const resolveSelfId = async () => {
+    if (!selfResolved) {
+      selfId = await resolveSelfAgentId(apiBase, companyId, apiKey);
+      selfResolved = true;
+    }
+    return selfId;
+  };
   const filed = [];
 
   if (zeroPullable?.alarm) {
     const marker = zeroPullableWorkWakeMarker();
     if (!hasOpenWakeTicket(openIssues, marker)) {
+      const assigneeAgentId = await resolveSelfId();
       await createWakeIssue(apiBase, companyId, apiKey, {
         title: `${marker} (LUL-810 detector)`,
         description:
@@ -581,10 +654,10 @@ async function fileWakeTickets(
           `with no resolution path, or runs died on the session limit after landing their PRs ` +
           `without closing their tickets. Run the board sweep (node scripts/board-integrity-check.mjs --post) ` +
           `and check for tombstones. See wiki playbooks/session-limit-issue-recovery.`,
-        assigneeAgentId: selfId,
+        assigneeAgentId,
         priority: 'critical',
       });
-      filed.push({ kind: 'zero-pullable-work', availableAgentCount: zeroPullable.availableAgentCount, assigneeAgentId: selfId });
+      filed.push({ kind: 'zero-pullable-work', availableAgentCount: zeroPullable.availableAgentCount, assigneeAgentId });
     }
   }
 
@@ -592,7 +665,7 @@ async function fileWakeTickets(
     const marker = staleConfirmationWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
     if (isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, nowMs)) continue;
-    const assigneeAgentId = issue.assigneeAgentId ?? selfId;
+    const assigneeAgentId = issue.assigneeAgentId ?? (await resolveSelfId());
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-810 detector)`,
       description:
@@ -611,7 +684,7 @@ async function fileWakeTickets(
     const { issue, disposition } = classified;
     const marker = tombstoneWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
-    const assigneeAgentId = issue.assigneeAgentId ?? selfId;
+    const assigneeAgentId = issue.assigneeAgentId ?? (await resolveSelfId());
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: tombstoneWakeTitle(marker, disposition),
       description: tombstoneWakeDescription(classified),
@@ -624,6 +697,7 @@ async function fileWakeTickets(
   for (const pr of unownedPrs) {
     const marker = unownedPrWakeMarker(pr);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
+    const assigneeAgentId = await resolveSelfId();
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-672 detector)`,
       description:
@@ -631,10 +705,10 @@ async function fileWakeTickets(
         `(${pr.html_url}) is mergeable_state \`clean\`, has an APPROVED review, and every ` +
         `required check has a success run -- but no open todo/in_progress ticket references ` +
         `it. Land it, or file/attach the ticket that should own it.`,
-      assigneeAgentId: selfId,
+      assigneeAgentId,
       priority: 'high',
     });
-    filed.push({ kind: 'unowned-pr', number: pr.number, assigneeAgentId: selfId });
+    filed.push({ kind: 'unowned-pr', number: pr.number, assigneeAgentId });
   }
 
   return filed;
@@ -643,15 +717,20 @@ async function fileWakeTickets(
 async function main() {
   const repo = process.env.GITHUB_REPOSITORY || DEFAULT_REPO;
   const apiBase = (process.env.PAPERCLIP_API_URL || '').replace(/\/api\/?$/, '').replace(/\/$/, '');
-  const apiKey = process.env.PAPERCLIP_API_KEY;
+  // Accept the run JWT when present; fall back to the durable CLI token
+  // (~/.paperclip/auth.json) so this can run unattended after every agent
+  // session that had PAPERCLIP_API_KEY is dead -- e.g. a host crontab
+  // (LUL-770/LUL-879).
+  const apiKey = process.env.PAPERCLIP_API_KEY || durableToken(apiBase);
   const companyId = process.env.PAPERCLIP_COMPANY_ID;
   const shouldPost = process.argv.includes('--post');
 
   if (!apiBase || !apiKey || !companyId) {
     throw new Error(
-      'PAPERCLIP_API_URL, PAPERCLIP_API_KEY and PAPERCLIP_COMPANY_ID must all be set -- ' +
-        'this detector needs live Paperclip issue data for both alarms, it cannot run ' +
-        'GitHub-only (see the file header and wiki systems/lul523-closed).',
+      'PAPERCLIP_API_URL and PAPERCLIP_COMPANY_ID must be set, and either PAPERCLIP_API_KEY ' +
+        'or a durable token at ~/.paperclip/auth.json must resolve -- this detector needs ' +
+        'live Paperclip issue data for both alarms, it cannot run GitHub-only (see the file ' +
+        'header and wiki systems/lul523-closed).',
     );
   }
 
@@ -759,4 +838,8 @@ export {
   findStaleConfirmations,
   isStaleConfirmationSuppressed,
   STALE_CONFIRMATION_DAYS,
+  authJsonPath,
+  durableToken,
+  resolveSelfAgentId,
+  fileWakeTickets,
 };

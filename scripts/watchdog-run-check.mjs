@@ -45,23 +45,44 @@
 // both the default branch and the release-train branch, never hand-listed --
 // see deriveWatchdogs below for why.
 //
-// Dedup is on the ALARM (one marker per watchdog), not the run: 99
-// consecutive red runs of the same workflow must produce one ticket, not 99.
-// Re-arm is a property of scoping the dedup check to OPEN issues only (same
-// as board-integrity-check.mjs): once a wake ticket is closed by whoever
-// fixes the underlying workflow, the next red run finds no open ticket
-// carrying the marker and files a fresh one. "Open" there means every
-// non-terminal status including `blocked` and `in_review`, not just the two
-// active ones -- see OPEN_STATUSES. No auto-close logic here --
-// verifying the fix and closing the ticket is a human/agent judgment call,
-// same as every other wake ticket in this family.
+// Dedup has TWO axes, and both are load-bearing.
+//
+// (1) On the ALARM (one marker per watchdog): 99 consecutive red runs of the
+// same workflow must produce one ticket, not 99. Scoped to OPEN issues only
+// (same as board-integrity-check.mjs) -- "open" meaning every non-terminal
+// status including `blocked` and `in_review`, not just the two active ones,
+// see OPEN_STATUSES.
+//
+// (2) On the RUN ID, which is what LUL-897 added and why. Axis (1) alone
+// re-arms on *close*, but the thing that re-arms it -- "a later red run" --
+// is not what it actually tests. This cron ticks every 30 minutes while the
+// watched crons tick every 1-4 hours, so for hours after a ticket is closed
+// the *latest* scheduled run is still the same red one that was already
+// ticketed and already handled. Axis (1) sees no open marker, files an
+// identical ticket, someone closes it, and the next tick files it again.
+// Measured on this exact detector before the fix: nine tickets (LUL-771,
+// -821, -832, -849, -861, -871, -881, -889, -897) for FIVE distinct red
+// runs -- run 33065636602 alone produced four. Recording the run id we
+// ticketed makes re-arm mean what the ticket text promises: a *newer* red
+// run than the last one routed.
+//
+// Axis (2)'s state lives outside the repo (WATCHDOG_STATE_DIR) because the
+// cron `reset --hard`s this clone every tick, and it FAILS OPEN: no state
+// dir, unreadable file, unwritable dir -> behave exactly as before and file
+// the ticket. A duplicate ticket is the old status quo; a red that routes to
+// nobody is the bug LUL-685 exists to prevent, and no bookkeeping
+// convenience is worth reintroducing it.
+//
+// No auto-close logic here -- verifying the fix and closing the ticket is a
+// human/agent judgment call, same as every other wake ticket in this family.
 //
 // Exit 0: ran cleanly, no RED alarms (INERT alarms alone do not fail the
 // run -- see above). Exit 1: at least one RED alarm found (and filed, if
 // --post). Exit 2: the run itself errored (network, auth, ...).
 import { pathToFileURL } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
+import path from 'node:path';
 import { ghFetch } from './lib/github-fetch.mjs';
 import { hasOpenWakeTicket } from './board-integrity-check.mjs';
 
@@ -333,6 +354,58 @@ async function fetchOpenIssuesForDedup(apiBase, companyId, apiKey) {
   return pages.flat();
 }
 
+// ---- axis (2): which run id we last filed a ticket for --------------------
+//
+// Keyed by workflow FILE, not display name: the file is the stable identity
+// (`name:` is editable prose, and formatReport already treats them as
+// separate things). Value is the run id as a string -- GitHub run ids exceed
+// 2^32 and JSON round-trips them fine as strings, whereas mixing number and
+// string forms would make the `===` below silently false and re-file.
+const TICKETED_RUNS_FILE = 'ticketed-runs.json';
+
+function ticketedRunsDir() {
+  return process.env.WATCHDOG_STATE_DIR || null;
+}
+
+// Every failure mode returns {} -- see the FAILS OPEN note in the header.
+function readTicketedRuns(dir) {
+  if (!dir) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(dir, TICKETED_RUNS_FILE), 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+// Best-effort: a write failure must not lose the ticket we just filed, so the
+// caller ignores the return value. Written via tmp+rename so a torn write
+// (cron killed mid-tick) leaves the previous map intact rather than a
+// half-file that parses as {} and re-files everything.
+function writeTicketedRuns(dir, map) {
+  if (!dir) return false;
+  try {
+    mkdirSync(dir, { recursive: true });
+    const target = path.join(dir, TICKETED_RUNS_FILE);
+    const tmp = `${target}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(map, null, 2) + '\n');
+    renameSync(tmp, target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Pure, so the nine-tickets-for-five-runs regression is directly testable.
+function alreadyTicketedRun(ticketedRuns, watchdog) {
+  const seen = ticketedRuns[watchdog.file];
+  return seen != null && String(seen) === String(watchdog.runId);
+}
+
+function recordTicketedRun(ticketedRuns, watchdog) {
+  return { ...ticketedRuns, [watchdog.file]: String(watchdog.runId) };
+}
+
 // Split out from durableToken so a regression like LUL-781 (process.env.HOME
 // used directly, which is `undefined` under `env -i` and string-concatenates
 // into the literal path ".../undefined/.paperclip/auth.json") is directly
@@ -403,19 +476,32 @@ async function createWakeIssue(apiBase, companyId, apiKey, { title, description,
   return res.json();
 }
 
-async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIssues) {
+async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIssues, stateDir) {
   // Resolve the assignee lazily — after the dedup check — so quiet runs never
   // touch /api/agents/me at all (LUL-770).
-  let assigneeId = null;
+  let assigneeId;
+  let resolved = false;
   const filed = [];
+  let ticketedRuns = readTicketedRuns(stateDir);
 
   for (const watchdog of redWatchdogs) {
     const marker = watchdogWakeMarker(watchdog);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
-    if (assigneeId === undefined) {
-      // already resolved (null = unassigned is acceptable)
-    } else if (assigneeId === null) {
+    // Axis (2). Ordered after axis (1) deliberately: the open-ticket check is
+    // the cheaper, stronger signal, and this one only has to catch the window
+    // where the ticket is already closed but the run has not advanced yet.
+    if (alreadyTicketedRun(ticketedRuns, watchdog)) {
+      console.error(
+        `dedup: "${watchdog.name}" is still red on run ${watchdog.runId}, which already had a ` +
+        `wake ticket filed and closed. Not re-filing -- re-arm waits for a NEWER red run (LUL-897).`,
+      );
+      continue;
+    }
+    if (!resolved) {
+      // null is a legitimate outcome (unassigned is acceptable) — cache it too,
+      // so a run with 2+ red watchdogs doesn't re-run the resolution chain.
       assigneeId = await resolveAssigneeId(apiBase, companyId, apiKey);
+      resolved = true;
     }
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-685 detector)`,
@@ -423,12 +509,17 @@ async function fileWakeTickets(apiBase, companyId, apiKey, redWatchdogs, openIss
         `Detected by scripts/watchdog-run-check.mjs: the scheduled workflow "${watchdog.name}" ` +
         `(.github/workflows/${watchdog.file}) most recently ran red on its cron trigger -- ` +
         `${watchdog.runUrl}. Read the run log, fix the underlying cause, and close this ticket ` +
-        `once it's addressed. Closing it re-arms this detector: a later red run of the same ` +
-        `workflow will file a fresh ticket only after this one is no longer open. See wiki ` +
-        `game/lul685-watchdog-wake-router.`,
+        `once it's addressed. Closing it re-arms this detector, but only for a NEWER red run: ` +
+        `this run (${watchdog.runId}) is now recorded as routed, so closing this ticket will not ` +
+        `produce another copy of it on the next tick. See wiki game/lul685-watchdog-wake-router.`,
       assigneeAgentId: assigneeId,
     });
-    filed.push({ kind: 'watchdog-red', name: watchdog.name, assigneeAgentId: assigneeId });
+    // Record only after the POST succeeded — createWakeIssue throws on a
+    // non-ok response, and marking a run "routed" when no ticket exists would
+    // suppress the alarm entirely.
+    ticketedRuns = recordTicketedRun(ticketedRuns, watchdog);
+    writeTicketedRuns(stateDir, ticketedRuns);
+    filed.push({ kind: 'watchdog-red', name: watchdog.name, runId: watchdog.runId, assigneeAgentId: assigneeId });
   }
 
   return filed;
@@ -465,10 +556,18 @@ async function main() {
         'Need PAPERCLIP_API_URL + PAPERCLIP_COMPANY_ID + (PAPERCLIP_API_KEY or ~/.paperclip/auth.json).',
       );
     }
+    const stateDir = ticketedRunsDir();
+    if (!stateDir) {
+      console.error(
+        'WATCHDOG_STATE_DIR is unset -- run-id dedup (LUL-897) is disabled for this invocation, ' +
+        'so a red run that was already ticketed and closed can be re-filed. Expected for ad-hoc ' +
+        'runs; the cron sets it.',
+      );
+    }
     const openIssues = await fetchOpenIssuesForDedup(apiBase, companyId, apiKey);
-    const filed = await fileWakeTickets(apiBase, companyId, apiKey, red, openIssues);
+    const filed = await fileWakeTickets(apiBase, companyId, apiKey, red, openIssues, stateDir);
     if (filed.length === 0) {
-      console.error('--post: every red watchdog already has an open wake ticket, filed nothing new.');
+      console.error('--post: every red watchdog is already routed (open ticket, or this run id already filed), filed nothing new.');
     } else {
       for (const f of filed) console.error(`filed wake ticket: ${JSON.stringify(f)}`);
     }
@@ -500,5 +599,11 @@ export {
   durableToken,
   resolveAssigneeId,
   fetchWorkflowFiles,
+  fileWakeTickets,
+  ticketedRunsDir,
+  readTicketedRuns,
+  writeTicketedRuns,
+  alreadyTicketedRun,
+  recordTicketedRun,
 };
 
