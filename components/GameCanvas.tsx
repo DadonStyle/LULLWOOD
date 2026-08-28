@@ -182,10 +182,15 @@ const OVERLAY_STYLE = `
      mode off with no way to reopen Settings and turn it back on. Flagged as a
      declared deviation from the literal "hide id=panel" ticket wording; see the
      LUL-650 PR body.
+     #lightState/#veilState (LUL-656) are also exempted: they're the hold-to-veil
+     readout (LUL-40/382), not a dev-tuning control, and were caught by this
+     blanket selector unintentionally -- the primary in-world feedback (vignette
+     dim + fog billow) still works without them, but every player lost the exact
+     charge % and the "(recharging)" explanation by default.
      #minimap needs !important: the engine writes its own inline
      mm.style.display (blackout difficulty preset, forest-engine.js), which
      beats a plain rule. */
-  body[data-admin-mode="0"] #panel > *:not(#settingsBtn) { display: none !important; }
+  body[data-admin-mode="0"] #panel > *:not(#settingsBtn):not(#lightState):not(#veilState) { display: none !important; }
   body[data-admin-mode="0"] #minimap { display: none !important; }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
