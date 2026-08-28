@@ -10,7 +10,24 @@ export const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
   : 'https://lullwood.vercel.app';
 
 export const SITE_NAME = 'Lullwood';
-export const SITE_DESCRIPTION = 'a lost child is somewhere in the dark';
+
+// SEO title. "Lullwood" alone is an invented word with no search volume --
+// nobody types it who doesn't already know the game. The suffix carries the
+// terms people actually search ("browser horror game", "free", "no download")
+// while the brand still leads, which is what Google shows in the result.
+// Kept under ~60 chars so it isn't truncated in SERPs.
+export const SITE_TITLE = 'Lullwood — Free Browser Horror Game, No Download';
+
+// The search-result snippet. The old value ("a lost child is somewhere in the
+// dark") is a great in-game line and a poor meta description: 36 chars, no
+// nouns anyone searches for. This keeps the tone but earns the click and lands
+// in the ~150-160 char window Google renders without truncating.
+export const SITE_DESCRIPTION =
+  'A glowing child is lost in the fog. Cross a night forest, hide from wolves, bears and lions that hunt by sight and scent, and carry her home. Free in browser.';
+
+// Short, atmospheric line for social cards, where mood beats keywords -- a
+// shared link is seen by people, not crawlers.
+export const SITE_TAGLINE = 'A lost child is somewhere in the dark.';
 
 // Google Search Console's HTML-tag verification token. Unset in every
 // environment until the founder pastes it into Vercel (see LUL-370) --
