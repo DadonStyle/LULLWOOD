@@ -259,7 +259,7 @@ ground.rotation.x = -Math.PI/2; scene.add(ground);
   const g = c.getContext('2d'), grd = g.createLinearGradient(0, 0, 0, 512);
   grd.addColorStop(0.0, '#05070d'); grd.addColorStop(0.55, '#080e18'); grd.addColorStop(1.0, '#0b1220');
   g.fillStyle = grd; g.fillRect(0, 0, 4, 512);
-  const tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding; scene.background = tex;
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; scene.background = tex;
 })();
 const STAR = 700, starArr = new Float32Array(STAR*3);
 for(let i=0;i<STAR;i++){ const th = Math.random()*Math.PI*2, y = Math.random()*0.9 + 0.05, s = Math.sqrt(1-y*y), r = 300;
@@ -2849,7 +2849,7 @@ function renderPost(t){
 initPost();
 if(!usePost){                                   // fallback: let the renderer tone-map directly
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
-  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(RES); renderer.setSize(innerWidth, innerHeight);
 }
 // adaptive resolution: drop internal scale if frames get expensive, raise if they're cheap
