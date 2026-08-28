@@ -42,7 +42,11 @@ const OVERLAY_STYLE = `
     letter-spacing: 0.03em; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
 
-  #hint { position: fixed; top: 20px; left: 0; right: 0; z-index: 1; text-align: center;
+  /* LUL-920: was top: 20px, same as #objective below -- the two sat directly on
+     top of each other for the ~5s the hint is visible after entering. Dropped
+     below the objective pill's rendered height (~20px top + ~34px pill) on both
+     desktop and mobile; nothing else occupies this band. */
+  #hint { position: fixed; top: 64px; left: 0; right: 0; z-index: 1; text-align: center;
     font-size: 12px; letter-spacing: 0.05em; color: #9fb2cd; pointer-events: none;
     text-shadow: 0 1px 8px rgba(0,0,0,0.8); transition: opacity 1.4s ease; opacity: 0; }
 
