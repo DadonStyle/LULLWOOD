@@ -19,14 +19,22 @@ name: Daily report
 # `github.token` (`github-actions[bot]`), same as every other self-serve PR in
 # this repo, so the review step cannot reuse `github.token` either. It uses
 # the `SHIP_REVIEW_PAT` repo secret instead, exactly like automerge.yml
-# (LUL-558) -- see systems/ship-never-merges-review-count-gap. If that secret
-# is not configured, this fails closed rather than attempting an ungated
-# merge with zero reviews (which the ruleset refuses unconditionally anyway).
+# (LUL-558) -- see systems/ship-never-merges-review-count-gap. `bot-approve.yml`
+# cannot substitute here (unlike automerge.yml's LUL-912 fix): that workflow
+# also runs as `github-actions[bot]`, so it would be approving its own PR and
+# 422 the same way `github.token` does. There is no identity in this repo
+# other than `SHIP_REVIEW_PAT` that can approve a bot-authored PR (LUL-960).
 #
 # Failure modes:
 #   - No diff → exits 0, nothing committed (expected when nothing landed).
-#   - CI red → exits 1, PR stays open with green-CI pending next night.
-#   - SHIP_REVIEW_PAT missing/failing, or merge refused → same; PR stays open.
+#   - CI red/timeout, review-submit failure, or merge refused → exits 1; PR
+#     stays open with the problem visible in the run log, pending next night.
+#   - SHIP_REVIEW_PAT not configured → exits 0 (LUL-960). This is a known,
+#     standing condition, not a bug in this run, so it must not paint the
+#     schedule red every single night for the same unconfigured secret. The
+#     step posts a comment on the PR instead, naming exactly what's missing,
+#     so the PR is discoverable by anyone browsing open PRs rather than only
+#     by whoever reads that night's Actions log.
 #   The following night's run uses --since 2 days ago, so a missed day is
 #   always corrected on the next successful run.
 
@@ -286,15 +294,27 @@ jobs:
           # with no bypass actor. This PR is authored by github-actions[bot] under
           # github.token, so github.token approving it 422s unconditionally
           # ("Review Can not approve your own pull request") -- there is no repo
-          # setting that lifts GitHub's same-identity rule. Must run under
-          # SHIP_REVIEW_TOKEN (the studio PAT), never GH_TOKEN. Fail closed if the
-          # secret is missing rather than attempt a merge that the ruleset will
-          # refuse anyway with zero reviews. See LUL-558 /
-          # systems/ship-never-merges-review-count-gap and automerge.yml, which
-          # this mirrors.
+          # setting that lifts GitHub's same-identity rule, and bot-approve.yml
+          # can't stand in either -- it is the same identity as the PR author
+          # here (see the header comment). Must run under SHIP_REVIEW_TOKEN (the
+          # studio PAT), never GH_TOKEN.
+          #
+          # LUL-960: an unconfigured secret is a known, standing condition (it
+          # has never been configured on this repo), not a per-run anomaly --
+          # `exit 1` here used to red the schedule every night for the same
+          # unactionable reason, and that red is easy to stop reading (LUL-912
+          # documented the same silent-refusal shape on automerge.yml). Leave
+          # the PR open and go green, but say exactly why on the PR itself so
+          # it's found by anyone browsing open PRs, not only by whoever reads
+          # that night's Actions log.
           if [ -z "${SHIP_REVIEW_TOKEN:-}" ]; then
-            echo "::error::SHIP_REVIEW_PAT secret is not configured; refusing to auto-merge #$PR_NUMBER."
-            exit 1
+            echo "::warning::SHIP_REVIEW_PAT secret is not configured; PR #$PR_NUMBER needs a manual approving review and merge."
+            body="Auto-merge did not run: the \`SHIP_REVIEW_PAT\` repo secret is not configured, so there is no identity available to submit the required approving review on this bot-authored PR (\`github.token\` and \`bot-approve.yml\` both 422 on self-approval here — see LUL-960)."
+            body="$body"$'\n\n'"CI is green on \`$BRANCH\`. Diff is \`DAILY_REPORTS/*.md\` only."
+            body="$body"$'\n\n'"**This PR needs a human or the Code Reviewer to approve and merge it manually.** Tomorrow night's run covers a rolling 2-day window, so a missed merge isn't lost — but letting these stack up wastes the CI run each one already paid for."
+            gh pr comment "$PR_NUMBER" --body "$body"
+            echo "::notice::daily-report run complete: PR #$PR_NUMBER opened, CI green, left open pending manual review (SHIP_REVIEW_PAT not configured)"
+            exit 0
           fi
           if ! GH_TOKEN="$SHIP_REVIEW_TOKEN" gh pr review "$PR_NUMBER" --approve \
                --body "Auto-approved by daily-report workflow: CI passed on \`$BRANCH\`, diff is \`DAILY_REPORTS/*.md\` only (LUL-534)."; then
