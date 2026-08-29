@@ -13,7 +13,7 @@
 // Boot/enter/console-error helpers are shared with the other specs in
 // e2e/helpers.ts (LUL-35 pass 2) -- each file used to carry its own copy.
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { test, expect } from '@playwright/test';
 import {
   assertInViewport,
@@ -28,8 +28,9 @@ import {
 // revision string, so a future three.js bump doesn't need a manual edit here too.
 // (A hardcoded '128' is exactly what let this suite report a false green against a
 // stale server serving three 0.128.0 while the branch had already moved to 0.185.1
-// -- see wiki systems/three-r185-upgrade.)
-const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+// -- see wiki systems/three-r185-upgrade.) Playwright transpiles specs as CommonJS,
+// so this resolves the path via __dirname rather than import.meta.
+const pkgPath = path.join(__dirname, '../package.json');
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
 const expectedThreeRevision = String(pkg.dependencies.three).split('.')[1];
 
