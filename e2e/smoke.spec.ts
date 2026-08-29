@@ -12,6 +12,8 @@
 // is never actually heard; only AudioContext lifecycle (created/closed) is checked.
 // Boot/enter/console-error helpers are shared with the other specs in
 // e2e/helpers.ts (LUL-35 pass 2) -- each file used to carry its own copy.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { test, expect } from '@playwright/test';
 import {
   assertInViewport,
@@ -21,6 +23,15 @@ import {
   readObjective,
   trackConsoleErrors,
 } from './helpers';
+
+// LUL-975: read the pinned version out of package.json rather than hardcoding the
+// revision string, so a future three.js bump doesn't need a manual edit here too.
+// (A hardcoded '128' is exactly what let this suite report a false green against a
+// stale server serving three 0.128.0 while the branch had already moved to 0.185.1
+// -- see wiki systems/three-r185-upgrade.)
+const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+const expectedThreeRevision = String(pkg.dependencies.three).split('.')[1];
 
 test.describe('initial load', () => {
   test('title gate, engine API, two canvases, no console errors', async ({ page }) => {
@@ -44,7 +55,7 @@ test.describe('initial load', () => {
     }));
 
     expect(load.title).toBe('Lullwood');
-    expect(String(load.threeRevision)).toBe('128');
+    expect(String(load.threeRevision)).toBe(expectedThreeRevision);
     // Assert the contract (init/dispose are callable), not the exact key list --
     // an exact-equality check on Object.keys(ForestEngine) fails every time the
     // engine gains a key for an unrelated reason (it did when `threeRevision` was
