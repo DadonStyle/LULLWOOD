@@ -1,6 +1,13 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, GOOGLE_SITE_VERIFICATION } from "../lib/site";
+import {
+  SITE_URL,
+  SITE_NAME,
+  SITE_TITLE,
+  SITE_DESCRIPTION,
+  SITE_TAGLINE,
+  GOOGLE_SITE_VERIFICATION,
+} from "../lib/site";
 
 // LUL-529: two things this repo had zero of before.
 // - `viewportFit: 'cover'` is what makes every `env(safe-area-inset-*)` in
@@ -22,45 +29,93 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: SITE_NAME,
+  // `template` applies to every future route (the LUL-47 devlog especially) --
+  // a child page sets `title: "Devlog"` and gets "Devlog — Lullwood" for free.
+  title: {
+    default: SITE_TITLE,
+    template: `%s — ${SITE_NAME}`,
+  },
   description: SITE_DESCRIPTION,
-  keywords: ["horror game", "browser game", "first-person horror", "Three.js", "Lullwood"],
+  applicationName: SITE_NAME,
+  keywords: [
+    "horror game",
+    "browser game",
+    "free horror game",
+    "online horror game",
+    "first-person horror",
+    "no download game",
+    "WebGL game",
+    "Three.js",
+    "Lullwood",
+  ],
   authors: [{ name: SITE_NAME }],
+  creator: SITE_NAME,
+  publisher: SITE_NAME,
+  category: "games",
   alternates: {
     canonical: "/",
   },
   verification: {
     google: GOOGLE_SITE_VERIFICATION,
   },
+  // Without this block Google defaults to a *thumbnail-sized* image preview and
+  // a truncated snippet. `max-image-preview: large` is what allows the big
+  // card in search results, and it is opt-in -- absent, you silently get small.
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
   openGraph: {
     type: "website",
-    title: SITE_NAME,
-    description: SITE_DESCRIPTION,
+    title: SITE_TITLE,
+    // Social cards are read by people, not crawlers -- lead with the mood.
+    description: `${SITE_TAGLINE} A free first-person horror game you play in the browser.`,
     url: "/",
     siteName: SITE_NAME,
     locale: "en_US",
   },
   twitter: {
     card: "summary_large_image",
-    title: SITE_NAME,
-    description: SITE_DESCRIPTION,
+    title: SITE_TITLE,
+    description: `${SITE_TAGLINE} A free first-person horror game you play in the browser.`,
   },
 };
 
 const videoGameJsonLd = {
   "@context": "https://schema.org",
   "@type": "VideoGame",
+  "@id": `${SITE_URL}#game`,
   name: SITE_NAME,
   description: SITE_DESCRIPTION,
   url: SITE_URL,
-  genre: "Horror",
+  // `image` is what lets the entry qualify for an image-bearing rich result;
+  // without it the VideoGame node is text-only. Reuses the OG asset Next
+  // already generates from app/opengraph-image.png.
+  image: `${SITE_URL}/opengraph-image.png`,
+  screenshot: `${SITE_URL}/opengraph-image.png`,
+  genre: ["Horror", "Survival", "Adventure"],
   gamePlatform: "Web Browser",
   applicationCategory: "Game",
+  applicationSubCategory: "Horror Game",
   operatingSystem: "Any",
+  browserRequirements: "Requires a WebGL-capable browser",
+  playMode: "SinglePlayer",
+  inLanguage: "en",
+  isAccessibleForFree: true,
+  author: { "@type": "Organization", name: SITE_NAME, url: SITE_URL },
+  publisher: { "@type": "Organization", name: SITE_NAME, url: SITE_URL },
   offers: {
     "@type": "Offer",
     price: "0",
     priceCurrency: "USD",
+    availability: "https://schema.org/InStock",
   },
 };
 
