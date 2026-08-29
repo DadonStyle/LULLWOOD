@@ -176,19 +176,36 @@ jobs:
 
           [ship]"
 
-          # If a branch from a previous failed run exists, drop it so our push
-          # is a clean fast-forward from current release/next. Closing any leftover PR
-          # is intentional: we are about to open a fresh one with the new diff.
-          gh api -X DELETE "repos/$REPO/git/refs/heads/$BRANCH" 2>/dev/null || true
+          # A branch from a previous run tonight may still be here. Only drop
+          # its ref when there is no OPEN PR pointing at it -- deleting an
+          # open PR's branch ref auto-closes the PR. That used to run
+          # unconditionally on every retry, and is what turned repeated
+          # same-night failures into invisible closed PRs instead of one
+          # visible open one (the "closes its own PRs mid-run" defect named
+          # alongside the credential fix, LUL-960/969/4998). Report content is
+          # idempotent (wiki systems/daily-reports §7), so a same-night rerun
+          # has nothing new to add on top of an already-open PR -- reuse it
+          # instead of replacing it.
+          existing_pr="$(gh pr list --head "$BRANCH" --state open \
+                           --json number --jq '.[0].number // empty')"
+          if [ -n "$existing_pr" ]; then
+            echo "::notice::PR #$existing_pr already open for $BRANCH from earlier tonight; leaving its branch alone, nothing new to push"
+            # No new push happened, so there is no fresh CI run to wait for --
+            # point the poll step at the branch's existing run(s) by using a
+            # push_time far enough in the past to include them.
+            echo "push_time=1970-01-01T00:00:00Z" >> "$GITHUB_OUTPUT"
+          else
+            gh api -X DELETE "repos/$REPO/git/refs/heads/$BRANCH" 2>/dev/null || true
 
-          # Snapshot time just before the push so the poll step below can
-          # identify the right CI run by creation timestamp. The push itself
-          # authenticates via the checkout step's token (LUL-1049), not this
-          # step's GH_TOKEN -- GH_TOKEN here only covers the `gh api` calls in
-          # this step (the DELETE above).
-          echo "push_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+            # Snapshot time just before the push so the poll step below can
+            # identify the right CI run by creation timestamp. The push itself
+            # authenticates via the checkout step's token (LUL-1049), not this
+            # step's GH_TOKEN -- GH_TOKEN here only covers the `gh api` calls
+            # in this step.
+            echo "push_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
-          git push origin "HEAD:refs/heads/$BRANCH"
+            git push origin "HEAD:refs/heads/$BRANCH"
+          fi
 
       - name: open PR
         if: steps.diff.outputs.empty == 'false'
