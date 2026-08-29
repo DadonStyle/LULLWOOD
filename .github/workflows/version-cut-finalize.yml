@@ -40,6 +40,33 @@ jobs:
       github.repository == 'DadonStyle/LULLWOOD'
     runs-on: ubuntu-latest
     steps:
+      # LUL-1041: a squash-merged cut PR discards its second parent, so main
+      # stops being reachable as an ancestor of release/next and every
+      # subsequent cut opens with a docs/ELEMENTS.md conflict -- discovered
+      # only once the NEXT cut choked, days after the squash happened
+      # (LUL-962/LUL-978). This job already only fires for a merged cut PR
+      # (head==release/next, base==main), so it's the earliest point to catch
+      # a squash instead of a merge commit. Fail loudly here rather than
+      # silently tagging and syncing a broken ancestor edge forward.
+      - name: assert the cut commit has two parents
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          parents="$(gh api "repos/$REPO/commits/$SHA" --jq '.parents | length')"
+          echo "::notice::cut commit $SHA has $parents parent(s)."
+          if [ "$parents" -ne 2 ]; then
+            echo "::error::cut commit $SHA has $parents parent(s), expected 2 -- this PR was" \
+                 "squash-merged instead of merge-committed, discarding main as an ancestor of" \
+                 "release/next. Every subsequent cut will conflict until this is repaired the" \
+                 "same way LUL-1041 was: merge (not squash) main into release/next as a real" \
+                 "--no-ff commit with no [ship] marker, verify parent count, merge manually" \
+                 "with 'gh pr merge --merge'. See systems/release-train in the shared wiki."
+            exit 1
+          fi
+
       - name: tag the version
         id: tag
         env:
