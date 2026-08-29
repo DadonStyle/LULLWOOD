@@ -145,23 +145,8 @@ jobs:
               echo "::endgroup::"; continue
             fi
 
-            python3 - <<PY > body.json
-          import json
-          body = (
-              "Auto-approved as **Tier $tier** under the development-first directive "
-              "(AGENTS.md § Review tiers).\n\n"
-              "Every file in this diff classifies as Tier A or B via "
-              "\`scripts/pr-tier.mjs\`, and every status check required by "
-              "\`$base\`'s ruleset was verified SUCCESS on this PR's rollup before "
-              "this review was submitted.\n\n"
-              "Submitted by \`github-actions[bot]\`, a distinct identity from the "
-              "studio PAT, which cannot approve its own PRs. Tier C -- engine "
-              "simulation, persistence, secrets, CI and merge rules -- is unaffected "
-              "and still requires a blocking human review.\n\n"
-              "See \`.github/workflows/tier-approve.yml\`."
-          )
-          json.dump({"event": "APPROVE", "body": body}, open(1, "w", closefd=False))
-          PY
+            msg="Auto-approved as Tier $tier under the development-first directive (AGENTS.md, Review tiers). Every file in this diff classifies as Tier A or B via scripts/pr-tier.mjs, and every status check required by the $base ruleset was verified SUCCESS on this PR rollup before this review was submitted. Submitted by github-actions[bot], a distinct identity from the studio PAT, which cannot approve its own PRs. Tier C (engine simulation, persistence, secrets, CI and merge rules) is unaffected and still requires a blocking human review. See .github/workflows/tier-approve.yml"
+            jq -n --arg b "$msg" '{event:"APPROVE", body:$b}' > body.json
 
             gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input body.json \
               --jq '"approved PR '"$PR"' review \(.id) state=\(.state) by=\(.user.login)"' \
