@@ -76,6 +76,7 @@ import {
   CATCH_MARGIN,
   isCaught,
   isSniffImmune,
+  predatorSeparationPush,
   rollSniffs,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
@@ -1527,6 +1528,26 @@ function updatePredators(dt, noiseRadius){
     const tailWiggleAmp = telegraphing ? 1.6 : 1;
     p.tail.rotation.z = Math.sin(tt*tailWiggleHz + p.phase)*0.18*tailWiggleAmp;
     p.tail2.rotation.z = Math.sin(tt*tailWiggleHz + p.phase + 0.8)*0.22*tailWiggleAmp;
+  }
+
+  // LUL-394: predator-vs-predator separation, second pass -- run after every
+  // predator's own steering/movement above so this frame's positions are
+  // final before checking overlap between them. updateWolfPack() (top of
+  // this function) reads teammates' *state* for flank targeting, never
+  // position, so ordering this pass last cannot fight it. Same
+  // axis-separated "don't step into a blocked circle" guard the tree
+  // collision above uses, just against another predator's circle instead of
+  // a tree's.
+  for(const p of predators){
+    if(p.inert) continue;
+    const others = predators.filter(q => q !== p && !q.inert);
+    if(!others.length) continue;
+    const [pushX, pushZ] = predatorSeparationPush(p.x, p.z, p.rad, others);
+    if(!pushX && !pushZ) continue;
+    const nx = clamp(p.x + pushX, -half+2, half-2), nz = clamp(p.z + pushZ, -half+2, zMax-2);
+    if(!blockedR(nx, p.z, p.rad)) p.x = nx;
+    if(!blockedR(p.x, nz, p.rad)) p.z = nz;
+    p.g.position.x = p.x; p.g.position.z = p.z;
   }
 }
 // lock onto the player: stinger, roar, screen flash, and a rear-up alert beat
