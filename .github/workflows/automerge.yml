@@ -158,34 +158,25 @@ jobs:
             exit 0
           fi
 
-          # Release-train ancestor-repair PRs (title convention:
-          # "chore(release-train): ...", e.g. PR #222/#223/#225) exist ONLY to
-          # carry a real merge commit recording main as an ancestor of
-          # release/next after a cut was wrongly squashed. This job always
-          # squash-merges below -- correct for ordinary feature PRs, but for
-          # one of these it silently discards the exact parent edge the PR
-          # exists to create, reproducing the break it was meant to fix
-          # (LUL-962/LUL-978/LUL-1041, verified twice: PR #222 and #223 both
-          # squashed here despite being real `--no-ff` merges). Refuse and
-          # require a manual `gh pr merge --merge` instead.
-          pr_title="$(gh pr view "$number" --json title --jq '.title')"
-          if printf '%s' "$pr_title" | grep -qE '^chore\(release-train\):'; then
-            echo "::warning::#$number is a release-train repair PR; refusing to squash-merge even though it carries [ship]."
-            printf '%s\n' \
-              '<!-- RELEASE_TRAIN_NO_SQUASH -->' \
-              'This PR'"'"'s title matches the release-train repair convention' \
-              '(`chore(release-train): ...`), which means it exists to carry a real merge' \
-              'commit recording an ancestor edge between `main` and `release/next`.' \
-              'Squash-merging it would discard that parent edge and reproduce the exact' \
-              'break it fixes (LUL-962/LUL-978/LUL-1041). Not auto-merging.' \
-              '' \
-              'Merge manually with a real merge commit:' \
-              '' \
-              '```bash' \
-              "gh pr merge $number --merge" \
-              '```' > /tmp/release-train-no-squash.md
-            comment_once 'RELEASE_TRAIN_NO_SQUASH' /tmp/release-train-no-squash.md
-            exit 0
+          # Release-train ancestor-repair PRs (branch-name convention: any
+          # `lul-*` branch with a `-train-` segment, e.g. `lul-train-sync`,
+          # `lul-train-resolve`, `lul-1041-train-repair` -- PR #222/#223/#225)
+          # exist ONLY to carry a real merge commit recording main as an
+          # ancestor of release/next after a cut was wrongly squashed.
+          # Squashing one discards the exact parent edge it exists to create,
+          # reproducing the break it was meant to fix (LUL-962/LUL-978/
+          # LUL-1041, verified three times: #222, #223, and #225 were all
+          # real `--no-ff` merges and all three got squashed anyway -- #225 by
+          # auto-pr.yml's own native auto-merge arm before this job ever ran,
+          # so the matching guard also lives there). Branch name, not PR
+          # title -- auto-pr.yml derives the PR title from the head commit's
+          # subject line, which has no fixed convention and is exactly why a
+          # title-based version of this check (this job's first attempt)
+          # missed PR #225.
+          merge_method=squash
+          if printf '%s' "$BRANCH" | grep -qE '^lul-([0-9]+-)?train-'; then
+            merge_method=merge
+            echo "::notice::#$number ($BRANCH) is a release-train repair branch; will merge with --merge, not --squash (LUL-1041)."
           fi
 
           # `[ship]` skips the Code Reviewer, so it only covers diffs where a
@@ -304,7 +295,7 @@ jobs:
             fi
           fi
 
-          if gh pr merge "$number" --squash --delete-branch; then
+          if gh pr merge "$number" --"$merge_method" --delete-branch; then
             echo "::notice::merged #$number"
           else
             # Expected when the branch is behind main: the ruleset requires

@@ -188,6 +188,22 @@ jobs:
           # everything already on main. The regex below is unchanged and must
           # stay byte-identical to automerge.yml's -- only the input widens.
           messages="$(git log --no-merges FETCH_HEAD..HEAD --pretty=%B)"
+
+          # Release-train ancestor-repair branches (`lul-*-train-*`, e.g.
+          # `lul-train-sync`, `lul-1041-train-repair`) carry a real merge
+          # commit recording main as an ancestor of release/next. Both arm
+          # calls below default to --squash, which discards that parent edge
+          # -- this is the actual mechanism that broke PR #225 (LUL-1041):
+          # native auto-merge armed --squash here at PR-open time, before
+          # automerge.yml's own [ship]-gated squash call ever got a chance to
+          # run or matter. See automerge.yml for the matching guard, which
+          # this must stay in sync with (same branch-name pattern).
+          merge_method=squash
+          if printf '%s' "$BRANCH" | grep -qE '^lul-([0-9]+-)?train-'; then
+            merge_method=merge
+            echo "::notice::$BRANCH is a release-train repair branch; will arm auto-merge with --merge, not --squash (LUL-1041)."
+          fi
+
           if printf '%s\n' "$messages" | grep -qE '^[[:space:]]*\[ship\][[:space:]]*$'; then
 
             # ...but intent is not authority. `[ship]` merges on green alone,
@@ -248,7 +264,7 @@ jobs:
             elif ! GH_TOKEN="$SHIP_REVIEW_TOKEN" gh_retry gh pr review "$number" --approve \
                  --body "Auto-approved: \`[ship]\` + \`ship-allowed.sh\` passed for this exact head. Policy: LUL-558."; then
               echo "::warning::could not submit the required approving review on #$number; not arming auto-merge. automerge.yml will get its own shot after CI."
-            elif gh_retry gh pr merge "$number" --auto --squash --delete-branch; then
+            elif gh_retry gh pr merge "$number" --auto --"$merge_method" --delete-branch; then
               echo "::notice::auto-merge armed on #$number"
             else
               # "Allow auto-merge" may be off in repo settings; automerge.yml
@@ -313,7 +329,7 @@ jobs:
             # a human/Code Reviewer approval while required_approving_review_count > 0)
             # has actually landed.
             echo "::notice::no [ship] marker on #$number; arming auto-merge anyway (founder directive 2026-08-28) -- merges once required review + checks are satisfied, whenever that happens."
-            if gh_retry gh pr merge "$number" --auto --squash --delete-branch; then
+            if gh_retry gh pr merge "$number" --auto --"$merge_method" --delete-branch; then
               echo "::notice::auto-merge armed on #$number"
             else
               echo "::warning::could not arm auto-merge on #$number (already merged/closed, or the repo setting is off); leaving it for manual merge."
