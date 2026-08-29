@@ -1,0 +1,122 @@
+name: Cut merge
+
+# LUL-1041. The version-cut PR (release/next -> main, opened by
+# version-cut.yml) is the one merge on this repo that must NEVER be a
+# squash: a squash discards the second parent, so `main` and `release/next`
+# stop sharing an ancestor and every later cut opens with a spurious
+# conflict on anything both branches touched. Measured directly: cut PR #211
+# was squashed by hand (`gh pr merge --squash`) and broke the train (wiki
+# systems/release-train). Nothing before this workflow stopped an agent
+# reaching for the same generic squash command every other PR on this repo
+# merges with -- this exists so landing a cut is one command that cannot get
+# the merge method wrong, instead of a manual step that occasionally does.
+#
+# This still requires a human/reviewer judgement call before it runs -- the
+# cut PR needs a full-version Code Reviewer pass scoped to cross-PR
+# collisions (systems/release-train, playbooks/version-review), which is a
+# Paperclip-side verdict this workflow cannot produce. Record that verdict
+# as a GitHub review first (bot-approve.yml, same pattern LUL-797 already
+# uses), then dispatch this with the PR number. This workflow does not
+# submit the approval itself -- it only refuses to merge without one, and
+# refuses to merge anything that isn't shaped exactly like a cut PR.
+#
+# Deliberately narrow: refuses to run on any PR that is not exactly
+# base=main, head=release/next. This must never become a general-purpose
+# "merge with --merge" button -- the whole safety property comes from it
+# being usable for nothing else.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Cut PR number (must be base=main, head=release/next)
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    name: merge the cut PR with a real merge commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: verify shape, checks, and review, then merge with --merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+
+          base="$(gh api "repos/$REPO/pulls/$PR" --jq '.base.ref')"
+          head="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.ref')"
+          state="$(gh api "repos/$REPO/pulls/$PR" --jq '.state')"
+          if [ "$base" != "main" ] || [ "$head" != "release/next" ] || [ "$state" != "open" ]; then
+            echo "::error::PR #$PR is base=$base head=$head state=$state -- this workflow only merges the version-cut PR (open, base=main, head=release/next). Refusing."
+            exit 1
+          fi
+
+          # Same required-checks-by-name verification as bot-approve.yml --
+          # `isRequired` on the rollup is unreliable on this repo (measured
+          # null for every check on every PR, systems/ci-github-token-blind-spot),
+          # so match main's ruleset contexts against the rollup explicitly.
+          gh api "repos/$REPO/rules/branches/main" \
+            --jq '.[] | select(.type == "required_status_checks")
+                      | .parameters.required_status_checks[].context' | sort -u > required.txt
+          echo "checks required by main's ruleset:"; cat required.txt
+          if [ ! -s required.txt ]; then
+            echo "::error::main's ruleset declares no required status checks. Refusing to merge an unverified head."
+            exit 1
+          fi
+
+          gh pr view "$PR" --repo "$REPO" --json statusCheckRollup \
+            --jq '.statusCheckRollup[] | "\(.name // .context)\t\(.conclusion // .state)"' > rollup.tsv
+          echo "PR #$PR rollup:"; cat rollup.tsv
+
+          fail=0
+          while IFS= read -r ctx; do
+            state="$(awk -F'\t' -v c="$ctx" '$1 == c {print $2}' rollup.tsv | tail -1)"
+            echo "  required '$ctx' -> ${state:-<ABSENT>}"
+            if [ "$state" != "SUCCESS" ]; then
+              echo "::error::required check '$ctx' is ${state:-absent from the PR rollup} on PR #$PR."
+              fail=1
+            fi
+          done < required.txt
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Refusing to merge PR #$PR -- not every ruleset-required check is green."
+            exit 1
+          fi
+
+          approvals="$(gh api "repos/$REPO/pulls/$PR/reviews" --jq '[.[] | select(.state == "APPROVED")] | length')"
+          if [ "$approvals" -eq 0 ]; then
+            echo "::error::PR #$PR has no approving review. Record the version-review verdict with .github/workflows/bot-approve.yml first, then dispatch this workflow. LUL-1041."
+            exit 1
+          fi
+
+          # The whole point of this workflow: --merge, hardcoded, never
+          # --squash and never --rebase. Branch protection (strict on main)
+          # still adjudicates -- a stale head refuses here exactly as it
+          # would on any other merge attempt.
+          if ! gh pr merge "$PR" --repo "$REPO" --merge; then
+            echo "::error::merge of PR #$PR was refused -- most likely main moved under it (strict) or a required check regressed. Re-check and re-dispatch; do not fall back to --squash."
+            exit 1
+          fi
+
+          sha="$(gh api "repos/$REPO/pulls/$PR" --jq '.merge_commit_sha')"
+          echo "::notice::merged #$PR as $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: assert the merge actually has two parents
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          sha="$(gh api "repos/$REPO/pulls/$PR" --jq '.merge_commit_sha')"
+          node scripts/assert-two-parent-merge.mjs "$REPO" "$sha"
