@@ -2,12 +2,15 @@ name: Version cut finalize
 
 # The second half of LUL-497. Fires once the cut PR opened by version-cut.yml
 # actually merges (a merge commit into `main`, per LUL-492 §3.4 -- never
-# squash, so individual PR history survives). Two things happen:
+# squash, so individual PR history survives). Three things happen:
 #
-#   1. tag the merge commit `vYYYY.MM.DD-N`, parsed from the PR title
+#   1. assert the merge that just landed actually has two parents (LUL-1041
+#      -- see that step's own comment for why this has to come first).
+#   2. tag the merge commit `vYYYY.MM.DD-N`, parsed from the PR title
 #      version-cut.yml set, so tag and PR title stay in lockstep by
 #      construction.
-#   2. get everything `main` just gained back onto `release/next`.
+#   3. get everything `main` just gained back onto `release/next`, and arm
+#      that PR to merge itself with `--merge` (LUL-1041) once green.
 #
 # "Recreate release/next from main" (LUL-492 §3.5) is NOT implemented as a
 # reset or force-push. release/next carries the same `pull_request` and
@@ -21,6 +24,15 @@ name: Version cut finalize
 # already be ahead of what went into the cut. A reset would silently drop
 # that work. Instead this opens an ordinary PR (head=main, base=release/next)
 # through the same gate every other release/next change goes through.
+#
+# LUL-1041: squashing either direction of this train discards the second
+# parent, so `main` and `release/next` stop sharing an ancestor and every
+# later cut opens with spurious conflicts (measured twice: PR #222, #223,
+# and separately on the cut PR itself, PR #211 -- wiki systems/release-train).
+# Both directions are now enforced here to always use `--merge`: the
+# sync-back PR self-merges with `--merge` below, and the cut-PR-side landing
+# is checked (not enforced -- that merge is still a human/reviewer call,
+# Tier C) by the two-parent assertion as the very first step.
 
 on:
   pull_request:
@@ -40,30 +52,41 @@ jobs:
       github.repository == 'DadonStyle/LULLWOOD'
     runs-on: ubuntu-latest
     steps:
-      # LUL-1041: a squash-merged cut PR discards its second parent, so main
-      # stops being reachable as an ancestor of release/next and every
-      # subsequent cut opens with a docs/ELEMENTS.md conflict -- discovered
-      # only once the NEXT cut choked, days after the squash happened
-      # (LUL-962/LUL-978). This job already only fires for a merged cut PR
-      # (head==release/next, base==main), so it's the earliest point to catch
-      # a squash instead of a merge commit. Fail loudly here rather than
-      # silently tagging and syncing a broken ancestor edge forward.
-      - name: assert the cut commit has two parents
+      # LUL-1041: a squash discards the second parent, which is exactly what
+      # broke this train twice (PR #222, #223 -- wiki systems/release-train).
+      # Check this BEFORE tagging: tagging a squashed commit as a version
+      # would make the bad merge look like a normal, successful cut. A
+      # one-parent result here means someone merged the cut PR with
+      # `--squash` instead of `--merge` -- fail loud, do not tag, do not
+      # open the sync-back PR (it would only hit the same conflict LUL-1041
+      # is about).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: assert the cut landed as a real merge commit, not a squash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          parents="$(gh api "repos/$REPO/commits/$SHA" --jq '.parents | length')"
-          echo "::notice::cut commit $SHA has $parents parent(s)."
-          if [ "$parents" -ne 2 ]; then
-            echo "::error::cut commit $SHA has $parents parent(s), expected 2 -- this PR was" \
-                 "squash-merged instead of merge-committed, discarding main as an ancestor of" \
-                 "release/next. Every subsequent cut will conflict until this is repaired the" \
-                 "same way LUL-1041 was: merge (not squash) main into release/next as a real" \
-                 "--no-ff commit with no [ship] marker, verify parent count, merge manually" \
-                 "with 'gh pr merge --merge'. See systems/release-train in the shared wiki."
+          if ! node scripts/assert-two-parent-merge.mjs "$REPO" "$SHA"; then
+            printf '%s\n' \
+              '<!-- CUT_MERGE_NOT_A_MERGE_COMMIT -->' \
+              "This cut landed on \`main\` as \`$SHA\`, but that commit does not have two" \
+              'parents -- it was squashed (or fast-forwarded) instead of merged with' \
+              '`--merge`. That silently breaks the shared ancestor between `main` and' \
+              '`release/next`: the next cut PR will open with spurious conflicts on' \
+              'anything both branches touched. LUL-1041.' \
+              '' \
+              'This run is NOT tagging a version and NOT opening the release/next' \
+              'sync-back PR for that reason -- both would just compound the problem.' \
+              '' \
+              'Fix: re-do this cut with a real merge commit (`gh pr merge <n> --merge`),' \
+              'never `--squash`, on the `release/next` -> `main` direction.' > /tmp/cut-not-merge.md
+            gh pr comment "$PR" --repo "$REPO" --body-file /tmp/cut-not-merge.md
             exit 1
           fi
 
@@ -92,6 +115,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: open the release/next sync-back PR
+        id: sync_pr
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -102,6 +126,7 @@ jobs:
           number="$(gh pr list --repo "$REPO" --state open --base release/next --head main --json number --jq '.[0].number // empty')"
           if [ -n "$number" ]; then
             echo "::notice::sync-back PR #$number already open; not opening a duplicate."
+            echo "number=$number" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -115,10 +140,60 @@ jobs:
             'still requires a green run and one approval same as any other PR' \
             '(systems/release-train). Merge with a normal merge commit.' \
             '' \
-            'Opened automatically by `.github/workflows/version-cut-finalize.yml`.' \
+            'Opened automatically by `.github/workflows/version-cut-finalize.yml`,' \
+            'which also arms it to auto-merge itself with `--merge` (never `--squash`)' \
+            'once its required check is green -- see the next step below and LUL-1041.' \
             > /tmp/sync-pr-body.md
 
           gh pr create --repo "$REPO" \
             --base release/next --head main \
             --title "Sync release/next after $TAG" \
             --body-file /tmp/sync-pr-body.md
+
+          number="$(gh pr list --repo "$REPO" --state open --base release/next --head main --json number --jq '.[0].number')"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      # LUL-1041: this PR is exactly the other direction of the same bug --
+      # PR #222/#223 were hand-rolled attempts at this same sync that got
+      # routed through the generic `lul-*` ship-squash pipeline
+      # (automerge.yml) and squashed, discarding main's parent. Arming
+      # auto-merge here, forced to `--merge`, means this specific PR (always
+      # base=release/next, head=main, opened by this workflow) never again
+      # needs a human -- or a workaround branch -- to land it correctly.
+      #
+      # github-actions[bot] authored this PR (gh pr create above ran under
+      # GH_TOKEN), so it cannot approve its own PR (422) -- same constraint
+      # automerge.yml documents. SHIP_REVIEW_PAT is the distinct identity
+      # that can. Content here is mechanical (everything already passed
+      # version-cut review), so approving it programmatically is the same
+      # judgement call daily-report.yml already makes for its own
+      # docs-only auto-merge.
+      - name: approve and arm auto-merge on the sync-back PR (forced --merge)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.sync_pr.outputs.number }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SHIP_REVIEW_TOKEN:-}" ]; then
+            echo "::warning::SHIP_REVIEW_PAT secret is not configured; sync-back PR #$NUMBER stays open for a human to review and merge with --merge (never --squash). LUL-558/LUL-1041."
+            exit 0
+          fi
+
+          existing="$(gh api "repos/$REPO/pulls/$NUMBER/reviews" --jq '[.[] | select(.state == "APPROVED")] | length')"
+          if [ "$existing" -eq 0 ]; then
+            GH_TOKEN="$SHIP_REVIEW_TOKEN" gh pr review "$NUMBER" --approve \
+              --body "Auto-approved: mechanical sync-back after the $TAG version cut, nothing new to re-litigate (LUL-1041)." \
+              --repo "$REPO"
+          fi
+
+          # `--auto` arms native auto-merge and lets branch protection's own
+          # required-check wait happen server-side; `--merge` is the whole
+          # point of this step -- squash is never an option here, unlike the
+          # generic `[ship]` path this deliberately does not reuse.
+          if ! gh pr merge "$NUMBER" --repo "$REPO" --merge --auto; then
+            echo "::warning::could not arm auto-merge (--merge) on sync-back PR #$NUMBER; it stays open. Merge it by hand with --merge, never --squash. LUL-1041."
+          fi
