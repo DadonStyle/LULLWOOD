@@ -4,6 +4,7 @@ import {
   stepVeilCharge,
   veilDetectMul,
   veilFogDensity,
+  veilMaxHoldForTier,
   VEIL_MAX_HOLD,
   VEIL_REGEN_MUL,
   VEIL_UNLOCK_CHARGE,
@@ -124,4 +125,25 @@ test('veilFogDensity ramps from whatever fogBase the player last set, not a hard
   // ramps up to the full veil density, not back down past their own setting
   assert.equal(veilFogDensity(0.11, 0.34, 1), 0.34);
   assert.equal(veilFogDensity(0.11, 0.34, 0), 0.11);
+});
+
+// ---- LUL-1043: Deeper Lungs tiers -----------------------------------------
+
+test('veilMaxHoldForTier: tier 0 is the untouched VEIL_MAX_HOLD, tiers 1-3 extend it to 6/7/8', () => {
+  assert.equal(veilMaxHoldForTier(0), VEIL_MAX_HOLD);
+  assert.equal(veilMaxHoldForTier(1), 6);
+  assert.equal(veilMaxHoldForTier(2), 7);
+  assert.equal(veilMaxHoldForTier(3), 8);
+});
+
+test('veilMaxHoldForTier clamps out-of-range tiers instead of returning undefined', () => {
+  assert.equal(veilMaxHoldForTier(-1), VEIL_MAX_HOLD);
+  assert.equal(veilMaxHoldForTier(99), 8);
+});
+
+test('stepVeilCharge at a higher maxHold drains slower than the tier-0 default', () => {
+  const s0: VeilChargeState = { charge: 1, locked: false };
+  const tier0 = stepVeilCharge(s0, true, 1, veilMaxHoldForTier(0));
+  const tier3 = stepVeilCharge(s0, true, 1, veilMaxHoldForTier(3));
+  assert.ok(tier3.charge > tier0.charge, 'Deeper Lungs III must drain slower than an unupgraded veil');
 });

@@ -32,18 +32,31 @@ export const VEIL_DETECT_MUL = 0.35;
 
 /** Advances the charge/lock state machine by one frame and decides whether
  * the veil is actually allowed to be active -- `held` alone isn't enough,
- * a locked-out or empty veil ignores the held key entirely. */
-export function stepVeilCharge(state: VeilChargeState, held: boolean, dt: number): VeilChargeState & { active: boolean } {
+ * a locked-out or empty veil ignores the held key entirely. `maxHold`
+ * defaults to VEIL_MAX_HOLD so every existing call site (and this file's own
+ * tests) is unaffected -- LUL-1043's Deeper Lungs sink is the only caller
+ * that ever passes a different value, via veilMaxHoldForTier() below. */
+export function stepVeilCharge(state: VeilChargeState, held: boolean, dt: number, maxHold: number = VEIL_MAX_HOLD): VeilChargeState & { active: boolean } {
   let { charge, locked } = state;
   if (locked && charge >= VEIL_UNLOCK_CHARGE) locked = false;
   const active = held && !locked && charge > 0;
   if (active) {
-    charge = Math.max(0, charge - dt / VEIL_MAX_HOLD);
+    charge = Math.max(0, charge - dt / maxHold);
     if (charge <= 0) locked = true;
   } else {
-    charge = Math.min(1, charge + (dt / VEIL_MAX_HOLD) * VEIL_REGEN_MUL);
+    charge = Math.min(1, charge + (dt / maxHold) * VEIL_REGEN_MUL);
   }
   return { charge, locked, active };
+}
+
+// LUL-1043: Deeper Lungs (wiki game/economy/embers) extends the hold window
+// across three purchased tiers -- tier 0 is the untouched VEIL_MAX_HOLD (5s).
+// Tier itself is owned by the engine's persisted embers state
+// (engine/forest-engine.js), not this module -- this is only the lookup.
+const VEIL_MAX_HOLD_BY_TIER = [VEIL_MAX_HOLD, 6, 7, 8];
+export function veilMaxHoldForTier(tier: number): number {
+  const i = Math.max(0, Math.min(VEIL_MAX_HOLD_BY_TIER.length - 1, Math.trunc(tier)));
+  return VEIL_MAX_HOLD_BY_TIER[i];
 }
 
 /** `veilAmount` is the eased 0..1 ramp the engine drives off the veil's

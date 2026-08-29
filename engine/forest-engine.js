@@ -85,7 +85,8 @@ import {
   stepSniffLoop,
   tickTimers,
 } from '@/lib/game/predator';
-import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
+import { stepVeilCharge, veilDetectMul, veilFogDensity, veilMaxHoldForTier } from '@/lib/game/veil';
+import { winPayout, deathPayout, deeperLungsCost } from '@/lib/game/economy';
 import {
   inLakeWater,
   inLakeClearance,
@@ -1543,7 +1544,12 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
-    jumping = false, jumpElapsed = 0, jumpPressed = false;   // LUL-213: see beginJump() / tick()'s jumpY
+    jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
+    // LUL-1043: how far out the player dared this run -- the `depth` Embers
+    // term. Must be tracked separately from `dist` (tick()'s movement block),
+    // which is path length, not displacement. Reset in enter(), which
+    // restart() always calls at its end, so a fresh run always starts at 0.
+    maxDistFromHome = 0;
 // LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
 // engine's own mutable locals (lib/game/outcome.ts is pure and holds no
 // state of its own) -- this snapshots them into the RunState shape the
@@ -1996,6 +2002,43 @@ function boom(when){
 // `statusHiding` went the same way: it was only ever assigned `statusVisible`,
 // so React derives the class from that instead of carrying two names for one
 // fact.
+// LUL-1043: Embers -- the bank-or-lose run currency (wiki game/economy/embers,
+// decisions/embers-accepted-2026-08-29). Balance and the Deeper Lungs tier are
+// engine state, not React state: the payout that fills the balance happens
+// inside arriveHome()/triggerDeath() below, and the tier directly changes
+// this run's veilMaxHoldForTier() input in tick() -- keeping both here avoids
+// a React-round-trip on every win/death just to feed a number the engine
+// itself just computed. Read once per init() the same way `currentSeed`
+// reads CONFIG.seed; persisted the same guarded way as components/Hud.tsx's
+// (former) lullwood:bestTimeSeconds and SettingsPanel.tsx's lullwood:settings
+// -- typeof window guard, try/catch around the actual calls. One store, per
+// the ticket ("do not invent a new store").
+const EMBERS_KEY = 'lullwood:embers';
+function loadEmbers(){
+  const fallback = { balance: 0, tiers: { deeperLungs: 0 } };
+  if(typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(EMBERS_KEY);
+    if(!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    const balance = Number.isFinite(parsed && parsed.balance) ? parsed.balance : 0;
+    const deeperLungs = Number.isFinite(parsed && parsed.tiers && parsed.tiers.deeperLungs) ? parsed.tiers.deeperLungs : 0;
+    return { balance, tiers: { deeperLungs } };
+  } catch {
+    return fallback;
+  }
+}
+function saveEmbers(){
+  if(typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(EMBERS_KEY, JSON.stringify({ balance: embersBalance, tiers: { deeperLungs: deeperLungsTier } }));
+  } catch {
+    // private mode / quota exceeded -- balance still applies this session, just won't persist
+  }
+}
+const initialEmbers = loadEmbers();
+let embersBalance = initialEmbers.balance, deeperLungsTier = initialEmbers.tiers.deeperLungs;
+
 let hudState = {
   entered: false,
   objectiveVisible: false, objectiveText: '', objectiveReady: false,
@@ -2013,6 +2056,9 @@ let hudState = {
   // and persists it to localStorage (see components/Hud.tsx).
   difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
+  // LUL-1043: embersPayout is the last completed run's breakdown, for the
+  // win/death screen -- null before the first run ends this session.
+  embersBalance, deeperLungsTier, embersPayout: null,
 };
 function pushState(patch){
   let changed = false;
@@ -2068,6 +2114,7 @@ function setPaused(p){
 function enter(){
   entered = true;
   enteredAt = clock.elapsedTime;
+  maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth term
   pushState({ entered: true });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
@@ -2662,8 +2709,13 @@ function arriveHome(){
   // of the win screen forever -- clear it the same way placePredators() does
   // on restart.
   activeCharges = 0;
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
+  // LUL-1043: payout happens exactly once, right here -- the only call site
+  // that flips won -- so there's no way to bank twice off one arrival.
+  const payout = winPayout(maxDistFromHome, survivedSeconds);
+  embersBalance += payout.total;
+  saveEmbers();
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds, embersPayout: payout, embersBalance });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embersBalance });
 }
 function triggerDeath(kind){
   const next = outcomeTriggerDeath(runState());
@@ -2672,8 +2724,15 @@ function triggerDeath(kind){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
-  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds });
-  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
+  // LUL-1043: a death never banks carried/home -- see deathPayout() in
+  // lib/game/economy.ts. Guarded by the `next.dead === dead` early-return
+  // above, same as the rest of this function, so a rejected death call can't
+  // double-pay either.
+  const payout = deathPayout(maxDistFromHome, survivedSeconds);
+  embersBalance += payout.total;
+  saveEmbers();
+  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds, embersPayout: payout, embersBalance });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embersBalance });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -2739,6 +2798,21 @@ function setRunMode(m){
   if(m !== 'hold' && m !== 'toggle') return;
   runMode = m; toggleRunOn = false;
   pushState({ runMode: m });
+}
+// LUL-1043: Deeper Lungs, the one Embers sink in the cheap version -- see
+// lib/game/economy.ts. Re-validated here (not trusted from the caller)
+// exactly like setDifficulty validates `d` against DIFFICULTY_PRESETS: the
+// spend screen (components/EmbersPanel.tsx) only ever offers the next tier at
+// its real cost, but a stale click (double-tap, or a tab left open across a
+// balance-changing run in another tab) must not buy a tier the balance can't
+// actually cover.
+function buyDeeperLungs(){
+  const cost = deeperLungsCost(deeperLungsTier);
+  if(cost == null || embersBalance < cost) return;
+  embersBalance -= cost;
+  deeperLungsTier += 1;
+  saveEmbers();
+  pushState({ embersBalance, deeperLungsTier });
 }
 function setSensitivity(v){ sensMul = clamp(v, 0.25, 3); pushState({ sensitivity: sensMul }); }
 function setInvertY(v){ invertY = !!v; pushState({ invertY }); }
@@ -2900,7 +2974,11 @@ function tick(){
   // the pause menu is open (which stops updating `keys` mid-hold) can't strand
   // the veil active.
   const veilHeld = playing && (!!keys['KeyF'] || touchVeil);
-  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt);
+  // LUL-1043: Deeper Lungs extends the hold window per the purchased tier --
+  // see veilMaxHoldForTier() in lib/game/veil.ts. Tier 0 (no purchase) passes
+  // VEIL_MAX_HOLD through unchanged, so an unupgraded veil behaves exactly as
+  // it did before this ticket.
+  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt, veilMaxHoldForTier(deeperLungsTier));
   veilCharge = veilStep.charge; veilLocked = veilStep.locked;
   const dimmed = veilStep.active;
   if(dimmed !== lightDimmed){
@@ -3103,6 +3181,11 @@ function tick(){
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
   canPickup = canPickUp(runState(), distBaby, 3.6);
   const distHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);   // LUL-38
+  // LUL-1043: `depth` Embers term -- how far out the player dared, tracked as
+  // a running max rather than reused from `dist` above (path length, not
+  // displacement). Gated on `playing` so the ~11.3s pickup cinematic and a
+  // paused game can't grow it.
+  if(playing) maxDistFromHome = Math.max(maxDistFromHome, distHome);
   if(playing){
     let statusVisible = false, statusText = '';
     if(hidden){
@@ -3315,7 +3398,8 @@ tick();
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchInteract,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun,
-           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions };
+           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
+           buyDeeperLungs };
 }
 
 function dispose() {

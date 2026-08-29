@@ -5,8 +5,10 @@ import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
 import OrientationGate from './OrientationGate';
 import SettingsPanel from './SettingsPanel';
+import EmbersPanel from './EmbersPanel';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
+import type { EmbersPayout } from '@/lib/game/economy';
 
 // LUL-124: fullscreen toggle. `document.fullscreenEnabled` is false on
 // browsers that never expose the API (older iOS Safari) so the button is
@@ -91,6 +93,14 @@ export interface EngineHudState {
   captionsOn: boolean;
   caption: string | null;
   captionId: number;
+  // LUL-1043: Embers -- the bank-or-lose run currency (wiki game/economy/embers).
+  // Engine-owned like difficulty/runMode above: the payout is computed and the
+  // balance mutated inside arriveHome()/triggerDeath() (engine/forest-engine.js),
+  // not here. embersPayout is the breakdown for the run that just ended --
+  // null until the first win/death this session.
+  embersBalance: number;
+  deeperLungsTier: number;
+  embersPayout: EmbersPayout | null;
 }
 
 export interface EngineActions {
@@ -120,6 +130,8 @@ export interface EngineActions {
   setInvertY: (v: boolean) => void;
   setReducedMotion: (v: boolean) => void;
   setCaptions: (v: boolean) => void;
+  // LUL-1043: the one Embers spend action in this cheap version.
+  buyDeeperLungs: () => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -157,6 +169,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   captionsOn: false,
   caption: null,
   captionId: 0,
+  embersBalance: 0,
+  deeperLungsTier: 0,
+  embersPayout: null,
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -169,64 +184,6 @@ const formatDuration = (totalSeconds: number) => {
   const m = Math.floor(s / 60);
   return `${m}:${(s % 60).toString().padStart(2, '0')}`;
 };
-
-// LUL-84: personal-best time survived, local only (no backend, no M4 telemetry).
-// Guarded the same way as the rest of the project's client-only state (see
-// useFullscreen above / LUL-26's panel persistence) -- `typeof window` first,
-// then a try/catch around the actual localStorage calls so private-mode/quota
-// rejections degrade to "no best to compare against" instead of a crash.
-const BEST_TIME_KEY = 'lullwood:bestTimeSeconds';
-
-function readBestTime(): number | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(BEST_TIME_KEY);
-    const n = raw == null ? NaN : Number(raw);
-    return Number.isFinite(n) ? n : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeBestTime(seconds: number) {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(BEST_TIME_KEY, String(seconds));
-  } catch {
-    // private mode / quota exceeded -- this run's time still renders, it just won't persist
-  }
-}
-
-// Reacts to the `ended` flip (false -> true) exactly once per run, not on
-// every re-render, even though winVisible/deathVisible stay true for the rest
-// of the screen's lifetime. `best`/`isNewBest` are adjusted synchronously
-// during render (the React-documented "adjusting state when a prop changes"
-// pattern: https://react.dev/learn/you-might-not-need-an-effect) instead of
-// from a useEffect, because setting state from inside an effect body triggers
-// an extra cascading render for no benefit here. The actual localStorage
-// write is the one genuine side effect, so that alone stays in a useEffect.
-function useRunRecap(ended: boolean, survivedSeconds: number) {
-  const [wasEnded, setWasEnded] = useState(ended);
-  const [best, setBest] = useState<number | null>(() => readBestTime());
-  const [isNewBest, setIsNewBest] = useState(false);
-
-  if (ended !== wasEnded) {
-    setWasEnded(ended);
-    if (ended) {
-      const beat = best == null || survivedSeconds > best;
-      setIsNewBest(beat);
-      if (beat) setBest(survivedSeconds);
-    } else {
-      setIsNewBest(false);
-    }
-  }
-
-  useEffect(() => {
-    if (isNewBest && best != null) writeBestTime(best);
-  }, [isNewBest, best]);
-
-  return { best, isNewBest };
-}
 
 // LUL-26: captions are the only channel carrying predator warnings for a deaf/
 // HoH player (every game sound is synthesized WebAudio, no other track exists),
@@ -264,19 +221,35 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
   return visible;
 }
 
-function RunRecap({ survivedSeconds, best, isNewBest }: { survivedSeconds: number; best: number | null; isNewBest: boolean }) {
+// LUL-1043: replaces the old best-time recap (deleted along with useRunRecap
+// -- see decisions/embers-accepted-2026-08-29 for why a persisted score that
+// counted deaths and rewarded stalling had to go in the same PR as the
+// currency that supersedes it). `payout` is null only on the very first
+// render before any run has ended this session.
+function RunRecap({
+  survivedSeconds,
+  payout,
+  balance,
+}: {
+  survivedSeconds: number;
+  payout: EmbersPayout | null;
+  balance: number;
+}) {
   return (
-    <p id="runRecap">
-      time survived: {formatDuration(survivedSeconds)}
-      {isNewBest ? (
-        <>
-          {' '}
-          — <span className="newBest">new best!</span>
-        </>
-      ) : best != null ? (
-        <> · best: {formatDuration(best)}</>
-      ) : null}
-    </p>
+    <div id="runRecap">
+      <p>time survived: {formatDuration(survivedSeconds)}</p>
+      {payout && (
+        <p id="embersPayout">
+          +{payout.total} embers
+          <span className="embersBreakdown">
+            {payout.carried > 0 && ` · carried ${payout.carried}`}
+            {payout.home > 0 && ` · home ${payout.home}`}
+            {` · depth ${payout.depth} · survival ${payout.survival}`}
+          </span>
+        </p>
+      )}
+      <p id="embersBalanceLine">embers: {balance}</p>
+    </div>
   );
 }
 
@@ -288,13 +261,17 @@ export default function Hud({
   actions: EngineActions | null;
 }) {
   const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
-  const { best: bestTime, isNewBest } = useRunRecap(state.winVisible || state.deathVisible, state.survivedSeconds);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
   const mobile = useState(() => isMobile())[0];
   // LUL-26: difficulty + accessibility settings panel.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // LUL-1043: the Embers spend screen, opened from the gate -- see the
+  // `#gate` block below. Deliberately a separate dialog from Settings: the
+  // fire-ring purchase decision belongs to the run-start moment, not general
+  // accessibility/difficulty config.
+  const [embersOpen, setEmbersOpen] = useState(false);
   const captionVisible = useCaptionToast(state.captionsOn, state.captionId);
 
   return (
@@ -364,6 +341,7 @@ export default function Hud({
       </div>
 
       <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <EmbersPanel state={state} actions={actions} open={embersOpen} onClose={() => setEmbersOpen(false)} />
 
       {/* LUL-26: closed captions for predator calls -- the only warning
           channel for a player who can't hear the (fully synthesized) audio.
@@ -416,6 +394,20 @@ export default function Hud({
               </>
             )}
           </div>
+          {/* LUL-1043: the spend screen lives at the gate, not mid-run --
+              "you cannot bank early and you cannot bank partially" applies to
+              the whole loop, not just the fire ring itself. stopPropagation
+              is required: #gate's own onClick above is what starts the run,
+              and this button sits inside it. */}
+          <button
+            id="embersBtn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEmbersOpen(true);
+            }}
+          >
+            Embers: {state.embersBalance} — Upgrades
+          </button>
         </div>
       )}
 
@@ -437,6 +429,13 @@ export default function Hud({
           {state.statusText}
         </div>
       )}
+
+      {/* LUL-1043: always-visible running balance, deliberately its own
+          top-level element rather than living in #panel -- #panel is the
+          dev/tuning HUD and is hidden by default (LUL-650's admin-mode
+          gate), which would have made the balance invisible to a normal
+          player the rest of the time. */}
+      {state.entered && <div id="embersHud">Embers: {state.embersBalance}</div>}
 
       {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
           forces React to remount this element on every fresh charge (not on
@@ -474,7 +473,7 @@ export default function Hud({
         <div id="winScreen" style={{ display: 'flex' }}>
           <h1>YOU WON</h1>
           <p>the child is safe — you carried them home through the Lullwood</p>
-          <RunRecap survivedSeconds={state.survivedSeconds} best={bestTime} isNewBest={isNewBest} />
+          <RunRecap survivedSeconds={state.survivedSeconds} payout={state.embersPayout} balance={state.embersBalance} />
           <button className="restartBtn" onClick={() => actions?.restart()}>
             Play again
           </button>
@@ -488,7 +487,7 @@ export default function Hud({
             <p>
               a <span id="deathKind">{state.deathKind}</span> caught you in the dark
             </p>
-            <RunRecap survivedSeconds={state.survivedSeconds} best={bestTime} isNewBest={isNewBest} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.embersPayout} balance={state.embersBalance} />
             <button className="restartBtn" onClick={() => actions?.restart()}>
               Try again
             </button>

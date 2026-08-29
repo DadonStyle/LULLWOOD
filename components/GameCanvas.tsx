@@ -41,6 +41,14 @@ const OVERLAY_STYLE = `
   #gateKeys { margin-top: 18px; font-size: 12px; line-height: 2; color: #7f92ad;
     letter-spacing: 0.03em; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
+  /* LUL-1043: the gate's Embers/Upgrades button -- opens EmbersPanel.tsx.
+     cursor: pointer is inherited from #gate itself; stated explicitly here
+     too since this button's own onClick stops the click from bubbling into
+     #gate's enter() handler, unlike everything else inside the gate. */
+  #embersBtn { margin-top: 14px; font: inherit; font-size: 13px; letter-spacing: 0.05em;
+    color: #ffdca8; cursor: pointer; background: rgba(255,220,168,0.10);
+    border: 1px solid rgba(255,220,168,0.3); border-radius: 999px; padding: 8px 18px; }
+  #embersBtn:hover { background: rgba(255,220,168,0.18); }
 
   #hint { position: fixed; top: 20px; left: 0; right: 0; z-index: 1; text-align: center;
     font-size: 12px; letter-spacing: 0.05em; color: #9fb2cd; pointer-events: none;
@@ -50,6 +58,19 @@ const OVERLAY_STYLE = `
     width: 160px; height: 160px; border-radius: 10px;
     border: 1px solid rgba(150,175,215,0.18); background: rgba(10,14,21,0.5);
     box-shadow: 0 6px 24px rgba(0,0,0,0.4); }
+
+  /* LUL-1043: always-visible Embers balance during a run. Sits just below
+     where #minimap would be (top:16 + 160px + 8px gap) rather than sharing
+     its spot, so the two never overlap on the rare admin-mode session where
+     the minimap is also visible -- see the admin-mode gate further down.
+     env(safe-area-inset-*) matches the pattern MobileControls.tsx already
+     uses (resolves to 0 on a desktop/unnotched browser, so this is one rule
+     for both platforms, not a mobile-only override). */
+  #embersHud { position: fixed; top: calc(184px + env(safe-area-inset-top)); right: calc(16px + env(safe-area-inset-right));
+    z-index: 10; padding: 6px 12px; border-radius: 999px; white-space: nowrap;
+    background: rgba(12,17,26,0.6); border: 1px solid rgba(150,175,215,0.16);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: 12px; letter-spacing: 0.04em; color: #ffdca8; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
 
   #panel { position: fixed; left: 16px; bottom: 16px; z-index: 10;
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
@@ -94,6 +115,11 @@ const OVERLAY_STYLE = `
     #gateTitle { font-size: 32px; }
     #gateSub { font-size: 13px; }
     #gateKeys { font-size: 13px; line-height: 2.1; }
+    /* LUL-1043: same 44px touch-target rationale as #panel button/.restartBtn
+       above -- the gate's Embers button and the spend screen's Buy button are
+       both a tap a mobile player must be able to hit reliably. */
+    #embersBtn { padding: 13px 20px; font-size: 14px; }
+    .embersBuyBtn { padding: 13px 18px; font-size: 15px; }
     /* Minimap stays legible at the same physical size rather than shrinking
        further -- on a ~390px-wide phone it's already a larger fraction of
        the screen than on desktop, which is the point (small map = useless
@@ -148,6 +174,33 @@ const OVERLAY_STYLE = `
   #settingsPanel input[type="checkbox"], #settingsPanel input[type="radio"] { accent-color: #7fa6dd; cursor: pointer; }
   #settingsPanel :focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
 
+  /* LUL-1043: the Embers spend screen -- same modal shape as #settingsPanel
+     above (full-viewport dim via the 9999px box-shadow trick, 100dvh-aware
+     max-height), deliberately a separate element so opening one never
+     affects the other's open/closed state. */
+  #embersPanel { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 40;
+    width: min(380px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto;
+    max-height: calc(100dvh - 48px);
+    padding: 20px 22px; border-radius: 14px;
+    background: rgba(14,19,29,0.94); border: 1px solid rgba(150,175,215,0.22);
+    box-shadow: 0 0 0 9999px rgba(6,9,15,0.72), 0 20px 60px rgba(0,0,0,0.5);
+    font-size: 13px; color: #b9c8dd; }
+  #embersHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  #embersHeader h2 { margin: 0; font-size: 16px; font-weight: 500; letter-spacing: 0.06em; color: #ffdca8; }
+  #embersHeader button { font: inherit; font-size: 16px; color: #cdd9ea; cursor: pointer;
+    background: transparent; border: none; padding: 4px 8px; border-radius: 6px; }
+  #embersHeader button:hover { background: rgba(150,175,215,0.14); }
+  #embersPanel fieldset { border: 1px solid rgba(150,175,215,0.16); border-radius: 10px;
+    padding: 10px 14px 14px; margin: 0; }
+  #embersPanel legend { padding: 0 6px; font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #9fb2cd; }
+  #embersPanel p { margin: 4px 0 10px; color: #b9c8dd; }
+  .embersBuyBtn { font: inherit; font-size: 13px; letter-spacing: 0.05em; color: #2a1a10; cursor: pointer;
+    background: #f0c79a; border: none; border-radius: 8px; padding: 8px 16px; }
+  .embersBuyBtn:hover { background: #f6d3ac; }
+  .embersBuyBtn:disabled { background: rgba(150,175,215,0.16); color: rgba(185,200,221,0.5); cursor: not-allowed; }
+  #embersPanel :focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
+
   /* LUL-26: closed captions for predator calls -- every sound in this game is
      synthesized WebAudio with no other track, so this is the sole warning
      channel for a player who can't hear it. Sits above #status (bottom: 74px)
@@ -169,6 +222,8 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #objective,
   body[data-high-contrast="1"] #status,
   body[data-high-contrast="1"] #captionToast,
+  body[data-high-contrast="1"] #embersHud,
+  body[data-high-contrast="1"] #embersPanel,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
   body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
   body[data-high-contrast="1"] #status.hiding { color: #baffcf; border-color: #6fe89a; }
@@ -218,7 +273,11 @@ const OVERLAY_STYLE = `
   #winScreen h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
     color: #ffe6c8; text-shadow: 0 2px 44px rgba(255,190,130,0.5); }
   #winScreen p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
-  .newBest { color: #ffdca8; font-weight: 500; }
+  /* LUL-1043: payout breakdown + new balance on the win/death recap. */
+  #runRecap p { margin: 0 0 4px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
+  #embersPayout { color: #ffdca8; }
+  .embersBreakdown { color: #b98f88; font-size: 13px; }
+  #embersBalanceLine { opacity: 0.75; font-size: 13px; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px; }
   .restartBtn:hover { background: #f6d3ac; }
