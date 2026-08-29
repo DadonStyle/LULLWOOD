@@ -253,3 +253,45 @@ export function backOffPoint(
   const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
   return [clamp(x - ux * dist, -half + 4, half - 4), clamp(z - uz * dist, -half + 4, zMax - 4)];
 }
+
+// ---- LUL-394: predator-vs-predator separation -----------------------------
+// `updatePredators()` on main has never compared one predator's position to
+// another's for collision purposes, same-species or cross-species -- only
+// `blockedR()` against the static tree/landmark grid (see `avoidDir()`
+// above it). Nine predators on the map means two can end up fully
+// overlapping with nothing to steer them apart. `updateWolfPack()`'s flank
+// coordination reads teammates' *state* (who's chasing) for target
+// selection, never their position for collision -- this is new, unrelated
+// math, not a change to that.
+//
+// Deliberately NOT folded into `pickAvoidDirection()`'s steer-toward-a-goal-
+// heading shape (cover.ts): that function answers "is my desired heading
+// clear," which only matters *before* two circles are already overlapping.
+// This answers the opposite question -- "am I already overlapping someone,
+// and by how much" -- so it's a post-hoc positional correction, run once
+// per predator per frame after normal movement resolves this frame's
+// position, the same "detect penetration, push apart by half the overlap
+// each" shape most simple circle-circle collision resolution uses.
+export function predatorSeparationPush(
+  x: number,
+  z: number,
+  rad: number,
+  others: { x: number; z: number; rad: number }[],
+): [number, number] {
+  let px = 0, pz = 0;
+  for (const o of others) {
+    const dx = x - o.x, dz = z - o.z;
+    const dist = Math.hypot(dx, dz);
+    const minDist = rad + o.rad;
+    if (dist >= minDist) continue;
+    const overlap = minDist - dist;
+    // Exact-overlap fallback: two predators standing on the identical point
+    // have no defined separation axis -- push along a fixed heading rather
+    // than divide by zero (dx/dz both 0 would otherwise yield [0, 0], i.e.
+    // no push at all, which is the one case that most needs one).
+    const [ux, uz] = dist > 0.0001 ? [dx / dist, dz / dist] : [1, 0];
+    px += ux * overlap * 0.5;
+    pz += uz * overlap * 0.5;
+  }
+  return [px, pz];
+}

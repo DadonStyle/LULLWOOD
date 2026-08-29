@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Records e2e/replay/*.spec.ts and stages the output as dated GAMES_REPLAY/ clips.
+# Records e2e/replay/*.spec.ts and stages the output as dated QA_REGRESSION/ clips.
 #
-# Before this script existed, producing a GAMES_REPLAY clip was a fully manual
+# Before this script existed, producing a QA_REGRESSION clip was a fully manual
 # copy/rename/ffmpeg dance (see wiki:systems/headless-qa-rig), done by hand twice
 # (LUL-216, LUL-237) and then not repeated -- which is why the folder sat frozen
 # on one date (LUL-436). This automates the mechanical half (run, locate, rename,
-# frame-extract); it deliberately does NOT touch GAMES_REPLAY/README.md or commit
+# frame-extract); it deliberately does NOT touch QA_REGRESSION/README.md or commit
 # anything -- deciding whether a clip is real gameplay and worth keeping stays a
 # judgement call for whoever runs this (see the frame-viewing step below).
 #
@@ -13,7 +13,7 @@
 #   scripts/record-replay.sh <lul-id> [extra-slug]
 #
 # Examples:
-#   scripts/record-replay.sh 436                  -> GAMES_REPLAY/<date>-lul-436-win-path.webm, ...-death-path.webm
+#   scripts/record-replay.sh 436                  -> QA_REGRESSION/<date>-lul-436-win-path.webm, ...-death-path.webm
 #   scripts/record-replay.sh 436 freshness-check   -> ...-win-path-freshness-check.webm
 set -euo pipefail
 
@@ -43,7 +43,7 @@ for video in test-results/*-replay/video.webm; do
   esac
   SLUG="$WHAT"
   [ -n "$EXTRA_SLUG" ] && SLUG="${WHAT}-${EXTRA_SLUG}"
-  DEST="GAMES_REPLAY/${DATE}-lul-${LUL_ID}-${SLUG}.webm"
+  DEST="QA_REGRESSION/${DATE}-lul-${LUL_ID}-${SLUG}.webm"
   cp "$video" "$DEST"
 
   if [ -n "$FF" ]; then
@@ -63,6 +63,6 @@ echo
 echo "Frames for manual review: $FRAME_DIR/*.png"
 echo "Next steps (not automated -- these are judgement calls):"
 echo "  1. Read the extracted frames. Confirm real gameplay, not a black/HUD-only screen."
-echo "  2. Add a row to GAMES_REPLAY/README.md for each clip you keep."
+echo "  2. Add a row to QA_REGRESSION/README.md for each clip you keep."
 echo "  3. Prune any earlier clip the new one supersedes (same commit, per the README's repo-weight budget)."
 echo "  4. Delete any clip you don't keep -- this script does not decide that for you."

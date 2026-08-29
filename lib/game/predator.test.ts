@@ -7,6 +7,7 @@ import {
   hasReachedSniffRange,
   isCaught,
   isSniffImmune,
+  predatorSeparationPush,
   rollSniffs,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
@@ -313,4 +314,52 @@ test('backOffPoint with dist=0 (coincident points) leaves the point where it sta
   const [x, z] = backOffPoint(5, -3, 1, 0, 0, 1000);
   assert.equal(x, 5);
   assert.equal(z, -3);
+});
+
+// ---- predatorSeparationPush (LUL-394) --------------------------------------
+
+test('predatorSeparationPush: no push when circles do not overlap', () => {
+  const [px, pz] = predatorSeparationPush(0, 0, 1, [{ x: 10, z: 0, rad: 1 }]);
+  assert.equal(px, 0);
+  assert.equal(pz, 0);
+});
+
+test('predatorSeparationPush: no push when circles are exactly touching (boundary, not overlapping)', () => {
+  const [px, pz] = predatorSeparationPush(0, 0, 1, [{ x: 2, z: 0, rad: 1 }]);
+  assert.equal(px, 0);
+  assert.equal(pz, 0);
+});
+
+test('predatorSeparationPush: pushes away from an overlapping predator by half the overlap', () => {
+  // rad 1 + rad 1 = minDist 2, actual dist 1 -> overlap 1 -> push 0.5 along -x (away from the other, at +x)
+  const [px, pz] = predatorSeparationPush(0, 0, 1, [{ x: 1, z: 0, rad: 1 }]);
+  assert.equal(px, -0.5);
+  assert.ok(Math.abs(pz) < 1e-9);
+});
+
+test('predatorSeparationPush: symmetric -- the other predator gets the mirrored push', () => {
+  const [px1] = predatorSeparationPush(0, 0, 1, [{ x: 1, z: 0, rad: 1 }]);
+  const [px2] = predatorSeparationPush(1, 0, 1, [{ x: 0, z: 0, rad: 1 }]);
+  assert.equal(px1, -px2);
+});
+
+test('predatorSeparationPush: exact-overlap fallback pushes along a fixed heading instead of returning zero', () => {
+  const [px, pz] = predatorSeparationPush(3, 3, 1, [{ x: 3, z: 3, rad: 1 }]);
+  assert.ok(px !== 0, 'coincident predators must still separate, not silently stay stacked');
+  assert.equal(pz, 0);
+});
+
+test('predatorSeparationPush: sums pushes from multiple overlapping predators', () => {
+  const [px, pz] = predatorSeparationPush(0, 0, 1, [
+    { x: 1, z: 0, rad: 1 },
+    { x: 0, z: 1, rad: 1 },
+  ]);
+  assert.equal(px, -0.5);
+  assert.equal(pz, -0.5);
+});
+
+test('predatorSeparationPush: an empty others list is a no-op', () => {
+  const [px, pz] = predatorSeparationPush(0, 0, 1, []);
+  assert.equal(px, 0);
+  assert.equal(pz, 0);
 });

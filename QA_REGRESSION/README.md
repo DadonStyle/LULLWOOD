@@ -1,16 +1,30 @@
-# GAMES_REPLAY
+# QA_REGRESSION
 
-Actual video of the agent playing Lullwood, per founder directive LUL-214. Recorded with
-Playwright's native video capture (`video: 'on'`, `e2e/replay/` specs, `replay` project in
-`playwright.config.ts`) driving the same production build that ships, headless.
+Renamed from `GAMES_REPLAY` (founder directive, 2026-08-28) when per-PR QA moved to a
+once-daily full regression run instead of a smoke suite on every push. This folder now
+holds two things:
 
-This is a curated set, not a CI artifact dump: a win clip, a death clip, and any future
-session that demonstrates a new feature or reproduces a bug. Use
-`scripts/record-replay.sh <lul-id> [extra-slug]` to produce a clip — it runs the replay
-project, renames the output into the `<date>-lul-<id>-<what>.webm` scheme below, and
-extracts frames for review; it does not decide what to keep or edit this file, that part
-stays a judgement call. See `systems/headless-qa-rig` on the shared wiki for the full
-recording workflow, including how often a fresh clip is actually warranted (LUL-436).
+1. **`reports/`** — the daily regression record. `scripts/qa-regression.mjs`, driven by a
+   host cron at 00:30 server time (never by a GitHub Actions workflow — Paperclip
+   credentials must not live in `.github/workflows/`, see that script's header), runs the
+   full `e2e/` suite once a day against `release/next`, writes a dated report here, and
+   opens tickets on the Paperclip board for new failures — a critical/game-breaking ticket
+   for a core-loop failure, a backlog ticket by severity (P1-P3) otherwise. This never
+   blocks a PR or a merge; it is purely a record and a ticket source. If the run is skipped
+   because the account is near a rate-limit cap that day, there is no catch-up run — the
+   next day's 00:30 run is the next data point. See `systems/qa-regression-cadence` on the
+   shared wiki.
+2. **Curated gameplay clips** (below) — actual video of the agent playing Lullwood, per
+   founder directive LUL-214. Recorded with Playwright's native video capture
+   (`video: 'on'`, `e2e/replay/` specs, `replay` project in `playwright.config.ts`) driving
+   the same production build that ships, headless. This is a curated set, not a CI artifact
+   dump: a win clip, a death clip, and any future session that demonstrates a new feature or
+   reproduces a bug. Use `scripts/record-replay.sh <lul-id> [extra-slug]` to produce a clip
+   — it runs the replay project, renames the output into the `<date>-lul-<id>-<what>.webm`
+   scheme below, and extracts frames for review; it does not decide what to keep or edit
+   this file, that part stays a judgement call. See `systems/headless-qa-rig` on the shared
+   wiki for the full recording workflow, including how often a fresh clip is actually
+   warranted (LUL-436).
 
 ## Index
 
@@ -55,7 +69,8 @@ LUL-211's collision fix holds for all four, before deferring the committed hooks
 
 ## Repo-weight budget
 
-Video is binary and permanent in git history. Keep clips short (seconds, not minutes),
+Applies to the video clips only — `reports/*.md` are plain text, tiny, and not subject to
+this budget. Video is binary and permanent in git history. Keep clips short (seconds, not minutes),
 downscaled (960x540, well under the 1280x720 canvas), and curated. Prune a superseded clip
 in the same PR that adds its replacement — do not let old and new versions both sit here.
 Current total: ~3.0 MB for 2 clips. If this folder starts pushing the repo past a few tens

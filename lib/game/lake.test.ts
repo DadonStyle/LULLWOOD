@@ -5,6 +5,7 @@ import {
   inLakeClearance,
   lakeSpeedMultiplier,
   pushOutOfLakeClearance,
+  keepWaypointOffLake,
   LAKE_SPEED_MULTIPLIER,
   type LakeConfig,
 } from './lake.ts';
@@ -84,4 +85,24 @@ test('a spawn draw that always lands in the lake exhausts its retry budget, and 
 test('a spawn draw outside the lake is accepted on the first try, unaffected by the lake check', () => {
   const clearCandidate = { x: -100, z: -100 };
   assert.equal(inLakeClearance(clearCandidate.x, clearCandidate.z, lake), false);
+});
+
+// ---- LUL-873: keepWaypointOffLake(), extracted from engine/forest-engine.js -----
+
+test('keepWaypointOffLake pushes a candidate inside the water to just past the water edge (r, not clear)', () => {
+  const candidate = { x: lake.x + 5, z: lake.z }; // inside r=15
+  const kept = keepWaypointOffLake(candidate.x, candidate.z, lake);
+  assert.equal(inLakeWater(kept.x, kept.z, lake), false);
+  const dist = Math.hypot(kept.x - lake.x, kept.z - lake.z);
+  assert.ok(Math.abs(dist - (lake.r + 2)) < 1e-9, `dist=${dist}`);
+  // same bearing as the original candidate (+x from center)
+  assert.ok(kept.x > lake.x);
+  assert.ok(Math.abs(kept.z - lake.z) < 1e-9);
+});
+
+test('keepWaypointOffLake is a no-op for a candidate already outside the water, even inside the wider clearance ring', () => {
+  const candidate = { x: lake.x + 18, z: lake.z }; // between r=15 and clear=22
+  assert.equal(inLakeWater(candidate.x, candidate.z, lake), false);
+  const kept = keepWaypointOffLake(candidate.x, candidate.z, lake);
+  assert.deepEqual(kept, candidate);
 });

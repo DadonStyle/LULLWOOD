@@ -183,62 +183,14 @@ jobs:
       - name: build
         run: npx next build
 
-  smoke:
-    name: playwright smoke suite
-    needs: build
-    runs-on: ubuntu-latest
-    # LUL-485: without this, a hung job inherited GitHub's 360-minute default
-    # and pinned a runner for hours (measured: two `workflow_dispatch` runs on
-    # superseded heads sat `in_progress` for 4h47m and 3h57m before being
-    # cancelled by hand). Root cause of both hangs, from job logs: `npx
-    # playwright install --with-deps chromium`'s internal `apt-get update`
-    # stalled fetching `noble-security InRelease` from archive.ubuntu.com —
-    # apt sets no read timeout, so a stalled TCP connection to a mirror hangs
-    # forever instead of erroring. That is a runner/network flake outside
-    # this repo's control; the cap here turns it into a bounded, visible
-    # failure instead of eliminating it.
-    #
-    # 30 min, not the 20 guessed when this was filed: 12 green runs on
-    # 2026-08-19 ranged 723-1138s (12-19min), so 20min would leave as little
-    # as ~1min of margin over the slowest legitimate run and risk flaking
-    # real passes. 30min keeps ~1.6x headroom over the observed max.
-    timeout-minutes: 30
-    # A job-level `if:` replaces the implicit `needs: success()` gate rather
-    # than adding to it (LUL-106) -- `needs.build.result` restores that gate
-    # explicitly. (No fork-scope half here anymore: `pull_request` is gone
-    # from `on:` above, see that block's comment.)
-    if: needs.build.result == 'success'
-    steps:
-
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - run: npm ci
-
-      # GitHub runners have root, so real system deps get installed here
-      # instead of the user-prefix workaround playwright.config.ts falls back
-      # to locally (see wiki:systems/headless-qa-rig). `CI` is set by GitHub
-      # Actions automatically, which is what that fallback checks against.
-      - name: install playwright browsers + system deps
-        run: npx playwright install --with-deps chromium
-
-      - name: playwright smoke suite
-        run: npx playwright test
-
-      # reporter is 'list' (playwright.config.ts), so playwright-report/ is
-      # never produced. On failure, Playwright's own output -- screenshots,
-      # traces, error-context.md -- lands in test-results/ instead; that's
-      # what needs uploading. `always()` (not `failure()`) so this still runs
-      # after a cancellation, and if-no-files-found stays quiet on green runs.
-      - name: upload playwright test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-test-results
-          path: test-results/
-          retention-days: 14
-          if-no-files-found: ignore
+# The Playwright suite ("smoke"/full regression) no longer runs per-push here.
+# Founder directive (2026-08-28): per-PR QA cost was too high relative to the
+# pace of shipping; the full e2e suite now runs once a day instead
+# (scripts/qa-regression.mjs, driven by a host cron, never by this workflow --
+# see that script's header for why Paperclip credentials must never live in
+# .github/workflows/). Findings are filed to the Paperclip board by severity
+# (critical/game-breaking vs backlog P1-P3) and never block a PR or a merge.
+# `unit tests` is the only required check on release/next; `build, typecheck,
+# lint` stays required only on `main`, satisfied by release/next's own push-
+# triggered run of that job before a version-cut PR is opened. See
+# systems/release-train and systems/qa-regression-cadence in the shared wiki.
