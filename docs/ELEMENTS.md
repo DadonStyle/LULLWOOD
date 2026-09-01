@@ -755,8 +755,9 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
   and synced to `hudState` via `setEmbers()` (L2822-2826 in
-  `engine/forest-engine.js`). Earnable via `updateRunPayout()` in
-  `lib/game/economy.ts`, applied on win/death via `arriveHome()` / `triggerDeath()`.
+  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
+  on win/death via `arriveHome()` / `triggerDeath()`.
 - `lastPayout`: breakdown of earnings from the run that just ended (null
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
@@ -766,7 +767,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 
 **What it can do**
-- Bank on win/death: `stepRunPayout()` in `lib/game/economy.ts` computes
+- Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
   balance delta and calls `setEmbers()` to persist; engine gates all payouts
   behind `canArriveHome()` / `triggerDeath()` to prevent double-apply.
 - Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COST[tier]` and increases
@@ -788,7 +789,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - `veilMaxHoldForTier(tier)` adds `DEEPER_LUNGS_HOLD_SECONDS[tier]` to base
   `VEIL_MAX_HOLD` — each tier adds 1 second to the hold cap (5/6/7/8 seconds
   at tiers 0/1/2/3).
-- Win/death screen shows a shop button (wired to `triggerBuyDeeperLungs()`
+- Win/death screen shows a shop button (wired to `purchaseDeeperLungs()`
   action) only if the player has balance ≥ `DEEPER_LUNGS_COST[currentTier]` and
   `currentTier < 3`.
 
@@ -799,7 +800,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 ## The interaction matrix
 
-Every pairwise combination of the 15 elements above, physical/geometric
+Every pairwise combination of the 16 elements above, physical/geometric
 relationships only (movement collision, line-of-sight blocking, "stood on").
 Scent and noise are **not** columns here because the source is unambiguous
 that neither channel has *any* geometry interaction with *any* element
@@ -817,23 +818,24 @@ collider · `ATT` = permanently attached/coincident · `–` = no interaction,
 verified in source · **`U`** = **UNDEFINED — no source resolves this**.
 Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
-| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ |
-| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ |
-| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
-| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
-| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
-| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ |
-| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
-| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
-| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – |
-| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – |
-| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | render¹⁷ |
-| **HO** Home | | | | | | | | | | | | · | – | – | – |
-| **FO** Fog | | | | | | | | | | | | | · | – | – |
-| **FL** Follow-light | | | | | | | | | | | | | | · | – |
-| **UI** HUD/UI | | | | | | | | | | | | | | | · |
+| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI | EM |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | – |
+| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | – |
+| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | – |
+| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | – |
+| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | – |
+| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ | – |
+| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
+| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
+| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
+| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – | – |
+| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | render¹⁷ | – |
+| **HO** Home | | | | | | | | | | | | · | – | – | – | – |
+| **FO** Fog | | | | | | | | | | | | | · | – | – | – |
+| **FL** Follow-light | | | | | | | | | | | | | | · | – | – |
+| **UI** HUD/UI | | | | | | | | | | | | | | | · | – |
+| **EM** Embers | | | | | | | | | | | | | | | | · |
 
 ¹ Pickup (`distBaby<3.6`) and carry-follow (child's position snaps to
 player's while carrying) — proximity, not collision.
