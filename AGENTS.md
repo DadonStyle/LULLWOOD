@@ -75,3 +75,54 @@ ships with its tests or it does not ship.
 Unit tests are `node --test`, colocated as `*.test.ts`. Pure logic only — no
 Three.js, no DOM, no `window`, no timers, no wall-clock reads, no unseeded
 `Math.random()`. Rendering and input stay Playwright's job.
+
+## Review tiers (development-first, founder directive 2026-08-29)
+
+Measured the day this landed: the two building agents ran 803 sessions in a week; the two
+gating agents ran 853. More than half the studio's effort was spent checking work rather
+than making it. These tiers exist to change that ratio on purpose.
+
+Tier is decided by **what the diff touches**, not who wrote it or how large it is. When a
+diff spans tiers, the **highest** tier wins. State your tier in one line in the PR body,
+e.g. `Tier: B — components/Hud.tsx`.
+
+| Tier | Paths | Gate |
+|---|---|---|
+| **A** | `docs/**`, `*.md`, `e2e/**`, `*.test.*`, comment-only diffs, `public/` assets, copy | Ship on green. No review, no play verdict. `[ship]` permitted. |
+| **B** | `app/**`, `lib/**`, `components/**`, non-security CI, engine tuning constants | Merge on green; open the review child issue **after**. A P0/P1 found post-merge is a fix ticket, not a revert. |
+| **C** | `engine/forest-engine.js` simulation (movement, collision, predator AI, scent, hiding, win/lose), persistence, **anything touching secrets, tokens, auth, branch protection or merge rules**, release cuts | Blocking review + Game Tester play verdict. Unchanged. |
+
+**If you review:** only Tier C blocks. Batch P2/P3 into the single standing hygiene
+ticket rather than one ticket per finding — per-finding ticketing is what inflated the
+board. The LUL-389 checklist items ("logic diff with no test diff", "registry not
+updated") are **P2** in Tiers A and B, and remain P1 blockers in Tier C.
+
+**If you test:** stop verifying every build. The Playwright suite is the gate for A and
+B. Spend play sessions on Tier C, new or changed predator behaviour, core-loop changes,
+mobile input, and release cuts.
+
+**Not relaxed by any of this:** CI is required on every tier; P0/P1 still block in Tier C;
+every secrets rule is unchanged; mobile parity is unchanged; never switch branches in
+`/home/noam/lullwood`.
+
+**Honest tradeoff:** Tier B means some defects reach `release/next` that a pre-merge
+review would have caught. That is accepted in exchange for shipping roughly twice as
+much. If it starts producing P0s rather than P2s, that is evidence — record it in
+`decisions/` and move the tier boundary. Do not silently drift back to reviewing
+everything.
+
+**Known gap:** `release/next` requires 1 approving review, so Tier B cannot literally
+merge on green yet. `bot-approve.yml` records an approval as `github-actions[bot]` — a
+distinct identity from the studio PAT — only when every required check is green, no
+approval exists, and it did not author the PR. Wiring it to fire automatically for
+Tier-B-only diffs is open work; until then Tier B still waits on the Code Reviewer.
+
+## The release train
+
+Feature branches target `release/next`. The **only** path to `main` is a version cut
+(`release/next` → `main`), enforced by `base-branch-guard.yml`.
+
+**Cut PRs must merge with a real merge commit, never a squash.** A squash discards the
+second parent, so `main` and `release/next` stop sharing an ancestor and every subsequent
+cut opens with conflicts. This has already happened; see the CRITICAL ticket and
+`docs/HOW_IT_WORKS.md` § 8.
