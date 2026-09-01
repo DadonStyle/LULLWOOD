@@ -222,15 +222,52 @@ export function pickAvoidDirection(
   grid: SpatialGrid<CircleCollider>,
   cell: number = CELL,
   lookAhead: number = 2.4,
+  nearLookAhead: number = 0.8,
 ): [number, number] {
-  const look = rad + lookAhead;
-  if (!blockedR(x + dx * look, z + dz * look, rad, grid, cell)) return [dx, dz];
+  const near = rad + nearLookAhead;
+  const far = rad + lookAhead;
+  // LUL-1091: a single far-only probe lands past obstacles nearer than `near`,
+  // so both distances must be sampled -- a direction only counts as clear if
+  // neither probe hits.
+  const clearDistance = (rx: number, rz: number): number => {
+    if (blockedR(x + rx * near, z + rz * near, rad, grid, cell)) return 0;
+    if (blockedR(x + rx * far, z + rz * far, rad, grid, cell)) return near;
+    return far;
+  };
+
+  if (clearDistance(dx, dz) === far) return [dx, dz];
+
+  // Every AVOID_ANGLES candidate is tried; the least-blocked one (greatest
+  // clear distance) wins so a fully-boxed-in predator never falls back to the
+  // heading already known to be blocked.
+  let bestDir: [number, number] = [dx, dz];
+  let bestDist = -1;
   for (const ang of AVOID_ANGLES) {
     const c = Math.cos(ang), s = Math.sin(ang);
     const rx = dx * c - dz * s, rz = dx * s + dz * c;
-    if (!blockedR(x + rx * look, z + rz * look, rad, grid, cell)) return [rx, rz];
+    const dist = clearDistance(rx, rz);
+    if (dist === far) return [rx, rz];
+    if (dist > bestDist) { bestDist = dist; bestDir = [rx, rz]; }
   }
-  return [dx, dz];
+  return bestDir;
+}
+
+// LUL-1091(d): axis-separated collision damped the blocked axis to 0.2x and
+// left the free axis untouched -- for a head-on approach (no velocity on the
+// free axis to begin with) that kills nearly all speed instead of sliding
+// around the obstacle. Projecting the full speed onto the free axis keeps a
+// predator moving at approach speed, redirected along the wall.
+export function slideVelocity(vx: number, vz: number, blockedX: boolean, blockedZ: boolean): [number, number] {
+  if (blockedX && blockedZ) return [0, 0];
+  if (blockedX) {
+    const sign = vz !== 0 ? Math.sign(vz) : 1;
+    return [0, sign * Math.hypot(vx, vz)];
+  }
+  if (blockedZ) {
+    const sign = vx !== 0 ? Math.sign(vx) : 1;
+    return [sign * Math.hypot(vx, vz), 0];
+  }
+  return [vx, vz];
 }
 
 // ---- cover-prop rotated-AABB collision (LUL-211, LUL-268) -------------------
