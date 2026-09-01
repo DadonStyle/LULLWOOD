@@ -22,6 +22,12 @@ async function readPredatorState(page: import('@playwright/test').Page) {
   });
 }
 
+async function readElapsedTime(page: import('@playwright/test').Page) {
+  return page.evaluate(() => {
+    return (window as any).ForestEngine?.qaProbeElapsedTime?.() ?? 0;
+  });
+}
+
 test.describe('predator determinism with seeded RNG', () => {
   test('two identical seeds produce identical predator positions after game ticks', async ({
     page: page1,
@@ -50,14 +56,12 @@ test.describe('predator determinism with seeded RNG', () => {
 
     // Poll for game time to advance on page1
     let elapsed1 = 0;
-    let state1 = await readPredatorState(page1);
-    const startTime1 = state1[0]?.t ?? 0;
+    const startTime1 = await readElapsedTime(page1);
 
     await expect
       .poll(
         async () => {
-          state1 = await readPredatorState(page1);
-          elapsed1 = state1[0]?.t - startTime1 ?? 0;
+          elapsed1 = (await readElapsedTime(page1)) - startTime1;
           return elapsed1;
         },
         {
@@ -69,14 +73,12 @@ test.describe('predator determinism with seeded RNG', () => {
 
     // Poll for game time to advance on page2 by the same amount
     let elapsed2 = 0;
-    let state2 = await readPredatorState(page2);
-    const startTime2 = state2[0]?.t ?? 0;
+    const startTime2 = await readElapsedTime(page2);
 
     await expect
       .poll(
         async () => {
-          state2 = await readPredatorState(page2);
-          elapsed2 = state2[0]?.t - startTime2 ?? 0;
+          elapsed2 = (await readElapsedTime(page2)) - startTime2;
           return elapsed2;
         },
         {
@@ -87,8 +89,8 @@ test.describe('predator determinism with seeded RNG', () => {
       .toBeGreaterThanOrEqual(GAME_SECONDS);
 
     // Final comparison: predator positions and states must be identical
-    state1 = await readPredatorState(page1);
-    state2 = await readPredatorState(page2);
+    const state1 = await readPredatorState(page1);
+    const state2 = await readPredatorState(page2);
 
     // Assert the same number of predators were sampled
     expect(state1.length).toBe(state2.length);

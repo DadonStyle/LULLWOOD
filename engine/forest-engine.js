@@ -87,6 +87,7 @@ import {
   tickTimers,
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
+import { stepStamina, sprintSpeedMul } from '@/lib/game/stamina';
 import {
   inLakeWater,
   inLakeClearance,
@@ -313,7 +314,7 @@ let lightDimmed = false;
 // (VEIL_RAMP), how thick it gets at full ramp (MIST_VEIL_FOG), and the mutable
 // per-frame state itself.
 const VEIL_RAMP = 1.6;            // seconds for mist/detect-cut to ease fully in or out
-let veilCharge = 1, veilLocked = false, veilAmount = 0;
+let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1;
 let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
 const MIST_VEIL_FOG = 0.34;       // ~3x the manual Mist slider's own max (0.11) -- deliberately overshoots it so the veil reads as a distinct world state
 
@@ -2146,6 +2147,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
   window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
+  window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
 
   // LUL-83: proves resolveInitialSeed() actually drives the generated layout --
   // `?seed=N` should reproduce this byte-identically across loads, and no
@@ -2956,7 +2958,7 @@ function tick(){
   // the sight-detect cut ramps in step with what the player actually sees.
   veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
   scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmount);
-  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked });
+  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, staminaCharge: Math.round(staminaCharge * 100) / 100 });
 
   // LUL-27: Fog Tide. The clock only advances while `playing` -- same gate
   // the veil above reads -- so the pause menu freezes the cycle exactly like
@@ -2993,7 +2995,8 @@ function tick(){
   const playerInLake = inLakeWater(player.x, player.z, CONFIG.lake);
   if(playing && !hidden){
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
-    const maxSpd = (running ? walk*1.8 : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerInBog) * lakeSpeedMultiplier(playerInLake);
+    staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
+    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerInBog) * lakeSpeedMultiplier(playerInLake);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
