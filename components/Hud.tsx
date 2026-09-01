@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
 import OrientationGate from './OrientationGate';
@@ -223,11 +223,16 @@ function writeEmbers(s: PersistedEmbers) {
 }
 
 function useEmbers(actions: EngineActions | null, balance: number, deeperLungsTier: number) {
+  // Track whether the apply-on-ready effect has run, so persist doesn't fire
+  // with zero defaults before the stored balance is applied.
+  const appliedRef = useRef(false);
+
   // Apply-on-ready: same pattern as SettingsPanel.tsx's identical effect for
   // difficulty/runMode/etc. -- only fires once per engine instance, since
   // `actions` only changes identity on mount/remount, never per-click.
   useEffect(() => {
     if (!actions) return;
+    appliedRef.current = true;
     const stored = readEmbers();
     if (stored) actions.setEmbers(stored.balance, stored.tiers.deeperLungs);
   }, [actions]);
@@ -236,6 +241,7 @@ function useEmbers(actions: EngineActions | null, balance: number, deeperLungsTi
   // the apply-on-ready effect above, so a mount with a stored balance isn't
   // immediately overwritten by the engine's own zeroed default before it applies.
   useEffect(() => {
+    if (!appliedRef.current) return;
     writeEmbers({ balance, tiers: { deeperLungs: deeperLungsTier } });
   }, [balance, deeperLungsTier]);
 }

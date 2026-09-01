@@ -749,6 +749,54 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 ---
 
+### Embers (run currency)
+
+**What it is**
+- `embersBalance`: player's persisted currency balance (runs completed,
+  predator kills, or other events), stored in `localStorage['lullwood:embers']`
+  and synced to `hudState` via `setEmbers()` (L3427-3434 in
+  `engine/forest-engine.js`). Earnable via `updateRunPayout()` in
+  `lib/game/economy.ts`, applied on win/death via `arriveHome()` / `triggerDeath()`.
+- `lastPayout`: breakdown of earnings from the run that just ended (null
+  before first win/death this session), read by HUD on win/death screens to
+  display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
+- Deeper Lungs: unlock via shop button in post-run UI; one-time purchase per
+  tier (tiers 0–3, `DEEPER_LUNGS_COST` array), persisted alongside balance as
+  `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
+  duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
+
+**What it can do**
+- Bank on win/death: `stepRunPayout()` in `lib/game/economy.ts` computes
+  balance delta and calls `setEmbers()` to persist; engine gates all payouts
+  behind `canArriveHome()` / `triggerDeath()` to prevent double-apply.
+- Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COST[tier]` and increases
+  `VEIL_MAX_HOLD` (via `veilMaxHoldForTier()`) until the next tier is purchased.
+  Purchase is final, persisted to localStorage and synced to `hudState` via
+  `deeperLungsTier` property.
+
+**What it CANNOT do**
+- Spend on anything other than Deeper Lungs tiers.
+- Be lost/reset except via manual localStorage deletion (QA/debug only, not
+  a player-facing action).
+
+**Behaviours & logic**
+- Persistence: `useEmbers()` hook in `components/Hud.tsx` (L225-241) reads
+  stored balance on engine mount and writes to localStorage whenever balance
+  or tier change. Gated to skip writing stale zero defaults before stored
+  state is applied (ref `appliedRef` prevents persist effect from firing until
+  apply-on-ready effect has run).
+- `veilMaxHoldForTier(tier)` adds `DEEPER_LUNGS_HOLD_SECONDS[tier]` to base
+  `VEIL_MAX_HOLD` — each tier adds 1 second to the hold cap (5/6/7/8 seconds
+  at tiers 0/1/2/3).
+- Win/death screen shows a shop button (wired to `triggerBuyDeeperLungs()`
+  action) only if the player has balance ≥ `DEEPER_LUNGS_COST[currentTier]` and
+  `currentTier < 3`.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
 ## The interaction matrix
 
 Every pairwise combination of the 15 elements above, physical/geometric
