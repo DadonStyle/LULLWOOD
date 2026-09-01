@@ -754,7 +754,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L3427-3434 in
+  and synced to `hudState` via `setEmbers()` (L2805-2809 in
   `engine/forest-engine.js`). Earnable via `updateRunPayout()` in
   `lib/game/economy.ts`, applied on win/death via `arriveHome()` / `triggerDeath()`.
 - `lastPayout`: breakdown of earnings from the run that just ended (null
