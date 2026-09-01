@@ -77,6 +77,11 @@ export interface EngineHudState {
   // while locked, even if held.
   veilCharge: number;
   veilLocked: boolean;
+  // LUL-1113: stamina resource meter, 1 (full) .. 0 (drained). Decays while
+  // sprinting, regenerates while walking. Passed to sprintSpeedMul() to ramp
+  // sprint multiplier from STAMINA_SPRINT_MUL (at full charge) to 1 (walk speed,
+  // at zero charge).
+  staminaCharge: number;
   // LUL-213: a wolf/lion is telegraphing a charge -- press Space within the
   // window or get caught. `chargeToken` only changes on a fresh charge (not
   // every frame one is active), so it can key the prompt element and retrigger
@@ -158,6 +163,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lightDimmed: false,
   veilCharge: 1,
   veilLocked: false,
+  staminaCharge: 1,
   chargeVisible: false,
   chargeToken: 0,
   difficulty: 'night',
@@ -408,6 +414,11 @@ export default function Hud({
             locked it out until charge climbs back past the unlock threshold. */}
         <span id="veilState">
           Veil: {Math.round(state.veilCharge * 100)}%{state.veilLocked ? ' (recharging)' : ''}
+        </span>
+        {/* LUL-1113: stamina resource meter -- the cost on sprint. Decays while
+            sprinting, regenerates while walking. */}
+        <span id="staminaState">
+          Stamina: {Math.round(state.staminaCharge * 100)}%
         </span>
         {/* LUL-1043: the run currency's balance -- exempted from admin-mode's
             #panel hide the same way lightState/veilState are (GameCanvas.tsx),
