@@ -7,6 +7,8 @@
 // that decides whether this loop lives to contain no unsure exploitable term.
 // Do not add peril back into this module without a new ticket.
 
+import { VEIL_MAX_HOLD } from './veil.ts';
+
 export interface RunPayout {
   depth: number;
   survival: number;
@@ -62,10 +64,16 @@ export function applyPayout(state: EmbersState, payout: RunPayout): EmbersState 
 }
 
 // ---- Spend: Deeper Lungs, the cheap version's one sink ----------------
-// Index 0 is the base (no tiers owned) -- see lib/game/veil.ts's
-// VEIL_MAX_HOLD (5s base). Each tier's cost is the price of buying *up to*
-// that tier from the one below it, not cumulative.
-export const DEEPER_LUNGS_HOLD_SECONDS = [5, 6, 7, 8] as const;
+// Index 0 is the base (no tiers owned) -- VEIL_MAX_HOLD seconds. Each tier's
+// cost is the price of buying *up to* that tier from the one below it, not
+// cumulative. Derived from VEIL_MAX_HOLD to ensure engine retuning propagates
+// automatically (a future change to VEIL_MAX_HOLD will not silently have no effect).
+export const DEEPER_LUNGS_HOLD_SECONDS = [
+  VEIL_MAX_HOLD,
+  VEIL_MAX_HOLD + 1,
+  VEIL_MAX_HOLD + 2,
+  VEIL_MAX_HOLD + 3,
+] as const;
 export const DEEPER_LUNGS_COSTS = [120, 300, 600] as const;
 export const DEEPER_LUNGS_MAX_TIER = DEEPER_LUNGS_COSTS.length;
 
