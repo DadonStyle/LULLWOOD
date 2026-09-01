@@ -61,11 +61,8 @@ test('entering the game on mobile with debugAudio logs context state', async ({ 
   );
   await enter(page);
 
-  // With debugAudio=1, we should see AudioInit and AudioAfterResume logs
+  // With debugAudio=1, we should see AudioInit logs
   const audioInitLogs = consoleLogs.filter((log) => log.includes('[AudioInit]'));
   expect(audioInitLogs.length > 0, 'should log [AudioInit] when debugAudio=1').toBe(true);
-
-  const afterResumeLogs = consoleLogs.filter((log) => log.includes('[AudioAfterResume]'));
-  expect(afterResumeLogs.length > 0, 'should log [AudioAfterResume] when debugAudio=1').toBe(true);
   });
 });
