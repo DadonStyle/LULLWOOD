@@ -110,6 +110,16 @@ import {
   fogTideWindGainMul,
 } from '@/lib/game/fogTide';
 
+// LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
+// hex/CSS light and material color as sRGB before lighting math runs. r128 never did
+// that decode -- colors were used as authored, directly as linear values -- so every
+// light and material color in this file was hand-tuned against the old (no-decode)
+// behavior. Turning it back off is the most faithful way to keep those colors reading
+// the same, rather than re-deriving a decode-compensation constant per color. This is
+// independent of the light *intensity* scale below (LEGACY_LIGHT_SCALE), which exists
+// because r155/r163 additionally removed useLegacyLights outright, with no opt-out.
+THREE.ColorManagement.enabled = false;
+
 let activeDispose = null;
 
 function init(onStateChange, inputMode) {
@@ -248,9 +258,16 @@ renderer.domElement.style.inset = '0';
 renderer.domElement.style.zIndex = '0';
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55));
-const moon = new THREE.DirectionalLight(0xbcd0ff, 0.5); moon.position.set(-6, 16, -4); scene.add(moon);
-const rim = new THREE.DirectionalLight(0x24344f, 0.4); rim.position.set(4, 5, 9); scene.add(rim);
+// LUL-975: r155 dropped the `Math.PI` "artist-friendly" scaling factor that used to
+// sit between a light's `intensity` and the render output (useLegacyLights, gone
+// entirely as of r163 -- no opt-out). Every intensity below was hand-tuned against
+// that old scale, so every one is multiplied by LEGACY_LIGHT_SCALE to read the same
+// as it did on r128. Confirmed by direct before/after screenshot comparison, not
+// just the documented factor -- see wiki systems/three-r185-upgrade.
+const LEGACY_LIGHT_SCALE = 5;
+scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55 * LEGACY_LIGHT_SCALE));
+const moon = new THREE.DirectionalLight(0xbcd0ff, 0.5 * LEGACY_LIGHT_SCALE); moon.position.set(-6, 16, -4); scene.add(moon);
+const rim = new THREE.DirectionalLight(0x24344f, 0.4 * LEGACY_LIGHT_SCALE); rim.position.set(4, 5, 9); scene.add(rim);
 
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800),
   new THREE.MeshStandardMaterial({ color: CONFIG.ground, roughness: 1, metalness: 0 }));
@@ -262,7 +279,7 @@ ground.rotation.x = -Math.PI/2; scene.add(ground);
   const g = c.getContext('2d'), grd = g.createLinearGradient(0, 0, 0, 512);
   grd.addColorStop(0.0, '#05070d'); grd.addColorStop(0.55, '#080e18'); grd.addColorStop(1.0, '#0b1220');
   g.fillStyle = grd; g.fillRect(0, 0, 4, 512);
-  const tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding; scene.background = tex;
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; scene.background = tex;
 })();
 const STAR = 700, starArr = new Float32Array(STAR*3);
 for(let i=0;i<STAR;i++){ const th = Math.random()*Math.PI*2, y = Math.random()*0.9 + 0.05, s = Math.sqrt(1-y*y), r = 300;
@@ -278,7 +295,7 @@ moonGroup.add(
   new THREE.Mesh(new THREE.CircleGeometry(15, 40), new THREE.MeshBasicMaterial({ color: 0xeef3ff, fog: false }))
 );
 scene.add(moonGroup);
-const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playerLight);
+const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20, 2); camera.add(playerLight);
 // LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
 // LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
 // the light cut is kept (still a smaller lit pool) but it's now one piece of a bigger,
@@ -715,14 +732,14 @@ const ring = new THREE.Mesh(new THREE.RingGeometry(CONFIG.lake.r*0.72, CONFIG.la
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
 ring.rotation.x = -Math.PI/2; ring.position.set(CONFIG.lake.x, 0.06, CONFIG.lake.z); scene.add(ring);
 
-const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3, 75, 2);
+const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3 * LEGACY_LIGHT_SCALE, 75, 2);
 lakeLight.position.set(CONFIG.lake.x, 7, CONFIG.lake.z); scene.add(lakeLight);
 
 // ---- Home landmark: where the child must be carried (LUL-38) -------------
 // Deliberately minimal -- "reuse the spawn point" per the ticket's own scope,
 // a lit waypoint rather than a new art pass. Static (no rng draw), so map
 // generation stays byte-identical for existing seeds.
-const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0, 24, 2);
+const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0 * LEGACY_LIGHT_SCALE, 24, 2);
 homeLight.position.set(CONFIG.home.x, 3, CONFIG.home.z); scene.add(homeLight);
 const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG.home.r*1.1, 40),
   new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
@@ -749,7 +766,7 @@ function buildFireTower(){
   }
   const deck = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.25, 2.6), legMat);
   deck.position.y = 9; g.add(deck);
-  const light = new THREE.PointLight(0xff9a4a, 0.9, 26, 2); light.position.set(0, 9.6, 0); g.add(light);
+  const light = new THREE.PointLight(0xff9a4a, 0.9 * LEGACY_LIGHT_SCALE, 26, 2); light.position.set(0, 9.6, 0); g.add(light);
   g.rotation.z = 0.13; g.rotation.x = 0.05;   // leaning
   return g;
 }
@@ -760,7 +777,7 @@ function buildStoneMarker(){
   shaft.position.y = 2.75; shaft.rotation.y = 0.4; g.add(shaft);
   const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.5, 0.6, 4), stoneMat);
   cap.position.y = 5.6; cap.rotation.y = 0.4; g.add(cap);
-  const glow = new THREE.PointLight(0x9fd0ff, 0.55, 16, 2); glow.position.set(0, 3.2, 0); g.add(glow);
+  const glow = new THREE.PointLight(0x9fd0ff, 0.55 * LEGACY_LIGHT_SCALE, 16, 2); glow.position.set(0, 3.2, 0); g.add(glow);
   return g;
 }
 function buildDrownedCar(){
@@ -772,7 +789,7 @@ function buildDrownedCar(){
   cab.position.set(-0.3, 1.15, 0); g.add(cab);
   g.rotation.set(0.05, 0.6, 0.16);   // tilted, half-sunken
   g.position.y = -0.3;
-  const headlight = new THREE.PointLight(0xffcf7a, 0.35, 9, 2); headlight.position.set(2.0, 0.5, 0.6); g.add(headlight);
+  const headlight = new THREE.PointLight(0xffcf7a, 0.35 * LEGACY_LIGHT_SCALE, 9, 2); headlight.position.set(2.0, 0.5, 0.6); g.add(headlight);
   return g;
 }
 function buildSplitOak(){
@@ -787,7 +804,7 @@ function buildSplitOak(){
     half_.rotation.z = -side*0.35; half_.rotation.x = 0.1;
     g.add(half_);
   }
-  const glow = new THREE.PointLight(0xcfe6ff, 0.4, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
+  const glow = new THREE.PointLight(0xcfe6ff, 0.4 * LEGACY_LIGHT_SCALE, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
   return g;
 }
 const landmarkGroups = {
@@ -860,7 +877,7 @@ const halo = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 12),
   new THREE.MeshBasicMaterial({ color: WARM, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false }));
 halo.position.y = 0.55;
 const BABY_LIGHT_DISTANCE = 28;   // LUL-27: named so Fog Tide's "glow carries further" can scale it at runtime, see tick()
-const babyLight = new THREE.PointLight(WARM, 1.1, BABY_LIGHT_DISTANCE, 2); babyLight.position.set(0, 1.3, 0);
+const babyLight = new THREE.PointLight(WARM, 1.1 * LEGACY_LIGHT_SCALE, BABY_LIGHT_DISTANCE, 2); babyLight.position.set(0, 1.3, 0);
 babyGroup.add(bundle, babyHead, halo, babyLight);
 scene.add(babyGroup);
 
@@ -2935,7 +2952,7 @@ function renderPost(t){
 initPost();
 if(!usePost){                                   // fallback: let the renderer tone-map directly
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
-  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(RES); renderer.setSize(innerWidth, innerHeight);
 }
 // adaptive resolution: drop internal scale if frames get expensive, raise if they're cheap
