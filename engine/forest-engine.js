@@ -1155,7 +1155,7 @@ function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRa
 // stored point), so "last noisy position" falls out of that existing
 // approach behavior for free.
 function hearNoise(p){
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(Math.random, 4);
+  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
 }
 
 // ---- Positional hiding / detection (LUL-43, LUL-22) -----------------------
@@ -1290,7 +1290,7 @@ function updatePredators(dt, noiseRadius){
         // existing investigate/approach loop (LUL-22, not to be retuned)
         // rather than snapping straight back into a full chase mid-overshoot
         // -- it just sprinted past you and has to notice you again.
-        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(Math.random, 3);
+        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 3);
         endChargeHud();
       } else {
         p.charge = cs;
@@ -1308,7 +1308,7 @@ function updatePredators(dt, noiseRadius){
       if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
-      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(Math.random, 4); p.hunt=false; }
+      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind);
         else { desx=ux; desz=uz; speed=p.spec.speed; }
@@ -1347,7 +1347,7 @@ function updatePredators(dt, noiseRadius){
       // chase since the player isn't hidden -- zero-speed forever. Keep
       // chasing blind while scentLock holds; once it expires, gate on sight
       // the same way a spotted chase always has.
-      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = rollSniffs(Math.random, 4); }
+      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = rollSniffs(rng, 4); }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -1438,7 +1438,7 @@ function updatePredators(dt, noiseRadius){
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
-        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(Math.random, 3); p.sniffTimer=rnd(1,4); sniff(); }
+        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(rng, 3); p.sniffTimer=rnd(1,4); sniff(); }
         else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL; }
       }
     }
