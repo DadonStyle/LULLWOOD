@@ -38,6 +38,7 @@ const OVERLAY_STYLE = `
   #gateTitle { font-size: 40px; font-weight: 400; letter-spacing: 0.18em;
     color: #d7e4f6; text-shadow: 0 2px 30px rgba(120,160,230,0.35); }
   #gateSub { font-size: 14px; letter-spacing: 0.06em; color: #9fb2cd; }
+  #gateCredit { font-size: 12px; letter-spacing: 0.04em; color: #6f82a0; }
   #gateKeys { margin-top: 18px; font-size: 12px; line-height: 2; color: #7f92ad;
     letter-spacing: 0.03em; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
@@ -99,6 +100,7 @@ const OVERLAY_STYLE = `
     .buyBtn { padding: 13px 18px; font-size: 14px; }
     #gateTitle { font-size: 32px; }
     #gateSub { font-size: 13px; }
+    #gateCredit { font-size: 11px; }
     #gateKeys { font-size: 13px; line-height: 2.1; }
     /* Minimap stays legible at the same physical size rather than shrinking
        further -- on a ~390px-wide phone it's already a larger fraction of
