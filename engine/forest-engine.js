@@ -1181,7 +1181,7 @@ function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRa
 // stored point), so "last noisy position" falls out of that existing
 // approach behavior for free.
 function hearNoise(p){
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(Math.random, 4);
+  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
 }
 
 // ---- Positional hiding / detection (LUL-43, LUL-22) -----------------------
@@ -1316,7 +1316,7 @@ function updatePredators(dt, noiseRadius){
         // existing investigate/approach loop (LUL-22, not to be retuned)
         // rather than snapping straight back into a full chase mid-overshoot
         // -- it just sprinted past you and has to notice you again.
-        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(Math.random, 3);
+        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 3);
         endChargeHud();
       } else {
         p.charge = cs;
@@ -1334,7 +1334,7 @@ function updatePredators(dt, noiseRadius){
       if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
-      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(Math.random, 4); p.hunt=false; }
+      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind);
         else { desx=ux; desz=uz; speed=p.spec.speed; }
@@ -1373,7 +1373,7 @@ function updatePredators(dt, noiseRadius){
       // chase since the player isn't hidden -- zero-speed forever. Keep
       // chasing blind while scentLock holds; once it expires, gate on sight
       // the same way a spotted chase always has.
-      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = rollSniffs(Math.random, 4); }
+      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = rollSniffs(rng, 4); }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -1464,7 +1464,7 @@ function updatePredators(dt, noiseRadius){
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
-        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(Math.random, 3); p.sniffTimer=rnd(1,4); sniff(); }
+        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(rng, 3); p.sniffTimer=rnd(1,4); sniff(); }
         else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL; }
       }
     }
@@ -1724,9 +1724,25 @@ function impulse(ctx, sec, decay){
   for(let c=0;c<2;c++){ const d = b.getChannelData(c); for(let i=0;i<len;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/len, decay); }
   return b;
 }
+// LUL-1112: iOS Safari workaround for mute-switch suppression of WebAudio.
+// Playing a silent audio element establishes the audio session category as
+// 'playback' instead of 'default', which allows WebAudio to bypass the mute switch.
+function primeAudioSession(){
+  // LUL-1112: iOS Safari requires the audio session category to be 'playback'
+  // (not 'default') to bypass the hardware mute switch. This is established by
+  // the muted autoplay <audio> element (audioSessionPrimer) which has already
+  // been playing since the component mounted. This function ensures the element
+  // is actively playing in case autoplay was delayed or blocked.
+  const primer = document.getElementById('audioSessionPrimer');
+  if(!primer) return;
+  primer.play().catch(() => {}); // swallow rejection if autoplay is blocked
+}
 function startAudio(){
   const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return;
   const ctx = new AC();
+  // LUL-1112: log audio context state for iOS debugging
+  const debugAudio = new URLSearchParams(window.location.search).has('debugAudio');
+  if(debugAudio) console.log('[AudioInit]', { state: ctx.state, sampleRate: ctx.sampleRate, currentTime: ctx.currentTime });
   const master = ctx.createGain(); master.connect(ctx.destination);
   master.gain.setValueAtTime(0.0001, ctx.currentTime);
   master.gain.exponentialRampToValueAtTime(soundOn ? 0.6 : 0.0001, ctx.currentTime + 2);
@@ -2132,6 +2148,10 @@ function enter(){
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   pushState({ entered: true });
   setPaused(false);
+  // LUL-1112: on iOS Safari, WebAudio is silent when mute switch is set to silent.
+  // Priming with a silent <audio> element establishes the audio session category
+  // as 'playback' instead of 'default', which lets WebAudio bypass the mute switch.
+  if(mode === 'mobile') primeAudioSession();
   if(!started){ startAudio(); started = true; }
   else if(audio){ audio.ctx.resume(); }
   // LUL-643: requestLock() is meaningless on a touch device and, worse, a

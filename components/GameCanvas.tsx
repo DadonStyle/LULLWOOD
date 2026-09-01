@@ -306,6 +306,7 @@ function overlayMarkup(mobile: boolean) {
 <div id="hint">${hint}</div>
 <div id="pausePrompt">${pausePrompt}</div>
 <video id="deathVideo" muted playsinline preload="auto" src="/death.mp4"></video>
+<audio id="audioSessionPrimer" preload="none" style="display:none;"></audio>
 `;
 }
 
