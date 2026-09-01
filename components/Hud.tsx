@@ -76,6 +76,7 @@ export interface EngineHudState {
   // while locked, even if held.
   veilCharge: number;
   veilLocked: boolean;
+  staminaCharge: number;
   // LUL-213: a wolf/lion is telegraphing a charge -- press Space within the
   // window or get caught. `chargeToken` only changes on a fresh charge (not
   // every frame one is active), so it can key the prompt element and retrigger
@@ -147,6 +148,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lightDimmed: false,
   veilCharge: 1,
   veilLocked: false,
+  staminaCharge: 1,
   chargeVisible: false,
   chargeToken: 0,
   difficulty: 'night',

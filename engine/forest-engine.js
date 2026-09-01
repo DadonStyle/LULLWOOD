@@ -314,7 +314,7 @@ let lightDimmed = false;
 // (VEIL_RAMP), how thick it gets at full ramp (MIST_VEIL_FOG), and the mutable
 // per-frame state itself.
 const VEIL_RAMP = 1.6;            // seconds for mist/detect-cut to ease fully in or out
-let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1;
+let veilCharge = 1, veilLocked = false, veilAmount = 0;
 let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
 const MIST_VEIL_FOG = 0.34;       // ~3x the manual Mist slider's own max (0.11) -- deliberately overshoots it so the veil reads as a distinct world state
 
@@ -2958,7 +2958,7 @@ function tick(){
   // the sight-detect cut ramps in step with what the player actually sees.
   veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
   scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmount);
-  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, staminaCharge: Math.round(staminaCharge * 100) / 100 });
+  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked });
 
   // LUL-27: Fog Tide. The clock only advances while `playing` -- same gate
   // the veil above reads -- so the pause menu freezes the cycle exactly like
