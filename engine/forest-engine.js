@@ -88,6 +88,15 @@ import {
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
 import {
+  freshEmbersState,
+  computeWinPayout,
+  computeDeathPayout,
+  applyPayout,
+  purchaseDeeperLungs as economyPurchaseDeeperLungs,
+  veilMaxHoldForTier,
+  DEEPER_LUNGS_MAX_TIER,
+} from '@/lib/game/economy';
+import {
   inLakeWater,
   inLakeClearance,
   lakeSpeedMultiplier,
@@ -1582,6 +1591,14 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false;   // LUL-213: see beginJump() / tick()'s jumpY
+// LUL-1043: Embers. `maxDistFromHome` is the run's displacement high-water
+// mark (not `dist` below, which is path length) -- reset in enter(), read by
+// arriveHome()/triggerDeath() for the payout's `depth` term. `embers` is the
+// engine's own copy of the cross-run balance/tiers, synced from
+// components/Hud.tsx's localStorage read via setEmbers() once on mount (same
+// pattern as setDifficulty/setRunMode/etc. -- see SettingsPanel.tsx) and
+// mutated in place by arriveHome/triggerDeath/purchaseDeeperLungs.
+let maxDistFromHome = 0, embers = freshEmbersState();
 // LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
 // engine's own mutable locals (lib/game/outcome.ts is pure and holds no
 // state of its own) -- this snapshots them into the RunState shape the
@@ -2051,6 +2068,12 @@ let hudState = {
   // and persists it to localStorage (see components/Hud.tsx).
   difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
+  // LUL-1043: Embers. `embersBalance`/`embersDeeperLungsTier` are the
+  // cross-run economy state -- engine-owned like difficulty above, synced
+  // from localStorage by components/Hud.tsx via setEmbers() once on mount.
+  // `lastPayout` is the most recent win/death breakdown (null before the
+  // first run ends this session), reset to null on restart().
+  embersBalance: 0, embersDeeperLungsTier: 0, lastPayout: null,
 };
 function pushState(patch){
   let changed = false;
@@ -2106,6 +2129,7 @@ function setPaused(p){
 function enter(){
   entered = true;
   enteredAt = clock.elapsedTime;
+  maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   pushState({ entered: true });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
@@ -2700,8 +2724,12 @@ function arriveHome(){
   // of the win screen forever -- clear it the same way placePredators() does
   // on restart.
   activeCharges = 0;
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
+  // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
+  const payout = computeWinPayout(maxDistFromHome, survivedSeconds);
+  embers = applyPayout(embers, payout);
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
+    lastPayout: payout, embersBalance: embers.balance });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
 }
 function triggerDeath(kind){
   const next = outcomeTriggerDeath(runState());
@@ -2710,8 +2738,12 @@ function triggerDeath(kind){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
-  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds });
-  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
+  // LUL-1043: the ground you covered is all you keep -- carried+home go out with you.
+  const payout = computeDeathPayout(maxDistFromHome, survivedSeconds);
+  embers = applyPayout(embers, payout);
+  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
+    lastPayout: payout, embersBalance: embers.balance });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -2782,6 +2814,20 @@ function setSensitivity(v){ sensMul = clamp(v, 0.25, 3); pushState({ sensitivity
 function setInvertY(v){ invertY = !!v; pushState({ invertY }); }
 function setReducedMotion(v){ reducedMotionSetting = !!v; pushState({ reducedMotion: reducedMotionSetting }); }
 function setCaptions(v){ captionsOn = !!v; pushState({ captionsOn }); }
+// LUL-1043: sync from components/Hud.tsx's localStorage read, once on mount --
+// same "engine owns the state, React persists it" split as setDifficulty/
+// setRunMode/etc. above (see SettingsPanel.tsx's identical apply-on-ready
+// effect). Bypasses earn/spend logic entirely -- this only ever restores a
+// prior balance, it never grants or charges Embers.
+function setEmbers(balance, deeperLungsTier){
+  const tier = Math.max(0, Math.min(DEEPER_LUNGS_MAX_TIER, Math.floor(deeperLungsTier) || 0));
+  embers = { balance: Math.max(0, Math.floor(balance) || 0), tiers: { deeperLungs: tier } };
+  pushState({ embersBalance: embers.balance, embersDeeperLungsTier: tier });
+}
+function purchaseDeeperLungs(){
+  embers = economyPurchaseDeeperLungs(embers);
+  pushState({ embersBalance: embers.balance, embersDeeperLungsTier: embers.tiers.deeperLungs });
+}
 on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   applyRes();
@@ -2938,7 +2984,8 @@ function tick(){
   // the pause menu is open (which stops updating `keys` mid-hold) can't strand
   // the veil active.
   const veilHeld = playing && (!!keys['KeyF'] || touchVeil);
-  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt);
+  // LUL-1043: Deeper Lungs' lever -- 5s base, +1s per tier purchased.
+  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt, veilMaxHoldForTier(embers.tiers.deeperLungs));
   veilCharge = veilStep.charge; veilLocked = veilStep.locked;
   const dimmed = veilStep.active;
   if(dimmed !== lightDimmed){
@@ -3023,6 +3070,15 @@ function tick(){
       // the sight-cover reeds give you costs you on the sound channel instead.
       noiseRadius = (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK) * bogNoiseMultiplier(playerInBog);
     }
+  }
+
+  // LUL-1043: Embers' `depth` term -- displacement from home, not path length
+  // (that's `dist` above). Tracked every tick regardless of movement this
+  // frame so it also holds correctly through the pickup cinematic and the
+  // carry leg, not just while the movement block above is live.
+  if(entered){
+    const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
+    if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
   }
 
   if(pickingUp){
@@ -3353,7 +3409,8 @@ tick();
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchInteract,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun,
-           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions };
+           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
+           setEmbers, purchaseDeeperLungs };
 }
 
 function dispose() {
