@@ -749,6 +749,65 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 ---
 
+### Embers (bank-or-lose run currency)
+
+LUL-1043 (wiki `game/economy/embers`, scope decision `decisions/embers-accepted-2026-08-29`).
+Not a spatial/world object — a persisted number plus one spend screen. Payout math is
+pure and engine-independent (`lib/game/economy.ts`, no Three.js, no engine state — same
+shape as `outcome.ts`/`veil.ts`); the engine is economy.ts's only caller and owns the
+mutable balance/tier and the one `localStorage` write.
+
+**What it can do**
+- Pay out on every run's end, win or death, computed from that run's `maxDistFromHome`
+  and `survivedSeconds`: `depthEmbers()` (uncapped, floor of distance/4) plus
+  `survivalEmbers()` (floor of seconds/20, capped at `SURVIVAL_CAP=6` — deliberately
+  capped so stalling in a bush forever can't out-earn a clean crossing, replacing the
+  incentive shape the deleted uncapped `lullwood:bestTimeSeconds` score used to have).
+  `winPayout()` additionally banks `CARRIED_EMBERS` (60) and `HOME_EMBERS` (25) —
+  **win-only**; `deathPayout()` never includes them, so a death after pickup forfeits
+  exactly those 85, landing the loss on the tensest moment in the run by design.
+- Called from the engine at `arriveHome()` and `triggerDeath()`, both of which add
+  `payout.total` to the in-memory `embersBalance` and persist it via `saveEmbers()`
+  (engine/forest-engine.js — `EMBERS_KEY = 'lullwood:embers'`, one JSON blob holding
+  `{ balance, tiers: { deeperLungs } }`, guarded the same `typeof window` + try/catch
+  way as the pre-existing `lullwood:settings`/former `lullwood:bestTimeSeconds` writes —
+  "one store, per the ticket," not a second persistence mechanism).
+- Spend on **Deeper Lungs**, the one sink wired up in this version (Steady Arms/Ash-Foot
+  from the full design are deliberately not built — Economist's gate, same decision
+  page): `buyDeeperLungs()` re-validates cost/balance server-side-equivalent (engine,
+  not just the UI) before deducting, same defensive pattern as `setDifficulty()`. Costs
+  step `DEEPER_LUNGS_COSTS = [120, 300, 600]` across `DEEPER_LUNGS_MAX_TIER = 3` tiers.
+  Effect: each tier extends the mist-veil hold window — `veilMaxHoldForTier()`
+  (`lib/game/veil.ts`) is the tier's only gameplay effect, read every tick alongside
+  `deeperLungsTier`.
+- Render via `components/EmbersPanel.tsx` (the spend screen, opened from the HUD's
+  `embersBtn`) and `components/Hud.tsx`'s `RunRecap` (post-run breakdown shown on both
+  win and death screens) plus the always-on `#embersHud`/`#embersBalanceLine` readouts.
+
+**What it CANNOT do**
+- Cannot be banked early or partially — payout only fires at `arriveHome()`/
+  `triggerDeath()`, both of which are terminal for the run; there is no mid-run partial
+  cash-out.
+- Cannot go negative or exceed what `buyDeeperLungs()` validates — the balance check is
+  re-done engine-side even though `EmbersPanel.tsx` already only offers an affordable
+  next tier, specifically to survive a stale click across a balance-changing run left
+  open in another tab.
+- Cannot affect anything but the veil hold window in this version — no `peril` term, no
+  other sinks exist yet (see the sink note above).
+
+**Behaviours & logic**
+- Pure functions, unit-tested independently of the engine (`lib/game/economy.ts`, per
+  `systems/unit-testing-standard`) — `depthEmbers()`, `survivalEmbers()`, `winPayout()`,
+  `deathPayout()`, `deeperLungsCost()`, `canBuyDeeperLungs()`.
+- Persistence is engine state, not React state, specifically so a win/death doesn't need
+  a React round-trip before the number it just computed is available — same reasoning as
+  `currentSeed` reading `CONFIG.seed` once at `init()`.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
 ## The interaction matrix
 
 Every pairwise combination of the 15 elements above, physical/geometric
