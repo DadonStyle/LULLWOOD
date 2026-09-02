@@ -41,13 +41,13 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3347-3351, gated on the same
+  `triggerTouchToggleRun()` (L3403-3406, gated on the same
   `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3324-3330, same guards as the desktop `Space`
+  `triggerTouchJump()` (L3380-3385, same guards as the desktop `Space`
   keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
@@ -57,7 +57,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3336-3340, `MobileControls.tsx`'s `touchPause` button) toggles both
+  (L3392-3396, `MobileControls.tsx`'s `touchPause` button) toggles both
   directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
@@ -72,8 +72,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3310 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L2940, mirrored the same way in `qaPlayerState()`'s return
+  button via `setTouchVeil()` L3366 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L2986, mirrored the same way in `qaPlayerState()`'s return
   object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED`,
   applied in `tick()`; paired with a screen-edge
@@ -749,9 +749,58 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 ---
 
+### Embers (run currency)
+
+**What it is**
+- `embersBalance`: player's persisted currency balance (runs completed,
+  predator kills, or other events), stored in `localStorage['lullwood:embers']`
+  and synced to `hudState` via `setEmbers()` (L2822-2826 in
+  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
+  on win/death via `arriveHome()` / `triggerDeath()`.
+- `lastPayout`: breakdown of earnings from the run that just ended (null
+  before first win/death this session), read by HUD on win/death screens to
+  display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
+- Deeper Lungs: unlock via shop button in post-run UI; one-time purchase per
+  tier (tiers 0–3, `DEEPER_LUNGS_COST` array), persisted alongside balance as
+  `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
+  duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
+
+**What it can do**
+- Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
+  balance delta and calls `setEmbers()` to persist; engine gates all payouts
+  behind `canArriveHome()` / `triggerDeath()` to prevent double-apply.
+- Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COST[tier]` and increases
+  `VEIL_MAX_HOLD` (via `veilMaxHoldForTier()`) until the next tier is purchased.
+  Purchase is final, persisted to localStorage and synced to `hudState` via
+  `deeperLungsTier` property.
+
+**What it CANNOT do**
+- Spend on anything other than Deeper Lungs tiers.
+- Be lost/reset except via manual localStorage deletion (QA/debug only, not
+  a player-facing action).
+
+**Behaviours & logic**
+- Persistence: `useEmbers()` hook in `components/Hud.tsx` (L225-241) reads
+  stored balance on engine mount and writes to localStorage whenever balance
+  or tier change. Gated to skip writing stale zero defaults before stored
+  state is applied (ref `appliedRef` prevents persist effect from firing until
+  apply-on-ready effect has run).
+- `veilMaxHoldForTier(tier)` adds `DEEPER_LUNGS_HOLD_SECONDS[tier]` to base
+  `VEIL_MAX_HOLD` — each tier adds 1 second to the hold cap (5/6/7/8 seconds
+  at tiers 0/1/2/3).
+- Win/death screen shows a shop button (wired to `purchaseDeeperLungs()`
+  action) only if the player has balance ≥ `DEEPER_LUNGS_COST[currentTier]` and
+  `currentTier < 3`.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
 ## The interaction matrix
 
-Every pairwise combination of the 15 elements above, physical/geometric
+Every pairwise combination of the 16 elements above, physical/geometric
 relationships only (movement collision, line-of-sight blocking, "stood on").
 Scent and noise are **not** columns here because the source is unambiguous
 that neither channel has *any* geometry interaction with *any* element
@@ -769,23 +818,24 @@ collider · `ATT` = permanently attached/coincident · `–` = no interaction,
 verified in source · **`U`** = **UNDEFINED — no source resolves this**.
 Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
-| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ |
-| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ |
-| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
-| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
-| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
-| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ |
-| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
-| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
-| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – |
-| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – |
-| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | render¹⁷ |
-| **HO** Home | | | | | | | | | | | | · | – | – | – |
-| **FO** Fog | | | | | | | | | | | | | · | – | – |
-| **FL** Follow-light | | | | | | | | | | | | | | · | – |
-| **UI** HUD/UI | | | | | | | | | | | | | | | · |
+| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI | EM |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | – |
+| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | – |
+| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | – |
+| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | – |
+| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | – |
+| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ | – |
+| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
+| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
+| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
+| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – | – |
+| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | render¹⁷ | – |
+| **HO** Home | | | | | | | | | | | | · | – | – | – | – |
+| **FO** Fog | | | | | | | | | | | | | · | – | – | – |
+| **FL** Follow-light | | | | | | | | | | | | | | · | – | – |
+| **UI** HUD/UI | | | | | | | | | | | | | | | · | – |
+| **EM** Embers | | | | | | | | | | | | | | | | · |
 
 ¹ Pickup (`distBaby<3.6`) and carry-follow (child's position snaps to
 player's while carrying) — proximity, not collision.
