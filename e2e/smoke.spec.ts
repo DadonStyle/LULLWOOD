@@ -15,6 +15,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
+import { SITE_TITLE } from '../lib/site';
 import {
   assertInViewport,
   boot,
@@ -55,7 +56,7 @@ test.describe('initial load', () => {
       text: document.body.innerText,
     }));
 
-    expect(load.title).toBe('Lullwood — Free Browser Horror Game, No Download');
+    expect(load.title).toBe(SITE_TITLE);
     expect(String(load.threeRevision)).toBe(expectedThreeRevision);
     // Assert the contract (init/dispose are callable), not the exact key list --
     // an exact-equality check on Object.keys(ForestEngine) fails every time the
