@@ -48,6 +48,8 @@ declare global {
         trees: { x: number; z: number }[];
         predators: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number }[];
       };
+      /** LUL-1331: the AudioContext state, started flag, soundOn state, and master gain value -- confirms the audio context is running and the gain is active. */
+      qaProbeAudio?: () => { state: string | null; started: boolean; soundOn: boolean; masterGain: number | null };
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
       /** Same as qaLurePredator, filtered to the given species. Returns the

@@ -1727,6 +1727,11 @@ function impulse(ctx, sec, decay){
 function startAudio(){
   const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return;
   const ctx = new AC();
+  // LUL-1112: iOS constructs AudioContext in suspended state even during user
+  // activation; explicit resume() is required. On desktop, ctx is already running,
+  // and resume() on a running context is a spec no-op, so this is safe everywhere.
+  const r = ctx.resume && ctx.resume();
+  if(r && r.catch) r.catch(function(){});
   const master = ctx.createGain(); master.connect(ctx.destination);
   master.gain.setValueAtTime(0.0001, ctx.currentTime);
   master.gain.exponentialRampToValueAtTime(soundOn ? 0.6 : 0.0001, ctx.currentTime + 2);
@@ -2134,6 +2139,7 @@ function enter(){
   setPaused(false);
   if(!started){ startAudio(); started = true; }
   else if(audio){ audio.ctx.resume(); }
+  if(audio){ audio.ctx.resume(); }  // Ensure audio context is running on every entry
   // LUL-643: requestLock() is meaningless on a touch device and, worse, a
   // stray el.requestPointerLock() call still succeeds in a mobile-emulated
   // Chromium context -- it locked the canvas as the pointer target and
@@ -2184,6 +2190,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     };
   };
 
+  window.ForestEngine.qaProbeAudio = function(){
+    return audio
+      ? { state: audio.ctx.state, started: started, soundOn: soundOn, masterGain: audio.master.gain.value }
+      : { state: null, started: started, soundOn: soundOn, masterGain: null };
+  };
   // LUL-211: the cover-collision fix (coverBlockedR, folded into blocked())
   // was unprovable from a test -- nothing outside the closure could read where
   // the player ended up, so "you can walk through a boulder" could only ever be
@@ -2677,6 +2688,20 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // CAMERA_FOV above) -- nothing outside init() could otherwise confirm the
   // mobile/desktop FOV split actually took effect.
   window.ForestEngine.qaCameraFov = function(){ return camera.fov; };
+}
+
+// LUL-1112: Audio debug readout for ?audiodebug=1. Renders a small fixed-position text
+// diagnostic showing ctx.state + soundOn + master gain, updated on a timer. Absent by
+// default — it must do nothing for real players, same discipline as the qaHooks block.
+if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('audiodebug')){
+  const audioDebugEl = document.createElement('div');
+  audioDebugEl.style.cssText = 'position: fixed; top: 10px; right: 10px; background: rgba(0,0,0,0.8); color: #0f0; font-family: monospace; font-size: 12px; padding: 8px; border-radius: 4px; pointer-events: none; z-index: 9999; line-height: 1.4;';
+  document.body.appendChild(audioDebugEl);
+  setInterval(function(){
+    const state = audio ? audio.ctx.state : 'null';
+    const gain = audio ? audio.master.gain.value.toFixed(5) : 'null';
+    audioDebugEl.textContent = 'ctx: ' + state + '\nsoundOn: ' + soundOn + '\ngain: ' + gain;
+  }, 100);
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
