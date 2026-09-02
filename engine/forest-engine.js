@@ -1790,6 +1790,7 @@ function splash(vol){
 // LUL-1209: stamina low-charge audio cue -- breath/exertion sound when player
 // nears full sprint drain. A short tone burst at ~200Hz (breath pitch).
 function staminaExertionCue(){
+  if(captionsOn) pushState({ caption: 'breathing hard', captionId: ++captionSeq });
   if(!audio || !soundOn) return;
   const { ctx, master } = audio, t = ctx.currentTime;
   const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 200;
@@ -3053,8 +3054,8 @@ function tick(){
   if(playing && !hidden){
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
-    if(staminaCharge < 0.2 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
-    else if(staminaCharge > 0.3) staminaLowCuePlayed = false;
+    if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
+    else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
     const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerInBog) * lakeSpeedMultiplier(playerInLake);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
