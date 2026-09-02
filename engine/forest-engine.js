@@ -2739,7 +2739,11 @@ function triggerDeath(kind){
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
   // LUL-1043: the ground you covered is all you keep -- carried+home go out with you.
-  const payout = computeDeathPayout(maxDistFromHome, survivedSeconds);
+  const payout = computeDeathPayout(
+    maxDistFromHome,
+    survivedSeconds,
+    Math.hypot(baby.x - CONFIG.home.x, baby.z - CONFIG.home.z),
+  );
   embers = applyPayout(embers, payout);
   pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance });
