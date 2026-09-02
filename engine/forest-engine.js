@@ -87,7 +87,7 @@ import {
   tickTimers,
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
-import { stepStamina, sprintSpeedMul } from '@/lib/game/stamina';
+import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL } from '@/lib/game/stamina';
 import {
   freshEmbersState,
   computeWinPayout,
@@ -972,7 +972,7 @@ const PSPEC = {
 // Size each animal's speed from its warning budget: from the moment it SEES you and you
 // flee at top speed, the fastest (lion) still gives ≥4s, the bear ≥9s. All are faster than
 // the player, so you can't simply outrun them — hiding is the real escape. Tune via CHASE_GAP.
-const RUN = CONFIG.walk * 1.8, CHASE_GAP = 28;
+const RUN = CONFIG.walk * STAMINA_SPRINT_MUL, CHASE_GAP = 28;
 for(const k in PSPEC) PSPEC[k].speed = RUN + CHASE_GAP / PSPEC[k].budget;
 
 // LUL-26: difficulty presets. `night` is the existing tuning verbatim (every
