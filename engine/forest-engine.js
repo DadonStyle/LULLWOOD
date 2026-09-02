@@ -1727,6 +1727,12 @@ function impulse(ctx, sec, decay){
 function startAudio(){
   const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return;
   const ctx = new AC();
+  // LUL-1112: iOS constructs AudioContext in suspended state regardless of user
+  // activation. Explicit resume() is required inside the gesture, even though
+  // resume() on an already-running context is a spec no-op, so this is safe
+  // on desktop and fixes silent audio on iOS.
+  const r = ctx.resume && ctx.resume();
+  if(r && r.catch) r.catch(function(){});
   const master = ctx.createGain(); master.connect(ctx.destination);
   master.gain.setValueAtTime(0.0001, ctx.currentTime);
   master.gain.exponentialRampToValueAtTime(soundOn ? 0.6 : 0.0001, ctx.currentTime + 2);
@@ -2133,7 +2139,7 @@ function enter(){
   pushState({ entered: true });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
-  else if(audio){ audio.ctx.resume(); }
+  if(audio){ audio.ctx.resume(); }
   // LUL-643: requestLock() is meaningless on a touch device and, worse, a
   // stray el.requestPointerLock() call still succeeds in a mobile-emulated
   // Chromium context -- it locked the canvas as the pointer target and
@@ -2677,6 +2683,30 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // CAMERA_FOV above) -- nothing outside init() could otherwise confirm the
   // mobile/desktop FOV split actually took effect.
   window.ForestEngine.qaCameraFov = function(){ return camera.fov; };
+
+  window.ForestEngine.qaProbeAudio = function(){
+    return audio
+      ? { state: audio.ctx.state, started: started, soundOn: soundOn, masterGain: audio.master.gain.value }
+      : { state: null, started: started, soundOn: soundOn, masterGain: null };
+  };
+}
+
+// ---- Audio debug readout (LUL-1112, founder-reachable on real iPhone) ------
+if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('audiodebug')){
+  const audioDebugEl = document.createElement('div');
+  audioDebugEl.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.7);color:#fff;padding:8px;font-family:monospace;font-size:12px;z-index:10000;pointer-events:none;';
+  document.body.appendChild(audioDebugEl);
+  setInterval(function(){
+    let text = 'audio: ';
+    if(audio){
+      text += 'state=' + audio.ctx.state + ' ';
+      text += 'gain=' + audio.master.gain.value.toFixed(4) + ' ';
+      text += 'sound=' + (soundOn ? 'on' : 'off');
+    } else {
+      text += 'not started';
+    }
+    audioDebugEl.textContent = text;
+  }, 100);
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
