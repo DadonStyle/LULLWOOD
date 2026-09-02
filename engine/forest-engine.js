@@ -1727,6 +1727,11 @@ function impulse(ctx, sec, decay){
 function startAudio(){
   const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return;
   const ctx = new AC();
+  // LUL-1112: iOS constructs AudioContext in suspended state even during user
+  // activation; explicit resume() is required. On desktop, ctx is already running,
+  // and resume() on a running context is a spec no-op, so this is safe everywhere.
+  const r = ctx.resume && ctx.resume();
+  if(r && r.catch) r.catch(function(){});
   const master = ctx.createGain(); master.connect(ctx.destination);
   master.gain.setValueAtTime(0.0001, ctx.currentTime);
   master.gain.exponentialRampToValueAtTime(soundOn ? 0.6 : 0.0001, ctx.currentTime + 2);
@@ -2132,8 +2137,8 @@ function enter(){
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   pushState({ entered: true });
   setPaused(false);
-  if(!started){ startAudio(); started = true; }
-  else if(audio){ audio.ctx.resume(); }
+  if(!started){ startAudio(); started = true; } else if(audio){ audio.ctx.resume(); }
+  if(audio){ audio.ctx.resume(); }
   // LUL-643: requestLock() is meaningless on a touch device and, worse, a
   // stray el.requestPointerLock() call still succeeds in a mobile-emulated
   // Chromium context -- it locked the canvas as the pointer target and
@@ -2182,6 +2187,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       trees: treeData.map(function(t){ return { x: t.x, z: t.z }; }),
       predators: predators.map(function(p){ return { kind: p.kind, x: p.x, z: p.z }; }),
     };
+  };
+
+  window.ForestEngine.qaProbeAudio = function(){
+    return audio
+      ? { state: audio.ctx.state, started: started, soundOn: soundOn, masterGain: audio.master.gain.value }
+      : { state: null, started: started, soundOn: soundOn, masterGain: null };
   };
 
   // LUL-211: the cover-collision fix (coverBlockedR, folded into blocked())
@@ -2948,6 +2959,15 @@ const clock = new THREE.Clock();
 let bobPhase = 0;
 let rafId = null;
 
+// LUL-1331: audio debug readout for founder testing on real devices.
+// Hidden by default; opt-in via ?audiodebug=1.
+let audioDebugEl = null;
+if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('audiodebug')){
+  audioDebugEl = document.createElement('div');
+  audioDebugEl.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.8);color:#0f0;font-family:monospace;font-size:12px;padding:8px;z-index:9999;pointer-events:none;';
+  document.body.appendChild(audioDebugEl);
+}
+
 function tick(){
   rafId = requestAnimationFrame(tick);
   const dt = clampDt(clock.getDelta()), t = clock.elapsedTime;
@@ -3308,6 +3328,13 @@ function tick(){
   updateBoom(dt);
   if(!dead){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
   adaptResolution(dt, t);
+
+  // LUL-1331: audio debug readout
+  if(audioDebugEl && t % 0.1 < dt){
+    const state = audio ? audio.ctx.state : 'none';
+    const gain = audio ? audio.master.gain.value : 0;
+    audioDebugEl.textContent = `ctx: ${state}\nsoundOn: ${soundOn}\ngain: ${gain.toFixed(4)}`;
+  }
 }
 tick();
 

@@ -48,6 +48,8 @@ declare global {
         trees: { x: number; z: number }[];
         predators: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number }[];
       };
+      /** LUL-1331: the AudioContext state, started flag, soundOn state, and master gain value -- confirms the audio context is running and the gain is active. */
+      qaProbeAudio?: () => { state: string | null; started: boolean; soundOn: boolean; masterGain: number | null };
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
       /** Same as qaLurePredator, filtered to the given species. Returns the
@@ -184,14 +186,6 @@ declare global {
       /** LUL-69: the live camera vertical FOV (degrees) -- confirms the
        * mobile/desktop CAMERA_FOV split in init() actually took effect. */
       qaCameraFov?: () => number;
-      /** LUL-1112: audio context state, soundOn flag, and master gain value for
-       * diagnostics. Returns null if audio hasn't been initialized. */
-      qaProbeAudio?: () => {
-        state: AudioContextState | null;
-        started: boolean;
-        soundOn: boolean;
-        masterGain: number | null;
-      };
     };
   }
 }
