@@ -22,8 +22,15 @@ name: Tier approve
 #      script fails closed: `.github/**`, `scripts/**`, `engine/**`,
 #      `app/api/**`, dependency manifests, and any unrecognised path are C.
 #      It cannot approve a change to itself or to the merge gate.
-#   2. NEVER SELF-APPROVES. Refuses if github-actions[bot] authored the PR
-#      (that is the real 422 case).
+#   2. NEVER SELF-APPROVES. The approval is submitted under `SHIP_REVIEW_PAT`
+#      (see below), not `github.token` -- every PR here is opened by
+#      auto-pr.yml under `github.token`, so approving under that same token
+#      is the real 422 case (GitHub refuses an identity approving its own
+#      PR). Refuses if the PR author's login matches the PAT's own login,
+#      resolved at run time, not a hardcoded `github-actions[bot]` check --
+#      that hardcoded form is what made this guard reject every PR (LUL-1334):
+#      github-actions[bot] is always the author, so it never matched anything
+#      else and the job silently did nothing.
 #   3. NEVER SUBSTITUTES FOR CI. Every check the BASE branch's ruleset requires
 #      must already be SUCCESS on this PR's rollup, matched BY NAME against the
 #      ruleset -- not via statusCheckRollup's `isRequired`, which is null for
@@ -35,12 +42,32 @@ name: Tier approve
 # Tier C is untouched: engine simulation, persistence, secrets, CI and merge
 # rules all keep their blocking human review.
 #
+# THE APPROVING IDENTITY
+#
+# Submitted under the `SHIP_REVIEW_PAT` repo secret, the same distinct
+# identity auto-pr.yml (~line 258) and automerge.yml already use to approve
+# bot-authored PRs -- never `github.token`, which IS the PR author here and
+# 422s approving its own PR. If the secret is not configured, this skips the
+# PR with a warning rather than failing the job; nothing else in this repo
+# can approve a bot-authored PR either in that case (LUL-558/LUL-960).
+#
 # TRIGGER
 #
 # check_suite:completed fires as each workflow finishes, so this re-evaluates
 # on every check completion and no-ops until the full required set is green.
 # That is why guard 3 is a hard gate rather than a race: the last completion
 # to land is the one that finds everything SUCCESS.
+#
+# check_suite, like schedule, is only ever read from the DEFAULT branch
+# (systems/scheduled-workflow-reads-default-branch) -- a copy of this file on
+# release/next alone never receives a check_suite dispatch. This file must
+# also be present on `main` to fire at all. `main` only moves via the daily
+# version-cut cron (version-cut.yml, 08:53 UTC), so a fix landing on
+# release/next rides the next scheduled cut rather than a manual carve-out
+# (LUL-1334). Verify after that cut lands: `gh run list
+# --workflow=tier-approve.yml` should show a `check_suite` event, not just
+# `pull_request` -- a green run proves the guards ran, not that anything was
+# approved.
 
 on:
   check_suite:
@@ -90,18 +117,26 @@ jobs:
       - name: classify tier and approve
         env:
           GH_TOKEN: ${{ github.token }}
+          SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           [ -s prs.txt ] || exit 0
+
+          if [ -z "${SHIP_REVIEW_TOKEN:-}" ]; then
+            echo "::warning::SHIP_REVIEW_PAT secret is not configured; no identity available to approve a bot-authored PR (LUL-558/LUL-960). Skipping every candidate."
+            exit 0
+          fi
+          approver_login=$(GH_TOKEN="$SHIP_REVIEW_TOKEN" gh api user --jq '.login')
+          echo "approving identity: $approver_login"
 
           while IFS= read -r PR; do
             [ -n "$PR" ] || continue
             echo "::group::PR #$PR"
 
             author=$(gh api "repos/$REPO/pulls/$PR" --jq '.user.login')
-            if [ "$author" = "github-actions[bot]" ]; then
-              echo "::notice::PR #$PR authored by the bot; cannot self-approve. Skipping."
+            if [ "$author" = "$approver_login" ]; then
+              echo "::notice::PR #$PR authored by $approver_login, the same identity that would approve it; cannot self-approve. Skipping."
               echo "::endgroup::"; continue
             fi
 
@@ -145,10 +180,10 @@ jobs:
               echo "::endgroup::"; continue
             fi
 
-            msg="Auto-approved as Tier $tier under the development-first directive (AGENTS.md, Review tiers). Every file in this diff classifies as Tier A or B via scripts/pr-tier.mjs, and every status check required by the $base ruleset was verified SUCCESS on this PR rollup before this review was submitted. Submitted by github-actions[bot], a distinct identity from the studio PAT, which cannot approve its own PRs. Tier C (engine simulation, persistence, secrets, CI and merge rules) is unaffected and still requires a blocking human review. See .github/workflows/tier-approve.yml"
+            msg="Auto-approved as Tier $tier under the development-first directive (AGENTS.md, Review tiers). Every file in this diff classifies as Tier A or B via scripts/pr-tier.mjs, and every status check required by the $base ruleset was verified SUCCESS on this PR rollup before this review was submitted. Submitted under the SHIP_REVIEW_PAT identity ($approver_login), distinct from this PR's author ($author), which cannot approve its own PRs. Tier C (engine simulation, persistence, secrets, CI and merge rules) is unaffected and still requires a blocking human review. See .github/workflows/tier-approve.yml"
             jq -n --arg b "$msg" '{event:"APPROVE", body:$b}' > body.json
 
-            gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input body.json \
+            GH_TOKEN="$SHIP_REVIEW_TOKEN" gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input body.json \
               --jq '"approved PR '"$PR"' review \(.id) state=\(.state) by=\(.user.login)"' \
               | tee -a "$GITHUB_STEP_SUMMARY"
             echo "::endgroup::"
