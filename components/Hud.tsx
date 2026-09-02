@@ -465,6 +465,7 @@ export default function Hud({
         >
           <div id="gateTitle">LULLWOOD</div>
           <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
+          <div id="gateCredit">Developed by an independent AI studio</div>
           <div id="gateKeys">
             {mobile ? (
               <>
