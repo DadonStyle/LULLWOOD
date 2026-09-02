@@ -55,7 +55,7 @@ test.describe('initial load', () => {
       text: document.body.innerText,
     }));
 
-    expect(load.title).toBe('Lullwood');
+    expect(load.title).toBe('Lullwood — Free Browser Horror Game, No Download');
     expect(String(load.threeRevision)).toBe(expectedThreeRevision);
     // Assert the contract (init/dispose are callable), not the exact key list --
     // an exact-equality check on Object.keys(ForestEngine) fails every time the
@@ -230,6 +230,31 @@ test.describe('lift the child / carry home / win', () => {
     expect(pointerLocked, 'winning must release Pointer Lock (LUL-197)').toBe(false);
     const cursor = await page.evaluate(() => document.body.style.cursor);
     expect(cursor, 'winning must restore the OS cursor (LUL-197)').not.toBe('none');
+
+    // LUL-1081/LUL-1120: the founder-reported regression this ticket exists for was
+    // "winning silently restarts the game" -- a win screen that appears and then
+    // disappears on its own, specifically hypothesized as triggered by a movement key
+    // still held at the moment of arrival (a real player walks home holding
+    // W/Shift, and is still holding it when they cross the threshold). A prior
+    // assertion of `winVisible === true` right after arrival would not catch that --
+    // it has to hold the screen open under exactly that input and keep checking.
+    await page.keyboard.down('ShiftLeft');
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(3_000);
+    await expect(
+      page.locator('#winScreen'),
+      'win screen must not disappear while a movement key is held (LUL-1081)',
+    ).toBeVisible();
+    await expect(page.locator('#gate'), 'winning must never silently restart back to the gate (LUL-1081)').toHaveCount(0);
+
+    await page.keyboard.up('KeyW');
+    await page.keyboard.up('ShiftLeft');
+    await page.waitForTimeout(1_000);
+    await expect(
+      page.locator('#winScreen'),
+      'win screen must still hold after the key is released (LUL-1081)',
+    ).toBeVisible();
+    await expect(page.locator('#gate')).toHaveCount(0);
   });
 });
 
