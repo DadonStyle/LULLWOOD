@@ -29,13 +29,15 @@ test.describe('SEO metadata', () => {
       };
     });
 
-    expect(head.ogTitle).toBe('Lullwood');
-    expect(head.ogDescription).toBe('a lost child is somewhere in the dark');
+    expect(head.ogTitle).toBe('Lullwood — Free Browser Horror Game, No Download');
+    expect(head.ogDescription).toBe(
+      'A lost child is somewhere in the dark. A free first-person horror game you play in the browser.'
+    );
     expect(head.ogType).toBe('website');
     expect(head.ogUrl).toBeTruthy();
     expect(head.ogSiteName).toBe('Lullwood');
     expect(head.twitterCard).toBe('summary_large_image');
-    expect(head.twitterTitle).toBe('Lullwood');
+    expect(head.twitterTitle).toBe('Lullwood — Free Browser Horror Game, No Download');
     expect(head.canonical).toBeTruthy();
     // LUL-49: static app/opengraph-image.png + app/twitter-image.png,
     // registered by Next's file convention -- assert they resolve, not just
