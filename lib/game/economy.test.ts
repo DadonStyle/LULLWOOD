@@ -58,7 +58,7 @@ test('a win pays carried + home + depth + survival', () => {
 });
 
 test('a death pays only depth + survival -- carried and home are zero', () => {
-  const p = computeDeathPayout(78, 110);
+  const p = computeDeathPayout(78, 110, 78);
   assert.equal(p.depth, 19);
   assert.equal(p.survival, 5);
   assert.equal(p.carried, 0);
@@ -67,25 +67,71 @@ test('a death pays only depth + survival -- carried and home are zero', () => {
 });
 
 test('death is never zero once any ground was covered or any time survived', () => {
-  const p = computeDeathPayout(40, 30);
+  const p = computeDeathPayout(40, 30, 78);
   assert.ok(p.total > 0);
 });
 
 test('a death that got deep pays more than a death that never left the treeline', () => {
-  const timid = computeDeathPayout(40, 30);
-  const deep = computeDeathPayout(78, 90);
+  const timid = computeDeathPayout(40, 30, 78);
+  const deep = computeDeathPayout(78, 90, 78);
   assert.ok(deep.total > timid.total, 'cowardice must not be the best-paying strategy');
 });
 
 test('dying on the doorstep (carrying, at the win-median depth/survival) costs exactly carried+home vs. the equivalent win', () => {
   const win = computeWinPayout(78, 110);
-  const death = computeDeathPayout(78, 110);
+  const death = computeDeathPayout(78, 110, 78);
   assert.equal(win.total - death.total, 60 + 25);
 });
 
 test('a win at zero distance and zero seconds still pays the flat carried+home', () => {
   const p = computeWinPayout(0, 0);
   assert.equal(p.total, 60 + 25);
+});
+
+// ---- depth cap at objective distance (LUL-1192) -------------------------
+
+test('farm death, normal child: depth capped at objective, not max distance', () => {
+  const p = computeDeathPayout(212, 50, 78);
+  assert.equal(p.depth, 19, 'capped to objective depth (78/4=19.5→19), not max distance depth (212/4=53)');
+  assert.equal(p.survival, 2);
+  assert.equal(p.total, 19 + 2);
+});
+
+test('max-reachable corner farm: still capped at objective despite distance', () => {
+  const p = computeDeathPayout(265, 60, 78);
+  assert.equal(p.depth, 19, 'capped to objective depth (78/4=19.5→19), not max distance depth (265/4=66)');
+  assert.equal(p.survival, 3);
+  assert.equal(p.total, 19 + 3);
+});
+
+test('legitimate outbound death: cap does not bind when max < objective', () => {
+  const p = computeDeathPayout(55, 50, 78);
+  assert.equal(p.depth, 13, 'uncapped (55/4=13.75→13)');
+  assert.equal(p.survival, 2);
+  assert.equal(p.total, 13 + 2);
+});
+
+test('death on the doorstep: cap does not bind when distances are equal', () => {
+  const p = computeDeathPayout(78, 90, 78);
+  assert.equal(p.depth, 19);
+  assert.equal(p.survival, 4);
+  assert.equal(p.total, 19 + 4);
+});
+
+test('blackout, child in bog: must not regress to flat 96 cap', () => {
+  const p = computeDeathPayout(200, 80, 220);
+  assert.equal(p.depth, 50, 'depth capped at objective (220/4=55→50, not 24 from a flat 96 cap)');
+  assert.equal(p.survival, 4);
+  assert.equal(p.total, 50 + 4);
+});
+
+test('win path untouched: depth uncapped even at high distance', () => {
+  const p = computeWinPayout(212, 50);
+  assert.equal(p.depth, 53, 'uncapped (212/4=53)');
+  assert.equal(p.survival, 2);
+  assert.equal(p.carried, 60);
+  assert.equal(p.home, 25);
+  assert.equal(p.total, 53 + 2 + 60 + 25);
 });
 
 // ---- applyPayout --------------------------------------------------------
