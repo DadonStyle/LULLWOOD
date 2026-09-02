@@ -199,10 +199,9 @@ const OVERLAY_STYLE = `
      #minimap needs !important: the engine writes its own inline
      mm.style.display (blackout difficulty preset, forest-engine.js), which
      beats a plain rule.
-     LUL-1043: #embersBalance is exempted for the same reason as
-     #lightState/#veilState -- it's the run currency's balance, not a
-     dev-tuning control, and a player should always see it. */
-  body[data-admin-mode="0"] #panel > *:not(#settingsBtn):not(#lightState):not(#veilState):not(#embersBalance) { display: none !important; }
+     LUL-1085: #panel is now dev-only (pace/fog/lightState/veilState/embersBalance
+     for monitoring). Player-facing menu moved to components/GameMenu.tsx. */
+  body[data-admin-mode="0"] #panel { display: none !important; }
   body[data-admin-mode="0"] #minimap { display: none !important; }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
