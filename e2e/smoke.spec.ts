@@ -55,7 +55,7 @@ test.describe('initial load', () => {
       text: document.body.innerText,
     }));
 
-    expect(load.title).toBe('Lullwood');
+    expect(load.title).toBe('Lullwood — Free Browser Horror Game, No Download');
     expect(String(load.threeRevision)).toBe(expectedThreeRevision);
     // Assert the contract (init/dispose are callable), not the exact key list --
     // an exact-equality check on Object.keys(ForestEngine) fails every time the

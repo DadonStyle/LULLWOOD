@@ -8,7 +8,7 @@ test.describe('SEO metadata', () => {
   test('OG, Twitter, canonical and JSON-LD VideoGame tags are present', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    await expect(page).toHaveTitle('Lullwood');
+    await expect(page).toHaveTitle('Lullwood — Free Browser Horror Game, No Download');
 
     const head = await page.evaluate(() => {
       const meta = (name: string, attr: 'name' | 'property' = 'property') =>
