@@ -3,12 +3,13 @@
 // this suite never needs to click into the game -- it is cheap and static,
 // unlike the rest of e2e/ which drives gameplay.
 import { test, expect } from '@playwright/test';
+import { SITE_TITLE } from '../lib/site';
 
 test.describe('SEO metadata', () => {
   test('OG, Twitter, canonical and JSON-LD VideoGame tags are present', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    await expect(page).toHaveTitle('Lullwood');
+    await expect(page).toHaveTitle(SITE_TITLE);
 
     const head = await page.evaluate(() => {
       const meta = (name: string, attr: 'name' | 'property' = 'property') =>
