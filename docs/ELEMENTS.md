@@ -761,15 +761,15 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - Deeper Lungs: unlock via shop button in post-run UI; one-time purchase per
-  tier (tiers 0–3, `DEEPER_LUNGS_COST` array), persisted alongside balance as
+  tier (tiers 0–3, `DEEPER_LUNGS_COSTS` array), persisted alongside balance as
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 
 **What it can do**
-- Bank on win/death: `winPayout()` / `deathPayout()` in `lib/game/economy.ts` compute
-  balance delta and `setEmbers()` persists it; engine gates all payouts
-  behind `arriveHome()` / `triggerDeath()` to prevent double-apply.
-- Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COST[tier]` and increases
+- Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
+  balance delta and calls `setEmbers()` to persist; engine gates all payouts
+  behind `canArriveHome()` / `triggerDeath()` to prevent double-apply.
+- Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COSTS[tier]` and increases
   `VEIL_MAX_HOLD` (via `veilMaxHoldForTier()`) until the next tier is purchased.
   Purchase is final, persisted to localStorage and synced to `hudState` via
   `deeperLungsTier` property.
@@ -789,7 +789,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   `VEIL_MAX_HOLD` — each tier adds 1 second to the hold cap (5/6/7/8 seconds
   at tiers 0/1/2/3).
 - Win/death screen shows a shop button (wired to `purchaseDeeperLungs()`
-  action) only if the player has balance ≥ `DEEPER_LUNGS_COST[currentTier]` and
+  action) only if the player has balance ≥ `DEEPER_LUNGS_COSTS[currentTier]` and
   `currentTier < 3`.
 
 **Collision & physics profile**
