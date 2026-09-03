@@ -57,6 +57,22 @@ name: Tier approve
 # this reuses that proven path instead of inventing a second one. Like
 # `check_suite`, `workflow_run` is read from the default branch, so this file
 # still has to live on `main` to fire at all (LUL-1334).
+#
+# CHECKOUT REF (LUL-1339)
+#
+# Landing the file on `main` made `workflow_run` dispatch (confirmed: 13 runs
+# since the LUL-1334 hotfix), but every run against a real candidate PR still
+# crashed in guard 1 with `MODULE_NOT_FOUND` on scripts/pr-tier.mjs -- zero
+# approvals, same as before the fix, just a different cause. Root cause: an
+# unpinned `actions/checkout` on a `workflow_run` event checks out the
+# workflow FILE's own branch (`main`), not the head of the PR whose CI just
+# finished -- and scripts/pr-tier.mjs has never reached `main` via a version
+# cut (it exists on `release/next` only). The `ref:` pin below checks out the
+# event's own head_sha for workflow_run instead, which is always a commit on
+# a `lul-*` branch descended from `release/next` and therefore has the
+# script. pull_request-triggered runs are untouched (github.sha already
+# resolves to the correct merge ref for that trigger). Wiki:
+# systems/tier-approve-checkout-ref-bug.
 
 on:
   workflow_run:
@@ -81,7 +97,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # workflow_run does not inherit the triggering run's ref: an unpinned
+      # checkout here resolves to the workflow FILE's own branch (main),
+      # not the PR head whose CI just finished. scripts/pr-tier.mjs (guard
+      # 1, below) has never reached main via a version cut, so every real
+      # workflow_run-triggered approval attempt crashed with
+      # MODULE_NOT_FOUND before this fix (LUL-1339, wiki
+      # systems/tier-approve-checkout-ref-bug). Pinning to the event's own
+      # head_sha for workflow_run leaves the pull_request trigger's default
+      # merge-ref checkout untouched.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
