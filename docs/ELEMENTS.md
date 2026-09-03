@@ -40,14 +40,14 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   edge-detect at L1506-1507 flips `toggleRunOn`),
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
-  `running` derivation at L2860. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3418+, gated on the same
+  `running` derivation at L2802. In toggle mode, touch's analogue is
+  `triggerTouchToggleRun()` (L3418-3422, gated on the same
   `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3395+, same guards as the desktop `Space`
+  `triggerTouchJump()` (L3395-3401, same guards as the desktop `Space`
   keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
@@ -57,7 +57,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3407+, `MobileControls.tsx`'s `touchPause` button) toggles both
+  (L3407-3411, `MobileControls.tsx`'s `touchPause` button) toggles both
   directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
@@ -73,7 +73,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
   button via `setTouchVeil()` L3381 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L2998, mirrored the same way in `qaPlayerState()`'s return
+  touchVeil` at L3001, mirrored the same way in `qaPlayerState()`'s return
   object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED`,
   applied in `tick()`; paired with a screen-edge
@@ -512,7 +512,7 @@ one geometry builder (`makePredator()`), differentiated by the
   (half speed, `LAKE_SPEED_MULTIPLIER`=0.5, same shape as the bog's
   `BOG_SPEED_MULTIPLIER`), not a hard wall — see ⁴. Nothing currently reads
   the lake as anything deeper than ankle/waist depth (no drown state, no
-  stamina penalty, no audio change beyond the existing proximity chime bias).
+  stamina drain, no audio change beyond the existing proximity chime bias).
 - Does not affect scent or noise propagation (both are pure radius+wind /
   radius+chance functions with no lake awareness).
 
@@ -754,7 +754,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L2822-2826 in
+  and synced to `hudState` via `setEmbers()` (L2837-2841 in
   `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`.
@@ -792,33 +792,6 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - Win/death screen shows a shop button (wired to `purchaseDeeperLungs()`
   action) only if the player has balance ≥ `DEEPER_LUNGS_COST[currentTier]` and
   `currentTier < 3`.
-
-**Collision & physics profile**
-- N/A — not a spatial/world object.
-
----
-
-### Stamina (sprint resource)
-
-**What it is**
-- `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L326), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
-- **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (L1792-1799, `staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.2 charge, and resets the cue as soon as stamina climbs back past 0.3 (hysteresis bands `0.2`/`0.3`, `staminaLowCuePlayed` flag).
-
-**What it can do**
-- Gate the player's sprint speed (`tick()` at L3055-3058): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
-- Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
-- Reset to full on each new run: `staminaCharge = 1` on `enter()` (L2775, alongside `veilCharge`).
-
-**What it CANNOT do**
-- Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
-- Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.
-- Cannot be toggled or disabled by difficulty/accessibility settings (LUL-26 unmerged; no `DIFFICULTY_PRESETS` logic exists on `main` today).
-
-**Behaviours & logic**
-- Drain rate and refill rates are constants in `lib/game/stamina.ts` (`stepStamina()` parameters: `chargeDrainRate`/`chargeRegenRate`).
-- Clamped to [0, 1] — never goes negative and never exceeds full.
-- No player agency: decay and recovery are automatic, tied only to the `running` state and elapsed time `dt`.
 
 **Collision & physics profile**
 - N/A — not a spatial/world object.

@@ -1,16 +1,12 @@
-// LUL-650: mobile half of the admin-mode toggle (see ../admin-mode.spec.ts
+// LUL-650/LUL-1085: mobile half of the admin-mode toggle (see ../admin-mode.spec.ts
 // for the desktop spec and the full writeup).
 //
-// This also stands in as the "is Settings reachable on mobile" check the
-// ticket asked for: components/Hud.tsx renders #panel (and #settingsBtn
-// inside it) unconditionally once entered, independent of Escape/pause --
-// Escape/pointer-lock is desktop-only (engine/forest-engine.js gates that
-// listener block on `mode === 'desktop'`). #panel is also repositioned above
-// MobileControls' sticks on narrow/coarse-pointer viewports (LUL-198), so
-// tapping #settingsBtn directly, with no Escape/pause step at all, is the
-// real mobile path -- and it already works without needing a reachability
-// fix in this PR. Not device-verified; this is a headless-Chromium touch
-// emulation repro, see the Game Tester's confirmation pass.
+// LUL-1085 moves Settings (#settingsBtn) from #panel (player-hidden when admin mode off)
+// to GameMenu (always visible hamburger menu). This test verifies Settings is still
+// reachable and the admin-mode toggle still works. The route is now: open menu ->
+// tap Settings button -> toggle admin mode in the panel.
+// Not device-verified; this is a headless-Chromium touch emulation repro,
+// see the Game Tester's confirmation pass.
 import { test, expect } from '@playwright/test';
 import { boot } from '../helpers';
 
@@ -26,6 +22,11 @@ test('admin mode defaults off and is reachable/toggleable on mobile', async ({ p
 
   await expect(page.locator('#minimap')).toBeHidden();
   await expect(page.locator('#pace')).toBeHidden();
+
+  // LUL-1085: Settings button moved to GameMenu, open it via the hamburger
+  const menuToggle = page.getByTestId('menuToggle');
+  await expect(menuToggle, 'Menu must be reachable on mobile').toBeVisible();
+  await menuToggle.evaluate((el) => (el as HTMLElement).click());
 
   // el.click(), not a real Playwright tap -- see
   // wiki:systems/lul44-diagnosis-and-fix (HUD control taps/clicks in this rig
