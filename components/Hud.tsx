@@ -5,39 +5,10 @@ import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
 import OrientationGate from './OrientationGate';
 import SettingsPanel from './SettingsPanel';
+import GameMenu from './GameMenu';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 import { nextDeeperLungsCost, veilMaxHoldForTier, type RunPayout } from '@/lib/game/economy';
-
-// LUL-124: fullscreen toggle. `document.fullscreenEnabled` is false on
-// browsers that never expose the API (older iOS Safari) so the button is
-// simply omitted there instead of rendering a control that would reject on
-// every click. The `fullscreenchange` listener is what keeps `isFullscreen`
-// correct after the browser's own exit paths (Esc key, system UI) which
-// don't otherwise call back into this component.
-function useFullscreen() {
-  const supported = useState(() => typeof document !== 'undefined' && document.fullscreenEnabled)[0];
-  const [isFullscreen, setIsFullscreen] = useState(
-    () => typeof document !== 'undefined' && document.fullscreenElement != null,
-  );
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const onChange = () => setIsFullscreen(document.fullscreenElement != null);
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
-
-  const toggle = useCallback(() => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    } else {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }
-  }, []);
-
-  return { supported, isFullscreen, toggle };
-}
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -347,7 +318,6 @@ export default function Hud({
   state: EngineHudState;
   actions: EngineActions | null;
 }) {
-  const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
   useEmbers(actions, state.embersBalance, state.embersDeeperLungsTier);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
@@ -416,17 +386,9 @@ export default function Hud({
         <button id="regen" onClick={() => actions?.regenMap()}>
           New map
         </button>
-        {fullscreenSupported && (
-          <button id="fullscreen" onClick={toggleFullscreen}>
-            Fullscreen: {isFullscreen ? 'on' : 'off'}
-          </button>
-        )}
-        {/* LUL-26: difficulty presets + accessibility, one dialog. */}
-        <button id="settingsBtn" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog">
-          Settings
-        </button>
       </div>
 
+      <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} />
       <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       {/* LUL-26: closed captions for predator calls -- the only warning
