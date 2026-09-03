@@ -40,7 +40,7 @@
 //                          (visible on the board, nobody woken) -- reasonable
 //                          while QA/reviewer agents are paused.
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -229,7 +229,7 @@ function diagnoseFailures(failures) {
 function getLastReportDate() {
   const dir = path.join(REPO_ROOT, 'QA_REGRESSION', 'reports');
   try {
-    const files = require('fs').readdirSync(dir);
+    const files = readdirSync(dir);
     const mdFiles = files.filter((f) => f.endsWith('.md')).sort().reverse();
     if (mdFiles.length > 1) {
       return mdFiles[1].replace('.md', ''); // Return second-most-recent (previous to today)
@@ -243,7 +243,7 @@ function getLastReportDate() {
 function parseMarkdownReport(date) {
   const file = path.join(REPO_ROOT, 'QA_REGRESSION', 'reports', `${date}.md`);
   try {
-    const content = require('fs').readFileSync(file, 'utf8');
+    const content = readFileSync(file, 'utf8');
     const failures = [];
     const lines = content.split('\n');
     let currentSeverity = null;
