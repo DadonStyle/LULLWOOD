@@ -184,6 +184,14 @@ declare global {
       /** LUL-69: the live camera vertical FOV (degrees) -- confirms the
        * mobile/desktop CAMERA_FOV split in init() actually took effect. */
       qaCameraFov?: () => number;
+      /** LUL-1112: the live audio context state, whether it's started, soundOn flag,
+       * and master gain value -- used to verify the audio context is running on mobile. */
+      qaProbeAudio?: () => {
+        state: AudioContextState | null;
+        started: boolean;
+        soundOn: boolean;
+        masterGain: number | null;
+      };
     };
   }
 }
