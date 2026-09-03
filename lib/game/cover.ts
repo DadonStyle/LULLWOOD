@@ -208,9 +208,14 @@ export function blockedR(x: number, z: number, pr: number, grid: SpatialGrid<Cir
 // same SpatialGrid<CircleCollider> this file already owns -- no separate
 // grid abstraction needed. Tries the raw heading first, then eight fallback
 // angles (order matters: nearest deflection first, so a predator prefers the
-// smallest course correction that actually clears the obstacle), and falls
-// back to the original heading unchanged if every angle is still blocked
-// (matches main: it doesn't stop, it just walks into whatever's there).
+// smallest course correction that actually clears the obstacle).
+//
+// LUL-1091 changed the two ends of this. Each candidate is now probed at TWO
+// distances (near and far) because a single far probe steps clean over a trunk
+// that is closer than the probe band and reports the heading clear. And when
+// every angle is blocked it returns the LEAST-blocked candidate, never the
+// original heading -- returning the known-bad heading (the old behaviour,
+// inherited from main) is a guaranteed wedge inside a tree cluster.
 const AVOID_ANGLES: readonly number[] = [0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.2, -2.2];
 
 export function pickAvoidDirection(
