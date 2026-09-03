@@ -12,7 +12,10 @@
 // is never actually heard; only AudioContext lifecycle (created/closed) is checked.
 // Boot/enter/console-error helpers are shared with the other specs in
 // e2e/helpers.ts (LUL-35 pass 2) -- each file used to carry its own copy.
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { test, expect } from '@playwright/test';
+import { SITE_TITLE } from '../lib/site';
 import {
   assertInViewport,
   boot,
@@ -21,6 +24,16 @@ import {
   readObjective,
   trackConsoleErrors,
 } from './helpers';
+
+// LUL-975: read the pinned version out of package.json rather than hardcoding the
+// revision string, so a future three.js bump doesn't need a manual edit here too.
+// (A hardcoded '128' is exactly what let this suite report a false green against a
+// stale server serving three 0.128.0 while the branch had already moved to 0.185.1
+// -- see wiki systems/three-r185-upgrade.) Playwright transpiles specs as CommonJS,
+// so this resolves the path via __dirname rather than import.meta.
+const pkgPath = path.join(__dirname, '../package.json');
+const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+const expectedThreeRevision = String(pkg.dependencies.three).split('.')[1];
 
 test.describe('initial load', () => {
   test('title gate, engine API, two canvases, no console errors', async ({ page }) => {
@@ -43,8 +56,8 @@ test.describe('initial load', () => {
       text: document.body.innerText,
     }));
 
-    expect(load.title).toBe('Lullwood');
-    expect(String(load.threeRevision)).toBe('128');
+    expect(load.title).toBe(SITE_TITLE);
+    expect(String(load.threeRevision)).toBe(expectedThreeRevision);
     // Assert the contract (init/dispose are callable), not the exact key list --
     // an exact-equality check on Object.keys(ForestEngine) fails every time the
     // engine gains a key for an unrelated reason (it did when `threeRevision` was
@@ -218,6 +231,31 @@ test.describe('lift the child / carry home / win', () => {
     expect(pointerLocked, 'winning must release Pointer Lock (LUL-197)').toBe(false);
     const cursor = await page.evaluate(() => document.body.style.cursor);
     expect(cursor, 'winning must restore the OS cursor (LUL-197)').not.toBe('none');
+
+    // LUL-1081/LUL-1120: the founder-reported regression this ticket exists for was
+    // "winning silently restarts the game" -- a win screen that appears and then
+    // disappears on its own, specifically hypothesized as triggered by a movement key
+    // still held at the moment of arrival (a real player walks home holding
+    // W/Shift, and is still holding it when they cross the threshold). A prior
+    // assertion of `winVisible === true` right after arrival would not catch that --
+    // it has to hold the screen open under exactly that input and keep checking.
+    await page.keyboard.down('ShiftLeft');
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(3_000);
+    await expect(
+      page.locator('#winScreen'),
+      'win screen must not disappear while a movement key is held (LUL-1081)',
+    ).toBeVisible();
+    await expect(page.locator('#gate'), 'winning must never silently restart back to the gate (LUL-1081)').toHaveCount(0);
+
+    await page.keyboard.up('KeyW');
+    await page.keyboard.up('ShiftLeft');
+    await page.waitForTimeout(1_000);
+    await expect(
+      page.locator('#winScreen'),
+      'win screen must still hold after the key is released (LUL-1081)',
+    ).toBeVisible();
+    await expect(page.locator('#gate')).toHaveCount(0);
   });
 });
 

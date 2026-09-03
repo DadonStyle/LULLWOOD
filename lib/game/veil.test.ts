@@ -94,6 +94,26 @@ test('releasing before a full drain never locks -- partial use is free to resume
   assert.equal(reactivated.active, true);
 });
 
+// ---- stepVeilCharge: maxHold override (LUL-1043 Deeper Lungs) ------------
+
+test('maxHold defaults to VEIL_MAX_HOLD -- omitting it matches passing it explicitly', () => {
+  const withDefault = stepVeilCharge({ charge: 1, locked: false }, true, 1);
+  const explicit = stepVeilCharge({ charge: 1, locked: false }, true, 1, VEIL_MAX_HOLD);
+  assert.equal(withDefault.charge, explicit.charge);
+});
+
+test('a larger maxHold drains slower -- a Deeper Lungs tier makes the same hold cost less charge', () => {
+  const base = stepVeilCharge({ charge: 1, locked: false }, true, 1, 5);
+  const upgraded = stepVeilCharge({ charge: 1, locked: false }, true, 1, 8);
+  assert.ok(upgraded.charge > base.charge);
+});
+
+test('a full continuous hold at an upgraded maxHold drains exactly to 0 over that many seconds', () => {
+  const result = stepVeilCharge({ charge: 1, locked: false }, true, 8, 8);
+  assert.equal(result.charge, 0);
+  assert.equal(result.locked, true);
+});
+
 // ---- veilDetectMul -----------------------------------------------------------
 
 test('veilDetectMul is 1 (no cut) at veilAmount=0', () => {

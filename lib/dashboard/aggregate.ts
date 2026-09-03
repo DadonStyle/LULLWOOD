@@ -173,3 +173,107 @@ export function computeFeatureEngagement(events: RawEvent[]): FeatureEngagementR
   }
   return Array.from(rows.values()).sort((a, b) => b.count - a.count);
 }
+
+export interface EconomyResult {
+  winPayout: { p50: number | null; p90: number | null; n: number };
+  lossPayout: { p50: number | null; p90: number | null; n: number };
+  /** P3: median(loss payout) / median(win payout) * 100. Falsification card predicts 12-28%. */
+  failureBandPct: number | null;
+  /**
+   * P4: derived death-depth = payout - min(6, floor(time_survived_ms / 20000)) on each
+   * loss (the survival term, capped at 6, subtracted back out). No `maxDistFromHome`
+   * field needed -- see wiki game/economy/falsification-card §1 note under P4.
+   * Falsification card predicts p95 <= 24.
+   */
+  lossDepth: { p50: number | null; p95: number | null; pctAbove24: number | null; n: number };
+  /**
+   * P5: a purchase is a decrease in an anon_id's balance sequence (win/loss events,
+   * ts-ordered) -- no `purchase` event needed. Falsification card predicts >=60% of
+   * anon_ids that ever cross 120 balance show a decrease within the next 3 runs.
+   */
+  purchase: {
+    crossed120Count: number;
+    purchasedWithin3RunsCount: number;
+    purchasedWithin3RunsPct: number | null;
+  };
+}
+
+const SURVIVAL_TERM_CAP = 6;
+const SURVIVAL_TERM_DIVISOR_MS = 20000;
+const DEPTH_FALSIFY_THRESHOLD = 24;
+const PURCHASE_BALANCE_THRESHOLD = 120;
+const PURCHASE_WINDOW_RUNS = 3;
+
+export function computeEconomy(events: RawEvent[]): EconomyResult {
+  const wins = events.filter((e) => e.event === 'win');
+  const losses = events.filter((e) => e.event === 'loss');
+
+  const winPayouts = wins
+    .map((e) => numberProp(e, 'payout'))
+    .filter((n): n is number => n !== null)
+    .sort((a, b) => a - b);
+  const lossPayouts = losses
+    .map((e) => numberProp(e, 'payout'))
+    .filter((n): n is number => n !== null)
+    .sort((a, b) => a - b);
+
+  const winPayoutP50 = percentile(winPayouts, 50);
+  const lossPayoutP50 = percentile(lossPayouts, 50);
+
+  const lossDepths = losses
+    .map((e) => {
+      const payout = numberProp(e, 'payout');
+      const survivedMs = numberProp(e, 'time_survived_ms');
+      if (payout === null || survivedMs === null) return null;
+      const survivalTerm = Math.min(SURVIVAL_TERM_CAP, Math.floor(survivedMs / SURVIVAL_TERM_DIVISOR_MS));
+      return payout - survivalTerm;
+    })
+    .filter((n): n is number => n !== null)
+    .sort((a, b) => a - b);
+
+  const pctAbove24 =
+    lossDepths.length === 0 ? null : (lossDepths.filter((d) => d > DEPTH_FALSIFY_THRESHOLD).length / lossDepths.length) * 100;
+
+  // P5: chronological balance sequence per anon_id, across win+loss events.
+  const runsByAnon = new Map<string, number[]>();
+  const chronological = [...wins, ...losses].sort((a, b) => a.ts - b.ts);
+  for (const e of chronological) {
+    const balance = numberProp(e, 'balance');
+    if (balance === null) continue;
+    const arr = runsByAnon.get(e.anon_id) ?? [];
+    arr.push(balance);
+    runsByAnon.set(e.anon_id, arr);
+  }
+
+  let crossed120Count = 0;
+  let purchasedWithin3RunsCount = 0;
+  for (const balances of runsByAnon.values()) {
+    const crossIdx = balances.findIndex((b) => b >= PURCHASE_BALANCE_THRESHOLD);
+    if (crossIdx === -1) continue;
+    crossed120Count++;
+    for (let i = crossIdx + 1; i <= crossIdx + PURCHASE_WINDOW_RUNS && i < balances.length; i++) {
+      if (balances[i] < balances[i - 1]) {
+        purchasedWithin3RunsCount++;
+        break;
+      }
+    }
+  }
+
+  return {
+    winPayout: { p50: winPayoutP50, p90: percentile(winPayouts, 90), n: winPayouts.length },
+    lossPayout: { p50: lossPayoutP50, p90: percentile(lossPayouts, 90), n: lossPayouts.length },
+    failureBandPct:
+      winPayoutP50 === null || lossPayoutP50 === null || winPayoutP50 === 0 ? null : (lossPayoutP50 / winPayoutP50) * 100,
+    lossDepth: {
+      p50: percentile(lossDepths, 50),
+      p95: percentile(lossDepths, 95),
+      pctAbove24,
+      n: lossDepths.length,
+    },
+    purchase: {
+      crossed120Count,
+      purchasedWithin3RunsCount,
+      purchasedWithin3RunsPct: crossed120Count === 0 ? null : (purchasedWithin3RunsCount / crossed120Count) * 100,
+    },
+  };
+}

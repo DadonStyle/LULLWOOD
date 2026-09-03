@@ -38,6 +38,7 @@ const OVERLAY_STYLE = `
   #gateTitle { font-size: 40px; font-weight: 400; letter-spacing: 0.18em;
     color: #d7e4f6; text-shadow: 0 2px 30px rgba(120,160,230,0.35); }
   #gateSub { font-size: 14px; letter-spacing: 0.06em; color: #9fb2cd; }
+  #gateCredit { font-size: 12px; letter-spacing: 0.04em; color: #6f82a0; }
   #gateKeys { margin-top: 18px; font-size: 12px; line-height: 2; color: #7f92ad;
     letter-spacing: 0.03em; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
@@ -95,8 +96,11 @@ const OVERLAY_STYLE = `
        15px font sits well under it, and this is the only tap a player has on
        the win/death screen. */
     .restartBtn { padding: 15px 24px; font-size: 16px; }
+    /* LUL-1043: same 44px rationale -- the Deeper Lungs buy button. */
+    .buyBtn { padding: 13px 18px; font-size: 14px; }
     #gateTitle { font-size: 32px; }
     #gateSub { font-size: 13px; }
+    #gateCredit { font-size: 11px; }
     #gateKeys { font-size: 13px; line-height: 2.1; }
     /* Minimap stays legible at the same physical size rather than shrinking
        further -- on a ~390px-wide phone it's already a larger fraction of
@@ -194,8 +198,10 @@ const OVERLAY_STYLE = `
      charge % and the "(recharging)" explanation by default.
      #minimap needs !important: the engine writes its own inline
      mm.style.display (blackout difficulty preset, forest-engine.js), which
-     beats a plain rule. */
-  body[data-admin-mode="0"] #panel > *:not(#settingsBtn):not(#lightState):not(#veilState) { display: none !important; }
+     beats a plain rule.
+     LUL-1085: #panel is now dev-only (pace/fog/lightState/veilState/embersBalance
+     for monitoring). Player-facing menu moved to components/GameMenu.tsx. */
+  body[data-admin-mode="0"] #panel { display: none !important; }
   body[data-admin-mode="0"] #minimap { display: none !important; }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
@@ -222,11 +228,25 @@ const OVERLAY_STYLE = `
   #winScreen h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
     color: #ffe6c8; text-shadow: 0 2px 44px rgba(255,190,130,0.5); }
   #winScreen p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
-  .newBest { color: #ffdca8; font-weight: 500; }
+  .emberGain { color: #ffdca8; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px; }
   .restartBtn:hover { background: #f6d3ac; }
   .restartBtn:focus-visible { outline: 2px solid #ffe6c8; outline-offset: 3px; }
+
+  /* LUL-1043: Embers shop -- Deeper Lungs I/II/III, the cheap version's one
+     sink. Reused on #gate, #winScreen and #deathText (see Hud.tsx's
+     EmbersShop comment for why it's on all three, not just the gate). */
+  #embersShop { display: flex; flex-direction: column; align-items: center; gap: 6px;
+    margin-top: 10px; font-size: 13px; color: #cbb7a4; }
+  #embersShopBalance { color: #ffdca8; letter-spacing: 0.05em; }
+  #embersShopMaxed { color: #9fd7b0; letter-spacing: 0.03em; }
+  .buyBtn { font: inherit; font-size: 13px; letter-spacing: 0.03em; color: #d7e4f6; cursor: pointer;
+    background: rgba(150,175,215,0.14); border: 1px solid rgba(150,175,215,0.3);
+    border-radius: 8px; padding: 8px 14px; }
+  .buyBtn:hover:not(:disabled) { background: rgba(150,175,215,0.24); }
+  .buyBtn:disabled { opacity: 0.45; cursor: default; }
+  .buyBtn:focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
 
   /* status line (hiding / hunted) */
   #status { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 12;

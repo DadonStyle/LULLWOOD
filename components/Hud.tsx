@@ -1,42 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
 import OrientationGate from './OrientationGate';
 import SettingsPanel from './SettingsPanel';
+import GameMenu from './GameMenu';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
-
-// LUL-124: fullscreen toggle. `document.fullscreenEnabled` is false on
-// browsers that never expose the API (older iOS Safari) so the button is
-// simply omitted there instead of rendering a control that would reject on
-// every click. The `fullscreenchange` listener is what keeps `isFullscreen`
-// correct after the browser's own exit paths (Esc key, system UI) which
-// don't otherwise call back into this component.
-function useFullscreen() {
-  const supported = useState(() => typeof document !== 'undefined' && document.fullscreenEnabled)[0];
-  const [isFullscreen, setIsFullscreen] = useState(
-    () => typeof document !== 'undefined' && document.fullscreenElement != null,
-  );
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const onChange = () => setIsFullscreen(document.fullscreenElement != null);
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
-
-  const toggle = useCallback(() => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    } else {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }
-  }, []);
-
-  return { supported, isFullscreen, toggle };
-}
+import { nextDeeperLungsCost, veilMaxHoldForTier, type RunPayout } from '@/lib/game/economy';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -91,6 +63,13 @@ export interface EngineHudState {
   captionsOn: boolean;
   caption: string | null;
   captionId: number;
+  // LUL-1043: Embers, the run currency -- engine-controlled like difficulty
+  // above, synced from localStorage via setEmbers() (see useEmbers() below).
+  // `lastPayout` is the breakdown for the run that just ended (null before
+  // the first win/death this session), read alongside winVisible/deathVisible.
+  embersBalance: number;
+  embersDeeperLungsTier: number;
+  lastPayout: RunPayout | null;
 }
 
 export interface EngineActions {
@@ -120,6 +99,9 @@ export interface EngineActions {
   setInvertY: (v: boolean) => void;
   setReducedMotion: (v: boolean) => void;
   setCaptions: (v: boolean) => void;
+  // LUL-1043
+  setEmbers: (balance: number, deeperLungsTier: number) => void;
+  purchaseDeeperLungs: () => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -157,6 +139,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   captionsOn: false,
   caption: null,
   captionId: 0,
+  embersBalance: 0,
+  embersDeeperLungsTier: 0,
+  lastPayout: null,
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -170,62 +155,66 @@ const formatDuration = (totalSeconds: number) => {
   return `${m}:${(s % 60).toString().padStart(2, '0')}`;
 };
 
-// LUL-84: personal-best time survived, local only (no backend, no M4 telemetry).
-// Guarded the same way as the rest of the project's client-only state (see
-// useFullscreen above / LUL-26's panel persistence) -- `typeof window` first,
-// then a try/catch around the actual localStorage calls so private-mode/quota
-// rejections degrade to "no best to compare against" instead of a crash.
-const BEST_TIME_KEY = 'lullwood:bestTimeSeconds';
+// LUL-1043: Embers, the run currency -- supersedes the LUL-84 personal-best
+// time survived this block used to hold (deleted: it rewarded dying slowly,
+// see wiki game/economy/state-of-play). Same client-only persistence
+// convention as the rest of the project (typeof window guard, try/catch
+// around the actual calls) -- see useFullscreen above / SettingsPanel.tsx.
+// The engine is the source of truth for balance/tiers (mirrors difficulty/
+// runMode/etc.) -- this hook only reads localStorage once to seed the
+// engine via setEmbers(), then persists whenever the engine's own state
+// changes, the same two-effect shape SettingsPanel.tsx uses.
+const EMBERS_KEY = 'lullwood:embers';
 
-function readBestTime(): number | null {
+interface PersistedEmbers {
+  balance: number;
+  tiers: { deeperLungs: number };
+}
+
+function readEmbers(): PersistedEmbers | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(BEST_TIME_KEY);
-    const n = raw == null ? NaN : Number(raw);
-    return Number.isFinite(n) ? n : null;
+    const raw = window.localStorage.getItem(EMBERS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedEmbers>;
+    if (typeof parsed.balance !== 'number') return null;
+    return { balance: parsed.balance, tiers: { deeperLungs: parsed.tiers?.deeperLungs ?? 0 } };
   } catch {
     return null;
   }
 }
 
-function writeBestTime(seconds: number) {
+function writeEmbers(s: PersistedEmbers) {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(BEST_TIME_KEY, String(seconds));
+    window.localStorage.setItem(EMBERS_KEY, JSON.stringify(s));
   } catch {
-    // private mode / quota exceeded -- this run's time still renders, it just won't persist
+    // private mode / quota exceeded -- balance still applies this session, just won't persist
   }
 }
 
-// Reacts to the `ended` flip (false -> true) exactly once per run, not on
-// every re-render, even though winVisible/deathVisible stay true for the rest
-// of the screen's lifetime. `best`/`isNewBest` are adjusted synchronously
-// during render (the React-documented "adjusting state when a prop changes"
-// pattern: https://react.dev/learn/you-might-not-need-an-effect) instead of
-// from a useEffect, because setting state from inside an effect body triggers
-// an extra cascading render for no benefit here. The actual localStorage
-// write is the one genuine side effect, so that alone stays in a useEffect.
-function useRunRecap(ended: boolean, survivedSeconds: number) {
-  const [wasEnded, setWasEnded] = useState(ended);
-  const [best, setBest] = useState<number | null>(() => readBestTime());
-  const [isNewBest, setIsNewBest] = useState(false);
+function useEmbers(actions: EngineActions | null, balance: number, deeperLungsTier: number) {
+  // Track whether the apply-on-ready effect has run, so persist doesn't fire
+  // with zero defaults before the stored balance is applied.
+  const appliedRef = useRef(false);
 
-  if (ended !== wasEnded) {
-    setWasEnded(ended);
-    if (ended) {
-      const beat = best == null || survivedSeconds > best;
-      setIsNewBest(beat);
-      if (beat) setBest(survivedSeconds);
-    } else {
-      setIsNewBest(false);
-    }
-  }
-
+  // Apply-on-ready: same pattern as SettingsPanel.tsx's identical effect for
+  // difficulty/runMode/etc. -- only fires once per engine instance, since
+  // `actions` only changes identity on mount/remount, never per-click.
   useEffect(() => {
-    if (isNewBest && best != null) writeBestTime(best);
-  }, [isNewBest, best]);
+    if (!actions) return;
+    appliedRef.current = true;
+    const stored = readEmbers();
+    if (stored) actions.setEmbers(stored.balance, stored.tiers.deeperLungs);
+  }, [actions]);
 
-  return { best, isNewBest };
+  // Persist whenever the engine's own balance/tier actually change -- after
+  // the apply-on-ready effect above, so a mount with a stored balance isn't
+  // immediately overwritten by the engine's own zeroed default before it applies.
+  useEffect(() => {
+    if (!appliedRef.current) return;
+    writeEmbers({ balance, tiers: { deeperLungs: deeperLungsTier } });
+  }, [balance, deeperLungsTier]);
 }
 
 // LUL-26: captions are the only channel carrying predator warnings for a deaf/
@@ -237,10 +226,10 @@ function useRunRecap(ended: boolean, survivedSeconds: number) {
 const CAPTION_DISPLAY_MS = 3200;
 
 function useCaptionToast(captionsOn: boolean, captionId: number) {
-  // Same "adjust state during render" pattern as useRunRecap's `wasEnded`
-  // above: `lastSeenId` is last render's captionId, compared inline instead
-  // of from a useEffect, so a fresh caption shows immediately in the render
-  // that received it rather than one tick later.
+  // "Adjust state during render" (https://react.dev/learn/you-might-not-need-an-effect):
+  // `lastSeenId` is last render's captionId, compared inline instead of from
+  // a useEffect, so a fresh caption shows immediately in the render that
+  // received it rather than one tick later.
   const [lastSeenId, setLastSeenId] = useState(captionId);
   const [visible, setVisible] = useState(false);
 
@@ -264,19 +253,61 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
   return visible;
 }
 
-function RunRecap({ survivedSeconds, best, isNewBest }: { survivedSeconds: number; best: number | null; isNewBest: boolean }) {
+// LUL-1043: the win/death payout breakdown -- replaces the old best-time
+// recap. `payout` is null only for the single frame before the engine's
+// first pushState after arriveHome()/triggerDeath() lands, so this never
+// renders with stale data from a previous run (lastPayout is set in the
+// same pushState call as winVisible/deathVisible).
+function RunRecap({ survivedSeconds, payout, balance }: { survivedSeconds: number; payout: RunPayout | null; balance: number }) {
   return (
     <p id="runRecap">
       time survived: {formatDuration(survivedSeconds)}
-      {isNewBest ? (
+      {payout && (
         <>
-          {' '}
-          — <span className="newBest">new best!</span>
+          <br />
+          +{payout.depth} depth · +{payout.survival} survival
+          {payout.carried > 0 && <> · +{payout.carried} child</>}
+          {payout.home > 0 && <> · +{payout.home} home</>}
+          {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
         </>
-      ) : best != null ? (
-        <> · best: {formatDuration(best)}</>
-      ) : null}
+      )}
     </p>
+  );
+}
+
+// LUL-1043: the one sink the cheap version ships -- Deeper Lungs I/II/III,
+// each tier adding a second to the mist veil's hold before it locks out (see
+// lib/game/veil.ts's VEIL_MAX_HOLD / lib/game/economy.ts's
+// veilMaxHoldForTier). Reused on the gate (the ticket's literal "spend
+// screen at the gate") and, deliberately, also on the win/death screens --
+// restart() never re-shows #gate (entered stays true for the rest of the
+// page's life), so gate-only would mean a returning player can only ever
+// spend once per page load, not "between runs" the way the design
+// (wiki game/economy/embers) describes it. Declared explicitly in the PR
+// body as a stated extension of the ticket's literal wording, not a silent one.
+function EmbersShop({ balance, tier, actions }: { balance: number; tier: number; actions: EngineActions | null }) {
+  const cost = nextDeeperLungsCost(tier);
+  const currentHold = veilMaxHoldForTier(tier);
+  return (
+    <div id="embersShop">
+      <div id="embersShopBalance">Embers: {balance}</div>
+      {cost == null ? (
+        <div id="embersShopMaxed">Deeper Lungs maxed — veil hold {currentHold}s</div>
+      ) : (
+        <button
+          className="buyBtn"
+          id="buyDeeperLungs"
+          disabled={balance < cost}
+          onClick={(e) => {
+            // #gate's own onClick would otherwise also fire enter() on this same click.
+            e.stopPropagation();
+            actions?.purchaseDeeperLungs();
+          }}
+        >
+          Deeper Lungs — veil hold {currentHold}s → {veilMaxHoldForTier(tier + 1)}s — {cost} embers
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -287,8 +318,7 @@ export default function Hud({
   state: EngineHudState;
   actions: EngineActions | null;
 }) {
-  const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
-  const { best: bestTime, isNewBest } = useRunRecap(state.winVisible || state.deathVisible, state.survivedSeconds);
+  useEmbers(actions, state.embersBalance, state.embersDeeperLungsTier);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
@@ -349,20 +379,16 @@ export default function Hud({
         <span id="veilState">
           Veil: {Math.round(state.veilCharge * 100)}%{state.veilLocked ? ' (recharging)' : ''}
         </span>
+        {/* LUL-1043: the run currency's balance -- exempted from admin-mode's
+            #panel hide the same way lightState/veilState are (GameCanvas.tsx),
+            since this is core game progress, not a dev-tuning control. */}
+        <span id="embersBalance">Embers: {state.embersBalance}</span>
         <button id="regen" onClick={() => actions?.regenMap()}>
           New map
         </button>
-        {fullscreenSupported && (
-          <button id="fullscreen" onClick={toggleFullscreen}>
-            Fullscreen: {isFullscreen ? 'on' : 'off'}
-          </button>
-        )}
-        {/* LUL-26: difficulty presets + accessibility, one dialog. */}
-        <button id="settingsBtn" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog">
-          Settings
-        </button>
       </div>
 
+      <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} />
       <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       {/* LUL-26: closed captions for predator calls -- the only warning
@@ -390,6 +416,7 @@ export default function Hud({
         >
           <div id="gateTitle">LULLWOOD</div>
           <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
+          <div id="gateCredit">Developed by an independent AI studio</div>
           <div id="gateKeys">
             {mobile ? (
               <>
@@ -416,6 +443,7 @@ export default function Hud({
               </>
             )}
           </div>
+          <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
         </div>
       )}
 
@@ -474,10 +502,11 @@ export default function Hud({
         <div id="winScreen" style={{ display: 'flex' }}>
           <h1>YOU WON</h1>
           <p>the child is safe — you carried them home through the Lullwood</p>
-          <RunRecap survivedSeconds={state.survivedSeconds} best={bestTime} isNewBest={isNewBest} />
+          <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
           <button className="restartBtn" onClick={() => actions?.restart()}>
             Play again
           </button>
+          <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
         </div>
       )}
 
@@ -488,10 +517,11 @@ export default function Hud({
             <p>
               a <span id="deathKind">{state.deathKind}</span> caught you in the dark
             </p>
-            <RunRecap survivedSeconds={state.survivedSeconds} best={bestTime} isNewBest={isNewBest} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
             <button className="restartBtn" onClick={() => actions?.restart()}>
               Try again
             </button>
+            <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
           </div>
         </div>
       )}

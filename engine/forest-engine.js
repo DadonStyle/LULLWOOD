@@ -88,6 +88,15 @@ import {
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
 import {
+  freshEmbersState,
+  computeWinPayout,
+  computeDeathPayout,
+  applyPayout,
+  purchaseDeeperLungs as economyPurchaseDeeperLungs,
+  veilMaxHoldForTier,
+  DEEPER_LUNGS_MAX_TIER,
+} from '@/lib/game/economy';
+import {
   inLakeWater,
   inLakeClearance,
   lakeSpeedMultiplier,
@@ -108,6 +117,16 @@ import {
   fogTideDroneGainMul,
   fogTideWindGainMul,
 } from '@/lib/game/fogTide';
+
+// LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
+// hex/CSS light and material color as sRGB before lighting math runs. r128 never did
+// that decode -- colors were used as authored, directly as linear values -- so every
+// light and material color in this file was hand-tuned against the old (no-decode)
+// behavior. Turning it back off is the most faithful way to keep those colors reading
+// the same, rather than re-deriving a decode-compensation constant per color. This is
+// independent of the light *intensity* scale below (LEGACY_LIGHT_SCALE), which exists
+// because r155/r163 additionally removed useLegacyLights outright, with no opt-out.
+THREE.ColorManagement.enabled = false;
 
 let activeDispose = null;
 
@@ -247,9 +266,16 @@ renderer.domElement.style.inset = '0';
 renderer.domElement.style.zIndex = '0';
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55));
-const moon = new THREE.DirectionalLight(0xbcd0ff, 0.5); moon.position.set(-6, 16, -4); scene.add(moon);
-const rim = new THREE.DirectionalLight(0x24344f, 0.4); rim.position.set(4, 5, 9); scene.add(rim);
+// LUL-975: r155 dropped the `Math.PI` "artist-friendly" scaling factor that used to
+// sit between a light's `intensity` and the render output (useLegacyLights, gone
+// entirely as of r163 -- no opt-out). Every intensity below was hand-tuned against
+// that old scale, so every one is multiplied by LEGACY_LIGHT_SCALE to read the same
+// as it did on r128. Confirmed by direct before/after screenshot comparison, not
+// just the documented factor -- see wiki systems/three-r185-upgrade.
+const LEGACY_LIGHT_SCALE = 5;
+scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55 * LEGACY_LIGHT_SCALE));
+const moon = new THREE.DirectionalLight(0xbcd0ff, 0.5 * LEGACY_LIGHT_SCALE); moon.position.set(-6, 16, -4); scene.add(moon);
+const rim = new THREE.DirectionalLight(0x24344f, 0.4 * LEGACY_LIGHT_SCALE); rim.position.set(4, 5, 9); scene.add(rim);
 
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800),
   new THREE.MeshStandardMaterial({ color: CONFIG.ground, roughness: 1, metalness: 0 }));
@@ -261,7 +287,7 @@ ground.rotation.x = -Math.PI/2; scene.add(ground);
   const g = c.getContext('2d'), grd = g.createLinearGradient(0, 0, 0, 512);
   grd.addColorStop(0.0, '#05070d'); grd.addColorStop(0.55, '#080e18'); grd.addColorStop(1.0, '#0b1220');
   g.fillStyle = grd; g.fillRect(0, 0, 4, 512);
-  const tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding; scene.background = tex;
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; scene.background = tex;
 })();
 const STAR = 700, starArr = new Float32Array(STAR*3);
 for(let i=0;i<STAR;i++){ const th = Math.random()*Math.PI*2, y = Math.random()*0.9 + 0.05, s = Math.sqrt(1-y*y), r = 300;
@@ -277,7 +303,7 @@ moonGroup.add(
   new THREE.Mesh(new THREE.CircleGeometry(15, 40), new THREE.MeshBasicMaterial({ color: 0xeef3ff, fog: false }))
 );
 scene.add(moonGroup);
-const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playerLight);
+const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20, 2); camera.add(playerLight);
 // LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
 // LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
 // the light cut is kept (still a smaller lit pool) but it's now one piece of a bigger,
@@ -714,14 +740,14 @@ const ring = new THREE.Mesh(new THREE.RingGeometry(CONFIG.lake.r*0.72, CONFIG.la
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
 ring.rotation.x = -Math.PI/2; ring.position.set(CONFIG.lake.x, 0.06, CONFIG.lake.z); scene.add(ring);
 
-const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3, 75, 2);
+const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3 * LEGACY_LIGHT_SCALE, 75, 2);
 lakeLight.position.set(CONFIG.lake.x, 7, CONFIG.lake.z); scene.add(lakeLight);
 
 // ---- Home landmark: where the child must be carried (LUL-38) -------------
 // Deliberately minimal -- "reuse the spawn point" per the ticket's own scope,
 // a lit waypoint rather than a new art pass. Static (no rng draw), so map
 // generation stays byte-identical for existing seeds.
-const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0, 24, 2);
+const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0 * LEGACY_LIGHT_SCALE, 24, 2);
 homeLight.position.set(CONFIG.home.x, 3, CONFIG.home.z); scene.add(homeLight);
 const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG.home.r*1.1, 40),
   new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
@@ -748,7 +774,7 @@ function buildFireTower(){
   }
   const deck = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.25, 2.6), legMat);
   deck.position.y = 9; g.add(deck);
-  const light = new THREE.PointLight(0xff9a4a, 0.9, 26, 2); light.position.set(0, 9.6, 0); g.add(light);
+  const light = new THREE.PointLight(0xff9a4a, 0.9 * LEGACY_LIGHT_SCALE, 26, 2); light.position.set(0, 9.6, 0); g.add(light);
   g.rotation.z = 0.13; g.rotation.x = 0.05;   // leaning
   return g;
 }
@@ -759,7 +785,7 @@ function buildStoneMarker(){
   shaft.position.y = 2.75; shaft.rotation.y = 0.4; g.add(shaft);
   const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.5, 0.6, 4), stoneMat);
   cap.position.y = 5.6; cap.rotation.y = 0.4; g.add(cap);
-  const glow = new THREE.PointLight(0x9fd0ff, 0.55, 16, 2); glow.position.set(0, 3.2, 0); g.add(glow);
+  const glow = new THREE.PointLight(0x9fd0ff, 0.55 * LEGACY_LIGHT_SCALE, 16, 2); glow.position.set(0, 3.2, 0); g.add(glow);
   return g;
 }
 function buildDrownedCar(){
@@ -771,7 +797,7 @@ function buildDrownedCar(){
   cab.position.set(-0.3, 1.15, 0); g.add(cab);
   g.rotation.set(0.05, 0.6, 0.16);   // tilted, half-sunken
   g.position.y = -0.3;
-  const headlight = new THREE.PointLight(0xffcf7a, 0.35, 9, 2); headlight.position.set(2.0, 0.5, 0.6); g.add(headlight);
+  const headlight = new THREE.PointLight(0xffcf7a, 0.35 * LEGACY_LIGHT_SCALE, 9, 2); headlight.position.set(2.0, 0.5, 0.6); g.add(headlight);
   return g;
 }
 function buildSplitOak(){
@@ -786,7 +812,7 @@ function buildSplitOak(){
     half_.rotation.z = -side*0.35; half_.rotation.x = 0.1;
     g.add(half_);
   }
-  const glow = new THREE.PointLight(0xcfe6ff, 0.4, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
+  const glow = new THREE.PointLight(0xcfe6ff, 0.4 * LEGACY_LIGHT_SCALE, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
   return g;
 }
 const landmarkGroups = {
@@ -859,7 +885,7 @@ const halo = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 12),
   new THREE.MeshBasicMaterial({ color: WARM, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false }));
 halo.position.y = 0.55;
 const BABY_LIGHT_DISTANCE = 28;   // LUL-27: named so Fog Tide's "glow carries further" can scale it at runtime, see tick()
-const babyLight = new THREE.PointLight(WARM, 1.1, BABY_LIGHT_DISTANCE, 2); babyLight.position.set(0, 1.3, 0);
+const babyLight = new THREE.PointLight(WARM, 1.1 * LEGACY_LIGHT_SCALE, BABY_LIGHT_DISTANCE, 2); babyLight.position.set(0, 1.3, 0);
 babyGroup.add(bundle, babyHead, halo, babyLight);
 scene.add(babyGroup);
 
@@ -1196,10 +1222,10 @@ function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid); }
 // bug (the two systems represent different things -- a spent resource vs. a
 // free world event -- and nothing says they shouldn't compound).
 function effectiveDetect(p){
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount), { hidden, hideTime });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount), { hidden, hideTime, carrying });
 }
 function canSee(p, dist){
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount), { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -1562,9 +1588,17 @@ const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
-    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
+    deathStart = 0, deathShown = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false;   // LUL-213: see beginJump() / tick()'s jumpY
+// LUL-1043: Embers. `maxDistFromHome` is the run's displacement high-water
+// mark (not `dist` below, which is path length) -- reset in enter(), read by
+// arriveHome()/triggerDeath() for the payout's `depth` term. `embers` is the
+// engine's own copy of the cross-run balance/tiers, synced from
+// components/Hud.tsx's localStorage read via setEmbers() once on mount (same
+// pattern as setDifficulty/setRunMode/etc. -- see SettingsPanel.tsx) and
+// mutated in place by arriveHome/triggerDeath/purchaseDeeperLungs.
+let maxDistFromHome = 0, embers = freshEmbersState();
 // LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
 // engine's own mutable locals (lib/game/outcome.ts is pure and holds no
 // state of its own) -- this snapshots them into the RunState shape the
@@ -1693,6 +1727,12 @@ function impulse(ctx, sec, decay){
 function startAudio(){
   const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return;
   const ctx = new AC();
+  // LUL-1112: iOS constructs AudioContext in suspended state regardless of user
+  // activation. Explicit resume() is required inside the gesture, even though
+  // resume() on an already-running context is a spec no-op, so this is safe
+  // on desktop and fixes silent audio on iOS.
+  const r = ctx.resume && ctx.resume();
+  if(r && r.catch) r.catch(function(){});
   const master = ctx.createGain(); master.connect(ctx.destination);
   master.gain.setValueAtTime(0.0001, ctx.currentTime);
   master.gain.exponentialRampToValueAtTime(soundOn ? 0.6 : 0.0001, ctx.currentTime + 2);
@@ -1829,8 +1869,9 @@ function twinkle(vol, bright){
   o.connect(g); o2.connect(g2); g2.connect(g); g.connect(master); g.connect(conv);
   o.start(t); o2.start(t); o.stop(t+1.7); o2.stop(t+1.7);
 }
-// swelling warm cue for the 10s pickup cinematic
-function playPickupMusic(){
+// LUL-1307: swelling warm cue for arriving home -- the win fanfare (moved
+// here from pickup(), which used to spend it at the run's midpoint).
+function playWinMusic(){
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t0 = ctx.currentTime;
   audio.wg.gain.setTargetAtTime(0.015, t0, 0.6);   // duck wind + drone
@@ -1853,7 +1894,7 @@ function playPickupMusic(){
       o.start(s); o2.start(s); o.stop(e+0.05); o2.stop(e+0.05);
     });
   });
-  const rise = [392.00,440.00,523.25,587.33,659.25,783.99,880.00,1046.50];   // ascending as the child lifts
+  const rise = [392.00,440.00,523.25,587.33,659.25,783.99,880.00,1046.50];   // ascending as the fanfare resolves
   rise.forEach((f, i) => {
     const s = t0 + 3.5 + i*0.55;
     const o = ctx.createOscillator(); o.type='sine'; o.frequency.value=f;
@@ -1862,6 +1903,22 @@ function playPickupMusic(){
     o.connect(g); g.connect(bus); g.connect(conv); o.start(s); o.stop(s+1.5);
   });
   later(() => { if(audio){ audio.wg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); audio.dg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); } }, 11000);
+}
+// LUL-1307: the pickup itself is no longer the win -- ramp wind/drone UP
+// (opposite of playWinMusic's duck) and sound one low note. Lifting the
+// child should read as the forest noticing, not a resolution.
+function playPickupCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, master, conv } = audio, t0 = ctx.currentTime;
+  audio.wg.gain.setTargetAtTime(0.11, t0, 0.4);
+  audio.dg.gain.setTargetAtTime(0.09, t0, 0.4);
+  const o = ctx.createOscillator(); o.type='sine'; o.frequency.value = 87.31;   // low F2
+  const o2 = ctx.createOscillator(); o2.type='triangle'; o2.frequency.value = 87.31; o2.detune.value = 4;
+  const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(0.18, t0+0.6); g.gain.setValueAtTime(0.18, t0+1.6);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+2.4);
+  o.connect(g); o2.connect(g); g.connect(master); g.connect(conv);
+  o.start(t0); o2.start(t0); o.stop(t0+2.5); o2.stop(t0+2.5);
 }
 // distinct voice per species so you can hear what's coming
 // LUL-26: closed captions for the fully-procedural audio -- there is no other
@@ -2034,6 +2091,12 @@ let hudState = {
   // and persists it to localStorage (see components/Hud.tsx).
   difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
+  // LUL-1043: Embers. `embersBalance`/`embersDeeperLungsTier` are the
+  // cross-run economy state -- engine-owned like difficulty above, synced
+  // from localStorage by components/Hud.tsx via setEmbers() once on mount.
+  // `lastPayout` is the most recent win/death breakdown (null before the
+  // first run ends this session), reset to null on restart().
+  embersBalance: 0, embersDeeperLungsTier: 0, lastPayout: null,
 };
 function pushState(patch){
   let changed = false;
@@ -2089,10 +2152,11 @@ function setPaused(p){
 function enter(){
   entered = true;
   enteredAt = clock.elapsedTime;
+  maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   pushState({ entered: true });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
-  else if(audio){ audio.ctx.resume(); }
+  if(audio){ audio.ctx.resume(); }
   // LUL-643: requestLock() is meaningless on a touch device and, worse, a
   // stray el.requestPointerLock() call still succeeds in a mobile-emulated
   // Chromium context -- it locked the canvas as the pointer target and
@@ -2636,6 +2700,30 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // CAMERA_FOV above) -- nothing outside init() could otherwise confirm the
   // mobile/desktop FOV split actually took effect.
   window.ForestEngine.qaCameraFov = function(){ return camera.fov; };
+
+  window.ForestEngine.qaProbeAudio = function(){
+    return audio
+      ? { state: audio.ctx.state, started: started, soundOn: soundOn, masterGain: audio.master.gain.value }
+      : { state: null, started: started, soundOn: soundOn, masterGain: null };
+  };
+}
+
+// ---- Audio debug readout (LUL-1112, founder-reachable on real iPhone) ------
+if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('audiodebug')){
+  const audioDebugEl = document.createElement('div');
+  audioDebugEl.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.7);color:#fff;padding:8px;font-family:monospace;font-size:12px;z-index:10000;pointer-events:none;';
+  document.body.appendChild(audioDebugEl);
+  setInterval(function(){
+    let text = 'audio: ';
+    if(audio){
+      text += 'state=' + audio.ctx.state + ' ';
+      text += 'gain=' + audio.master.gain.value.toFixed(4) + ' ';
+      text += 'sound=' + (soundOn ? 'on' : 'off');
+    } else {
+      text += 'not started';
+    }
+    audioDebugEl.textContent = text;
+  }, 100);
 }
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
@@ -2653,15 +2741,12 @@ function pickup(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   armsGroup.visible = true;
-  pickBoomed = false;
-  playPickupMusic();
+  playPickupCue();
 }
 function finishPickup(){
-  // LUL-38: the burst above (fireBoom) is the moment of pickup, not the child
-  // leaving -- winning now requires walking them to CONFIG.home. They ride
-  // along small and glowing until you arrive; see arriveHome(). Reset the
-  // glow properties the cinematic left mid-transition (the "boomed" branch
-  // above forces babyLight to 0 every frame while pickingUp).
+  // LUL-1307: pickup is just the gather now -- the fanfare (playWinMusic,
+  // fireBoom) moved to arriveHome(), the actual win. Reset the glow
+  // properties the ~2.5s gather cinematic left mid-transition.
   const next = completePickup(runState());
   pickingUp = next.pickingUp; carrying = next.carrying;
   armsGroup.visible = false;
@@ -2676,6 +2761,7 @@ function arriveHome(){
   babyGroup.visible = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
+  playWinMusic(); fireBoom(CONFIG.home.x, 2.2, CONFIG.home.z);   // LUL-1307: the win, not the midpoint
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
   // LUL-303: updatePredators() (the only other place that clears the charge
   // HUD) stops running once `playing` goes false here, so a charge/telegraph
@@ -2683,8 +2769,12 @@ function arriveHome(){
   // of the win screen forever -- clear it the same way placePredators() does
   // on restart.
   activeCharges = 0;
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
+  // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
+  const payout = computeWinPayout(maxDistFromHome, survivedSeconds);
+  embers = applyPayout(embers, payout);
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
+    lastPayout: payout, embersBalance: embers.balance });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
 }
 function triggerDeath(kind){
   const next = outcomeTriggerDeath(runState());
@@ -2693,8 +2783,16 @@ function triggerDeath(kind){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
-  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds });
-  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
+  // LUL-1043: the ground you covered is all you keep -- carried+home go out with you.
+  const payout = computeDeathPayout(
+    maxDistFromHome,
+    survivedSeconds,
+    Math.hypot(baby.x - CONFIG.home.x, baby.z - CONFIG.home.z),
+  );
+  embers = applyPayout(embers, payout);
+  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
+    lastPayout: payout, embersBalance: embers.balance });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -2715,7 +2813,7 @@ function restart(){
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
-  pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
+  boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
@@ -2765,6 +2863,20 @@ function setSensitivity(v){ sensMul = clamp(v, 0.25, 3); pushState({ sensitivity
 function setInvertY(v){ invertY = !!v; pushState({ invertY }); }
 function setReducedMotion(v){ reducedMotionSetting = !!v; pushState({ reducedMotion: reducedMotionSetting }); }
 function setCaptions(v){ captionsOn = !!v; pushState({ captionsOn }); }
+// LUL-1043: sync from components/Hud.tsx's localStorage read, once on mount --
+// same "engine owns the state, React persists it" split as setDifficulty/
+// setRunMode/etc. above (see SettingsPanel.tsx's identical apply-on-ready
+// effect). Bypasses earn/spend logic entirely -- this only ever restores a
+// prior balance, it never grants or charges Embers.
+function setEmbers(balance, deeperLungsTier){
+  const tier = Math.max(0, Math.min(DEEPER_LUNGS_MAX_TIER, Math.floor(deeperLungsTier) || 0));
+  embers = { balance: Math.max(0, Math.floor(balance) || 0), tiers: { deeperLungs: tier } };
+  pushState({ embersBalance: embers.balance, embersDeeperLungsTier: tier });
+}
+function purchaseDeeperLungs(){
+  embers = economyPurchaseDeeperLungs(embers);
+  pushState({ embersBalance: embers.balance, embersDeeperLungsTier: embers.tiers.deeperLungs });
+}
 on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   applyRes();
@@ -2861,7 +2973,7 @@ function renderPost(t){
 initPost();
 if(!usePost){                                   // fallback: let the renderer tone-map directly
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
-  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(RES); renderer.setSize(innerWidth, innerHeight);
 }
 // adaptive resolution: drop internal scale if frames get expensive, raise if they're cheap
@@ -2921,7 +3033,8 @@ function tick(){
   // the pause menu is open (which stops updating `keys` mid-hold) can't strand
   // the veil active.
   const veilHeld = playing && (!!keys['KeyF'] || touchVeil);
-  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt);
+  // LUL-1043: Deeper Lungs' lever -- 5s base, +1s per tier purchased.
+  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt, veilMaxHoldForTier(embers.tiers.deeperLungs));
   veilCharge = veilStep.charge; veilLocked = veilStep.locked;
   const dimmed = veilStep.active;
   if(dimmed !== lightDimmed){
@@ -3008,36 +3121,45 @@ function tick(){
     }
   }
 
+  // LUL-1043: Embers' `depth` term -- displacement from home, not path length
+  // (that's `dist` above). Tracked every tick regardless of movement this
+  // frame so it also holds correctly through the pickup cinematic and the
+  // carry leg, not just while the movement block above is live.
+  if(entered){
+    const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
+    if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
+  }
+
   if(pickingUp){
     const e = clock.elapsedTime - pickStart;
-    // arms rise into frame, gather the child, lift, then release to the sky
-    const lift   = key3(e, [[0,-0.95],[1.5,-0.9],[3.5,-0.35],[6,-0.05],[8,0.1],[9.5,-0.5],[10,-0.95]]);
-    const fwd    = key3(e, [[0,-0.5],[3.5,-0.72],[6,-0.78],[8,-0.72],[10,-0.5]]);
-    const spread = key3(e, [[0,0.3],[3.5,0.1],[6,0.13],[8,0.32],[10,0.3]]);
-    const pitchA = key3(e, [[0,0.2],[3.5,-0.35],[6,-0.8],[8,-1.05],[10,0.2]]);
+    // LUL-1307: gather only -- the child stays in the player's hands, no
+    // ascent, no release. ~2.5s, retimed from the old cinematic's own
+    // e in [0,3.5] "gather" phase (the ascent that used to follow it is gone).
+    const lift   = key3(e, [[0,-0.95],[1.2,-0.5],[2.5,-0.35]]);
+    const fwd    = key3(e, [[0,-0.5],[1.2,-0.68],[2.5,-0.72]]);
+    const spread = key3(e, [[0,0.3],[1.2,0.15],[2.5,0.1]]);
+    const pitchA = key3(e, [[0,0.2],[1.2,-0.2],[2.5,-0.35]]);
     armL.position.set(-spread, lift, fwd); armL.rotation.set(pitchA, 0,  0.2);
     armR.position.set( spread, lift, fwd); armR.rotation.set(pitchA, 0, -0.2);
-    // the child ascends, brightening as it goes
-    const ay = key3(e, [[0,0],[3.5,0.25],[5,1.6],[7,12],[9,34],[10,55]]);
-    const boomed = e >= 9.3;
-    babyGroup.visible = !boomed; babyGroup.position.set(baby.x, ay, baby.z); babyGroup.rotation.y = e*0.6;
+    // the child settles into the player's hands, brightening slightly
+    const ay = key3(e, [[0,0],[1.2,0.15],[2.5,0.22]]);
+    babyGroup.visible = true; babyGroup.position.set(baby.x, ay, baby.z); babyGroup.rotation.y = e*0.6;
     halo.material.opacity = Math.min(0.5, 0.12 + e*0.05);
     bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5 + e*0.15;
-    babyLight.intensity = boomed ? 0 : key3(e, [[0,1],[4,3.2],[7,2],[9,3.5]]);
-    if(boomed && !pickBoomed){ pickBoomed = true; fireBoom(baby.x, ay, baby.z); }   // the child bursts into the sky
-    // camera holds position and tilts up to follow the child, then the burst --
-    // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly the
-    // camera motion the setting exists to remove) and just hold the player's
-    // own look direction instead.
+    babyLight.intensity = key3(e, [[0,1],[1.5,2.4],[2.5,3.2]]);
+    // camera holds position, glances toward the child being gathered --
+    // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly
+    // the camera motion the setting exists to remove) and just hold the
+    // player's own look direction instead.
     camera.position.set(player.x, CONFIG.eye, player.z);
     if(motionReduced()){
       camera.rotation.set(player.pitch, player.yaw, 0);
     } else {
-      lookM.lookAt(camera.position, boomGroup.visible ? boomGroup.position : babyGroup.position, camera.up);
+      lookM.lookAt(camera.position, babyGroup.position, camera.up);
       lookQ.setFromRotationMatrix(lookM);
       camera.quaternion.slerp(lookQ, 0.06);
     }
-    if(e >= 11.3) finishPickup();
+    if(e >= 2.5) finishPickup();
   } else if(carrying){
     // LUL-38: carrying phase — child rides at the player's feet, glowing
     babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
@@ -3336,7 +3458,8 @@ tick();
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchInteract,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun,
-           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions };
+           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
+           setEmbers, purchaseDeeperLungs };
 }
 
 function dispose() {
