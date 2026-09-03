@@ -26,17 +26,16 @@ thing that draws danger — the carried light already exists in Lullwood (`babyL
 `engine/forest-engine.js:3115-3120`), it just currently does nothing mechanically. This
 spec wires it up.
 
-## The number is a placeholder — sequencing note
+## The number — finalized 2026-09-03
 
-Per the ticket: two inputs were expected before/alongside spec work — LUL-1311 (Game
-Economist, the actual detection-increase number) and LUL-1312 (Player Psychologist,
-whether the resulting death reads as fair). **Both are still `todo` with no comments as
-of this spec.** Per the ticket's own explicit permission ("or with a placeholder constant
-the Economist tunes after, your call on sequencing"), this spec ships a placeholder
-constant, `CARRY_DETECT_MUL = 1.35`, rather than blocking. **This is not a design
-decision — it is a number chosen only so the plumbing can ship and be tuned in place.**
-File a follow-up ticket (see "After this ships" below) to swap it for the Economist's
-real number once LUL-1311 lands; do not wait on this spec for that.
+Shipped as a placeholder pending LUL-1311 (Game Economist) and LUL-1312 (Player
+Psychologist). Both have since landed: LUL-1311 priced the detection multiplier at
+**1.35** — the same value the placeholder used — and found it moves the return-leg win
+rate from 0.850 to 0.795, inside the 0.75-0.90 bracket the tier multipliers (LUL-1043)
+were solved over, with 1.5 as the hard ceiling before those need re-deriving (see wiki
+`game/economy/carry-leg-detection-price`). LUL-1312 cleared the fairness read. **The
+constant is unchanged; only the comment in `lib/game/cover.ts` moved from
+"placeholder" to "priced."** No further tuning ticket is needed.
 
 Why 1.35 specifically, so the follow-up tuning starts from a reasoned baseline rather
 than an arbitrary one: `STILL_DETECT_CUT = 0.82` (`lib/game/cover.ts:417`) means full
@@ -219,8 +218,8 @@ no new HUD, per the ticket).
   before while carrying, just against a larger detect range. `effectiveDetect()`'s
   multiplicative composition (stillness cut × carry mul, not carry mul replacing or
   bypassing the stillness cut) is what preserves this — do not change that order.
-- Do not tune `CARRY_DETECT_MUL` beyond the placeholder value here. If you have an
-  opinion on the number, say so in the PR body — the Economist owns the final value.
+- `CARRY_DETECT_MUL` is now finalized at 1.35 (LUL-1311). Do not retune without a new
+  Economist pricing pass — see the ceiling analysis in "The number" above.
 - `DIFFICULTY_PRESETS[difficulty].detectMul` and the veil/fog-tide multipliers already
   in the wrapper functions are unchanged and untouched by this spec.
 

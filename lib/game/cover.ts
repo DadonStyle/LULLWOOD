@@ -415,8 +415,11 @@ export function findHideSpot(
 // apply and hands over the single product.
 export const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 export const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
-export const CARRY_DETECT_MUL = 1.35; // PLACEHOLDER (LUL-1310): pending Game Economist's
-                                       // number from LUL-1311 -- see docs/specs/lul-1310-carry-detection.md
+export const CARRY_DETECT_MUL = 1.35; // Priced by Game Economist (LUL-1311): return-leg win rate
+                                       // moves 0.850 -> 0.795, inside the 0.75-0.90 bracket the
+                                       // tier multipliers (LUL-1043) were solved over -- 1.5 is the
+                                       // ceiling before those need re-deriving. See wiki
+                                       // game/economy/carry-leg-detection-price.
 
 export interface DetectionState {
   hidden: boolean;
