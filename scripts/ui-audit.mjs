@@ -17,6 +17,21 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { audit } from '../lib/ui/hygiene.ts';
 
+// Same guard playwright.config.ts:8-13 carries, and for the same reason: this
+// box has no root and no system Chromium deps, so the browser's shared libs
+// live in a user-owned apt-download prefix (wiki: systems/headless-qa-rig).
+// This script does not go through playwright.config.ts, so without repeating
+// the guard here `chromium.launch()` dies on `libasound.so.2: cannot open
+// shared object file` -- which is exactly how it failed the first time it was
+// run on this rig. CI runners have root and get real libs from
+// `playwright install --with-deps`, so leave them alone.
+if (!process.env.CI) {
+  const prefix = '/home/noam/.paperclip/shared/browser-deps/usr/lib/x86_64-linux-gnu';
+  process.env.LD_LIBRARY_PATH = process.env.LD_LIBRARY_PATH
+    ? `${prefix}:${process.env.LD_LIBRARY_PATH}`
+    : prefix;
+}
+
 const arg = (name, dflt) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > -1 ? process.argv[i + 1] : dflt;
