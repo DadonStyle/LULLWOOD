@@ -16,8 +16,12 @@ export type AnalyticsEventInput =
   | { event: 'page_view' }
   | { event: 'cta_start_clicked' }
   | { event: 'game_start'; seed: number }
-  | { event: 'win'; time_survived_ms: number; seed: number }
-  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number }
+  // LUL-1043: `payout`/`balance` added so the Embers curve modelled on wiki
+  // game/economy/embers can be checked against real players -- `payout` is
+  // this run's Embers total (RunPayout.total from lib/game/economy.ts),
+  // `balance` is the running total after it's applied.
+  | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number }
+  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number }
   | { event: 'session_length'; duration_ms: number; reached_gameplay: boolean }
   | { event: 'feature_engagement'; feature: string; action: string };
 

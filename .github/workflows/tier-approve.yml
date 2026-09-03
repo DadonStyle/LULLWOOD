@@ -22,8 +22,16 @@ name: Tier approve
 #      script fails closed: `.github/**`, `scripts/**`, `engine/**`,
 #      `app/api/**`, dependency manifests, and any unrecognised path are C.
 #      It cannot approve a change to itself or to the merge gate.
-#   2. NEVER SELF-APPROVES. Refuses if github-actions[bot] authored the PR
-#      (that is the real 422 case).
+#   2. NEVER SELF-APPROVES. Refuses if the PR was authored by the same login
+#      the approving review is submitted under (the real 422 case). Every PR
+#      in this repo is opened by auto-pr.yml as github-actions[bot], and the
+#      approval below is submitted under SHIP_REVIEW_PAT -- a distinct
+#      identity -- so this guard is keyed to whatever login `gh api user`
+#      resolves for that token, not a hardcoded "github-actions[bot]". See
+#      LUL-1334 / wiki systems/tier-approve-inert: keying this to the bot name
+#      instead of the approving identity is what made every PR match "author
+#      == github-actions[bot]" and skip guard 2 unconditionally, since
+#      auto-pr.yml is what opens every PR here.
 #   3. NEVER SUBSTITUTES FOR CI. Every check the BASE branch's ruleset requires
 #      must already be SUCCESS on this PR's rollup, matched BY NAME against the
 #      ruleset -- not via statusCheckRollup's `isRequired`, which is null for
@@ -37,13 +45,22 @@ name: Tier approve
 #
 # TRIGGER
 #
-# check_suite:completed fires as each workflow finishes, so this re-evaluates
-# on every check completion and no-ops until the full required set is green.
-# That is why guard 3 is a hard gate rather than a race: the last completion
-# to land is the one that finds everything SUCCESS.
+# `check_suite:completed` was the original trigger and never fired: GitHub
+# does not dispatch check_suite for a suite that GitHub Actions itself created
+# (recursion guard, see "Events that trigger workflows" docs), and every
+# required check in this repo (unit tests, etc.) is an Actions-run check
+# suite. That held even after landing this file on `main` -- default-branch
+# placement fixes the *other* known trap (systems/scheduled-workflow-reads-
+# default-branch) but not this one. `workflow_run` does not carry that
+# specific restriction and is the trigger automerge.yml already uses,
+# successfully, for the identical "re-evaluate once CI finishes" need -- so
+# this reuses that proven path instead of inventing a second one. Like
+# `check_suite`, `workflow_run` is read from the default branch, so this file
+# still has to live on `main` to fire at all (LUL-1334).
 
 on:
-  check_suite:
+  workflow_run:
+    workflows: [CI]
     types: [completed]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -55,7 +72,7 @@ permissions:
   statuses: read
 
 concurrency:
-  group: tier-approve-${{ github.event.pull_request.number || github.event.check_suite.head_sha }}
+  group: tier-approve-${{ github.event.pull_request.number || github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
@@ -75,7 +92,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_FROM_EVENT: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.check_suite.head_sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           if [ -n "${PR_FROM_EVENT:-}" ]; then
@@ -90,18 +107,26 @@ jobs:
       - name: classify tier and approve
         env:
           GH_TOKEN: ${{ github.token }}
+          SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           [ -s prs.txt ] || exit 0
+
+          if [ -z "${SHIP_REVIEW_TOKEN:-}" ]; then
+            echo "::error::SHIP_REVIEW_PAT secret is not configured; tier-approve cannot submit a review under a distinct identity. Refusing to approve anything this run."
+            exit 0
+          fi
+          reviewer_login=$(GH_TOKEN="$SHIP_REVIEW_TOKEN" gh api user --jq '.login')
+          echo "approving identity: $reviewer_login"
 
           while IFS= read -r PR; do
             [ -n "$PR" ] || continue
             echo "::group::PR #$PR"
 
             author=$(gh api "repos/$REPO/pulls/$PR" --jq '.user.login')
-            if [ "$author" = "github-actions[bot]" ]; then
-              echo "::notice::PR #$PR authored by the bot; cannot self-approve. Skipping."
+            if [ "$author" = "$reviewer_login" ]; then
+              echo "::notice::PR #$PR authored by $reviewer_login, the same identity this job approves under; cannot self-approve. Skipping."
               echo "::endgroup::"; continue
             fi
 
@@ -145,10 +170,10 @@ jobs:
               echo "::endgroup::"; continue
             fi
 
-            msg="Auto-approved as Tier $tier under the development-first directive (AGENTS.md, Review tiers). Every file in this diff classifies as Tier A or B via scripts/pr-tier.mjs, and every status check required by the $base ruleset was verified SUCCESS on this PR rollup before this review was submitted. Submitted by github-actions[bot], a distinct identity from the studio PAT, which cannot approve its own PRs. Tier C (engine simulation, persistence, secrets, CI and merge rules) is unaffected and still requires a blocking human review. See .github/workflows/tier-approve.yml"
+            msg="Auto-approved as Tier $tier under the development-first directive (AGENTS.md, Review tiers). Every file in this diff classifies as Tier A or B via scripts/pr-tier.mjs, and every status check required by the $base ruleset was verified SUCCESS on this PR rollup before this review was submitted. Submitted under the studio review PAT (SHIP_REVIEW_PAT), a distinct identity from $author, the PR author, which cannot approve its own PRs. Tier C (engine simulation, persistence, secrets, CI and merge rules) is unaffected and still requires a blocking human review. See .github/workflows/tier-approve.yml"
             jq -n --arg b "$msg" '{event:"APPROVE", body:$b}' > body.json
 
-            gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input body.json \
+            GH_TOKEN="$SHIP_REVIEW_TOKEN" gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input body.json \
               --jq '"approved PR '"$PR"' review \(.id) state=\(.state) by=\(.user.login)"' \
               | tee -a "$GITHUB_STEP_SUMMARY"
             echo "::endgroup::"

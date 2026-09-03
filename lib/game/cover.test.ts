@@ -24,6 +24,7 @@ import {
   rollCoverPropShape,
   STILL_RAMP,
   STILL_DETECT_CUT,
+  CARRY_DETECT_MUL,
   PLAYER_COLLISION_RADIUS,
 } from './cover.ts';
 import type { SpatialGrid, CircleCollider, CoverAABB, DetectionState } from './cover.ts';
@@ -659,6 +660,39 @@ test('effectiveDetect: veil stacks multiplicatively with full stillness, same as
   const state: DetectionState = { hidden: true, hideTime: STILL_RAMP };
   const detectMul = veilDetectMul(1);
   assert.equal(effectiveDetect(10, detectMul, state), 10 * (1 - STILL_DETECT_CUT) * VEIL_DETECT_MUL);
+});
+
+test('effectiveDetect: carrying=true, not hidden -> full CARRY_DETECT_MUL applied', () => {
+  const state: DetectionState = { hidden: false, hideTime: 0, carrying: true };
+  assert.equal(effectiveDetect(10, 1, state), 10 * CARRY_DETECT_MUL);
+});
+
+test('effectiveDetect: carrying omitted -> defaults to no boost (matches carrying=false)', () => {
+  const withFalse: DetectionState = { hidden: false, hideTime: 0, carrying: false };
+  const omitted: DetectionState = { hidden: false, hideTime: 0 };
+  assert.equal(effectiveDetect(10, 1, omitted), effectiveDetect(10, 1, withFalse));
+  assert.equal(effectiveDetect(10, 1, omitted), 10);
+});
+
+test('effectiveDetect: carrying stacks multiplicatively with full stillness -- cover still cuts range, proportionally the same as empty-handed', () => {
+  const carryingStill: DetectionState = { hidden: true, hideTime: STILL_RAMP, carrying: true };
+  const emptyHandedStill: DetectionState = { hidden: true, hideTime: STILL_RAMP, carrying: false };
+  const carryRange = effectiveDetect(10, 1, carryingStill);
+  const emptyRange = effectiveDetect(10, 1, emptyHandedStill);
+  assert.equal(carryRange, 10 * (1 - STILL_DETECT_CUT) * CARRY_DETECT_MUL);
+  // same proportional cut from stillness either way -- carrying inflates the
+  // base range, it does not defeat the stillness discount
+  assert.ok(Math.abs(carryRange / emptyRange - CARRY_DETECT_MUL) < 1e-9);
+});
+
+test('canSee: carrying widens the range at which a predator in clear LOS spots the player', () => {
+  const coverGrid = makeGrid<CoverAABB>([]);
+  const notCarrying: DetectionState = { hidden: false, hideTime: 0, carrying: false };
+  const carrying: DetectionState = { hidden: false, hideTime: 0, carrying: true };
+  // pick a distance inside the carry-boosted range but outside the base range
+  const dist = 10 * 1.1; // 11, inside [10, 10*CARRY_DETECT_MUL=13.5)
+  assert.equal(canSee(dist, 10, 1, notCarrying, 0, 0, dist, 0, coverGrid), false);
+  assert.equal(canSee(dist, 10, 1, carrying, 0, 0, dist, 0, coverGrid), true);
 });
 
 // ---- canSee (composition) ---------------------------------------------------

@@ -27,8 +27,21 @@ const baseURL = `http://127.0.0.1:${PORT}`;
 const launchOptions = {
   // No GPU here (real or in CI) -- go through software rendering. `--mute-audio`
   // means the WebAudio layer is never exercised by this suite (see LUL-20: do not
-  // claim audio works from this rig).
-  args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox', '--mute-audio'],
+  // claim audio works from this rig). `--disable-dev-shm-usage` (LUL-1110): GitHub
+  // Actions runners default /dev/shm to 64MB, far too small for Chromium's shared
+  // memory under three.js/WebGL rendering load -- it was crashing mid-suite
+  // ("Protocol error (Runtime.callFunctionOn): Internal server error, session
+  // closed", 90s page.goto timeouts) even after version-cut.yml's 4-way sharding
+  // (PR #278) cut wall-clock time; the crash rate and per-test cost were unchanged
+  // post-shard, which is the signature of a shared-memory ceiling, not cross-test
+  // contention. This flag makes Chromium fall back to /tmp instead of /dev/shm.
+  args: [
+    '--use-gl=swiftshader',
+    '--enable-unsafe-swiftshader',
+    '--no-sandbox',
+    '--mute-audio',
+    '--disable-dev-shm-usage',
+  ],
 };
 
 export default defineConfig({

@@ -457,15 +457,19 @@ export function findHideSpot(
 // apply and hands over the single product.
 export const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 export const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
+export const CARRY_DETECT_MUL = 1.35; // PLACEHOLDER (LUL-1310): pending Game Economist's
+                                       // number from LUL-1311 -- see docs/specs/lul-1310-carry-detection.md
 
 export interface DetectionState {
   hidden: boolean;
   hideTime: number;
+  carrying?: boolean;
 }
 
 export function effectiveDetect(detect: number, detectMul: number, state: DetectionState): number {
   const stillness = state.hidden ? Math.min(1, state.hideTime / STILL_RAMP) : 0;
-  return detect * (1 - stillness * STILL_DETECT_CUT) * detectMul;
+  const carryMul = state.carrying ? CARRY_DETECT_MUL : 1;
+  return detect * (1 - stillness * STILL_DETECT_CUT) * detectMul * carryMul;
 }
 
 // ---- can a predator see the player? ------------------------------------------
