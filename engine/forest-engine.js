@@ -88,6 +88,15 @@ import {
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
 import {
+  freshEmbersState,
+  computeWinPayout,
+  computeDeathPayout,
+  applyPayout,
+  purchaseDeeperLungs as economyPurchaseDeeperLungs,
+  veilMaxHoldForTier,
+  DEEPER_LUNGS_MAX_TIER,
+} from '@/lib/game/economy';
+import {
   inLakeWater,
   inLakeClearance,
   lakeSpeedMultiplier,
@@ -108,6 +117,16 @@ import {
   fogTideDroneGainMul,
   fogTideWindGainMul,
 } from '@/lib/game/fogTide';
+
+// LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
+// hex/CSS light and material color as sRGB before lighting math runs. r128 never did
+// that decode -- colors were used as authored, directly as linear values -- so every
+// light and material color in this file was hand-tuned against the old (no-decode)
+// behavior. Turning it back off is the most faithful way to keep those colors reading
+// the same, rather than re-deriving a decode-compensation constant per color. This is
+// independent of the light *intensity* scale below (LEGACY_LIGHT_SCALE), which exists
+// because r155/r163 additionally removed useLegacyLights outright, with no opt-out.
+THREE.ColorManagement.enabled = false;
 
 let activeDispose = null;
 
@@ -247,9 +266,16 @@ renderer.domElement.style.inset = '0';
 renderer.domElement.style.zIndex = '0';
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55));
-const moon = new THREE.DirectionalLight(0xbcd0ff, 0.5); moon.position.set(-6, 16, -4); scene.add(moon);
-const rim = new THREE.DirectionalLight(0x24344f, 0.4); rim.position.set(4, 5, 9); scene.add(rim);
+// LUL-975: r155 dropped the `Math.PI` "artist-friendly" scaling factor that used to
+// sit between a light's `intensity` and the render output (useLegacyLights, gone
+// entirely as of r163 -- no opt-out). Every intensity below was hand-tuned against
+// that old scale, so every one is multiplied by LEGACY_LIGHT_SCALE to read the same
+// as it did on r128. Confirmed by direct before/after screenshot comparison, not
+// just the documented factor -- see wiki systems/three-r185-upgrade.
+const LEGACY_LIGHT_SCALE = 5;
+scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55 * LEGACY_LIGHT_SCALE));
+const moon = new THREE.DirectionalLight(0xbcd0ff, 0.5 * LEGACY_LIGHT_SCALE); moon.position.set(-6, 16, -4); scene.add(moon);
+const rim = new THREE.DirectionalLight(0x24344f, 0.4 * LEGACY_LIGHT_SCALE); rim.position.set(4, 5, 9); scene.add(rim);
 
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800),
   new THREE.MeshStandardMaterial({ color: CONFIG.ground, roughness: 1, metalness: 0 }));
@@ -261,7 +287,7 @@ ground.rotation.x = -Math.PI/2; scene.add(ground);
   const g = c.getContext('2d'), grd = g.createLinearGradient(0, 0, 0, 512);
   grd.addColorStop(0.0, '#05070d'); grd.addColorStop(0.55, '#080e18'); grd.addColorStop(1.0, '#0b1220');
   g.fillStyle = grd; g.fillRect(0, 0, 4, 512);
-  const tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding; scene.background = tex;
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; scene.background = tex;
 })();
 const STAR = 700, starArr = new Float32Array(STAR*3);
 for(let i=0;i<STAR;i++){ const th = Math.random()*Math.PI*2, y = Math.random()*0.9 + 0.05, s = Math.sqrt(1-y*y), r = 300;
@@ -277,7 +303,7 @@ moonGroup.add(
   new THREE.Mesh(new THREE.CircleGeometry(15, 40), new THREE.MeshBasicMaterial({ color: 0xeef3ff, fog: false }))
 );
 scene.add(moonGroup);
-const playerLight = new THREE.PointLight(0x33456a, 0.7, 20, 2); camera.add(playerLight);
+const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20, 2); camera.add(playerLight);
 // LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
 // LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
 // the light cut is kept (still a smaller lit pool) but it's now one piece of a bigger,
@@ -714,14 +740,14 @@ const ring = new THREE.Mesh(new THREE.RingGeometry(CONFIG.lake.r*0.72, CONFIG.la
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
 ring.rotation.x = -Math.PI/2; ring.position.set(CONFIG.lake.x, 0.06, CONFIG.lake.z); scene.add(ring);
 
-const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3, 75, 2);
+const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3 * LEGACY_LIGHT_SCALE, 75, 2);
 lakeLight.position.set(CONFIG.lake.x, 7, CONFIG.lake.z); scene.add(lakeLight);
 
 // ---- Home landmark: where the child must be carried (LUL-38) -------------
 // Deliberately minimal -- "reuse the spawn point" per the ticket's own scope,
 // a lit waypoint rather than a new art pass. Static (no rng draw), so map
 // generation stays byte-identical for existing seeds.
-const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0, 24, 2);
+const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0 * LEGACY_LIGHT_SCALE, 24, 2);
 homeLight.position.set(CONFIG.home.x, 3, CONFIG.home.z); scene.add(homeLight);
 const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG.home.r*1.1, 40),
   new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
@@ -748,7 +774,7 @@ function buildFireTower(){
   }
   const deck = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.25, 2.6), legMat);
   deck.position.y = 9; g.add(deck);
-  const light = new THREE.PointLight(0xff9a4a, 0.9, 26, 2); light.position.set(0, 9.6, 0); g.add(light);
+  const light = new THREE.PointLight(0xff9a4a, 0.9 * LEGACY_LIGHT_SCALE, 26, 2); light.position.set(0, 9.6, 0); g.add(light);
   g.rotation.z = 0.13; g.rotation.x = 0.05;   // leaning
   return g;
 }
@@ -759,7 +785,7 @@ function buildStoneMarker(){
   shaft.position.y = 2.75; shaft.rotation.y = 0.4; g.add(shaft);
   const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.5, 0.6, 4), stoneMat);
   cap.position.y = 5.6; cap.rotation.y = 0.4; g.add(cap);
-  const glow = new THREE.PointLight(0x9fd0ff, 0.55, 16, 2); glow.position.set(0, 3.2, 0); g.add(glow);
+  const glow = new THREE.PointLight(0x9fd0ff, 0.55 * LEGACY_LIGHT_SCALE, 16, 2); glow.position.set(0, 3.2, 0); g.add(glow);
   return g;
 }
 function buildDrownedCar(){
@@ -771,7 +797,7 @@ function buildDrownedCar(){
   cab.position.set(-0.3, 1.15, 0); g.add(cab);
   g.rotation.set(0.05, 0.6, 0.16);   // tilted, half-sunken
   g.position.y = -0.3;
-  const headlight = new THREE.PointLight(0xffcf7a, 0.35, 9, 2); headlight.position.set(2.0, 0.5, 0.6); g.add(headlight);
+  const headlight = new THREE.PointLight(0xffcf7a, 0.35 * LEGACY_LIGHT_SCALE, 9, 2); headlight.position.set(2.0, 0.5, 0.6); g.add(headlight);
   return g;
 }
 function buildSplitOak(){
@@ -786,7 +812,7 @@ function buildSplitOak(){
     half_.rotation.z = -side*0.35; half_.rotation.x = 0.1;
     g.add(half_);
   }
-  const glow = new THREE.PointLight(0xcfe6ff, 0.4, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
+  const glow = new THREE.PointLight(0xcfe6ff, 0.4 * LEGACY_LIGHT_SCALE, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
   return g;
 }
 const landmarkGroups = {
@@ -859,7 +885,7 @@ const halo = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 12),
   new THREE.MeshBasicMaterial({ color: WARM, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false }));
 halo.position.y = 0.55;
 const BABY_LIGHT_DISTANCE = 28;   // LUL-27: named so Fog Tide's "glow carries further" can scale it at runtime, see tick()
-const babyLight = new THREE.PointLight(WARM, 1.1, BABY_LIGHT_DISTANCE, 2); babyLight.position.set(0, 1.3, 0);
+const babyLight = new THREE.PointLight(WARM, 1.1 * LEGACY_LIGHT_SCALE, BABY_LIGHT_DISTANCE, 2); babyLight.position.set(0, 1.3, 0);
 babyGroup.add(bundle, babyHead, halo, babyLight);
 scene.add(babyGroup);
 
@@ -1565,6 +1591,14 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false;   // LUL-213: see beginJump() / tick()'s jumpY
+// LUL-1043: Embers. `maxDistFromHome` is the run's displacement high-water
+// mark (not `dist` below, which is path length) -- reset in enter(), read by
+// arriveHome()/triggerDeath() for the payout's `depth` term. `embers` is the
+// engine's own copy of the cross-run balance/tiers, synced from
+// components/Hud.tsx's localStorage read via setEmbers() once on mount (same
+// pattern as setDifficulty/setRunMode/etc. -- see SettingsPanel.tsx) and
+// mutated in place by arriveHome/triggerDeath/purchaseDeeperLungs.
+let maxDistFromHome = 0, embers = freshEmbersState();
 // LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
 // engine's own mutable locals (lib/game/outcome.ts is pure and holds no
 // state of its own) -- this snapshots them into the RunState shape the
@@ -2034,6 +2068,12 @@ let hudState = {
   // and persists it to localStorage (see components/Hud.tsx).
   difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
+  // LUL-1043: Embers. `embersBalance`/`embersDeeperLungsTier` are the
+  // cross-run economy state -- engine-owned like difficulty above, synced
+  // from localStorage by components/Hud.tsx via setEmbers() once on mount.
+  // `lastPayout` is the most recent win/death breakdown (null before the
+  // first run ends this session), reset to null on restart().
+  embersBalance: 0, embersDeeperLungsTier: 0, lastPayout: null,
 };
 function pushState(patch){
   let changed = false;
@@ -2089,6 +2129,7 @@ function setPaused(p){
 function enter(){
   entered = true;
   enteredAt = clock.elapsedTime;
+  maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   pushState({ entered: true });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
@@ -2683,8 +2724,12 @@ function arriveHome(){
   // of the win screen forever -- clear it the same way placePredators() does
   // on restart.
   activeCharges = 0;
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
+  // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
+  const payout = computeWinPayout(maxDistFromHome, survivedSeconds);
+  embers = applyPayout(embers, payout);
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
+    lastPayout: payout, embersBalance: embers.balance });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
 }
 function triggerDeath(kind){
   const next = outcomeTriggerDeath(runState());
@@ -2693,8 +2738,12 @@ function triggerDeath(kind){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
-  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds });
-  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed });
+  // LUL-1043: the ground you covered is all you keep -- carried+home go out with you.
+  const payout = computeDeathPayout(maxDistFromHome, survivedSeconds);
+  embers = applyPayout(embers, payout);
+  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
+    lastPayout: payout, embersBalance: embers.balance });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -2765,6 +2814,20 @@ function setSensitivity(v){ sensMul = clamp(v, 0.25, 3); pushState({ sensitivity
 function setInvertY(v){ invertY = !!v; pushState({ invertY }); }
 function setReducedMotion(v){ reducedMotionSetting = !!v; pushState({ reducedMotion: reducedMotionSetting }); }
 function setCaptions(v){ captionsOn = !!v; pushState({ captionsOn }); }
+// LUL-1043: sync from components/Hud.tsx's localStorage read, once on mount --
+// same "engine owns the state, React persists it" split as setDifficulty/
+// setRunMode/etc. above (see SettingsPanel.tsx's identical apply-on-ready
+// effect). Bypasses earn/spend logic entirely -- this only ever restores a
+// prior balance, it never grants or charges Embers.
+function setEmbers(balance, deeperLungsTier){
+  const tier = Math.max(0, Math.min(DEEPER_LUNGS_MAX_TIER, Math.floor(deeperLungsTier) || 0));
+  embers = { balance: Math.max(0, Math.floor(balance) || 0), tiers: { deeperLungs: tier } };
+  pushState({ embersBalance: embers.balance, embersDeeperLungsTier: tier });
+}
+function purchaseDeeperLungs(){
+  embers = economyPurchaseDeeperLungs(embers);
+  pushState({ embersBalance: embers.balance, embersDeeperLungsTier: embers.tiers.deeperLungs });
+}
 on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
   applyRes();
@@ -2861,7 +2924,7 @@ function renderPost(t){
 initPost();
 if(!usePost){                                   // fallback: let the renderer tone-map directly
   renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
-  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(RES); renderer.setSize(innerWidth, innerHeight);
 }
 // adaptive resolution: drop internal scale if frames get expensive, raise if they're cheap
@@ -2921,7 +2984,8 @@ function tick(){
   // the pause menu is open (which stops updating `keys` mid-hold) can't strand
   // the veil active.
   const veilHeld = playing && (!!keys['KeyF'] || touchVeil);
-  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt);
+  // LUL-1043: Deeper Lungs' lever -- 5s base, +1s per tier purchased.
+  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt, veilMaxHoldForTier(embers.tiers.deeperLungs));
   veilCharge = veilStep.charge; veilLocked = veilStep.locked;
   const dimmed = veilStep.active;
   if(dimmed !== lightDimmed){
@@ -3006,6 +3070,15 @@ function tick(){
       // the sight-cover reeds give you costs you on the sound channel instead.
       noiseRadius = (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK) * bogNoiseMultiplier(playerInBog);
     }
+  }
+
+  // LUL-1043: Embers' `depth` term -- displacement from home, not path length
+  // (that's `dist` above). Tracked every tick regardless of movement this
+  // frame so it also holds correctly through the pickup cinematic and the
+  // carry leg, not just while the movement block above is live.
+  if(entered){
+    const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
+    if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
   }
 
   if(pickingUp){
@@ -3336,7 +3409,8 @@ tick();
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchInteract,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun,
-           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions };
+           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
+           setEmbers, purchaseDeeperLungs };
 }
 
 function dispose() {

@@ -3,15 +3,42 @@ name: Daily report
 # Generates DAILY_REPORTS/ entries for the last 2 days and lands the diff.
 # Spec: wiki systems/daily-reports §9.
 #
-# Why the full cycle lives in this one job (LUL-534):
+# Why the full cycle lives in this one job (LUL-534, credential fixed LUL-1115):
 # A push made with GITHUB_TOKEN does not trigger other workflows (GitHub's
-# recursion guard). auto-pr.yml fires on push only, and automerge.yml fires
-# only when CI's triggering event is "push" -- both are silent on
-# GITHUB_TOKEN-authored pushes. This workflow therefore handles everything:
-#   1. generate → commit → push branch
+# recursion guard) -- push events are suppressed for GITHUB_TOKEN-authored
+# commits, unconditionally (systems/ci-github-token-blind-spot). This
+# workflow therefore handles everything:
+#   1. generate → commit → push branch, authenticated with SHIP_REVIEW_PAT
+#      so the push fires `CI / push` naturally
 #   2. open PR
-#   3. dispatch CI explicitly (workflow_dispatch is exempt from suppression)
-#   4. wait for CI, then submit an approving review and merge
+#   3. wait for that push-triggered CI run, then submit an approving review
+#      and merge
+#
+# LUL-1115 (reconciles LUL-1049 and LUL-1058): step 1 used to push under
+# `github.token`, whose push events `ci.yml` never sees, so this job used to
+# dispatch CI by hand as a compensating fallback (`workflow_dispatch`). That
+# fallback could never satisfy the merge gate: a `workflow_dispatch` run's
+# check-runs never enter the PR's `statusCheckRollup`, which is what
+# `PUT /pulls/{n}/merge` actually reads (LUL-762) -- every nightly report PR
+# was permanently unmergeable no matter how green CI was. The dead dispatch
+# step is removed; the push now authenticates as `SHIP_REVIEW_PAT` (the
+# studio PAT, `DadonStyle`) for that one `git push` invocation only, via a
+# credential helper that reads the token from an env var -- never via
+# `persist-credentials` on checkout (that would keep the PAT live in
+# `.git/config` for every later step in the job, including `npm ci`'s
+# arbitrary third-party postinstall scripts) and never embedded in a remote
+# URL (`decisions/0011-pat-leaked-via-remote-url` already burned a PAT that
+# way). See the "commit and push" step below for the mechanism.
+#
+# Declared side effect: a real-credential, [ship]-marked push on a `lul-*`
+# branch also matches auto-pr.yml's `push` trigger and, once CI completes,
+# automerge.yml's -- both now process this same PR independently of this
+# job, the same as every other `[ship]` branch in the repo. All paths
+# converge on the same outcome (squash + delete-branch) using the same
+# SHIP_REVIEW_PAT identity for the approving review, so a duplicate review is
+# harmless; the "wait for CI, approve, and merge" step below checks whether
+# the PR is already merged before acting, so a rival path winning the race
+# reads as success, not a red run.
 #
 # The approving review below must be submitted under a different identity than
 # the PR author, or GitHub 422s with "Review Can not approve your own pull
@@ -27,14 +54,18 @@ name: Daily report
 #
 # Failure modes:
 #   - No diff → exits 0, nothing committed (expected when nothing landed).
+#   - SHIP_REVIEW_PAT not configured at push time → exits 1 before anything is
+#     pushed (LUL-1115): pushing under github.token instead would silently
+#     reproduce the exact bug this fixes, so this fails loud instead. (The
+#     LUL-960 comment-and-continue fallback further down, for a missing
+#     SHIP_REVIEW_PAT at *review* time, is therefore normally unreachable in
+#     a single run -- kept as defense in depth, e.g. a secret revoked
+#     mid-run, not as the expected path.)
 #   - CI red/timeout, review-submit failure, or merge refused → exits 1; PR
 #     stays open with the problem visible in the run log, pending next night.
-#   - SHIP_REVIEW_PAT not configured → exits 0 (LUL-960). This is a known,
-#     standing condition, not a bug in this run, so it must not paint the
-#     schedule red every single night for the same unconfigured secret. The
-#     step posts a comment on the PR instead, naming exactly what's missing,
-#     so the PR is discoverable by anyone browsing open PRs rather than only
-#     by whoever reads that night's Actions log.
+#   - A rival workflow (auto-pr.yml/automerge.yml, see "declared side effect"
+#     above) already merged the PR by the time this job checks → exits 0,
+#     not an error.
 #   The following night's run uses --since 2 days ago, so a missed day is
 #   always corrected on the next successful run.
 
@@ -47,7 +78,10 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  actions: write
+  # LUL-1115: the dead "dispatch CI" step (which POSTed to the workflow
+  # dispatch API) is gone; the two remaining Actions API calls in "wait for
+  # CI, approve, and merge" are both GETs, which `read` covers.
+  actions: read
 
 concurrency:
   # One run at a time. A schedule tick that fires while the previous night's
@@ -64,6 +98,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # LUL-1115: never persist a credential here. The default
+          # (persist-credentials: true) would write whatever token this uses
+          # into `.git/config` as an `http.extraheader` for the rest of the
+          # job -- including `npm ci` and the report generator, both of which
+          # run arbitrary/generated code with filesystem read access to
+          # `.git/config`. This checkout only needs to read; the one step
+          # that pushes ("commit and push", below) authenticates that single
+          # `git push` invocation on its own via a scoped credential helper,
+          # never via a persisted config value.
+          persist-credentials: false
           # LUL-925: branch from (and target) `release/next`, not `main`. The
           # release train only lets `release/next` reach `main`, and
           # `.github/scripts/base-branch-guard.sh` enforces it: a PR whose base
@@ -130,10 +174,35 @@ jobs:
         if: steps.diff.outputs.empty == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
+          SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
           BRANCH: ${{ steps.dates.outputs.branch }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+
+          # LUL-1115: a branch from an earlier run tonight (same schedule
+          # window, a prior attempt that got this far but failed downstream)
+          # may already have an open PR. Reuse it rather than deleting and
+          # recreating the ref -- deleting a ref with an open PR attached
+          # closes that PR as a side effect, which is what silently ate
+          # several nights of failed-but-real evidence (LUL-1058). Report
+          # content is idempotent (systems/daily-reports §7), so a same-night
+          # rerun has nothing new to add on top of an already-open PR.
+          existing_pr="$(gh pr list --head "$BRANCH" --state open \
+                            --json number --jq '.[0].number // empty')"
+          if [ -n "$existing_pr" ]; then
+            echo "::notice::PR #$existing_pr already open for $BRANCH from earlier tonight; reusing it, nothing new to push."
+            exit 0
+          fi
+
+          # LUL-1115: must push under a real credential, not github.token --
+          # github.token pushes are invisible to ci.yml's `push` trigger, so
+          # CI's checks never enter the PR's statusCheckRollup no matter how
+          # green they are (systems/ci-github-token-blind-spot, LUL-762).
+          if [ -z "${SHIP_REVIEW_TOKEN:-}" ]; then
+            echo "::error::SHIP_REVIEW_PAT secret is not configured; refusing to push under github.token, whose pushes ci.yml's push trigger never sees."
+            exit 1
+          fi
 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -147,12 +216,21 @@ jobs:
 
           [ship]"
 
-          # If a branch from a previous failed run exists, drop it so our push
-          # is a clean fast-forward from current release/next. Closing any leftover PR
-          # is intentional: we are about to open a fresh one with the new diff.
+          # A branch can still be left over with no open PR attached
+          # (already merged, or a human closed it) -- clear it so the push
+          # below is a clean fast-forward. Only reached once we already know
+          # there is no open PR to protect.
           gh api -X DELETE "repos/$REPO/git/refs/heads/$BRANCH" 2>/dev/null || true
 
-          git push origin "HEAD:refs/heads/$BRANCH"
+          # Authenticate this one push as SHIP_REVIEW_PAT without ever
+          # putting the token in `.git/config` or in a remote URL (the exact
+          # mechanism decisions/0011-pat-leaked-via-remote-url burned a PAT
+          # on -- a later `git remote -v` would print it). A credential
+          # helper scoped to this single invocation reads the token from the
+          # environment when git invokes it; the token itself never appears
+          # in this command's argv, only the env-var *name* does.
+          git -c credential.helper='!f() { echo "username=x-access-token"; echo "password=$SHIP_REVIEW_TOKEN"; }; f' \
+              push origin "HEAD:refs/heads/$BRANCH"
 
       - name: open PR
         if: steps.diff.outputs.empty == 'false'
@@ -205,25 +283,6 @@ jobs:
           echo "number=$number" >> "$GITHUB_OUTPUT"
           echo "::notice::opened PR #$number for $BRANCH"
 
-      - name: dispatch CI
-        if: steps.diff.outputs.empty == 'false'
-        id: ci-dispatch
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BRANCH: ${{ steps.dates.outputs.branch }}
-        run: |
-          set -euo pipefail
-
-          # Snapshot time just before dispatch so the poll step can identify
-          # the right run by creation timestamp.
-          echo "dispatch_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
-          gh api -X POST \
-            "repos/${{ github.repository }}/actions/workflows/ci.yml/dispatches" \
-            -f "ref=$BRANCH"
-
-          echo "::notice::CI dispatched on $BRANCH"
-
       - name: wait for CI, approve, and merge
         if: steps.diff.outputs.empty == 'false'
         env:
@@ -231,21 +290,28 @@ jobs:
           SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
           BRANCH: ${{ steps.dates.outputs.branch }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
-          DISPATCH_TIME: ${{ steps.ci-dispatch.outputs.dispatch_time }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
           # ── locate the CI run ────────────────────────────────────────────────
-          # Allow up to 3 minutes for GitHub to register the dispatched run.
-          echo "::notice::waiting for CI run on $BRANCH (dispatched ≥ $DISPATCH_TIME)..."
+          # LUL-1115: "commit and push" now authenticates its push as
+          # SHIP_REVIEW_PAT, a real credential, so it fires `CI / push`
+          # naturally -- `event=push` is the only run type whose check-runs
+          # enter the PR's statusCheckRollup, which is what `gh pr merge`
+          # below actually evaluates (LUL-762). No separate dispatch is
+          # needed. Only this workflow ever pushes to this branch, so the
+          # latest push-triggered run is always the right one to track --
+          # whether it started from this run's own push above, or (when an
+          # already-open PR was reused) from an earlier run's push tonight.
+          # Allow up to 3 minutes for GitHub to register the run.
+          echo "::notice::waiting for CI's push-triggered run on $BRANCH..."
           run_id=""
           for i in $(seq 1 18); do
             sleep 10
             run_id="$(gh api \
-              "repos/$REPO/actions/workflows/ci.yml/runs?branch=$BRANCH&event=workflow_dispatch&per_page=20" \
-              --jq ".workflow_runs[] | select(.created_at >= \"$DISPATCH_TIME\") | .id" \
-              | head -1)"
+              "repos/$REPO/actions/workflows/ci.yml/runs?branch=$BRANCH&event=push&per_page=1" \
+              --jq '.workflow_runs[0].id // empty')"
             [ -n "$run_id" ] && break
           done
 
@@ -287,6 +353,21 @@ jobs:
           if [ "$conclusion" != "success" ]; then
             echo "::error::CI run $run_id concluded $conclusion -- PR #$PR_NUMBER stays open"
             exit 1
+          fi
+
+          # ── race check ────────────────────────────────────────────────────────
+          # LUL-1115: the real-credential push above also satisfies
+          # auto-pr.yml's and automerge.yml's own triggers (see the file
+          # header) -- either can review and merge this exact PR
+          # independently before this step gets here. An already-merged PR
+          # is success, not a failure to report: skip straight past both the
+          # review submission and the merge call below, so a rival path
+          # winning the declared race doesn't paint this scheduled job red
+          # (LUL-925) for a run that actually succeeded.
+          already_merged="$(gh pr view "$PR_NUMBER" --json merged --jq '.merged')"
+          if [ "$already_merged" = "true" ]; then
+            echo "::notice::PR #$PR_NUMBER was already merged (auto-pr.yml/automerge.yml won the race); nothing left to do."
+            exit 0
           fi
 
           # ── submit approving review ──────────────────────────────────────────

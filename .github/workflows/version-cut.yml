@@ -86,10 +86,27 @@ jobs:
           echo "::notice::ahead_by=$ahead event=$EVENT should_cut=$should_cut"
 
   combined-suite:
-    name: build the merge tree and run the full suite
+    name: build the merge tree and run the full suite (shard ${{ matrix.shard }}/4)
     needs: decide
     if: needs.decide.outputs.should_cut == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # LUL-927 (wiki game/lul927-smoke-suite-timing-diffuse): the suite's ~22-26min
+      # green-path cost is diffuse across all 65 tests, not concentrated in a few
+      # slow specs, and playwright.config.ts has run it single-worker/serial since
+      # the file's first commit for no stated reason. Run serially on a merge tree
+      # already contending for CPU with three.js/WebGL rendering, that turned into
+      # ~100min wall-clock and ~30 cascading timeouts/CDP-connection errors on run
+      # 33633069397 (LUL-1272) -- the same render-contention-under-load shape
+      # LUL-554 diagnosed at smaller scale on 2026-08-20. Sharding across separate
+      # runners (each its own CPU, its own fresh browser process) fixes the
+      # contention without touching playwright.config.ts's workers:1 -- local and
+      # per-PR runs (which don't use this workflow) are unaffected. 4-way lands
+      # each shard near the suite's original single-project cost; revisit if the
+      # suite grows enough to blow that budget again.
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -99,7 +116,11 @@ jobs:
       # Live fetch, not a snapshot from the `decide` job -- release/next can
       # keep taking feature merges the whole time this run is in flight, and
       # this is the state the combined-suite result actually needs to speak
-      # for.
+      # for. Each shard re-fetches/re-merges independently (matrix jobs don't
+      # share a filesystem); a push landing on main mid-run could in theory
+      # skew shards onto slightly different trees, the same live-fetch
+      # tradeoff this job already accepted pre-sharding, just spread across
+      # more checkouts.
       - name: build the combined tree (release/next merged with main)
         run: |
           set -euo pipefail
@@ -119,18 +140,27 @@ jobs:
 
       - run: npm ci
 
+      # Non-playwright checks are identical on every shard's tree (same merge
+      # commit) -- run them once, on shard 1, not 4x. A failure here still
+      # fails that matrix job, which still fails the aggregate `combined-suite`
+      # result the PR step below reads (`needs.combined-suite.result` is
+      # 'success' only if every matrix job succeeded).
       - name: unit tests
+        if: matrix.shard == 1
         run: npm test
 
       - name: lint
+        if: matrix.shard == 1
         run: npm run lint
 
       # Next 16 injects generated route types; next-env.d.ts is gitignored
       # and doesn't exist in a fresh checkout (same as ci.yml's build job).
+      # Every shard needs this before its own build, not just shard 1.
       - name: typegen
         run: npx next typegen
 
       - name: typecheck
+        if: matrix.shard == 1
         run: npx tsc --noEmit
 
       - name: build
@@ -139,14 +169,14 @@ jobs:
       - name: install playwright browsers + system deps
         run: npx playwright install --with-deps chromium
 
-      - name: playwright smoke suite
-        run: npx playwright test
+      - name: playwright smoke suite (shard ${{ matrix.shard }}/4)
+        run: npx playwright test --shard=${{ matrix.shard }}/4
 
       - name: upload playwright test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: version-cut-playwright-results
+          name: version-cut-playwright-results-shard-${{ matrix.shard }}
           path: test-results/
           retention-days: 14
           if-no-files-found: ignore

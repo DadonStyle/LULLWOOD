@@ -32,16 +32,27 @@ export const VEIL_DETECT_MUL = 0.35;
 
 /** Advances the charge/lock state machine by one frame and decides whether
  * the veil is actually allowed to be active -- `held` alone isn't enough,
- * a locked-out or empty veil ignores the held key entirely. */
-export function stepVeilCharge(state: VeilChargeState, held: boolean, dt: number): VeilChargeState & { active: boolean } {
+ * a locked-out or empty veil ignores the held key entirely.
+ *
+ * `maxHold` defaults to VEIL_MAX_HOLD and is the LUL-1043 (Embers) Deeper
+ * Lungs lever -- callers pass a larger value once tiers are purchased so a
+ * full hold drains slower (and, symmetrically, a full regen also takes
+ * longer). Every existing call site that omits it keeps today's behaviour
+ * exactly, so this is additive, not a retune. */
+export function stepVeilCharge(
+  state: VeilChargeState,
+  held: boolean,
+  dt: number,
+  maxHold: number = VEIL_MAX_HOLD,
+): VeilChargeState & { active: boolean } {
   let { charge, locked } = state;
   if (locked && charge >= VEIL_UNLOCK_CHARGE) locked = false;
   const active = held && !locked && charge > 0;
   if (active) {
-    charge = Math.max(0, charge - dt / VEIL_MAX_HOLD);
+    charge = Math.max(0, charge - dt / maxHold);
     if (charge <= 0) locked = true;
   } else {
-    charge = Math.min(1, charge + (dt / VEIL_MAX_HOLD) * VEIL_REGEN_MUL);
+    charge = Math.min(1, charge + (dt / maxHold) * VEIL_REGEN_MUL);
   }
   return { charge, locked, active };
 }

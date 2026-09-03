@@ -3,12 +3,13 @@
 // this suite never needs to click into the game -- it is cheap and static,
 // unlike the rest of e2e/ which drives gameplay.
 import { test, expect } from '@playwright/test';
+import { SITE_NAME, SITE_TITLE } from '../lib/site';
 
 test.describe('SEO metadata', () => {
   test('OG, Twitter, canonical and JSON-LD VideoGame tags are present', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    await expect(page).toHaveTitle('Lullwood');
+    await expect(page).toHaveTitle(SITE_TITLE);
 
     const head = await page.evaluate(() => {
       const meta = (name: string, attr: 'name' | 'property' = 'property') =>
@@ -29,13 +30,13 @@ test.describe('SEO metadata', () => {
       };
     });
 
-    expect(head.ogTitle).toBe('Lullwood');
+    expect(head.ogTitle).toBe(SITE_TITLE);
     expect(head.ogDescription).toBe('a lost child is somewhere in the dark');
     expect(head.ogType).toBe('website');
     expect(head.ogUrl).toBeTruthy();
-    expect(head.ogSiteName).toBe('Lullwood');
+    expect(head.ogSiteName).toBe(SITE_NAME);
     expect(head.twitterCard).toBe('summary_large_image');
-    expect(head.twitterTitle).toBe('Lullwood');
+    expect(head.twitterTitle).toBe(SITE_TITLE);
     expect(head.canonical).toBeTruthy();
     // LUL-49: static app/opengraph-image.png + app/twitter-image.png,
     // registered by Next's file convention -- assert they resolve, not just
@@ -47,7 +48,7 @@ test.describe('SEO metadata', () => {
     const data = JSON.parse(head.jsonLd as string);
     expect(data['@context']).toBe('https://schema.org');
     expect(data['@type']).toBe('VideoGame');
-    expect(data.name).toBe('Lullwood');
+    expect(data.name).toBe(SITE_NAME);
     expect(data.genre).toBe('Horror');
     expect(data.applicationCategory).toBe('Game');
     expect(data.offers).toMatchObject({ '@type': 'Offer', price: '0', priceCurrency: 'USD' });
