@@ -43,7 +43,13 @@ export async function collectElems(page: Page, opts: { opaqueAlpha?: number; bac
               .map(n => (n.textContent || '').trim())
               .join(' ')
               .trim();
-            // `cursor` INHERITS. #gate carries `cursor: pointer` so its title, subtitle and every <b> reported as pointer targets; the first run flagged ten "undersized tap targets" that are body copy. Closed by requiring the element to ORIGINATE the pointer cursor (parent does not already have it), unless it is a real control or carries a testid.
+            // `cursor` INHERITS. #gate carries `cursor: pointer` and every
+            // descendant -- the title, the subtitle, each <b> -- reports
+            // pointer too, which made a first cut of this rule flag the gate's
+            // own body copy as an undersized tap target. A pointer cursor only
+            // counts when this element is where it originates, i.e. its parent
+            // does not already have it. Real controls and anything the suite
+            // addresses by testid are always tappable regardless.
             const parentCs = c.parentElement ? getComputedStyle(c.parentElement) : null;
             const ownsPointer = cs.cursor === 'pointer' && parentCs?.cursor !== 'pointer';
             const tappable = cs.pointerEvents !== 'none' && (
