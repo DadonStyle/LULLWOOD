@@ -1,7 +1,7 @@
 // Node built-in test runner. Run: node --test lib/dashboard/aggregate.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement } from './aggregate.ts';
+import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement, computeEconomy } from './aggregate.ts';
 import type { RawEvent } from './events.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -118,4 +118,59 @@ test('computeFeatureEngagement: groups by feature+action, sorted by count desc',
 test('computeFeatureEngagement: ignores non-feature_engagement events', () => {
   const rows = computeFeatureEngagement([ev('page_view', BASE_TS, 'a')]);
   assert.deepEqual(rows, []);
+});
+
+test('computeEconomy: payout percentiles and failure band', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { payout: 100, balance: 100, time_survived_ms: 90000 }),
+    ev('win', BASE_TS, 'b', { payout: 120, balance: 220, time_survived_ms: 90000 }),
+    ev('loss', BASE_TS, 'c', { payout: 15, balance: 15, time_survived_ms: 30000, predator_kind: 'wolf' }),
+    ev('loss', BASE_TS, 'd', { payout: 25, balance: 25, time_survived_ms: 30000, predator_kind: 'bear' }),
+  ];
+  const economy = computeEconomy(events);
+  assert.equal(economy.winPayout.n, 2);
+  assert.equal(economy.winPayout.p50, 100);
+  assert.equal(economy.lossPayout.n, 2);
+  assert.equal(economy.lossPayout.p50, 15);
+  assert.equal(economy.failureBandPct, 15);
+});
+
+test('computeEconomy: empty input never divides by zero', () => {
+  const economy = computeEconomy([]);
+  assert.equal(economy.winPayout.p50, null);
+  assert.equal(economy.failureBandPct, null);
+  assert.equal(economy.lossDepth.pctAbove24, null);
+  assert.equal(economy.purchase.crossed120Count, 0);
+  assert.equal(economy.purchase.purchasedWithin3RunsPct, null);
+});
+
+test('computeEconomy: loss depth derives survival term from time_survived_ms, capped at 6', () => {
+  const events: RawEvent[] = [
+    // survivalTerm = min(6, floor(150000/20000)) = min(6,7) = 6; depth = 30 - 6 = 24
+    ev('loss', BASE_TS, 'a', { payout: 30, time_survived_ms: 150000, predator_kind: 'wolf' }),
+    // survivalTerm = min(6, floor(10000/20000)) = 0; depth = 40 - 0 = 40 (> 24)
+    ev('loss', BASE_TS, 'b', { payout: 40, time_survived_ms: 10000, predator_kind: 'lion' }),
+  ];
+  const economy = computeEconomy(events);
+  assert.equal(economy.lossDepth.n, 2);
+  assert.equal(economy.lossDepth.p50, 24);
+  assert.equal(economy.lossDepth.pctAbove24, 50);
+});
+
+test('computeEconomy: purchase is a balance decrease within 3 runs of crossing 120', () => {
+  const events: RawEvent[] = [
+    // anon 'a': crosses 120 on run 2, decreases on run 3 (within window) -> purchased
+    ev('win', BASE_TS, 'a', { payout: 100, balance: 100, time_survived_ms: 90000 }),
+    ev('win', BASE_TS + 1, 'a', { payout: 30, balance: 130, time_survived_ms: 90000 }),
+    ev('loss', BASE_TS + 2, 'a', { payout: 15, balance: 45, time_survived_ms: 30000, predator_kind: 'wolf' }),
+    // anon 'b': crosses 120 on run 1, never decreases -> not purchased
+    ev('win', BASE_TS, 'b', { payout: 150, balance: 150, time_survived_ms: 90000 }),
+    ev('win', BASE_TS + 1, 'b', { payout: 20, balance: 170, time_survived_ms: 90000 }),
+    // anon 'c': never crosses 120 -> excluded entirely
+    ev('loss', BASE_TS, 'c', { payout: 15, balance: 15, time_survived_ms: 30000, predator_kind: 'bear' }),
+  ];
+  const economy = computeEconomy(events);
+  assert.equal(economy.purchase.crossed120Count, 2);
+  assert.equal(economy.purchase.purchasedWithin3RunsCount, 1);
+  assert.equal(economy.purchase.purchasedWithin3RunsPct, 50);
 });
