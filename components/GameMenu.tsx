@@ -147,7 +147,7 @@ export default function GameMenu({
             data-testid="menuRestart"
             className="menuRow"
             onClick={() => {
-              actions?.regenMap();
+              actions?.restart();
               setOpen(false);
             }}
           >
