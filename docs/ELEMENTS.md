@@ -41,13 +41,13 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3472-3476, gated on the same
+  `triggerTouchToggleRun()` (L3497-3501, gated on the same
   `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3449-3455, same guards as the desktop `Space`
+  `triggerTouchJump()` (L3474-3480, same guards as the desktop `Space`
   keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
@@ -57,7 +57,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3461-3465, `MobileControls.tsx`'s `touchPause` button) toggles both
+  (L3486-3490, `MobileControls.tsx`'s `touchPause` button) toggles both
   directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
@@ -72,8 +72,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3435 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3052, mirrored the same way in `qaPlayerState()`'s return
+  button via `setTouchVeil()` L3460 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3060, mirrored the same way in `qaPlayerState()`'s return
   object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED`,
   applied in `tick()`; paired with a screen-edge
@@ -766,7 +766,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L2888-2892 in
+  and synced to `hudState` via `setEmbers()` (L2896-2900 in
   `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`.
@@ -815,12 +815,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1801-1809): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()` L1806-1814): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
 - Gate the player's sprint speed (`tick()` at L3109-3112): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
-- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2829, alongside `staminaLowCuePlayed`).
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2831, alongside `staminaLowCuePlayed`).
 
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
