@@ -56,7 +56,10 @@ test.describe('SEO metadata', () => {
     expect(data['@context']).toBe('https://schema.org');
     expect(data['@type']).toBe('VideoGame');
     expect(data.name).toBe(SITE_NAME);
-    expect(data.genre).toBe('Horror');
+    // LUL-SEO widened this from a single 'Horror' string to a genre list
+    // (app/layout.tsx's videoGameJsonLd) without a matching test update --
+    // same stale-literal pattern as the title/OG-description bugs above.
+    expect(data.genre).toEqual(['Horror', 'Survival', 'Adventure']);
     expect(data.applicationCategory).toBe('Game');
     expect(data.offers).toMatchObject({ '@type': 'Offer', price: '0', priceCurrency: 'USD' });
   });
