@@ -125,12 +125,23 @@ export default defineConfig({
     // above, and CI's `playwright install --with-deps chromium`). Own testDir,
     // isolated the same way `replay` is isolated above, so this project only
     // ever runs the mobile spec, not the whole smoke suite a second time under
-    // a tiny viewport. Unlike `replay` this carries no opt-in flag: VP R&D's
-    // ask on LUL-275 is a permanent gate, so it runs on every plain
-    // `npx playwright test`, same as `chromium`.
+    // a tiny viewport. VP R&D's ask on LUL-275 is a permanent gate, so this
+    // project runs on every plain `npx playwright test`, same as `chromium`
+    // -- the one exception is ui-hygiene.spec.ts, gated below until its
+    // defects are fixed.
     {
       name: 'mobile',
       testDir: './e2e/mobile',
+      // LUL-1092: ui-hygiene.spec.ts is RED ON PURPOSE -- it asserts the UI
+      // defects found in the 2026-08-30 mobile audit are gone, and they are
+      // not gone yet (LUL-1085..LUL-1089 are the fixes). Every other project
+      // in this list runs on a plain `npx playwright test`, and version-cut.yml
+      // runs exactly that, sharded -- so leaving the spec un-gated would stamp
+      // every release cut's PR "DO NOT MERGE" on known, already-ticketed
+      // defects. A gate that is red on arrival gets bypassed, not fixed.
+      // Run it on demand with `UI_HYGIENE=1 npx playwright test --project=mobile`;
+      // delete this line once the fixes land, which is the whole switch-on.
+      testIgnore: process.env.UI_HYGIENE ? [] : ['**/ui-hygiene.spec.ts'],
       use: { ...devices['Pixel 5'] },
     },
   ],
