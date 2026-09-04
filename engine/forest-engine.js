@@ -2786,7 +2786,7 @@ function arriveHome(){
   // on restart.
   activeCharges = 0;
   // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
-  const payout = computeWinPayout(maxDistFromHome, survivedSeconds);
+  const payout = computeWinPayout(maxDistFromHome, survivedSeconds, difficulty);
   embers = applyPayout(embers, payout);
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance });
@@ -2804,6 +2804,7 @@ function triggerDeath(kind){
     maxDistFromHome,
     survivedSeconds,
     Math.hypot(baby.x - CONFIG.home.x, baby.z - CONFIG.home.z),
+    difficulty,
   );
   embers = applyPayout(embers, payout);
   pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,

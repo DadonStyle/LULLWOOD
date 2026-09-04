@@ -9,6 +9,19 @@
 
 import { VEIL_MAX_HOLD } from './veil.ts';
 
+// CEO ruling 2026-09-03: corrected table (wiki game/economy/tier-reward-multipliers §11).
+// Each pair is { win, loss } — win scales computeWinPayout total, loss scales
+// computeDeathPayout total. Do not adjust without re-running the farm guards in the wiki;
+// blackout's loss 1.25 is the bracket-floor ceiling and night's 1.35 protects the band-top
+// farmer at pL=0.75 — both were corrected twice from the original spec filing.
+export type DifficultyTier = 'lantern' | 'night' | 'blackout';
+
+const TIER_MULTIPLIERS: Record<DifficultyTier, { win: number; loss: number }> = {
+  lantern:  { win: 1.00, loss: 1.00 },
+  night:    { win: 1.75, loss: 1.35 },
+  blackout: { win: 2.00, loss: 1.25 },
+};
+
 export interface RunPayout {
   depth: number;
   survival: number;
@@ -47,20 +60,27 @@ export function computeSurvival(survivedSeconds: number): number {
   return Math.min(SURVIVAL_CAP, Math.floor(survivedSeconds / SURVIVAL_UNIT_SECONDS));
 }
 
-export function computeWinPayout(maxDistFromHome: number, survivedSeconds: number): RunPayout {
+export function computeWinPayout(
+  maxDistFromHome: number,
+  survivedSeconds: number,
+  tier: DifficultyTier = 'lantern',
+): RunPayout {
   const depth = computeDepth(maxDistFromHome);
   const survival = computeSurvival(survivedSeconds);
-  return { depth, survival, carried: CARRIED, home: HOME, total: depth + survival + CARRIED + HOME };
+  const total = Math.round((depth + survival + CARRIED + HOME) * TIER_MULTIPLIERS[tier].win);
+  return { depth, survival, carried: CARRIED, home: HOME, total };
 }
 
 export function computeDeathPayout(
   maxDistFromHome: number,
   survivedSeconds: number,
   objectiveDistFromHome: number,
+  tier: DifficultyTier = 'lantern',
 ): RunPayout {
   const depth = Math.min(computeDepth(maxDistFromHome), computeDepth(objectiveDistFromHome));
   const survival = computeSurvival(survivedSeconds);
-  return { depth, survival, carried: 0, home: 0, total: depth + survival };
+  const total = Math.round((depth + survival) * TIER_MULTIPLIERS[tier].loss);
+  return { depth, survival, carried: 0, home: 0, total };
 }
 
 export function applyPayout(state: EmbersState, payout: RunPayout): EmbersState {

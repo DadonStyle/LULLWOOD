@@ -118,6 +118,52 @@ test('win depth is uncapped even at far distances: M2 Deepwater at 212m maxDist 
   assert.equal(p.home, 25);
 });
 
+// ---- Tier multipliers (LUL-1412) ----------------------------------------
+// Corrected table: CEO ruling 2026-09-03 (wiki game/economy/tier-reward-multipliers §11)
+//   lantern: ×1.00 win / ×1.00 loss
+//   night:   ×1.75 win / ×1.35 loss
+//   blackout: ×2.00 win / ×1.25 loss
+
+// Win at d=96 (lantern band top, t=100s): base = depth(24)+survival(5)+carried(60)+home(25)=114
+test('computeWinPayout tier multipliers pin the three win amounts', () => {
+  const lw = computeWinPayout(96, 100, 'lantern');
+  const nw = computeWinPayout(96, 100, 'night');
+  const bw = computeWinPayout(96, 100, 'blackout');
+  assert.equal(lw.total, 114);                        // ×1.00
+  assert.equal(nw.total, Math.round(114 * 1.75));     // 200
+  assert.equal(bw.total, Math.round(114 * 2.00));     // 228
+});
+
+// Death at d=44, t=0: base = depth(11)+survival(0)=11; objective>=44 so cap doesn't bind
+test('computeDeathPayout tier multipliers pin the three death amounts', () => {
+  const ld = computeDeathPayout(44, 0, 44, 'lantern');
+  const nd = computeDeathPayout(44, 0, 44, 'night');
+  const bd = computeDeathPayout(44, 0, 44, 'blackout');
+  assert.equal(ld.total, 11);                         // ×1.00
+  assert.equal(nd.total, Math.round(11 * 1.35));      // 15
+  assert.equal(bd.total, Math.round(11 * 1.25));      // 14
+});
+
+// Regression: night > lantern for identical inputs — this is the structural defect fixed.
+// Night and lantern share the same child-spawn distribution; night has 6.1× the effective
+// hazard. The payout must be strictly higher for any non-zero run.
+test('night win payout strictly exceeds lantern for identical non-zero inputs (fixes domination)', () => {
+  const lanternWin = computeWinPayout(78, 120, 'lantern');
+  const nightWin = computeWinPayout(78, 120, 'night');
+  assert.ok(nightWin.total > lanternWin.total, `night ${nightWin.total} must exceed lantern ${lanternWin.total}`);
+});
+
+test('night death payout strictly exceeds lantern for identical non-zero inputs', () => {
+  const lanternDeath = computeDeathPayout(78, 120, 78, 'lantern');
+  const nightDeath = computeDeathPayout(78, 120, 78, 'night');
+  assert.ok(nightDeath.total > lanternDeath.total, `night ${nightDeath.total} must exceed lantern ${lanternDeath.total}`);
+});
+
+test('computeWinPayout and computeDeathPayout default to lantern when tier is omitted', () => {
+  assert.equal(computeWinPayout(96, 100).total, computeWinPayout(96, 100, 'lantern').total);
+  assert.equal(computeDeathPayout(44, 0, 44).total, computeDeathPayout(44, 0, 44, 'lantern').total);
+});
+
 // ---- applyPayout --------------------------------------------------------
 
 test('applyPayout adds the payout total to the balance and leaves tiers untouched', () => {
