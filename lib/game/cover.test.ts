@@ -9,6 +9,7 @@ import {
   gridKey,
   blockedR,
   pickAvoidDirection,
+  slideVelocity,
   coverBlockedR,
   canopyBlockedR,
   blocked,
@@ -451,13 +452,27 @@ test('pickAvoidDirection: when both +/-0.5 are equally clear, prefers +0.5 (angl
   assert.ok(Math.abs(rx - Math.cos(0.5)) < 1e-9);
 });
 
-test('pickAvoidDirection: every angle blocked falls back to the original heading (matches main -- it does not stop)', () => {
+test('pickAvoidDirection: every angle blocked returns the least-blocked candidate, never the original heading (LUL-1091b)', () => {
   // a huge blocker centered on the predator itself: every look-ahead point,
-  // at any angle, is within `look` (3) of the origin, well inside rr (10.6)
+  // near or far, at any angle, is within `far` (3) of the origin, well
+  // inside rr (10.6) -- a guaranteed all-blocked wedge.
   const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 10 }]);
   const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
-  assert.equal(rx, 1);
-  assert.equal(rz, 0);
+  // never the known-bad heading already confirmed blocked
+  assert.ok(!(rx === 1 && rz === 0));
+  // every candidate ties at clearDistance 0 here, so the tie is broken by
+  // AVOID_ANGLES order -- the first angle (+0.5) wins
+  assert.ok(Math.abs(rx - Math.cos(0.5)) < 1e-9);
+  assert.ok(Math.abs(rz - Math.sin(0.5)) < 1e-9);
+});
+
+test('pickAvoidDirection: obstacle within the near probe is caught even though the old far-only probe would sail past it (LUL-1091a)', () => {
+  // trunk centered 1.0 units out; the near probe (rad+0.8=1.4) lands inside
+  // it, but a single far-only probe (rad+2.4=3.0) would have missed it
+  // entirely, walking the predator straight into the trunk.
+  const grid = makeGrid<CircleCollider>([{ x: 1.0, z: 0, cr: 0.3 }]);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  assert.ok(!(rx === 1 && rz === 0));
 });
 
 test('pickAvoidDirection: respects a custom lookAhead distance', () => {
@@ -469,6 +484,38 @@ test('pickAvoidDirection: respects a custom lookAhead distance', () => {
   assert.equal(rzDefault, 0);
   const [rxWide] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, CELL, 5.4); // look=6, lands right on it
   assert.notEqual(rxWide, 1);
+});
+
+// ---- slideVelocity (LUL-1091d: wall slide instead of axis-damping) --------
+
+test('slideVelocity: neither axis blocked returns velocity unchanged', () => {
+  const [vx, vz] = slideVelocity(3, 4, false, false);
+  assert.equal(vx, 3);
+  assert.equal(vz, 4);
+});
+
+test('slideVelocity: x blocked projects the full speed onto z, keeping z\'s sign', () => {
+  const [vx, vz] = slideVelocity(5, -2, true, false);
+  assert.equal(vx, 0);
+  assert.ok(Math.abs(vz - -Math.hypot(5, -2)) < 1e-9);
+});
+
+test('slideVelocity: head-on approach (no free-axis velocity to inherit) redirects full speed instead of damping to ~0 (old bug)', () => {
+  const [vx, vz] = slideVelocity(5, 0, true, false);
+  assert.equal(vx, 0);
+  assert.equal(vz, 5); // old behaviour would have been vx=1 (5*0.2), vz=0 -- near-total stop
+});
+
+test('slideVelocity: z blocked projects the full speed onto x', () => {
+  const [vx, vz] = slideVelocity(2, 5, false, true);
+  assert.ok(Math.abs(vx - Math.hypot(2, 5)) < 1e-9);
+  assert.equal(vz, 0);
+});
+
+test('slideVelocity: both axes blocked stops the predator', () => {
+  const [vx, vz] = slideVelocity(5, 5, true, true);
+  assert.equal(vx, 0);
+  assert.equal(vz, 0);
 });
 
 test('canopyBlockedR: true inside a tree\'s canopy radius', () => {
