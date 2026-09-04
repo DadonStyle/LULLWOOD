@@ -2519,6 +2519,26 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return spot.kind;
   };
 
+  // LUL-1089: stage cover (findHideSpot() !== null) and a chasing, sighted
+  // lion (canSee()) at once -- qaTeleportToHideSpot() followed by
+  // qaOpenHideNearLion() does NOT do this, because qaOpenHideNearLion resets
+  // player.x/z to the spawn clearing (0,0) to guarantee its own cover-free
+  // scenario, clobbering the teleport. This hook places the lion 4 units from
+  // the hide spot itself instead of the spawn clearing, so the cover-vs-veil
+  // precedence test can assert both conditions hold simultaneously.
+  window.ForestEngine.qaOpenHideNearLionAtHideSpot = function(){
+    const spot = coverData.find(c => HIDE_KINDS[c.kind]);
+    if(!spot) return null;
+    player.x = spot.x; player.z = spot.z;
+    const idx = predators.findIndex(p => p.kind === 'lion');
+    if(idx < 0) return null;
+    const lion = predators[idx];
+    lion.x = player.x + 4; lion.z = player.z;
+    lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
+    lion.state = 'chase'; lion.hunt = true;
+    return { idx, kind: spot.kind };
+  };
+
   // LUL-388: `dist`/`canSee` added. A caller racing this predator's blind-chase
   // window against wall-clock time (e.g. "is it still blind 300ms after I
   // staged it?") is racing the dt-clamp-vs-walltime hazard for no reason --

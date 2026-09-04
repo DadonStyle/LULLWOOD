@@ -64,9 +64,12 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
     await boot(page, { qaHooks: true });
     await enter(page);
 
-    // Place player at hide spot, then stage a chasing lion in sight (cover + veil both true)
-    await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.());
-    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLion?.());
+    // Place player at hide spot AND a chasing, sighted lion 4 units from that
+    // same spot -- both cover and veil conditions true at once. (Not
+    // qaTeleportToHideSpot() + qaOpenHideNearLion(): the latter resets
+    // player.x/z to the spawn clearing, clobbering the teleport.)
+    const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
+    expect(staged, 'qaOpenHideNearLionAtHideSpot returned null — no hide spot or lion at this seed').not.toBeNull();
     await page.waitForTimeout(350);
 
     const prompt = page.locator('#actionPrompt');
