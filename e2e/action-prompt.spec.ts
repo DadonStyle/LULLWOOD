@@ -64,12 +64,21 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
     await boot(page, { qaHooks: true });
     await enter(page);
 
-    // Place player at hide spot AND a chasing, sighted lion 4 units from that
-    // same spot -- both cover and veil conditions true at once. (Not
-    // qaTeleportToHideSpot() + qaOpenHideNearLion(): the latter resets
-    // player.x/z to the spawn clearing, clobbering the teleport.)
+    // Place player 0.5 units outside the hide spot's AABB edge (not at center)
+    // and a chasing lion 4 units further in the same direction -- both cover and
+    // veil conditions true at once, and hasLOS() is unblocked by the prop itself.
     const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
     expect(staged, 'qaOpenHideNearLionAtHideSpot returned null — no hide spot or lion at this seed').not.toBeNull();
+
+    // Verify the premise: the lion must actually have line of sight to the player
+    // right after staging. If this fails, the test's two-condition premise is broken
+    // again (e.g. another cover prop blocked the sightline at this seed).
+    const lionState = await page.evaluate(
+      (idx: number) => window.ForestEngine?.qaPredatorState?.(idx) ?? null,
+      staged!.idx
+    );
+    expect(lionState?.canSee, 'Staged lion must have line of sight to player (both conditions must hold)').toBe(true);
+
     await page.waitForTimeout(350);
 
     const prompt = page.locator('#actionPrompt');
