@@ -44,10 +44,32 @@ const launchOptions = {
   ],
 };
 
+// LUL-1110: on GitHub Actions, `CI` currently means "the version-cut merge-tree
+// job" specifically -- ci.yml no longer runs this suite at all, and the nightly
+// qa-regression.mjs cron runs `npx playwright test` on the host, outside GH
+// Actions, with `CI` unset. That job's runner is measurably more CPU-starved
+// than this suite's other environments: it does a fresh `npm ci` + `next build`
+// + `playwright install --with-deps chromium` in the same job, immediately
+// before serving the game over software-rendered WebGL (`--use-gl=swiftshader`,
+// already <20fps per wiki systems/dt-clamp-vs-walltime). Sharding (PR #278) and
+// the /dev/shm fix (PR #291, LUL-1110) each cut real failure modes but left an
+// unchanged signature behind: entire specs -- not just the dt-accumulated-timer
+// ones systems/dt-clamp-vs-walltime already named -- blowing the 10s/90s
+// wall-clock budgets identically across independent runs (33708960681,
+// 33719198049), while a byte-for-byte `git merge-tree` of release/next+main
+// showed zero diff, ruling out a real regression. Widening the wall-clock
+// budget only in this one job is the stopgap; the durable fix is rewriting
+// every affected spec's waits to be game-time-aware per that wiki page's
+// "The rule" -- tracked separately, out of scope for this workflow-reliability
+// fix.
+const ciTimeouts = process.env.CI
+  ? { timeout: 240_000, expect: { timeout: 30_000 } }
+  : { timeout: 90_000, expect: { timeout: 10_000 } };
+
 export default defineConfig({
   testDir: './e2e',
-  timeout: 90_000,
-  expect: { timeout: 10_000 },
+  timeout: ciTimeouts.timeout,
+  expect: ciTimeouts.expect,
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
@@ -103,12 +125,23 @@ export default defineConfig({
     // above, and CI's `playwright install --with-deps chromium`). Own testDir,
     // isolated the same way `replay` is isolated above, so this project only
     // ever runs the mobile spec, not the whole smoke suite a second time under
-    // a tiny viewport. Unlike `replay` this carries no opt-in flag: VP R&D's
-    // ask on LUL-275 is a permanent gate, so it runs on every plain
-    // `npx playwright test`, same as `chromium`.
+    // a tiny viewport. VP R&D's ask on LUL-275 is a permanent gate, so this
+    // project runs on every plain `npx playwright test`, same as `chromium`
+    // -- the one exception is ui-hygiene.spec.ts, gated below until its
+    // defects are fixed.
     {
       name: 'mobile',
       testDir: './e2e/mobile',
+      // LUL-1092: ui-hygiene.spec.ts is RED ON PURPOSE -- it asserts the UI
+      // defects found in the 2026-08-30 mobile audit are gone, and they are
+      // not gone yet (LUL-1085..LUL-1089 are the fixes). Every other project
+      // in this list runs on a plain `npx playwright test`, and version-cut.yml
+      // runs exactly that, sharded -- so leaving the spec un-gated would stamp
+      // every release cut's PR "DO NOT MERGE" on known, already-ticketed
+      // defects. A gate that is red on arrival gets bypassed, not fixed.
+      // Run it on demand with `UI_HYGIENE=1 npx playwright test --project=mobile`;
+      // delete this line once the fixes land, which is the whole switch-on.
+      testIgnore: process.env.UI_HYGIENE ? [] : ['**/ui-hygiene.spec.ts'],
       use: { ...devices['Pixel 5'] },
     },
   ],

@@ -51,6 +51,7 @@ import {
   canopyRadiusAtEye,
   rollCoverPropShape,
   pickAvoidDirection,
+  slideVelocity,
   HIDE_KINDS,
   CELL,
   gridKey as key,
@@ -1040,7 +1041,7 @@ function makePredator(kind){
   scene.add(g);
   return { g, kind, spec:s, legs, neck, head, torso, tail, tail2, rad:s.rad,
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
-    phase:Math.random()*6, spotted:false, callTimer:0,
+    phase:rng()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
@@ -1182,7 +1183,7 @@ function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRa
 // stored point), so "last noisy position" falls out of that existing
 // approach behavior for free.
 function hearNoise(p){
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(Math.random, 4);
+  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
 }
 
 // ---- Positional hiding / detection (LUL-43, LUL-22) -----------------------
@@ -1317,7 +1318,7 @@ function updatePredators(dt, noiseRadius){
         // existing investigate/approach loop (LUL-22, not to be retuned)
         // rather than snapping straight back into a full chase mid-overshoot
         // -- it just sprinted past you and has to notice you again.
-        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(Math.random, 3);
+        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 3);
         endChargeHud();
       } else {
         p.charge = cs;
@@ -1335,7 +1336,7 @@ function updatePredators(dt, noiseRadius){
       if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
-      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(Math.random, 4); p.hunt=false; }
+      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind);
         else { desx=ux; desz=uz; speed=p.spec.speed; }
@@ -1357,7 +1358,7 @@ function updatePredators(dt, noiseRadius){
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
-        if(wd < 2.5){ const a=Math.random()*Math.PI*2, r=15+Math.random()*40;
+        if(wd < 2.5){ const a=rng()*Math.PI*2, r=15+rng()*40;
           let nwx=clamp(p.x+Math.cos(a)*r,-half+4,half-4), nwz=clamp(p.z+Math.sin(a)*r,-half+4,zMax-4);
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
           p.wpx=clamp(kept.x,-half+4,half-4); p.wpz=clamp(kept.z,-half+4,zMax-4); }
@@ -1374,7 +1375,7 @@ function updatePredators(dt, noiseRadius){
       // chase since the player isn't hidden -- zero-speed forever. Keep
       // chasing blind while scentLock holds; once it expires, gate on sight
       // the same way a spotted chase always has.
-      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = rollSniffs(Math.random, 4); }
+      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = rollSniffs(rng, 4); }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -1435,7 +1436,7 @@ function updatePredators(dt, noiseRadius){
         if(sniffOutcome.done){
           p.sniffsLeft = sniffOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
-          if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + Math.random()*8;
+          if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax); }
           else { p.state='roam'; p.spotted=false; }
         }
@@ -1465,7 +1466,7 @@ function updatePredators(dt, noiseRadius){
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
-        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(Math.random, 3); p.sniffTimer=rnd(1,4); sniff(); }
+        if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(rng, 3); p.sniffTimer=rnd(1,4); sniff(); }
         else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL; }
       }
     }
@@ -1478,8 +1479,10 @@ function updatePredators(dt, noiseRadius){
     p.vz += (dvz - p.vz) * Math.min(1, dt*accel);
     const px0 = p.x, pz0 = p.z;
     const nx = clamp(p.x + p.vx*dt, -half+2, half-2), nz = clamp(p.z + p.vz*dt, -half+2, zMax-2);
-    if(!blockedR(nx, p.z, p.rad)) p.x = nx; else p.vx *= 0.2;
-    if(!blockedR(p.x, nz, p.rad)) p.z = nz; else p.vz *= 0.2;
+    const blockedX = blockedR(nx, p.z, p.rad), blockedZ = blockedR(p.x, nz, p.rad);
+    if(!blockedX) p.x = nx;
+    if(!blockedZ) p.z = nz;
+    if(blockedX || blockedZ) [p.vx, p.vz] = slideVelocity(p.vx, p.vz, blockedX, blockedZ);
     p.g.position.x = p.x; p.g.position.z = p.z;
 
     // trail + stuck detection (only while it actually wants to move)
@@ -1488,12 +1491,12 @@ function updatePredators(dt, noiseRadius){
     const moved = Math.hypot(p.x - px0, p.z - pz0);
     if(speed > 1 && p.reroute <= 0 && p.alert <= 0){
       if(moved < speed*dt*0.35) p.stuckT += dt; else p.stuckT = Math.max(0, p.stuckT - dt*2);
-      if(p.stuckT > 3){                              // go back along the trail, then a different way
+      if(p.stuckT > 0.8){                            // go back along the trail, then a different way
         const back = p.trail[0] || [p.x - ux*6, p.z - uz*6];
         p.rrX = back[0]; p.rrZ = back[1]; p.reroute = 1.4; p.stuckT = 0;
         // fresh, different waypoint (LUL-857: kept off the water same as the roam pick above)
-        const freshx = clamp(p.x + (Math.random()-0.5)*40, -half+4, half-4);
-        const freshz = clamp(p.z + (Math.random()-0.5)*40, -half+4, zMax-4);
+        const freshx = clamp(p.x + (rng()-0.5)*40, -half+4, half-4);
+        const freshz = clamp(p.z + (rng()-0.5)*40, -half+4, zMax-4);
         const freshKept = keepWaypointOffLake(freshx, freshz, CONFIG.lake);
         p.wpx = clamp(freshKept.x, -half+4, half-4);
         p.wpz = clamp(freshKept.z, -half+4, zMax-4);
@@ -2205,6 +2208,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
   window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
+  window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
 
   // LUL-83: proves resolveInitialSeed() actually drives the generated layout --
   // `?seed=N` should reproduce this byte-identically across loads, and no

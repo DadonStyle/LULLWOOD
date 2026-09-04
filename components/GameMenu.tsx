@@ -114,25 +114,30 @@ export default function GameMenu({
             Sound: {state.soundOn ? 'on' : 'off'}
           </button>
 
-          <div className="menuRow menuDifficulty">
-            <label>Difficulty</label>
-            <div className="segmentedControl">
-              {(['lantern', 'night', 'blackout'] as const).map((d) => (
-                <button
-                  key={d}
-                  data-testid={`menuDifficulty${d}`}
-                  className={`segment ${state.difficulty === d ? 'active' : ''}`}
-                  onClick={() => {
-                    actions?.setDifficulty(d);
-                    setOpen(false);
-                  }}
-                  title={d === 'lantern' ? 'Forgiving' : d === 'night' ? 'Default' : 'No mercy'}
-                >
-                  {d.slice(0, 1).toUpperCase()}
-                </button>
-              ))}
+          {!state.entered && (
+            <div className="menuRow menuDifficulty">
+              <label>Difficulty</label>
+              <div className="segmentedControl">
+                {(['lantern', 'night', 'blackout'] as const).map((d) => {
+                  const tierLabel = d === 'lantern' ? 'Lantern' : d === 'night' ? 'Night' : 'Blackout';
+                  return (
+                    <button
+                      key={d}
+                      data-testid={`menuDifficulty${d}`}
+                      className={`segment ${state.difficulty === d ? 'active' : ''}`}
+                      onClick={() => {
+                        actions?.setDifficulty(d);
+                        setOpen(false);
+                      }}
+                      title={d === 'lantern' ? 'Forgiving' : d === 'night' ? 'Default' : 'No mercy'}
+                    >
+                      {tierLabel}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           <button
             id="settingsBtn"
@@ -147,7 +152,7 @@ export default function GameMenu({
             data-testid="menuRestart"
             className="menuRow"
             onClick={() => {
-              actions?.regenMap();
+              actions?.restart();
               setOpen(false);
             }}
           >
@@ -256,7 +261,7 @@ export default function GameMenu({
         .segment {
           flex: 1;
           min-height: 32px;
-          padding: 4px 8px;
+          padding: 4px 6px;
           border: 1px solid #cdd9ea;
           background: transparent;
           color: #cdd9ea;
@@ -264,6 +269,9 @@ export default function GameMenu({
           cursor: pointer;
           border-radius: 2px;
           transition: all 0.2s;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .segment:hover {
