@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Dark forest night background -->
+  <rect width="32" height="32" rx="4" fill="#0d1f11"/>
+  <!-- Pine tree silhouette — single solid shape for 16x16 legibility -->
+  <!-- Top canopy triangle -->
+  <polygon points="16,3 6.5,18 25.5,18" fill="#d4ecd4"/>
+  <!-- Lower skirt (wider, overlapping) -->
+  <polygon points="16,11 5,26 27,26" fill="#e8f4e8"/>
+  <!-- Trunk -->
+  <rect x="14.5" y="25" width="3" height="4" fill="#c0d8c0"/>
+  <!-- Tiny amber glow at tree base — the lost child -->
+  <circle cx="16" cy="27.5" r="1.8" fill="#ffcc60" opacity="0.85"/>
+</svg>
