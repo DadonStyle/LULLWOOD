@@ -69,8 +69,10 @@ export interface DetectionState {
 below them:
 
 ```ts
-export const CARRY_DETECT_MUL = 1.35; // PLACEHOLDER (LUL-1310): pending Game Economist's
-                                       // number from LUL-1311 -- see docs/specs/lul-1310-carry-detection.md
+// Priced by the Game Economist (LUL-1311, wiki game/economy/carry-leg-detection-price).
+// Ceiling is 1.5: above that the carry-leg win-rate drop leaves the bracket the tier
+// reward multipliers were solved over, and those would need re-deriving first.
+export const CARRY_DETECT_MUL = 1.35;
 ```
 
 **c. `effectiveDetect()`, `:424-427`** — multiply in the carry term. Current:
