@@ -53,8 +53,12 @@ export function computeWinPayout(maxDistFromHome: number, survivedSeconds: numbe
   return { depth, survival, carried: CARRIED, home: HOME, total: depth + survival + CARRIED + HOME };
 }
 
-export function computeDeathPayout(maxDistFromHome: number, survivedSeconds: number): RunPayout {
-  const depth = computeDepth(maxDistFromHome);
+export function computeDeathPayout(
+  maxDistFromHome: number,
+  survivedSeconds: number,
+  objectiveDistFromHome: number,
+): RunPayout {
+  const depth = Math.min(computeDepth(maxDistFromHome), computeDepth(objectiveDistFromHome));
   const survival = computeSurvival(survivedSeconds);
   return { depth, survival, carried: 0, home: 0, total: depth + survival };
 }

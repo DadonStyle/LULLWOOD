@@ -27,14 +27,49 @@ const baseURL = `http://127.0.0.1:${PORT}`;
 const launchOptions = {
   // No GPU here (real or in CI) -- go through software rendering. `--mute-audio`
   // means the WebAudio layer is never exercised by this suite (see LUL-20: do not
-  // claim audio works from this rig).
-  args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox', '--mute-audio'],
+  // claim audio works from this rig). `--disable-dev-shm-usage` (LUL-1110): GitHub
+  // Actions runners default /dev/shm to 64MB, far too small for Chromium's shared
+  // memory under three.js/WebGL rendering load -- it was crashing mid-suite
+  // ("Protocol error (Runtime.callFunctionOn): Internal server error, session
+  // closed", 90s page.goto timeouts) even after version-cut.yml's 4-way sharding
+  // (PR #278) cut wall-clock time; the crash rate and per-test cost were unchanged
+  // post-shard, which is the signature of a shared-memory ceiling, not cross-test
+  // contention. This flag makes Chromium fall back to /tmp instead of /dev/shm.
+  args: [
+    '--use-gl=swiftshader',
+    '--enable-unsafe-swiftshader',
+    '--no-sandbox',
+    '--mute-audio',
+    '--disable-dev-shm-usage',
+  ],
 };
+
+// LUL-1110: on GitHub Actions, `CI` currently means "the version-cut merge-tree
+// job" specifically -- ci.yml no longer runs this suite at all, and the nightly
+// qa-regression.mjs cron runs `npx playwright test` on the host, outside GH
+// Actions, with `CI` unset. That job's runner is measurably more CPU-starved
+// than this suite's other environments: it does a fresh `npm ci` + `next build`
+// + `playwright install --with-deps chromium` in the same job, immediately
+// before serving the game over software-rendered WebGL (`--use-gl=swiftshader`,
+// already <20fps per wiki systems/dt-clamp-vs-walltime). Sharding (PR #278) and
+// the /dev/shm fix (PR #291, LUL-1110) each cut real failure modes but left an
+// unchanged signature behind: entire specs -- not just the dt-accumulated-timer
+// ones systems/dt-clamp-vs-walltime already named -- blowing the 10s/90s
+// wall-clock budgets identically across independent runs (33708960681,
+// 33719198049), while a byte-for-byte `git merge-tree` of release/next+main
+// showed zero diff, ruling out a real regression. Widening the wall-clock
+// budget only in this one job is the stopgap; the durable fix is rewriting
+// every affected spec's waits to be game-time-aware per that wiki page's
+// "The rule" -- tracked separately, out of scope for this workflow-reliability
+// fix.
+const ciTimeouts = process.env.CI
+  ? { timeout: 240_000, expect: { timeout: 30_000 } }
+  : { timeout: 90_000, expect: { timeout: 10_000 } };
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 90_000,
-  expect: { timeout: 10_000 },
+  timeout: ciTimeouts.timeout,
+  expect: ciTimeouts.expect,
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,

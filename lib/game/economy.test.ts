@@ -58,7 +58,7 @@ test('a win pays carried + home + depth + survival', () => {
 });
 
 test('a death pays only depth + survival -- carried and home are zero', () => {
-  const p = computeDeathPayout(78, 110);
+  const p = computeDeathPayout(78, 110, 78);
   assert.equal(p.depth, 19);
   assert.equal(p.survival, 5);
   assert.equal(p.carried, 0);
@@ -67,25 +67,55 @@ test('a death pays only depth + survival -- carried and home are zero', () => {
 });
 
 test('death is never zero once any ground was covered or any time survived', () => {
-  const p = computeDeathPayout(40, 30);
+  const p = computeDeathPayout(40, 30, 40);
   assert.ok(p.total > 0);
 });
 
 test('a death that got deep pays more than a death that never left the treeline', () => {
-  const timid = computeDeathPayout(40, 30);
-  const deep = computeDeathPayout(78, 90);
+  const timid = computeDeathPayout(40, 30, 40);
+  const deep = computeDeathPayout(78, 90, 78);
   assert.ok(deep.total > timid.total, 'cowardice must not be the best-paying strategy');
 });
 
 test('dying on the doorstep (carrying, at the win-median depth/survival) costs exactly carried+home vs. the equivalent win', () => {
   const win = computeWinPayout(78, 110);
-  const death = computeDeathPayout(78, 110);
+  const death = computeDeathPayout(78, 110, 78);
   assert.equal(win.total - death.total, 60 + 25);
 });
 
 test('a win at zero distance and zero seconds still pays the flat carried+home', () => {
   const p = computeWinPayout(0, 0);
   assert.equal(p.total, 60 + 25);
+});
+
+// LUL-1192: depth cap on death at objective distance (farm exploit fix)
+
+test('death depth is capped at the objective distance: drowned-car farm (212m far, 78m objective) pays depth 19 not 53', () => {
+  const p = computeDeathPayout(212, 50, 78);
+  assert.equal(p.depth, 19);
+  assert.equal(p.survival, 2);
+  assert.equal(p.total, 21);
+});
+
+test('death depth below the cap is unchanged: 55m distance, 78m objective (well below cap)', () => {
+  const p = computeDeathPayout(55, 50, 78);
+  assert.equal(p.depth, 13);
+  assert.equal(computeDepth(55), 13, 'baseline unchanged');
+});
+
+test('blackout regression test: bogward death at 200m far, child at 220m objective pays depth 50 not 24', () => {
+  // blackout child spawns at 140-241.6m; a flat 96 cap would underpay this
+  const p = computeDeathPayout(200, 60, 220);
+  assert.equal(p.depth, 50);
+  assert.equal(computeDepth(220), 55, 'objective at 220m = depth 55');
+  assert.equal(computeDepth(200), 50, 'but player only reached 200m = depth 50, so that is the cap');
+});
+
+test('win depth is uncapped even at far distances: M2 Deepwater at 212m maxDist keeps depth 53', () => {
+  const p = computeWinPayout(212, 50);
+  assert.equal(p.depth, 53, 'win depth is never capped by objective distance');
+  assert.equal(p.carried, 60);
+  assert.equal(p.home, 25);
 });
 
 // ---- applyPayout --------------------------------------------------------
