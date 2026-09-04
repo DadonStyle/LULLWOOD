@@ -798,6 +798,33 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 ---
 
+### Stamina (sprint resource)
+
+**What it is**
+- `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L326), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
+- **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
+- Audio cue (`staminaExertionCue()` L1798-1806): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+
+**What it can do**
+- Gate the player's sprint speed (`tick()` at L3105-3108): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2825, alongside `staminaLowCuePlayed`).
+
+**What it CANNOT do**
+- Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
+- Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.
+- Cannot be toggled or disabled by difficulty/accessibility settings (LUL-26 unmerged; no `DIFFICULTY_PRESETS` logic exists on `main` today).
+
+**Behaviours & logic**
+- Drain rate and refill rates are constants in `lib/game/stamina.ts` (`stepStamina()` parameters: `chargeDrainRate`/`chargeRegenRate`).
+- Clamped to [0, 1] — never goes negative and never exceeds full.
+- No player agency: decay and recovery are automatic, tied only to the `running` state and elapsed time `dt`.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
 ## The interaction matrix
 
 Every pairwise combination of the 16 elements above, physical/geometric
