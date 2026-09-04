@@ -83,6 +83,10 @@ const OVERLAY_STYLE = `
      for viewports isMobile() calls mobile that this query doesn't catch. */
   @media (max-width: 768px), (pointer: coarse) and (hover: none) {
     #panel { bottom: 240px; }
+    /* LUL-1089: raise #actionPrompt clear of the mobile control row (z-index 30,
+       bottom: 24px+safe-area). 240px matches #panel's own mobile override above;
+       the prompt rides above the controls rather than behind them. */
+    #actionPrompt { bottom: 240px; }
     /* LUL-69: ~44px is the standard (WCAG 2.5.5 / Apple HIG / Material)
        minimum touch-target side -- desktop's 6px/12px padding at 12px font
        sits well under that, and the founder's own complaint was "HUD sized
@@ -176,11 +180,14 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #panel,
   body[data-high-contrast="1"] #objective,
   body[data-high-contrast="1"] #status,
+  body[data-high-contrast="1"] #actionPrompt,
   body[data-high-contrast="1"] #captionToast,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
   body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
   body[data-high-contrast="1"] #status.hiding { color: #baffcf; border-color: #6fe89a; }
   body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
+  body[data-high-contrast="1"] #actionPrompt { color: #ffe6b0; border-color: #ffcf7a; }
+  body[data-high-contrast="1"] #actionPrompt.urgent { color: #ff9f9f; border-color: #ff6b6b; }
 
   /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
@@ -255,6 +262,28 @@ const OVERLAY_STYLE = `
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
     font-size: 13px; letter-spacing: 0.03em; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #status.hiding { color: #9fd7b0; border-color: rgba(120,200,150,0.4); }
+
+  /* LUL-1089: contextual hide/veil prompt. Sits between #status (74px) and
+     #chargePrompt (130px). Calm state: amber (#ffdca8) matching #objective.ready —
+     the game's existing "available now" grammar. Urgent: red (#e8554a) matching
+     #chargeBar — the only red in the HUD, already meaning "act now".
+     urgentFlash animates background + box-shadow only — never transform, never
+     layout — so the translateX(-50%) centring is never overridden mid-panic. */
+  #actionPrompt { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 12;
+    display: flex; align-items: center; gap: 0; pointer-events: none;
+    padding: 7px 16px; border-radius: 999px; white-space: nowrap;
+    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+  #actionPrompt #actionKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
+  #actionPrompt.urgent #actionKey { animation: urgentFlash 0.42s ease-in-out infinite alternate; }
+  @keyframes urgentFlash {
+    from { background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
+    to   { background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
+  @media (prefers-reduced-motion: reduce) {
+    #actionPrompt.urgent #actionKey { animation: none; background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
 
   /* LUL-213/LUL-304: charge-dodge visual key + countdown bar. The animation
      duration is CHARGE_WINDOW (imported from lib/game/charge.ts, not

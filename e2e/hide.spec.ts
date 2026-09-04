@@ -36,7 +36,7 @@ test.describe('H hide toggle', () => {
     await expect(page.locator('#status')).toBeVisible();
     await expect(page.locator('#status')).toHaveClass(/hiding/);
     await expect(page.locator('#status')).toContainText('Hidden');
-    await expect(page.locator('#status')).toHaveText(/Hidden · \d+\.\ds\s+\(move to break cover\)/);
+    await expect(page.locator('#status')).toHaveText(/Hidden · \d+\.\ds\s+\(moving breaks cover\)/);
 
     // hideTime is strictly increasing while held and not interrupted.
     const first = await page.locator('#status').textContent();

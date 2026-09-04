@@ -709,11 +709,20 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   `#deathVideo`.
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
   `hudState`/`pushState()`/`emitState()`: objective text,
-  hiding status, win/death screens, charge-dodge prompt, the post-run recap
+  hiding status, win/death screens, charge-dodge prompt, the contextual
+  `#actionPrompt` (LUL-1089: hide/veil prompts), the post-run recap
   (`#runRecap`). **Not** difficulty/accessibility controls or captions —
   those were built on the unmerged LUL-26 branch; see the Player section's
   note. There is no separate modal settings surface on `main` today
   (engine's own comment, L1692-1693: "LUL-70, still backlog").
+  LUL-1089 adds five new `EngineHudState` fields: `coverPromptVisible`,
+  `coverPromptUrgent`, `coverPromptKind` (`'bramble'|'log'|null`),
+  `veilPromptVisible`, `veilPromptUrgent`. Cover prompt fires only while
+  `!hidden` and within `COVER_URGENT_RANGE` of a chasing predator for urgent.
+  Veil prompt fires only when cover is not available (cover wins, never both).
+  The cover probe is throttled to `COVER_PROBE_HZ` (6Hz); `lastHideSpot`
+  holds the result between probes. Both prompt flags reset at every
+  `hidden=false` reset site (pickup, death, restart).
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
