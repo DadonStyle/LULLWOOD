@@ -40,7 +40,7 @@ const OVERLAY_STYLE = `
   #gateSub { font-size: 14px; letter-spacing: 0.06em; color: #9fb2cd; }
   #gateCredit { font-size: 12px; letter-spacing: 0.04em; color: #6f82a0; }
   #gateKeys { margin-top: 18px; font-size: 12px; line-height: 2; color: #7f92ad;
-    letter-spacing: 0.03em; }
+    letter-spacing: 0.03em; max-width: 34rem; margin-inline: auto; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
 
   /* LUL-920: was top: 20px, same as #objective below -- the two sat directly on
@@ -102,10 +102,10 @@ const OVERLAY_STYLE = `
     .restartBtn { padding: 15px 24px; font-size: 16px; }
     /* LUL-1043: same 44px rationale -- the Deeper Lungs buy button. */
     .buyBtn { padding: 13px 18px; font-size: 14px; }
-    #gateTitle { font-size: 32px; }
-    #gateSub { font-size: 13px; }
+    #gateTitle { font-size: 26px; }
+    #gateSub { font-size: 12px; }
     #gateCredit { font-size: 11px; }
-    #gateKeys { font-size: 13px; line-height: 2.1; }
+    #gateKeys { font-size: 11px; line-height: 1.7; max-width: 34rem; margin-inline: auto; }
     /* Minimap stays legible at the same physical size rather than shrinking
        further -- on a ~390px-wide phone it's already a larger fraction of
        the screen than on desktop, which is the point (small map = useless
