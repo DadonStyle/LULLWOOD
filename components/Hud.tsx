@@ -442,15 +442,11 @@ export default function Hud({
           <div id="gateKeys">
             {mobile ? (
               <>
-                <b>left stick</b> — move &nbsp;·&nbsp; <b>right stick</b> — look &nbsp;·&nbsp; push the left stick further to run
+                sticks to move and look &nbsp;·&nbsp; push the left stick to run
                 <br />
-                <b>Hide</b> button — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> button — lift the child
+                <b>Hide</b> / <b>E</b> / <b>Jump</b> &nbsp;·&nbsp; the buttons tell you when
                 <br />
-                <b>Jump</b> button — jump (also how you clear a charging wolf or lion) &nbsp;·&nbsp;{' '}
-                <b>Pause</b> button — pause / resume
-                <br />
-                <b>Veil</b> button — hold for the mist veil (dims your light, floods the world in mist, and cuts
-                how far predators can see you) — limited, watch the Veil meter
+                <b>Veil</b> &nbsp;·&nbsp; holds off what is hunting you
               </>
             ) : (
               <>
