@@ -54,10 +54,11 @@ export function overlapsTreeTrunk(x: number, z: number, propRadius: number, tree
   return false;
 }
 
-// ---- walkable-cover-vs-tree-canopy spawn clearance (LUL-384, LUL-491 review) -
+// ---- walkable-cover-vs-tree-canopy spawn clearance (LUL-384, LUL-491 review,
+// LUL-1642) --------------------------------------------------------------
 // overlapsTreeTrunk() above deliberately checks only the trunk's movement
 // radius (t.cr), not the wider canopy radius (t.crCanopy, LUL-267) -- fine
-// for rock/bramble, which stay solid either way, so a prop spawning inside a
+// for a prop that stays solid either way, since one spawning inside a
 // canopy circle but outside the trunk circle changes nothing observable.
 // LUL-384 made 'log' walkable, which breaks that assumption: canopyBlockedR()
 // blocks the player unconditionally within crCanopy regardless of what's on
@@ -67,8 +68,10 @@ export function overlapsTreeTrunk(x: number, z: number, propRadius: number, tree
 // invisible canopy edge mid-crossing. Found by LUL-491's re-review via direct
 // blocked()-sampling across a log's full span in
 // e2e/lul211-founder-report.spec.ts. generateCover() only calls this for
-// walkable kinds (coverKindBlocksPlayerMovement() false); rock/bramble/reed
-// keep the cheaper trunk-only check, unchanged.
+// walkable kinds (coverKindBlocksPlayerMovement() false) -- LUL-1642 put
+// bramble on that list alongside log, so bramble now gets this same
+// canopy-clearance check too; rock/reed, which stay solid, keep the cheaper
+// trunk-only check, unchanged.
 export interface TreeCanopy {
   x: number;
   z: number;
@@ -83,21 +86,33 @@ export function overlapsTreeCanopy(x: number, z: number, propRadius: number, tre
   return false;
 }
 
-// ---- which cover kinds block the player's own movement (LUL-384) -----------
+// ---- which cover kinds block the player's own movement (LUL-384, LUL-1642) --
 // coverBlockedR() below already skipped 'tree' (its circle-grid collision via
 // blockedR()/grid is separate, so re-blocking it here would be a double
-// check, not new behaviour). This adds 'log' to that same skip list: a
+// check, not new behaviour). LUL-384 added 'log' to that same skip list: a
 // fallen log is the one cover prop a person would naturally step/run over
 // rather than route around, and predators already ignore all cover-prop
-// collision entirely (LUL-119/LUL-211's "predators pass through" rule) --
-// making the player consistent with that for logs specifically, not for
-// rock/bramble/reed, which stay solid. LOS blocking (hasLOS()) and hide-spot
-// eligibility (findHideSpot()/HIDE_KINDS) both read coverGrid independently
-// of this function and are unchanged: a log is still sight-cover and still a
-// valid hiding spot, it just no longer stops you from walking or running
-// across it to get there.
+// collision entirely (LUL-119/LUL-211's "predators pass through" rule).
+//
+// LUL-1642: bramble joins log here too. Both were already identical in
+// every *decision* sense -- HIDE_KINDS = {bramble, log} share the exact same
+// `hidden`/hideTime/findHideSpot() state machine -- but leaving bramble
+// solid meant the player was collision-stopped at its AABB edge while
+// hiding, often standing just *outside* the small bramble footprint
+// (findHideSpot()'s HIDE_RADIUS=2.2 triggers well beyond the box itself).
+// A log hider, by contrast, could stand inside/on top of the log's long
+// footprint since nothing blocked them from walking onto it. hasLOS()
+// doesn't care about the `hidden` flag at all -- it only cares whether the
+// player's actual world position sits behind the AABB from a given
+// predator's angle -- so an edge-standing bramble hider could be in clean
+// sightline the log case never exposed, reading in play as "sniffing broke,
+// it found me while I was still hidden." Matching bramble's movement
+// exemption to log's puts the player inside/against the same footprint
+// hasLOS() tests, unifying the two HIDE_KINDS the way the ticket asked
+// rather than inventing a second, bramble-only detection path. Rock/reed
+// aren't hiding spots and stay solid.
 export function coverKindBlocksPlayerMovement(kind: string): boolean {
-  return kind !== 'tree' && kind !== 'log';
+  return kind !== 'tree' && !HIDE_KINDS[kind];
 }
 
 // ============================================================================
