@@ -84,7 +84,7 @@ export default defineConfig({
     // The suite serves itself against a production build, same as what actually ships.
     command: `npm run build && npm run start -- -p ${PORT}`,
     url: baseURL,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 180_000,
   },
   projects: [
