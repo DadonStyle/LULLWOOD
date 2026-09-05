@@ -2913,6 +2913,7 @@ function regenMap(){ generateMap((Math.random()*1e9)>>>0); }
 function setDifficulty(d){
   if(!DIFFICULTY_PRESETS[d]) return;
   difficulty = d;
+  track({ event: 'feature_engagement', feature: 'difficulty', action: d });
   // LUL-372: thread the real difficulty choice down to LUL-25's hard-baby-
   // spawn seam -- 'blackout' (the hardest preset: full roster, already
   // hunting, no minimap) is the only tier that also pushes the child beyond
