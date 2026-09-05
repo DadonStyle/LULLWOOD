@@ -1,0 +1,12 @@
+#!/bin/sh
+# LUL-1630: same guard as .githooks/pre-commit, run again before push -- a
+# remote URL can be reset by something other than a commit (e.g. a bare
+# `git remote set-url`), so pre-commit alone would miss it. See wiki
+# decisions/0011-pat-leaked-via-remote-url for the incident history.
+#
+# `git worktree prune` first -- see .githooks/pre-commit for why: this box's
+# shared checkout accumulates stale worktree registrations from Paperclip
+# run-scratch dirs, and the detector fails closed (LUL-468) on any of those
+# it can't resolve.
+git worktree prune
+exec node scripts/check-git-remote-credentials.mjs --repo .

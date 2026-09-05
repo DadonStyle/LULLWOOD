@@ -1,0 +1,16 @@
+#!/bin/sh
+# LUL-1630: catch a git remote URL that reverted to an HTTPS PAT (see wiki
+# decisions/0011-pat-leaked-via-remote-url) before it can be read back by
+# anything running on this box. Reuses the LUL-445 detector rather than
+# re-implementing the credential patterns here -- CI already runs the same
+# script, but only against its own throwaway checkout, which can never see
+# this box's local .git/config.
+#
+# `git worktree prune` first: the detector fails closed (LUL-468) on any
+# registered worktree whose directory is gone, and this box's shared
+# checkout accumulates exactly that -- every `git worktree add` under a
+# Paperclip run's /tmp scratch dir stays registered after Paperclip deletes
+# that directory at run end, since nothing ever runs `git worktree remove`.
+# Left unpruned, that alone fails every commit with no real leak involved.
+git worktree prune
+exec node scripts/check-git-remote-credentials.mjs --repo .
