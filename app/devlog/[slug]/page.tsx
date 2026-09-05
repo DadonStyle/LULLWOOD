@@ -42,9 +42,7 @@ export default async function DevlogPost({ params }: Props) {
   if (!post) notFound();
 
   // Dynamic import so tree-shaking drops unreferenced posts at build time.
-  const { default: Content } = await import(
-    `../../../content/devlog/${slug}`
-  );
+  const { default: Content } = await import(`../posts/${slug}`);
 
   const jsonLd = {
     "@context": "https://schema.org",
