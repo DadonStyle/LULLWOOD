@@ -412,18 +412,19 @@ one geometry builder (`makePredator()`), differentiated by the
   means you're no longer stopped at its edge in the first place.
 
 **What it CANNOT do**
-- Movement-blocking exemption now shared with the player too (LUL-384) —
-  Log is the only cover kind that blocks neither actor's movement. Rock and
-  Bramble are unchanged, still solid to the player.
+- Movement-blocking exemption, originally player-only for Log (LUL-384) —
+  **as of LUL-1642, Bramble shares it too** (see Bramble section below).
+  Log and Bramble are now the two cover kinds that block neither actor's
+  movement; Rock and Reed remain solid to the player.
 - Guaranteed clear of tree **trunks** at placement, same as every cover kind
-  (see matrix) — and, unlike Rock/Bramble, also guaranteed clear of tree
-  **canopies** (`overlapsTreeCanopy()`, `lib/game/cover.ts`, LUL-491): since
-  a log invites the player to walk its full span and `canopyBlockedR()`
-  blocks unconditionally within a tree's canopy radius regardless of what
-  cover prop sits there, `generateCover()` rejects a log candidate whose
-  footprint overlaps a nearby canopy circle even when it clears the trunk
-  circle. Rock/Bramble don't get this extra check — solid either way, so a
-  canopy-only overlap there changes nothing observable.
+  (see matrix) — and, like Bramble as of LUL-1642, also guaranteed clear of
+  tree **canopies** (`overlapsTreeCanopy()`, `lib/game/cover.ts`, LUL-491):
+  since a log invites the player to walk its full span and
+  `canopyBlockedR()` blocks unconditionally within a tree's canopy radius
+  regardless of what cover prop sits there, `generateCover()` rejects a log
+  candidate whose footprint overlaps a nearby canopy circle even when it
+  clears the trunk circle. Rock/Reed don't get this extra check — solid
+  either way, so a canopy-only overlap there changes nothing observable.
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
@@ -449,18 +450,41 @@ one geometry builder (`makePredator()`), differentiated by the
   — researched against stealth/horror foley convention per the
   LUL-212 handoff (wiki `game/lul212-hiding-spots`).
 - ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()`).
+- **LUL-1642: the player walks and runs over it too, same as Log** —
+  `coverKindBlocksPlayerMovement('bramble')` is now `false`
+  (`lib/game/cover.ts`), so `coverBlockedR()` no longer stops the player
+  here either. Previously Bramble alone among `HIDE_KINDS` stayed solid,
+  which meant a player entering `hidden` at a bramble was collision-stopped
+  at its (small, roughly circular) AABB edge rather than standing inside it
+  the way a Log hider could — `hasLOS()` reads the player's actual world
+  position against that AABB regardless of the `hidden` flag, so an
+  edge-standing bramble hider could sit in a predator's clean sightline a
+  log hider's on-footprint position never exposed. That read in play as
+  "sniffing broke — the animal found me while I was still hiding," reported
+  as LUL-1642 (Bramble, unlike Log, is not fixed to matching a real "step
+  over it" affordance — this is a deliberate deviation from LUL-384's
+  original walkable-vs-solid distinction, made to unify the two `HIDE_KINDS`
+  behind one detection path per the ticket's explicit ask, not an
+  independent design call).
 
 **What it CANNOT do**
-- Same as Log: no predator movement collision; not guaranteed clear of tree
-  trunks at placement.
+- Same as Log: no predator movement collision (never had one); as of
+  LUL-1642, no player movement collision either. Not guaranteed clear of
+  tree trunks at placement (same as every cover kind), but — also as of
+  LUL-1642, matching Log — now guaranteed clear of tree **canopies** too
+  (`overlapsTreeCanopy()`, since it reads `coverKindBlocksPlayerMovement()`
+  directly and now includes bramble).
 
 **Behaviours & logic**
 - `r = 0.8+rng()*0.7`, `hx=hz=r` (roughly round footprint,
   `generateCover()`).
 
 **Collision & physics profile**
-- Same as Log: player-only rotated-AABB collider, LOS for both actors,
-  `findHideSpot()`-eligible.
+- LOS-blocking for both actors, same as Log/Rock (`hasLOS()`, unchanged).
+- **No movement collision for either actor** (LUL-1642 matched Log's
+  LUL-384 exemption; predators never had one). `findHideSpot()`-eligible,
+  unaffected — that function reads `coverGrid` directly and never calls
+  `coverBlockedR()`.
 
 ---
 
@@ -864,7 +888,7 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
 | | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI | EM |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
 | **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | TRIG²¹ |
 | **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
 | **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
@@ -948,16 +972,17 @@ tree's trunk collision circle (`treesNear()` + `overlapsTreeTrunk()` in
 `lib/game/cover.ts`) before placing it, same as the `inLake()`/`inSpawn()`/
 `inBaby()` rejections already there. Previously unchecked — a prop could
 spawn overlapping a tree trunk, a possible unreachable/broken hide spot if
-it hit a `bramble`/`log`. **Log additionally checks canopy clearance
-(LUL-384/LUL-491):** `overlapsTreeCanopy()` (`lib/game/cover.ts`) rejects a
-log candidate whose footprint overlaps a nearby tree's wider *canopy*
-circle (`t.crCanopy`), even when the trunk circle is clear — needed because
-Log is walkable (`coverKindBlocksPlayerMovement('log') === false`) and
-`canopyBlockedR()` blocks the player unconditionally within the canopy
-radius regardless of what's on the ground; without this a log could spawn
-clear of every trunk yet still wedge the player mid-crossing at a canopy
-edge. Rock/Bramble stay trunk-only — solid either way, so a canopy-only
-overlap changes nothing observable for them.
+it hit a `bramble`/`log`. **Log (and, as of LUL-1642, Bramble too) also
+checks canopy clearance (LUL-384/LUL-491/LUL-1642):** `overlapsTreeCanopy()`
+(`lib/game/cover.ts`) rejects a walkable-kind candidate whose footprint
+overlaps a nearby tree's wider *canopy* circle (`t.crCanopy`), even when the
+trunk circle is clear — needed because a walkable prop
+(`coverKindBlocksPlayerMovement(kind) === false`) lets the player cross its
+full footprint and `canopyBlockedR()` blocks the player unconditionally
+within the canopy radius regardless of what's on the ground; without this a
+log or bramble could spawn clear of every trunk yet still wedge the player
+mid-crossing at a canopy edge. Rock/Reed stay trunk-only — solid either
+way, so a canopy-only overlap changes nothing observable for them.
 ¹⁵ Trees and cover props both reject `inLake()` spawn candidates
 (`generateMap()`, `generateCover()`) — defined, not undefined.
 ¹⁶ Both protected from home only indirectly, via the shared `inSpawn()`
@@ -965,11 +990,14 @@ check (home reuses the spawn coordinates) — see Home's "what it cannot do."
 ¹⁷ Rendered as a dot/circle on the minimap (`drawMinimapStatic()`)
 — a read-only relationship, not physical.
 ¹⁸ Cover props are never checked against each other at placement — two
-props (e.g. a rock and a bramble) can overlap. Lower severity than ¹⁴ (both
-are already non-solid to predators and the overlap is cosmetic at most for
-the player, who still collides with whichever AABB the grid cell returns
-first) — not filed as a separate ticket; noted for whoever next touches
-`generateCover()`.
+props (e.g. a rock and a log) can overlap. Lower severity than ¹⁴ (both are
+already non-solid to predators, and the overlap is cosmetic at most for the
+player: a solid prop (Rock/Reed) involved still collides normally,
+predictably resolving to whichever AABB the grid cell returns first. As of
+LUL-1642, Bramble is walkable like Log, so a Log-Bramble overlap
+specifically is cosmetic in every sense — neither collides with the
+player either) — not filed as a separate ticket; noted for whoever next
+touches `generateCover()`.
 ¹⁹ Both are static, hardcoded far apart (lake at (34,-28) r=15/clear=22;
 home at (0,0) r=3.6) — no code enforces their separation, but no seed can
 move either one, so there's nothing to verify per-seed. Defined by
@@ -984,6 +1012,27 @@ only the `C` is gone.
 object — no movement collision or LOS interaction. `TRIG` marks events where
 Embers earnings are computed: Player earnings/spending gate, Child pickup
 earning trigger, Predator kill earning trigger, Home arrival earning trigger.
+²² **Changed, LUL-1642.** Previously `C+LOS+HIDE` — Bramble was the one
+`HIDE_KINDS` prop still solid to the player, unlike Log (²⁰). Both kinds
+already ran the exact same `hidden`/`hideTime`/`findHideSpot()` state
+machine, but `hasLOS()`/`canSee()` test the player's *actual world
+position* against the prop's AABB, not the `hidden` flag — solid Bramble
+collision-stopped the player at its (small, roughly circular) footprint's
+edge, often standing just outside the box `findHideSpot()`'s
+`HIDE_RADIUS`=2.2 allowed them to trigger `hidden` from, while walkable Log
+let the player stand inside its own (long, thin) footprint instead. An
+edge-standing Bramble hider could sit in a clean sightline the on-footprint
+Log case never exposed, playing as "the animal found me while I was still
+hiding." Fixed by extending `coverKindBlocksPlayerMovement()`'s walkable
+exemption from `log` alone to every `HIDE_KINDS` entry
+(`!HIDE_KINDS[kind]`, `lib/game/cover.ts`) — Bramble now shares Log's
+`LOS+HIDE` cell and the same canopy-clearance placement check (¹⁴). This is
+a deliberate reversal of part of LUL-384's original walkable-vs-solid
+split (which kept Bramble solid on purpose, "the one prop a person would
+step over" being Log specifically) — called out here since the ticket
+asked explicitly for one unified hiding behaviour across both cover kinds
+rather than a bramble-only fix that left the two divergent. Rock/Reed,
+neither a hiding spot, are unaffected.
 
 ---
 
