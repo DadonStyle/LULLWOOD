@@ -57,3 +57,144 @@ main.about li strong {
   color: #b7c7de;
   font-weight: 500;
 }
+
+/* Devlog pages (LUL-47). Standalone routes -- no game overlay, no 100vh push. */
+main.devlog-index,
+main.devlog-post {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 48px 24px 96px;
+  background: #0a0e15;
+  color: #9fb2cd;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.7;
+  min-height: 100vh;
+}
+
+/* Index */
+main.devlog-index h1 {
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: #d7e4f6;
+  margin-bottom: 10px;
+}
+main.devlog-index .devlog-tagline {
+  font-size: 15px;
+  color: #8a9eb8;
+  margin-bottom: 40px;
+}
+main.devlog-index .devlog-list {
+  list-style: none;
+}
+main.devlog-index .devlog-item {
+  margin-bottom: 32px;
+}
+main.devlog-index .devlog-item a {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+main.devlog-index .devlog-item a:hover h2 {
+  color: #d7e4f6;
+}
+main.devlog-index .devlog-item h2 {
+  font-size: 18px;
+  font-weight: 400;
+  color: #b7c7de;
+  margin-bottom: 4px;
+  transition: color 0.15s;
+}
+main.devlog-index .devlog-item time {
+  font-size: 12px;
+  color: #5c7090;
+  display: block;
+  margin-bottom: 8px;
+}
+main.devlog-index .devlog-item p {
+  font-size: 14px;
+}
+main.devlog-index .devlog-back {
+  margin-top: 48px;
+  font-size: 13px;
+}
+main.devlog-index .devlog-back a {
+  color: #6a8cb0;
+  text-decoration: none;
+}
+main.devlog-index .devlog-back a:hover {
+  color: #9fb2cd;
+}
+
+/* Post */
+main.devlog-post .devlog-back {
+  margin-bottom: 32px;
+  font-size: 13px;
+}
+main.devlog-post .devlog-back a {
+  color: #6a8cb0;
+  text-decoration: none;
+}
+main.devlog-post .devlog-back a:hover {
+  color: #9fb2cd;
+}
+main.devlog-post article header h1 {
+  font-size: 26px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: #d7e4f6;
+  margin-bottom: 8px;
+}
+main.devlog-post article header time {
+  font-size: 12px;
+  color: #5c7090;
+  display: block;
+  margin-bottom: 32px;
+}
+main.devlog-post .devlog-body p {
+  font-size: 15px;
+  margin-bottom: 20px;
+}
+main.devlog-post .devlog-body h2 {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: #cdd9ea;
+  margin: 36px 0 12px;
+}
+main.devlog-post .devlog-body code {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  background: #111827;
+  color: #94adc7;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+main.devlog-post .devlog-body em {
+  color: #b0c3d9;
+  font-style: italic;
+}
+main.devlog-post .devlog-footer {
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid #1e2d42;
+  font-size: 13px;
+}
+main.devlog-post .devlog-footer a {
+  color: #6a8cb0;
+  text-decoration: none;
+}
+main.devlog-post .devlog-footer a:hover {
+  color: #9fb2cd;
+}
+
+@media (max-width: 480px) {
+  main.devlog-index,
+  main.devlog-post {
+    padding: 32px 16px 72px;
+  }
+  main.devlog-index h1,
+  main.devlog-post article header h1 {
+    font-size: 22px;
+  }
+}
