@@ -41,12 +41,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3544-3548, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  `triggerTouchToggleRun()` (L3686-3690, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3521-3527, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
+  `triggerTouchJump()` (L3663-3669, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
   target on mobile, wired to the same `triggerTouchJump()` — it used to
@@ -55,7 +55,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3533-3537, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
+  (L3675-3679, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3507 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3107, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3643 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3232, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED`,
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -464,6 +464,67 @@ one geometry builder (`makePredator()`), differentiated by the
 
 ---
 
+### Throwable (stone/twig) — LUL-1623
+
+**What it can do**
+- Grab: `E`/Interact, desktop and mobile, context-dispatched on the same key
+  as child pickup (`canPickup` takes priority; `grabThrowable()`,
+  `triggerTouchInteract()`) — no separate grab button on either platform.
+- Throw: left-click desktop (`mousedown`, only while pointer-locked and not
+  dragging/paused) / a dedicated "Throw" button on mobile
+  (`triggerTouchThrow()`, `EngineActions`), both call `throwThrowable()`.
+  Lands at `player pos + facing * THROWABLE_THROW_DISTANCE` (18u); the same
+  landing-point formula on both platforms, so throw behavior doesn't diverge
+  by input method.
+- On landing, plays a percussive thud (`leafRustle(false)`, player-audible)
+  and rolls `checkThrowableNoise()` (`lib/game/noise.ts`) against every
+  non-inert predator's distance to the landing point. Any predator within
+  `THROWABLE_NOISE_RADIUS` (24u, = `NOISE_RADIUS_RUN`) is redirected into
+  `investigate`/`approach` **targeting the landing point**, not the live
+  player, for a randomized 3–5s (`hearThrowableNoise()`) before reverting via
+  the existing sniff/back/roam loop.
+- Usable in any playable state, including while carrying the child (CTO plan
+  decision 6) — grab/throw have no `carrying` gate.
+
+**What it CANNOT do**
+- Not a hiding spot, not LOS-blocking, not a movement collider for either
+  actor — deliberately not `coverData`/`HIDE_KINDS` (CTO plan decision 3).
+  Own spawn list (`throwableData`) and own `InstancedMesh`, independent of
+  the cover-prop system above.
+- Cannot be held two at once (`canGrabThrowable()`/`canThrowThrowable()`,
+  `lib/game/outcome.ts` — one `heldThrowable` boolean, not a stack).
+- Does not change `hearNoise()`/`isNoiseHeard()`/`checkNoise()` — those stay
+  exactly as before; a throw is an additive, parallel noise source.
+- No projectile arc / travel animation for v1 — landing is instant/computed,
+  not a simulated flight (Scout proposal's "cheap version"; a visible arc is
+  a possible follow-up).
+- No economy cost, cooldown, or respawn for v1 (Economist territory, later).
+
+**Behaviours & logic**
+- 10 fixed spawn points per map (`THROWABLE_COUNT`), rejection-sampled at
+  `generateMap()` time clear of tree trunks, home/spawn (12u), and each other
+  (6u) — `generateThrowables()`. Picked-up stones are hidden (parked
+  off-map, not removed from the array) via `layoutThrowableMeshes()`.
+- Predator targeting override is confined to the `approach` sub-phase only:
+  `updatePredators()`'s live-player `ux/uz/dist` are untouched for every
+  other consumer (`canSee()`, `hunt`, `chase`, roam's investigate-entry
+  check); only the local `approach`-branch target redirects to
+  `p.noiseTarget` while it's set. No new `p.state`/`p.inv` value — this is a
+  **deliberate, declared deviation from the CTO PLAN's literal "reuse
+  hearNoise() unchanged"** (spec §4.6): wiring a throw through `hearNoise()`
+  unmodified would have made the predator walk toward the live player, not
+  the landing spot, defeating the mechanic.
+- `shouldRevertInvestigateToChase()` (`lib/game/predator.ts`) is untouched —
+  hiding during the investigate window still works exactly like a normal
+  noise-hear; only the physical approach target differs while a decoy noise
+  is active.
+
+**Collision & physics profile**
+- No collider of any kind (neither actor). Detection-only: a one-shot
+  distance check on landing, not a per-frame roll like footstep noise.
+
+---
+
 ### Ground / terrain
 
 **What it can do**
@@ -769,7 +830,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L2943-2947 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  and synced to `hudState` via `setEmbers()` (L3068-3072 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
@@ -821,12 +882,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1817-1825): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()` L1909-1917): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3109-3112): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L3292): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
-- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2879, alongside `staminaLowCuePlayed`).
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L3008, alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
 - Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.

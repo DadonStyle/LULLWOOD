@@ -10,6 +10,8 @@ import {
   arriveHome,
   canTriggerDeath,
   triggerDeath,
+  canGrabThrowable,
+  canThrowThrowable,
   type RunState,
 } from './outcome.ts';
 
@@ -176,4 +178,21 @@ test('triggerDeath on a clean state only sets dead, leaves won/carrying untouche
   assert.equal(next.dead, true);
   assert.equal(next.won, false);
   assert.equal(next.carrying, false);
+});
+
+test('canGrabThrowable: in range and empty-handed can grab', () => {
+  assert.equal(canGrabThrowable(false, 2, 3), true);
+});
+
+test('canGrabThrowable: already holding one cannot grab another', () => {
+  assert.equal(canGrabThrowable(true, 2, 3), false);
+});
+
+test('canGrabThrowable: out of range cannot grab', () => {
+  assert.equal(canGrabThrowable(false, 5, 3), false);
+});
+
+test('canThrowThrowable: only true while holding one', () => {
+  assert.equal(canThrowThrowable(true), true);
+  assert.equal(canThrowThrowable(false), false);
 });
