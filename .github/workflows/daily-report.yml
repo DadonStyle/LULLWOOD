@@ -405,7 +405,13 @@ jobs:
           echo "::notice::review submitted"
 
           # ── merge ────────────────────────────────────────────────────────────
-          if gh pr merge "$PR_NUMBER" --squash --delete-branch; then
+          # LUL-762 (2026-09-05): merge under SHIP_REVIEW_TOKEN too, not just
+          # the push above -- a github.token merge produces a release/next
+          # commit exempt from ci.yml's push trigger just like an unfixed
+          # push would, so the LUL-1115 push fix alone doesn't fully close
+          # this. SHIP_REVIEW_TOKEN is already known non-empty here (checked
+          # above before the review step).
+          if GH_TOKEN="$SHIP_REVIEW_TOKEN" gh pr merge "$PR_NUMBER" --squash --delete-branch; then
             echo "::notice::PR #$PR_NUMBER merged"
           else
             echo "::error::merge of PR #$PR_NUMBER refused -- it stays open with green CI. Check the branch protection rules."

@@ -196,6 +196,12 @@ jobs:
           # required-check wait happen server-side; `--merge` is the whole
           # point of this step -- squash is never an option here, unlike the
           # generic `[ship]` path this deliberately does not reuse.
-          if ! gh pr merge "$NUMBER" --repo "$REPO" --merge --auto; then
+          #
+          # LUL-762: arm under SHIP_REVIEW_TOKEN (guaranteed non-empty here,
+          # the early exit above already covers the unconfigured case) so the
+          # resulting release/next commit is PAT-authored and fires ci.yml's
+          # push trigger -- the same fix as automerge.yml/auto-pr.yml/
+          # daily-report.yml, same root cause (stranded cut PR #239).
+          if ! GH_TOKEN="$SHIP_REVIEW_TOKEN" gh pr merge "$NUMBER" --repo "$REPO" --merge --auto; then
             echo "::warning::could not arm auto-merge (--merge) on sync-back PR #$NUMBER; it stays open. Merge it by hand with --merge, never --squash. LUL-1041."
           fi
