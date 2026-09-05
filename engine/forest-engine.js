@@ -2109,7 +2109,7 @@ let hudState = {
   entered: false,
   objectiveVisible: false, objectiveText: '', objectiveReady: false,
   statusVisible: false, statusText: '',
-  winVisible: false,
+  winVisible: false, winRevealed: false,
   deathVisible: false, deathKind: 'wolf', lossRevealed: false,
   survivedSeconds: 0,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
@@ -2825,6 +2825,8 @@ function arriveHome(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
   playWinMusic(); fireBoom(CONFIG.home.x, 2.2, CONFIG.home.z);   // LUL-1307: the win, not the midpoint
+  // LUL-1609: reveal the win text 100ms after the burst finishes (updateBoom retires at e>1.8s)
+  later(() => pushState({ winRevealed: true }), 1900);
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
   // LUL-303: updatePredators() (the only other place that clears the charge
   // HUD) stops running once `playing` goes false here, so a charge/telegraph
@@ -2869,7 +2871,7 @@ function playDeathVideo(){
 }
 function revealLoss(){ deathShown = true; document.body.style.cursor = ''; pushState({ lossRevealed: true }); }
 function restart(){
-  pushState({ winVisible: false, deathVisible: false, lossRevealed: false });
+  pushState({ winVisible: false, winRevealed: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   const fresh = freshRunState();
   won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; baby.taken = fresh.babyTaken;
