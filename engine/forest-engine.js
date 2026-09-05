@@ -121,6 +121,11 @@ import {
   fogTideDroneGainMul,
   fogTideWindGainMul,
 } from '@/lib/game/fogTide';
+import {
+  timeOfDayFromHour,
+  TIME_OF_DAY_VISUALS,
+  TIME_OF_DAY_AUDIO,
+} from '@/lib/game/timeOfDay';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
 // hex/CSS light and material color as sRGB before lighting math runs. r128 never did
@@ -228,10 +233,18 @@ let currentSeed = CONFIG.seed;
 const rnd = (a=1,b) => b===undefined ? rng()*a : a + rng()*(b-a);
 const clamp = (v,a,b) => v<a ? a : v>b ? b : v;
 
+// LUL-1644: time-of-day is a per-session snapshot of the player's real
+// wall-clock hour at load, not a live clock during play -- see
+// docs/specs/time-of-day.md for why. Consumed by the sky/lighting block
+// below and by startAudio().
+const timeOfDay = timeOfDayFromHour(new Date().getHours());
+const TOD_VISUAL = TIME_OF_DAY_VISUALS[timeOfDay];
+const TOD_AUDIO = TIME_OF_DAY_AUDIO[timeOfDay];
+
 // ---- Scene / camera / renderer -------------------------------------------
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(CONFIG.bg);
-scene.fog = new THREE.FogExp2(0x0b1220, CONFIG.fog);
+scene.fog = new THREE.FogExp2(TOD_VISUAL.fogColor, CONFIG.fog);
 
 // LUL-69: a phone screen is usually narrower (portrait) or shorter (landscape)
 // than the 1280x720-ish desktop window this FOV was tuned for -- Three's
@@ -277,19 +290,19 @@ document.body.appendChild(renderer.domElement);
 // as it did on r128. Confirmed by direct before/after screenshot comparison, not
 // just the documented factor -- see wiki systems/three-r185-upgrade.
 const LEGACY_LIGHT_SCALE = 5;
-scene.add(new THREE.HemisphereLight(0x8fa8c8, 0x0a0d12, 0.55 * LEGACY_LIGHT_SCALE));
-const moon = new THREE.DirectionalLight(0xbcd0ff, 0.5 * LEGACY_LIGHT_SCALE); moon.position.set(-6, 16, -4); scene.add(moon);
-const rim = new THREE.DirectionalLight(0x24344f, 0.4 * LEGACY_LIGHT_SCALE); rim.position.set(4, 5, 9); scene.add(rim);
+scene.add(new THREE.HemisphereLight(TOD_VISUAL.hemisphereSky, TOD_VISUAL.hemisphereGround, TOD_VISUAL.hemisphereIntensity * LEGACY_LIGHT_SCALE));
+const moon = new THREE.DirectionalLight(TOD_VISUAL.sunMoonColor, TOD_VISUAL.sunMoonIntensity * LEGACY_LIGHT_SCALE); moon.position.set(-6, 16, -4); scene.add(moon);
+const rim = new THREE.DirectionalLight(TOD_VISUAL.rimColor, TOD_VISUAL.rimIntensity * LEGACY_LIGHT_SCALE); rim.position.set(4, 5, 9); scene.add(rim);
 
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(800, 800),
   new THREE.MeshStandardMaterial({ color: CONFIG.ground, roughness: 1, metalness: 0 }));
 ground.rotation.x = -Math.PI/2; scene.add(ground);
 
-// ---- Night sky: gradient backdrop, stars, moon; soft fill on the player ---
+// ---- Sky: gradient backdrop, stars, sun/moon disc (per TOD_VISUAL); soft fill on the player ---
 (function(){
   const c = document.createElement('canvas'); c.width = 4; c.height = 512;
   const g = c.getContext('2d'), grd = g.createLinearGradient(0, 0, 0, 512);
-  grd.addColorStop(0.0, '#05070d'); grd.addColorStop(0.55, '#080e18'); grd.addColorStop(1.0, '#0b1220');
+  grd.addColorStop(0.0, TOD_VISUAL.skyTop); grd.addColorStop(0.55, TOD_VISUAL.skyMid); grd.addColorStop(1.0, TOD_VISUAL.skyBottom);
   g.fillStyle = grd; g.fillRect(0, 0, 4, 512);
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; scene.background = tex;
 })();
@@ -298,13 +311,13 @@ for(let i=0;i<STAR;i++){ const th = Math.random()*Math.PI*2, y = Math.random()*0
   starArr[i*3] = r*s*Math.cos(th); starArr[i*3+1] = r*y; starArr[i*3+2] = r*s*Math.sin(th); }
 const starGeo = new THREE.BufferGeometry(); starGeo.setAttribute('position', new THREE.BufferAttribute(starArr, 3));
 const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xcfe0ff, size: 1.15,
-  sizeAttenuation: false, transparent: true, opacity: 0.85, depthWrite: false, fog: false }));
+  sizeAttenuation: false, transparent: true, opacity: TOD_VISUAL.starOpacity, depthWrite: false, fog: false }));
 scene.add(stars);
 const moonDir = new THREE.Vector3(-6, 16, -4).normalize();
 const moonGroup = new THREE.Group();
 moonGroup.add(
-  new THREE.Mesh(new THREE.CircleGeometry(34, 32), new THREE.MeshBasicMaterial({ color: 0x9fb6ff, transparent: true, opacity: 0.30, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })),
-  new THREE.Mesh(new THREE.CircleGeometry(15, 40), new THREE.MeshBasicMaterial({ color: 0xeef3ff, fog: false }))
+  new THREE.Mesh(new THREE.CircleGeometry(34, 32), new THREE.MeshBasicMaterial({ color: TOD_VISUAL.sunMoonHaloColor, transparent: true, opacity: TOD_VISUAL.sunMoonHaloOpacity, blending: THREE.AdditiveBlending, depthWrite: false, fog: false })),
+  new THREE.Mesh(new THREE.CircleGeometry(15, 40), new THREE.MeshBasicMaterial({ color: TOD_VISUAL.sunMoonColor, fog: false }))
 );
 scene.add(moonGroup);
 const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20, 2); camera.add(playerLight);
@@ -1763,11 +1776,17 @@ function startAudio(){
   // wind bed — brown noise through a lowpass, opens up as you move
   const wind = ctx.createBufferSource(); wind.buffer = noise(ctx, 3, true); wind.loop = true;
   const wf = ctx.createBiquadFilter(); wf.type = 'lowpass'; wf.frequency.value = 340; wf.Q.value = 0.6;
-  const wg = ctx.createGain(); wg.gain.value = 0.06;
+  const wg = ctx.createGain(); wg.gain.value = 0.06 * TOD_AUDIO.windGainMul;
   wind.connect(wf); wf.connect(wg); wg.connect(master); wg.connect(conv); wind.start();
 
+  // insect bed -- filtered noise loop, silent (gain 0) outside daylight/dusk states
+  const insects = ctx.createBufferSource(); insects.buffer = noise(ctx, 3, false); insects.loop = true;
+  const inf = ctx.createBiquadFilter(); inf.type = 'bandpass'; inf.frequency.value = 4800; inf.Q.value = 1.4;
+  const ing = ctx.createGain(); ing.gain.value = TOD_AUDIO.insectsGain;
+  insects.connect(inf); inf.connect(ing); ing.connect(master); ing.connect(conv); insects.start();
+
   // low ominous drone
-  const dg = ctx.createGain(); dg.gain.value = 0.05; dg.connect(master); dg.connect(conv);
+  const dg = ctx.createGain(); dg.gain.value = 0.05 * TOD_AUDIO.droneGainMul; dg.connect(master); dg.connect(conv);
   [55, 82.5, 110].forEach((f, i) => { const o = ctx.createOscillator(); o.type='sine'; o.frequency.value=f;
     o.detune.value=(i-1)*6; const og = ctx.createGain(); og.gain.value = i===2 ? 0.35 : 1;
     o.connect(og); og.connect(dg); o.start(); });
@@ -1787,6 +1806,7 @@ function startAudio(){
   const shg = ctx.createGain(); shg.gain.value=0.012; shimmer.connect(shg); shg.connect(huntGain); shimmer.start();
 
   audio = { ctx, master, wf, wg, dg, huntGain, plfo, conv, foot: 0, twinkle: rnd(1.5,4), footBuf: noise(ctx, 0.3, false) };
+  if (TOD_AUDIO.birdsGain > 0) scheduleBirdChirp();
 }
 function footstep(vol){
   const { ctx, conv, master, footBuf } = audio, t = ctx.currentTime;
@@ -1795,6 +1815,21 @@ function footstep(vol){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t+0.005); g.gain.exponentialRampToValueAtTime(0.0001, t+0.18);
   src.connect(f); f.connect(g); g.connect(master); g.connect(conv); src.start(t); src.stop(t+0.22);
+}
+// LUL-1644: self-scheduling ambient bird-chirp layer, active only in
+// daylight/dawn/dusk states (TOD_AUDIO.birdsGain > 0) -- see startAudio().
+function scheduleBirdChirp(){
+  if (!audio || TOD_AUDIO.birdsGain <= 0) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.08, false);
+  const f = ctx.createBiquadFilter(); f.type = 'bandpass';
+  f.frequency.value = 2200 + Math.random() * 1800; f.Q.value = 4;
+  const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(TOD_AUDIO.birdsGain, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+  src.connect(f); f.connect(g); g.connect(master); g.connect(conv); src.start();
+  const nextMs = (0.4 + Math.random() * 1.6) / TOD_AUDIO.birdsChirpHz * 1000;
+  later(scheduleBirdChirp, nextMs);
 }
 // LUL-25: bog footstep foley -- a noise burst through a lowpass sweep (bright
 // slap of impact dropping to a dull glug as the ripple settles), same
