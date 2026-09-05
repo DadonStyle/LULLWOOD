@@ -56,7 +56,7 @@ test.describe('SEO metadata', () => {
     expect(data['@context']).toBe('https://schema.org');
     expect(data['@type']).toBe('VideoGame');
     expect(data.name).toBe(SITE_NAME);
-    expect(data.genre).toBe('Horror');
+    expect(data.genre).toEqual(['Horror', 'Survival', 'Adventure']);
     expect(data.applicationCategory).toBe('Game');
     expect(data.offers).toMatchObject({ '@type': 'Offer', price: '0', priceCurrency: 'USD' });
   });
