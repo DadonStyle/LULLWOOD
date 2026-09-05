@@ -2856,8 +2856,13 @@ function triggerDeath(kind){
     difficulty,
   );
   embers = applyPayout(embers, payout);
+  // LUL-1638: mirror arriveHome()'s LUL-303 fix -- updatePredators() (the only
+  // other place that clears the charge HUD) stops running once `playing` goes
+  // false here, so a charge/telegraph in flight at the exact moment of death
+  // would otherwise render on top of the death screen forever.
+  activeCharges = 0;
   pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance });
+    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false });
   track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
   playDeathVideo();
   deathAudio(kind);
