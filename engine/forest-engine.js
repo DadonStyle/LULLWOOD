@@ -61,6 +61,8 @@ import {
   findHideSpot as geoFindHideSpot,
   effectiveDetect as geoEffectiveDetect,
   canSee as geoCanSee,
+  COVER_URGENT_RANGE,
+  COVER_PROBE_HZ,
 } from '@/lib/game/cover';
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
@@ -87,7 +89,7 @@ import {
   stepSniffLoop,
   tickTimers,
 } from '@/lib/game/predator';
-import { stepVeilCharge, veilDetectMul, veilFogDensity } from '@/lib/game/veil';
+import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL } from '@/lib/game/stamina';
 import {
   freshEmbersState,
@@ -325,6 +327,9 @@ let lightDimmed = false;
 // per-frame state itself.
 const VEIL_RAMP = 1.6;            // seconds for mist/detect-cut to ease fully in or out
 let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, staminaLowCuePlayed = false;
+// LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
+// last result between probes; coverProbeAccum counts elapsed seconds.
+let lastHideSpot = null, coverProbeAccum = 0;
 let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
 const MIST_VEIL_FOG = 0.34;       // ~3x the manual Mist slider's own max (0.11) -- deliberately overshoots it so the veil reads as a distinct world state
 
@@ -2101,6 +2106,9 @@ let hudState = {
   // LUL-382: mist veil resource meter -- 1 is full charge, 0 is fully drained.
   veilCharge: 1, veilLocked: false,
   chargeVisible: false, chargeToken: 0,
+  // LUL-1089: contextual action prompts
+  coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null,
+  veilPromptVisible: false, veilPromptUrgent: false,
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
   // and persists it to localStorage (see components/Hud.tsx).
@@ -2511,6 +2519,34 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return spot.kind;
   };
 
+  // LUL-1089: stage cover (findHideSpot() !== null) and a chasing, sighted
+  // lion (canSee()) at once -- qaTeleportToHideSpot() followed by
+  // qaOpenHideNearLion() does NOT do this, because qaOpenHideNearLion resets
+  // player.x/z to the spawn clearing (0,0) to guarantee its own cover-free
+  // scenario, clobbering the teleport. This hook places the player 0.5 units
+  // outside the cover AABB's local-x edge (not at its center) so hasLOS()
+  // does not find the player inside the prop and self-block the sightline --
+  // both player and lion are on the same side of the OBB, sightline clear.
+  window.ForestEngine.qaOpenHideNearLionAtHideSpot = function(){
+    const spot = coverData.find(c => HIDE_KINDS[c.kind]);
+    if(!spot) return null;
+    const ry = spot.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
+    // Place the player 0.5 units outside the prop's local +x edge (world frame).
+    // Inverse rotation: (lx,lz) -> world offset (dx,dz) = (lx*co + lz*si, -lx*si + lz*co).
+    const offset = spot.hx + 0.5;
+    player.x = spot.x + offset * co;
+    player.z = spot.z - offset * si;
+    const idx = predators.findIndex(p => p.kind === 'lion');
+    if(idx < 0) return null;
+    const lion = predators[idx];
+    // Lion is 4 more units in the same local-x direction -- clear sightline guaranteed.
+    lion.x = spot.x + (offset + 4) * co;
+    lion.z = spot.z - (offset + 4) * si;
+    lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
+    lion.state = 'chase'; lion.hunt = true;
+    return { idx, kind: spot.kind };
+  };
+
   // LUL-388: `dist`/`canSee` added. A caller racing this predator's blind-chase
   // window against wall-clock time (e.g. "is it still blind 300ms after I
   // staged it?") is racing the dt-clamp-vs-walltime hazard for no reason --
@@ -2751,7 +2787,7 @@ function pickup(){
   const next = beginPickup(runState());
   if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
   baby.taken = next.babyTaken; pickingUp = next.pickingUp;
-  pickStart = clock.elapsedTime; hidden = false;
+  pickStart = clock.elapsedTime; hidden = false; lastHideSpot = null; coverProbeAccum = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found; carrying starts now
   pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
@@ -2795,7 +2831,7 @@ function arriveHome(){
 function triggerDeath(kind){
   const next = outcomeTriggerDeath(runState());
   if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
-  dead = next.dead; hidden = false; deathStart = clock.elapsedTime; deathShown = false;
+  dead = next.dead; hidden = false; lastHideSpot = null; coverProbeAccum = 0; deathStart = clock.elapsedTime; deathShown = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
@@ -2826,7 +2862,7 @@ function restart(){
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   const fresh = freshRunState();
   won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; baby.taken = fresh.babyTaken;
-  hidden = false; hideTime = 0; hideKind = null; eyeH = CONFIG.eye; deathShown = false;
+  hidden = false; hideTime = 0; hideKind = null; lastHideSpot = null; coverProbeAccum = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
@@ -3273,17 +3309,34 @@ function tick(){
       statusVisible = true;
       const sniffer = predators.some(p => p.state==='investigate' && Math.hypot(player.x-p.x, player.z-p.z) < 6);
       statusText = sniffer ? 'Hidden · something is sniffing you — DON’T MOVE'
-                            : 'Hidden · ' + hideTime.toFixed(1) + 's   (move to break cover)';
+                            : 'Hidden · ' + hideTime.toFixed(1) + 's   (moving breaks cover)';
     }
+    // LUL-1089: throttled cover probe at COVER_PROBE_HZ
+    coverProbeAccum += dt;
+    if(coverProbeAccum >= 1 / COVER_PROBE_HZ){
+      coverProbeAccum = 0;
+      lastHideSpot = !hidden ? geoFindHideSpot(player.x, player.z, coverGrid) : null;
+    }
+    // LUL-1089: contextual action prompts
+    const coverPromptVisible = !hidden && lastHideSpot !== null;
+    const coverPromptKind = coverPromptVisible ? (lastHideSpot.kind ?? null) : null;
+    const coverPromptUrgent = coverPromptVisible && predators.some(function(p){ return p.state === 'chase' && Math.hypot(player.x-p.x, player.z-p.z) < COVER_URGENT_RANGE; });
+    const veilActive = playing && !hidden && !veilHeld && !veilLocked
+      && veilCharge > VEIL_PROMPT_MIN_CHARGE
+      && predators.some(function(p){ return p.state === 'chase' && canSee(p, Math.hypot(player.x-p.x, player.z-p.z)); });
+    const veilPromptVisible = veilActive && !coverPromptVisible;
+    const veilPromptUrgent = veilPromptVisible;
     pushState({
       objectiveVisible: true, objectiveReady: canPickup,
       objectiveText: carrying
         ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm'
         : (canPickup ? 'Press  E  to lift the child' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'),
       statusVisible, statusText,
+      coverPromptVisible, coverPromptUrgent, coverPromptKind,
+      veilPromptVisible, veilPromptUrgent,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false });
   }
   // the child's idle glow (outside the cinematic)
   if(!baby.taken){

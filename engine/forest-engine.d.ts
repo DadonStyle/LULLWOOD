@@ -69,6 +69,8 @@ declare global {
       // must check for null rather than assume the index is always valid.
       /** Teleports the player to the spawn clearing and a lion 4 units out, hunting. Returns the lion's `predators` index, or null if no lion spawned. */
       qaOpenHideNearLion?: () => number | null;
+      /** LUL-1089: teleports the player to the first hide-spot prop (bramble/log) and places a lion 4 units away in chase state. Returns { idx, kind } on success, or null if no hide spot or no lion spawned. */
+      qaOpenHideNearLionAtHideSpot?: () => { idx: number; kind: string } | null;
       /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble/log; LUL-212 narrowed this from any non-tree cover prop). Returns 0, or null if no hiding-spot prop exists. */
       qaHideBehindCover?: () => number | null;
       /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind, playerX, playerZ } on success (playerX/playerZ per LUL-242, the player's placed position -- needed to compute an exact offset back to the predator, since cover-clearance separation and scent-pickup radius are different quantities), null if no clear hiding-spot placement exists. */

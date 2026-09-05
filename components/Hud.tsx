@@ -48,6 +48,12 @@ export interface EngineHudState {
   // while locked, even if held.
   veilCharge: number;
   veilLocked: boolean;
+  // LUL-1089: contextual action prompts for hide and veil mechanics.
+  coverPromptVisible: boolean;
+  coverPromptUrgent:  boolean;
+  coverPromptKind:    'bramble' | 'log' | null;
+  veilPromptVisible:  boolean;
+  veilPromptUrgent:   boolean;
   // LUL-1113: stamina resource meter, 1 (full) .. 0 (drained). Decays while
   // sprinting, regenerates while walking. Passed to sprintSpeedMul() to ramp
   // sprint multiplier from STAMINA_SPRINT_MUL (at full charge) to 1 (walk speed,
@@ -134,6 +140,11 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lightDimmed: false,
   veilCharge: 1,
   veilLocked: false,
+  coverPromptVisible: false,
+  coverPromptUrgent: false,
+  coverPromptKind: null,
+  veilPromptVisible: false,
+  veilPromptUrgent: false,
   staminaCharge: 1,
   chargeVisible: false,
   chargeToken: 0,
@@ -476,6 +487,51 @@ export default function Hud({
           {state.statusText}
         </div>
       )}
+
+      {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;
+          cover wins (engine enforces via !coverPromptVisible in veil condition).
+          Key/button name uses the same #actionKey pill style as #chargeKey above.
+          Double-spaces around the key name are house style (match "Press  E  to lift the child"). */}
+      {(state.coverPromptVisible || state.veilPromptVisible) && (() => {
+        const noun = state.coverPromptKind === 'log' ? 'hollow log' : 'bush';
+        const urgentKeyStyle = state.reducedMotion
+          ? { animation: 'none', background: '#e8554a', boxShadow: '0 2px 26px rgba(232,85,74,0.85)' } as const
+          : undefined;
+        if(state.coverPromptVisible){
+          if(state.coverPromptUrgent){
+            return (
+              <div id="actionPrompt" className="urgent">
+                {mobile
+                  ? <>{`the ${noun} is right there — TAP  `}<span id="actionKey" style={urgentKeyStyle}>Hide</span></>
+                  : <>{`the ${noun} is right there — PRESS  `}<span id="actionKey" style={urgentKeyStyle}>H</span></>}
+              </div>
+            );
+          }
+          return (
+            <div id="actionPrompt">
+              {mobile
+                ? <>{'Tap  '}<span id="actionKey">Hide</span>{`  to slip into the ${noun}`}</>
+                : <>{'Press  '}<span id="actionKey">H</span>{`  to hide in the ${noun}`}</>}
+            </div>
+          );
+        }
+        if(state.veilPromptUrgent){
+          return (
+            <div id="actionPrompt" className="urgent">
+              {mobile
+                ? <>{`nowhere to hide — HOLD  `}<span id="actionKey" style={urgentKeyStyle}>Veil</span></>
+                : <>{`nowhere to hide — HOLD  `}<span id="actionKey" style={urgentKeyStyle}>F</span>{'  for the veil'}</>}
+            </div>
+          );
+        }
+        return (
+          <div id="actionPrompt">
+            {mobile
+              ? <>{`it is hunting you — hold  `}<span id="actionKey">Veil</span></>
+              : <>{`it is hunting you — hold  `}<span id="actionKey">F</span>{'  for the mist veil'}</>}
+          </div>
+        );
+      })()}
 
       {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
           forces React to remount this element on every fresh charge (not on

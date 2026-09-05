@@ -26,6 +26,8 @@ export interface VeilChargeState {
 export const VEIL_MAX_HOLD = 5;          // seconds of continuous hold before a full drain
 export const VEIL_REGEN_MUL = 0.5;       // regen rate vs. drain rate -- refill is slower than spend
 export const VEIL_UNLOCK_CHARGE = 0.3;   // fraction of charge required to recover from a full-drain lock
+// LUL-1089: veil prompt minimum charge threshold -- veil prompt only shows when charge > this
+export const VEIL_PROMPT_MIN_CHARGE = 0.25;
 // sight-detect range multiplier at full ramp (veilAmount = 1) -- a 65% cut,
 // vs. LUL-291's 25% (DIM_DETECT_MUL 0.75).
 export const VEIL_DETECT_MUL = 0.35;
