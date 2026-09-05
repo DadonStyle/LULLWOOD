@@ -310,11 +310,13 @@ one geometry builder (`makePredator()`), differentiated by the
   the engine only owns *when* one can start (`p.chargeCooldown<=0`,
   `CHARGE_COOLDOWN`=10s) and the resulting movement.
 - Stuck detection: if a predator's actual movement falls under 35% of its
-  intended speed for >0.8s while trying to move, it backs up along its last 6
+  intended speed for >3s while trying to move, it backs up along its last 6
   trail points then picks a fresh random waypoint (`p.stuckT`, L1491-1496).
-  The threshold was 3s until LUL-1091 — long enough that a predator visibly
-  ground against a trunk before rerouting. `p.trail` samples every 0.4s and
-  keeps 6, so `p.trail[0]` is still ~2.4s of history at the shorter threshold.
+  LUL-1091 shipped this at 0.8s but LUL-1597 reverted it: the shorter window
+  is sensitive to per-frame wall-clock jitter, causing `predator-determinism`
+  e2e divergence across parallel runs with the same seed. The pathfinding
+  improvements (pickAvoidDirection near+far probe, slideVelocity) from
+  LUL-1091 are retained. `p.trail` samples every 0.4s and keeps 6 points.
 
 **Collision & physics profile**
 - Movement collider: circular, radius `PSPEC[kind].rad` (0.8/1.5/1.0),

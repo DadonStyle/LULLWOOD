@@ -1496,7 +1496,7 @@ function updatePredators(dt, noiseRadius){
     const moved = Math.hypot(p.x - px0, p.z - pz0);
     if(speed > 1 && p.reroute <= 0 && p.alert <= 0){
       if(moved < speed*dt*0.35) p.stuckT += dt; else p.stuckT = Math.max(0, p.stuckT - dt*2);
-      if(p.stuckT > 0.8){                            // go back along the trail, then a different way
+      if(p.stuckT > 3){                              // go back along the trail, then a different way
         const back = p.trail[0] || [p.x - ux*6, p.z - uz*6];
         p.rrX = back[0]; p.rrZ = back[1]; p.reroute = 1.4; p.stuckT = 0;
         // fresh, different waypoint (LUL-857: kept off the water same as the roam pick above)
