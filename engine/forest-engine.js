@@ -1189,6 +1189,17 @@ function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRa
 // approach behavior for free.
 function hearNoise(p){
   p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
+  leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
+  if(captionsOn){
+    const dx = p.x - player.x, dz = p.z - player.z, dist = Math.hypot(dx, dz);
+    const near = dist < 30 ? 'near' : 'far';
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+    const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+    const fwd = dx*fx + dz*fz, right = dx*rx + dz*rz;
+    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
+    pushState({ caption: `${p.kind} heard you · ${near} · ${side}`, captionId: ++captionSeq });
+  }
 }
 
 // ---- Positional hiding / detection (LUL-43, LUL-22) -----------------------
