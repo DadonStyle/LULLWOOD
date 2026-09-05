@@ -47,6 +47,21 @@ test('Tier C: engine, server routes, secrets and dependency manifests', () => {
   assert.equal(tier('lib/auth-helper.ts'), 'C', 'path naming a credential beats lib/**');
 });
 
+// LUL-1664: lib/game/** is simulation logic imported into engine/forest-engine.js
+// (hiding, detection, scent, predator AI, win/lose) -- it must not fall into the
+// generic Tier B lib/** bucket, or tier-approve.yml auto-approves engine-grade
+// changes with zero Code Reviewer involvement.
+test('Tier C: lib/game/** is simulation, not generic lib/** app surface', () => {
+  assert.equal(tier('lib/game/cover.ts'), 'C');
+  assert.equal(tier('lib/game/predator.ts'), 'C');
+  assert.equal(tier('lib/game/outcome.ts'), 'C', 'win/lose conditions');
+  assert.equal(tier('lib/site.ts'), 'B', 'lib/** outside lib/game/ is unaffected');
+});
+
+test('Tier A still wins for lib/game/*.test.ts (test files stay unreviewed-tier)', () => {
+  assert.equal(tier('lib/game/cover.test.ts'), 'A');
+});
+
 test('fails closed on anything unrecognised', () => {
   assert.equal(tier('some/unknown/path.rb'), 'C');
   assert.equal(tier('Dockerfile'), 'C');
