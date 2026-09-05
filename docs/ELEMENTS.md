@@ -41,13 +41,13 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3330-3334, gated on the same
+  `triggerTouchToggleRun()` (L3526-3530, gated on the same
   `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3307-3313, same guards as the desktop `Space`
+  `triggerTouchJump()` (L3503-3509, same guards as the desktop `Space`
   keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
@@ -57,7 +57,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3319-3323, `MobileControls.tsx`'s `touchPause` button) toggles both
+  (L3515-3519, `MobileControls.tsx`'s `touchPause` button) toggles both
   directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
@@ -72,8 +72,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3293 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L2923, mirrored the same way in `qaPlayerState()`'s return
+  button via `setTouchVeil()` L3489 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3089, mirrored the same way in `qaPlayerState()`'s return
   object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED`,
   applied in `tick()`; paired with a screen-edge
@@ -311,7 +311,12 @@ one geometry builder (`makePredator()`), differentiated by the
   `CHARGE_COOLDOWN`=10s) and the resulting movement.
 - Stuck detection: if a predator's actual movement falls under 35% of its
   intended speed for >3s while trying to move, it backs up along its last 6
-  trail points then picks a fresh random waypoint (`p.stuckT`, L1121-1129).
+  trail points then picks a fresh random waypoint (`p.stuckT`, L1491-1496).
+  LUL-1091 shipped this at 0.8s but LUL-1597 reverted it: the shorter window
+  is sensitive to per-frame wall-clock jitter, causing `predator-determinism`
+  e2e divergence across parallel runs with the same seed. The pathfinding
+  improvements (pickAvoidDirection near+far probe, slideVelocity) from
+  LUL-1091 are retained. `p.trail` samples every 0.4s and keeps 6 points.
 
 **Collision & physics profile**
 - Movement collider: circular, radius `PSPEC[kind].rad` (0.8/1.5/1.0),
@@ -706,11 +711,20 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   `#deathVideo`.
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
   `hudState`/`pushState()`/`emitState()`: objective text,
-  hiding status, win/death screens, charge-dodge prompt, the post-run recap
+  hiding status, win/death screens, charge-dodge prompt, the contextual
+  `#actionPrompt` (LUL-1089: hide/veil prompts), the post-run recap
   (`#runRecap`). **Not** difficulty/accessibility controls or captions —
   those were built on the unmerged LUL-26 branch; see the Player section's
   note. There is no separate modal settings surface on `main` today
   (engine's own comment, L1692-1693: "LUL-70, still backlog").
+  LUL-1089 adds five new `EngineHudState` fields: `coverPromptVisible`,
+  `coverPromptUrgent`, `coverPromptKind` (`'bramble'|'log'|null`),
+  `veilPromptVisible`, `veilPromptUrgent`. Cover prompt fires only while
+  `!hidden` and within `COVER_URGENT_RANGE` of a chasing predator for urgent.
+  Veil prompt fires only when cover is not available (cover wins, never both).
+  The cover probe is throttled to `COVER_PROBE_HZ` (6Hz); `lastHideSpot`
+  holds the result between probes. Both prompt flags reset at every
+  `hidden=false` reset site (pickup, death, restart).
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
@@ -749,9 +763,89 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 ---
 
+### Embers (run currency)
+
+**What it is**
+- `embersBalance`: player's persisted currency balance (runs completed,
+  predator kills, or other events), stored in `localStorage['lullwood:embers']`
+  and synced to `hudState` via `setEmbers()` (L2925-2929 in
+  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
+  on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
+  accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
+  scales the total by a tier multiplier (LUL-1412): lantern ×1.00/×1.00,
+  night ×1.75 win/×1.35 loss, blackout ×2.00 win/×1.25 loss. The engine passes
+  `difficulty` at both call sites.
+- `lastPayout`: breakdown of earnings from the run that just ended (null
+  before first win/death this session), read by HUD on win/death screens to
+  display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
+- Deeper Lungs: unlock via shop button in post-run UI; one-time purchase per
+  tier (tiers 0–3, `DEEPER_LUNGS_COSTS` array), persisted alongside balance as
+  `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
+  duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
+
+**What it can do**
+- Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
+  balance delta and calls `setEmbers()` to persist; engine gates all payouts
+  behind `canArriveHome()` / `triggerDeath()` to prevent double-apply.
+- Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COSTS[tier]` and increases
+  `VEIL_MAX_HOLD` (via `veilMaxHoldForTier()`) until the next tier is purchased.
+  Purchase is final, persisted to localStorage and synced to `hudState` via
+  `deeperLungsTier` property.
+
+**What it CANNOT do**
+- Spend on anything other than Deeper Lungs tiers.
+- Be lost/reset except via manual localStorage deletion (QA/debug only, not
+  a player-facing action).
+
+**Behaviours & logic**
+- Persistence: `useEmbers()` hook in `components/Hud.tsx` (L225-241) reads
+  stored balance on engine mount and writes to localStorage whenever balance
+  or tier change. Gated to skip writing stale zero defaults before stored
+  state is applied (ref `appliedRef` prevents persist effect from firing until
+  apply-on-ready effect has run).
+- `veilMaxHoldForTier(tier)` adds `DEEPER_LUNGS_HOLD_SECONDS[tier]` to base
+  `VEIL_MAX_HOLD` — each tier adds 1 second to the hold cap (5/6/7/8 seconds
+  at tiers 0/1/2/3).
+- Win/death screen shows a shop button (wired to `purchaseDeeperLungs()`
+  action) only if the player has balance ≥ `DEEPER_LUNGS_COSTS[currentTier]` and
+  `currentTier < 3`.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
+### Stamina (sprint resource)
+
+**What it is**
+- `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
+- **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
+- Audio cue (`staminaExertionCue()` L1806-1814): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+
+**What it can do**
+- Gate the player's sprint speed (`tick()` at L3109-3112): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2860, alongside `staminaLowCuePlayed`).
+
+**What it CANNOT do**
+- Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
+- Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.
+- Cannot be toggled or disabled by difficulty/accessibility settings (LUL-26 unmerged; no `DIFFICULTY_PRESETS` logic exists on `main` today).
+
+**Behaviours & logic**
+- Drain rate and refill rates are constants in `lib/game/stamina.ts` (`stepStamina()` parameters: `chargeDrainRate`/`chargeRegenRate`).
+- Clamped to [0, 1] — never goes negative and never exceeds full.
+- No player agency: decay and recovery are automatic, tied only to the `running` state and elapsed time `dt`.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
 ## The interaction matrix
 
-Every pairwise combination of the 15 elements above, physical/geometric
+Every pairwise combination of the 16 elements above, physical/geometric
 relationships only (movement collision, line-of-sight blocking, "stood on").
 Scent and noise are **not** columns here because the source is unambiguous
 that neither channel has *any* geometry interaction with *any* element
@@ -769,23 +863,24 @@ collider · `ATT` = permanently attached/coincident · `–` = no interaction,
 verified in source · **`U`** = **UNDEFINED — no source resolves this**.
 Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
-| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ |
-| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ |
-| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
-| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
-| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ |
-| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ |
-| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
-| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – |
-| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – |
-| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – |
-| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | render¹⁷ |
-| **HO** Home | | | | | | | | | | | | · | – | – | – |
-| **FO** Fog | | | | | | | | | | | | | · | – | – |
-| **FL** Follow-light | | | | | | | | | | | | | | · | – |
-| **UI** HUD/UI | | | | | | | | | | | | | | | · |
+| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI | EM |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
+| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | TRIG²¹ |
+| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
+| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
+| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
+| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ | – |
+| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
+| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
+| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
+| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – | – |
+| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | render¹⁷ | – |
+| **HO** Home | | | | | | | | | | | | · | – | – | – | TRIG²¹ |
+| **FO** Fog | | | | | | | | | | | | | · | – | – | – |
+| **FL** Follow-light | | | | | | | | | | | | | | · | – | – |
+| **UI** HUD/UI | | | | | | | | | | | | | | | · | – |
+| **EM** Embers | | | | | | | | | | | | | | | | · |
 
 ¹ Pickup (`distBaby<3.6`) and carry-follow (child's position snaps to
 player's while carrying) — proximity, not collision.
@@ -886,6 +981,10 @@ one cover kind that doesn't block the player's movement either —
 by `coverBlockedR()`. LOS and hide-spot eligibility are untouched (both read
 `coverGrid` independently of `coverBlockedR()`), so Log keeps `LOS+HIDE`;
 only the `C` is gone.
+²¹ **Embers** (LUL-1043) is a run-currency event tracker, not a spatial
+object — no movement collision or LOS interaction. `TRIG` marks events where
+Embers earnings are computed: Player earnings/spending gate, Child pickup
+earning trigger, Predator kill earning trigger, Home arrival earning trigger.
 
 ---
 

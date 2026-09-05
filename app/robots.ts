@@ -6,6 +6,10 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
+      // LUL-155: internal analytics dashboard -- already gated by proxy.ts's
+      // shared-secret check and absent from sitemap.ts, this is
+      // belt-and-suspenders so it's not even offered to crawlers.
+      disallow: "/internal",
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
   };

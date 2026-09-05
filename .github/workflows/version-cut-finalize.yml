@@ -60,6 +60,8 @@ jobs:
       # `--squash` instead of `--merge` -- fail loud, do not tag, do not
       # open the sync-back PR (it would only hit the same conflict LUL-1041
       # is about).
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22

@@ -208,9 +208,14 @@ export function blockedR(x: number, z: number, pr: number, grid: SpatialGrid<Cir
 // same SpatialGrid<CircleCollider> this file already owns -- no separate
 // grid abstraction needed. Tries the raw heading first, then eight fallback
 // angles (order matters: nearest deflection first, so a predator prefers the
-// smallest course correction that actually clears the obstacle), and falls
-// back to the original heading unchanged if every angle is still blocked
-// (matches main: it doesn't stop, it just walks into whatever's there).
+// smallest course correction that actually clears the obstacle).
+//
+// LUL-1091 changed the two ends of this. Each candidate is now probed at TWO
+// distances (near and far) because a single far probe steps clean over a trunk
+// that is closer than the probe band and reports the heading clear. And when
+// every angle is blocked it returns the LEAST-blocked candidate, never the
+// original heading -- returning the known-bad heading (the old behaviour,
+// inherited from main) is a guaranteed wedge inside a tree cluster.
 const AVOID_ANGLES: readonly number[] = [0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.2, -2.2];
 
 export function pickAvoidDirection(
@@ -222,15 +227,52 @@ export function pickAvoidDirection(
   grid: SpatialGrid<CircleCollider>,
   cell: number = CELL,
   lookAhead: number = 2.4,
+  nearLookAhead: number = 0.8,
 ): [number, number] {
-  const look = rad + lookAhead;
-  if (!blockedR(x + dx * look, z + dz * look, rad, grid, cell)) return [dx, dz];
+  const near = rad + nearLookAhead;
+  const far = rad + lookAhead;
+  // LUL-1091: a single far-only probe lands past obstacles nearer than `near`,
+  // so both distances must be sampled -- a direction only counts as clear if
+  // neither probe hits.
+  const clearDistance = (rx: number, rz: number): number => {
+    if (blockedR(x + rx * near, z + rz * near, rad, grid, cell)) return 0;
+    if (blockedR(x + rx * far, z + rz * far, rad, grid, cell)) return near;
+    return far;
+  };
+
+  if (clearDistance(dx, dz) === far) return [dx, dz];
+
+  // Every AVOID_ANGLES candidate is tried; the least-blocked one (greatest
+  // clear distance) wins so a fully-boxed-in predator never falls back to the
+  // heading already known to be blocked.
+  let bestDir: [number, number] = [dx, dz];
+  let bestDist = -1;
   for (const ang of AVOID_ANGLES) {
     const c = Math.cos(ang), s = Math.sin(ang);
     const rx = dx * c - dz * s, rz = dx * s + dz * c;
-    if (!blockedR(x + rx * look, z + rz * look, rad, grid, cell)) return [rx, rz];
+    const dist = clearDistance(rx, rz);
+    if (dist === far) return [rx, rz];
+    if (dist > bestDist) { bestDist = dist; bestDir = [rx, rz]; }
   }
-  return [dx, dz];
+  return bestDir;
+}
+
+// LUL-1091(d): axis-separated collision damped the blocked axis to 0.2x and
+// left the free axis untouched -- for a head-on approach (no velocity on the
+// free axis to begin with) that kills nearly all speed instead of sliding
+// around the obstacle. Projecting the full speed onto the free axis keeps a
+// predator moving at approach speed, redirected along the wall.
+export function slideVelocity(vx: number, vz: number, blockedX: boolean, blockedZ: boolean): [number, number] {
+  if (blockedX && blockedZ) return [0, 0];
+  if (blockedX) {
+    const sign = vz !== 0 ? Math.sign(vz) : 1;
+    return [0, sign * Math.hypot(vx, vz)];
+  }
+  if (blockedZ) {
+    const sign = vx !== 0 ? Math.sign(vx) : 1;
+    return [sign * Math.hypot(vx, vz), 0];
+  }
+  return [vx, vz];
 }
 
 // ---- cover-prop rotated-AABB collision (LUL-211, LUL-268) -------------------
@@ -415,15 +457,25 @@ export function findHideSpot(
 // apply and hands over the single product.
 export const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 export const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
+export const CARRY_DETECT_MUL = 1.35;
+// LUL-1089: contextual hide prompt
+export const COVER_URGENT_RANGE = 22; // world units — a chasing predator within this triggers urgent state
+export const COVER_PROBE_HZ     = 6;  // findHideSpot() is throttled to this rate (never 60x/s) // Priced by Game Economist (LUL-1311): return-leg win rate
+                                       // moves 0.850 -> 0.795, inside the 0.75-0.90 bracket the
+                                       // tier multipliers (LUL-1043) were solved over -- 1.5 is the
+                                       // ceiling before those need re-deriving. See wiki
+                                       // game/economy/carry-leg-detection-price.
 
 export interface DetectionState {
   hidden: boolean;
   hideTime: number;
+  carrying?: boolean;
 }
 
 export function effectiveDetect(detect: number, detectMul: number, state: DetectionState): number {
   const stillness = state.hidden ? Math.min(1, state.hideTime / STILL_RAMP) : 0;
-  return detect * (1 - stillness * STILL_DETECT_CUT) * detectMul;
+  const carryMul = state.carrying ? CARRY_DETECT_MUL : 1;
+  return detect * (1 - stillness * STILL_DETECT_CUT) * detectMul * carryMul;
 }
 
 // ---- can a predator see the player? ------------------------------------------

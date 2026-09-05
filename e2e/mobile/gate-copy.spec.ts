@@ -18,8 +18,9 @@ test('mobile gate copy describes the touch controls, not keyboard shortcuts', as
   const gateText = await page.locator('#gateKeys').innerText();
 
   expect(gateText).toContain('left stick');
-  expect(gateText).toContain('right stick');
   expect(gateText).toContain('Hide');
+  expect(gateText).toContain('Veil');
+  // "E" maps to the lift-child button and still appears in the shortened copy ("Hide / E / Jump")
   expect(gateText).toContain('E');
 
   // None of these desktop-only bindings exist on a touch device -- asserting

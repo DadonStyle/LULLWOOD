@@ -38,8 +38,9 @@ const OVERLAY_STYLE = `
   #gateTitle { font-size: 40px; font-weight: 400; letter-spacing: 0.18em;
     color: #d7e4f6; text-shadow: 0 2px 30px rgba(120,160,230,0.35); }
   #gateSub { font-size: 14px; letter-spacing: 0.06em; color: #9fb2cd; }
+  #gateCredit { font-size: 12px; letter-spacing: 0.04em; color: #6f82a0; }
   #gateKeys { margin-top: 18px; font-size: 12px; line-height: 2; color: #7f92ad;
-    letter-spacing: 0.03em; }
+    letter-spacing: 0.03em; max-width: 34rem; margin-inline: auto; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
 
   /* LUL-920: was top: 20px, same as #objective below -- the two sat directly on
@@ -82,6 +83,10 @@ const OVERLAY_STYLE = `
      for viewports isMobile() calls mobile that this query doesn't catch. */
   @media (max-width: 768px), (pointer: coarse) and (hover: none) {
     #panel { bottom: 240px; }
+    /* LUL-1089: raise #actionPrompt clear of the mobile control row (z-index 30,
+       bottom: 24px+safe-area). 240px matches #panel's own mobile override above;
+       the prompt rides above the controls rather than behind them. */
+    #actionPrompt { bottom: 240px; }
     /* LUL-69: ~44px is the standard (WCAG 2.5.5 / Apple HIG / Material)
        minimum touch-target side -- desktop's 6px/12px padding at 12px font
        sits well under that, and the founder's own complaint was "HUD sized
@@ -95,9 +100,12 @@ const OVERLAY_STYLE = `
        15px font sits well under it, and this is the only tap a player has on
        the win/death screen. */
     .restartBtn { padding: 15px 24px; font-size: 16px; }
-    #gateTitle { font-size: 32px; }
-    #gateSub { font-size: 13px; }
-    #gateKeys { font-size: 13px; line-height: 2.1; }
+    /* LUL-1043: same 44px rationale -- the Deeper Lungs buy button. */
+    .buyBtn { padding: 13px 18px; font-size: 14px; }
+    #gateTitle { font-size: 26px; }
+    #gateSub { font-size: 12px; }
+    #gateCredit { font-size: 11px; }
+    #gateKeys { font-size: 11px; line-height: 1.7; max-width: 34rem; margin-inline: auto; }
     /* Minimap stays legible at the same physical size rather than shrinking
        further -- on a ~390px-wide phone it's already a larger fraction of
        the screen than on desktop, which is the point (small map = useless
@@ -172,11 +180,14 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #panel,
   body[data-high-contrast="1"] #objective,
   body[data-high-contrast="1"] #status,
+  body[data-high-contrast="1"] #actionPrompt,
   body[data-high-contrast="1"] #captionToast,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
   body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
   body[data-high-contrast="1"] #status.hiding { color: #baffcf; border-color: #6fe89a; }
   body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
+  body[data-high-contrast="1"] #actionPrompt { color: #ffe6b0; border-color: #ffcf7a; }
+  body[data-high-contrast="1"] #actionPrompt.urgent { color: #ff9f9f; border-color: #ff6b6b; }
 
   /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
@@ -194,8 +205,10 @@ const OVERLAY_STYLE = `
      charge % and the "(recharging)" explanation by default.
      #minimap needs !important: the engine writes its own inline
      mm.style.display (blackout difficulty preset, forest-engine.js), which
-     beats a plain rule. */
-  body[data-admin-mode="0"] #panel > *:not(#settingsBtn):not(#lightState):not(#veilState) { display: none !important; }
+     beats a plain rule.
+     LUL-1085: #panel is now dev-only (pace/fog/lightState/veilState/embersBalance
+     for monitoring). Player-facing menu moved to components/GameMenu.tsx. */
+  body[data-admin-mode="0"] #panel { display: none !important; }
   body[data-admin-mode="0"] #minimap { display: none !important; }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
@@ -222,11 +235,25 @@ const OVERLAY_STYLE = `
   #winScreen h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
     color: #ffe6c8; text-shadow: 0 2px 44px rgba(255,190,130,0.5); }
   #winScreen p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
-  .newBest { color: #ffdca8; font-weight: 500; }
+  .emberGain { color: #ffdca8; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px; }
   .restartBtn:hover { background: #f6d3ac; }
   .restartBtn:focus-visible { outline: 2px solid #ffe6c8; outline-offset: 3px; }
+
+  /* LUL-1043: Embers shop -- Deeper Lungs I/II/III, the cheap version's one
+     sink. Reused on #gate, #winScreen and #deathText (see Hud.tsx's
+     EmbersShop comment for why it's on all three, not just the gate). */
+  #embersShop { display: flex; flex-direction: column; align-items: center; gap: 6px;
+    margin-top: 10px; font-size: 13px; color: #cbb7a4; }
+  #embersShopBalance { color: #ffdca8; letter-spacing: 0.05em; }
+  #embersShopMaxed { color: #9fd7b0; letter-spacing: 0.03em; }
+  .buyBtn { font: inherit; font-size: 13px; letter-spacing: 0.03em; color: #d7e4f6; cursor: pointer;
+    background: rgba(150,175,215,0.14); border: 1px solid rgba(150,175,215,0.3);
+    border-radius: 8px; padding: 8px 14px; }
+  .buyBtn:hover:not(:disabled) { background: rgba(150,175,215,0.24); }
+  .buyBtn:disabled { opacity: 0.45; cursor: default; }
+  .buyBtn:focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
 
   /* status line (hiding / hunted) */
   #status { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 12;
@@ -235,6 +262,28 @@ const OVERLAY_STYLE = `
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
     font-size: 13px; letter-spacing: 0.03em; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #status.hiding { color: #9fd7b0; border-color: rgba(120,200,150,0.4); }
+
+  /* LUL-1089: contextual hide/veil prompt. Sits between #status (74px) and
+     #chargePrompt (130px). Calm state: amber (#ffdca8) matching #objective.ready —
+     the game's existing "available now" grammar. Urgent: red (#e8554a) matching
+     #chargeBar — the only red in the HUD, already meaning "act now".
+     urgentFlash animates background + box-shadow only — never transform, never
+     layout — so the translateX(-50%) centring is never overridden mid-panic. */
+  #actionPrompt { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 12;
+    display: flex; align-items: center; gap: 0; pointer-events: none;
+    padding: 7px 16px; border-radius: 999px; white-space: nowrap;
+    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+  #actionPrompt #actionKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
+  #actionPrompt.urgent #actionKey { animation: urgentFlash 0.42s ease-in-out infinite alternate; }
+  @keyframes urgentFlash {
+    from { background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
+    to   { background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
+  @media (prefers-reduced-motion: reduce) {
+    #actionPrompt.urgent #actionKey { animation: none; background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
 
   /* LUL-213/LUL-304: charge-dodge visual key + countdown bar. The animation
      duration is CHARGE_WINDOW (imported from lib/game/charge.ts, not

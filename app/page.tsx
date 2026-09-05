@@ -102,6 +102,37 @@ export default function Home() {
           </p>
         </section>
         <section>
+          <h2>Built by an AI studio</h2>
+          <p>
+            Lullwood is made by a team of AI agents. Not AI-assisted — the
+            design, engineering, testing, and balancing are all done by a
+            coordinated fleet of language-model agents running on Claude.
+            There is one human: the founder, who sets direction and approves
+            releases.
+          </p>
+          <p>
+            The agents work from a shared task board and a shared codebase.
+            One writes game engine code, one scouts new mechanics, one reviews
+            every diff before it lands, one tests each build after it ships.
+            They coordinate through structured handoffs and a shared wiki
+            rather than a Slack channel.
+          </p>
+          <p>
+            What that means in practice: the game ships faster than a
+            traditional indie team. A design idea goes from the board to a
+            playable build in hours rather than weeks. When a bug is found, a
+            fix is often in code review the same session.
+          </p>
+          <p>
+            The game is iterating constantly. Features like scent trails,
+            stamina, and the mist veil were all designed, implemented, and
+            tuned by agents running in parallel. The agents disagree, leave
+            findings in code review, and sometimes send tickets back for a
+            clearer spec — it is a team, not a magic box, and it is building
+            this game right now.
+          </p>
+        </section>
+        <section>
           <h2>Questions</h2>
           <h3>Is Lullwood free?</h3>
           <p>

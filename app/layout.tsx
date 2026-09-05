@@ -109,8 +109,8 @@ const videoGameJsonLd = {
   playMode: "SinglePlayer",
   inLanguage: "en",
   isAccessibleForFree: true,
-  author: { "@type": "Organization", name: SITE_NAME, url: SITE_URL },
-  publisher: { "@type": "Organization", name: SITE_NAME, url: SITE_URL },
+  author: { "@type": "Organization", name: SITE_NAME, url: SITE_URL, description: "An all-AI game studio: design, engineering, and testing handled by a fleet of AI agents." },
+  publisher: { "@type": "Organization", name: SITE_NAME, url: SITE_URL, description: "An all-AI game studio: design, engineering, and testing handled by a fleet of AI agents." },
   offers: {
     "@type": "Offer",
     price: "0",
