@@ -1639,10 +1639,6 @@ let maxDistFromHome = 0, embers = freshEmbersState();
 function runState(){
   return { entered, won, dead, pickingUp, carrying, babyTaken: baby.taken };
 }
-// LUL-153: `game_start` fires once per page-load (first real pointer-lock
-// acquisition), not once per restart -- it feeds the page_view -> ... -> win
-// funnel, which measures "did this visitor ever reach gameplay," not run count.
-let gameStartFired = false;
 // LUL-24: last normalized heading the player actually moved along -- the "escape
 // vector" the wolf pack flanks off of. Only updated while moving (see tick()'s
 // movement block), so it holds the most recent flight direction while the
@@ -1714,10 +1710,6 @@ if(mode === 'desktop'){
     locked = document.pointerLockElement === el;
     if(locked){
       setPaused(false);
-      // LUL-153: the actual "gameplay begins" moment -- distinct from the gate
-      // click (cta_start_clicked, fired in Hud.tsx), which only requests the
-      // lock; this is the browser actually granting it.
-      if(entered && !gameStartFired){ gameStartFired = true; track({ event: 'game_start', seed: currentSeed }); }
     }
     else if(isPlaying(runState())) setPaused(true);     // Esc / released lock -> menu
   });
@@ -2223,6 +2215,11 @@ function enter(){
   enteredAt = clock.elapsedTime;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   pushState({ entered: true });
+  // LUL-1425: the real "a run begins" moment on both input modes -- enter() is
+  // called by the gate click (Hud.tsx) and by restart(). Fires once per RUN, not
+  // once per page load; see docs/specs. Previously lived in the desktop-only
+  // pointerlockchange handler, so it never fired on mobile at all.
+  track({ event: 'game_start', seed: currentSeed });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
   if(audio){ audio.ctx.resume(); }
