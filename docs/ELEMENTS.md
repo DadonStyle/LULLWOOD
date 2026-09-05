@@ -769,7 +769,11 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   and synced to `hudState` via `setEmbers()` (L2924-2928 in
   `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
-  on win/death via `arriveHome()` / `triggerDeath()`.
+  on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
+  accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
+  scales the total by a tier multiplier (LUL-1412): lantern ×1.00/×1.00,
+  night ×1.75 win/×1.35 loss, blackout ×2.00 win/×1.25 loss. The engine passes
+  `difficulty` at both call sites.
 - `lastPayout`: breakdown of earnings from the run that just ended (null
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
