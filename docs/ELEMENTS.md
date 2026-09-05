@@ -780,7 +780,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - Deeper Lungs: unlock via shop button in post-run UI; one-time purchase per
-  tier (tiers 0–3, `DEEPER_LUNGS_COST` array), persisted alongside balance as
+  tier (tiers 0–3, `DEEPER_LUNGS_COSTS` array), persisted alongside balance as
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 
@@ -788,7 +788,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
   balance delta and calls `setEmbers()` to persist; engine gates all payouts
   behind `canArriveHome()` / `triggerDeath()` to prevent double-apply.
-- Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COST[tier]` and increases
+- Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COSTS[tier]` and increases
   `VEIL_MAX_HOLD` (via `veilMaxHoldForTier()`) until the next tier is purchased.
   Purchase is final, persisted to localStorage and synced to `hudState` via
   `deeperLungsTier` property.
@@ -808,7 +808,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   `VEIL_MAX_HOLD` — each tier adds 1 second to the hold cap (5/6/7/8 seconds
   at tiers 0/1/2/3).
 - Win/death screen shows a shop button (wired to `purchaseDeeperLungs()`
-  action) only if the player has balance ≥ `DEEPER_LUNGS_COST[currentTier]` and
+  action) only if the player has balance ≥ `DEEPER_LUNGS_COSTS[currentTier]` and
   `currentTier < 3`.
 
 **Collision & physics profile**
@@ -865,18 +865,18 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
 | | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI | EM |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | – |
-| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | – |
-| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | – |
-| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | – |
-| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | – |
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | C+LOS+HIDE | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
+| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | TRIG²¹ |
+| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
+| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
+| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
 | **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ | – |
 | **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
 | **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
 | **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
 | **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – | – |
 | **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | render¹⁷ | – |
-| **HO** Home | | | | | | | | | | | | · | – | – | – | – |
+| **HO** Home | | | | | | | | | | | | · | – | – | – | TRIG²¹ |
 | **FO** Fog | | | | | | | | | | | | | · | – | – | – |
 | **FL** Follow-light | | | | | | | | | | | | | | · | – | – |
 | **UI** HUD/UI | | | | | | | | | | | | | | | · | – |
@@ -981,6 +981,10 @@ one cover kind that doesn't block the player's movement either —
 by `coverBlockedR()`. LOS and hide-spot eligibility are untouched (both read
 `coverGrid` independently of `coverBlockedR()`), so Log keeps `LOS+HIDE`;
 only the `C` is gone.
+²¹ **Embers** (LUL-1043) is a run-currency event tracker, not a spatial
+object — no movement collision or LOS interaction. `TRIG` marks events where
+Embers earnings are computed: Player earnings/spending gate, Child pickup
+earning trigger, Predator kill earning trigger, Home arrival earning trigger.
 
 ---
 
