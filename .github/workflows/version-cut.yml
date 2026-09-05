@@ -192,6 +192,7 @@ jobs:
       - name: open or refresh the cut PR
         env:
           GH_TOKEN: ${{ github.token }}
+          SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
           REPO: ${{ github.repository }}
           SUITE_RESULT: ${{ needs.combined-suite.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -269,7 +270,14 @@ jobs:
           # result in plain sight; arming just no longer waits on it. Revert this if that
           # trade stops paying off -- restore `if [ "$SUITE_RESULT" = "success" ]; then`
           # around the merge call below.
-          if gh pr merge "$number" --repo "$REPO" --auto --merge; then
+          # LUL-762: arm under SHIP_REVIEW_TOKEN when configured -- GitHub
+          # attributes an auto-merge's eventual completion to whoever armed
+          # it, so arming under github.token still leaves the resulting main
+          # commit exempt from ci.yml's push trigger. Same fix as
+          # cut-merge.yml (the manual alternative to this arm) and the
+          # release/next-targeting merges.
+          merge_token="${SHIP_REVIEW_TOKEN:-$GH_TOKEN}"
+          if GH_TOKEN="$merge_token" gh pr merge "$number" --repo "$REPO" --auto --merge; then
             echo "::notice::auto-merge armed on cut PR #$number (merge commit, pending Code Reviewer approval; combined-suite is $SUITE_RESULT and is advisory-only)"
           else
             echo "::warning::could not arm auto-merge on cut PR #$number -- it stays open for a manual merge once reviewed."
