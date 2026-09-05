@@ -1189,6 +1189,17 @@ function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRa
 // approach behavior for free.
 function hearNoise(p){
   p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
+  leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
+  if(captionsOn){
+    const dx = p.x - player.x, dz = p.z - player.z, dist = Math.hypot(dx, dz);
+    const near = dist < 30 ? 'near' : 'far';
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+    const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+    const fwd = dx*fx + dz*fz, right = dx*rx + dz*rz;
+    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
+    pushState({ caption: `${p.kind} heard you · ${near} · ${side}`, captionId: ++captionSeq });
+  }
 }
 
 // ---- Positional hiding / detection (LUL-43, LUL-22) -----------------------
@@ -2098,7 +2109,7 @@ let hudState = {
   entered: false,
   objectiveVisible: false, objectiveText: '', objectiveReady: false,
   statusVisible: false, statusText: '',
-  winVisible: false,
+  winVisible: false, winRevealed: false,
   deathVisible: false, deathKind: 'wolf', lossRevealed: false,
   survivedSeconds: 0,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
@@ -2814,6 +2825,8 @@ function arriveHome(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
   playWinMusic(); fireBoom(CONFIG.home.x, 2.2, CONFIG.home.z);   // LUL-1307: the win, not the midpoint
+  // LUL-1609: reveal the win text 100ms after the burst finishes (updateBoom retires at e>1.8s)
+  later(() => pushState({ winRevealed: true }), 1900);
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
   // LUL-303: updatePredators() (the only other place that clears the charge
   // HUD) stops running once `playing` goes false here, so a charge/telegraph
@@ -2858,7 +2871,7 @@ function playDeathVideo(){
 }
 function revealLoss(){ deathShown = true; document.body.style.cursor = ''; pushState({ lossRevealed: true }); }
 function restart(){
-  pushState({ winVisible: false, deathVisible: false, lossRevealed: false });
+  pushState({ winVisible: false, winRevealed: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   const fresh = freshRunState();
   won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; baby.taken = fresh.babyTaken;
@@ -2900,12 +2913,11 @@ function setDifficulty(d){
   // hunting, no minimap) is the only tier that also pushes the child beyond
   // the bog; 'lantern'/'night' keep the child at its normal spawn.
   babySpawnDifficulty = d === 'blackout' ? 'hard' : 'normal';
-  // Repositioning/parking predators mid-chase would be jarring and could pop
-  // one in on top of the player, so a live difficulty change only re-applies
-  // immediately before the player has entered; otherwise it takes effect on
-  // the next restart() (which already calls placePredators() itself and,
-  // via generateMap(), applyHardBabySpawn()).
-  if(!entered) { placePredators(); applyHardBabySpawn(); }
+  // Difficulty changes always take effect on the next restart(), which already
+  // calls placePredators() and (via generateMap()) applyHardBabySpawn().
+  // The pre-entry immediate-apply branch was dead code: #settingsBtn is fully
+  // covered by the gate overlay while entered===false, so Settings can never
+  // be opened before the first gate click (LUL-876).
   pushState({ difficulty: d });
 }
 function setRunMode(m){

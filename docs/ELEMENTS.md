@@ -41,14 +41,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3526-3530, gated on the same
-  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  `triggerTouchToggleRun()` (L3538-3542, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3503-3509, same guards as the desktop `Space`
-  keydown handler, minus the `e.repeat` check since a tap is already
+  `triggerTouchJump()` (L3515-3521, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
   target on mobile, wired to the same `triggerTouchJump()` — it used to
@@ -57,8 +55,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3515-3519, `MobileControls.tsx`'s `touchPause` button) toggles both
-  directions instead of only pausing.
+  (L3527-3531, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -72,9 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3489 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3089, mirrored the same way in `qaPlayerState()`'s return
-  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3501 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3101, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED`,
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -253,7 +249,11 @@ one geometry builder (`makePredator()`), differentiated by the
   (`canSee()`, LOS raycast + shrinking-with-stillness range),
   **scent** (`checkScent()`, radius+wind, no LOS check at all),
   and **noise** (`checkNoise()`, pure distance + per-second chance while the
-  player moves). Any one channel alone triggers a chase.
+  player moves). Any one channel alone triggers a chase. Noise acquisition
+  now fires a distinct `leafRustle()` cue + caption ("wolf heard you · near ·
+  behind") so the player knows *which* channel caught them; callTimer is also
+  initialised on noise-catch so the first roar in the following chase is
+  correctly delayed (LUL-1610).
 - Chase, losing/regaining track via `investigate`→`sniff`→`back` (LUL-22,
   explicitly "not to be retuned").
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
@@ -650,8 +650,9 @@ one geometry builder (`makePredator()`), differentiated by the
   L222): `VEIL_MAX_HOLD` (5s) of continuous hold drains it to zero, which
   force-drops the veil even with `KeyF` still held; it only regenerates
   while inactive, at `VEIL_REGEN_MUL` (0.5x) the drain rate, and a full
-  drain locks the veil out until charge climbs back past
-  `VEIL_UNLOCK_CHARGE` (0.3). The state machine itself is pure logic, lifted
+  drain locks the veil out until ~`VEIL_UNLOCK_CHARGE * VEIL_MAX_HOLD / maxHold`
+  absolute veil-seconds of regen have elapsed (~1.5s by default; the threshold
+  is scaled so Deeper Lungs tiers do not extend the lockout). The state machine itself is pure logic, lifted
   out to `lib/game/veil.ts` (`stepVeilCharge()`, unit tested — see
   `lib/game/veil.test.ts`) rather than living inline in `forest-engine.js`,
   per wiki systems/unit-testing-standard. Surfaced to the HUD as
@@ -768,8 +769,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L2925-2929 in
-  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  and synced to `hudState` via `setEmbers()` (L2937-2941 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
@@ -821,13 +821,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1806-1814): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()` L1817-1825): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
 - Gate the player's sprint speed (`tick()` at L3109-3112): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
-- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2860, alongside `staminaLowCuePlayed`).
-
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2879, alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
 - Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.

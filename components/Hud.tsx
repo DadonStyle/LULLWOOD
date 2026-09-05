@@ -32,6 +32,7 @@ export interface EngineHudState {
   statusVisible: boolean;
   statusText: string;
   winVisible: boolean;
+  winRevealed: boolean;
   deathVisible: boolean;
   deathKind: string;
   lossRevealed: boolean;
@@ -130,6 +131,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   statusVisible: false,
   statusText: '',
   winVisible: false,
+  winRevealed: false,
   deathVisible: false,
   deathKind: 'wolf',
   lossRevealed: false,
@@ -563,13 +565,15 @@ export default function Hud({
 
       {state.winVisible && (
         <div id="winScreen" style={{ display: 'flex' }}>
-          <h1>YOU WON</h1>
-          <p>the child is safe — you carried them home through the Lullwood</p>
-          <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
-          <button className="restartBtn" onClick={() => actions?.restart()}>
-            Play again
-          </button>
-          <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
+          <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
+            <h1>YOU WON</h1>
+            <p>the child is safe — you carried them home through the Lullwood</p>
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
+            <button className="restartBtn" onClick={() => actions?.restart()}>
+              Play again
+            </button>
+            <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
+          </div>
         </div>
       )}
 

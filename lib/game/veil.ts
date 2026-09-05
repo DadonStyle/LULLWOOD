@@ -25,7 +25,7 @@ export interface VeilChargeState {
 
 export const VEIL_MAX_HOLD = 5;          // seconds of continuous hold before a full drain
 export const VEIL_REGEN_MUL = 0.5;       // regen rate vs. drain rate -- refill is slower than spend
-export const VEIL_UNLOCK_CHARGE = 0.3;   // fraction of charge required to recover from a full-drain lock
+export const VEIL_UNLOCK_CHARGE = 0.3;   // base-tier fraction of charge at which the lock clears; scaled by VEIL_MAX_HOLD/maxHold at call time so Deeper Lungs tiers keep lockout at a fixed ~3s
 // LUL-1089: veil prompt minimum charge threshold -- veil prompt only shows when charge > this
 export const VEIL_PROMPT_MIN_CHARGE = 0.25;
 // sight-detect range multiplier at full ramp (veilAmount = 1) -- a 65% cut,
@@ -48,7 +48,7 @@ export function stepVeilCharge(
   maxHold: number = VEIL_MAX_HOLD,
 ): VeilChargeState & { active: boolean } {
   let { charge, locked } = state;
-  if (locked && charge >= VEIL_UNLOCK_CHARGE) locked = false;
+  if (locked && charge >= VEIL_UNLOCK_CHARGE * VEIL_MAX_HOLD / maxHold) locked = false;
   const active = held && !locked && charge > 0;
   if (active) {
     charge = Math.max(0, charge - dt / maxHold);

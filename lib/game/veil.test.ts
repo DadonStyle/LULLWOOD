@@ -114,6 +114,24 @@ test('a full continuous hold at an upgraded maxHold drains exactly to 0 over tha
   assert.equal(result.locked, true);
 });
 
+test('Deeper Lungs (larger maxHold) does not extend the post-drain lockout -- lockout time stays ~3s across all tiers', () => {
+  function lockoutSeconds(maxHold: number): number {
+    let s: VeilChargeState = { charge: 0, locked: true };
+    let t = 0;
+    const dt = 0.001;
+    while (s.locked && t < 60) {
+      s = stepVeilCharge(s, false, dt, maxHold);
+      t += dt;
+    }
+    return t;
+  }
+  const base = lockoutSeconds(VEIL_MAX_HOLD);
+  const upgraded = lockoutSeconds(8);
+  const upgraded2 = lockoutSeconds(12);
+  assert.ok(Math.abs(base - upgraded) < 0.05, `base=${base.toFixed(2)}s vs upgraded=${upgraded.toFixed(2)}s should match`);
+  assert.ok(Math.abs(base - upgraded2) < 0.05, `base=${base.toFixed(2)}s vs upgraded2=${upgraded2.toFixed(2)}s should match`);
+});
+
 // ---- veilDetectMul -----------------------------------------------------------
 
 test('veilDetectMul is 1 (no cut) at veilAmount=0', () => {

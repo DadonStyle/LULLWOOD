@@ -227,14 +227,19 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #objective.ready { color: #ffdca8; border-color: rgba(255,200,140,0.45); }
 
-  /* win screen */
+  /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
+     particle burst on the canvas below is fully visible for the ~1.8s it runs;
+     gradient moved to #winText inner wrapper so text remains readable */
   #winScreen { position: fixed; inset: 0; z-index: 25; display: none;
-    flex-direction: column; align-items: center; justify-content: center; gap: 6px;
-    text-align: center; padding: 24px;
-    background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86)); }
-  #winScreen h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
+    align-items: center; justify-content: center; text-align: center; padding: 24px;
+    background: rgba(0,0,0,0); pointer-events: none; }
+  #winText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column;
+    align-items: center; gap: 6px; pointer-events: auto;
+    background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86));
+    padding: 24px; border-radius: 4px; }
+  #winText h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
     color: #ffe6c8; text-shadow: 0 2px 44px rgba(255,190,130,0.5); }
-  #winScreen p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
+  #winText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
   .emberGain { color: #ffdca8; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px; }
