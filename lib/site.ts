@@ -9,6 +9,7 @@ export const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
   : 'https://lullwood.vercel.app';
 
+// SITE_NAME is the site's display name used in page titles and metadata
 export const SITE_NAME = 'Lullwood';
 
 // SEO title. "Lullwood" alone is an invented word with no search volume --
