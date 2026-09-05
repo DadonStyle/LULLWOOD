@@ -2900,12 +2900,11 @@ function setDifficulty(d){
   // hunting, no minimap) is the only tier that also pushes the child beyond
   // the bog; 'lantern'/'night' keep the child at its normal spawn.
   babySpawnDifficulty = d === 'blackout' ? 'hard' : 'normal';
-  // Repositioning/parking predators mid-chase would be jarring and could pop
-  // one in on top of the player, so a live difficulty change only re-applies
-  // immediately before the player has entered; otherwise it takes effect on
-  // the next restart() (which already calls placePredators() itself and,
-  // via generateMap(), applyHardBabySpawn()).
-  if(!entered) { placePredators(); applyHardBabySpawn(); }
+  // Difficulty changes always take effect on the next restart(), which already
+  // calls placePredators() and (via generateMap()) applyHardBabySpawn().
+  // The pre-entry immediate-apply branch was dead code: #settingsBtn is fully
+  // covered by the gate overlay while entered===false, so Settings can never
+  // be opened before the first gate click (LUL-876).
   pushState({ difficulty: d });
 }
 function setRunMode(m){
