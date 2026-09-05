@@ -650,8 +650,9 @@ one geometry builder (`makePredator()`), differentiated by the
   L222): `VEIL_MAX_HOLD` (5s) of continuous hold drains it to zero, which
   force-drops the veil even with `KeyF` still held; it only regenerates
   while inactive, at `VEIL_REGEN_MUL` (0.5x) the drain rate, and a full
-  drain locks the veil out until charge climbs back past
-  `VEIL_UNLOCK_CHARGE` (0.3). The state machine itself is pure logic, lifted
+  drain locks the veil out until ~`VEIL_UNLOCK_CHARGE * VEIL_MAX_HOLD / maxHold`
+  absolute veil-seconds of regen have elapsed (~1.5s by default; the threshold
+  is scaled so Deeper Lungs tiers do not extend the lockout). The state machine itself is pure logic, lifted
   out to `lib/game/veil.ts` (`stepVeilCharge()`, unit tested — see
   `lib/game/veil.test.ts`) rather than living inline in `forest-engine.js`,
   per wiki systems/unit-testing-standard. Surfaced to the HUD as
