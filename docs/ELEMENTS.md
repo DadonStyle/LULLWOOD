@@ -41,12 +41,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3602-3606, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  `triggerTouchToggleRun()` (L3702-3706, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3579-3585, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
+  `triggerTouchJump()` (L3679-3685, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
   target on mobile, wired to the same `triggerTouchJump()` — it used to
@@ -55,7 +55,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3591-3595, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
+  (L3691-3695, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -69,9 +69,9 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3565 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3165, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
-  `LIGHT_NORMAL`/`LIGHT_DIMMED`,
+  button via `setTouchVeil()` L3664 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3244, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
@@ -186,6 +186,20 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   glow stays legible through the tide's own added fog density (Fog above) —
   the two effects (denser fog, longer-reaching glow) are meant to roughly
   offset, not one cancel the other out unintentionally.
+- **As of `LUL-1480`** (rules `LUL-1438`/`LUL-1414`), the unscaled idle/carry
+  glow and halo curves live in `lib/game/childGlow.ts` (pure, unit tested),
+  not inline in `tick()`: `idleGlowIntensity()`/`idleHaloOpacity()` for the
+  outbound leg and `carryGlowIntensity()`/`carryHaloOpacity()` for carry,
+  handing off at `PICKUP_GLOW_PEAK` at the end of the pickup cinematic. The
+  fix makes the carry leg strictly brighter and faster-pulsing than idle at
+  every instant (`CARRY_GLOW_BASE=2.6` vs `IDLE_GLOW_BASE=1.0`, `CARRY_GLOW_
+  FREQ=3.2` vs `IDLE_GLOW_FREQ=1.8`) — previously the pickup cinematic
+  flared to 3.2 and then carry settled back down to ~1.2, barely above idle,
+  the same frame `CARRY_DETECT_MUL` (`lib/game/cover.ts`) raises predator
+  sight-detect by 35%. The difficulty preset's `glowMul` and
+  `fogTideGlowMul()` still apply on top of these curves exactly as before;
+  the pulse **rate** (not just brightness) is what's carry-only and
+  unspoofable by either multiplier.
 
 **What it CANNOT do**
 - Cannot move on its own, ever, outside the two scripted transitions above —
@@ -308,7 +322,7 @@ one geometry builder (`makePredator()`), differentiated by the
 - Charge state machine (`telegraph`→`charging`→`overshoot`→`caught`/`cleared`)
   lives in `lib/game/charge.ts`, unit-tested, imported into the engine —
   the engine only owns *when* one can start (`p.chargeCooldown<=0`,
-  `CHARGE_COOLDOWN`=10s) and the resulting movement.
+  `CHARGE_COOLDOWN`=10s, `engine/tuning.js`) and the resulting movement.
 - Stuck detection: if a predator's actual movement falls under 35% of its
   intended speed for >3s while trying to move, it backs up along its last 6
   trail points then picks a fresh random waypoint (`p.stuckT`, L1491-1496).
@@ -828,7 +842,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L3001-3005 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  and synced to `hudState` via `setEmbers()` (L3063-3067 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
@@ -880,12 +894,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1844-1852): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()` L1866-1874): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3225): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L3243): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
-- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2942, alongside `staminaLowCuePlayed`).
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L3004, alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
 - Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.
@@ -904,16 +918,17 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 ### Missions (detour objectives)
 
 **What it is**
-- **Spec only as of this entry — not yet implemented** (LUL-1258 specs it; LUL-1259 implements
-  it). `MISSION_POOL` (`lib/game/mission.ts`, new): a pool of optional detour objectives, one
-  active per run, drawn from the run's own seeded RNG (never player-selected). Today the pool
-  has exactly one member, `deepwater` — a fixed waypoint at the drowned car landmark
-  (`x: 55, z: 205`, matching `LANDMARKS`' `drownedCar` entry, `engine/forest-engine.js:207`).
+- **Implemented (LUL-1259).** `MISSION_POOL` (`lib/game/mission.ts`): a pool of optional detour
+  objectives, one active per run, drawn from the run's own seeded RNG (never player-selected).
+  Today the pool has exactly one member, `deepwater` — a fixed waypoint at the drowned car
+  landmark (`x: 55, z: 205`, matching `LANDMARKS`' `drownedCar` entry, `engine/tuning.js:44`).
   Per-run state (`mission: MissionState | null`) lives alongside `baby` at
-  `engine/forest-engine.js:893`.
-- No verbs of its own — completion rides the existing interact action (`KeyE` /
-  `triggerTouchInteract()`, the same key/button that already lifts the child), gated on a new
-  `missionCanComplete` check computed alongside `canPickup` (`engine/forest-engine.js:3354`).
+  `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every other rng()
+  consumer, so it never shifts the stream any existing seed/replay depends on.
+- No verbs of its own — completion rides the existing interact action (`KeyE`
+  (`engine/forest-engine.js:1689`) / `triggerTouchInteract()` (`:3635`), the same key/button
+  that already lifts the child), gated on a `missionCanComplete` check computed alongside
+  `canPickup` (`:3430`).
 
 **What it can do**
 - Add a completion bonus to the win payout only: `MISSION_DEEPWATER_REWARD = 12` Embers

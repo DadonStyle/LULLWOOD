@@ -39,6 +39,9 @@ declare global {
       qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
       /** LUL-25: the child's world position and whether it's past the forest/bog seam. */
       qaProbeBaby?: () => { x: number; z: number; inBog: boolean };
+      /** LUL-1093: w2m(x,z)'s clamped pixel output plus the minimap canvas size (mm),
+       * so a test can assert an arbitrary world point stays on-canvas. */
+      qaProbeMinimapPoint?: (x: number, z: number) => { px: number; py: number; mm: number };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */
