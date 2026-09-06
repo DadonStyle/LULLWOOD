@@ -901,6 +901,52 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 ---
 
+### Missions (detour objectives)
+
+**What it is**
+- **Spec only as of this entry — not yet implemented** (LUL-1258 specs it; LUL-1259 implements
+  it). `MISSION_POOL` (`lib/game/mission.ts`, new): a pool of optional detour objectives, one
+  active per run, drawn from the run's own seeded RNG (never player-selected). Today the pool
+  has exactly one member, `deepwater` — a fixed waypoint at the drowned car landmark
+  (`x: 55, z: 205`, matching `LANDMARKS`' `drownedCar` entry, `engine/forest-engine.js:207`).
+  Per-run state (`mission: MissionState | null`) lives alongside `baby` at
+  `engine/forest-engine.js:893`.
+- No verbs of its own — completion rides the existing interact action (`KeyE` /
+  `triggerTouchInteract()`, the same key/button that already lifts the child), gated on a new
+  `missionCanComplete` check computed alongside `canPickup` (`engine/forest-engine.js:3354`).
+
+**What it can do**
+- Add a completion bonus to the win payout only: `MISSION_DEEPWATER_REWARD = 12` Embers
+  (`lib/game/economy.ts`), passed as `computeWinPayout()`'s new optional fourth argument at the
+  `arriveHome()` call site. **Forfeited on death** — `computeDeathPayout()` is unmodified, so
+  reaching the mission target but dying before reaching home banks none of the +12 (the detour's
+  real payout is the `depth` term, already uncapped on win / capped on death; the mission bonus
+  is a small addition on top, not the source of the risk/reward).
+- Emit a repeating, non-predator-audible navigational audio cue (tempo-shortens with proximity,
+  same shape as Ship 1's `childCry` wayfinding pattern) while the mission is active and the
+  player is not carrying the child; silent once carrying.
+- Fire a one-time unconditional caption + audio sting on completion, and show a two-line
+  collapsed HUD panel (name + progress glyph) top-left whenever a mission exists and the player
+  isn't carrying — mirrors the Embers/Stamina HUD-reflection pattern above, not a new panel
+  system.
+
+**What it CANNOT do**
+- Cannot be selected or seen by the player before the draw — the pool member is chosen silently
+  at run start from the same seeded stream as map/predator generation, not exposed as a choice.
+- Cannot replace or gate the core objective — the child-distance/carry pill is unaffected; a
+  mission is a detour, not a mode switch.
+- Cannot bind a new key or a new `EngineActions` method — the sole new player-facing action
+  (mission completion) reuses the existing interact button/key, so it needs no new touch target
+  and has no mobile-unreachable action.
+- Cannot pay out on death — the completion bonus is win-only, exactly like `CARRIED`/`HOME`.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object. The mission *target* (the drowned car) is a `LANDMARKS`
+  entry with its own existing decorative/navigational collision profile, unchanged by this
+  entry; the mission struct only reads that entry's coordinates, it does not add new geometry.
+
+---
+
 ## The interaction matrix
 
 Every pairwise combination of the 16 elements above, physical/geometric
