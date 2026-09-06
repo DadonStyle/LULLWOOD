@@ -541,6 +541,11 @@ one geometry builder (`makePredator()`), differentiated by the
   `maxSpd` while `inLakeWater()` is true — the visible water radius
   `CONFIG.lake.r` (15), a tighter circle than the `clear` ring spawn checks
   use, so the slow starts exactly where the water mesh does. LUL-791/LUL-392.
+- Slow predators too, the same way: `updatePredators()` samples
+  `lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake))` (and the bog's
+  equivalent) per predator per tick and folds it into every roam/hunt/chase/
+  investigate/flank speed — a predator that wades in pays the same cost the
+  player does. The `charge` dash is explicitly exempt (LUL-1309).
 - Bias the ambient "twinkle" chime to play brighter/more often when the
   player is near it (`distLake < CONFIG.lake.r*3`, `tick()`).
 - Deflect a predator's roam/stuck-recovery waypoint: `updatePredators()`'s
