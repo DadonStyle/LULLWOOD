@@ -24,6 +24,16 @@ export const CONFIG = {
   trunk:   0x171b20,
   foliage: 0x102420,
   ground:  0x0c1117,
+  // LUL-874: keep this well clear of the map edge (half = mapSize/2 = 240).
+  // updatePredators()'s waypoint-pick sites clamp to map bounds, call
+  // keepWaypointOffLake() (lib/game/lake.ts) -- which can push a waypoint out
+  // to `r + margin` (~17 units) from the lake's center -- then clamp to
+  // bounds *again*. If the lake ever sat within that push distance of an
+  // edge, the second clamp could silently snap the waypoint back into the
+  // water, reopening the bug PR #183 fixed, with no test or CI signal since
+  // nothing currently asserts this. Today's (34,-28) is ~206 units from the
+  // nearest edge, comfortably clear -- re-check this distance before moving
+  // the lake or shrinking mapSize (wiki game/lul857-review-pr183).
   lake:    { x: 34, z: -28, r: 15, clear: 22, glow: 0x86b8ff },
   home:    { x: 0, z: 0, r: 3.6, glow: 0xffd9b0 },   // LUL-38: reuses the spawn point, no new rng draw
   carryPaceMul: 0.72,                                 // LUL-38: burden while carrying the child, not a cripple
