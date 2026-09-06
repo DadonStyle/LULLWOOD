@@ -1956,8 +1956,8 @@ function staminaExertionCue(){
 // noise bursts, same building blocks as footstep()/the rest of this file --
 // no audio files, per the engine's existing all-procedural-WebAudio approach.
 // Bush: a few quick high, bright bursts read as individual leaves brushing
-// past -- the "something is hiding in the brush" cue that's the universal
-// foley convention for stealth/horror games (wiki: game/lul212-hiding-spots).
+// past -- the "something is hiding in the brush" cue that's a common
+// foley convention for stealth/horror games.
 function leafRustle(entering){
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
@@ -2700,9 +2700,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { x: p.x, z: p.z };
   };
 
-  // LUL-212: teleport the player to the nearest hiding spot (bramble/log),
-  // no predator involved -- e2e/hide.spec.ts only needs a deterministic spot
-  // to press KeyH at, not a chase scenario.
+  // LUL-212: teleport the player to the first generated hiding spot
+  // (bramble/log), no predator involved -- e2e/hide.spec.ts only needs a
+  // deterministic spot to press KeyH at, not a chase scenario.
   window.ForestEngine.qaTeleportToHideSpot = function(){
     const spot = coverData.find(c => HIDE_KINDS[c.kind]);
     if(!spot) return null;
