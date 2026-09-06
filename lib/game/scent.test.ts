@@ -4,6 +4,7 @@ import {
   clampDt,
   DT_CLAMP_CEILING,
   driftedScentPosition,
+  isMovingAgainstWind,
   isScentDetected,
   isScentExpired,
   isScentPastPruneCutoff,
@@ -31,6 +32,24 @@ test('clampDt is a no-op right at the ceiling', () => {
 
 test('clampDt(0) stays 0, not the ceiling', () => {
   assert.equal(clampDt(0), 0);
+});
+
+// ---- wind-against detection --------------------------------------------
+
+test('isMovingAgainstWind is true when moving directly into the wind (dot < 0)', () => {
+  assert.equal(isMovingAgainstWind(-1, 0, 1, 0), true);
+});
+
+test('isMovingAgainstWind is false when moving with the wind (dot > 0)', () => {
+  assert.equal(isMovingAgainstWind(1, 0, 1, 0), false);
+});
+
+test('isMovingAgainstWind is false when moving perpendicular to the wind (dot === 0)', () => {
+  assert.equal(isMovingAgainstWind(0, 1, 1, 0), false);
+});
+
+test('isMovingAgainstWind is false for zero movement (dot === 0)', () => {
+  assert.equal(isMovingAgainstWind(0, 0, 1, 0), false);
 });
 
 // ---- expiry / prune boundary ------------------------------------------------
