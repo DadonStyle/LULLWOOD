@@ -60,14 +60,22 @@ export function computeSurvival(survivedSeconds: number): number {
   return Math.min(SURVIVAL_CAP, Math.floor(survivedSeconds / SURVIVAL_UNIT_SECONDS));
 }
 
+// LUL-1258: M2 Deepwater's completion bonus. Win-only, like CARRIED/HOME --
+// forfeited on death, same as the rest of the "reached it but didn't make it
+// home" case. The detour's real payout is `depth` (uncapped on win, capped on
+// death already); this is a flat bonus on top, priced deliberately low per
+// game/economy/mission-rewards §2 ("the greed comes from the depth").
+export const MISSION_DEEPWATER_REWARD = 12;
+
 export function computeWinPayout(
   maxDistFromHome: number,
   survivedSeconds: number,
   tier: DifficultyTier = 'lantern',
+  missionBonus = 0,
 ): RunPayout {
   const depth = computeDepth(maxDistFromHome);
   const survival = computeSurvival(survivedSeconds);
-  const total = Math.round((depth + survival + CARRIED + HOME) * TIER_MULTIPLIERS[tier].win);
+  const total = Math.round((depth + survival + CARRIED + HOME + missionBonus) * TIER_MULTIPLIERS[tier].win);
   return { depth, survival, carried: CARRIED, home: HOME, total };
 }
 

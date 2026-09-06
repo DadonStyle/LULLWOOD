@@ -99,7 +99,16 @@ import {
   purchaseDeeperLungs as economyPurchaseDeeperLungs,
   veilMaxHoldForTier,
   DEEPER_LUNGS_MAX_TIER,
+  MISSION_DEEPWATER_REWARD,
 } from '@/lib/game/economy';
+// LUL-1258: M2 Deepwater. Pure mission-state helpers, no Three.js -- mirrors
+// how lib/game/outcome.ts's transitions are imported above.
+import {
+  pickMission,
+  distToMissionTarget,
+  canCompleteMission,
+  completeMission,
+} from '@/lib/game/mission';
 import {
   inLakeWater,
   inLakeClearance,
@@ -722,6 +731,10 @@ function generateMap(seed){
                   // own blockedR() calls treat the four landmark meshes as solid too
   applyHardBabySpawn();
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
+  // LUL-1258: draw this run's mission last, after every other rng() consumer
+  // above, so it never shifts the stream any existing seed/replay depends on.
+  mission = pickMission(rng);
+  missionHumTimer = 2;
 }
 
 // ---- Lake landmark (the thing to find) -----------------------------------
@@ -865,6 +878,12 @@ dust.frustumCulled = false; scene.add(dust);
 // ---- The lost child (the objective) --------------------------------------
 const baby = { x: 60, z: 60, taken: false };
 function inBaby(x,z){ const dx=x-baby.x, dz=z-baby.z; return dx*dx+dz*dz < 20; }   // ~4.5-unit clearing
+
+// LUL-1258: M2 Deepwater. Per-run mission state, drawn once per generateMap()
+// call (see the tail of generateMap() below) from the same seeded rng stream
+// map/predator generation already consumes -- never player-selected.
+let mission = null;
+let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- first hum fires quickly, not after a full interval
 
 const babyGroup = new THREE.Group();
 const bundle = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12),
@@ -1171,6 +1190,40 @@ function hearNoise(p){
     const fwd = dx*fx + dz*fz, right = dx*rx + dz*rz;
     const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
     pushState({ caption: `${p.kind} heard you · ${near} · ${side}`, captionId: ++captionSeq });
+  }
+}
+
+// LUL-1258: the mission waypoint's hum -- same tempo-carries-distance shape
+// Ship 1 specs for the child's cry (docs/specs/lul-1255-wayfinding-ship1.md
+// S3d), applied to the mission target instead of the baby. Deliberately NOT
+// predator-audible (unlike the child's cry) -- this is a detour aid, not a
+// second "wayfinding that makes the forest more dangerous" mechanic; scope
+// per this ticket is the nav cue only, not a new detection surface (S4).
+function missionWaypointHum(m, distToPlayer){
+  if(!audio || !soundOn || !m || m.status !== 'active') return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const near = Math.max(0, Math.min(1, 1 - distToPlayer / 140));   // 0 far .. 1 close
+  const pan = ctx.createStereoPanner();
+  const dx = m.target.x - player.x, dz = m.target.z - player.z;
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  const right = dx*rx + dz*rz, fwd = dx*fx + dz*fz;
+  pan.pan.value = Math.max(-1, Math.min(1, right / Math.max(1, Math.hypot(right, fwd))));
+  const o = ctx.createOscillator(); o.type = 'sine';
+  const baseF = 220 + near * 60;   // lower/duller than the child's cry so the two cues stay distinguishable
+  o.frequency.setValueAtTime(baseF, t);
+  o.frequency.exponentialRampToValueAtTime(baseF * 1.25, t + 0.22);
+  o.frequency.exponentialRampToValueAtTime(baseF, t + 0.6);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.04 + near * 0.05, t + 0.06);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+  o.connect(g); g.connect(pan); pan.connect(master); pan.connect(conv);
+  o.start(t); o.stop(t + 0.75);
+  if(captionsOn){
+    const cnear = distToPlayer < 30 ? 'near' : 'far';
+    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
+    pushState({ caption: `something metal, underwater · ${cnear} · ${side}`, captionId: ++captionSeq });
   }
 }
 
@@ -1581,7 +1634,8 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
-    jumping = false, jumpElapsed = 0, jumpPressed = false;   // LUL-213: see beginJump() / tick()'s jumpY
+    jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
+    missionCanComplete = false;   // LUL-1258: recomputed every tick alongside canPickup, below
 // LUL-1043: Embers. `maxDistFromHome` is the run's displacement high-water
 // mark (not `dist` below, which is path length) -- reset in enter(), read by
 // arriveHome()/triggerDeath() for the payout's `depth` term. `embers` is the
@@ -1631,7 +1685,11 @@ on(window, 'keydown', e => {
   if((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && runMode === 'toggle' && !e.repeat && playing && !paused){
     toggleRunOn = !toggleRunOn;
   }
-  if(e.code === 'KeyE' && canPickup && playing && !paused) pickup();
+  // LUL-1258: no new key -- mission completion reuses the interact action.
+  if(e.code === 'KeyE' && playing && !paused){
+    if(canPickup) pickup();
+    else if(missionCanComplete) completeMissionSequence();
+  }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
   // LUL-213: jumping stands you up first (same as any movement key already
   // does via the moveKey-breaks-hide check in tick()) -- a charge can still
@@ -2103,6 +2161,9 @@ let hudState = {
   // LUL-1089: contextual action prompts
   coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null,
   veilPromptVisible: false, veilPromptUrgent: false,
+  // LUL-1258: M2 Deepwater's minimal HUD panel -- null/null whenever no
+  // mission is active or the player is carrying (see the tick() pushState).
+  missionKind: null, missionStatus: null,
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
   // and persists it to localStorage (see components/Hud.tsx).
@@ -2804,6 +2865,33 @@ function finishPickup(){
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.55;
   halo.material.opacity = 0.22; babyLight.intensity = 1.3;
 }
+// LUL-1258: M2 Deepwater's completion sting -- reuses hollowLogSound's
+// noise-burst + oscillator chain (same procedural building blocks, no new
+// audio files) for a short, distinct "found it" cue instead of a footstep
+// sound played out of context.
+function missionCompleteSting(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.12, false);
+  const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = 800; bp.Q.value = 4;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.22, t+0.01); ng.gain.exponentialRampToValueAtTime(0.0001, t+0.2);
+  nb.connect(bp); bp.connect(ng); ng.connect(master); ng.connect(conv); nb.start(t); nb.stop(t+0.22);
+
+  const o = ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(340, t); o.frequency.exponentialRampToValueAtTime(560, t+0.22);
+  const og = ctx.createGain();
+  og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(0.18, t+0.03); og.gain.exponentialRampToValueAtTime(0.0001, t+0.4);
+  o.connect(og); og.connect(master); og.connect(conv); o.start(t); o.stop(t+0.42);
+}
+// LUL-1258: no cinematic lock (unlike pickup's ~2.5s gather) -- this is a
+// detour bonus, not the core objective, and stopping the player's clock here
+// would undercut the risk this mission is supposed to cost.
+function completeMissionSequence(){
+  if(mission.status === 'complete') return;   // guards a same-frame double-fire (e.g. OS key-repeat while holding E), mirrors pickup()'s own rejection check
+  mission = completeMission(mission);
+  pushState({ caption: 'the drowned car -- found it', captionId: ++captionSeq });   // unconditional, matches the landmark first-run caption's precedent
+  missionCompleteSting();
+}
 function arriveHome(){
   const next = outcomeArriveHome(runState());
   won = next.won; carrying = next.carrying;
@@ -2821,7 +2909,10 @@ function arriveHome(){
   // on restart.
   activeCharges = 0;
   // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
-  const payout = computeWinPayout(maxDistFromHome, survivedSeconds, difficulty);
+  // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
+  // like carried/home, since computeDeathPayout's signature is untouched.
+  const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
+  const payout = computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus);
   embers = applyPayout(embers, payout);
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance });
@@ -3307,6 +3398,10 @@ function tick(){
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
   canPickup = canPickUp(runState(), distBaby, 3.6);
   const distHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);   // LUL-38
+  // LUL-1258: M2 Deepwater -- distance/completion gate for the mission target,
+  // computed the same way canPickup is above.
+  const distMission = mission ? distToMissionTarget(mission, player.x, player.z) : Infinity;
+  missionCanComplete = mission ? canCompleteMission(mission, distMission) : false;
   if(playing){
     let statusVisible = false, statusText = '';
     if(hidden){
@@ -3330,17 +3425,33 @@ function tick(){
       && predators.some(function(p){ return p.state === 'chase' && canSee(p, Math.hypot(player.x-p.x, player.z-p.z)); });
     const veilPromptVisible = veilActive && !coverPromptVisible;
     const veilPromptUrgent = veilPromptVisible;
+    // LUL-1258: the mission's nav-cue hum, only while active and not carrying
+    // (return leg is silent, same rule the mission panel follows below) --
+    // reuses childCry's tempo-carries-distance shape (Ship 1 spec S3d).
+    if(mission?.status === 'active' && !carrying){
+      missionHumTimer -= dt;
+      if(missionHumTimer <= 0){
+        missionWaypointHum(mission, distMission);
+        const near = Math.max(0, Math.min(1, 1 - distMission / 140));
+        missionHumTimer = 5.5 - near * 3.5;   // 5.5s far, 2s close -- matches childCry's curve
+      }
+    }
     pushState({
       objectiveVisible: true, objectiveReady: canPickup,
       objectiveText: carrying
         ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm'
-        : (canPickup ? 'Press  E  to lift the child' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'),
+        : (canPickup ? 'Press  E  to lift the child'
+           : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
       statusVisible, statusText,
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,
+      // LUL-1258: mission HUD panel -- null/null while carrying so the panel
+      // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
+      missionKind: mission && !carrying ? mission.target.kind : null,
+      missionStatus: mission && !carrying ? mission.status : null,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, missionKind: null, missionStatus: null });
   }
   // the child's idle glow (outside the cinematic)
   if(!baby.taken){
@@ -3498,6 +3609,7 @@ tick();
   function triggerTouchInteract() {
     const playing = isPlaying(runState());
     if(canPickup && playing && !paused) pickup();
+    else if(missionCanComplete && playing && !paused) completeMissionSequence();
   }
   // LUL-529: touch analogue of the Space keydown handler (forest-engine.js
   // keydown listener above) -- same guards, same beginJump()/jumpPressed
