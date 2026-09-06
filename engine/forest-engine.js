@@ -1386,7 +1386,7 @@ function updatePredators(dt, noiseRadius){
         p.lastCharge = { result: 'caught', overshootDuration: 0 };
         p.charge = null;
         endChargeHud();
-        triggerDeath(p.kind);
+        triggerDeath(p.kind, 'charge');   // LUL-1194: telegraphed charge, missed the dodge window
       } else if(cs.phase === 'cleared'){
         // stepCharge() (lib/game/charge.ts) zeroes overshootDuration on the
         // 'cleared' state it returns, so read it off the *old* p.charge
@@ -1444,7 +1444,7 @@ function updatePredators(dt, noiseRadius){
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
       if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       else {
-        if(isCaught(dist, p.rad)) triggerDeath(p.kind);
+        if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
         else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
@@ -1506,7 +1506,7 @@ function updatePredators(dt, noiseRadius){
         // mid-blind-chase (scentLock > 0) can catch the player straight
         // through the cover prop breaking canSee() right now, since
         // predators never physically collide with cover (LUL-119/LUL-211).
-        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind); }
+        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, 'chase'); }   // LUL-1194: run down mid-chase, in the open
         else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
@@ -1723,6 +1723,14 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false;   // LUL-1258: recomputed every tick alongside canPickup, below
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
+// LUL-1194: the death cutscene is full-length and unskippable exactly once --
+// the player's first-ever death -- and skippable by any input after that.
+// Persisted across sessions (not just page load, unlike carryDeathExplained
+// above) so it stays a one-time thing rather than resetting on every reload.
+const HAS_DIED_KEY = 'lullwood:hasDied';
+let hasDiedBefore = false;
+try { hasDiedBefore = localStorage.getItem(HAS_DIED_KEY) === '1'; } catch(e){}
+let cutsceneSkippable = false;   // set fresh on every triggerDeath(), read by the skip listeners below
 // LUL-1043: Embers. `maxDistFromHome` is the run's displacement high-water
 // mark (not `dist` below, which is path length) -- reset in enter(), read by
 // arriveHome()/triggerDeath() for the payout's `depth` term. `embers` is the
@@ -1762,8 +1770,14 @@ let runMode = 'hold', toggleRunOn = false, sensMul = 1, invertY = false,
     reducedMotionSetting = false, captionsOn = false, captionSeq = 0;
 function motionReduced(){ return reduce || reducedMotionSetting; }
 
+// LUL-1194: any input skips the death cutscene straight to revealLoss(), on every
+// death after the player's first. Independent of `playing` (false while dead), and
+// deliberately not e.repeat-gated -- a held key still counts as "an input" here.
+function skipCutsceneIfAllowed(){ if(dead && !deathShown && cutsceneSkippable) revealLoss(); }
+on(window, 'pointerdown', skipCutsceneIfAllowed);   // covers both mouse click and touch tap
 on(window, 'keydown', e => {
   keys[e.code] = true;
+  skipCutsceneIfAllowed();
   const playing = isPlaying(runState());
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
   // LUL-26: toggle-run edge-triggers off keydown (not keyup) so the very
@@ -2263,7 +2277,7 @@ let hudState = {
   objectiveVisible: false, objectiveText: '', objectiveReady: false,
   statusVisible: false, statusText: '',
   winVisible: false, winRevealed: false,
-  deathVisible: false, deathKind: 'wolf', lossRevealed: false,
+  deathVisible: false, deathKind: 'wolf', deathCause: 'chase', lossRevealed: false,
   survivedSeconds: 0,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
@@ -3054,7 +3068,7 @@ function arriveHome(){
     lastPayout: payout, embersBalance: embers.balance });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
-function triggerDeath(kind){
+function triggerDeath(kind, cause){
   const next = outcomeTriggerDeath(runState());
   if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
   dead = next.dead; hidden = false; lastHideSpot = null; coverProbeAccum = 0; deathStart = clock.elapsedTime; deathShown = false;
@@ -3076,9 +3090,13 @@ function triggerDeath(kind){
   activeCharges = 0;
   const deathCarrying = carrying && !carryDeathExplained;
   if(deathCarrying) carryDeathExplained = true;
-  pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
+  // LUL-1194: full-length + unskippable only on the player's first-ever death
+  // (persisted, see HAS_DIED_KEY above) -- skippable by any input every death after.
+  cutsceneSkippable = hasDiedBefore;
+  if(!hasDiedBefore){ hasDiedBefore = true; try { localStorage.setItem(HAS_DIED_KEY, '1'); } catch(e){} }
+  pushState({ deathVisible: true, deathKind: kind, deathCause: cause, lossRevealed: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying });
-  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty });
+  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty });
   playDeathVideo();
   deathAudio(kind);
 }
