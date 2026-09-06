@@ -16,7 +16,6 @@
 export const CONFIG = {
   seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
   mapSize: 240,          // the forest is a fixed square this many units across
-  bogDepth: 120,         // LUL-25: the bog band appended past the forest's +z edge
   trees:   1300,
   walk:    6,            // walking speed (units/s); Shift multiplies it
   fog:     0.04,
@@ -40,8 +39,8 @@ export const CONFIG = {
 export const LANDMARKS = [
   { kind: 'fireTower',   x: -95, z: -95, clear: 12, cr: 1.6 },
   { kind: 'stoneMarker', x: 100, z: -75, clear: 9,  cr: 1.1 },
-  { kind: 'oak',         x: -65, z: 135, clear: 10, cr: 1.3 },
-  { kind: 'drownedCar',  x: 55,  z: 205, clear: 11, cr: 2.3 },
+  { kind: 'oak',         x: 22,  z: 4,   clear: 10, cr: 1.3 },
+  { kind: 'drownedCar',  x: -95, z: 46,  clear: 11, cr: 2.3 },
 ];
 
 // ---- Lighting --------------------------------------------------------------
