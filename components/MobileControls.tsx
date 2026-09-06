@@ -20,8 +20,13 @@ import type { EngineActions } from './Hud';
 
 // Dead-zone: stick must move beyond this fraction before input is emitted.
 const DEAD = 0.2;
-// Max stick travel in px (visual + input clamped to this).
-const RADIUS = 48;
+// Stick dimensions (feel constants).
+const STICK_BASE = 122;
+const STICK_THUMB = 42;
+const STICK_TRAVEL = 45;
+// Button dimensions (feel constants).
+const BTN = 50;
+const BTN_SMALL = 44;
 
 interface StickState {
   active: boolean;
@@ -42,14 +47,14 @@ function Stick({ onMove, onSprint, testId }: StickProps) {
 
   function update(ox: number, oy: number) {
     const clamped = Math.hypot(ox, oy);
-    if (clamped > RADIUS) { ox = ox / clamped * RADIUS; oy = oy / clamped * RADIUS; }
+    if (clamped > STICK_TRAVEL) { ox = ox / clamped * STICK_TRAVEL; oy = oy / clamped * STICK_TRAVEL; }
     stateRef.current.ox = ox;
     stateRef.current.oy = oy;
     if (thumbRef.current) {
       thumbRef.current.style.transform = `translate(${ox}px, ${oy}px)`;
     }
-    const nx = ox / RADIUS;
-    const ny = oy / RADIUS;
+    const nx = ox / STICK_TRAVEL;
+    const ny = oy / STICK_TRAVEL;
     const mag = Math.hypot(nx, ny);
     if (mag < DEAD) {
       onMove(0, 0);
@@ -100,8 +105,8 @@ function Stick({ onMove, onSprint, testId }: StickProps) {
 
   const base: React.CSSProperties = {
     position: 'relative',
-    width:  RADIUS * 2 + 32,
-    height: RADIUS * 2 + 32,
+    width:  STICK_BASE,
+    height: STICK_BASE,
     borderRadius: '50%',
     background: 'rgba(180,200,230,0.12)',
     border: '1.5px solid rgba(180,200,230,0.25)',
@@ -115,8 +120,8 @@ function Stick({ onMove, onSprint, testId }: StickProps) {
   };
 
   const thumb: React.CSSProperties = {
-    width:  RADIUS,
-    height: RADIUS,
+    width:  STICK_THUMB,
+    height: STICK_THUMB,
     borderRadius: '50%',
     background: 'rgba(180,200,230,0.35)',
     border: '1.5px solid rgba(180,200,230,0.5)',
@@ -146,7 +151,7 @@ interface ActionBtnProps {
 }
 
 function ActionBtn({ label, onTap, testId, small }: ActionBtnProps) {
-  const size = small ? 44 : 56;
+  const size = small ? BTN_SMALL : BTN;
   const style: React.CSSProperties = {
     width: size,
     height: size,
@@ -191,8 +196,8 @@ function ActionBtn({ label, onTap, testId, small }: ActionBtnProps) {
 // swipe-back edge gesture) still releases the veil instead of stranding it on.
 function HoldBtn({ label, onHold, testId }: { label: string; onHold: (v: boolean) => void; testId?: string }) {
   const style: React.CSSProperties = {
-    width: 56,
-    height: 56,
+    width: BTN,
+    height: BTN,
     borderRadius: '50%',
     background: 'rgba(180,200,230,0.14)',
     border: '1.5px solid rgba(180,200,230,0.28)',
