@@ -652,7 +652,12 @@ export default function Hud({
             <h1>YOU WON</h1>
             <p>the child is safe — you carried them home through the Lullwood</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
-            <button ref={winRestartRef} className="restartBtn" onClick={() => actions?.restart()}>
+            <button
+              ref={winRestartRef}
+              className="restartBtn"
+              disabled={!state.winRevealed}
+              onClick={() => actions?.restart()}
+            >
               Play again
             </button>
             <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
@@ -674,7 +679,12 @@ export default function Hud({
               {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
-            <button ref={deathRestartRef} className="restartBtn" onClick={() => actions?.restart()}>
+            <button
+              ref={deathRestartRef}
+              className="restartBtn"
+              disabled={!state.lossRevealed}
+              onClick={() => actions?.restart()}
+            >
               Try again
             </button>
             <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
