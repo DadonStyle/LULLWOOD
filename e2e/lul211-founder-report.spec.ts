@@ -24,7 +24,7 @@
 //     spec, ?qaHooks=1 only).
 //
 //     LUL-384 deliberately narrows this for `log` specifically: a fallen log
-//     is no longer solid to the *player's* movement (coverKindBlocksPlayerMovement(),
+//     is no longer solid to the *player's* movement (coverKindBlocksMovement(),
 //     lib/game/cover.ts) so walking/running over one feels natural, while LOS,
 //     hide-spot eligibility and predator catch are all untouched -- a log is
 //     still not a safe zone. That is an intentional, scoped exception, not a

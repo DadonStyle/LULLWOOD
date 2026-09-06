@@ -16,7 +16,9 @@ export interface FunnelStep {
 }
 
 export function computeFunnel(events: RawEvent[]): FunnelStep[] {
-  const counts = FUNNEL_STEPS.map((name) => events.filter((e) => e.event === name).length);
+  const counts = FUNNEL_STEPS.map(
+    (name) => new Set(events.filter((e) => e.event === name).map((e) => e.anon_id)).size,
+  );
   const first = counts[0];
   return FUNNEL_STEPS.map((name, i) => ({
     event: name,
@@ -50,6 +52,11 @@ function percentile(sortedAsc: number[], p: number): number | null {
 function numberProp(e: RawEvent, key: string): number | null {
   const v = e[key];
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function stringProp(e: RawEvent, key: string): string | null {
+  const v = e[key];
+  return typeof v === 'string' ? v : null;
 }
 
 export function computeOutcomes(events: RawEvent[]): OutcomesResult {
@@ -135,15 +142,36 @@ function computeReturnRate(events: RawEvent[], dayOffset: number): number | null
 
 export function computeSessions(events: RawEvent[]): SessionsResult {
   const sessionEvents = events.filter((e) => e.event === 'session_length');
-  const durations = sessionEvents
-    .map((e) => numberProp(e, 'duration_ms'))
+  const bySession = new Map<string, { duration: number | null; reached: boolean }>();
+  for (const e of sessionEvents) {
+    // Legacy rows (emitted before LUL-1430) carry no session_id. Give each its
+    // own key rather than collapsing a player's history into one session -- we
+    // do not retroactively invent a grouping the emitter never recorded.
+    const sid =
+      typeof e.session_id === 'string' && e.session_id.length > 0
+        ? e.session_id
+        : `legacy:${e.anon_id}:${e.ts}`;
+    const d = numberProp(e, 'duration_ms');
+    const prev = bySession.get(sid);
+    if (prev === undefined) {
+      bySession.set(sid, { duration: d, reached: e.reached_gameplay === true });
+    } else {
+      bySession.set(sid, {
+        duration: d === null ? prev.duration : prev.duration === null ? d : Math.max(prev.duration, d),
+        reached: prev.reached || e.reached_gameplay === true,
+      });
+    }
+  }
+  const rows = [...bySession.values()];
+  const durations = rows
+    .map((r) => r.duration)
     .filter((n): n is number => n !== null)
     .sort((a, b) => a - b);
-  const reachedCount = sessionEvents.filter((e) => e.reached_gameplay === true).length;
+  const reachedCount = rows.filter((r) => r.reached).length;
 
   return {
-    sessionCount: sessionEvents.length,
-    reachedGameplayRatePct: sessionEvents.length === 0 ? null : (reachedCount / sessionEvents.length) * 100,
+    sessionCount: bySession.size,
+    reachedGameplayRatePct: bySession.size === 0 ? null : (reachedCount / bySession.size) * 100,
     durationMs: {
       p50: percentile(durations, 50),
       p90: percentile(durations, 90),
@@ -174,28 +202,34 @@ export function computeFeatureEngagement(events: RawEvent[]): FeatureEngagementR
   return Array.from(rows.values()).sort((a, b) => b.count - a.count);
 }
 
-export interface EconomyResult {
+export interface EconomyMetrics {
   winPayout: { p50: number | null; p90: number | null; n: number };
   lossPayout: { p50: number | null; p90: number | null; n: number };
-  /** P3: median(loss payout) / median(win payout) * 100. Falsification card predicts 12-28%. */
+  /** P3: median(loss payout) / median(win payout) * 100. */
   failureBandPct: number | null;
   /**
    * P4: derived death-depth = payout - min(6, floor(time_survived_ms / 20000)) on each
-   * loss (the survival term, capped at 6, subtracted back out). No `maxDistFromHome`
-   * field needed -- see wiki game/economy/falsification-card §1 note under P4.
-   * Falsification card predicts p95 <= 24.
+   * loss. Unreachable on lantern/night (child-spawn 60-96m); falsification predicts p95 <= 60 on blackout.
    */
   lossDepth: { p50: number | null; p95: number | null; pctAbove24: number | null; n: number };
+}
+
+export type EconomyTierKey = 'lantern' | 'night' | 'blackout' | 'unattributed';
+
+export interface EconomyResult extends EconomyMetrics {
   /**
    * P5: a purchase is a decrease in an anon_id's balance sequence (win/loss events,
    * ts-ordered) -- no `purchase` event needed. Falsification card predicts >=60% of
    * anon_ids that ever cross 120 balance show a decrease within the next 3 runs.
+   * Not split by tier: balance sequences have holes when a player changes difficulty
+   * between runs, making per-tier sequences meaningless.
    */
   purchase: {
     crossed120Count: number;
     purchasedWithin3RunsCount: number;
     purchasedWithin3RunsPct: number | null;
   };
+  byDifficulty: Record<EconomyTierKey, EconomyMetrics>;
 }
 
 const SURVIVAL_TERM_CAP = 6;
@@ -204,10 +238,9 @@ const DEPTH_FALSIFY_THRESHOLD = 24;
 const PURCHASE_BALANCE_THRESHOLD = 120;
 const PURCHASE_WINDOW_RUNS = 3;
 
-export function computeEconomy(events: RawEvent[]): EconomyResult {
-  const wins = events.filter((e) => e.event === 'win');
-  const losses = events.filter((e) => e.event === 'loss');
+const TIER_KEYS: EconomyTierKey[] = ['lantern', 'night', 'blackout', 'unattributed'];
 
+function economyMetricsFor(wins: RawEvent[], losses: RawEvent[]): EconomyMetrics {
   const winPayouts = wins
     .map((e) => numberProp(e, 'payout'))
     .filter((n): n is number => n !== null)
@@ -234,6 +267,24 @@ export function computeEconomy(events: RawEvent[]): EconomyResult {
   const pctAbove24 =
     lossDepths.length === 0 ? null : (lossDepths.filter((d) => d > DEPTH_FALSIFY_THRESHOLD).length / lossDepths.length) * 100;
 
+  return {
+    winPayout: { p50: winPayoutP50, p90: percentile(winPayouts, 90), n: winPayouts.length },
+    lossPayout: { p50: lossPayoutP50, p90: percentile(lossPayouts, 90), n: lossPayouts.length },
+    failureBandPct:
+      winPayoutP50 === null || lossPayoutP50 === null || winPayoutP50 === 0 ? null : (lossPayoutP50 / winPayoutP50) * 100,
+    lossDepth: {
+      p50: percentile(lossDepths, 50),
+      p95: percentile(lossDepths, 95),
+      pctAbove24,
+      n: lossDepths.length,
+    },
+  };
+}
+
+export function computeEconomy(events: RawEvent[]): EconomyResult {
+  const wins = events.filter((e) => e.event === 'win');
+  const losses = events.filter((e) => e.event === 'loss');
+
   // P5: chronological balance sequence per anon_id, across win+loss events.
   const runsByAnon = new Map<string, number[]>();
   const chronological = [...wins, ...losses].sort((a, b) => a.ts - b.ts);
@@ -259,21 +310,34 @@ export function computeEconomy(events: RawEvent[]): EconomyResult {
     }
   }
 
+  const winsByTier = new Map<EconomyTierKey, RawEvent[]>();
+  const lossesByTier = new Map<EconomyTierKey, RawEvent[]>();
+  for (const key of TIER_KEYS) {
+    winsByTier.set(key, []);
+    lossesByTier.set(key, []);
+  }
+  for (const e of wins) {
+    const d = stringProp(e, 'difficulty');
+    const key: EconomyTierKey = d === 'lantern' || d === 'night' || d === 'blackout' ? d : 'unattributed';
+    winsByTier.get(key)!.push(e);
+  }
+  for (const e of losses) {
+    const d = stringProp(e, 'difficulty');
+    const key: EconomyTierKey = d === 'lantern' || d === 'night' || d === 'blackout' ? d : 'unattributed';
+    lossesByTier.get(key)!.push(e);
+  }
+
+  const byDifficulty = Object.fromEntries(
+    TIER_KEYS.map((key) => [key, economyMetricsFor(winsByTier.get(key)!, lossesByTier.get(key)!)]),
+  ) as Record<EconomyTierKey, EconomyMetrics>;
+
   return {
-    winPayout: { p50: winPayoutP50, p90: percentile(winPayouts, 90), n: winPayouts.length },
-    lossPayout: { p50: lossPayoutP50, p90: percentile(lossPayouts, 90), n: lossPayouts.length },
-    failureBandPct:
-      winPayoutP50 === null || lossPayoutP50 === null || winPayoutP50 === 0 ? null : (lossPayoutP50 / winPayoutP50) * 100,
-    lossDepth: {
-      p50: percentile(lossDepths, 50),
-      p95: percentile(lossDepths, 95),
-      pctAbove24,
-      n: lossDepths.length,
-    },
+    ...economyMetricsFor(wins, losses),
     purchase: {
       crossed120Count,
       purchasedWithin3RunsCount,
       purchasedWithin3RunsPct: crossed120Count === 0 ? null : (purchasedWithin3RunsCount / crossed120Count) * 100,
     },
+    byDifficulty,
   };
 }

@@ -1,0 +1,147 @@
+// Pure numeric/feel constants extracted from engine/forest-engine.js (LUL-1065,
+// docs/specs/tuning-extraction.md). Mechanical move -- values are unchanged from
+// what forest-engine.js used to declare inline. No Three.js/DOM dependency.
+//
+// NOTE (LUL-1491 deviation, declared on the ticket): RUN is NOT here. The spec's
+// literal `CONFIG.walk * 1.8` predates the stamina merge (LUL-1113), which
+// replaced that literal with `CONFIG.walk * STAMINA_SPRINT_MUL` (imported from
+// lib/game/stamina.ts) specifically to kill a duplicate-constant P1 finding.
+// Moving RUN here as a bare literal would silently resurrect that duplicate;
+// importing lib/game/stamina.ts here would violate this file's own "no imports"
+// design (tuning.js is meant to be engine-local presentation/feel data with no
+// cross-module coupling). RUN stays declared in forest-engine.js, right next to
+// PSPEC, still built from the imported CHASE_GAP below.
+
+// ---- Knobs ---------------------------------------------------------------
+export const CONFIG = {
+  seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
+  mapSize: 480,          // the forest is a fixed square this many units across
+  trees:   5200,
+  walk:    6,            // walking speed (units/s); Shift multiplies it
+  fog:     0.04,
+  eye:     2.2,          // eye height
+  bg:      0x0a0e15,
+  trunk:   0x171b20,
+  foliage: 0x102420,
+  ground:  0x0c1117,
+  // LUL-874: keep this well clear of the map edge (half = mapSize/2 = 240).
+  // updatePredators()'s waypoint-pick sites clamp to map bounds, call
+  // keepWaypointOffLake() (lib/game/lake.ts) -- which can push a waypoint out
+  // to `r + margin` (~17 units) from the lake's center -- then clamp to
+  // bounds *again*. If the lake ever sat within that push distance of an
+  // edge, the second clamp could silently snap the waypoint back into the
+  // water, reopening the bug PR #183 fixed, with no test or CI signal since
+  // nothing currently asserts this. Today's (34,-28) is ~206 units from the
+  // nearest edge, comfortably clear -- re-check this distance before moving
+  // the lake or shrinking mapSize (wiki game/lul857-review-pr183).
+  lake:    { x: 34, z: -28, r: 15, clear: 22, glow: 0x86b8ff },
+  home:    { x: 0, z: 0, r: 3.6, glow: 0xffd9b0 },   // LUL-38: reuses the spawn point, no new rng draw
+  carryPaceMul: 0.72,                                 // LUL-38: burden while carrying the child, not a cripple
+};
+
+// LUL-25: four fixed navigational landmarks, "visible over the fog line" so
+// the player can orient without the minimap (which stays scaled to the
+// original 240x240 forest -- see w2m()/drawMinimap() in forest-engine.js).
+// Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home.
+// `cr` is the movement-collision radius (LUL-374) -- deliberately much
+// smaller than `clear` (which only keeps trees/cover from generating too
+// close to the landmark's nudge target).
+export const LANDMARKS = [
+  { kind: 'fireTower',   x: -95, z: -95, clear: 12, cr: 1.6 },
+  { kind: 'stoneMarker', x: 100, z: -75, clear: 9,  cr: 1.1 },
+  { kind: 'oak',         x: 22,  z: 4,   clear: 10, cr: 1.3 },
+  { kind: 'drownedCar',  x: -95, z: 46,  clear: 11, cr: 2.3 },
+];
+
+// ---- Lighting --------------------------------------------------------------
+// LUL-975: r155 dropped the `Math.PI` "artist-friendly" scaling factor that used to
+// sit between a light's `intensity` and the render output. Every light intensity in
+// forest-engine.js is multiplied by this to read the same as it did pre-r155 --
+// see wiki systems/three-r185-upgrade.
+export const LEGACY_LIGHT_SCALE = 5;
+
+// LUL-40/LUL-382: hold KeyF for the mist veil -- these are the player-light
+// intensity/distance pair tick() swaps between as the veil ramps in/out.
+export const LIGHT_NORMAL = { intensity: 0.7, distance: 20 };
+export const LIGHT_DIMMED = { intensity: 0.18, distance: 8 };
+
+// LUL-382: how fast the mist visibly ramps (VEIL_RAMP) and how thick it gets
+// at full ramp (MIST_VEIL_FOG) -- the veil charge/lock state machine itself
+// lives in lib/game/veil.ts, not here.
+export const VEIL_RAMP = 1.6;            // seconds for mist/detect-cut to ease fully in or out
+export const MIST_VEIL_FOG = 0.34;       // ~3x the manual Mist slider's own max (0.11) -- deliberately overshoots it so the veil reads as a distinct world state
+
+export const VIGNETTE_NORMAL = { inner: 45, outerAlpha: 0.60 };
+export const VIGNETTE_DIMMED = { inner: 18, outerAlpha: 0.92 };
+
+// ---- Tree canopy geometry --------------------------------------------------
+// Feeds both the tree meshes AND lib/game/cover.ts's canopyRadiusAtEye() (movement
+// collision) -- see forest-engine.js's own CANOPY_GEO assembly, which stays there.
+export const CANOPY_R = 1.15;     // cone1Geo base radius, at its widest (near the ground)
+export const CONE1_HEIGHT = 2.5;
+export const CONE1_Y = 2.1;
+
+// ---- Population counts ------------------------------------------------------
+export const STAR = 700;          // starfield points
+export const LW = 50;             // lake wisps
+export const DUST = 350;          // ambient dust particles
+export const BW = 26;             // baby beacon wisps
+export const BSP = 70;            // win-burst particles
+export const BOG_TREES = 360;
+export const COVER_PROPS = 880;
+
+// LUL-195: wind silently decides scent outcomes; the ambient dust drift is the
+// only player-visible tell. Speed is tuned for legibility, not to match
+// lib/game/scent.ts's own wind-driven scent math.
+export const DUST_WIND_SPEED = 0.3;
+
+export const WARM = 0xffd9b0;   // the child's warm glow color
+// LUL-27: named so Fog Tide's "glow carries further" can scale it at runtime.
+export const BABY_LIGHT_DISTANCE = 28;
+
+// ---- Predators --------------------------------------------------------------
+// `nose` (LUL-23): scent-pickup radius multiplier. The bear gets the strongest
+// nose and the lion the weakest -- it hunts by stalking/sight -- so the three
+// species stay differentiated across both detection channels, not just sight.
+// `speed` below is a placeholder immediately overwritten (see RUN/CHASE_GAP) --
+// forest-engine.js's own PSPEC[k].speed assignment loop is what actually sets it.
+export const PSPEC = {
+  wolf: { body:0x565b63, sz:1.0, len:1.6, h:0.9,  mane:false, ears:true,  speed:8.5, detect:42, eye:0xadd8e6, rad:0.8, budget:6, nose:1.0 },
+  bear: { body:0x3d2c22, sz:1.8, len:2.0, h:1.45, mane:false, ears:false, speed:6.8, detect:30, eye:0xff5a2a, rad:1.5, budget:9, nose:1.4 },
+  lion: { body:0xc79a5b, sz:1.2, len:1.7, h:1.0,  mane:true,  ears:true,  speed:9.2, detect:48, eye:0xffcf3a, rad:1.0, budget:4, nose:0.75 },
+};
+// Size each animal's speed from its warning budget: from the moment it SEES you and you
+// flee at top speed, the fastest (lion) still gives >=4s, the bear >=9s. All are faster
+// than the player, so you can't simply outrun them -- hiding is the real escape.
+// RUN itself is NOT exported here -- see the note at the top of this file.
+export const CHASE_GAP = 28;
+
+// LUL-26: difficulty presets. `night` is the existing tuning verbatim (every
+// multiplier is a no-op) and stays default. `activePerSpecies` trims the roster
+// without touching PSPEC itself; `detectMul` scales the sight-detect radius;
+// `glowMul` scales the child's existing idle/carry glow values.
+export const DIFFICULTY_PRESETS = {
+  lantern:  { activePerSpecies: 1, detectMul: 0.7, glowMul: 1.6, startHunting: false, minimap: true },
+  night:    { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: false, minimap: true },
+  blackout: { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: true,  minimap: false },
+};
+
+// LUL-213: once a charge resolves (either way) the same predator can't
+// immediately roll for another. Long enough to read as "that's over," short
+// enough that a second charge later in the same chase is still in play.
+export const CHARGE_COOLDOWN = 10;
+
+// ---- Player feel -------------------------------------------------------------
+export const SENS = 0.0022;   // mouse-look sensitivity base
+
+// "always only when the user sees the target": the player's forward view cone
+// a predator's charge telegraph must be inside to start. ~130deg total FOV --
+// generous enough to not feel unfair, narrow enough that "behind you" really
+// means behind you.
+export const PLAYER_FOV_COS = Math.cos(65 * Math.PI/180);
+
+// ---- Audio --------------------------------------------------------------------
+export const SCALE = [523.25, 587.33, 659.25, 783.99, 880.0, 987.77];   // twinkle() cue notes
+
+// ---- Death cutscene -------------------------------------------------------------
+export const CUT_END = 3.7;   // death video length; reveal the loss text at the end

@@ -13,6 +13,7 @@ import {
   DEEPER_LUNGS_HOLD_SECONDS,
   DEEPER_LUNGS_COSTS,
   DEEPER_LUNGS_MAX_TIER,
+  MISSION_DEEPWATER_REWARD,
   type EmbersState,
 } from './economy.ts';
 
@@ -116,6 +117,28 @@ test('win depth is uncapped even at far distances: M2 Deepwater at 212m maxDist 
   assert.equal(p.depth, 53, 'win depth is never capped by objective distance');
   assert.equal(p.carried, 60);
   assert.equal(p.home, 25);
+});
+
+// ---- LUL-1258: M2 Deepwater's mission bonus ------------------------------
+
+test('computeWinPayout defaults missionBonus to zero -- an unrelated win pays nothing extra', () => {
+  const withBonus = computeWinPayout(212, 50);
+  assert.equal(withBonus.total, computeWinPayout(212, 50, 'lantern', 0).total);
+});
+
+test('completing M2 Deepwater and reaching home adds MISSION_DEEPWATER_REWARD on top of the win total', () => {
+  const base = computeWinPayout(212, 50);
+  const withMission = computeWinPayout(212, 50, 'lantern', MISSION_DEEPWATER_REWARD);
+  assert.equal(withMission.total, base.total + MISSION_DEEPWATER_REWARD);
+});
+
+test('the mission bonus is not payable on death -- computeDeathPayout has no missionBonus argument', () => {
+  // completing the mission then dying before reaching home forfeits the +12
+  // entirely: computeDeathPayout's signature has no fourth argument to pass
+  // it through, by design (S2's forfeiture rule).
+  const p = computeDeathPayout(212, 50, 78);
+  assert.equal(p.carried, 0);
+  assert.equal(p.home, 0);
 });
 
 // ---- Tier multipliers (LUL-1412) ----------------------------------------

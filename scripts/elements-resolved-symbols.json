@@ -1,13 +1,9 @@
 {
   "_comment": "LUL-682. docs/ELEMENTS.md cites these symbols by name only, with no engine line number -- the citation is shift-invariant by construction, so an engine edit that moves the symbol cannot create a merge conflict here. check-elements-citations.mjs verifies each one still resolves to exactly one non-ambiguous declaration in engine/forest-engine.js on every run; any entry that stops resolving is a hard failure, not baselined (there is no debt to grandfather -- every entry here was proven resolvable the day it was added). This list is populated by hand, deliberately: converting an existing `L<n>`-cited, unverifiable entry to a resolved one requires first proving it resolves (`--report`), then adding it here AND removing its line number in the doc, in the same PR. See the header of check-elements-citations.mjs.",
-  "generatedAgainst": "docs/ELEMENTS.md + engine/forest-engine.js @ release/next addca24 (LUL-682)",
-  "count": 38,
+  "generatedAgainst": "docs/ELEMENTS.md + engine/forest-engine.js @ release/next addca24 (LUL-682); +6 (LUL-1467)",
+  "count": 40,
   "symbols": [
-    "CHARGE_COOLDOWN",
-    "LIGHT_DIMMED",
-    "MIST_VEIL_FOG",
     "PSPEC",
-    "VEIL_RAMP",
     "applyLook",
     "applyVignette",
     "arriveHome",
@@ -35,10 +31,16 @@
     "placeBabyWisps",
     "placePredators",
     "pushState",
+    "restart",
+    "setEmbers",
     "setFog",
+    "staminaExertionCue",
     "tick",
     "toggleHidden",
     "triggerTouchInteract",
+    "triggerTouchJump",
+    "triggerTouchPause",
+    "triggerTouchToggleRun",
     "updatePredators",
     "updateWolfPack"
   ]
