@@ -98,6 +98,8 @@ export function biomeAt(x: number, z: number): number {
   return raw * fade;
 }
 
+export const BLACKOUT_MIN_RADIUS = 192; // lantern's spawn annulus tops out at half*0.8=192u at half=240 -- floor blackout at exactly that so it never spawns closer than lantern's hardest draw
+
 export const BOG_SPEED_MULTIPLIER = 0.5; // "shallow water at half walk speed", at bogginess 1.0
 export const BOG_NOISE_MULTIPLIER = 1.6; // splashing carries further than dry footsteps, at bogginess 1.0
 
@@ -145,7 +147,7 @@ export function pickHardBabyPosition(
   for (let i = 0; i < maxTries; i++) {
     x = lo + rng() * (hi - lo);
     z = lo + rng() * (hi - lo);
-    if (biomeAt(x, z) > 0 && clearOfLandmarks(x, z, landmarks, pad)) return { x, z };
+    if (Math.hypot(x, z) >= BLACKOUT_MIN_RADIUS && biomeAt(x, z) > 0 && clearOfLandmarks(x, z, landmarks, pad)) return { x, z };
   }
   return { x, z };
 }

@@ -73,7 +73,7 @@ export function computeWinPayout(
   tier: DifficultyTier = 'lantern',
   missionBonus = 0,
 ): RunPayout {
-  const depth = computeDepth(maxDistFromHome);
+  const depth = Math.min(computeDepth(maxDistFromHome), 62); // caps blackout's 2.0x win multiplier at 306E (30% of the 1,020E Deeper Lungs tree); inert for lantern/night, whose max depth is 48
   const survival = computeSurvival(survivedSeconds);
   const total = Math.round((depth + survival + CARRIED + HOME + missionBonus) * TIER_MULTIPLIERS[tier].win);
   return { depth, survival, carried: CARRIED, home: HOME, total };

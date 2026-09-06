@@ -112,11 +112,24 @@ test('blackout regression test: bogward death at 200m far, child at 220m objecti
   assert.equal(computeDepth(200), 50, 'but player only reached 200m = depth 50, so that is the cap');
 });
 
-test('win depth is uncapped even at far distances: M2 Deepwater at 212m maxDist keeps depth 53', () => {
+test('win depth is unaffected by objective distance below the depth-62 ceiling: M2 Deepwater at 212m maxDist keeps depth 53', () => {
   const p = computeWinPayout(212, 50);
-  assert.equal(p.depth, 53, 'win depth is never capped by objective distance');
+  assert.equal(p.depth, 53, 'win depth is not capped by objective distance (only by the flat 62 ceiling, see below)');
   assert.equal(p.carried, 60);
   assert.equal(p.home, 25);
+});
+
+test('win depth caps at 62 past that distance -- this is the blackout farm fix (LUL-1792)', () => {
+  const p = computeWinPayout(1000, 50);
+  assert.equal(p.depth, 62, 'depth must not scale past the cap');
+  assert.equal(computeDepth(1000), 250, 'uncapped depth would have been 250');
+});
+
+test('blackout win at the depth cap pays exactly 306E, 30% of the 1,020E Deeper Lungs tree', () => {
+  const p = computeWinPayout(1000, 120, 'blackout');
+  assert.equal(p.depth, 62);
+  assert.equal(p.survival, 6);
+  assert.equal(p.total, 306);
 });
 
 // ---- LUL-1258: M2 Deepwater's mission bonus ------------------------------
