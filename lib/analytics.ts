@@ -22,7 +22,7 @@ export type AnalyticsEventInput =
   // `balance` is the running total after it's applied.
   | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number }
   | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number }
-  | { event: 'session_length'; duration_ms: number; reached_gameplay: boolean }
+  | { event: 'session_length'; duration_ms: number; reached_gameplay: boolean; session_id: string }
   | { event: 'feature_engagement'; feature: string; action: string };
 
 export type AnalyticsEvent = AnalyticsEventInput & {
@@ -102,6 +102,17 @@ export function track(input: AnalyticsEventInput): void {
 
 const pageLoadTs = Date.now();
 
+let cachedSessionId: string | null = null;
+/** Stable for one page load. Lets the aggregator collapse the N prefix rows
+ *  one session emits (one per tab-away) back into a single session. */
+function getSessionId(): string {
+  if (cachedSessionId == null) {
+    cachedSessionId =
+      typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : fallbackUuidV4();
+  }
+  return cachedSessionId;
+}
+
 /**
  * Fires `session_length` on `pagehide`/`visibilitychange:hidden`. Call once
  * from a client-only mount point; returns a cleanup function. The eventual
@@ -115,7 +126,12 @@ export function startSessionTracking(): () => void {
   if (typeof window === 'undefined') return () => {};
 
   const fire = () => {
-    track({ event: 'session_length', duration_ms: Date.now() - pageLoadTs, reached_gameplay: reachedGameplay });
+    track({
+      event: 'session_length',
+      duration_ms: Date.now() - pageLoadTs,
+      reached_gameplay: reachedGameplay,
+      session_id: getSessionId(),
+    });
   };
   const onVisibility = () => {
     if (document.visibilityState === 'hidden') fire();

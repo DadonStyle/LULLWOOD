@@ -16,7 +16,9 @@ export interface FunnelStep {
 }
 
 export function computeFunnel(events: RawEvent[]): FunnelStep[] {
-  const counts = FUNNEL_STEPS.map((name) => events.filter((e) => e.event === name).length);
+  const counts = FUNNEL_STEPS.map(
+    (name) => new Set(events.filter((e) => e.event === name).map((e) => e.anon_id)).size,
+  );
   const first = counts[0];
   return FUNNEL_STEPS.map((name, i) => ({
     event: name,
@@ -135,15 +137,36 @@ function computeReturnRate(events: RawEvent[], dayOffset: number): number | null
 
 export function computeSessions(events: RawEvent[]): SessionsResult {
   const sessionEvents = events.filter((e) => e.event === 'session_length');
-  const durations = sessionEvents
-    .map((e) => numberProp(e, 'duration_ms'))
+  const bySession = new Map<string, { duration: number | null; reached: boolean }>();
+  for (const e of sessionEvents) {
+    // Legacy rows (emitted before LUL-1430) carry no session_id. Give each its
+    // own key rather than collapsing a player's history into one session -- we
+    // do not retroactively invent a grouping the emitter never recorded.
+    const sid =
+      typeof e.session_id === 'string' && e.session_id.length > 0
+        ? e.session_id
+        : `legacy:${e.anon_id}:${e.ts}`;
+    const d = numberProp(e, 'duration_ms');
+    const prev = bySession.get(sid);
+    if (prev === undefined) {
+      bySession.set(sid, { duration: d, reached: e.reached_gameplay === true });
+    } else {
+      bySession.set(sid, {
+        duration: d === null ? prev.duration : prev.duration === null ? d : Math.max(prev.duration, d),
+        reached: prev.reached || e.reached_gameplay === true,
+      });
+    }
+  }
+  const rows = [...bySession.values()];
+  const durations = rows
+    .map((r) => r.duration)
     .filter((n): n is number => n !== null)
     .sort((a, b) => a - b);
-  const reachedCount = sessionEvents.filter((e) => e.reached_gameplay === true).length;
+  const reachedCount = rows.filter((r) => r.reached).length;
 
   return {
-    sessionCount: sessionEvents.length,
-    reachedGameplayRatePct: sessionEvents.length === 0 ? null : (reachedCount / sessionEvents.length) * 100,
+    sessionCount: bySession.size,
+    reachedGameplayRatePct: bySession.size === 0 ? null : (reachedCount / bySession.size) * 100,
     durationMs: {
       p50: percentile(durations, 50),
       p90: percentile(durations, 90),
