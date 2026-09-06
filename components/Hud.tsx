@@ -36,6 +36,10 @@ export interface EngineHudState {
   winRevealed: boolean;
   deathVisible: boolean;
   deathKind: string;
+  // LUL-1194: what actually killed the player (dodge miss / forced hunt / run down
+  // mid-chase) -- the death screen names this, not deathKind's species; deathKind
+  // stays around for the #deathKind test hook (e2e/*.spec.ts key on it directly).
+  deathCause: 'charge' | 'hunt' | 'chase';
   deathCarrying: boolean;   // LUL-1438: show carry-death clause on first carry death only
   lossRevealed: boolean;
   survivedSeconds: number;
@@ -148,6 +152,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   winRevealed: false,
   deathVisible: false,
   deathKind: 'wolf',
+  deathCause: 'chase',
   deathCarrying: false,
   lossRevealed: false,
   survivedSeconds: 0,
@@ -187,6 +192,16 @@ export const INITIAL_HUD_STATE: EngineHudState = {
 // M1/M3/M4/M5 extends this map, not the render logic below.
 const MISSION_NAMES: Record<MissionKind, string> = {
   deepwater: 'Deepwater',
+};
+
+// LUL-1194: the death screen names the cause, not the species -- a death the
+// player can name produces "one more run," one they can't produces a closed
+// tab. Keyed on engine/forest-engine.js's triggerDeath() call sites (charge
+// dodge miss, the 30s force-hunt escalation, a normal chase run-down).
+const DEATH_CAUSE_TEXT: Record<EngineHudState['deathCause'], string> = {
+  charge: "you didn't clear its charge in time",
+  hunt: 'you went quiet too long, and it came looking',
+  chase: 'it ran you down before you could break away',
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -371,6 +386,23 @@ export default function Hud({
   // LUL-26: difficulty + accessibility settings panel.
   const [settingsOpen, setSettingsOpen] = useState(false);
   const captionVisible = useCaptionToast(state.captionsOn, state.captionId);
+
+  // LUL-1194: the keyboard is otherwise dead on end screens (isPlaying() gates
+  // every keydown branch in the engine on !won && !dead) -- focusing the
+  // restart button once the screen actually reveals gives Enter/Space a path
+  // back in for free via the browser's native focused-button activation.
+  // Deliberately keyed on *Revealed, not *Visible: focusing early (while the
+  // death screen is still opacity:0 during the unskippable first-death
+  // cutscene) would let a stray Enter restart through native button
+  // activation, bypassing the cutscene entirely.
+  const winRestartRef = useRef<HTMLButtonElement>(null);
+  const deathRestartRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (state.winRevealed) winRestartRef.current?.focus();
+  }, [state.winRevealed]);
+  useEffect(() => {
+    if (state.lossRevealed) deathRestartRef.current?.focus();
+  }, [state.lossRevealed]);
 
   return (
     <>
@@ -620,7 +652,7 @@ export default function Hud({
             <h1>YOU WON</h1>
             <p>the child is safe — you carried them home through the Lullwood</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
-            <button className="restartBtn" onClick={() => actions?.restart()}>
+            <button ref={winRestartRef} className="restartBtn" onClick={() => actions?.restart()}>
               Play again
             </button>
             <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
@@ -633,11 +665,16 @@ export default function Hud({
           <div id="deathText" style={{ opacity: state.lossRevealed ? 1 : 0 }}>
             <h1>YOU LOSE</h1>
             <p>
-              a <span id="deathKind">{state.deathKind}</span> caught you in the dark
+              {/* LUL-1194: #deathKind carries species for the existing e2e hooks
+                  (e2e/*.spec.ts assert on it directly) but is no longer the copy
+                  shown to the player -- that's DEATH_CAUSE_TEXT below, keyed on
+                  the cause, not the animal. */}
+              <span id="deathKind" style={{ display: 'none' }}>{state.deathKind}</span>
+              {DEATH_CAUSE_TEXT[state.deathCause]}
               {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
-            <button className="restartBtn" onClick={() => actions?.restart()}>
+            <button ref={deathRestartRef} className="restartBtn" onClick={() => actions?.restart()}>
               Try again
             </button>
             <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
