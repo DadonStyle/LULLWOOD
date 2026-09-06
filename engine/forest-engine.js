@@ -31,6 +31,7 @@ import {
   CHARGE_TRIGGER_MIN,
   CHARGE_TRIGGER_MAX,
 } from '@/lib/game/charge';
+import { startSightLock, stepSightLock, SIGHT_TELL_TIME } from '@/lib/game/sightLock';
 import {
   clampDt,
   isScentDetected,
@@ -1048,7 +1049,7 @@ function makePredator(kind){
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
-    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false };
+    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false, sightLock:null };
 }
 const predators = [];
 // `speciesIdx` (0..2 within its species) is what LUL-26's `activePerSpecies`
@@ -1390,6 +1391,18 @@ function updatePredators(dt, noiseRadius){
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
+    } else if(p.sightLock){
+      // LUL-1482: mid carry-only sight-acquisition tell (lib/game/sightLock.ts).
+      // Frozen, facing the player -- reuses the alert>0 branch's own rear-up
+      // animation for free (`alerting = p.alert > 0`, :1548) by mirroring the
+      // tell's remaining time into p.alert every frame; there is no second
+      // animation to build.
+      facePlayer = true; speed = 0;
+      const stillVisible = canSee(p, dist);
+      p.sightLock = stepSightLock(p.sightLock, dt, stillVisible);
+      p.alert = p.sightLock.phase === 'spotting' ? SIGHT_TELL_TIME - p.sightLock.t : 0;
+      if(p.sightLock.phase === 'locked'){ p.sightLock = null; spotOnto(p, { skipAlert: true }); }
+      else if(p.sightLock.phase === 'cancelled'){ p.sightLock = null; }
     } else if(p.state === 'roam'){
       // LUL-437: a predator lands in `roam` right on top of the scent point
       // that pulled it into investigate/flank in the first place (that's why
@@ -1400,7 +1413,10 @@ function updatePredators(dt, noiseRadius){
       // Wandering (the `else` block below) still runs during the immunity --
       // only re-detection is suppressed, so it isn't frozen in place.
       const sniffImmune = isSniffImmune(p.sniffImmuneT, hidden);
-      if(!sniffImmune && canSee(p, dist)){ spotOnto(p); }
+      if(!sniffImmune && canSee(p, dist)){
+        if(carrying){ p.sightLock = startSightLock(); facePlayer = true; }
+        else spotOnto(p);
+      }
       else if(!sniffImmune && checkScent(p)){ scentOnto(p); }
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
       else {
@@ -1495,7 +1511,10 @@ function updatePredators(dt, noiseRadius){
       // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
       // still work normally -- a flanker that stumbles onto the player still
       // spots/scents them -- this only replaces what it does with *no* signal.
-      if(canSee(p, dist)){ spotOnto(p); }
+      if(canSee(p, dist)){
+        if(carrying){ p.sightLock = startSightLock(); facePlayer = true; }
+        else spotOnto(p);
+      }
       else if(checkScent(p)){ scentOnto(p); }
       else if(p.inv === 'hold'){
         // holding investigate *at the flank point*, deliberately not gated on
@@ -1626,9 +1645,16 @@ function updatePredators(dt, noiseRadius){
     p.g.position.x = p.x; p.g.position.z = p.z;
   }
 }
-// lock onto the player: stinger, roar, screen flash, and a rear-up alert beat
-function spotOnto(p){
-  p.state='chase'; p.callTimer=rnd(2.6,4.2); p.alert = 0.55;
+// lock onto the player: stinger, roar, screen flash, and a rear-up alert beat.
+// `opts.skipAlert` (LUL-1482): true when this call is resolving a completed
+// carry-only pre-lock tell (see the new p.sightLock branch in
+// updatePredators()) -- the freeze+rear-up already played during the tell,
+// so re-arming p.alert here would be a second, redundant freeze immediately
+// after the first. Every other call site (outbound sight, scent, the 30s
+// force-hunt escalation) omits opts and keeps today's behavior exactly.
+function spotOnto(p, opts){
+  const skipAlert = !!(opts && opts.skipAlert);
+  p.state='chase'; p.callTimer=rnd(2.6,4.2); if(!skipAlert) p.alert = 0.55;
   if(!p.spotted){ p.spotted=true; }
   predatorCall(p.kind, false, p); spotSting(); spotFlash = 1;
 }
@@ -2553,7 +2579,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       }
       if(!clear) continue;
       p.x = px; p.z = pz;
-      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
       return idx;
@@ -2588,7 +2614,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       }
       if(!clear) continue;
       p.x = px; p.z = pz;
-      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
       return { idx, kind, playerX: qx, playerZ: qz };
@@ -2606,7 +2632,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const p = predators[idx];
     if(!p) return null;
     p.state = 'roam'; p.spotted = false; p.scentLock = 0; p.scentCalls = 0;
-    p.hunt = false; p.alert = 0; p.sniffsLeft = 0;
+    p.hunt = false; p.alert = 0; p.sniffsLeft = 0; p.sightLock = null;
     return { x: p.x, z: p.z };
   };
 
@@ -2660,7 +2686,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const dist = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
     // LUL-659: x/z added so a caller can trace lateral movement around a cover
     // prop (e.g. avoidDir() steering), not just closing distance.
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), x: p.x, z: p.z };
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), x: p.x, z: p.z, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
@@ -2678,7 +2704,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const dist = (CHARGE_TRIGGER_MIN + CHARGE_TRIGGER_MAX) / 2;
     player.x = 0; player.z = 0; player.yaw = -Math.PI/2;   // forward = (-sin(yaw), -cos(yaw)) = (+1, 0), faces the predator below
     p.x = player.x + dist; p.z = player.z;
-    p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.hunt = false;
+    p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.hunt = false; p.sightLock = null;
     p.state = 'chase'; p.scentLock = 0; p.chargeCooldown = 0;
     p.charge = startCharge(dist);
     p.chargeDirX = -1; p.chargeDirZ = 0;
@@ -2779,7 +2805,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       const bx = c.x + lxB*co + lzB*si, bz = c.z - lxB*si + lzB*co;
       if(blockedR(ax, az, p.rad) || blocked(bx, bz)) continue;
       p.x = ax; p.z = az;
-      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       // A charge in flight (or freshly cooled down and re-triggerable) resolves
       // on its own fixed 1s timer (stepCharge()'s 'caught' phase) with zero
       // distance/LOS check at all -- by design (LUL-213: "dodgeable because it
