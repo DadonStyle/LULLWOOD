@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3778 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3357, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3794 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3362, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -817,7 +817,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 - **Engine-owned DOM** (`document.getElementById(...)`, created by
   `components/GameCanvas.tsx`, mutated directly by the engine): `#vignette`,
-  `#spotFlash`, `#flash`, `#minimap` (canvas, drawn every frame by
+  `#spotFlash`, `#bearingPulse`, `#flash`, `#minimap` (canvas, drawn every frame by
   `drawMinimap()`/`drawMinimapStatic()`), `#hint`, `#pausePrompt`,
   `#deathVideo`.
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
@@ -840,6 +840,20 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   read-only `EngineHudState` fields (`windX`/`windZ`), pushed once per map
   generation (not per-frame) — the only HUD element driven by map-constant
   rather than per-frame or per-event engine state.
+
+LUL-1308 adds `#bearingPulse`, a screen-edge glow answering "which side is the nearest
+approaching predator on" for players who can't rely on the caption toggle (LUL-26) or
+the direction-free `#spotFlash`. Driven off the same `pianoTimer`-gated approach-cue
+block that fires `pianoNote()` (`updatePredators`'s threat-metrics scan): every note,
+`bearingOf(nearP, player, ...)` (`lib/game/bearing.ts`) resolves a side, and unless it's
+`'ahead'` (the player's own view already covers that case) the engine sets
+`bearingPulseSide`/`bearingPulseT` and the element's class/opacity follow. The same
+`bearingOf()` call also feeds `pianoNote()`'s new `pan` argument (a single
+`StereoPannerNode` per note, `lib/game/bearing.ts`'s `bearingPan()`), and
+`predatorCall()`'s volume now falls off with distance (`callVolumeMul()`, same module,
+folded in per the CEO's LUL-1282 addendum) instead of the old binary `big ? 1.0 : 0.6`.
+Not present: any compass, minimap dot, or degrees readout — deliberately rejected in the
+design doc as turning horror into radar.
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends

@@ -374,6 +374,16 @@ const OVERLAY_STYLE = `
   /* death: video cutscene + loss text */
   #spotFlash { position: fixed; inset: 0; z-index: 12; pointer-events: none; opacity: 0;
     background: radial-gradient(circle at 50% 45%, rgba(255,20,20,0) 40%, rgba(200,0,0,0.5) 100%); }
+  /* LUL-1308: off-screen predator bearing. z-index one below spotFlash so a
+     real spot event (the more urgent, full-screen signal) reads on top if both
+     are active at once. Class name ('left'/'right'/'behind') set by the engine
+     off bearingOf(nearP,...).side; opacity is the only per-frame mutation. */
+  #bearingPulse { position: fixed; inset: 0; z-index: 11; pointer-events: none; opacity: 0; }
+  #bearingPulse.left { background: linear-gradient(to right, rgba(255,60,40,0.55) 0%, rgba(255,60,40,0) 22%); }
+  #bearingPulse.right { background: linear-gradient(to left, rgba(255,60,40,0.55) 0%, rgba(255,60,40,0) 22%); }
+  #bearingPulse.behind { background:
+    linear-gradient(to right, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%),
+    linear-gradient(to left, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%); }
   #flash { position: fixed; inset: 0; z-index: 23; pointer-events: none; opacity: 0; background: #fff; }
   #deathVideo { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
     z-index: 24; display: none; background: #000; pointer-events: none; }
@@ -398,6 +408,7 @@ function overlayMarkup(mobile: boolean) {
   return `
 <div id="vignette"></div>
 <div id="spotFlash"></div>
+<div id="bearingPulse"></div>
 <div id="flash"></div>
 <canvas id="minimap" width="160" height="160"></canvas>
 <div id="hint">${hint}</div>
