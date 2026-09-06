@@ -36,6 +36,7 @@ export interface EngineHudState {
   winRevealed: boolean;
   deathVisible: boolean;
   deathKind: string;
+  deathCarrying: boolean;   // LUL-1438: show carry-death clause on first carry death only
   lossRevealed: boolean;
   survivedSeconds: number;
   pace: number;
@@ -140,6 +141,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   winRevealed: false,
   deathVisible: false,
   deathKind: 'wolf',
+  deathCarrying: false,
   lossRevealed: false,
   survivedSeconds: 0,
   pace: 6,
@@ -608,6 +610,7 @@ export default function Hud({
             <h1>YOU LOSE</h1>
             <p>
               a <span id="deathKind">{state.deathKind}</span> caught you in the dark
+              {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
             <button className="restartBtn" onClick={() => actions?.restart()}>
