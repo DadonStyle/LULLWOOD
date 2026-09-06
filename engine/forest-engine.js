@@ -1697,6 +1697,7 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false;   // LUL-1258: recomputed every tick alongside canPickup, below
+let carryDeathExplained = false;   // LUL-1438: first carry death per page load
 // LUL-1043: Embers. `maxDistFromHome` is the run's displacement high-water
 // mark (not `dist` below, which is path length) -- reset in enter(), read by
 // arriveHome()/triggerDeath() for the payout's `depth` term. `embers` is the
@@ -3035,8 +3036,10 @@ function triggerDeath(kind){
   // false here, so a charge/telegraph in flight at the exact moment of death
   // would otherwise render on top of the death screen forever.
   activeCharges = 0;
+  const deathCarrying = carrying && !carryDeathExplained;
+  if(deathCarrying) carryDeathExplained = true;
   pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false });
+    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying });
   track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying });
   playDeathVideo();
   deathAudio(kind);
