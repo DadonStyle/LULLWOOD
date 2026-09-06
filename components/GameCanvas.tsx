@@ -90,15 +90,29 @@ const OVERLAY_STYLE = `
     /* LUL-69: ~44px is the standard (WCAG 2.5.5 / Apple HIG / Material)
        minimum touch-target side -- desktop's 6px/12px padding at 12px font
        sits well under that, and the founder's own complaint was "HUD sized
-       for desktop". Bumping padding/font grows the box height comfortably
-       past 44px without a hardcoded min-height fighting the button's own
-       content. */
-    #panel button { padding: 13px 16px; font-size: 14px; }
+       for desktop". Bumping padding/font was meant to grow the box height
+       comfortably past 44px without a hardcoded min-height fighting the
+       button's own content -- but LUL-1088 measured #settingsBtn (a #panel
+       button) at 78x43 on a real Pixel 5, one pixel under the claim above.
+       Padding/font growth alone is text-metric-dependent and not reliable;
+       min-height is the actual guarantee. */
+    #panel button { padding: 13px 16px; font-size: 14px; min-height: 48px; }
     #panel label, #panel span { font-size: 13px; }
     #panel input[type="range"] { width: 64px; }
+    /* LUL-1088: the settings X close button measured 28x26 on a real Pixel 5. */
+    #settingsHeader button { min-width: 44px; min-height: 44px; }
     /* LUL-529: same 44px rationale as #panel button above -- 10px/24px at
        15px font sits well under it, and this is the only tap a player has on
-       the win/death screen. */
+       the win/death screen.
+       LUL-1088 CASCADE-ORDER BUG: this override has always been dead. The
+       unconditional .restartBtn rule near the bottom of this stylesheet
+       (search "win screen") has identical selector specificity and comes
+       LATER in source order, so *it* wins here too, even inside this media
+       query -- padding/font-size below never actually apply on mobile. The
+       fix lives on that later rule (a min-height: 48px added there, since
+       min-height is the one property this override doesn't declare and so
+       is not itself shadowed) rather than here. Do not "clean up" by
+       reordering these two rules without re-verifying which one wins. */
     .restartBtn { padding: 15px 24px; font-size: 16px; }
     /* LUL-1043: same 44px rationale -- the Deeper Lungs buy button. */
     .buyBtn { padding: 13px 18px; font-size: 14px; }
@@ -157,8 +171,33 @@ const OVERLAY_STYLE = `
   #settingsPanel .sliderRow { justify-content: space-between; }
   #settingsPanel .sliderRow input[type="range"] { flex: 1; accent-color: #7fa6dd; cursor: pointer; }
   #settingsPanel .sliderRow span { min-width: 40px; text-align: right; opacity: 0.7; }
-  #settingsPanel input[type="checkbox"], #settingsPanel input[type="radio"] { accent-color: #7fa6dd; cursor: pointer; }
+  /* LUL-1088: the checkbox/radio itself only needs to be visually >=24px --
+     pointer-events: none hands every click to the wrapping <label class="radioRow">
+     instead (a label always forwards a click to its associated control, with
+     or without pointer-events on that control), so the ROW below is the real
+     tap target the touch-target audit measures, not this glyph. */
+  #settingsPanel input[type="checkbox"], #settingsPanel input[type="radio"] {
+    accent-color: #7fa6dd; cursor: pointer; width: 24px; height: 24px; pointer-events: none; }
+  /* LUL-1088: min-height 48px makes the row itself the >=44px touch target
+     (WCAG 2.5.5 / Apple HIG / Material, same rationale as #panel button's
+     LUL-69 comment above); cursor: pointer marks it as the real tappable
+     surface now that the checkbox/radio glyph inside it is pointer-events: none. */
+  #settingsPanel .radioRow { min-height: 48px; cursor: pointer; }
   #settingsPanel :focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
+
+  /* LUL-1088: a landscape phone (e.g. Pixel 5 at 851x393) is short, not
+     narrow -- #settingsPanel's own max-height: calc(100dvh - 48px) already
+     caps it around 345px there, well under the two fieldsets' stacked height
+     once every row above is a >=48px touch target. Laying the two fieldsets
+     (Difficulty, Accessibility) out side by side instead of stacked is what
+     actually buys back the vertical space; width is untouched (still
+     min(420px, 100vw - 48px)), so this is purely a height-triggered query,
+     independent of the width/pointer mobile query above. */
+  @media (max-height: 500px) {
+    #settingsPanel { display: grid; grid-template-columns: 1fr 1fr; column-gap: 14px; align-content: start; }
+    #settingsHeader { grid-column: 1 / -1; }
+    #settingsPanel fieldset { margin: 0; }
+  }
 
   /* LUL-26: closed captions for predator calls -- every sound in this game is
      synthesized WebAudio with no other track, so this is the sole warning
@@ -255,7 +294,15 @@ const OVERLAY_STYLE = `
   #winText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
   .emberGain { color: #ffdca8; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
-    background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px; }
+    background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px;
+    /* LUL-1088 CASCADE-ORDER BUG GUARD: the mobile-only .restartBtn override up
+       in the @media block sets padding/font-size but this later, unconditional
+       rule has identical specificity and wins for those properties on every
+       viewport, including mobile -- see the comment on that override. min-height
+       is the one property that override doesn't set, so it survives regardless
+       of source order and is what actually keeps this button >=44px tall on a
+       phone. Keep this even if the two rules are ever reordered. */
+    min-height: 48px; }
   .restartBtn:hover { background: #f6d3ac; }
   .restartBtn:focus-visible { outline: 2px solid #ffe6c8; outline-offset: 3px; }
 
