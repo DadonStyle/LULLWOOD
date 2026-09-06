@@ -41,12 +41,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3676-3680, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  `triggerTouchToggleRun()` (L3759-3763, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3653-3659, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
+  `triggerTouchJump()` (L3736-3742, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
   target on mobile, wired to the same `triggerTouchJump()` — it used to
@@ -55,7 +55,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3665-3669, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
+  (L3748-3752, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3638 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3218, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3721 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3301, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -268,6 +268,13 @@ one geometry builder (`makePredator()`), differentiated by the
   behind") so the player knows *which* channel caught them; callTimer is also
   initialised on noise-catch so the first roar in the following chase is
   correctly delayed (LUL-1610).
+- **Carrying the child only:** sight acquisition no longer locks into a chase
+  on the same frame `canSee()` turns true. A `SIGHT_TELL_TIME` (0.35s,
+  `lib/game/sightLock.ts`) freeze-and-face-the-player tell plays first,
+  reusing the existing alert rear-up animation; break line of sight or leave
+  range before it elapses and the tell cancels with no roar, no flash, no
+  state change (LUL-1482). Scent and noise acquisition are unaffected in
+  every state, carrying or not.
 - Chase, losing/regaining track via `investigate`→`sniff`→`back` (LUL-22,
   explicitly "not to be retuned").
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
@@ -842,7 +849,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L3054-3058 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  and synced to `hudState` via `setEmbers()` (L3120-3124 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
@@ -894,12 +901,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1861-1869): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()` L1921-1929): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3243): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L3344): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
-- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2995, alongside `staminaLowCuePlayed`).
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L3055-3070, alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
 - Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.
@@ -1163,35 +1170,36 @@ registry's own merge.
 
 ---
 
-## Pending: the Bog (LUL-25, PR #58 — not yet on `main`)
+## The Bog (LUL-25 / LUL-1483) — live on `main`
 
-Sourced from branch `lul-25-bog-map-landmarks` (head `86be9fc2`) and
-`lib/game/bog.ts` on that branch, **not** `main` — do not treat this section
-as live until the PR merges, and fold it into the tables above (not append a
-second matrix) the same day it does.
+`isInBog()`/the fixed z-band this section used to describe are gone
+(LUL-1483). The bog is now a biome distributed by 2D value noise over the
+whole `[-half, half]` square (`biomeAt(x, z)`, `lib/game/bog.ts`), not a
+directional strip past the forest's old +z edge — the world is square again,
+not a 240×360 rectangle.
 
 **New elements it adds**: `BogTree` (90-instance thinner-cover twin of Tree,
 own `bogTreeData` array, merged into the shared `grid` for collision),
 `Reed` (tall `coverData` kind `'reed'`, LOS-blocking like Rock/Log/Bramble
 but **not** in `HIDE_KINDS` — not a hiding spot), four fixed `Landmark`
 groups (fire tower, stone marker, drowned car, lightning-split oak — static,
-no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`), and a
-`Bog` terrain band itself (`z > half && z <= zMax`, `isInBog()` in
-`lib/game/bog.ts`) that halves player walk speed and multiplies noise
-radius 1.6× while standing in it (`bogSpeedMultiplier`/`bogNoiseMultiplier`).
+no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`; `oak`
+and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit
+inside an actual bog patch now that the bog is no longer a fixed band), and
+the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
+boolean, so a patch edge scales speed/noise in rather than stepping. It
+scales player/predator walk speed down and noise radius up while standing in
+it (`bogSpeedMultiplier`/`bogNoiseMultiplier`, applied to both the player,
+`engine/forest-engine.js`'s movement block, and predators, the terrain
+multiplier in `updatePredators()`), and is kept fully dry around
+`CONFIG.home`/spawn regardless of the noise field (`HOME_CLEAR_RADIUS`/
+`HOME_FADE_RADIUS` in `lib/game/bog.ts`).
 
-**What's already known and citable from that branch** (so this isn't a
-guess): reeds reuse the exact same `coverMeshes`/`coverGrid`/`hasLOS()`
-machinery as Rock/Log/Bramble, with zero changes to either function; bog
-trees reuse `canopyRadiusAtEye()` unchanged; the minimap is deliberately
-**not** extended to cover the bog (wiki `game/lul25-status`: "the bog is off
-[the minimap's] edge on purpose," reasoned against genre wayfinding
-precedent, not a shortcut). All of this predicts the same interaction shapes
+**What's already known and citable**: reeds reuse the exact same
+`coverMeshes`/`coverGrid`/`hasLOS()` machinery as Rock/Log/Bramble, with zero
+changes to either function; bog trees reuse `canopyRadiusAtEye()` unchanged;
+the minimap is deliberately **not** extended to cover the bog specially (wiki
+`game/lul25-status`; LUL-1093's clamp already scales correctly for a square
+world, untouched by LUL-1483). This predicts the same interaction shapes
 already in the matrix above (Tree-shaped collision, Rock/Log/Bramble-shaped
-LOS-only cover) — the merge-day update should mostly be new rows that mirror
-existing ones, not new logic to re-derive.
-
-**Not re-verified here**: PR #58's own review (LUL-371, Code Reviewer,
-`REVIEW: APPROVED`) already re-derived its determinism claims independently;
-this section only describes shape for forward-planning, it is not a second
-review pass.
+LOS-only cover).

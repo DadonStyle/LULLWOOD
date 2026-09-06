@@ -16,10 +16,15 @@ export interface MissionTarget {
 }
 
 export const MISSION_POOL: readonly MissionTarget[] = [
-  // Coordinates match LANDMARKS' drownedCar entry (engine/tuning.ts) --
-  // do not hand-copy the numbers again if that entry ever moves; import LANDMARKS
-  // in the engine call site instead (see S3).
-  { kind: 'deepwater', x: 55, z: 205, zoneRadius: 20, interactRadius: 4 },
+  // LUL-1483: coordinates match LANDMARKS' relocated drownedCar entry
+  // (engine/tuning.ts) -- the old (55, 205) sat outside the new
+  // [-120,120] square. Still a hand-copy, not an import (see the
+  // pre-existing TODO above this line) -- fixing that structurally is out
+  // of scope for this ticket; if it drifts again, the "lake and other
+  // landmarks are not accidentally boggy" style test in bog.test.ts is not
+  // where you'd catch it. Consider a follow-up ticket to make mission.ts
+  // import LANDMARKS directly instead of re-stating its coordinates.
+  { kind: 'deepwater', x: -95, z: 46, zoneRadius: 20, interactRadius: 4 },
 ];
 
 export interface MissionState {
