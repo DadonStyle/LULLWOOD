@@ -86,7 +86,7 @@ jobs:
           echo "::notice::ahead_by=$ahead event=$EVENT should_cut=$should_cut"
 
   combined-suite:
-    name: build the merge tree and run the full suite (shard ${{ matrix.shard }}/4)
+    name: build the merge tree and run the full suite (shard ${{ matrix.shard }}/6)
     needs: decide
     if: needs.decide.outputs.should_cut == 'true'
     runs-on: ubuntu-latest
@@ -102,11 +102,14 @@ jobs:
       # LUL-554 diagnosed at smaller scale on 2026-08-20. Sharding across separate
       # runners (each its own CPU, its own fresh browser process) fixes the
       # contention without touching playwright.config.ts's workers:1 -- local and
-      # per-PR runs (which don't use this workflow) are unaffected. 4-way lands
-      # each shard near the suite's original single-project cost; revisit if the
-      # suite grows enough to blow that budget again.
+      # per-PR runs (which don't use this workflow) are unaffected.
+      #
+      # LUL-1702: widened 4->6 after the 4-way split (sized against a smaller
+      # suite) started running 32-47min/shard against a ~26min budget, with
+      # widespread unrelated-spec timeouts. 6-way gives each shard more margin
+      # against the same per-test cost without needing a bigger/pricier runner.
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -169,8 +172,27 @@ jobs:
       - name: install playwright browsers + system deps
         run: npx playwright install --with-deps chromium
 
-      - name: playwright smoke suite (shard ${{ matrix.shard }}/4)
-        run: npx playwright test --shard=${{ matrix.shard }}/4
+      # LUL-1702: this job has no `container:` key -- it's a bare VM runner, not
+      # a Docker container -- so /dev/shm should default to ~50% of RAM (a few
+      # GB), not the 64MB Docker-container default LUL-1110's `--disable-dev-shm-
+      # usage` fix (playwright.config.ts) was reasoning from. That assumption was
+      # never actually measured on this runner. Logging it here costs nothing and
+      # gives the next incident real numbers instead of another guess.
+      - name: log runner resources (shm/mem) for CI-sizing diagnosis
+        run: |
+          echo "--- /dev/shm ---"; df -h /dev/shm
+          echo "--- memory ---"; free -h
+          echo "--- cpu ---"; nproc
+
+      # LUL-1702: `replay` (e2e/replay/**, always-on video recording) was
+      # running here on every shard even though its own project comment in
+      # playwright.config.ts says it's "run by hand ... never as part of the
+      # required checks" -- there was no --project filter to actually enforce
+      # that, so the gated suite was silently paying for video encoding it was
+      # never meant to run. Restricting to the two projects this workflow
+      # actually intends (chromium, mobile) cuts real work off every shard.
+      - name: playwright smoke suite (shard ${{ matrix.shard }}/6)
+        run: npx playwright test --shard=${{ matrix.shard }}/6 --project=chromium --project=mobile
 
       - name: upload playwright test results
         if: always()
