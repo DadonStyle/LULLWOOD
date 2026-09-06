@@ -126,6 +126,13 @@ import {
   TIME_OF_DAY_VISUALS,
   TIME_OF_DAY_AUDIO,
 } from '@/lib/game/timeOfDay';
+import {
+  CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
+  MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
+  STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
+  BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
+  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END,
+} from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
 // hex/CSS light and material color as sRGB before lighting math runs. r128 never did
@@ -163,22 +170,6 @@ function init(onStateChange, inputMode) {
   }
 
 // ---- Knobs ---------------------------------------------------------------
-const CONFIG = {
-  seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
-  mapSize: 240,          // the forest is a fixed square this many units across
-  bogDepth: 120,         // LUL-25: the bog band appended past the forest's +z edge
-  trees:   1300,
-  walk:    6,            // walking speed (units/s); Shift multiplies it
-  fog:     0.04,
-  eye:     2.2,          // eye height
-  bg:      0x0a0e15,
-  trunk:   0x171b20,
-  foliage: 0x102420,
-  ground:  0x0c1117,
-  lake:    { x: 34, z: -28, r: 15, clear: 22, glow: 0x86b8ff },
-  home:    { x: 0, z: 0, r: 3.6, glow: 0xffd9b0 },   // LUL-38: reuses the spawn point, no new rng draw
-  carryPaceMul: 0.72,                                 // LUL-38: burden while carrying the child, not a cripple
-};
 const half = CONFIG.mapSize / 2;
 const margin = 4;
 // LUL-25: the world is a rectangle now, not a square -- `half` still bounds
@@ -200,12 +191,6 @@ function inBog(x, z){ return isInBog(z, { half, zMax }); }
 // under its row's `clear`, so clearLandmarkSpot()'s existing guarantee --
 // nothing else this seed placed sits within `clear` of the settled position
 // -- also guarantees nothing overlaps the tighter `cr` collider.
-const LANDMARKS = [
-  { kind: 'fireTower',   x: -95, z: -95, clear: 12, cr: 1.6 },
-  { kind: 'stoneMarker', x: 100, z: -75, clear: 9,  cr: 1.1 },
-  { kind: 'oak',         x: -65, z: 135, clear: 10, cr: 1.3 },
-  { kind: 'drownedCar',  x: 55,  z: 205, clear: 11, cr: 2.3 },
-];
 
 // ---- Seeded RNG (so a given map is a real, repeatable place) --------------
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
@@ -289,7 +274,6 @@ document.body.appendChild(renderer.domElement);
 // that old scale, so every one is multiplied by LEGACY_LIGHT_SCALE to read the same
 // as it did on r128. Confirmed by direct before/after screenshot comparison, not
 // just the documented factor -- see wiki systems/three-r185-upgrade.
-const LEGACY_LIGHT_SCALE = 5;
 scene.add(new THREE.HemisphereLight(TOD_VISUAL.hemisphereSky, TOD_VISUAL.hemisphereGround, TOD_VISUAL.hemisphereIntensity * LEGACY_LIGHT_SCALE));
 const moon = new THREE.DirectionalLight(TOD_VISUAL.sunMoonColor, TOD_VISUAL.sunMoonIntensity * LEGACY_LIGHT_SCALE); moon.position.set(-6, 16, -4); scene.add(moon);
 const rim = new THREE.DirectionalLight(TOD_VISUAL.rimColor, TOD_VISUAL.rimIntensity * LEGACY_LIGHT_SCALE); rim.position.set(4, 5, 9); scene.add(rim);
@@ -306,7 +290,7 @@ ground.rotation.x = -Math.PI/2; scene.add(ground);
   g.fillStyle = grd; g.fillRect(0, 0, 4, 512);
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; scene.background = tex;
 })();
-const STAR = 700, starArr = new Float32Array(STAR*3);
+const starArr = new Float32Array(STAR*3);
 for(let i=0;i<STAR;i++){ const th = Math.random()*Math.PI*2, y = Math.random()*0.9 + 0.05, s = Math.sqrt(1-y*y), r = 300;
   starArr[i*3] = r*s*Math.cos(th); starArr[i*3+1] = r*y; starArr[i*3+2] = r*s*Math.sin(th); }
 const starGeo = new THREE.BufferGeometry(); starGeo.setAttribute('position', new THREE.BufferAttribute(starArr, 3));
@@ -330,21 +314,17 @@ const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20,
 // every-second decision, not a set-once knob. `lightDimmed` now names "is the veil
 // actually active" (it can be held down and denied by the charge meter -- see
 // stepVeilCharge(), lib/game/veil.ts -- so it's not just "is F held").
-const LIGHT_NORMAL = { intensity: 0.7, distance: 20 };
-const LIGHT_DIMMED  = { intensity: 0.18, distance: 8 };
 let lightDimmed = false;
 // LUL-382: charge/lock state machine and the two multipliers it gates live in
 // lib/game/veil.ts (pure, unit tested -- see wiki systems/unit-testing-standard).
 // The engine only owns the rendering-side bits: how fast the mist visibly ramps
 // (VEIL_RAMP), how thick it gets at full ramp (MIST_VEIL_FOG), and the mutable
 // per-frame state itself.
-const VEIL_RAMP = 1.6;            // seconds for mist/detect-cut to ease fully in or out
 let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, staminaLowCuePlayed = false;
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
 // last result between probes; coverProbeAccum counts elapsed seconds.
 let lastHideSpot = null, coverProbeAccum = 0;
 let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
-const MIST_VEIL_FOG = 0.34;       // ~3x the manual Mist slider's own max (0.11) -- deliberately overshoots it so the veil reads as a distinct world state
 
 // LUL-27: Fog Tide, the first recurring world event (lib/game/eventScheduler.ts
 // + lib/game/fogTide.ts own the pure phase/multiplier math; the engine only
@@ -366,8 +346,6 @@ let fogTideClock = 0, fogTideAmount = 0, fogTideBuild = 0, fogTideActive = false
 // with dark past its rim" per the ticket's own framing, not just darker.
 let dimAmount = 0;
 const vignetteEl = document.getElementById('vignette');
-const VIGNETTE_NORMAL = { inner: 45, outerAlpha: 0.60 };
-const VIGNETTE_DIMMED  = { inner: 18, outerAlpha: 0.92 };
 function applyVignette(amt){
   if (!vignetteEl) return;
   const inner = VIGNETTE_NORMAL.inner + (VIGNETTE_DIMMED.inner - VIGNETTE_NORMAL.inner) * amt;
@@ -376,8 +354,6 @@ function applyVignette(amt){
 }
 
 // ---- Trees: one instanced "master tree", positions fixed per map ---------
-const CANOPY_R = 1.15;     // cone1Geo base radius, at its widest (near the ground)
-const CONE1_HEIGHT = 2.5, CONE1_Y = 2.1;
 const trunkGeo = new THREE.CylinderGeometry(0.12, 0.20, 1.6, 6);   trunkGeo.translate(0, 0.8, 0);
 const cone1Geo = new THREE.ConeGeometry(CANOPY_R, CONE1_HEIGHT, 7); cone1Geo.translate(0, CONE1_Y, 0);
 const cone2Geo = new THREE.ConeGeometry(0.78, 1.9, 7);             cone2Geo.translate(0, 3.35, 0);
@@ -427,7 +403,6 @@ parts.forEach(p => { p.frustumCulled = false; scene.add(p); });
 // CONFIG.trees -- "thinner tree cover" per the ticket. A separate pool, not a
 // bigger CONFIG.trees, so the original forest loop's rng draw count (and
 // every draw after it) is untouched -- see generateBogTrees() below.
-const BOG_TREES = 90;
 const bogParts = [
   new THREE.InstancedMesh(trunkGeo, trunkMat,   BOG_TREES),
   new THREE.InstancedMesh(cone1Geo, foliageMat, BOG_TREES),
@@ -442,7 +417,6 @@ bogParts.forEach(p => { p.frustumCulled = false; scene.add(p); });
 // would touch predator path/stuck-avoidance logic that this ticket has no
 // budget to re-verify. Declared in the LUL-43 handoff; a fast-follow can add
 // it if the founder wants these to be walls, not just visual/LOS cover.
-const COVER_PROPS = 220;
 const logGeo = new THREE.BoxGeometry(1, 1, 1);
 const rockGeo = new THREE.DodecahedronGeometry(1, 0);
 const brambleGeo = new THREE.IcosahedronGeometry(1, 1);
@@ -866,7 +840,7 @@ function placeLandmarks(){
   }
 }
 
-const LW = 50, lwArr = new Float32Array(LW*3);
+const lwArr = new Float32Array(LW*3);
 for(let i=0;i<LW;i++){ const a=Math.random()*Math.PI*2, r=Math.random()*CONFIG.lake.r*0.95;
   lwArr[i*3]=CONFIG.lake.x+Math.cos(a)*r; lwArr[i*3+1]=0.3+Math.random()*4; lwArr[i*3+2]=CONFIG.lake.z+Math.sin(a)*r; }
 const lwGeo = new THREE.BufferGeometry(); lwGeo.setAttribute('position', new THREE.BufferAttribute(lwArr,3));
@@ -881,8 +855,7 @@ lwisps.frustumCulled = false; scene.add(lwisps);
 // free -- no HUD, no compass, matches the "no readouts" feel of the rest of
 // the game. Speed is tuned for legibility, not to match WIND_STRENGTH
 // (3.2u/s would read as a gust, not a steady drift).
-const DUST_WIND_SPEED = 0.3;
-const DUST = 350, dustArr = new Float32Array(DUST*3);
+const dustArr = new Float32Array(DUST*3);
 for(let i=0;i<DUST;i++){ dustArr[i*3]=(Math.random()*2-1)*30; dustArr[i*3+1]=Math.random()*12; dustArr[i*3+2]=(Math.random()*2-1)*30-3; }
 const dustGeo = new THREE.BufferGeometry(); dustGeo.setAttribute('position', new THREE.BufferAttribute(dustArr,3));
 const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0xa8c2e8, size: 0.06,
@@ -894,7 +867,6 @@ const baby = { x: 60, z: 60, taken: false };
 function inBaby(x,z){ const dx=x-baby.x, dz=z-baby.z; return dx*dx+dz*dz < 20; }   // ~4.5-unit clearing
 
 const babyGroup = new THREE.Group();
-const WARM = 0xffd9b0;
 const bundle = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12),
   new THREE.MeshStandardMaterial({ color: 0xf3d3c0, emissive: 0xffcaa0, emissiveIntensity: 0.5, roughness: 0.85 }));
 bundle.scale.set(1, 0.8, 1); bundle.position.y = 0.42;
@@ -904,13 +876,12 @@ babyHead.position.y = 0.8;
 const halo = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 12),
   new THREE.MeshBasicMaterial({ color: WARM, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false }));
 halo.position.y = 0.55;
-const BABY_LIGHT_DISTANCE = 28;   // LUL-27: named so Fog Tide's "glow carries further" can scale it at runtime, see tick()
 const babyLight = new THREE.PointLight(WARM, 1.1 * LEGACY_LIGHT_SCALE, BABY_LIGHT_DISTANCE, 2); babyLight.position.set(0, 1.3, 0);
 babyGroup.add(bundle, babyHead, halo, babyLight);
 scene.add(babyGroup);
 
 // warm beacon wisps so it can be spotted through the fog
-const BW = 26, bwArr = new Float32Array(BW*3);
+const bwArr = new Float32Array(BW*3);
 const bwisps = new THREE.Points(new THREE.BufferGeometry(),
   new THREE.PointsMaterial({ color: WARM, size: 0.14, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
 bwisps.geometry.setAttribute('position', new THREE.BufferAttribute(bwArr, 3));
@@ -941,7 +912,7 @@ const boomFlash = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12),
 const boomRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 8, 44),
   new THREE.MeshBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 boomRing.rotation.x = Math.PI/2;
-const BSP = 70, bspArr = new Float32Array(BSP*3), bspVel = [];
+const bspArr = new Float32Array(BSP*3), bspVel = [];
 const bspPts = new THREE.Points(new THREE.BufferGeometry(),
   new THREE.PointsMaterial({ color: 0xffe6b0, size: 0.7, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 bspPts.geometry.setAttribute('position', new THREE.BufferAttribute(bspArr, 3));
@@ -979,32 +950,20 @@ function key3(time, keys){   // smoothstep-interpolated keyframes
 // (The death "getting eaten" moment is now a separate 2D cutscene overlay, not 3D geometry.)
 
 // ---- Predators: wolf, bear, lion -----------------------------------------
-const PSPEC = {
-  // `nose` (LUL-23): scent-pickup radius multiplier. The bear gets the strongest
-  // nose and the lion the weakest -- it hunts by stalking/sight, per LUL-24's
-  // reserved two-stage stalk/circle behaviour -- so the three species stay
-  // differentiated across both detection channels, not just sight.
-  wolf: { body:0x565b63, sz:1.0, len:1.6, h:0.9,  mane:false, ears:true,  speed:8.5, detect:42, eye:0xadd8e6, rad:0.8, budget:6, nose:1.0 },
-  bear: { body:0x3d2c22, sz:1.8, len:2.0, h:1.45, mane:false, ears:false, speed:6.8, detect:30, eye:0xff5a2a, rad:1.5, budget:9, nose:1.4 },
-  lion: { body:0xc79a5b, sz:1.2, len:1.7, h:1.0,  mane:true,  ears:true,  speed:9.2, detect:48, eye:0xffcf3a, rad:1.0, budget:4, nose:0.75 },
-};
+// PSPEC_BASE (engine/tuning.js) is a module-level singleton shared across every
+// init() call -- clone it fresh here so this call's speed assignment below can't
+// leak into the next init() (LUL-1065/tuning-extraction.md).
+const PSPEC = Object.fromEntries(Object.entries(PSPEC_BASE).map(([k, v]) => [k, { ...v }]));
 // Size each animal's speed from its warning budget: from the moment it SEES you and you
 // flee at top speed, the fastest (lion) still gives ≥4s, the bear ≥9s. All are faster than
 // the player, so you can't simply outrun them — hiding is the real escape. Tune via CHASE_GAP.
-const RUN = CONFIG.walk * STAMINA_SPRINT_MUL, CHASE_GAP = 28;
+// RUN stays declared here (not in engine/tuning.js) so it keeps tracking
+// STAMINA_SPRINT_MUL by import rather than re-duplicating that literal --
+// see LUL-1491 handoff comment for why this is a declared deviation from
+// docs/specs/tuning-extraction.md's literal `CONFIG.walk * 1.8`.
+const RUN = CONFIG.walk * STAMINA_SPRINT_MUL;
 for(const k in PSPEC) PSPEC[k].speed = RUN + CHASE_GAP / PSPEC[k].budget;
 
-// LUL-26: difficulty presets. `night` is the existing tuning verbatim (every
-// multiplier is a no-op) and stays default -- the ticket is explicit that
-// tuning must not change. `activePerSpecies` trims the roster without
-// touching PSPEC itself; `detectMul` scales the sight-detect radius at the
-// one place that already reads it (effectiveDetect); `glowMul` scales the
-// child's existing idle/carry glow values instead of new ones.
-const DIFFICULTY_PRESETS = {
-  lantern:  { activePerSpecies: 1, detectMul: 0.7, glowMul: 1.6, startHunting: false, minimap: true },
-  night:    { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: false, minimap: true },
-  blackout: { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: true,  minimap: false },
-};
 let difficulty = 'night';
 function makePredator(kind){
   const s = PSPEC[kind], g = new THREE.Group();
@@ -1302,7 +1261,6 @@ function updateWolfPack(dt){
 // would be back in telegraph two frames later, since dist and LOS are still
 // exactly where they were. Long enough to read as "that's over," short
 // enough that a second charge later in the same chase is still in play.
-const CHARGE_COOLDOWN = 10;
 
 function updatePredators(dt, noiseRadius){
   const tt = clock.elapsedTime;
@@ -1692,7 +1650,6 @@ on(window, 'keyup', e => { keys[e.code] = false; });
 // Look: free mouse-look via Pointer Lock, with click-and-drag as a fallback
 let dragging = false, locked = false, paused = false;
 const el = renderer.domElement;
-const SENS = 0.0022;
 function applyLook(dx, dy){
   const s = SENS * sensMul, dyEff = invertY ? -dy : dy;
   player.yaw -= dx*s;
@@ -1915,7 +1872,6 @@ function toggleHidden(){
   const spot = findHideSpot(player.x, player.z);
   if(spot) enterHide(spot);
 }
-const SCALE = [523.25, 587.33, 659.25, 783.99, 880.0, 987.77];
 function twinkle(vol, bright){
   const { ctx, conv, master } = audio, t = ctx.currentTime;
   const f = SCALE[Math.floor(Math.random()*SCALE.length)] * (bright ? 2 : 1);
@@ -2191,7 +2147,6 @@ function endChargeHud(){
 // starts off-screen or behind the player's back where it can't be reacted to.
 // ~130deg total FOV: generous enough to not feel unfair, narrow enough that
 // "behind you" really means behind you.
-const PLAYER_FOV_COS = Math.cos(65 * Math.PI/180);
 function playerCanSee(p){
   const dx = p.x - player.x, dz = p.z - player.z, d = Math.hypot(dx, dz) || 0.0001;
   const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
@@ -2824,7 +2779,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 // ---- Objective, pickup cinematic, win / death ----------------------------
 const spotFlashEl = document.getElementById('spotFlash');
 const deathVideo = document.getElementById('deathVideo');
-const CUT_END = 3.7;   // death video length; reveal the loss text at the end
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
   const next = beginPickup(runState());
