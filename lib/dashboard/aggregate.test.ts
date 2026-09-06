@@ -195,6 +195,64 @@ test('computeEconomy: loss depth derives survival term from time_survived_ms, ca
   assert.equal(economy.lossDepth.pctAbove24, 50);
 });
 
+test('computeEconomy: byDifficulty buckets events by difficulty field', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { payout: 100, balance: 100, time_survived_ms: 90000, difficulty: 'lantern' }),
+    ev('loss', BASE_TS, 'b', { payout: 15, balance: 15, time_survived_ms: 30000, predator_kind: 'wolf', difficulty: 'night' }),
+    ev('win', BASE_TS, 'c', { payout: 130, balance: 130, time_survived_ms: 90000, difficulty: 'blackout' }),
+    ev('loss', BASE_TS, 'd', { payout: 40, balance: 40, time_survived_ms: 10000, predator_kind: 'bear', difficulty: 'blackout' }),
+  ];
+  const economy = computeEconomy(events);
+  assert.equal(economy.byDifficulty.lantern.winPayout.n, 1);
+  assert.equal(economy.byDifficulty.night.lossPayout.n, 1);
+  assert.equal(economy.byDifficulty.blackout.winPayout.n, 1);
+  assert.equal(economy.byDifficulty.blackout.lossPayout.n, 1);
+  assert.equal(economy.byDifficulty.unattributed.winPayout.n, 0);
+  // tier ns + unattributed must sum to pooled n
+  const totalWins = economy.byDifficulty.lantern.winPayout.n + economy.byDifficulty.night.winPayout.n +
+    economy.byDifficulty.blackout.winPayout.n + economy.byDifficulty.unattributed.winPayout.n;
+  assert.equal(totalWins, economy.winPayout.n);
+});
+
+test('computeEconomy: events without difficulty go to unattributed, pooled numbers unchanged', () => {
+  const noAttr: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { payout: 100, balance: 100, time_survived_ms: 90000 }),
+    ev('loss', BASE_TS, 'b', { payout: 15, balance: 15, time_survived_ms: 30000, predator_kind: 'wolf' }),
+  ];
+  const withAttr: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { payout: 100, balance: 100, time_survived_ms: 90000, difficulty: undefined }),
+    ev('loss', BASE_TS, 'b', { payout: 15, balance: 15, time_survived_ms: 30000, predator_kind: 'wolf', difficulty: undefined }),
+  ];
+  const e1 = computeEconomy(noAttr);
+  const e2 = computeEconomy(withAttr);
+  assert.equal(e2.byDifficulty.unattributed.winPayout.n, 1);
+  assert.equal(e2.byDifficulty.unattributed.lossPayout.n, 1);
+  assert.equal(e1.winPayout.p50, e2.winPayout.p50);
+  assert.equal(e1.lossPayout.p50, e2.lossPayout.p50);
+  assert.equal(e1.failureBandPct, e2.failureBandPct);
+});
+
+test('computeEconomy: unknown difficulty string goes to unattributed', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { payout: 100, balance: 100, time_survived_ms: 90000, difficulty: 'nonsense' }),
+  ];
+  const economy = computeEconomy(events);
+  assert.equal(economy.byDifficulty.unattributed.winPayout.n, 1);
+  assert.equal(economy.byDifficulty.lantern.winPayout.n, 0);
+  assert.equal(economy.byDifficulty.blackout.winPayout.n, 0);
+});
+
+test('computeEconomy: tier with zero events returns nulls not NaN', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { payout: 100, balance: 100, time_survived_ms: 90000, difficulty: 'lantern' }),
+  ];
+  const economy = computeEconomy(events);
+  assert.equal(economy.byDifficulty.blackout.winPayout.p50, null);
+  assert.equal(economy.byDifficulty.blackout.lossPayout.p50, null);
+  assert.equal(economy.byDifficulty.blackout.failureBandPct, null);
+  assert.equal(economy.byDifficulty.blackout.lossDepth.pctAbove24, null);
+});
+
 test('computeEconomy: purchase is a balance decrease within 3 runs of crossing 120', () => {
   const events: RawEvent[] = [
     // anon 'a': crosses 120 on run 2, decreases on run 3 (within window) -> purchased

@@ -893,6 +893,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - `lastPayout`: breakdown of earnings from the run that just ended (null
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
+- `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
+  both `track()` call sites in `arriveHome()` (L3045) and `triggerDeath()` (L3071).
+  The `difficulty` module-level variable is in scope at both sites. The economy
+  dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
+  `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
+  `unattributed`.
 - Deeper Lungs: unlock via shop button in post-run UI; one-time purchase per
   tier (tiers 0–3, `DEEPER_LUNGS_COSTS` array), persisted alongside balance as
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
