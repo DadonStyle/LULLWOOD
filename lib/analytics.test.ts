@@ -12,10 +12,10 @@ test('track() never throws, even when the sink throws', () => {
   try {
     assert.doesNotThrow(() => track({ event: 'page_view' }));
     assert.doesNotThrow(() =>
-      track({ event: 'loss', predator_kind: 'wolf', time_survived_ms: 1200, seed: 42, payout: 15, balance: 150, carrying: false }),
+      track({ event: 'loss', predator_kind: 'wolf', time_survived_ms: 1200, seed: 42, payout: 15, balance: 150, carrying: false, difficulty: 'night' }),
     );
     assert.doesNotThrow(() =>
-      track({ event: 'loss', predator_kind: 'bear', time_survived_ms: 4300, seed: 43, payout: 22, balance: 172, carrying: true }),
+      track({ event: 'loss', predator_kind: 'bear', time_survived_ms: 4300, seed: 43, payout: 22, balance: 172, carrying: true, difficulty: 'blackout' }),
     );
   } finally {
     setSink(() => {}); // don't leak the throwing sink into other tests

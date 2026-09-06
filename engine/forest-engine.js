@@ -3037,7 +3037,7 @@ function arriveHome(){
   embers = applyPayout(embers, payout);
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 function triggerDeath(kind){
   const next = outcomeTriggerDeath(runState());
@@ -3063,7 +3063,7 @@ function triggerDeath(kind){
   if(deathCarrying) carryDeathExplained = true;
   pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying });
-  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty });
   playDeathVideo();
   deathAudio(kind);
 }

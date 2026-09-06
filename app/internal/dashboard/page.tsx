@@ -234,6 +234,74 @@ export default async function DashboardPage({
             12–28%; P4 predicts loss depth P95 ≤ 24; P5 predicts ≥60% purchase-within-3-runs; P6 predicts win payout
             P50 in [95, 130]. This panel reports the measurements only — it does not evaluate the predictions.
           </p>
+
+          <h3>Economy by difficulty</h3>
+          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: '0.5rem' }}>
+            <thead>
+              <tr>
+                <th style={th}>Metric</th>
+                <th style={th}>Lantern</th>
+                <th style={th}>Night</th>
+                <th style={th}>Blackout</th>
+                {economy.byDifficulty.unattributed.winPayout.n + economy.byDifficulty.unattributed.lossPayout.n > 0 ? (
+                  <th style={th}>Unattributed</th>
+                ) : null}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={td}>Win payout P50 / P90 (n)</td>
+                {(['lantern', 'night', 'blackout', 'unattributed'] as const).map((tier) => {
+                  const m = economy.byDifficulty[tier];
+                  if (tier === 'unattributed' && m.winPayout.n + m.lossPayout.n === 0) return null;
+                  return (
+                    <td style={td} key={tier}>
+                      {fmtNum2(m.winPayout.p50)} / {fmtNum2(m.winPayout.p90)} ({fmtNum(m.winPayout.n)})
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td style={td}>Loss payout P50 / P90 (n)</td>
+                {(['lantern', 'night', 'blackout', 'unattributed'] as const).map((tier) => {
+                  const m = economy.byDifficulty[tier];
+                  if (tier === 'unattributed' && m.winPayout.n + m.lossPayout.n === 0) return null;
+                  return (
+                    <td style={td} key={tier}>
+                      {fmtNum2(m.lossPayout.p50)} / {fmtNum2(m.lossPayout.p90)} ({fmtNum(m.lossPayout.n)})
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td style={td}>Failure band (loss/win payout)</td>
+                {(['lantern', 'night', 'blackout', 'unattributed'] as const).map((tier) => {
+                  const m = economy.byDifficulty[tier];
+                  if (tier === 'unattributed' && m.winPayout.n + m.lossPayout.n === 0) return null;
+                  return (
+                    <td style={td} key={tier}>
+                      {fmtPct(m.failureBandPct)}
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td style={td}>Loss depth &gt; 24</td>
+                {(['lantern', 'night', 'blackout', 'unattributed'] as const).map((tier) => {
+                  const m = economy.byDifficulty[tier];
+                  if (tier === 'unattributed' && m.winPayout.n + m.lossPayout.n === 0) return null;
+                  // P4 is structurally unreachable on lantern/night: child-spawn distance
+                  // there (60-96m) cannot produce a death-depth above 24. A 0% here would
+                  // read as "checked and fine" when the real answer is "does not apply".
+                  return (
+                    <td style={td} key={tier}>
+                      {tier === 'lantern' || tier === 'night' ? 'n/a — unreachable on this tier' : fmtPct(m.lossDepth.pctAbove24)}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section>

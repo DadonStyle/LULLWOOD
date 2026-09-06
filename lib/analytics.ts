@@ -12,6 +12,12 @@
 
 export type PredatorKind = 'wolf' | 'bear' | 'lion';
 
+// LUL-1450: the three DIFFICULTY_PRESETS keys (engine/forest-engine.js). Child
+// spawn distance is a disjoint band per tier (lantern/night 60-96m, blackout
+// 140-241.7m), so win/loss data blended across tiers is unfalsifiable -- see
+// wiki game/economy/panel-blind-to-difficulty.
+export type Difficulty = 'lantern' | 'night' | 'blackout';
+
 export type AnalyticsEventInput =
   | { event: 'page_view' }
   | { event: 'cta_start_clicked' }
@@ -20,8 +26,8 @@ export type AnalyticsEventInput =
   // game/economy/embers can be checked against real players -- `payout` is
   // this run's Embers total (RunPayout.total from lib/game/economy.ts),
   // `balance` is the running total after it's applied.
-  | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number }
-  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; carrying: boolean }
+  | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number; difficulty: Difficulty }
+  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; carrying: boolean; difficulty: Difficulty }
   | { event: 'session_length'; duration_ms: number; reached_gameplay: boolean; session_id: string }
   | { event: 'feature_engagement'; feature: string; action: string; carrying?: boolean };
 

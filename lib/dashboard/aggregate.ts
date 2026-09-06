@@ -54,6 +54,11 @@ function numberProp(e: RawEvent, key: string): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
+function stringProp(e: RawEvent, key: string): string | null {
+  const v = e[key];
+  return typeof v === 'string' ? v : null;
+}
+
 export function computeOutcomes(events: RawEvent[]): OutcomesResult {
   const wins = events.filter((e) => e.event === 'win');
   const losses = events.filter((e) => e.event === 'loss');
@@ -197,7 +202,7 @@ export function computeFeatureEngagement(events: RawEvent[]): FeatureEngagementR
   return Array.from(rows.values()).sort((a, b) => b.count - a.count);
 }
 
-export interface EconomyResult {
+export interface EconomyMetrics {
   winPayout: { p50: number | null; p90: number | null; n: number };
   lossPayout: { p50: number | null; p90: number | null; n: number };
   /** P3: median(loss payout) / median(win payout) * 100. Falsification card predicts 12-28%. */
@@ -209,16 +214,33 @@ export interface EconomyResult {
    * Falsification card predicts p95 <= 24.
    */
   lossDepth: { p50: number | null; p95: number | null; pctAbove24: number | null; n: number };
+}
+
+/** LUL-1450: the three DIFFICULTY_PRESETS tiers, plus events with no (or an
+ *  unrecognized) `difficulty` field -- every win/loss recorded before this
+ *  field shipped, which is permanently unattributable, not derivable from
+ *  `seed`. Kept as its own visible bucket rather than folded into a tier
+ *  (fabricates attribution) or dropped (collapses every existing panel `n`
+ *  on deploy day). See wiki game/economy/panel-blind-to-difficulty. */
+export type EconomyTierKey = 'lantern' | 'night' | 'blackout' | 'unattributed';
+
+const DIFFICULTY_TIERS: ReadonlySet<string> = new Set(['lantern', 'night', 'blackout']);
+
+export interface EconomyResult extends EconomyMetrics {
   /**
    * P5: a purchase is a decrease in an anon_id's balance sequence (win/loss events,
    * ts-ordered) -- no `purchase` event needed. Falsification card predicts >=60% of
    * anon_ids that ever cross 120 balance show a decrease within the next 3 runs.
+   * Not split by tier: a player can change difficulty between runs, so a
+   * per-tier balance sequence has holes in it and means nothing (LUL-1450 spec).
    */
   purchase: {
     crossed120Count: number;
     purchasedWithin3RunsCount: number;
     purchasedWithin3RunsPct: number | null;
   };
+  /** Every win/loss in the window, all tiers pooled. Preserves the pre-LUL-1431 numbers. */
+  byDifficulty: Record<EconomyTierKey, EconomyMetrics>;
 }
 
 const SURVIVAL_TERM_CAP = 6;
@@ -227,10 +249,7 @@ const DEPTH_FALSIFY_THRESHOLD = 24;
 const PURCHASE_BALANCE_THRESHOLD = 120;
 const PURCHASE_WINDOW_RUNS = 3;
 
-export function computeEconomy(events: RawEvent[]): EconomyResult {
-  const wins = events.filter((e) => e.event === 'win');
-  const losses = events.filter((e) => e.event === 'loss');
-
+function economyMetricsFor(wins: RawEvent[], losses: RawEvent[]): EconomyMetrics {
   const winPayouts = wins
     .map((e) => numberProp(e, 'payout'))
     .filter((n): n is number => n !== null)
@@ -257,7 +276,31 @@ export function computeEconomy(events: RawEvent[]): EconomyResult {
   const pctAbove24 =
     lossDepths.length === 0 ? null : (lossDepths.filter((d) => d > DEPTH_FALSIFY_THRESHOLD).length / lossDepths.length) * 100;
 
+  return {
+    winPayout: { p50: winPayoutP50, p90: percentile(winPayouts, 90), n: winPayouts.length },
+    lossPayout: { p50: lossPayoutP50, p90: percentile(lossPayouts, 90), n: lossPayouts.length },
+    failureBandPct:
+      winPayoutP50 === null || lossPayoutP50 === null || winPayoutP50 === 0 ? null : (lossPayoutP50 / winPayoutP50) * 100,
+    lossDepth: {
+      p50: percentile(lossDepths, 50),
+      p95: percentile(lossDepths, 95),
+      pctAbove24,
+      n: lossDepths.length,
+    },
+  };
+}
+
+function tierOf(e: RawEvent): EconomyTierKey {
+  const d = stringProp(e, 'difficulty');
+  return d !== null && DIFFICULTY_TIERS.has(d) ? (d as EconomyTierKey) : 'unattributed';
+}
+
+export function computeEconomy(events: RawEvent[]): EconomyResult {
+  const wins = events.filter((e) => e.event === 'win');
+  const losses = events.filter((e) => e.event === 'loss');
+
   // P5: chronological balance sequence per anon_id, across win+loss events.
+  // Pooled across tiers on purpose -- see EconomyResult.purchase doc.
   const runsByAnon = new Map<string, number[]>();
   const chronological = [...wins, ...losses].sort((a, b) => a.ts - b.ts);
   for (const e of chronological) {
@@ -282,21 +325,23 @@ export function computeEconomy(events: RawEvent[]): EconomyResult {
     }
   }
 
+  const winsByTier: Record<EconomyTierKey, RawEvent[]> = { lantern: [], night: [], blackout: [], unattributed: [] };
+  const lossesByTier: Record<EconomyTierKey, RawEvent[]> = { lantern: [], night: [], blackout: [], unattributed: [] };
+  for (const e of wins) winsByTier[tierOf(e)].push(e);
+  for (const e of losses) lossesByTier[tierOf(e)].push(e);
+
   return {
-    winPayout: { p50: winPayoutP50, p90: percentile(winPayouts, 90), n: winPayouts.length },
-    lossPayout: { p50: lossPayoutP50, p90: percentile(lossPayouts, 90), n: lossPayouts.length },
-    failureBandPct:
-      winPayoutP50 === null || lossPayoutP50 === null || winPayoutP50 === 0 ? null : (lossPayoutP50 / winPayoutP50) * 100,
-    lossDepth: {
-      p50: percentile(lossDepths, 50),
-      p95: percentile(lossDepths, 95),
-      pctAbove24,
-      n: lossDepths.length,
-    },
+    ...economyMetricsFor(wins, losses),
     purchase: {
       crossed120Count,
       purchasedWithin3RunsCount,
       purchasedWithin3RunsPct: crossed120Count === 0 ? null : (purchasedWithin3RunsCount / crossed120Count) * 100,
+    },
+    byDifficulty: {
+      lantern: economyMetricsFor(winsByTier.lantern, lossesByTier.lantern),
+      night: economyMetricsFor(winsByTier.night, lossesByTier.night),
+      blackout: economyMetricsFor(winsByTier.blackout, lossesByTier.blackout),
+      unattributed: economyMetricsFor(winsByTier.unattributed, lossesByTier.unattributed),
     },
   };
 }
