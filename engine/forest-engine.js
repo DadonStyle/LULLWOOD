@@ -80,6 +80,8 @@ import {
   CATCH_MARGIN,
   isCaught,
   isSniffImmune,
+  LKP_MAX_SWEEPS,
+  pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
   shouldGiveUpChase,
@@ -1049,6 +1051,7 @@ function makePredator(kind){
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
+    lkpX:0, lkpZ:0, lkpSweeps:0,
     charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false, sightLock:null };
 }
 const predators = [];
@@ -1057,6 +1060,7 @@ const predators = [];
 // need to re-derive array position every restart.
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
 let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
+let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
 let coverAmt = 0;   // LUL-144: eased 0..1 desaturation driven by the cover-feedback scan below
 function placePredators(){
   // LUL-26: `night` (default) has activePerSpecies:3, so `p.inert` is false
@@ -1091,6 +1095,7 @@ function placePredators(){
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
+    p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
@@ -1435,8 +1440,11 @@ function updatePredators(dt, noiseRadius){
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
-        if(wd < 2.5){ const a=rng()*Math.PI*2, r=15+rng()*40;
-          let nwx=clamp(p.x+Math.cos(a)*r,-half+4,half-4), nwz=clamp(p.z+Math.sin(a)*r,-half+4,zMax-4);
+        if(wd < 2.5){
+          const distFromLkp = Math.hypot(player.x - p.lkpX, player.z - p.lkpZ);
+          const pick = pickRoamWaypoint(rng, p.x, p.z, p.lkpX, p.lkpZ, p.lkpSweeps, distFromLkp);
+          p.lkpSweeps = pick.sweepsLeft;
+          let nwx=clamp(pick.x,-half+4,half-4), nwz=clamp(pick.z,-half+4,zMax-4);
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
           p.wpx=clamp(kept.x,-half+4,half-4); p.wpz=clamp(kept.z,-half+4,zMax-4); }
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
@@ -1515,7 +1523,7 @@ function updatePredators(dt, noiseRadius){
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax); }
-          else { p.state='roam'; p.spotted=false; }
+          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
@@ -1542,7 +1550,7 @@ function updatePredators(dt, noiseRadius){
           p.sniffsLeft = holdOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(holdOutcome.next === 'hold') p.sniffTimer = rnd(1,4);
-          else { p.state='roam'; p.spotted=false; p.inv=''; }
+          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; }
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
@@ -2650,6 +2658,50 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { x: p.x, z: p.z };
   };
 
+  window.ForestEngine.qaGetPredatorLkp = function(idx){
+    const p = predators[idx];
+    if(!p) return null;
+    return { lkpX: p.lkpX, lkpZ: p.lkpZ, lkpSweeps: p.lkpSweeps };
+  };
+
+  // LUL-1620: finds the given species, places it `dx/dz` from the player's
+  // *current* position (does not move the player, so KeyH/hidden staging
+  // done before this call survives it), and arms it one tick away from the
+  // investigate/sniff give-up transition (:1520-1525). Driving the real
+  // sniffsLeft/sniffTimer countdown to reach that transition is what
+  // qaSetPredatorRoam's own comment warns off (destroys whatever staging a
+  // test already set up) -- this hook manipulates state directly instead,
+  // same philosophy. Clears the higher-priority branches (charge/sightLock/
+  // alert/reroute/hunt) that would otherwise pre-empt the investigate/sniff
+  // branch this tick. Returns the predator's index (for qaGetPredatorLkp)
+  // and placed position, or null if the species doesn't resolve.
+  window.ForestEngine.qaStagePredatorGiveUp = function(kind, dx, dz){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    p.x = player.x + dx; p.z = player.z + dz;
+    p.vx = p.vz = 0; p.charge = null; p.sightLock = null; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.hunt = false;
+    p.state = 'investigate'; p.inv = 'sniff'; p.sniffsLeft = 1; p.sniffTimer = 0.001;
+    return { idx, x: p.x, z: p.z };
+  };
+
+  window.ForestEngine.qaIsApproachPianoActive = function(){
+    return approachPianoActive;
+  };
+
+  // LUL-1620: teleports predator[idx] onto its own current roam waypoint so
+  // the very next tick's `wd < 2.5` arrival check (engine/forest-engine.js
+  // roam branch) fires immediately, running the real pickRoamWaypoint()
+  // repick instead of waiting out the actual travel time -- lets a test
+  // drive the bounded LKP_MAX_SWEEPS count down to exhaustion in a handful
+  // of ticks instead of the ~10-20s of real navigation each sweep leg takes.
+  window.ForestEngine.qaFastForwardPredatorToWaypoint = function(idx){
+    const p = predators[idx];
+    if(!p) return null;
+    p.x = p.wpx; p.z = p.wpz;
+    return { x: p.x, z: p.z };
+  };
+
   // LUL-212: teleport the player to the nearest hiding spot (bramble/log),
   // no predator involved -- e2e/hide.spec.ts only needs a deterministic spot
   // to press KeyH at, not a chase scenario.
@@ -3454,7 +3506,7 @@ function tick(){
       if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
       const dpd = Math.hypot(player.x - p.x, player.z - p.z);
       if(dpd < nearDist){ nearDist = dpd; nearP = p; }
-      if(p.state==='chase' || p.hunt || (p.state==='investigate' && p.inv!=='back')) approaching = true;
+      if(p.state==='chase' || p.hunt || (p.state==='investigate' && p.inv!=='back') || (p.state==='roam' && p.lkpSweeps > 0)) approaching = true;
       if(dpd < effectiveDetect(p)){
         if(hasLOS(p.x, p.z, player.x, player.z)) exposedNow = true; else coveredNow = true;
       }
@@ -3463,7 +3515,8 @@ function tick(){
     if(nearDist < 20) sinceClose = 0; else sinceClose += dt;
     if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; spotOnto(nearP); sinceClose = 12; }
     // approach piano note: quicker + higher the nearer it is
-    if(approaching && nearDist < 46 && !hidden){
+    if(approaching && nearDist < 46){
+      approachPianoActive = true;
       pianoTimer -= dt;
       if(pianoTimer <= 0){
         const near01 = clamp(1 - nearDist/46, 0, 1);           // 0 far … 1 close
@@ -3471,8 +3524,8 @@ function tick(){
         const steps = [0,3,5,7,10,12][Math.min(5, Math.floor(near01*6))];
         pianoNote(98 * Math.pow(2, steps/12), 0.5 + near01*0.6);   // low, scary; rises as it closes
       }
-    } else pianoTimer = 0;
-  } else { sinceClose = 0; }
+    } else { pianoTimer = 0; approachPianoActive = false; }
+  } else { sinceClose = 0; approachPianoActive = false; }
 
   // LUL-144: the player-facing half of the scan above. `covered` is the
   // instantaneous, un-eased signal (a real predator, in range, LOS blocked,

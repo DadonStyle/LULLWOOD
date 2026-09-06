@@ -157,6 +157,49 @@ export function isSniffImmune(sniffImmuneT: number, hidden: boolean): boolean {
   return hidden && sniffImmuneT > 0;
 }
 
+// ---- last-known-position return sweep (LUL-1573/LUL-1620) -----------------------
+// A predator that gives up (investigate/sniff or flank/hold, never chase's
+// distance-based give-up -- see spec) stashes where it lost the player and
+// gets a bounded number of ring-biased roam waypoints before it truly
+// forgets. Alien: Isolation's director shape: area, not point; bounded, not
+// permanent. `LKP_REPEAT_RADIUS` is the Game Economist's requirement
+// (predator-memory-depth-farming.md): a camper who stays near the spot they
+// were lost keeps getting re-swept; one who has genuinely moved on does not
+// burn the remaining bounded count for nothing.
+export const LKP_MAX_SWEEPS = 3;       // bounded return sweeps before permanent amnesia
+export const LKP_RING_RADIUS = 18;     // base distance (units) of a sweep waypoint from the remembered point
+export const LKP_RING_JITTER = 10;     // + 0..this: sweep waypoints land 18..28u from the remembered point
+export const LKP_REPEAT_RADIUS = 32;   // ~1.78x LKP_RING_RADIUS, inside the Economist's 1.5-2.0x band
+
+export interface RoamWaypointPick {
+  x: number;
+  z: number;
+  /** Write back onto p.lkpSweeps. 0 means memory is cleared for real this tick. */
+  sweepsLeft: number;
+}
+
+// Replaces the roam waypoint pick inline at engine/forest-engine.js:1377-1380.
+// `sweepsLeft > 0` selects the ring-biased branch (search around the
+// remembered point); `sweepsLeft === 0` reproduces the original uniform-
+// random pick byte-for-byte (same two rng() draws, same formula), so a
+// predator that has never had a memory, or whose memory already cleared,
+// behaves exactly as it does on `release/next` today.
+export function pickRoamWaypoint(
+  rng: () => number,
+  px: number, pz: number,
+  lkpX: number, lkpZ: number, sweepsLeft: number,
+  playerDistFromLkp: number,
+): RoamWaypointPick {
+  if (sweepsLeft > 0) {
+    const a = rng() * Math.PI * 2;
+    const r = LKP_RING_RADIUS + rng() * LKP_RING_JITTER;
+    const continues = sweepsLeft - 1 > 0 && playerDistFromLkp <= LKP_REPEAT_RADIUS;
+    return { x: lkpX + Math.cos(a) * r, z: lkpZ + Math.sin(a) * r, sweepsLeft: continues ? sweepsLeft - 1 : 0 };
+  }
+  const a = rng() * Math.PI * 2, r = 15 + rng() * 40;
+  return { x: px + Math.cos(a) * r, z: pz + Math.sin(a) * r, sweepsLeft: 0 };
+}
+
 // ---- investigate re-escalation gate (LUL-562) -------------------------------------
 // `investigate`'s `if(!hidden){ p.state='chase'; }` (main, line 1364) fired
 // for *any* `p.inv` sub-phase, including a freshly-entered 'approach' --  but
