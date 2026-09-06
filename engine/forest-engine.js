@@ -43,6 +43,8 @@ import {
   SCENT_RADIUS_WALK,
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
+  isMovingAgainstWind,
+  WIND_AGAINST_RADIUS_MULTIPLIER,
 } from '@/lib/game/scent';
 import {
   coverKindBlocksMovement,
@@ -749,6 +751,7 @@ function generateMap(seed){
   placePredators();
   generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
   generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
+  pushState({ windX, windZ });   // LUL-1724: map-constant, pushed once, not per-frame
   // LUL-25: everything below is new and runs last -- see the comment on
   // generateBogTrees() for why the ordering is load-bearing.
   generateBogTrees();
@@ -1164,8 +1167,10 @@ function generateWind(){
 }
 
 let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 is always oldest)
-function depositScent(hot){
-  scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius: hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK });
+function depositScent(hot, againstWind){
+  const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
+  const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
+  scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
   while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0)) scentPoints.shift();
 }
 function checkScent(p){
@@ -3433,7 +3438,7 @@ function tick(){
       // LUL-23: lay scent while actually moving -- holding still (or being hidden,
       // which already implies not moving) never adds to the trail.
       scentEmitT -= dt;
-      if(scentEmitT <= 0){ depositScent(running); scentEmitT = SCENT_DEPOSIT_INTERVAL; }
+      if(scentEmitT <= 0){ depositScent(running, isMovingAgainstWind(mvx, mvz, windX, windZ)); scentEmitT = SCENT_DEPOSIT_INTERVAL; }
       // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
       // shape as scent, sized off the same running flag rather than a new one.
       // LUL-25: splashing through the bog carries further than a dry footstep --
@@ -3530,7 +3535,7 @@ function tick(){
     }
     // if nobody has been near for 30s, the closest one comes straight for you
     if(nearDist < 20) sinceClose = 0; else sinceClose += dt;
-    if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; spotOnto(nearP); sinceClose = 12; }
+    if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; nearP.sightLock = null; spotOnto(nearP); sinceClose = 12; }
     // approach piano note: quicker + higher the nearer it is
     if(approaching && nearDist < 46 && !hidden){
       pianoTimer -= dt;

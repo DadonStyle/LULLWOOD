@@ -92,6 +92,10 @@ export interface EngineHudState {
   // in that case) -- Hud never has to know about `carrying` itself.
   missionKind: MissionKind | null;
   missionStatus: 'active' | 'complete' | null;
+  // LUL-1724: wind direction, engine-driven, map-constant (set once per
+  // generateMap(), pushed once -- not a per-frame value like veilCharge).
+  windX: number;
+  windZ: number;
 }
 
 export interface EngineActions {
@@ -175,6 +179,8 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lastPayout: null,
   missionKind: null,
   missionStatus: null,
+  windX: 1,
+  windZ: 0,
 };
 
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
@@ -518,6 +524,16 @@ export default function Hud({
       {state.statusVisible && (
         <div id="status" className="hiding" style={{ display: 'block' }}>
           {state.statusText}
+        </div>
+      )}
+
+      {state.entered && (
+        <div
+          id="windIndicator"
+          title="Wind direction -- move into the arrow to reduce your scent trail"
+          style={{ transform: `rotate(${Math.atan2(state.windZ, state.windX)}rad)` }}
+        >
+          {'→'}
         </div>
       )}
 
