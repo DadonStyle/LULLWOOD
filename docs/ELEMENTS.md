@@ -41,12 +41,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3668-3672, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  `triggerTouchToggleRun()` (L3673-3677, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3645-3651, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
+  `triggerTouchJump()` (L3650-3656, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
   target on mobile, wired to the same `triggerTouchJump()` — it used to
@@ -55,7 +55,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3657-3661, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
+  (L3662-3666, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3630 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3210, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3635 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3215, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -186,6 +186,20 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   glow stays legible through the tide's own added fog density (Fog above) —
   the two effects (denser fog, longer-reaching glow) are meant to roughly
   offset, not one cancel the other out unintentionally.
+- **As of `LUL-1480`** (rules `LUL-1438`/`LUL-1414`), the unscaled idle/carry
+  glow and halo curves live in `lib/game/childGlow.ts` (pure, unit tested),
+  not inline in `tick()`: `idleGlowIntensity()`/`idleHaloOpacity()` for the
+  outbound leg and `carryGlowIntensity()`/`carryHaloOpacity()` for carry,
+  handing off at `PICKUP_GLOW_PEAK` at the end of the pickup cinematic. The
+  fix makes the carry leg strictly brighter and faster-pulsing than idle at
+  every instant (`CARRY_GLOW_BASE=2.6` vs `IDLE_GLOW_BASE=1.0`, `CARRY_GLOW_
+  FREQ=3.2` vs `IDLE_GLOW_FREQ=1.8`) — previously the pickup cinematic
+  flared to 3.2 and then carry settled back down to ~1.2, barely above idle,
+  the same frame `CARRY_DETECT_MUL` (`lib/game/cover.ts`) raises predator
+  sight-detect by 35%. The difficulty preset's `glowMul` and
+  `fogTideGlowMul()` still apply on top of these curves exactly as before;
+  the pulse **rate** (not just brightness) is what's carry-only and
+  unspoofable by either multiplier.
 
 **What it CANNOT do**
 - Cannot move on its own, ever, outside the two scripted transitions above —
@@ -828,7 +842,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L3046-3050 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  and synced to `hudState` via `setEmbers()` (L3051-3055 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
@@ -880,7 +894,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1859-1867): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()` L1860-1868): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
 - Gate the player's sprint speed (`tick()` at L3243): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.

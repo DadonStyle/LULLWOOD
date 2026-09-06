@@ -91,6 +91,7 @@ import {
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL } from '@/lib/game/stamina';
+import { PICKUP_GLOW_PEAK, carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity, CARRY_GLOW_BASE, CARRY_HALO_BASE } from '@/lib/game/childGlow';
 import {
   freshEmbersState,
   computeWinPayout,
@@ -1923,7 +1924,7 @@ function playHideSfx(kind, entering){ if(kind === 'log') hollowLogSound(entering
 // shadowed toggleHidden() carried that track() call but was dead code (a
 // later function declaration in the same scope wins in JS), so the event
 // never fired.
-function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used' }); }
+function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); }
 function exitHide(){ if(!hidden) return; playHideSfx(hideKind, false); hidden = false; hideKind = null; }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
@@ -2300,6 +2301,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
   window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
+  window.ForestEngine.qaProbeBabyLight = function(){
+    return { intensity: babyLight.intensity, distance: babyLight.distance,
+             carrying, pickingUp, taken: baby.taken };
+  };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
 
   // LUL-83: proves resolveInitialSeed() actually drives the generated layout --
@@ -2889,7 +2894,7 @@ function finishPickup(){
   document.body.style.cursor = '';
   babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.55;
-  halo.material.opacity = 0.22; babyLight.intensity = 1.3;
+  halo.material.opacity = CARRY_HALO_BASE; babyLight.intensity = CARRY_GLOW_BASE;
 }
 // LUL-1258: M2 Deepwater's completion sting -- reuses hollowLogSound's
 // noise-burst + oscillator chain (same procedural building blocks, no new
@@ -2966,7 +2971,7 @@ function triggerDeath(kind){
   activeCharges = 0;
   pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance, chargeVisible: false });
-  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -3324,7 +3329,7 @@ function tick(){
     babyGroup.visible = true; babyGroup.position.set(baby.x, ay, baby.z); babyGroup.rotation.y = e*0.6;
     halo.material.opacity = Math.min(0.5, 0.12 + e*0.05);
     bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5 + e*0.15;
-    babyLight.intensity = key3(e, [[0,1],[1.5,2.4],[2.5,3.2]]);
+    babyLight.intensity = key3(e, [[0,1],[1.5,1.6],[2.5,PICKUP_GLOW_PEAK]]);
     // camera holds position, glances toward the child being gathered --
     // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly
     // the camera motion the setting exists to remove) and just hold the
@@ -3342,8 +3347,8 @@ function tick(){
     // LUL-38: carrying phase — child rides at the player's feet, glowing
     babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = (0.20 + Math.sin(t*1.8)*0.04) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.intensity = (1.2 + Math.sin(t*1.8)*0.2) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    halo.material.opacity = carryHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    babyLight.intensity = carryGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
     babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
@@ -3483,8 +3488,8 @@ function tick(){
   if(!baby.taken){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = (0.11 + Math.sin(t*1.8) * 0.05) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.intensity = (1.0 + Math.sin(t*1.8) * 0.25) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    halo.material.opacity = idleHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    babyLight.intensity = idleGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
     babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
     const bp = bwisps.geometry.attributes.position.array;
     for(let i=0;i<BW;i++){ bp[i*3+1] += dt*0.4; if(bp[i*3+1] > 3.4) bp[i*3+1] = 0.2; }
