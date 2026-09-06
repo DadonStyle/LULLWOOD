@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3796 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3375, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3824 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3403, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -918,7 +918,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3069) and `triggerDeath()` (L3099).
+  both `track()` call sites in `arriveHome()` (L3097) and `triggerDeath()` (L3127).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -968,7 +968,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3344): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L3464): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1258,11 +1258,15 @@ not a 240×360 rectangle.
 **New elements it adds**: `BogTree` (90-instance thinner-cover twin of Tree,
 own `bogTreeData` array, merged into the shared `grid` for collision),
 `Reed` (tall `coverData` kind `'reed'`, LOS-blocking like Rock/Log/Bramble
-but **not** in `HIDE_KINDS` — not a hiding spot), four fixed `Landmark`
-groups (fire tower, stone marker, drowned car, lightning-split oak — static,
+but **not** in `HIDE_KINDS` — not a hiding spot), six fixed `Landmark`
+groups (fire tower, stone marker, drowned car, lightning-split oak, radio
+mast, chapel steeple — static,
 no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`; `oak`
 and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit
-inside an actual bog patch now that the bog is no longer a fixed band), and
+inside an actual bog patch now that the bog is no longer a fixed band),
+`radioMast` and `chapelSteeple` (LUL-1782) sit in the outer ring, radius
+~178-179, restoring fixed orientation geography on the leg past the original
+four that LUL-1484's map growth left featureless. and
 the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
 boolean, so a patch edge scales speed/noise in rather than stepping. It
 scales player/predator walk speed down and noise radius up while standing in

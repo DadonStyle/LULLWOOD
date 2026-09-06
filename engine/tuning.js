@@ -39,18 +39,26 @@ export const CONFIG = {
   carryPaceMul: 0.72,                                 // LUL-38: burden while carrying the child, not a cripple
 };
 
-// LUL-25: four fixed navigational landmarks, "visible over the fog line" so
+// LUL-25: six fixed navigational landmarks, "visible over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() in forest-engine.js).
 // Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home.
 // `cr` is the movement-collision radius (LUL-374) -- deliberately much
 // smaller than `clear` (which only keeps trees/cover from generating too
 // close to the landmark's nudge target).
+// LUL-1782: radioMast/chapelSteeple added when the map grew to 480x480
+// (LUL-1484) left everything past radius ~134 without a landmark, and the
+// child now spawns at radius 120-192 -- beyond the original four entirely.
+// Placed at radius ~178-179, in the two widest angular gaps between the
+// original four (the empty arc through `oak` at ~10 deg, and the empty arc
+// between `fireTower` at 225 deg and `stoneMarker` at 323 deg).
 export const LANDMARKS = [
-  { kind: 'fireTower',   x: -95, z: -95, clear: 12, cr: 1.6 },
-  { kind: 'stoneMarker', x: 100, z: -75, clear: 9,  cr: 1.1 },
-  { kind: 'oak',         x: 22,  z: 4,   clear: 10, cr: 1.3 },
-  { kind: 'drownedCar',  x: -95, z: 46,  clear: 11, cr: 2.3 },
+  { kind: 'fireTower',     x: -95, z: -95, clear: 12, cr: 1.6 },
+  { kind: 'stoneMarker',   x: 100, z: -75, clear: 9,  cr: 1.1 },
+  { kind: 'oak',           x: 22,  z: 4,   clear: 10, cr: 1.3 },
+  { kind: 'drownedCar',    x: -95, z: 46,  clear: 11, cr: 2.3 },
+  { kind: 'radioMast',     x: 30,  z: 175, clear: 10, cr: 1.0 },
+  { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
 
 // ---- Lighting --------------------------------------------------------------
