@@ -41,6 +41,9 @@ export interface EngineHudState {
   survivedSeconds: number;
   pace: number;
   fog: number;
+  // LUL-1709: live time-of-run pacing clock, plain "h:mm AM/PM" text -- ticks from
+  // dawn to full night over the run. Engine-driven like pace/fog above.
+  timeOfRunClock: string;
   soundOn: boolean;
   // LUL-40/LUL-382: hold-to-veil (mist ramp + follow-light dim + sight-detect cut),
   // engine-driven (see engine/forest-engine.js tick()) -- read-only here, there's no
@@ -146,6 +149,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   survivedSeconds: 0,
   pace: 6,
   fog: 0.04,
+  timeOfRunClock: '6:00 AM',
   soundOn: true,
   lightDimmed: false,
   veilCharge: 1,
@@ -419,6 +423,10 @@ export default function Hud({
         <span id="staminaState">
           Stamina: {Math.round(state.staminaCharge * 100)}%
         </span>
+        {/* LUL-1709: plain-text day/night pacing clock, ticks from dawn to night
+            over the run. Read-only readout, same one-directional engine->HUD
+            pattern as lightState/veilState/staminaState above it. */}
+        <span id="timeOfRunClock">Time: {state.timeOfRunClock}</span>
         {/* LUL-1043: the run currency's balance -- exempted from admin-mode's
             #panel hide the same way lightState/veilState are (GameCanvas.tsx),
             since this is core game progress, not a dev-tuning control. */}
