@@ -240,6 +240,10 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #missionGlyph { color: #7fa6dd; }
 
+  #windIndicator { position: fixed; top: 20px; right: 20px; z-index: 12;
+    font-size: 28px; color: #ddd; text-shadow: 0 0 4px rgba(0,0,0,0.6);
+    transform-origin: 50% 50%; pointer-events: none; }
+
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;
      gradient moved to #winText inner wrapper so text remains readable */
