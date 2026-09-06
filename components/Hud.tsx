@@ -9,6 +9,7 @@ import GameMenu from './GameMenu';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 import { nextDeeperLungsCost, veilMaxHoldForTier, type RunPayout } from '@/lib/game/economy';
+import type { MissionKind } from '@/lib/game/mission';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -82,6 +83,11 @@ export interface EngineHudState {
   embersBalance: number;
   embersDeeperLungsTier: number;
   lastPayout: RunPayout | null;
+  // LUL-1258: M2 Deepwater's minimal HUD panel. Both null whenever no mission
+  // exists or the player is carrying (the engine never sends non-null values
+  // in that case) -- Hud never has to know about `carrying` itself.
+  missionKind: MissionKind | null;
+  missionStatus: 'active' | 'complete' | null;
 }
 
 export interface EngineActions {
@@ -161,6 +167,14 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   embersBalance: 0,
   embersDeeperLungsTier: 0,
   lastPayout: null,
+  missionKind: null,
+  missionStatus: null,
+};
+
+// LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
+// M1/M3/M4/M5 extends this map, not the render logic below.
+const MISSION_NAMES: Record<MissionKind, string> = {
+  deepwater: 'Deepwater',
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -474,6 +488,17 @@ export default function Hud({
       {state.objectiveVisible && (
         <div id="objective" className={state.objectiveReady ? 'ready' : undefined} style={{ display: 'block' }}>
           {state.objectiveText}
+        </div>
+      )}
+
+      {/* LUL-1258: M2 Deepwater's minimal HUD panel -- decisions/missions-accepted-2026-09-01
+          §2's "two collapsed lines, top-left, never occupying the play area". No
+          expand-on-hold in this ship (declared simplification, spec S5) -- read-only
+          text, no touch target, so it needs no new EngineActions entry. */}
+      {state.missionKind && state.missionStatus && (
+        <div id="missionPanel">
+          {MISSION_NAMES[state.missionKind]}
+          <span id="missionGlyph">{state.missionStatus === 'complete' ? '●' : '○'}</span>
         </div>
       )}
 
