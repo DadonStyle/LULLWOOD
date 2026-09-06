@@ -21,9 +21,9 @@ export type AnalyticsEventInput =
   // this run's Embers total (RunPayout.total from lib/game/economy.ts),
   // `balance` is the running total after it's applied.
   | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number }
-  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number }
+  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; carrying: boolean }
   | { event: 'session_length'; duration_ms: number; reached_gameplay: boolean; session_id: string }
-  | { event: 'feature_engagement'; feature: string; action: string };
+  | { event: 'feature_engagement'; feature: string; action: string; carrying?: boolean };
 
 export type AnalyticsEvent = AnalyticsEventInput & {
   ts: number;
