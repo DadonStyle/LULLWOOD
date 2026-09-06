@@ -67,7 +67,7 @@ import {
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import {
-  isInBog,
+  biomeAt,
   bogSpeedMultiplier,
   bogNoiseMultiplier,
   pickHardBabyPosition,
@@ -182,12 +182,14 @@ function init(onStateChange, inputMode) {
 // ---- Knobs ---------------------------------------------------------------
 const half = CONFIG.mapSize / 2;
 const margin = 4;
-// LUL-25: the world is a rectangle now, not a square -- `half` still bounds
-// x symmetrically (and is the z coordinate the forest ends at), `zMax` is the
-// new outer z edge, out past the bog. Every place that used to clamp z the
-// same way it clamps x now clamps to [-half, zMax] instead of [-half, half].
-const zMax = half + CONFIG.bogDepth;
-function inBog(x, z){ return isInBog(z, { half, zMax }); }
+// LUL-1483: the world is a square again -- x and z both bound to
+// [-half, half]. `zMax` is kept, equal to `half`, purely so every existing
+// `[-half+n, zMax-n]`-shaped clamp elsewhere in this file (backOffPoint,
+// roam/reroute waypoints, the predator/player position clamps in
+// updatePredators()/tick()) keeps compiling and behaving correctly without a
+// site-by-site rename -- it is not a second world boundary, just an alias.
+// inBog()/isInBog() are gone; biomeAt(x, z) (lib/game/bog.ts) replaces both.
+const zMax = half;
 // LUL-25: four fixed navigational landmarks, "visible over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() below, both untouched).
@@ -639,9 +641,13 @@ function layoutTreePool(meshParts, data, count){
 function generateBogTrees(){
   bogTreeData = [];
   let tries = 0;
-  while(bogTreeData.length < BOG_TREES && tries < BOG_TREES*25){
+  // LUL-1483: was a direct scatter into the z-band (100% acceptance minus
+  // nearLandmarks) -- now also rejects on biomeAt (~30% of the square is
+  // boggy), so the try budget is raised to keep hitting BOG_TREES reliably.
+  while(bogTreeData.length < BOG_TREES && tries < BOG_TREES*200){
     tries++;
-    const x = rnd(-half+margin, half-margin), z = rnd(half+margin, zMax-margin);
+    const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
+    if(biomeAt(x, z) <= 0) continue;
     if(nearLandmarks(x, z, 2)) continue;
     const s = 0.6 + rng()*1.3;   // thinner cover -- same scatter shape, smaller sizes than the forest
     bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
@@ -654,9 +660,10 @@ function generateBogTrees(){
 // like any other prop, with zero changes to either function.
 function generateReeds(){
   let tries = 0, placed = 0;
-  while(placed < COVER_PROPS && tries < COVER_PROPS*25){
+  while(placed < COVER_PROPS && tries < COVER_PROPS*200){   // LUL-1483: same acceptance-rate drop as generateBogTrees()
     tries++;
-    const x = rnd(-half+margin, half-margin), z = rnd(half+4, zMax-4);
+    const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
+    if(biomeAt(x, z) <= 0) continue;
     if(nearLandmarks(x, z, 3)) continue;
     const r = 0.5 + rng()*0.4, h = 1.3 + rng()*0.9;
     coverData.push({ x, z, hx: r, hz: r, y: h*0.5, kind: 'reed', ry: rng()*Math.PI*2 });
@@ -683,7 +690,7 @@ let babySpawnDifficulty = 'normal';
 let babyNormalSpawn = { x: 0, z: 0 };
 function applyHardBabySpawn(){
   const pos = babySpawnDifficulty === 'hard'
-    ? pickHardBabyPosition(rng, { half, zMax }, half, LANDMARKS)
+    ? pickHardBabyPosition(rng, half, LANDMARKS)
     : babyNormalSpawn;
   baby.x = pos.x; baby.z = pos.z;
   babyGroup.position.set(baby.x, 0, baby.z);
@@ -1520,6 +1527,13 @@ function updatePredators(dt, noiseRadius){
 
     if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz);
 
+    // LUL-1483: wading, same as the player -- applied once here rather than
+    // at each state branch above, since every one of them (hunt/chase/
+    // investigate/flank/reroute/charge) already funnels into this one
+    // `speed` read. Was previously player-only (bogSpeedMultiplier at
+    // player-movement's maxSpd, above); predators waded at full land speed.
+    speed *= bogSpeedMultiplier(biomeAt(p.x, p.z));
+
     // smooth velocity + collide with trees (axis-separated slide)
     const dvx = desx*speed, dvz = desz*speed, accel = speed > 0 ? 3.6 : 6;
     p.vx += (dvx - p.vx) * Math.min(1, dt*accel);
@@ -2306,7 +2320,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // lets a test pin the 'hard' baby-spawn seam directly, without also
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
-  window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
+  window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: biomeAt(baby.x, baby.z) > 0 }; };
   // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
   // "this world point stays on-canvas" for both the player arrow (which calls
   // w2m(player.x, player.z) in drawMinimap()) and the objective marker (which
@@ -3286,7 +3300,7 @@ function tick(){
   }
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
-  const playerInBog = inBog(player.x, player.z);   // LUL-25: shallow water -- half speed, louder splash
+  const playerBogginess = biomeAt(player.x, player.z);   // LUL-1483: continuous 0..1, was a boolean z-band test
   // LUL-791/LUL-392: the lake used to be pure render -- no collision, no slow,
   // walkable like dry ground. `inLakeWater` (the visible water radius `r`,
   // not the wider `clear` spawn-clearance ring the spawn checks use) so the
@@ -3301,7 +3315,7 @@ function tick(){
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
-    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerInBog) * lakeSpeedMultiplier(playerInLake);
+    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerBogginess) * lakeSpeedMultiplier(playerInLake);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
@@ -3329,7 +3343,7 @@ function tick(){
       // shape as scent, sized off the same running flag rather than a new one.
       // LUL-25: splashing through the bog carries further than a dry footstep --
       // the sight-cover reeds give you costs you on the sound channel instead.
-      noiseRadius = (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK) * bogNoiseMultiplier(playerInBog);
+      noiseRadius = (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK) * bogNoiseMultiplier(playerBogginess);
     }
   }
 
@@ -3560,7 +3574,7 @@ function tick(){
     audio.foot += dist;                              // footsteps play in both states
     if(spd > 0.3 && audio.foot >= 1.9){
       audio.foot -= 1.9;
-      if(playerInBog) splash(0.3); else footstep(0.12);   // LUL-25: same cadence, louder/wetter in the bog
+      if(playerBogginess > 0) splash(0.3); else footstep(0.12);   // LUL-1483: continuous field, splash whenever standing in any bog
     }
   }
 
