@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { fetchEvents, isRange, type Range } from '@/lib/dashboard/blob-source';
-import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement } from '@/lib/dashboard/aggregate';
+import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement, computeEconomy } from '@/lib/dashboard/aggregate';
 
 // Reads live external data on every request -- must never be statically
 // prerendered at build time, and there's nothing here worth caching given
@@ -24,6 +24,10 @@ function fmtNum(n: number): string {
   return n.toLocaleString('en-US');
 }
 
+function fmtNum2(n: number | null): string {
+  return n === null ? '—' : n.toFixed(2);
+}
+
 const th: CSSProperties = { textAlign: 'left', padding: '0.4rem 0.8rem 0.4rem 0', borderBottom: '1px solid #444' };
 const td: CSSProperties = { padding: '0.3rem 0.8rem 0.3rem 0', borderBottom: '1px solid #2a2a2a' };
 
@@ -40,6 +44,7 @@ export default async function DashboardPage({
   const outcomes = computeOutcomes(events);
   const sessions = computeSessions(events);
   const featureEngagement = computeFeatureEngagement(events);
+  const economy = computeEconomy(events);
 
   return (
     <main
@@ -179,6 +184,55 @@ export default async function DashboardPage({
           <p style={{ color: '#777', fontSize: '0.85rem' }}>
             D1/D7 return is computed only from anon_id sightings inside the selected range, so it undercounts near the
             edges of the window (a sighting from before the window starts is invisible to it).
+          </p>
+        </section>
+
+        <section style={{ marginBottom: '2.5rem' }}>
+          <h2>Economy</h2>
+          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: '1rem' }}>
+            <tbody>
+              <tr>
+                <td style={td}>Win payout P50 / P90 (n)</td>
+                <td style={td}>
+                  {fmtNum2(economy.winPayout.p50)} / {fmtNum2(economy.winPayout.p90)} ({fmtNum(economy.winPayout.n)})
+                </td>
+              </tr>
+              <tr>
+                <td style={td}>Loss payout P50 / P90 (n)</td>
+                <td style={td}>
+                  {fmtNum2(economy.lossPayout.p50)} / {fmtNum2(economy.lossPayout.p90)} ({fmtNum(economy.lossPayout.n)})
+                </td>
+              </tr>
+              <tr>
+                <td style={td}>Failure band (loss/win payout)</td>
+                <td style={td}>{fmtPct(economy.failureBandPct)}</td>
+              </tr>
+              <tr>
+                <td style={td}>Loss depth P50 / P95 (n)</td>
+                <td style={td}>
+                  {fmtNum2(economy.lossDepth.p50)} / {fmtNum2(economy.lossDepth.p95)} ({fmtNum(economy.lossDepth.n)})
+                </td>
+              </tr>
+              <tr>
+                <td style={td}>Loss depth &gt; 24</td>
+                <td style={td}>{fmtPct(economy.lossDepth.pctAbove24)}</td>
+              </tr>
+              <tr>
+                <td style={td}>Crossed 120 balance</td>
+                <td style={td}>{fmtNum(economy.purchase.crossed120Count)}</td>
+              </tr>
+              <tr>
+                <td style={td}>Purchased within 3 runs of crossing</td>
+                <td style={td}>
+                  {fmtNum(economy.purchase.purchasedWithin3RunsCount)} ({fmtPct(economy.purchase.purchasedWithin3RunsPct)})
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p style={{ color: '#777', fontSize: '0.85rem' }}>
+            Falsification card (wiki <code>game/economy/falsification-card</code>): P3 predicts the failure band in
+            12–28%; P4 predicts loss depth P95 ≤ 24; P5 predicts ≥60% purchase-within-3-runs; P6 predicts win payout
+            P50 in [95, 130]. This panel reports the measurements only — it does not evaluate the predictions.
           </p>
         </section>
 

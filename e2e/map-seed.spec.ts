@@ -5,12 +5,16 @@
 // spec proves both halves: the override reproduces a layout exactly, and the
 // default does not reproduce anything.
 import { test, expect } from '@playwright/test';
-import { boot, QA_PINNED_SEED } from './helpers';
+import { boot, QA_PINNED_SEED, qaHook, enter } from './helpers';
 
 async function dumpMapSeed(page: import('@playwright/test').Page) {
   const dump = await page.evaluate(() => window.ForestEngine?.qaProbeMapSeed?.() ?? null);
   if (dump === null) throw new Error('qaProbeMapSeed returned null -- qaHooks not active?');
   return dump;
+}
+
+async function readElapsedTime(page: import('@playwright/test').Page) {
+  return page.evaluate(() => (window as any).ForestEngine?.qaProbeElapsedTime?.() ?? 0);
 }
 
 test.describe('session-varied map seed', () => {
@@ -47,5 +51,45 @@ test.describe('session-varied map seed', () => {
     expect(b.seed).not.toBe(QA_PINNED_SEED);
     expect(a.seed).not.toBe(b.seed);
     expect(a).not.toEqual(b);
+  });
+});
+
+test.describe('runtime seed determinism — predator behavior', () => {
+  test('?seed= reproduces identical predator behavior across two runs (LUL-1104)', async ({ page }) => {
+    // LUL-1104: the map seed is reproducible, but predator runtime behavior
+    // (sniffs, positions, state machine transitions) must also be deterministic.
+    // This drives the game forward and verifies predator states match exactly.
+
+    async function runAndCaptureStates(page: import('@playwright/test').Page) {
+      await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
+      await enter(page);
+      // Let the predators update through several frames of behavior (roam,
+      // sniff, investigate, etc). 1.5 game-seconds is enough for state changes.
+      // Poll the engine's game clock (qaProbeElapsedTime), not wall-clock --
+      // a fixed waitForTimeout() can let CI jitter advance a different number
+      // of engine ticks between the two sequential runs below, producing tiny
+      // (~0.1-0.3 unit) x/z/dist drift that isn't a real determinism bug.
+      const GAME_SECONDS = 1.5;
+      const startTime = await readElapsedTime(page);
+      await expect
+        .poll(async () => (await readElapsedTime(page)) - startTime, {
+          message: `game clock did not advance to ${GAME_SECONDS}s`,
+          timeout: 60_000,
+        })
+        .toBeGreaterThanOrEqual(GAME_SECONDS);
+      // Capture all 9 predators (3 species × 3 individuals)
+      const states = [];
+      for (let i = 0; i < 9; i++) {
+        const state = await qaHook(page, 'qaPredatorState', i);
+        states.push(state);
+      }
+      return states;
+    }
+
+    const firstRun = await runAndCaptureStates(page);
+    const secondRun = await runAndCaptureStates(page);
+
+    // Verify that all predator states are identical across both runs
+    expect(secondRun).toEqual(firstRun);
   });
 });

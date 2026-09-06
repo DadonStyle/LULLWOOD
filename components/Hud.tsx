@@ -5,39 +5,11 @@ import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
 import OrientationGate from './OrientationGate';
 import SettingsPanel from './SettingsPanel';
+import GameMenu from './GameMenu';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 import { nextDeeperLungsCost, veilMaxHoldForTier, type RunPayout } from '@/lib/game/economy';
-
-// LUL-124: fullscreen toggle. `document.fullscreenEnabled` is false on
-// browsers that never expose the API (older iOS Safari) so the button is
-// simply omitted there instead of rendering a control that would reject on
-// every click. The `fullscreenchange` listener is what keeps `isFullscreen`
-// correct after the browser's own exit paths (Esc key, system UI) which
-// don't otherwise call back into this component.
-function useFullscreen() {
-  const supported = useState(() => typeof document !== 'undefined' && document.fullscreenEnabled)[0];
-  const [isFullscreen, setIsFullscreen] = useState(
-    () => typeof document !== 'undefined' && document.fullscreenElement != null,
-  );
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    const onChange = () => setIsFullscreen(document.fullscreenElement != null);
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
-  }, []);
-
-  const toggle = useCallback(() => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    } else {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }
-  }, []);
-
-  return { supported, isFullscreen, toggle };
-}
+import type { MissionKind } from '@/lib/game/mission';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -61,6 +33,7 @@ export interface EngineHudState {
   statusVisible: boolean;
   statusText: string;
   winVisible: boolean;
+  winRevealed: boolean;
   deathVisible: boolean;
   deathKind: string;
   lossRevealed: boolean;
@@ -77,6 +50,17 @@ export interface EngineHudState {
   // while locked, even if held.
   veilCharge: number;
   veilLocked: boolean;
+  // LUL-1089: contextual action prompts for hide and veil mechanics.
+  coverPromptVisible: boolean;
+  coverPromptUrgent:  boolean;
+  coverPromptKind:    'bramble' | 'log' | null;
+  veilPromptVisible:  boolean;
+  veilPromptUrgent:   boolean;
+  // LUL-1113: stamina resource meter, 1 (full) .. 0 (drained). Decays while
+  // sprinting, regenerates while walking. Passed to sprintSpeedMul() to ramp
+  // sprint multiplier from STAMINA_SPRINT_MUL (at full charge) to 1 (walk speed,
+  // at zero charge).
+  staminaCharge: number;
   // LUL-213: a wolf/lion is telegraphing a charge -- press Space within the
   // window or get caught. `chargeToken` only changes on a fresh charge (not
   // every frame one is active), so it can key the prompt element and retrigger
@@ -99,6 +83,11 @@ export interface EngineHudState {
   embersBalance: number;
   embersDeeperLungsTier: number;
   lastPayout: RunPayout | null;
+  // LUL-1258: M2 Deepwater's minimal HUD panel. Both null whenever no mission
+  // exists or the player is carrying (the engine never sends non-null values
+  // in that case) -- Hud never has to know about `carrying` itself.
+  missionKind: MissionKind | null;
+  missionStatus: 'active' | 'complete' | null;
 }
 
 export interface EngineActions {
@@ -148,6 +137,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   statusVisible: false,
   statusText: '',
   winVisible: false,
+  winRevealed: false,
   deathVisible: false,
   deathKind: 'wolf',
   lossRevealed: false,
@@ -158,6 +148,12 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lightDimmed: false,
   veilCharge: 1,
   veilLocked: false,
+  coverPromptVisible: false,
+  coverPromptUrgent: false,
+  coverPromptKind: null,
+  veilPromptVisible: false,
+  veilPromptUrgent: false,
+  staminaCharge: 1,
   chargeVisible: false,
   chargeToken: 0,
   difficulty: 'night',
@@ -171,6 +167,14 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   embersBalance: 0,
   embersDeeperLungsTier: 0,
   lastPayout: null,
+  missionKind: null,
+  missionStatus: null,
+};
+
+// LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
+// M1/M3/M4/M5 extends this map, not the render logic below.
+const MISSION_NAMES: Record<MissionKind, string> = {
+  deepwater: 'Deepwater',
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -347,7 +351,6 @@ export default function Hud({
   state: EngineHudState;
   actions: EngineActions | null;
 }) {
-  const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
   useEmbers(actions, state.embersBalance, state.embersDeeperLungsTier);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
@@ -409,6 +412,11 @@ export default function Hud({
         <span id="veilState">
           Veil: {Math.round(state.veilCharge * 100)}%{state.veilLocked ? ' (recharging)' : ''}
         </span>
+        {/* LUL-1113: stamina resource meter -- the cost on sprint. Decays while
+            sprinting, regenerates while walking. */}
+        <span id="staminaState">
+          Stamina: {Math.round(state.staminaCharge * 100)}%
+        </span>
         {/* LUL-1043: the run currency's balance -- exempted from admin-mode's
             #panel hide the same way lightState/veilState are (GameCanvas.tsx),
             since this is core game progress, not a dev-tuning control. */}
@@ -416,17 +424,9 @@ export default function Hud({
         <button id="regen" onClick={() => actions?.regenMap()}>
           New map
         </button>
-        {fullscreenSupported && (
-          <button id="fullscreen" onClick={toggleFullscreen}>
-            Fullscreen: {isFullscreen ? 'on' : 'off'}
-          </button>
-        )}
-        {/* LUL-26: difficulty presets + accessibility, one dialog. */}
-        <button id="settingsBtn" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog">
-          Settings
-        </button>
       </div>
 
+      <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} />
       <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       {/* LUL-26: closed captions for predator calls -- the only warning
@@ -458,15 +458,11 @@ export default function Hud({
           <div id="gateKeys">
             {mobile ? (
               <>
-                <b>left stick</b> — move &nbsp;·&nbsp; <b>right stick</b> — look &nbsp;·&nbsp; push the left stick further to run
+                sticks to move and look &nbsp;·&nbsp; push the left stick to run
                 <br />
-                <b>Hide</b> button — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> button — lift the child
+                <b>Hide</b> / <b>E</b> / <b>Jump</b> &nbsp;·&nbsp; the buttons tell you when
                 <br />
-                <b>Jump</b> button — jump (also how you clear a charging wolf or lion) &nbsp;·&nbsp;{' '}
-                <b>Pause</b> button — pause / resume
-                <br />
-                <b>Veil</b> button — hold for the mist veil (dims your light, floods the world in mist, and cuts
-                how far predators can see you) — limited, watch the Veil meter
+                <b>Veil</b> &nbsp;·&nbsp; holds off what is hunting you
               </>
             ) : (
               <>
@@ -495,6 +491,17 @@ export default function Hud({
         </div>
       )}
 
+      {/* LUL-1258: M2 Deepwater's minimal HUD panel -- decisions/missions-accepted-2026-09-01
+          §2's "two collapsed lines, top-left, never occupying the play area". No
+          expand-on-hold in this ship (declared simplification, spec S5) -- read-only
+          text, no touch target, so it needs no new EngineActions entry. */}
+      {state.missionKind && state.missionStatus && (
+        <div id="missionPanel">
+          {MISSION_NAMES[state.missionKind]}
+          <span id="missionGlyph">{state.missionStatus === 'complete' ? '●' : '○'}</span>
+        </div>
+      )}
+
       {/* `hiding` is not a second flag: status only ever appears while hidden
           (LUL-35 pass 2 removed the `statusHiding` field, which the engine only
           ever set to the same value as `statusVisible`). */}
@@ -503,6 +510,51 @@ export default function Hud({
           {state.statusText}
         </div>
       )}
+
+      {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;
+          cover wins (engine enforces via !coverPromptVisible in veil condition).
+          Key/button name uses the same #actionKey pill style as #chargeKey above.
+          Double-spaces around the key name are house style (match "Press  E  to lift the child"). */}
+      {(state.coverPromptVisible || state.veilPromptVisible) && (() => {
+        const noun = state.coverPromptKind === 'log' ? 'hollow log' : 'bush';
+        const urgentKeyStyle = state.reducedMotion
+          ? { animation: 'none', background: '#e8554a', boxShadow: '0 2px 26px rgba(232,85,74,0.85)' } as const
+          : undefined;
+        if(state.coverPromptVisible){
+          if(state.coverPromptUrgent){
+            return (
+              <div id="actionPrompt" className="urgent">
+                {mobile
+                  ? <>{`the ${noun} is right there — TAP  `}<span id="actionKey" style={urgentKeyStyle}>Hide</span></>
+                  : <>{`the ${noun} is right there — PRESS  `}<span id="actionKey" style={urgentKeyStyle}>H</span></>}
+              </div>
+            );
+          }
+          return (
+            <div id="actionPrompt">
+              {mobile
+                ? <>{'Tap  '}<span id="actionKey">Hide</span>{`  to slip into the ${noun}`}</>
+                : <>{'Press  '}<span id="actionKey">H</span>{`  to hide in the ${noun}`}</>}
+            </div>
+          );
+        }
+        if(state.veilPromptUrgent){
+          return (
+            <div id="actionPrompt" className="urgent">
+              {mobile
+                ? <>{`nowhere to hide — HOLD  `}<span id="actionKey" style={urgentKeyStyle}>Veil</span></>
+                : <>{`nowhere to hide — HOLD  `}<span id="actionKey" style={urgentKeyStyle}>F</span>{'  for the veil'}</>}
+            </div>
+          );
+        }
+        return (
+          <div id="actionPrompt">
+            {mobile
+              ? <>{`it is hunting you — hold  `}<span id="actionKey">Veil</span></>
+              : <>{`it is hunting you — hold  `}<span id="actionKey">F</span>{'  for the mist veil'}</>}
+          </div>
+        );
+      })()}
 
       {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
           forces React to remount this element on every fresh charge (not on
@@ -538,13 +590,15 @@ export default function Hud({
 
       {state.winVisible && (
         <div id="winScreen" style={{ display: 'flex' }}>
-          <h1>YOU WON</h1>
-          <p>the child is safe — you carried them home through the Lullwood</p>
-          <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
-          <button className="restartBtn" onClick={() => actions?.restart()}>
-            Play again
-          </button>
-          <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
+          <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
+            <h1>YOU WON</h1>
+            <p>the child is safe — you carried them home through the Lullwood</p>
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
+            <button className="restartBtn" onClick={() => actions?.restart()}>
+              Play again
+            </button>
+            <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
+          </div>
         </div>
       )}
 

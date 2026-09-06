@@ -40,7 +40,7 @@ const OVERLAY_STYLE = `
   #gateSub { font-size: 14px; letter-spacing: 0.06em; color: #9fb2cd; }
   #gateCredit { font-size: 12px; letter-spacing: 0.04em; color: #6f82a0; }
   #gateKeys { margin-top: 18px; font-size: 12px; line-height: 2; color: #7f92ad;
-    letter-spacing: 0.03em; }
+    letter-spacing: 0.03em; max-width: 34rem; margin-inline: auto; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
 
   /* LUL-920: was top: 20px, same as #objective below -- the two sat directly on
@@ -83,6 +83,10 @@ const OVERLAY_STYLE = `
      for viewports isMobile() calls mobile that this query doesn't catch. */
   @media (max-width: 768px), (pointer: coarse) and (hover: none) {
     #panel { bottom: 240px; }
+    /* LUL-1089: raise #actionPrompt clear of the mobile control row (z-index 30,
+       bottom: 24px+safe-area). 240px matches #panel's own mobile override above;
+       the prompt rides above the controls rather than behind them. */
+    #actionPrompt { bottom: 240px; }
     /* LUL-69: ~44px is the standard (WCAG 2.5.5 / Apple HIG / Material)
        minimum touch-target side -- desktop's 6px/12px padding at 12px font
        sits well under that, and the founder's own complaint was "HUD sized
@@ -98,10 +102,10 @@ const OVERLAY_STYLE = `
     .restartBtn { padding: 15px 24px; font-size: 16px; }
     /* LUL-1043: same 44px rationale -- the Deeper Lungs buy button. */
     .buyBtn { padding: 13px 18px; font-size: 14px; }
-    #gateTitle { font-size: 32px; }
-    #gateSub { font-size: 13px; }
+    #gateTitle { font-size: 26px; }
+    #gateSub { font-size: 12px; }
     #gateCredit { font-size: 11px; }
-    #gateKeys { font-size: 13px; line-height: 2.1; }
+    #gateKeys { font-size: 11px; line-height: 1.7; max-width: 34rem; margin-inline: auto; }
     /* Minimap stays legible at the same physical size rather than shrinking
        further -- on a ~390px-wide phone it's already a larger fraction of
        the screen than on desktop, which is the point (small map = useless
@@ -176,11 +180,14 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #panel,
   body[data-high-contrast="1"] #objective,
   body[data-high-contrast="1"] #status,
+  body[data-high-contrast="1"] #actionPrompt,
   body[data-high-contrast="1"] #captionToast,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
   body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
   body[data-high-contrast="1"] #status.hiding { color: #baffcf; border-color: #6fe89a; }
   body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
+  body[data-high-contrast="1"] #actionPrompt { color: #ffe6b0; border-color: #ffcf7a; }
+  body[data-high-contrast="1"] #actionPrompt.urgent { color: #ff9f9f; border-color: #ff6b6b; }
 
   /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
@@ -199,10 +206,9 @@ const OVERLAY_STYLE = `
      #minimap needs !important: the engine writes its own inline
      mm.style.display (blackout difficulty preset, forest-engine.js), which
      beats a plain rule.
-     LUL-1043: #embersBalance is exempted for the same reason as
-     #lightState/#veilState -- it's the run currency's balance, not a
-     dev-tuning control, and a player should always see it. */
-  body[data-admin-mode="0"] #panel > *:not(#settingsBtn):not(#lightState):not(#veilState):not(#embersBalance) { display: none !important; }
+     LUL-1085: #panel is now dev-only (pace/fog/lightState/veilState/embersBalance
+     for monitoring). Player-facing menu moved to components/GameMenu.tsx. */
+  body[data-admin-mode="0"] #panel { display: none !important; }
   body[data-admin-mode="0"] #minimap { display: none !important; }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
@@ -221,14 +227,32 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #objective.ready { color: #ffdca8; border-color: rgba(255,200,140,0.45); }
 
-  /* win screen */
+  /* LUL-1258: M2 Deepwater's minimal mission panel -- two collapsed lines,
+     top-left, per decisions/missions-accepted-2026-09-01 §2. Small and
+     read-only (no touch target), so it needs no mobile media-query override:
+     it never grows past a couple of words at any viewport. */
+  #missionPanel { position: fixed; top: 16px; left: 16px; z-index: 10;
+    display: flex; align-items: center; gap: 8px; pointer-events: none;
+    padding: 6px 12px; border-radius: 999px;
+    background: rgba(12,17,26,0.55); border: 1px solid rgba(150,175,215,0.14);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    font-size: 12px; letter-spacing: 0.04em; color: #b9c8dd;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+  #missionGlyph { color: #7fa6dd; }
+
+  /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
+     particle burst on the canvas below is fully visible for the ~1.8s it runs;
+     gradient moved to #winText inner wrapper so text remains readable */
   #winScreen { position: fixed; inset: 0; z-index: 25; display: none;
-    flex-direction: column; align-items: center; justify-content: center; gap: 6px;
-    text-align: center; padding: 24px;
-    background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86)); }
-  #winScreen h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
+    align-items: center; justify-content: center; text-align: center; padding: 24px;
+    background: rgba(0,0,0,0); pointer-events: none; }
+  #winText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column;
+    align-items: center; gap: 6px; pointer-events: auto;
+    background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86));
+    padding: 24px; border-radius: 4px; }
+  #winText h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
     color: #ffe6c8; text-shadow: 0 2px 44px rgba(255,190,130,0.5); }
-  #winScreen p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
+  #winText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
   .emberGain { color: #ffdca8; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px; }
@@ -256,6 +280,28 @@ const OVERLAY_STYLE = `
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
     font-size: 13px; letter-spacing: 0.03em; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #status.hiding { color: #9fd7b0; border-color: rgba(120,200,150,0.4); }
+
+  /* LUL-1089: contextual hide/veil prompt. Sits between #status (74px) and
+     #chargePrompt (130px). Calm state: amber (#ffdca8) matching #objective.ready —
+     the game's existing "available now" grammar. Urgent: red (#e8554a) matching
+     #chargeBar — the only red in the HUD, already meaning "act now".
+     urgentFlash animates background + box-shadow only — never transform, never
+     layout — so the translateX(-50%) centring is never overridden mid-panic. */
+  #actionPrompt { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 12;
+    display: flex; align-items: center; gap: 0; pointer-events: none;
+    padding: 7px 16px; border-radius: 999px; white-space: nowrap;
+    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+  #actionPrompt #actionKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
+  #actionPrompt.urgent #actionKey { animation: urgentFlash 0.42s ease-in-out infinite alternate; }
+  @keyframes urgentFlash {
+    from { background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
+    to   { background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
+  @media (prefers-reduced-motion: reduce) {
+    #actionPrompt.urgent #actionKey { animation: none; background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
 
   /* LUL-213/LUL-304: charge-dodge visual key + countdown bar. The animation
      duration is CHARGE_WINDOW (imported from lib/game/charge.ts, not

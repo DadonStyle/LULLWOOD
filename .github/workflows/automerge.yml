@@ -32,11 +32,26 @@ name: Auto merge
 # repo (systems/ship-never-merges-review-count-gap), so in practice the
 # pre-existing-review check above is what actually lets a `[ship]` PR merge
 # today; the SHIP_REVIEW_PAT path exists as the fail-closed fallback for the
-# rare PR that reaches this job with no review at all yet. `gh pr merge` and
-# everything else in this job stays on `github.token`. See
+# rare PR that reaches this job with no review at all yet. See
 # systems/ship-never-merges-review-count-gap, 2026-08-20 CHANGES REQUESTED
 # entry (LUL-584) for the incident this fixes, and LUL-912 for why the
 # fallback alone was never enough.
+#
+# CORRECTED 2026-09-05 (LUL-762 fallout on cut PR #239): "`gh pr merge` ...
+# stays on `github.token`" above was written when SHIP_REVIEW_PAT had never
+# been configured, so it read as a no-op detail. It is configured now, and
+# that line is a real bug: a merge performed under `github.token` produces a
+# commit on `release/next` that GitHub's own recursion guard exempts from
+# `ci.yml`'s `push` trigger -- so `release/next`'s tip has been carrying zero
+# required-check coverage after every one of this workflow's merges, not
+# just occasionally. This is exactly what stranded cut PR #239: its head was
+# `release/next`'s tip, which had never had a real push-triggered CI run,
+# and `gh pr merge --merge` refused it outright ("the base branch policy
+# prohibits the merge") despite every constituent PR having been reviewed
+# and tested individually. The merge call below now runs under
+# SHIP_REVIEW_TOKEN when it's configured, so the resulting commit is
+# PAT-authored and DOES fire `ci.yml`'s push trigger -- falls back to
+# `github.token` (the original behavior) only when the secret is absent.
 #
 # NOTE: This self-approval constraint on the fallback step is specific to
 # BOT-authored PRs. For human-authored PRs (e.g. authored by `DadonStyle`),
@@ -295,7 +310,13 @@ jobs:
             fi
           fi
 
-          if gh pr merge "$number" --"$merge_method" --delete-branch; then
+          # LUL-762: merge under SHIP_REVIEW_TOKEN when available so the
+          # resulting release/next commit is PAT-authored, not github.token
+          # (see the CORRECTED header note above) -- falls back to the
+          # original github.token merge, unchanged, when the secret isn't
+          # configured.
+          merge_token="${SHIP_REVIEW_TOKEN:-$GH_TOKEN}"
+          if GH_TOKEN="$merge_token" gh pr merge "$number" --"$merge_method" --delete-branch; then
             echo "::notice::merged #$number"
           else
             # Expected when the branch is behind main: the ruleset requires

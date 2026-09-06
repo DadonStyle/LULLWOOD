@@ -9,6 +9,19 @@
 
 import { VEIL_MAX_HOLD } from './veil.ts';
 
+// CEO ruling 2026-09-03: corrected table (wiki game/economy/tier-reward-multipliers §11).
+// Each pair is { win, loss } — win scales computeWinPayout total, loss scales
+// computeDeathPayout total. Do not adjust without re-running the farm guards in the wiki;
+// blackout's loss 1.25 is the bracket-floor ceiling and night's 1.35 protects the band-top
+// farmer at pL=0.75 — both were corrected twice from the original spec filing.
+export type DifficultyTier = 'lantern' | 'night' | 'blackout';
+
+const TIER_MULTIPLIERS: Record<DifficultyTier, { win: number; loss: number }> = {
+  lantern:  { win: 1.00, loss: 1.00 },
+  night:    { win: 1.75, loss: 1.35 },
+  blackout: { win: 2.00, loss: 1.25 },
+};
+
 export interface RunPayout {
   depth: number;
   survival: number;
@@ -47,16 +60,35 @@ export function computeSurvival(survivedSeconds: number): number {
   return Math.min(SURVIVAL_CAP, Math.floor(survivedSeconds / SURVIVAL_UNIT_SECONDS));
 }
 
-export function computeWinPayout(maxDistFromHome: number, survivedSeconds: number): RunPayout {
+// LUL-1258: M2 Deepwater's completion bonus. Win-only, like CARRIED/HOME --
+// forfeited on death, same as the rest of the "reached it but didn't make it
+// home" case. The detour's real payout is `depth` (uncapped on win, capped on
+// death already); this is a flat bonus on top, priced deliberately low per
+// game/economy/mission-rewards §2 ("the greed comes from the depth").
+export const MISSION_DEEPWATER_REWARD = 12;
+
+export function computeWinPayout(
+  maxDistFromHome: number,
+  survivedSeconds: number,
+  tier: DifficultyTier = 'lantern',
+  missionBonus = 0,
+): RunPayout {
   const depth = computeDepth(maxDistFromHome);
   const survival = computeSurvival(survivedSeconds);
-  return { depth, survival, carried: CARRIED, home: HOME, total: depth + survival + CARRIED + HOME };
+  const total = Math.round((depth + survival + CARRIED + HOME + missionBonus) * TIER_MULTIPLIERS[tier].win);
+  return { depth, survival, carried: CARRIED, home: HOME, total };
 }
 
-export function computeDeathPayout(maxDistFromHome: number, survivedSeconds: number): RunPayout {
-  const depth = computeDepth(maxDistFromHome);
+export function computeDeathPayout(
+  maxDistFromHome: number,
+  survivedSeconds: number,
+  objectiveDistFromHome: number,
+  tier: DifficultyTier = 'lantern',
+): RunPayout {
+  const depth = Math.min(computeDepth(maxDistFromHome), computeDepth(objectiveDistFromHome));
   const survival = computeSurvival(survivedSeconds);
-  return { depth, survival, carried: 0, home: 0, total: depth + survival };
+  const total = Math.round((depth + survival) * TIER_MULTIPLIERS[tier].loss);
+  return { depth, survival, carried: 0, home: 0, total };
 }
 
 export function applyPayout(state: EmbersState, payout: RunPayout): EmbersState {

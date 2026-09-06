@@ -40,11 +40,10 @@
 //                          (visible on the board, nobody woken) -- reasonable
 //                          while QA/reviewer agents are paused.
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -178,53 +177,90 @@ function ticketMarker(failure) {
 }
 
 // ---------------------------------------------------------------------------
-// Diagnosis: detect infrastructure failures
+// Diagnosis and analysis
 // ---------------------------------------------------------------------------
-function analyzeFailures(failures) {
+function diagnoseFailures(failures) {
   if (failures.length === 0) {
-    return { diagnosis: 'All green', category: 'pass' };
+    return { headline: 'All tests passed.', isCritical: false };
   }
 
-  const timeoutFailures = failures.filter((f) =>
-    f.error && /timeout of \d+ms exceeded/i.test(f.error)
-  );
-  const timeoutPercent = (timeoutFailures.length / failures.length) * 100;
-
-  if (timeoutPercent >= 80) {
+  // Check if >80% of failures are timeouts with same timeout value
+  const timeoutFailures = failures.filter((f) => f.error && f.error.includes('timeout'));
+  if (timeoutFailures.length / failures.length > 0.8) {
+    const timeouts = [...new Set(timeoutFailures.map((f) => f.error.match(/(\d+)ms/)?.[1]).filter(Boolean))];
     return {
-      diagnosis:
-        `${Math.round(timeoutPercent)}% of the suite times out (${timeoutFailures.length}/${failures.length} failures). ` +
-        `This is a single infrastructure failure — the test suite did not boot or the server is unresponsive. ` +
-        `See the test environment and server logs, not individual test names.`,
-      category: 'infrastructure',
+      headline: `Infrastructure failure detected: ${timeoutFailures.length}/${failures.length} failures are timeouts. This is a single infrastructure issue (likely suite bootstrap or server connectivity), not ${timeoutFailures.length} independent regressions.`,
+      isCritical: true,
+      variants: timeouts.length > 0 ? `All timeouts with variants: [${timeouts.join(', ')}ms]` : null,
     };
   }
 
-  return { diagnosis: null, category: 'real' };
+  // Check if most failures are in the same file
+  const byFile = {};
+  for (const f of failures) {
+    byFile[f.specFile] = (byFile[f.specFile] || 0) + 1;
+  }
+  const topFile = Object.entries(byFile).sort((a, b) => b[1] - a[1])[0];
+  if (topFile && topFile[1] / failures.length > 0.5) {
+    return {
+      headline: `Most failures are in a single spec: \`${topFile[0]}\` (${topFile[1]}/${failures.length}). This suggests the issue is localized, not a systemic regression.`,
+      isCritical: false,
+    };
+  }
+
+  // Check by severity
+  const p0Count = failures.filter((f) => f.severity === 'P0').length;
+  if (p0Count > 0) {
+    return {
+      headline: `${p0Count} P0 (game-breaking) failure(s) detected. The core game loop is affected.`,
+      isCritical: true,
+    };
+  }
+
+  return {
+    headline: `${failures.length} test(s) failing, no P0 severity. Check below for details.`,
+    isCritical: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Previous run tracking
+// Report readers
 // ---------------------------------------------------------------------------
-function getPreviousReportDate(date) {
-  const [year, month, day] = date.split('-').map(Number);
-  const d = new Date(year, month - 1, day - 1);
-  const prev = d.toISOString().slice(0, 10);
-  return prev;
-}
-
-function loadPreviousFailures(date) {
-  const prevDate = getPreviousReportDate(date);
+function getLastReportDate() {
   const dir = path.join(REPO_ROOT, 'QA_REGRESSION', 'reports');
-  const mdFile = path.join(dir, `${prevDate}.md`);
   try {
-    const content = readFileSync(mdFile, 'utf8');
+    const files = readdirSync(dir);
+    const mdFiles = files.filter((f) => f.endsWith('.md')).sort().reverse();
+    if (mdFiles.length > 1) {
+      return mdFiles[1].replace('.md', ''); // Return second-most-recent (previous to today)
+    }
+  } catch {
+    // Directory doesn't exist or read error
+  }
+  return null;
+}
+
+function parseMarkdownReport(date) {
+  const file = path.join(REPO_ROOT, 'QA_REGRESSION', 'reports', `${date}.md`);
+  try {
+    const content = readFileSync(file, 'utf8');
     const failures = [];
     const lines = content.split('\n');
+    let currentSeverity = null;
+
     for (const line of lines) {
-      const match = line.match(/^- `([^`]+)` :: (.+?)(?:\s*\[.+?\])?(?:\s*--.*)?$/);
-      if (match) {
-        failures.push({ specFile: match[1], title: match[2].trim() });
+      if (/^## (P[0-3])/.test(line)) {
+        currentSeverity = line.match(/^## (P[0-3])/)[1];
+      } else if (currentSeverity && line.startsWith('- `')) {
+        // Parse: - `file.ts` :: title [project] -- error
+        const specMatch = line.match(/^- `([^`]+)`/);
+        if (specMatch) {
+          failures.push({
+            specFile: specMatch[1],
+            severity: currentSeverity,
+            title: 'unknown', // We don't store full title in md
+          });
+        }
       }
     }
     return failures;
@@ -233,41 +269,231 @@ function loadPreviousFailures(date) {
   }
 }
 
-function categorizeByStaleness(current, previous) {
-  const prevKeys = new Set(previous.map((f) => `${f.specFile}::${f.title}`));
-  const currKeys = new Set(current.map((f) => `${f.specFile}::${f.title}`));
-
-  const newFailures = current.filter((f) => !prevKeys.has(`${f.specFile}::${f.title}`));
-  const repeatFailures = current.filter((f) => prevKeys.has(`${f.specFile}::${f.title}`));
-  const newlyFixed = previous.filter((f) => !currKeys.has(`${f.specFile}::${f.title}`));
-
-  return { newFailures, repeatFailures, newlyFixed };
-}
-
-// ---------------------------------------------------------------------------
-// Git diff since last run
-// ---------------------------------------------------------------------------
-function getCommitsSinceLastRun(date) {
+async function getCommitDelta() {
+  const { execSync } = await import('child_process');
   try {
-    // Try to get commits on release/next since yesterday
-    // Fall back gracefully if git or branch lookup fails
-    const res = execSync('git log --oneline -20 release/next 2>/dev/null || echo ""', {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      cwd: REPO_ROOT,
-    });
-    return res
+    // Get commits on release/next since yesterday
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const commits = execSync(
+      `git log --oneline --since="${oneDayAgo}" origin/release/next 2>/dev/null | head -20`,
+      { cwd: REPO_ROOT, encoding: 'utf8' }
+    )
       .trim()
       .split('\n')
       .filter(Boolean)
-      .slice(0, 10);
+      .map((line) => {
+        const [hash, ...rest] = line.split(' ');
+        return { hash: hash.slice(0, 7), message: rest.join(' ') };
+      });
+    return commits;
   } catch {
     return [];
   }
 }
 
 // ---------------------------------------------------------------------------
-// Report writers: Markdown and HTML
+// HTML Report Writer
+// ---------------------------------------------------------------------------
+function writeHtmlReport({ date, failures, totalTests, filedCount, dryRun, diagnosis, newFailures, repeatFailures, commits }) {
+  const dir = path.join(REPO_ROOT, 'QA_REGRESSION', 'reports');
+  mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${date}.html`);
+
+  const bySeverity = { P0: [], P1: [], P2: [], P3: [] };
+  for (const f of failures) bySeverity[f.severity].push(f);
+
+  const escapedHtml = (str) => {
+    const div = new Map([
+      ['&', '&amp;'],
+      ['<', '&lt;'],
+      ['>', '&gt;'],
+      ['"', '&quot;'],
+      ["'", '&#39;'],
+    ]);
+    return String(str).replace(/[&<>"']/g, (c) => div.get(c) || c);
+  };
+
+  const diagnosisClass = diagnosis.isCritical ? 'critical' : '';
+  const diagnosisText = escapedHtml(diagnosis.headline);
+  const diagnosisVariants = diagnosis.variants ? `<div style="margin-top: 8px; font-size: 14px; color: inherit;">${escapedHtml(diagnosis.variants)}</div>` : '';
+
+  const statBoxes = [
+    { label: 'Total Tests', value: totalTests ?? '?', severity: 'p0' },
+    { label: 'Failing', value: failures.length, severity: failures.some((f) => f.severity === 'P0') ? 'p0' : 'p2' },
+  ];
+  if (!dryRun) {
+    statBoxes.push({ label: 'New Tickets', value: filedCount, severity: 'p1' });
+  }
+  for (const sev of ['P0', 'P1', 'P2', 'P3']) {
+    if (bySeverity[sev].length > 0) {
+      statBoxes.push({ label: `${sev} Failures`, value: bySeverity[sev].length, severity: sev.toLowerCase() });
+    }
+  }
+
+  const commitSection = commits.length > 0
+    ? `
+    <div class="commit-delta">
+      <h3>Recent Commits on release/next (last 24h)</h3>
+      <div class="commit-list">
+        ${commits.map((c) => `<div class="commit-item"><span class="commit-hash">${escapedHtml(c.hash)}</span>${escapedHtml(c.message)}</div>`).join('')}
+      </div>
+    </div>
+    `
+    : '';
+
+  const failureSections = ['P0', 'P1', 'P2', 'P3']
+    .filter((sev) => bySeverity[sev].length > 0)
+    .map((sev) => {
+      const severityLabel = sev === 'P0' ? 'P0 — Game-Breaking' : sev === 'P1' ? 'P1 — High' : sev === 'P2' ? 'P2 — Medium' : 'P3 — Low';
+      return `
+    <div class="section">
+      <div class="section-title">${severityLabel} (${bySeverity[sev].length})</div>
+      <div class="failure-list">
+        ${bySeverity[sev]
+          .map((f) => {
+            const marker = ticketMarker(f);
+            const isNew = newFailures.has(marker);
+            const isRepeat = repeatFailures.has(marker);
+            const css = isNew ? 'new' : isRepeat ? 'repeat' : '';
+            return `
+        <div class="failure-item ${css}">
+          <div class="failure-spec">${escapedHtml(f.specFile)}</div>
+          <div class="failure-title">${escapedHtml(f.title)}</div>
+          ${f.project ? `<div class="failure-project">Project: ${escapedHtml(f.project)}</div>` : ''}
+          ${f.error ? `<div class="failure-error">${escapedHtml(f.error)}</div>` : ''}
+          ${isNew ? '<div style="margin-top: 4px; font-size: 11px; color: #d32f2f; font-weight: 600;">⚠ NEW FAILURE</div>' : ''}
+          ${isRepeat ? '<div style="margin-top: 4px; font-size: 11px; color: #f9a825; font-weight: 600;">↻ REPEAT (has open ticket)</div>' : ''}
+        </div>
+        `;
+          })
+          .join('')}
+      </div>
+    </div>
+    `;
+    })
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QA Regression Report — ${date}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      color: #333;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+    .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    h1 { font-size: 32px; margin-bottom: 10px; color: #222; }
+    .meta { font-size: 14px; color: #666; margin-bottom: 30px; }
+    .diagnosis {
+      background: #fff8e1;
+      border-left: 4px solid #f9a825;
+      padding: 16px;
+      margin-bottom: 30px;
+      border-radius: 4px;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+    .diagnosis.critical { background: #ffebee; border-left-color: #d32f2f; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 30px; }
+    .stat-box {
+      background: #f9f9f9;
+      padding: 16px;
+      border-radius: 6px;
+      border: 1px solid #e0e0e0;
+      text-align: center;
+    }
+    .stat-number { font-size: 28px; font-weight: bold; color: #1976d2; }
+    .stat-label { font-size: 14px; color: #666; margin-top: 8px; }
+    .stat-box.critical .stat-number { color: #d32f2f; }
+    .stat-box.warning .stat-number { color: #f9a825; }
+    .commit-delta {
+      background: #f0f7ff;
+      border: 1px solid #90caf9;
+      padding: 16px;
+      margin-bottom: 30px;
+      border-radius: 4px;
+    }
+    .commit-delta h3 { font-size: 16px; margin-bottom: 12px; color: #1565c0; }
+    .commit-list { font-family: 'Courier New', monospace; font-size: 13px; }
+    .commit-item { padding: 4px 0; color: #333; }
+    .commit-hash { color: #1976d2; font-weight: 600; margin-right: 8px; }
+    .section { margin-bottom: 40px; }
+    .section-title { font-size: 20px; font-weight: 600; margin-bottom: 16px; color: #222; padding-bottom: 8px; border-bottom: 2px solid #e0e0e0; }
+    .failure-group { margin-bottom: 20px; }
+    .failure-group-title { font-size: 14px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .failure-list { margin-left: 16px; }
+    .failure-item {
+      padding: 12px;
+      background: #fafafa;
+      border-left: 3px solid #ddd;
+      margin-bottom: 8px;
+      border-radius: 2px;
+      font-size: 13px;
+    }
+    .failure-item.new { border-left-color: #d32f2f; background: #ffebee; }
+    .failure-item.repeat { border-left-color: #f9a825; background: #fff8e1; }
+    .failure-spec { font-family: 'Courier New', monospace; color: #1565c0; font-weight: 600; }
+    .failure-title { margin: 4px 0; color: #333; }
+    .failure-project { font-size: 12px; color: #999; margin-top: 4px; }
+    .failure-error {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: #d32f2f;
+      margin-top: 4px;
+      background: rgba(211, 47, 47, 0.05);
+      padding: 8px;
+      border-radius: 2px;
+    }
+    .p0 .stat-number { color: #d32f2f; }
+    .p1 .stat-number { color: #f9a825; }
+    .p2 .stat-number { color: #1976d2; }
+    .p3 .stat-number { color: #388e3c; }
+    .footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #999; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { padding: 8px; text-align: left; border-bottom: 1px solid #e0e0e0; }
+    th { background: #f5f5f5; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>QA Regression Report</h1>
+    <div class="meta">${date} — Full \`e2e/\` suite against \`release/next\`</div>
+
+    <div class="diagnosis ${diagnosisClass}">
+      <strong>Diagnosis:</strong> ${diagnosisText}
+      ${diagnosisVariants}
+    </div>
+
+    <div class="stats">
+      ${statBoxes.map((box) => `<div class="stat-box ${box.severity}"><div class="stat-number">${box.value}</div><div class="stat-label">${box.label}</div></div>`).join('')}
+    </div>
+
+    ${commitSection}
+
+    ${failureSections}
+
+    <div class="footer">
+      <p>Report generated by \`scripts/qa-regression.mjs\` — daily QA regression run against \`release/next\`.</p>
+      <p>See \`QA_REGRESSION/reports/${date}.md\` for the raw list. File a bug if the diagnosis is wrong.</p>
+    </div>
+  </div>
+</body>
+</html>
+`;
+
+  writeFileSync(file, html);
+  return file;
+}
+
+// ---------------------------------------------------------------------------
+// Report writer
 // ---------------------------------------------------------------------------
 function writeReport({ date, failures, totalTests, filedCount, dryRun }) {
   const dir = path.join(REPO_ROOT, 'QA_REGRESSION', 'reports');
@@ -302,311 +528,6 @@ function writeReport({ date, failures, totalTests, filedCount, dryRun }) {
   return file;
 }
 
-function writeHtmlReport({
-  date,
-  failures,
-  totalTests,
-  diagnosis,
-  category,
-  newFailures,
-  repeatFailures,
-  newlyFixed,
-  commits,
-}) {
-  const dir = path.join(REPO_ROOT, 'QA_REGRESSION', 'reports');
-  mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `${date}.html`);
-
-  const bySeverity = { P0: [], P1: [], P2: [], P3: [] };
-  for (const f of failures) bySeverity[f.severity].push(f);
-
-  const escapedDiagnosis = (diagnosis || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>QA Regression Report — ${date}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-      line-height: 1.6;
-      color: #24292e;
-      background: #fff;
-      padding: 2rem;
-      max-width: 1000px;
-      margin: 0 auto;
-    }
-    @media (prefers-color-scheme: dark) {
-      body { background: #0d1117; color: #c9d1d9; }
-      a { color: #58a6ff; }
-      .diagnosis { background: #161b22; border-color: #30363d; }
-      .section { border-color: #30363d; }
-      .failure { background: #0d1117; border-color: #30363d; }
-      .new { background: rgba(34, 110, 147, 0.1); border-color: #30363d; }
-      .repeat { background: rgba(110, 78, 30, 0.1); border-color: #30363d; }
-      .severity-p0 { background: rgba(248, 81, 73, 0.1); }
-      .severity-p1 { background: rgba(233, 151, 30, 0.1); }
-      .severity-p2 { background: rgba(130, 138, 142, 0.1); }
-    }
-    h1 { margin: 0 0 0.5rem 0; font-size: 2rem; }
-    h2 { margin: 2rem 0 1rem 0; font-size: 1.3rem; font-weight: 600; border-bottom: 1px solid #e1e4e8; padding-bottom: 0.5rem; }
-    @media (prefers-color-scheme: dark) {
-      h2 { border-bottom-color: #30363d; }
-    }
-    .header-meta { font-size: 0.9rem; color: #666; margin-bottom: 1.5rem; }
-    @media (prefers-color-scheme: dark) {
-      .header-meta { color: #8b949e; }
-    }
-    .diagnosis {
-      background: #f6f8fa;
-      border: 1px solid #d0d7de;
-      border-radius: 6px;
-      padding: 1rem;
-      margin: 1rem 0 2rem 0;
-      line-height: 1.6;
-    }
-    .diagnosis.infrastructure { border-left: 4px solid #e74c3c; }
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 1rem;
-      margin: 1.5rem 0;
-    }
-    .stat-box {
-      background: #f6f8fa;
-      padding: 1rem;
-      border-radius: 6px;
-      text-align: center;
-      border: 1px solid #d0d7de;
-    }
-    @media (prefers-color-scheme: dark) {
-      .stat-box { background: #161b22; border-color: #30363d; }
-    }
-    .stat-number { font-size: 1.8rem; font-weight: bold; color: #0366d6; margin-bottom: 0.25rem; }
-    .stat-label { font-size: 0.85rem; color: #666; }
-    @media (prefers-color-scheme: dark) {
-      .stat-label { color: #8b949e; }
-    }
-    .section { border-left: 4px solid #d0d7de; padding-left: 1rem; margin: 2rem 0; }
-    .section.new { border-left-color: #226e93; }
-    .section.repeat { border-left-color: #6e4e1e; }
-    .section.fixed { border-left-color: #1a633b; }
-    .commit-list { background: #f6f8fa; padding: 1rem; border-radius: 6px; max-height: 300px; overflow-y: auto; }
-    @media (prefers-color-scheme: dark) {
-      .commit-list { background: #161b22; }
-    }
-    .commit-item { font-family: monospace; font-size: 0.9rem; padding: 0.25rem 0; }
-    .failure {
-      background: #f6f8fa;
-      padding: 0.75rem;
-      margin: 0.5rem 0;
-      border-left: 3px solid #d0d7de;
-      border-radius: 3px;
-      break-inside: avoid;
-    }
-    @media (prefers-color-scheme: dark) {
-      .failure { background: #0d1117; border-left-color: #30363d; }
-    }
-    .failure.new { border-left-color: #226e93; background: rgba(34, 110, 147, 0.1); }
-    .failure.repeat { border-left-color: #6e4e1e; background: rgba(110, 78, 30, 0.1); }
-    .failure-title { font-weight: 600; margin-bottom: 0.25rem; }
-    .failure-meta { font-size: 0.85rem; color: #666; font-family: monospace; margin-top: 0.25rem; }
-    @media (prefers-color-scheme: dark) {
-      .failure-meta { color: #8b949e; }
-    }
-    .failure-error { font-size: 0.85rem; color: #e74c3c; margin-top: 0.25rem; font-family: monospace; word-break: break-word; }
-    .severity-badge {
-      display: inline-block;
-      padding: 0.2rem 0.5rem;
-      border-radius: 3px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      margin-left: 0.5rem;
-    }
-    .severity-p0 { background: #fee; color: #c02828; }
-    .severity-p1 { background: #fff3cd; color: #856404; }
-    .severity-p2 { background: #e9ecef; color: #383d41; }
-    .severity-p3 { background: #e2e3e5; color: #383d41; }
-    @media (prefers-color-scheme: dark) {
-      .severity-p0 { background: rgba(248, 81, 73, 0.2); color: #f85149; }
-      .severity-p1 { background: rgba(233, 151, 30, 0.2); color: #d29922; }
-      .severity-p2 { background: rgba(130, 138, 142, 0.2); color: #8b949e; }
-      .severity-p3 { background: rgba(102, 109, 118, 0.2); color: #8b949e; }
-    }
-    .no-issues { color: #2c7c2c; font-weight: 600; }
-    .footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #e1e4e8; font-size: 0.85rem; color: #666; }
-    @media (prefers-color-scheme: dark) {
-      .footer { border-top-color: #30363d; color: #8b949e; }
-    }
-  </style>
-</head>
-<body>
-  <h1>QA Regression Report</h1>
-  <div class="header-meta">Run: ${date} · Full \`e2e/\` suite · ${totalTests || '?'} tests total</div>
-
-  ${
-    diagnosis
-      ? `<div class="diagnosis ${category}"><strong>Diagnosis:</strong> ${escapedDiagnosis}</div>`
-      : ''
-  }
-
-  <div class="stats">
-    <div class="stat-box">
-      <div class="stat-number">${failures.length}</div>
-      <div class="stat-label">Failing</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-number">${newFailures.length}</div>
-      <div class="stat-label">New Today</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-number">${repeatFailures.length}</div>
-      <div class="stat-label">Repeat</div>
-    </div>
-    <div class="stat-box">
-      <div class="stat-number">${newlyFixed.length}</div>
-      <div class="stat-label">Newly Fixed</div>
-    </div>
-  </div>
-
-  ${
-    commits.length > 0
-      ? `
-  <h2>Changes Since Last Run</h2>
-  <div class="commit-list">
-    ${commits.map((c) => `<div class="commit-item">${c.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('')}
-  </div>
-  `
-      : ''
-  }
-
-  ${
-    newFailures.length > 0
-      ? `
-  <div class="section new">
-    <h2>New Failures (${newFailures.length})</h2>
-    ${newFailures
-      .sort((a, b) => b.severity.localeCompare(a.severity))
-      .map(
-        (f) => `
-      <div class="failure new">
-        <div class="failure-title">
-          ${(f.title || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-          <span class="severity-badge severity-${f.severity.toLowerCase()}">${f.severity}</span>
-        </div>
-        <div class="failure-meta">${f.specFile}${f.project ? ` · ${f.project}` : ''}</div>
-        ${f.error ? `<div class="failure-error">${f.error}</div>` : ''}
-      </div>
-    `
-      )
-      .join('')}
-  </div>
-  `
-      : ''
-  }
-
-  ${
-    repeatFailures.length > 0
-      ? `
-  <div class="section repeat">
-    <h2>Repeat Failures (${repeatFailures.length})</h2>
-    <p style="margin-bottom: 1rem; font-size: 0.9rem;">These failed in the previous run too.</p>
-    ${repeatFailures
-      .sort((a, b) => b.severity.localeCompare(a.severity))
-      .map(
-        (f) => `
-      <div class="failure repeat">
-        <div class="failure-title">
-          ${(f.title || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-          <span class="severity-badge severity-${f.severity.toLowerCase()}">${f.severity}</span>
-        </div>
-        <div class="failure-meta">${f.specFile}${f.project ? ` · ${f.project}` : ''}</div>
-        ${f.error ? `<div class="failure-error">${f.error}</div>` : ''}
-      </div>
-    `
-      )
-      .join('')}
-  </div>
-  `
-      : ''
-  }
-
-  ${
-    newlyFixed.length > 0
-      ? `
-  <div class="section fixed">
-    <h2>Newly Fixed (${newlyFixed.length})</h2>
-    <p style="margin-bottom: 1rem; font-size: 0.9rem;">These failed yesterday but pass today.</p>
-    ${newlyFixed
-      .map(
-        (f) => `
-      <div style="background: #f6f8fa; padding: 0.75rem; margin: 0.5rem 0; border-left: 3px solid #1a633b; border-radius: 3px;">
-        <div style="font-weight: 600; margin-bottom: 0.25rem;">
-          ${(f.title || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-        </div>
-        <div style="font-size: 0.85rem; color: #666; font-family: monospace; margin-top: 0.25rem;">${f.specFile}${f.project ? ` · ${f.project}` : ''}</div>
-      </div>
-    `
-      )
-      .join('')}
-  </div>
-  `
-      : ''
-  }
-
-  ${
-    failures.length === 0
-      ? `<div style="margin: 2rem 0;"><p class="no-issues">✓ All tests passing.</p></div>`
-      : `
-  <h2>All Failures by Severity</h2>
-  ${['P0', 'P1', 'P2', 'P3']
-    .filter((sev) => bySeverity[sev].length > 0)
-    .map(
-      (sev) => `
-    <h3 style="margin: 1.5rem 0 0.75rem 0; font-size: 1.1rem; font-weight: 600; color: ${
-        sev === 'P0'
-          ? '#c02828'
-          : sev === 'P1'
-            ? '#856404'
-            : '#383d41'
-      };">${sev}${sev === 'P0' ? ' — Game-breaking' : ''} (${bySeverity[sev].length})</h3>
-    ${bySeverity[sev]
-      .map(
-        (f) => `
-      <div class="failure severity-${sev.toLowerCase()}">
-        <div class="failure-title">
-          ${(f.title || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}
-        </div>
-        <div class="failure-meta">${f.specFile}${f.project ? ` · ${f.project}` : ''}</div>
-        ${f.error ? `<div class="failure-error">${f.error}</div>` : ''}
-      </div>
-    `
-      )
-      .join('')}
-  `
-    )
-    .join('')}
-  `
-  }
-
-  <div class="footer">
-    Generated by <code>scripts/qa-regression.mjs</code> · Report only, does not block deployment
-  </div>
-</body>
-</html>`;
-
-  writeFileSync(file, html);
-  return file;
-}
-
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -626,11 +547,9 @@ async function main() {
   const date = new Date().toISOString().slice(0, 10);
   let filedCount = 0;
 
-  // Analyze failures for diagnosis and categorize by staleness
-  const { diagnosis, category } = analyzeFailures(failures);
-  const previousFailures = loadPreviousFailures(date);
-  const { newFailures, repeatFailures, newlyFixed } = categorizeByStaleness(failures, previousFailures);
-  const commits = getCommitsSinceLastRun(date);
+  // Collect new and repeat failures for HTML report
+  const newFailures = new Set();
+  const repeatFailures = new Set();
 
   if (shouldPost && failures.length > 0) {
     const apiBase = (process.env.PAPERCLIP_API_URL || '').replace(/\/api\/?$/, '').replace(/\/$/, '');
@@ -644,40 +563,60 @@ async function main() {
 
     for (const f of failures) {
       const marker = ticketMarker(f);
-      if (hasOpenTicket(openIssues, marker)) continue;
-      await createIssue(apiBase, companyId, apiKey, {
-        title: `${marker} (${f.severity})`,
-        description:
-          `Filed by scripts/qa-regression.mjs (daily QA regression, ${date}).\n\n` +
-          `Spec: \`${f.specFile}\`\nTest: ${f.title}\n` +
-          (f.project ? `Project: ${f.project}\n` : '') +
-          (f.error ? `\nFirst error line:\n\`\`\`\n${f.error}\n\`\`\`\n` : '') +
-          `\nSeverity ${f.severity} assigned by scripts/qa-regression.mjs's SEVERITY_MAP -- re-triage if this ` +
-          `doesn't match the actual player impact. This ticket does not block any PR or merge; it exists ` +
-          `purely so the failure isn't lost. See QA_REGRESSION/reports/${date}.html for the full run.`,
-        status: SEVERITY_TO_STATUS[f.severity],
-        priority: SEVERITY_TO_PRIORITY[f.severity],
-        assigneeAgentId,
-      });
-      filedCount += 1;
+      if (hasOpenTicket(openIssues, marker)) {
+        repeatFailures.add(marker);
+      } else {
+        newFailures.add(marker);
+        await createIssue(apiBase, companyId, apiKey, {
+          title: `${marker} (${f.severity})`,
+          description:
+            `Filed by scripts/qa-regression.mjs (daily QA regression, ${date}).\n\n` +
+            `Spec: \`${f.specFile}\`\nTest: ${f.title}\n` +
+            (f.project ? `Project: ${f.project}\n` : '') +
+            (f.error ? `\nFirst error line:\n\`\`\`\n${f.error}\n\`\`\`\n` : '') +
+            `\nSeverity ${f.severity} assigned by scripts/qa-regression.mjs's SEVERITY_MAP -- re-triage if this ` +
+            `doesn't match the actual player impact. This ticket does not block any PR or merge; it exists ` +
+            `purely so the failure isn't lost. See QA_REGRESSION/reports/${date}.md for the full run.`,
+          status: SEVERITY_TO_STATUS[f.severity],
+          priority: SEVERITY_TO_PRIORITY[f.severity],
+          assigneeAgentId,
+        });
+        filedCount += 1;
+      }
+    }
+  } else if (!shouldPost) {
+    // In dry-run, estimate which are new by comparing to previous report
+    const lastDate = getLastReportDate();
+    if (lastDate) {
+      const lastFailures = parseMarkdownReport(lastDate);
+      const lastMarkers = new Set(lastFailures.map(ticketMarker));
+      for (const f of failures) {
+        const marker = ticketMarker(f);
+        if (lastMarkers.has(marker)) {
+          repeatFailures.add(marker);
+        } else {
+          newFailures.add(marker);
+        }
+      }
     }
   }
 
+  // Generate diagnosis
+  const diagnosis = diagnoseFailures(failures);
+
+  // Get recent commits
+  let commits = [];
+  try {
+    commits = await getCommitDelta();
+  } catch {
+    // Silently fail if git is not available
+  }
+
+  // Write both Markdown and HTML reports
   const mdFile = writeReport({ date, failures, totalTests, filedCount, dryRun: !shouldPost });
-  const htmlFile = writeHtmlReport({
-    date,
-    failures,
-    totalTests,
-    diagnosis,
-    category,
-    newFailures,
-    repeatFailures,
-    newlyFixed,
-    commits,
-  });
+  const htmlFile = writeHtmlReport({ date, failures, totalTests, filedCount, dryRun: !shouldPost, diagnosis, newFailures, repeatFailures, commits });
 
   console.log(`QA regression ${date}: ${failures.length} failing / ${totalTests ?? '?'} total.`);
-  if (diagnosis) console.log(`Diagnosis: ${diagnosis}`);
   if (shouldPost) {
     console.log(`Filed ${filedCount} new ticket(s) (${failures.length - filedCount} already had an open ticket).`);
   } else {

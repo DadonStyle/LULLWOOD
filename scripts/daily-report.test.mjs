@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,7 +13,6 @@ import {
   extractTicketIds,
   renderDay,
   buildEntriesByDay,
-  generateRange,
   FIRST_COMPANY_DAY,
 } from './daily-report.mjs';
 

@@ -264,7 +264,14 @@ jobs:
             elif ! GH_TOKEN="$SHIP_REVIEW_TOKEN" gh_retry gh pr review "$number" --approve \
                  --body "Auto-approved: \`[ship]\` + \`ship-allowed.sh\` passed for this exact head. Policy: LUL-558."; then
               echo "::warning::could not submit the required approving review on #$number; not arming auto-merge. automerge.yml will get its own shot after CI."
-            elif gh_retry gh pr merge "$number" --auto --"$merge_method" --delete-branch; then
+            # LUL-762: arm under SHIP_REVIEW_TOKEN (known non-empty here), not
+            # GH_TOKEN/github.token -- GitHub attributes an auto-merge's
+            # eventual completion to whoever armed it, so arming under
+            # github.token still leaves the resulting release/next commit
+            # exempt from ci.yml's push trigger even though the review above
+            # used the right identity. This is the same bug that stranded cut
+            # PR #239 -- see automerge.yml's matching fix and header note.
+            elif GH_TOKEN="$SHIP_REVIEW_TOKEN" gh_retry gh pr merge "$number" --auto --"$merge_method" --delete-branch; then
               echo "::notice::auto-merge armed on #$number"
             else
               # "Allow auto-merge" may be off in repo settings; automerge.yml
@@ -329,7 +336,11 @@ jobs:
             # a human/Code Reviewer approval while required_approving_review_count > 0)
             # has actually landed.
             echo "::notice::no [ship] marker on #$number; arming auto-merge anyway (founder directive 2026-08-28) -- merges once required review + checks are satisfied, whenever that happens."
-            if gh_retry gh pr merge "$number" --auto --"$merge_method" --delete-branch; then
+            # LUL-762: arm under SHIP_REVIEW_TOKEN when configured, same
+            # reasoning as the [ship] branch above -- falls back to
+            # github.token, unchanged, when the secret is absent.
+            merge_token="${SHIP_REVIEW_TOKEN:-$GH_TOKEN}"
+            if GH_TOKEN="$merge_token" gh_retry gh pr merge "$number" --auto --"$merge_method" --delete-branch; then
               echo "::notice::auto-merge armed on #$number"
             else
               echo "::warning::could not arm auto-merge on #$number (already merged/closed, or the repo setting is off); leaving it for manual merge."

@@ -48,6 +48,7 @@ jobs:
       - name: verify shape, checks, and review, then merge with --merge
         env:
           GH_TOKEN: ${{ github.token }}
+          SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
           REPO: ${{ github.repository }}
           PR: ${{ inputs.pr }}
         run: |
@@ -102,7 +103,16 @@ jobs:
           # --squash and never --rebase. Branch protection (strict on main)
           # still adjudicates -- a stale head refuses here exactly as it
           # would on any other merge attempt.
-          if ! gh pr merge "$PR" --repo "$REPO" --merge; then
+          #
+          # LUL-762: merge under SHIP_REVIEW_TOKEN when configured so the
+          # resulting main commit is PAT-authored, same fix as the
+          # release/next-targeting merges (automerge.yml/auto-pr.yml/
+          # daily-report.yml/version-cut-finalize.yml) -- nothing in this
+          # pipeline currently re-checks main's tip via a push trigger, but
+          # there's no reason to leave the one merge workflow whose entire
+          # job is landing production code as the odd one out.
+          merge_token="${SHIP_REVIEW_TOKEN:-$GH_TOKEN}"
+          if ! GH_TOKEN="$merge_token" gh pr merge "$PR" --repo "$REPO" --merge; then
             echo "::error::merge of PR #$PR was refused -- most likely main moved under it (strict) or a required check regressed. Re-check and re-dispatch; do not fall back to --squash."
             exit 1
           fi
