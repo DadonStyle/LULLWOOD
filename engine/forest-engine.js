@@ -43,6 +43,8 @@ import {
   SCENT_RADIUS_WALK,
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
+  isMovingAgainstWind,
+  WIND_AGAINST_RADIUS_MULTIPLIER,
 } from '@/lib/game/scent';
 import {
   coverKindBlocksMovement,
@@ -138,6 +140,7 @@ import {
   TIME_OF_DAY_VISUALS,
   TIME_OF_DAY_AUDIO,
 } from '@/lib/game/timeOfDay';
+import { timeOfRunDetectMul } from '@/lib/game/dayNight';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -288,7 +291,9 @@ document.body.appendChild(renderer.domElement);
 // that old scale, so every one is multiplied by LEGACY_LIGHT_SCALE to read the same
 // as it did on r128. Confirmed by direct before/after screenshot comparison, not
 // just the documented factor -- see wiki systems/three-r185-upgrade.
-scene.add(new THREE.HemisphereLight(TOD_VISUAL.hemisphereSky, TOD_VISUAL.hemisphereGround, TOD_VISUAL.hemisphereIntensity * LEGACY_LIGHT_SCALE));
+const HEMI_BASE_INTENSITY = TOD_VISUAL.hemisphereIntensity * LEGACY_LIGHT_SCALE;
+const hemiLight = new THREE.HemisphereLight(TOD_VISUAL.hemisphereSky, TOD_VISUAL.hemisphereGround, HEMI_BASE_INTENSITY);
+scene.add(hemiLight);
 const moon = new THREE.DirectionalLight(TOD_VISUAL.sunMoonColor, TOD_VISUAL.sunMoonIntensity * LEGACY_LIGHT_SCALE); moon.position.set(-6, 16, -4); scene.add(moon);
 const rim = new THREE.DirectionalLight(TOD_VISUAL.rimColor, TOD_VISUAL.rimIntensity * LEGACY_LIGHT_SCALE); rim.position.set(4, 5, 9); scene.add(rim);
 
@@ -346,6 +351,16 @@ let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil r
 // same split as the veil above). `fogTideClock` only advances while `playing`
 // (see tick()) -- that's the whole "pausable" requirement, no separate flag.
 let fogTideClock = 0, fogTideAmount = 0, fogTideBuild = 0, fogTideActive = false;
+// LUL-1709: live time-of-run pacing clock, 0 (dawn) -> 1 (full night) over
+// TIME_OF_RUN_DURATION_S of actual play. Same pausable-accumulator pattern as
+// fogTideClock immediately above -- only advances while `playing` (see tick()),
+// so the pause menu freezes the pacing ramp exactly like it freezes everything
+// else. Distinct from LUL-1644's TOD_VISUAL/TOD_AUDIO (a static snapshot of the
+// player's real wall-clock hour, computed once at load) -- this is a live value
+// that changes every frame during a run and the two compose, not replace.
+const TIME_OF_RUN_DURATION_S = 120;
+const TIME_OF_RUN_FOG_DELTA = 0.10 - CONFIG.fog;   // additive fog-density term at full night
+let runElapsed = 0, timeOfRun = 0;
 // LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
 // found the point-light radius/intensity cut above unreadable against this
 // scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
@@ -736,6 +751,7 @@ function generateMap(seed){
   placePredators();
   generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
   generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
+  pushState({ windX, windZ });   // LUL-1724: map-constant, pushed once, not per-frame
   // LUL-25: everything below is new and runs last -- see the comment on
   // generateBogTrees() for why the ordering is load-bearing.
   generateBogTrees();
@@ -1151,8 +1167,10 @@ function generateWind(){
 }
 
 let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 is always oldest)
-function depositScent(hot){
-  scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius: hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK });
+function depositScent(hot, againstWind){
+  const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
+  const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
+  scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
   while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0)) scentPoints.shift();
 }
 function checkScent(p){
@@ -1287,10 +1305,10 @@ function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid); }
 // bug (the two systems represent different things -- a spent resource vs. a
 // free world event -- and nothing says they shouldn't compound).
 function effectiveDetect(p){
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount), { hidden, hideTime, carrying });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying });
 }
 function canSee(p, dist){
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -2323,6 +2341,7 @@ function setPaused(p){
 function enter(){
   entered = true;
   enteredAt = clock.elapsedTime;
+  runElapsed = 0;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   pushState({ entered: true });
   // LUL-1425: the real "a run begins" moment on both input modes -- enter() is
@@ -2380,6 +2399,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
              carrying, pickingUp, taken: baby.taken };
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
+
+  // LUL-1484: before/after perf baseline for the map-size growth (E3), and
+  // the baseline E6's chunking work later has to justify itself against.
+  window.ForestEngine.qaProbePerf = function(){
+    return {
+      calls: renderer.info.render.calls,
+      triangles: renderer.info.render.triangles,
+      elapsedTime: clock.elapsedTime,
+    };
+  };
 
   // LUL-83: proves resolveInitialSeed() actually drives the generated layout --
   // `?seed=N` should reproduce this byte-identically across loads, and no
@@ -3023,7 +3052,7 @@ function arriveHome(){
   embers = applyPayout(embers, payout);
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 function triggerDeath(kind){
   const next = outcomeTriggerDeath(runState());
@@ -3049,7 +3078,7 @@ function triggerDeath(kind){
   if(deathCarrying) carryDeathExplained = true;
   pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying });
-  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -3262,6 +3291,21 @@ function adaptResolution(dt, t){
 }
 function applyRes(){ if(usePost) makeTargets(); else { renderer.setPixelRatio(RES); renderer.setSize(innerWidth, innerHeight); } }
 
+// LUL-1709: maps timeOfRun (0..1) onto a plain hh:mm clock label, dawn (06:00) at
+// timeOfRun=0 to full night (21:00) at timeOfRun=1 -- linear, matching every other
+// ramp in this feature. Plain text only, no icon/color chrome (ticket's explicit
+// MVP cap) -- that is Phase-2-adjacent polish, not this pass.
+const TIME_OF_RUN_CLOCK_START_MIN = 6 * 60;
+const TIME_OF_RUN_CLOCK_END_MIN = 21 * 60;
+function formatTimeOfRunClock(t){
+  const totalMin = TIME_OF_RUN_CLOCK_START_MIN + t * (TIME_OF_RUN_CLOCK_END_MIN - TIME_OF_RUN_CLOCK_START_MIN);
+  const h24 = Math.floor(totalMin / 60) % 24;
+  const m = Math.floor(totalMin % 60);
+  const period = h24 < 12 ? 'AM' : 'PM';
+  let h12 = h24 % 12; if(h12 === 0) h12 = 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
 // ---- Build the first map, then run ---------------------------------------
 generateMap(resolveInitialSeed());
 const clock = new THREE.Clock();
@@ -3303,6 +3347,9 @@ function tick(){
 
   const playing = isPlaying(runState()) && !paused;
 
+  if(playing) runElapsed += dt;
+  timeOfRun = clamp(runElapsed / TIME_OF_RUN_DURATION_S, 0, 1);
+
   // LUL-40/LUL-382: hold KeyF for the mist veil. Read every frame like `running`
   // below rather than from the keydown/keyup handlers, so releasing F while e.g.
   // the pause menu is open (which stops updating `keys` mid-hold) can't strand
@@ -3326,8 +3373,9 @@ function tick(){
   // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
   // the sight-detect cut ramps in step with what the player actually sees.
   veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
-  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmount);
-  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, staminaCharge: Math.round(staminaCharge * 100) / 100 });
+  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmount) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
+  hemiLight.intensity = HEMI_BASE_INTENSITY * (1 - timeOfRun * 0.7);
+  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, staminaCharge: Math.round(staminaCharge * 100) / 100, timeOfRunClock: formatTimeOfRunClock(timeOfRun) });
 
   // LUL-27: Fog Tide. The clock only advances while `playing` -- same gate
   // the veil above reads -- so the pause menu freezes the cycle exactly like
@@ -3390,7 +3438,7 @@ function tick(){
       // LUL-23: lay scent while actually moving -- holding still (or being hidden,
       // which already implies not moving) never adds to the trail.
       scentEmitT -= dt;
-      if(scentEmitT <= 0){ depositScent(running); scentEmitT = SCENT_DEPOSIT_INTERVAL; }
+      if(scentEmitT <= 0){ depositScent(running, isMovingAgainstWind(mvx, mvz, windX, windZ)); scentEmitT = SCENT_DEPOSIT_INTERVAL; }
       // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
       // shape as scent, sized off the same running flag rather than a new one.
       // LUL-25: splashing through the bog carries further than a dry footstep --
@@ -3487,7 +3535,7 @@ function tick(){
     }
     // if nobody has been near for 30s, the closest one comes straight for you
     if(nearDist < 20) sinceClose = 0; else sinceClose += dt;
-    if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; spotOnto(nearP); sinceClose = 12; }
+    if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; nearP.sightLock = null; spotOnto(nearP); sinceClose = 12; }
     // approach piano note: quicker + higher the nearer it is
     if(approaching && nearDist < 46 && !hidden){
       pianoTimer -= dt;

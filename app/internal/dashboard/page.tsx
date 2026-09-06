@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import { fetchEvents, isRange, type Range } from '@/lib/dashboard/blob-source';
-import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement, computeEconomy } from '@/lib/dashboard/aggregate';
+import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement, computeEconomy, type EconomyMetrics, type EconomyTierKey } from '@/lib/dashboard/aggregate';
 
 // Reads live external data on every request -- must never be statically
 // prerendered at build time, and there's nothing here worth caching given
@@ -189,6 +189,7 @@ export default async function DashboardPage({
 
         <section style={{ marginBottom: '2.5rem' }}>
           <h2>Economy</h2>
+          <p style={{ color: '#777', fontSize: '0.85rem', marginBottom: '0.5rem' }}>Pooled (all tiers)</p>
           <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: '1rem' }}>
             <tbody>
               <tr>
@@ -218,7 +219,7 @@ export default async function DashboardPage({
                 <td style={td}>{fmtPct(economy.lossDepth.pctAbove24)}</td>
               </tr>
               <tr>
-                <td style={td}>Crossed 120 balance</td>
+                <td style={td}>Crossed 120 balance (P5)</td>
                 <td style={td}>{fmtNum(economy.purchase.crossed120Count)}</td>
               </tr>
               <tr>
@@ -229,11 +230,126 @@ export default async function DashboardPage({
               </tr>
             </tbody>
           </table>
+
+          {(['lantern', 'night', 'blackout', 'unattributed'] as EconomyTierKey[])
+            .filter((tier) => tier !== 'unattributed' || economy.byDifficulty.unattributed.winPayout.n > 0 || economy.byDifficulty.unattributed.lossPayout.n > 0)
+            .map((tier) => {
+              const m: EconomyMetrics = economy.byDifficulty[tier];
+              const isLanternOrNight = tier === 'lantern' || tier === 'night';
+              return (
+                <div key={tier} style={{ marginBottom: '1rem' }}>
+                  <p style={{ color: '#777', fontSize: '0.85rem', marginBottom: '0.25rem' }}>{tier}</p>
+                  <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                    <tbody>
+                      <tr>
+                        <td style={td}>Win payout P50 / P90 (n)</td>
+                        <td style={td}>
+                          {fmtNum2(m.winPayout.p50)} / {fmtNum2(m.winPayout.p90)} ({fmtNum(m.winPayout.n)})
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style={td}>Loss payout P50 / P90 (n)</td>
+                        <td style={td}>
+                          {fmtNum2(m.lossPayout.p50)} / {fmtNum2(m.lossPayout.p90)} ({fmtNum(m.lossPayout.n)})
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style={td}>Failure band (P3)</td>
+                        <td style={td}>{fmtPct(m.failureBandPct)}</td>
+                      </tr>
+                      <tr>
+                        <td style={td}>Loss depth P50 / P95 (n)</td>
+                        <td style={td}>
+                          {fmtNum2(m.lossDepth.p50)} / {fmtNum2(m.lossDepth.p95)} ({fmtNum(m.lossDepth.n)})
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style={td}>Loss depth &gt; 24 (P4)</td>
+                        <td style={td}>
+                          {isLanternOrNight ? 'n/a — unreachable on this tier' : fmtPct(m.lossDepth.pctAbove24)}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+
           <p style={{ color: '#777', fontSize: '0.85rem' }}>
-            Falsification card (wiki <code>game/economy/falsification-card</code>): P3 predicts the failure band in
-            12–28%; P4 predicts loss depth P95 ≤ 24; P5 predicts ≥60% purchase-within-3-runs; P6 predicts win payout
-            P50 in [95, 130]. This panel reports the measurements only — it does not evaluate the predictions.
+            Falsification card (wiki <code>game/economy/falsification-card</code>): P3 predicts failure band 12–24%
+            (lantern/night) / 28–51% (blackout); P4 predicts loss depth P95 ≤ 60 on blackout, unreachable on
+            lantern/night; P5 predicts ≥60% purchase-within-3-runs (pooled); P6 predicts win payout P50 [101,109]
+            (lantern/night) / [123,148] (blackout). This panel reports measurements only — it does not evaluate
+            the predictions.
           </p>
+
+          <h3>Economy by difficulty</h3>
+          <table style={{ borderCollapse: 'collapse', width: '100%', marginBottom: '0.5rem' }}>
+            <thead>
+              <tr>
+                <th style={th}>Metric</th>
+                <th style={th}>Lantern</th>
+                <th style={th}>Night</th>
+                <th style={th}>Blackout</th>
+                {economy.byDifficulty.unattributed.winPayout.n + economy.byDifficulty.unattributed.lossPayout.n > 0 ? (
+                  <th style={th}>Unattributed</th>
+                ) : null}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={td}>Win payout P50 / P90 (n)</td>
+                {(['lantern', 'night', 'blackout', 'unattributed'] as const).map((tier) => {
+                  const m = economy.byDifficulty[tier];
+                  if (tier === 'unattributed' && m.winPayout.n + m.lossPayout.n === 0) return null;
+                  return (
+                    <td style={td} key={tier}>
+                      {fmtNum2(m.winPayout.p50)} / {fmtNum2(m.winPayout.p90)} ({fmtNum(m.winPayout.n)})
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td style={td}>Loss payout P50 / P90 (n)</td>
+                {(['lantern', 'night', 'blackout', 'unattributed'] as const).map((tier) => {
+                  const m = economy.byDifficulty[tier];
+                  if (tier === 'unattributed' && m.winPayout.n + m.lossPayout.n === 0) return null;
+                  return (
+                    <td style={td} key={tier}>
+                      {fmtNum2(m.lossPayout.p50)} / {fmtNum2(m.lossPayout.p90)} ({fmtNum(m.lossPayout.n)})
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td style={td}>Failure band (loss/win payout)</td>
+                {(['lantern', 'night', 'blackout', 'unattributed'] as const).map((tier) => {
+                  const m = economy.byDifficulty[tier];
+                  if (tier === 'unattributed' && m.winPayout.n + m.lossPayout.n === 0) return null;
+                  return (
+                    <td style={td} key={tier}>
+                      {fmtPct(m.failureBandPct)}
+                    </td>
+                  );
+                })}
+              </tr>
+              <tr>
+                <td style={td}>Loss depth &gt; 24</td>
+                {(['lantern', 'night', 'blackout', 'unattributed'] as const).map((tier) => {
+                  const m = economy.byDifficulty[tier];
+                  if (tier === 'unattributed' && m.winPayout.n + m.lossPayout.n === 0) return null;
+                  // P4 is structurally unreachable on lantern/night: child-spawn distance
+                  // there (60-96m) cannot produce a death-depth above 24. A 0% here would
+                  // read as "checked and fine" when the real answer is "does not apply".
+                  return (
+                    <td style={td} key={tier}>
+                      {tier === 'lantern' || tier === 'night' ? 'n/a — unreachable on this tier' : fmtPct(m.lossDepth.pctAbove24)}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section>

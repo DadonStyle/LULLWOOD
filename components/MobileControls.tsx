@@ -154,7 +154,8 @@ function ActionBtn({ label, onTap, testId, small }: ActionBtnProps) {
     background: 'rgba(180,200,230,0.14)',
     border: '1.5px solid rgba(180,200,230,0.28)',
     color: 'rgba(185,200,221,0.9)',
-    fontSize: small ? 10 : 11,
+    // LUL-1088: was 10/11px -- under lib/ui/hygiene.ts's MIN_FONT_PX (12) floor.
+    fontSize: 12,
     fontFamily: 'inherit',
     letterSpacing: '0.05em',
     display: 'flex',
@@ -197,7 +198,8 @@ function HoldBtn({ label, onHold, testId }: { label: string; onHold: (v: boolean
     background: 'rgba(180,200,230,0.14)',
     border: '1.5px solid rgba(180,200,230,0.28)',
     color: 'rgba(185,200,221,0.9)',
-    fontSize: 11,
+    // LUL-1088: was 11px -- under lib/ui/hygiene.ts's MIN_FONT_PX (12) floor.
+    fontSize: 12,
     fontFamily: 'inherit',
     letterSpacing: '0.05em',
     display: 'flex',
