@@ -227,6 +227,19 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #objective.ready { color: #ffdca8; border-color: rgba(255,200,140,0.45); }
 
+  /* LUL-1258: M2 Deepwater's minimal mission panel -- two collapsed lines,
+     top-left, per decisions/missions-accepted-2026-09-01 §2. Small and
+     read-only (no touch target), so it needs no mobile media-query override:
+     it never grows past a couple of words at any viewport. */
+  #missionPanel { position: fixed; top: 16px; left: 16px; z-index: 10;
+    display: flex; align-items: center; gap: 8px; pointer-events: none;
+    padding: 6px 12px; border-radius: 999px;
+    background: rgba(12,17,26,0.55); border: 1px solid rgba(150,175,215,0.14);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    font-size: 12px; letter-spacing: 0.04em; color: #b9c8dd;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+  #missionGlyph { color: #7fa6dd; }
+
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;
      gradient moved to #winText inner wrapper so text remains readable */
