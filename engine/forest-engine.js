@@ -1992,6 +1992,31 @@ function playPickupCue(){
   o.connect(g); o2.connect(g); g.connect(master); g.connect(conv);
   o.start(t0); o2.start(t0); o.stop(t0+2.5); o2.stop(t0+2.5);
 }
+// LUL-1635: mark the pickup->carry transition -- pickup() already sounded
+// playPickupCue() at the gather's start, 2.5s earlier; nothing marked the
+// moment carrying actually begins (speed and detection change here).
+// leafRustle() is hiding-spot foley (wrong theme), playPickupCue()'s drone
+// already fired, playWinMusic() is reserved for arriveHome() -- this is a
+// short weight-settling thump plus a soft rising two-note interval, reading
+// as "the load is now in your arms," not a fanfare.
+function playCarryStartCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, master, conv } = audio, t = ctx.currentTime;
+  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.08, false);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300; lp.Q.value = 0.7;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.16, t+0.01); ng.gain.exponentialRampToValueAtTime(0.0001, t+0.12);
+  nb.connect(lp); lp.connect(ng); ng.connect(master); ng.connect(conv); nb.start(t); nb.stop(t+0.14);
+
+  const notes = [130.81, 164.81];   // C3 -> E3, soft rising third -- warm, not triumphant
+  notes.forEach((f, i) => {
+    const s = t + 0.05 + i*0.09;
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, s); g.gain.exponentialRampToValueAtTime(0.14, s+0.03); g.gain.exponentialRampToValueAtTime(0.0001, s+0.5);
+    o.connect(g); g.connect(master); g.connect(conv); o.start(s); o.stop(s+0.55);
+  });
+}
 // distinct voice per species so you can hear what's coming
 // LUL-26: closed captions for the fully-procedural audio -- there is no other
 // channel carrying predator warnings (every sound in this game is synthesized
@@ -2859,6 +2884,7 @@ function finishPickup(){
   // properties the ~2.5s gather cinematic left mid-transition.
   const next = completePickup(runState());
   pickingUp = next.pickingUp; carrying = next.carrying;
+  playCarryStartCue();
   armsGroup.visible = false;
   document.body.style.cursor = '';
   babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
@@ -3487,9 +3513,9 @@ function tick(){
       // drone" reads as the tide arriving, not the drone just getting louder.
       // Only applied in the calm bed, same as everything else in this branch --
       // a chase already wins the audio mix outright (see the `hunting` branch above).
-      audio.wg.gain.setTargetAtTime((0.05 + move01*0.10) * fogTideWindGainMul(fogTideAmount), now, 0.3);
+      audio.wg.gain.setTargetAtTime((0.05 + move01*0.10) * fogTideWindGainMul(fogTideAmount) * TOD_AUDIO.windGainMul, now, 0.3);
       audio.wf.frequency.setTargetAtTime(320 + move01*900, now, 0.3);
-      audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuild), now, 0.3);
+      audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuild) * TOD_AUDIO.droneGainMul, now, 0.3);
       audio.twinkle -= dt;
       if(audio.twinkle <= 0){
         const near = distLake < CONFIG.lake.r*3;
