@@ -855,6 +855,15 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   `autoFocus`, which would fire before the screen reveals and let a stray
   Enter bypass the unskippable first cutscene via native button activation),
   giving Enter/Space a keyboard path back into a new run for free.
+  Follow-up in the same ticket: both restart buttons are now `disabled`
+  until their screen's `*Revealed` flag is true. `#deathText`/`#winText`
+  are `opacity:0` but `pointer-events:auto` while unrevealed
+  (`components/GameCanvas.tsx`) — an un-disabled button there was a live,
+  invisible hitbox that a stray click (or the focus-then-Enter path just
+  added) could fire, restarting straight through the "unskippable" first
+  death cutscene. `disabled` blocks both click and keyboard activation
+  without a CSS change; the ref-focus effects already only fire on reveal,
+  so this doesn't fight them.
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
