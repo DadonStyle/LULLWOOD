@@ -41,12 +41,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3701-3705, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  `triggerTouchToggleRun()` (L3801-3805, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3678-3684, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
+  `triggerTouchJump()` (L3778-3784, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
   target on mobile, wired to the same `triggerTouchJump()` — it used to
@@ -55,7 +55,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3690-3694, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
+  (L3790-3794, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3663 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3242, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3763 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3342, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -186,6 +186,20 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   glow stays legible through the tide's own added fog density (Fog above) —
   the two effects (denser fog, longer-reaching glow) are meant to roughly
   offset, not one cancel the other out unintentionally.
+- **As of `LUL-1480`** (rules `LUL-1438`/`LUL-1414`), the unscaled idle/carry
+  glow and halo curves live in `lib/game/childGlow.ts` (pure, unit tested),
+  not inline in `tick()`: `idleGlowIntensity()`/`idleHaloOpacity()` for the
+  outbound leg and `carryGlowIntensity()`/`carryHaloOpacity()` for carry,
+  handing off at `PICKUP_GLOW_PEAK` at the end of the pickup cinematic. The
+  fix makes the carry leg strictly brighter and faster-pulsing than idle at
+  every instant (`CARRY_GLOW_BASE=2.6` vs `IDLE_GLOW_BASE=1.0`, `CARRY_GLOW_
+  FREQ=3.2` vs `IDLE_GLOW_FREQ=1.8`) — previously the pickup cinematic
+  flared to 3.2 and then carry settled back down to ~1.2, barely above idle,
+  the same frame `CARRY_DETECT_MUL` (`lib/game/cover.ts`) raises predator
+  sight-detect by 35%. The difficulty preset's `glowMul` and
+  `fogTideGlowMul()` still apply on top of these curves exactly as before;
+  the pulse **rate** (not just brightness) is what's carry-only and
+  unspoofable by either multiplier.
 
 **What it CANNOT do**
 - Cannot move on its own, ever, outside the two scripted transitions above —
@@ -254,6 +268,13 @@ one geometry builder (`makePredator()`), differentiated by the
   behind") so the player knows *which* channel caught them; callTimer is also
   initialised on noise-catch so the first roar in the following chase is
   correctly delayed (LUL-1610).
+- **Carrying the child only:** sight acquisition no longer locks into a chase
+  on the same frame `canSee()` turns true. A `SIGHT_TELL_TIME` (0.35s,
+  `lib/game/sightLock.ts`) freeze-and-face-the-player tell plays first,
+  reusing the existing alert rear-up animation; break line of sight or leave
+  range before it elapses and the tell cancels with no roar, no flash, no
+  state change (LUL-1482). Scent and noise acquisition are unaffected in
+  every state, carrying or not.
 - Chase, losing/regaining track via `investigate`→`sniff`→`back` (LUL-22,
   explicitly "not to be retuned").
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
@@ -375,14 +396,15 @@ one geometry builder (`makePredator()`), differentiated by the
 ### Rock
 
 **What it can do**
-- Block movement for the **player only** (`coverBlockedR()`, rotated AABB).
+- Block movement for **both player and predators** (`coverBlockedR()` for
+  the player via `blocked()`, `blockedForPredator()` for predators —
+  **LUL-1643**, rotated AABB).
 - Block LOS for both player and predators (`hasLOS()`).
 - Render as one of three cover-prop kinds (`DodecahedronGeometry`, L251),
   ~35% of the 220 `COVER_PROPS` roll (`roll < 0.75 && roll >= 0.4`,
   `generateCover()`).
 
 **What it CANNOT do**
-- Cannot block predator movement (predators never call `coverBlockedR()`).
 - Cannot be a hiding spot — not in `HIDE_KINDS`. Ducking behind a rock
   blocks sight but never enables `hidden`.
 - Not guaranteed clear of tree trunks at placement (see matrix).
@@ -392,7 +414,9 @@ one geometry builder (`makePredator()`), differentiated by the
   (`generateCover()`).
 
 **Collision & physics profile**
-- Player-only rotated-AABB collider (half-extents `hx,hz`, rotation `ry`).
+- Rotated-AABB collider for both actors (half-extents `hx,hz`, rotation
+  `ry`) — `blocked()` (player) and `blockedForPredator()` (predator,
+  **LUL-1643**) both route through the same `coverBlockedR()`.
 - LOS: same AABB, both actors.
 
 ---
@@ -406,7 +430,7 @@ one geometry builder (`makePredator()`), differentiated by the
 - ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()`), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
 - **LUL-384: the player walks and runs over it, no route-around needed** —
-  `coverKindBlocksPlayerMovement('log')` is `false` (`lib/game/cover.ts`),
+  `coverKindBlocksMovement('log')` is `false` (`lib/game/cover.ts`),
   so `coverBlockedR()` no longer blocks the player here. The always-on jump
   (LUL-213) already worked everywhere, including on/over a log; this just
   means you're no longer stopped at its edge in the first place.
@@ -415,7 +439,8 @@ one geometry builder (`makePredator()`), differentiated by the
 - Movement-blocking exemption, originally player-only for Log (LUL-384) —
   **as of LUL-1642, Bramble shares it too** (see Bramble section below).
   Log and Bramble are now the two cover kinds that block neither actor's
-  movement; Rock and Reed remain solid to the player.
+  movement; Rock and Reed remain solid to both actors — as of **LUL-1643**,
+  that includes predators too, not just the player (see matrix note ²³).
 - Guaranteed clear of tree **trunks** at placement, same as every cover kind
   (see matrix) — and, like Bramble as of LUL-1642, also guaranteed clear of
   tree **canopies** (`overlapsTreeCanopy()`, `lib/game/cover.ts`, LUL-491):
@@ -451,7 +476,7 @@ one geometry builder (`makePredator()`), differentiated by the
   LUL-212 handoff (wiki `game/lul212-hiding-spots`).
 - ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()`).
 - **LUL-1642: the player walks and runs over it too, same as Log** —
-  `coverKindBlocksPlayerMovement('bramble')` is now `false`
+  `coverKindBlocksMovement('bramble')` is now `false`
   (`lib/game/cover.ts`), so `coverBlockedR()` no longer stops the player
   here either. Previously Bramble alone among `HIDE_KINDS` stayed solid,
   which meant a player entering `hidden` at a bramble was collision-stopped
@@ -472,7 +497,7 @@ one geometry builder (`makePredator()`), differentiated by the
   LUL-1642, no player movement collision either. Not guaranteed clear of
   tree trunks at placement (same as every cover kind), but — also as of
   LUL-1642, matching Log — now guaranteed clear of tree **canopies** too
-  (`overlapsTreeCanopy()`, since it reads `coverKindBlocksPlayerMovement()`
+  (`overlapsTreeCanopy()`, since it reads `coverKindBlocksMovement()`
   directly and now includes bramble).
 
 **Behaviours & logic**
@@ -849,7 +874,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L3060-3064 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  and synced to `hudState` via `setEmbers()` (L3143-3147 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
@@ -901,12 +926,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1872-1880): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()` L1941-1949): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3243): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L3344): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
-- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L3000, alongside `staminaLowCuePlayed`).
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L3078-3093, alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
 - Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.
@@ -993,9 +1018,9 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
 | **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | TRIG²¹ |
-| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
-| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
-| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | LOS only¹¹ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
+| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
+| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
+| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
 | **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ | – |
 | **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
 | **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
@@ -1044,10 +1069,12 @@ apart along the line between their centers by half the overlap each (a
 fixed heading if they're exactly coincident, since there's no defined
 separation axis at zero distance). Applies to every pairing uniformly,
 including same-species (wolf/wolf, bear/bear, lion/lion — see ⁹/¹³).
-¹¹ Predators never call `coverBlockedR()` — movement passes straight
-through rock/log/bramble. **Deliberate** (LUL-119/LUL-211 comment,
-`coverBlockedR()` in `lib/game/cover.ts`), not `U`. LOS is still blocked
-normally.
+¹¹ Log/Bramble movement passes straight through for predators (and the
+player, LUL-384/LUL-1642) — **deliberate**, the one exemption
+`coverKindBlocksMovement()` (`lib/game/cover.ts`) carves out of the
+composite block both actors otherwise share. **Rock/Reed no longer belong
+in this footnote as of LUL-1643** — see ²³. LOS is still blocked normally
+for all four kinds.
 ¹² **Fixed, LUL-791/LUL-395 (spawn) and LUL-857 (roam).**
 `placePredators()`'s spawn-rejection loop rejects `inLake()` (the
 `clear`-radius ring, same predicate as the tree/cover/child spawn loops),
@@ -1080,7 +1107,7 @@ checks canopy clearance (LUL-384/LUL-491/LUL-1642):** `overlapsTreeCanopy()`
 (`lib/game/cover.ts`) rejects a walkable-kind candidate whose footprint
 overlaps a nearby tree's wider *canopy* circle (`t.crCanopy`), even when the
 trunk circle is clear — needed because a walkable prop
-(`coverKindBlocksPlayerMovement(kind) === false`) lets the player cross its
+(`coverKindBlocksMovement(kind) === false`) lets the player cross its
 full footprint and `canopyBlockedR()` blocks the player unconditionally
 within the canopy radius regardless of what's on the ground; without this a
 log or bramble could spawn clear of every trunk yet still wedge the player
@@ -1107,7 +1134,7 @@ move either one, so there's nothing to verify per-seed. Defined by
 construction, not undefined.
 ²⁰ **Changed, LUL-384.** Previously `C+LOS+HIDE` like Bramble. Log is now the
 one cover kind that doesn't block the player's movement either —
-`coverKindBlocksPlayerMovement('log')` is `false` (`lib/game/cover.ts`), read
+`coverKindBlocksMovement('log')` is `false` (`lib/game/cover.ts`), read
 by `coverBlockedR()`. LOS and hide-spot eligibility are untouched (both read
 `coverGrid` independently of `coverBlockedR()`), so Log keeps `LOS+HIDE`;
 only the `C` is gone.
@@ -1126,7 +1153,7 @@ edge, often standing just outside the box `findHideSpot()`'s
 let the player stand inside its own (long, thin) footprint instead. An
 edge-standing Bramble hider could sit in a clean sightline the on-footprint
 Log case never exposed, playing as "the animal found me while I was still
-hiding." Fixed by extending `coverKindBlocksPlayerMovement()`'s walkable
+hiding." Fixed by extending `coverKindBlocksMovement()`'s walkable
 exemption from `log` alone to every `HIDE_KINDS` entry
 (`!HIDE_KINDS[kind]`, `lib/game/cover.ts`) — Bramble now shares Log's
 `LOS+HIDE` cell and the same canopy-clearance placement check (¹⁴). This is
@@ -1136,6 +1163,17 @@ step over" being Log specifically) — called out here since the ticket
 asked explicitly for one unified hiding behaviour across both cover kinds
 rather than a bramble-only fix that left the two divergent. Rock/Reed,
 neither a hiding spot, are unaffected.
+²³ **Added, LUL-1643.** Predator movement now calls `blockedForPredator()`
+(`lib/game/cover.ts`) — `blockedR()` (tree/landmark circles) plus
+`coverBlockedR()` — instead of bare `blockedR()`, so Rock/Reed become real
+predator colliders for the first time, reusing the exact same
+`coverKindBlocksMovement()` solid/walkable predicate the player already
+used via `blocked()`. `pickAvoidDirection()` (steering avoidance) probes the
+same composite, so a chasing predator now slides around a Rock/Reed edge
+in advance rather than bonking into it — same qualitative behaviour it
+already had for trees. `canopyBlockedR` stays player-only (camera/eye-height
+concern, no predator analogue) — Rock/Reed's predator collider is grid+cover
+only. Log/Bramble are unaffected by this change (¹¹).
 
 ---
 
@@ -1170,35 +1208,39 @@ registry's own merge.
 
 ---
 
-## Pending: the Bog (LUL-25, PR #58 — not yet on `main`)
+## The Bog (LUL-25 / LUL-1483) — live on `main`
 
-Sourced from branch `lul-25-bog-map-landmarks` (head `86be9fc2`) and
-`lib/game/bog.ts` on that branch, **not** `main` — do not treat this section
-as live until the PR merges, and fold it into the tables above (not append a
-second matrix) the same day it does.
+`isInBog()`/the fixed z-band this section used to describe are gone
+(LUL-1483). The bog is now a biome distributed by 2D value noise over the
+whole `[-half, half]` square (`biomeAt(x, z)`, `lib/game/bog.ts`), not a
+directional strip past the forest's old +z edge — the world is square again,
+not a 240×360 rectangle.
 
 **New elements it adds**: `BogTree` (90-instance thinner-cover twin of Tree,
 own `bogTreeData` array, merged into the shared `grid` for collision),
 `Reed` (tall `coverData` kind `'reed'`, LOS-blocking like Rock/Log/Bramble
 but **not** in `HIDE_KINDS` — not a hiding spot), four fixed `Landmark`
 groups (fire tower, stone marker, drowned car, lightning-split oak — static,
-no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`), and a
-`Bog` terrain band itself (`z > half && z <= zMax`, `isInBog()` in
-`lib/game/bog.ts`) that halves player walk speed and multiplies noise
-radius 1.6× while standing in it (`bogSpeedMultiplier`/`bogNoiseMultiplier`).
+no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`; `oak`
+and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit
+inside an actual bog patch now that the bog is no longer a fixed band), and
+the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
+boolean, so a patch edge scales speed/noise in rather than stepping. It
+scales player/predator walk speed down and noise radius up while standing in
+it (`bogSpeedMultiplier`/`bogNoiseMultiplier`, applied to both the player,
+`engine/forest-engine.js`'s movement block, and predators, the terrain
+multiplier in `updatePredators()`), and is kept fully dry around
+`CONFIG.home`/spawn regardless of the noise field (`HOME_CLEAR_RADIUS`/
+`HOME_FADE_RADIUS` in `lib/game/bog.ts`).
 
-**What's already known and citable from that branch** (so this isn't a
-guess): reeds reuse the exact same `coverMeshes`/`coverGrid`/`hasLOS()`
-machinery as Rock/Log/Bramble, with zero changes to either function; bog
-trees reuse `canopyRadiusAtEye()` unchanged; the minimap is deliberately
-**not** extended to cover the bog (wiki `game/lul25-status`: "the bog is off
-[the minimap's] edge on purpose," reasoned against genre wayfinding
-precedent, not a shortcut). All of this predicts the same interaction shapes
-already in the matrix above (Tree-shaped collision, Rock/Log/Bramble-shaped
-LOS-only cover) — the merge-day update should mostly be new rows that mirror
-existing ones, not new logic to re-derive.
-
-**Not re-verified here**: PR #58's own review (LUL-371, Code Reviewer,
-`REVIEW: APPROVED`) already re-derived its determinism claims independently;
-this section only describes shape for forward-planning, it is not a second
-review pass.
+**What's already known and citable**: reeds reuse the exact same
+`coverMeshes`/`coverGrid`/`hasLOS()` machinery as Rock/Log/Bramble, with zero
+changes to either function; bog trees reuse `canopyRadiusAtEye()` unchanged;
+the minimap is deliberately **not** extended to cover the bog specially (wiki
+`game/lul25-status`; LUL-1093's clamp already scales correctly for a square
+world, untouched by LUL-1483). This predicts the same interaction shapes
+already in the matrix above (Tree-shaped collision for both actors,
+Rock-shaped `C+LOS` for both actors as of LUL-1643 (²³), Log/Bramble-shaped
+LOS-only walkable cover) — Reed shares Rock's `coverKindBlocksMovement()`
+predicate (both `!HIDE_KINDS` kinds), so it also became a real predator
+collider in the same change, not just a player one.
