@@ -1,0 +1,79 @@
+name: Scope drift flag
+
+# LUL-547 (spec: wiki playbooks/scope-drift-check) -- non-blocking flag: when
+# a push's diff against release/next touches .github/workflows/**,
+# package.json, or .github/CODEOWNERS, comment on the branch's open PR
+# naming the files. Catches the failure mode a stale-branch backmerge
+# silently dragging CI/infra config across a PR that never meant to touch
+# it -- the backmerge commit carries no scope signal in its own message, so
+# this doesn't try to parse title/body intent (that variant was considered
+# and rejected -- see the wiki page).
+#
+# Deliberately NOT a required/blocking check: continue-on-error on the job,
+# every gh call best-effort. A failure here must never affect mergeability
+# and this must never become a required status check.
+#
+# Triggers on push (mirrors auto-pr.yml), so the commit is authored by a
+# real deploy-key push, not GITHUB_TOKEN -- no ci-github-token-blind-spot
+# trigger-suppression risk (that trap is about GITHUB_TOKEN-authored commits
+# not firing push/pull_request events at all, which doesn't apply here).
+# `gh pr comment` under GH_TOKEN: ${{ github.token }} from a push-triggered
+# job on a lul-* branch is the same working pattern auto-pr.yml already uses
+# for its ship-denied/ship-malformed comments.
+
+on:
+  push:
+    branches: ['lul-*']
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  flag:
+    name: flag CI/infra scope drift
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: diff against release/next
+        id: diff
+        run: |
+          git fetch origin release/next
+          CHANGED=$(git diff --name-only origin/release/next...HEAD || true)
+          HITS=$(printf '%s\n' "$CHANGED" | grep -E '^\.github/workflows/|^package\.json$|^\.github/CODEOWNERS$' || true)
+          if [ -z "$HITS" ]; then
+            echo "hits=" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "hits<<SCOPE_DRIFT_EOF"
+              echo "$HITS"
+              echo "SCOPE_DRIFT_EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: comment on the open PR
+        if: steps.diff.outputs.hits != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          HITS: ${{ steps.diff.outputs.hits }}
+        run: |
+          number=$(gh pr list --repo "$REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty' || true)
+          if [ -z "$number" ]; then
+            echo "no open PR for $BRANCH yet -- nothing to comment on"
+            exit 0
+          fi
+          {
+            echo "**Scope drift flag** (non-blocking): this branch's diff vs \`release/next\` touches CI/infra config:"
+            echo
+            printf '%s\n' "$HITS" | sed 's/^/- \`/; s/$/\`/'
+            echo
+            echo "If that's not this PR's stated purpose (e.g. a stray backmerge hunk), call it out for the reviewer. See wiki \`playbooks/scope-drift-check\`."
+          } > /tmp/scope-drift-comment.md
+          gh pr comment "$number" --repo "$REPO" --body-file /tmp/scope-drift-comment.md || true
