@@ -68,7 +68,7 @@ export function overlapsTreeTrunk(x: number, z: number, propRadius: number, tree
 // invisible canopy edge mid-crossing. Found by LUL-491's re-review via direct
 // blocked()-sampling across a log's full span in
 // e2e/lul211-founder-report.spec.ts. generateCover() only calls this for
-// walkable kinds (coverKindBlocksPlayerMovement() false) -- LUL-1642 put
+// walkable kinds (coverKindBlocksMovement() false) -- LUL-1642 put
 // bramble on that list alongside log, so bramble now gets this same
 // canopy-clearance check too; rock/reed, which stay solid, keep the cheaper
 // trunk-only check, unchanged.
@@ -91,8 +91,9 @@ export function overlapsTreeCanopy(x: number, z: number, propRadius: number, tre
 // blockedR()/grid is separate, so re-blocking it here would be a double
 // check, not new behaviour). LUL-384 added 'log' to that same skip list: a
 // fallen log is the one cover prop a person would naturally step/run over
-// rather than route around, and predators already ignore all cover-prop
-// collision entirely (LUL-119/LUL-211's "predators pass through" rule).
+// rather than route around, and predators exempt log/bramble from movement
+// collision too, via this same predicate (LUL-1643 unified rock/reed as
+// predator colliders; see blockedForPredator()).
 //
 // LUL-1642: bramble joins log here too. Both were already identical in
 // every *decision* sense -- HIDE_KINDS = {bramble, log} share the exact same
@@ -111,7 +112,7 @@ export function overlapsTreeCanopy(x: number, z: number, propRadius: number, tre
 // hasLOS() tests, unifying the two HIDE_KINDS the way the ticket asked
 // rather than inventing a second, bramble-only detection path. Rock/reed
 // aren't hiding spots and stay solid.
-export function coverKindBlocksPlayerMovement(kind: string): boolean {
+export function coverKindBlocksMovement(kind: string): boolean {
   return kind !== 'tree' && !HIDE_KINDS[kind];
 }
 
@@ -240,6 +241,7 @@ export function pickAvoidDirection(
   dx: number,
   dz: number,
   grid: SpatialGrid<CircleCollider>,
+  coverGrid: SpatialGrid<CoverAABB>,
   cell: number = CELL,
   lookAhead: number = 2.4,
   nearLookAhead: number = 0.8,
@@ -250,8 +252,8 @@ export function pickAvoidDirection(
   // so both distances must be sampled -- a direction only counts as clear if
   // neither probe hits.
   const clearDistance = (rx: number, rz: number): number => {
-    if (blockedR(x + rx * near, z + rz * near, rad, grid, cell)) return 0;
-    if (blockedR(x + rx * far, z + rz * far, rad, grid, cell)) return near;
+    if (blockedForPredator(x + rx * near, z + rz * near, rad, grid, coverGrid, cell)) return 0;
+    if (blockedForPredator(x + rx * far, z + rz * far, rad, grid, coverGrid, cell)) return near;
     return far;
   };
 
@@ -299,15 +301,16 @@ export function slideVelocity(vx: number, vz: number, blockedX: boolean, blocked
 //
 // `kind === 'tree'` is always skipped (its own circle-grid collision via
 // blockedR() above already handles it); LUL-384 additionally skips 'log' via
-// coverKindBlocksPlayerMovement() -- a fallen log is the one cover prop a
-// person would naturally step/run over rather than route around, and
-// predators already ignore all cover-prop collision (LUL-119/LUL-211). LOS
+// coverKindBlocksMovement() -- a fallen log is the one cover prop a
+// person would naturally step/run over rather than route around. Predators
+// now route through this same function via blockedForPredator() (LUL-1643),
+// they just share the identical log/bramble exemption. LOS
 // (hasLOS() below, which does NOT skip either kind) and hide-spot
 // eligibility (findHideSpot()/HIDE_KINDS) both read coverGrid independently
 // of this function and are unchanged by either skip.
 export function coverBlockedR(x: number, z: number, pr: number, coverGrid: SpatialGrid<CoverAABB>, cell: number = CELL): boolean {
   for (const c of neighbourhood(coverGrid, x, z, cell)) {
-    if (!coverKindBlocksPlayerMovement(c.kind)) continue;
+    if (!coverKindBlocksMovement(c.kind)) continue;
     const dx = x - c.x, dz = z - c.z;
     const ry = c.ry ?? 0;
     const co = Math.cos(ry), si = Math.sin(ry);
@@ -351,6 +354,24 @@ export function blocked(
     coverBlockedR(x, z, PLAYER_COLLISION_RADIUS, coverGrid, cell) ||
     canopyBlockedR(x, z, grid, cell)
   );
+}
+
+// ---- composite predator movement block (LUL-1643) ---------------------------
+// Predator counterpart to blocked() above: grid + cover, deliberately no
+// canopyBlockedR. Canopy exists only to keep the *player's camera* out of
+// foliage at eye height (LUL-267) -- a rendering concern predators, which have
+// no camera, don't share. Reuses coverBlockedR/coverKindBlocksMovement, the
+// exact same solid/walkable predicate blocked() uses for the player, so rock/
+// reed are solid and log/bramble stay walkable for both actors identically.
+export function blockedForPredator(
+  x: number,
+  z: number,
+  pr: number,
+  grid: SpatialGrid<CircleCollider>,
+  coverGrid: SpatialGrid<CoverAABB>,
+  cell: number = CELL,
+): boolean {
+  return blockedR(x, z, pr, grid, cell) || coverBlockedR(x, z, pr, coverGrid, cell);
 }
 
 // ---- segment vs. axis-aligned box (slab test) --------------------------------

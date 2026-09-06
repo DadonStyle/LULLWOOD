@@ -45,7 +45,7 @@ import {
   SCENT_TRACK_TIME,
 } from '@/lib/game/scent';
 import {
-  coverKindBlocksPlayerMovement,
+  coverKindBlocksMovement,
   distanceToCoverEdge,
   overlapsTreeCanopy,
   overlapsTreeTrunk,
@@ -58,6 +58,7 @@ import {
   gridKey as key,
   blockedR as geoBlockedR,
   blocked as geoBlocked,
+  blockedForPredator as geoBlockedForPredator,
   hasLOS as geoHasLOS,
   findHideSpot as geoFindHideSpot,
   effectiveDetect as geoEffectiveDetect,
@@ -425,11 +426,10 @@ bogParts.forEach(p => { p.frustumCulled = false; scene.add(p); });
 
 // ---- Cover props (LUL-43): brambles, fallen logs, rock shelves -----------
 // Purely visual + line-of-sight-blocking (see canSee()/hasLOS() below) --
-// deliberately NOT movement colliders. Trees already own movement collision
-// via `grid`/blockedR below; giving these their own physical collision too
-// would touch predator path/stuck-avoidance logic that this ticket has no
-// budget to re-verify. Declared in the LUL-43 handoff; a fast-follow can add
-// it if the founder wants these to be walls, not just visual/LOS cover.
+// deliberately NOT movement colliders. LUL-1643 made rock/reed real predator
+// colliders (see predatorBlocked() below and blockedForPredator() in
+// lib/game/cover.ts); log/bramble stay walkable for predators, matching the
+// player's own exemption.
 const logGeo = new THREE.BoxGeometry(1, 1, 1);
 const rockGeo = new THREE.DodecahedronGeometry(1, 0);
 const brambleGeo = new THREE.IcosahedronGeometry(1, 1);
@@ -510,17 +510,24 @@ function buildGrid(){
 // rotated-cover-AABB, tree-canopy and composite movement-block checks) now
 // live in lib/game/cover.ts, unit-tested there -- see the module comment at
 // the top of that file's LUL-425 section. These are thin wrappers that just
-// inject the engine's own `grid`/`coverGrid` closure state; every call site
-// below (predators call blockedR() directly for their own movement, not
-// blocked() -- see cover.ts's own comment on why that split is load-bearing)
-// is unchanged. coverBlockedR/canopyBlockedR themselves stay in cover.ts
+// inject the engine's own `grid`/`coverGrid` closure state. Predators now
+// call predatorBlocked() (grid + cover, no canopy) instead of bare
+// blockedR(), for every real movement call site (see predatorBlocked()
+// below); blockedR() itself is unchanged and still used directly only where
+// a tree/landmark-circle-only check is intentionally wanted (the QA helpers
+// that stage against HIDE_KINDS props only). coverBlockedR/canopyBlockedR
+// themselves stay in cover.ts
 // (not wrapped here individually, only via the composite blocked()) --
 // nothing outside blocked() called them directly. LUL-384's walkable-log
-// skip (coverKindBlocksPlayerMovement(), imported above) is preserved inside
+// skip (coverKindBlocksMovement(), imported above) is preserved inside
 // cover.ts's own coverBlockedR(), so geoBlocked() below still treats 'log'
 // as non-blocking, same as release/next did before this extraction.
 function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid); }
 function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid); }
+// LUL-1643: predator movement now consults cover the same way blocked() does
+// for the player, minus canopyBlockedR (camera-only, LUL-267 -- see
+// blockedForPredator()'s own comment in cover.ts for why canopy stays excluded).
+function predatorBlocked(x,z,pr){ return geoBlockedForPredator(x,z,pr,grid,coverGrid); }
 
 function buildCoverGrid(){
   coverGrid = new Map();
@@ -580,7 +587,7 @@ function generateCover(){
     const roll = rng();
     const { kind, hx, hz, y } = rollCoverPropShape(roll, rng);   // LUL-425: lib/game/cover.ts
     if(overlapsTreeTrunk(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
-    if(!coverKindBlocksPlayerMovement(kind) && overlapsTreeCanopy(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
+    if(!coverKindBlocksMovement(kind) && overlapsTreeCanopy(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
     placed++;
   }
@@ -1110,7 +1117,7 @@ function placePredators(){
 // (pickAvoidDirection, unit tested there) -- this stays a thin wrapper that
 // injects the engine's own tree/landmark `grid` closure state, same pattern
 // as blockedR/blocked/hasLOS/findHideSpot above.
-function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz, grid); }
+function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz, grid, coverGrid); }
 // ---- Scent trail + wind (LUL-23) ------------------------------------------
 // The player leaves scent while moving (see the deposit call in tick()'s
 // movement block -- nothing is deposited while `hidden` or standing still, so
@@ -1573,7 +1580,7 @@ function updatePredators(dt, noiseRadius){
     p.vz += (dvz - p.vz) * Math.min(1, dt*accel);
     const px0 = p.x, pz0 = p.z;
     const nx = clamp(p.x + p.vx*dt, -half+2, half-2), nz = clamp(p.z + p.vz*dt, -half+2, zMax-2);
-    const blockedX = blockedR(nx, p.z, p.rad), blockedZ = blockedR(p.x, nz, p.rad);
+    const blockedX = predatorBlocked(nx, p.z, p.rad), blockedZ = predatorBlocked(p.x, nz, p.rad);
     if(!blockedX) p.x = nx;
     if(!blockedZ) p.z = nz;
     if(blockedX || blockedZ) [p.vx, p.vz] = slideVelocity(p.vx, p.vz, blockedX, blockedZ);
@@ -1668,8 +1675,8 @@ function updatePredators(dt, noiseRadius){
     const [pushX, pushZ] = predatorSeparationPush(p.x, p.z, p.rad, others);
     if(!pushX && !pushZ) continue;
     const nx = clamp(p.x + pushX, -half+2, half-2), nz = clamp(p.z + pushZ, -half+2, zMax-2);
-    if(!blockedR(nx, p.z, p.rad)) p.x = nx;
-    if(!blockedR(p.x, nz, p.rad)) p.z = nz;
+    if(!predatorBlocked(nx, p.z, p.rad)) p.x = nx;
+    if(!predatorBlocked(p.x, nz, p.rad)) p.z = nz;
     p.g.position.x = p.x; p.g.position.z = p.z;
   }
 }
@@ -2543,7 +2550,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!p) return null;
     return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, t: clock.elapsedTime };
   };
-
   // LUL-43 positional-hiding scaffolding. Both hooks place a specific predator
   // deterministically -- never "wherever the seed happened to spawn one" -- so
   // e2e/hide.spec.ts doesn't have to search the procedural map for a matching
@@ -2793,8 +2799,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // LUL-388: reproduces the exact LUL-387 regression shape live -- a predator
   // mid-blind-scent-chase (scentLock > 0, so the 'chase' branch never falls
   // through to the canSee()-gated investigate transition), within catch range
-  // of the player, with a real cover prop's rotated AABB sitting on the
-  // segment between them so canSee() is false. Pre-fix this died instantly
+  // of the player, with a log/bramble cover prop's (HIDE_KINDS -- rock/reed
+  // now collide with the predator, LUL-1643, so this hook is restricted to
+  // the kinds that still don't) rotated AABB sitting on the segment between
+  // them so canSee() is false. Pre-fix this died instantly
   // (bare isCaught(dist, rad)); post-fix canCatchInChase() must keep gating
   // the kill on canSee() too. Existing hooks (qaHideBehindCover(Kind)) place
   // predator and player several units apart -- clear of the cover prop
@@ -2815,15 +2823,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(idx < 0) return null;
     const p = predators[idx];
     for(const c of coverData){
-      if(c.kind === 'tree') continue;
+      if(!HIDE_KINDS[c.kind]) continue;
       const thin = Math.min(c.hx, c.hz);
-      // Asymmetric on purpose: the predator (point A) never calls blocked()/
-      // coverBlockedR() for its own movement (LUL-119/211 -- the whole point of
-      // this hook), so it can sit right at the box's thin face. The player
-      // (point B) very much does -- blocked()'s coverBlockedR(x,z,0.6) call pads
-      // every prop by the player's own 0.6 radius -- so it needs to clear
-      // thin+0.6, not just thin, or qaProbePlayer/blocked() would reject its own
-      // staged position as "inside" the prop.
+      // Asymmetric on purpose: the predator (point A) never collides against
+      // a log/bramble cover prop (HIDE_KINDS) -- rock/reed now collide with
+      // the predator (LUL-1643), so this hook is restricted to the kinds
+      // that still don't -- so it can sit right at the box's thin face. The
+      // player (point B) very much does -- blocked()'s coverBlockedR(x,z,0.6)
+      // call pads every prop by the player's own 0.6 radius -- so it needs
+      // to clear thin+0.6, not just thin, or qaProbePlayer/blocked() would
+      // reject its own staged position as "inside" the prop.
       const offA = thin + 0.1, offB = thin + 0.6 + 0.1;
       if(offA + offB >= p.rad + CATCH_MARGIN) continue;   // must land inside catch range
       const co = Math.cos(c.ry), si = Math.sin(c.ry);
@@ -2832,7 +2841,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       const lxB = thinIsZ ? 0 : offB, lzB = thinIsZ ? offB : 0;
       const ax = c.x + lxA*co + lzA*si, az = c.z - lxA*si + lzA*co;
       const bx = c.x + lxB*co + lzB*si, bz = c.z - lxB*si + lzB*co;
-      if(blockedR(ax, az, p.rad) || blocked(bx, bz)) continue;
+      if(predatorBlocked(ax, az, p.rad) || blocked(bx, bz)) continue;
       p.x = ax; p.z = az;
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       // A charge in flight (or freshly cooled down and re-triggerable) resolves
