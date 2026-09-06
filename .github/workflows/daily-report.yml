@@ -284,7 +284,7 @@ jobs:
           echo "::notice::opened PR #$number for $BRANCH"
 
       - name: wait for CI, approve, and merge
-        if: steps.diff.outputs.empty == 'false'
+        if: steps.diff.outputs.empty == 'false' && steps.pr.outputs.number != ''
         env:
           GH_TOKEN: ${{ github.token }}
           SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
@@ -293,6 +293,16 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+
+          # Validate PR_NUMBER is set and numeric before proceeding
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "::error::PR_NUMBER environment variable is empty; cannot proceed with approve/merge"
+            exit 1
+          fi
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::PR_NUMBER is not numeric: '$PR_NUMBER'"
+            exit 1
+          fi
 
           # ── locate the CI run ────────────────────────────────────────────────
           # LUL-1115: "commit and push" now authenticates its push as
@@ -320,6 +330,18 @@ jobs:
             exit 1
           fi
           echo "::notice::tracking CI run $run_id"
+
+          # ── race check early ──────────────────────────────────────────────────
+          # If the PR is already merged before we even wait for CI, that means a
+          # rival workflow (auto-pr.yml/automerge.yml) won the race, or a human
+          # merged it. Either way, we're done. Check this EARLY to avoid
+          # unnecessary CI polling if we already know the outcome.
+          if already_merged="$(gh pr view "$PR_NUMBER" --json merged --jq '.merged' 2>/dev/null || echo "unknown")"; then
+            if [ "$already_merged" = "true" ]; then
+              echo "::notice::PR #$PR_NUMBER was already merged; skipping CI wait and merge steps."
+              exit 0
+            fi
+          fi
 
           # ── wait for completion (up to 50 min, poll every 30 s) ─────────────
           # LUL-534: this budget was 25 min (50 × 30 s) and was structurally too
@@ -355,7 +377,7 @@ jobs:
             exit 1
           fi
 
-          # ── race check ────────────────────────────────────────────────────────
+          # ── race check (second time) ───────────────────────────────────────────
           # LUL-1115: the real-credential push above also satisfies
           # auto-pr.yml's and automerge.yml's own triggers (see the file
           # header) -- either can review and merge this exact PR
@@ -364,10 +386,11 @@ jobs:
           # review submission and the merge call below, so a rival path
           # winning the declared race doesn't paint this scheduled job red
           # (LUL-925) for a run that actually succeeded.
-          already_merged="$(gh pr view "$PR_NUMBER" --json merged --jq '.merged')"
-          if [ "$already_merged" = "true" ]; then
-            echo "::notice::PR #$PR_NUMBER was already merged (auto-pr.yml/automerge.yml won the race); nothing left to do."
-            exit 0
+          if already_merged="$(gh pr view "$PR_NUMBER" --json merged --jq '.merged' 2>/dev/null || echo "unknown")"; then
+            if [ "$already_merged" = "true" ]; then
+              echo "::notice::PR #$PR_NUMBER was already merged (auto-pr.yml/automerge.yml won the race); nothing left to do."
+              exit 0
+            fi
           fi
 
           # ── submit approving review ──────────────────────────────────────────
