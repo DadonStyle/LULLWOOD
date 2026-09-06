@@ -41,12 +41,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3700-3704, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  `triggerTouchToggleRun()` (L3701-3705, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3677-3683, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
+  `triggerTouchJump()` (L3678-3684, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
   target on mobile, wired to the same `triggerTouchJump()` — it used to
@@ -55,7 +55,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3689-3693, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
+  (L3690-3694, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3662 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3241, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3663 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3242, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -734,16 +734,19 @@ one geometry builder (`makePredator()`), differentiated by the
   (fogTideAmount)` (floor `FOG_TIDE_DETECT_MUL` 0.65 — a further 35% cut at
   full tide) in the same product as `veilDetectMul(veilAmount)` and the
   difficulty preset's own `detectMul` — all three stack multiplicatively.
-- **As of `LUL-1709`**, a `(1 + timeOfRun * 0.3)` multiplier — up to a 30%
-  sight-range *increase* by full night — stacks in the same product in both
-  `effectiveDetect()` and `canSee()`. Unlike the veil/tide terms above (which
-  all cut range), this one only grows predator sight as the run's `timeOfRun`
-  pacing clock advances (see Fog above); it composes multiplicatively with,
-  and does not replace, `DIFFICULTY_PRESETS[difficulty].detectMul`.
-  Deliberate, not a double-count bug: a spent resource (the veil, gated by
-  its charge meter above) and a free recurring world event compounding is
-  fine. Sight-only, same scope as the veil — `p.spec.scent` is untouched, so
-  a predator can still scent-lock the player straight through a tide.
+- **As of `LUL-1709`/`LUL-1714`**, `timeOfRunDetectMul(timeOfRun)`
+  (`lib/game/dayNight.ts`, unit tested — see `lib/game/dayNight.test.ts`,
+  same pure-module split as `veilDetectMul()`/`fogTideDetectMul()`) — up to a
+  30% (`TIME_OF_RUN_DETECT_MUL`) sight-range *increase* by full night —
+  stacks in the same product in both `effectiveDetect()` and `canSee()`.
+  Unlike the veil/tide terms above (which all cut range), this one only
+  grows predator sight as the run's `timeOfRun` pacing clock advances (see
+  Fog above); it composes multiplicatively with, and does not replace,
+  `DIFFICULTY_PRESETS[difficulty].detectMul`. Deliberate, not a double-count
+  bug: a spent resource (the veil, gated by its charge meter above) and a
+  free recurring world event compounding is fine. Sight-only, same scope as
+  the veil — `p.spec.scent` is untouched, so a predator can still
+  scent-lock the player straight through a tide.
   Signposted ~10s ahead of the active window: the raw telegraph signal eases
   into `fogTideDroneGainMul(fogTideBuild)`, raising the ambient drone gain,
   while `fogTideWindGainMul(fogTideAmount)` ducks the wind bed by up to
@@ -846,7 +849,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L3059-3063 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  and synced to `hudState` via `setEmbers()` (L3060-3064 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
@@ -898,7 +901,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1871-1879): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()` L1872-1880): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
 - Gate the player's sprint speed (`tick()` at L3243): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
