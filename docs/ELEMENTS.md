@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3794 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3362, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3812 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3380, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -840,6 +840,21 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   read-only `EngineHudState` fields (`windX`/`windZ`), pushed once per map
   generation (not per-frame) — the only HUD element driven by map-constant
   rather than per-frame or per-event engine state.
+  LUL-1194: the death screen copy names the *cause*, not the predator species
+  — a new `deathCause: 'charge'|'hunt'|'chase'` field, set by `triggerDeath()`
+  (three call sites in `updatePredators()`) and mapped to player-facing text
+  by `DEATH_CAUSE_TEXT` in `components/Hud.tsx`. `deathKind` (species) still
+  exists in state and DOM (`#deathKind`, now `display:none`) purely so the
+  existing e2e specs that assert on it keep working — it is no longer
+  rendered to the player. The death cutscene (`#deathVideo`, `CUT_END`=3.7s)
+  stays full-length and unskippable on the player's first-ever death only
+  (persisted via `localStorage['lullwood:hasDied']`, not per-page-load);
+  every death after that, any keydown or pointerdown skips straight to
+  `revealLoss()` (`skipCutsceneIfAllowed()`). Both end screens' restart
+  button also gains a `ref`-based focus-on-reveal in `Hud.tsx` (not raw
+  `autoFocus`, which would fire before the screen reveals and let a stray
+  Enter bypass the unskippable first cutscene via native button activation),
+  giving Enter/Space a keyboard path back into a new run for free.
 
 LUL-1308 adds `#bearingPulse`, a screen-edge glow answering "which side is the nearest
 approaching predator on" for players who can't rely on the caption toggle (LUL-26) or
@@ -908,7 +923,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3045) and `triggerDeath()` (L3071).
+  both `track()` call sites in `arriveHome()` (L3069) and `triggerDeath()` (L3099).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
