@@ -2400,6 +2400,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
 
+  // LUL-1484: before/after perf baseline for the map-size growth (E3), and
+  // the baseline E6's chunking work later has to justify itself against.
+  window.ForestEngine.qaProbePerf = function(){
+    return {
+      calls: renderer.info.render.calls,
+      triangles: renderer.info.render.triangles,
+      elapsedTime: clock.elapsedTime,
+    };
+  };
+
   // LUL-83: proves resolveInitialSeed() actually drives the generated layout --
   // `?seed=N` should reproduce this byte-identically across loads, and no
   // `?seed=` should vary it. Trees/predators are read back from the same
