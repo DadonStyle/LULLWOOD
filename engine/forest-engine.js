@@ -91,6 +91,7 @@ import {
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL } from '@/lib/game/stamina';
+import { PICKUP_GLOW_PEAK, carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity, CARRY_GLOW_BASE, CARRY_HALO_BASE } from '@/lib/game/childGlow';
 import {
   freshEmbersState,
   computeWinPayout,
@@ -716,7 +717,6 @@ function generateMap(seed){
   }
   layoutTreePool(parts, treeData, CONFIG.trees);
   buildGrid();
-  drawMinimapStatic();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
   generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
@@ -735,6 +735,13 @@ function generateMap(seed){
   // above, so it never shifts the stream any existing seed/replay depends on.
   mission = pickMission(rng);
   missionHumTimer = 2;
+  // LUL-1093: moved from right after the tree-pool buildGrid() above.
+  // bogTreeData/landmarkData don't exist until generateBogTrees()/
+  // placeLandmarks() run, both below the old call site -- drawing from them
+  // there always rendered empty arrays. This draws from data only and
+  // consumes no rng, so it cannot perturb the seeded stream (LUL-25's
+  // ordering comment above generateBogTrees() explains what does).
+  drawMinimapStatic();
 }
 
 // ---- Lake landmark (the thing to find) -----------------------------------
@@ -1926,7 +1933,7 @@ function playHideSfx(kind, entering){ if(kind === 'log') hollowLogSound(entering
 // shadowed toggleHidden() carried that track() call but was dead code (a
 // later function declaration in the same scope wins in JS), so the event
 // never fired.
-function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used' }); }
+function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); }
 function exitHide(){ if(!hidden) return; playHideSfx(hideKind, false); hidden = false; hideKind = null; }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
@@ -2303,6 +2310,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
   window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
+  // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
+  // "this world point stays on-canvas" for both the player arrow (which calls
+  // w2m(player.x, player.z) in drawMinimap()) and the objective marker (which
+  // calls w2m(baby.x, baby.z)) without needing to actually move either --
+  // both draw calls go through this same function.
+  window.ForestEngine.qaProbeMinimapPoint = function(x, z){ const [px, py] = w2m(x, z); return { px, py, mm: MM }; };
+  window.ForestEngine.qaProbeBabyLight = function(){
+    return { intensity: babyLight.intensity, distance: babyLight.distance,
+             carrying, pickingUp, taken: baby.taken };
+  };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
 
   // LUL-83: proves resolveInitialSeed() actually drives the generated layout --
@@ -2892,7 +2909,7 @@ function finishPickup(){
   document.body.style.cursor = '';
   babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.55;
-  halo.material.opacity = 0.22; babyLight.intensity = 1.3;
+  halo.material.opacity = CARRY_HALO_BASE; babyLight.intensity = CARRY_GLOW_BASE;
 }
 // LUL-1258: M2 Deepwater's completion sting -- reuses hollowLogSound's
 // noise-burst + oscillator chain (same procedural building blocks, no new
@@ -2969,7 +2986,7 @@ function triggerDeath(kind){
   activeCharges = 0;
   pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance, chargeVisible: false });
-  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance });
+  track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -3064,13 +3081,30 @@ on(window, 'resize', () => {
 const mm = document.getElementById('minimap'), mmx = mm.getContext('2d'), MM = mm.width, mmS = MM/CONFIG.mapSize;
 const mmStatic = document.createElement('canvas'); mmStatic.width = MM; mmStatic.height = MM;
 const sx = mmStatic.getContext('2d');
-function w2m(x,z){ return [ (x+half)*mmS, (z+half)*mmS ]; }
+// LUL-1093: clamped so a bog coordinate (z up to zMax=240, engine/tuning.js
+// CONFIG.bogDepth) pins to the canvas edge instead of being drawn off it and
+// vanishing. mmS is still one scalar for both axes -- splitting into mmSx/mmSz
+// is E2's job once the world stops being a 240x360 rectangle (see LUL-1483's
+// spec, specs/bigger-wrapping-world-e2-e6 in the wiki). This clamp is defence
+// in depth only, not a geometry fix.
+function w2m(x,z){
+  return [ Math.max(0, Math.min(MM, (x+half)*mmS)), Math.max(0, Math.min(MM, (z+half)*mmS)) ];
+}
 function drawMinimapStatic(){
   sx.clearRect(0,0,MM,MM);
   sx.fillStyle = 'rgba(10,14,21,0.5)'; sx.fillRect(0,0,MM,MM);
   sx.strokeStyle = 'rgba(150,175,215,0.25)'; sx.lineWidth = 1; sx.strokeRect(1,1,MM-2,MM-2);
   sx.fillStyle = 'rgba(120,150,120,0.5)';
   for(let i=0;i<treeData.length;i+=4){ const [px,py] = w2m(treeData[i].x, treeData[i].z); sx.fillRect(px, py, 1.2, 1.2); }
+  // LUL-1093: bogTreeData/landmarkData were never drawn here -- both are
+  // populated by generateBogTrees()/placeLandmarks(), which used to run AFTER
+  // this function was called from generateMap() (see the generateMap() edit
+  // below), so both arrays were always empty at this point. Same subsample
+  // stride and fill style as the forest-tree loop above; landmarks get a
+  // bigger square (3x3 vs 1.2x1.2) so they read as distinct points -- this is
+  // a minimal legibility choice for a bugfix, not a final art pass.
+  for(let i=0;i<bogTreeData.length;i+=4){ const [px,py] = w2m(bogTreeData[i].x, bogTreeData[i].z); sx.fillRect(px, py, 1.2, 1.2); }
+  for(const l of landmarkData){ const [px,py] = w2m(l.x, l.z); sx.fillRect(px-1.5, py-1.5, 3, 3); }
   const [lx,ly] = w2m(CONFIG.lake.x, CONFIG.lake.z);
   sx.beginPath(); sx.arc(lx, ly, CONFIG.lake.r*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(134,184,255,0.55)'; sx.fill();
 }
@@ -3327,7 +3361,7 @@ function tick(){
     babyGroup.visible = true; babyGroup.position.set(baby.x, ay, baby.z); babyGroup.rotation.y = e*0.6;
     halo.material.opacity = Math.min(0.5, 0.12 + e*0.05);
     bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5 + e*0.15;
-    babyLight.intensity = key3(e, [[0,1],[1.5,2.4],[2.5,3.2]]);
+    babyLight.intensity = key3(e, [[0,1],[1.5,1.6],[2.5,PICKUP_GLOW_PEAK]]);
     // camera holds position, glances toward the child being gathered --
     // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly
     // the camera motion the setting exists to remove) and just hold the
@@ -3345,8 +3379,8 @@ function tick(){
     // LUL-38: carrying phase — child rides at the player's feet, glowing
     babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = (0.20 + Math.sin(t*1.8)*0.04) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.intensity = (1.2 + Math.sin(t*1.8)*0.2) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    halo.material.opacity = carryHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    babyLight.intensity = carryGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
     babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
@@ -3486,8 +3520,8 @@ function tick(){
   if(!baby.taken){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = (0.11 + Math.sin(t*1.8) * 0.05) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.intensity = (1.0 + Math.sin(t*1.8) * 0.25) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    halo.material.opacity = idleHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
+    babyLight.intensity = idleGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
     babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
     const bp = bwisps.geometry.attributes.position.array;
     for(let i=0;i<BW;i++){ bp[i*3+1] += dt*0.4; if(bp[i*3+1] > 3.4) bp[i*3+1] = 0.2; }
