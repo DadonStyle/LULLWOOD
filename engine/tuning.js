@@ -15,8 +15,8 @@
 // ---- Knobs ---------------------------------------------------------------
 export const CONFIG = {
   seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
-  mapSize: 240,          // the forest is a fixed square this many units across
-  trees:   1300,
+  mapSize: 480,          // the forest is a fixed square this many units across
+  trees:   5200,
   walk:    6,            // walking speed (units/s); Shift multiplies it
   fog:     0.04,
   eye:     2.2,          // eye height
@@ -77,8 +77,8 @@ export const LW = 50;             // lake wisps
 export const DUST = 350;          // ambient dust particles
 export const BW = 26;             // baby beacon wisps
 export const BSP = 70;            // win-burst particles
-export const BOG_TREES = 90;
-export const COVER_PROPS = 220;
+export const BOG_TREES = 360;
+export const COVER_PROPS = 880;
 
 // LUL-195: wind silently decides scent outcomes; the ambient dust drift is the
 // only player-visible tell. Speed is tuned for legibility, not to match
