@@ -220,8 +220,8 @@ test('coverKindBlocksPlayerMovement is true for rock -- unchanged, still solid',
   assert.equal(coverKindBlocksPlayerMovement('rock'), true);
 });
 
-test('coverKindBlocksPlayerMovement is true for bramble -- unchanged, still solid', () => {
-  assert.equal(coverKindBlocksPlayerMovement('bramble'), true);
+test('coverKindBlocksPlayerMovement is false for bramble -- LUL-1642, walkable like log so hasLOS() unifies with the log hiding case', () => {
+  assert.equal(coverKindBlocksPlayerMovement('bramble'), false);
 });
 
 test('coverKindBlocksPlayerMovement is true for reed -- unchanged, still solid', () => {
@@ -543,6 +543,12 @@ test('blocked: true from the cover-AABB check alone', () => {
 test('blocked: false from the cover-AABB check for a walkable log (LUL-384), even dead center', () => {
   const grid = makeGrid<CircleCollider>([]);
   const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'log', ry: 0 }]);
+  assert.equal(blocked(0, 0, grid, coverGrid), false);
+});
+
+test('blocked: false from the cover-AABB check for a walkable bramble (LUL-1642), even dead center -- matches log', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'bramble', ry: 0 }]);
   assert.equal(blocked(0, 0, grid, coverGrid), false);
 });
 

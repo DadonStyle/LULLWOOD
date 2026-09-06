@@ -21,6 +21,21 @@
 //     engine/", but nothing mechanical can tell a tuning constant from a
 //     change to the collision solver, and guessing wrong here ships a broken
 //     game. A human can still approve those normally.
+//   - `lib/game/**` is C, not the generic Tier B `lib/**` bucket. Every module
+//     here (cover.ts, predator.ts, scent.ts, stamina.ts, outcome.ts, ...) is
+//     simulation logic imported into engine/forest-engine.js by name (that's
+//     what scripts/check-duplicate-logic.mjs's allowlist mechanism assumes) --
+//     it is AGENTS.md's Tier C "engine simulation" list (hiding, detection,
+//     scent, win/lose) living under lib/ for import reasons, not app-surface
+//     code. Found LUL-1664: PR #351 (lib/game/cover.ts, hiding/detection) was
+//     treated as "squarely Tier C" by the humans/AGENTS.md prose reasoning
+//     about the ticket, but this script would have classified it Tier B and
+//     let tier-approve.yml auto-approve it with zero Code Reviewer involved,
+//     bot or human -- a strictly worse hole than the one LUL-1664 is actually
+//     about (a manual bypass at least required a person to act; this one is
+//     fully automatic). This rule is listed after the Tier A test/spec rule
+//     (so lib/game/*.test.ts stays A, like every other test file) but before
+//     the generic `lib/**` -> B rule, since first match wins.
 //   - `package.json` / lockfile are C: a dependency bump is arbitrary code.
 //
 // Usage: node scripts/pr-tier.mjs <file> [file...]
@@ -39,6 +54,8 @@ const rules = [
   [/(auth|secret|token|credential)/i, 'C'],
 
   // --- Tier A: docs, tests, assets. No review, no play verdict. ---
+  // Checked before lib/game/ -> C below so a lib/game/*.test.ts stays A, same
+  // as every other test file -- only the simulation source itself is C.
   [/^docs\//, 'A'],
   [/^NOAM_MDS\//, 'A'],
   [/^DAILY_REPORTS\//, 'A'],
@@ -48,6 +65,8 @@ const rules = [
   [/\.(test|spec)\.[jt]sx?$/, 'A'],
   [/^public\//, 'A'],
   [/\.md$/, 'A'],
+
+  [/^lib\/game\//, 'C'],
 
   // --- Tier B: app surface. Merge on green, review after. ---
   [/^app\//, 'B'],

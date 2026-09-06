@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --experimental-test-module-mocks"
+    "test": "node --test --experimental-test-module-mocks",
+    "prepare": "node scripts/setup-git-hooks.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.0",
