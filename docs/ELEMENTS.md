@@ -621,6 +621,18 @@ one geometry builder (`makePredator()`), differentiated by the
   map's `rng()` stream (see wiki `game/lul27-fog-tide` for the full
   reasoning). See Follow-light and Child below for the tide's other two
   effect surfaces (detect radius, child glow).
+- **As of `LUL-1709`**, an additive `timeOfRun * TIME_OF_RUN_FOG_DELTA` term
+  (`TIME_OF_RUN_FOG_DELTA = 0.10 - CONFIG.fog`) on top of the veil/tide terms
+  above, driven by `timeOfRun` — a live 0→1 pacing clock that rises over
+  `TIME_OF_RUN_DURATION_S` (120s) of actual play (pauses with everything else,
+  resets to 0 in `enter()`). Distinct from `LUL-1644`'s `TOD_VISUAL`/`TOD_AUDIO`
+  (a static snapshot of the player's real wall-clock hour, computed once at
+  load) — this is a live value that changes every frame during a run; the two
+  compose, not replace. Same term also ramps the scene's `HemisphereLight`
+  intensity down (`HEMI_BASE_INTENSITY * (1 - timeOfRun * 0.7)`) and is
+  surfaced to the HUD as a plain-text clock (`#timeOfRunClock`,
+  `formatTimeOfRunClock()`, dawn 6:00 AM at `timeOfRun=0` to 9:00 PM at
+  `timeOfRun=1`).
 
 **What it CANNOT do**
 - `effectiveDetect()` (predator sight range) still never reads
@@ -722,6 +734,12 @@ one geometry builder (`makePredator()`), differentiated by the
   (fogTideAmount)` (floor `FOG_TIDE_DETECT_MUL` 0.65 — a further 35% cut at
   full tide) in the same product as `veilDetectMul(veilAmount)` and the
   difficulty preset's own `detectMul` — all three stack multiplicatively.
+- **As of `LUL-1709`**, a `(1 + timeOfRun * 0.3)` multiplier — up to a 30%
+  sight-range *increase* by full night — stacks in the same product in both
+  `effectiveDetect()` and `canSee()`. Unlike the veil/tide terms above (which
+  all cut range), this one only grows predator sight as the run's `timeOfRun`
+  pacing clock advances (see Fog above); it composes multiplicatively with,
+  and does not replace, `DIFFICULTY_PRESETS[difficulty].detectMul`.
   Deliberate, not a double-count bug: a spent resource (the veil, gated by
   its charge meter above) and a free recurring world event compounding is
   fine. Sight-only, same scope as the veil — `p.spec.scent` is untouched, so
