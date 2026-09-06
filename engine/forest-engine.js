@@ -717,7 +717,6 @@ function generateMap(seed){
   }
   layoutTreePool(parts, treeData, CONFIG.trees);
   buildGrid();
-  drawMinimapStatic();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
   generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
@@ -736,6 +735,13 @@ function generateMap(seed){
   // above, so it never shifts the stream any existing seed/replay depends on.
   mission = pickMission(rng);
   missionHumTimer = 2;
+  // LUL-1093: moved from right after the tree-pool buildGrid() above.
+  // bogTreeData/landmarkData don't exist until generateBogTrees()/
+  // placeLandmarks() run, both below the old call site -- drawing from them
+  // there always rendered empty arrays. This draws from data only and
+  // consumes no rng, so it cannot perturb the seeded stream (LUL-25's
+  // ordering comment above generateBogTrees() explains what does).
+  drawMinimapStatic();
 }
 
 // ---- Lake landmark (the thing to find) -----------------------------------
@@ -2301,6 +2307,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
   window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: inBog(baby.x, baby.z) }; };
+  // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
+  // "this world point stays on-canvas" for both the player arrow (which calls
+  // w2m(player.x, player.z) in drawMinimap()) and the objective marker (which
+  // calls w2m(baby.x, baby.z)) without needing to actually move either --
+  // both draw calls go through this same function.
+  window.ForestEngine.qaProbeMinimapPoint = function(x, z){ const [px, py] = w2m(x, z); return { px, py, mm: MM }; };
   window.ForestEngine.qaProbeBabyLight = function(){
     return { intensity: babyLight.intensity, distance: babyLight.distance,
              carrying, pickingUp, taken: baby.taken };
@@ -3066,13 +3078,30 @@ on(window, 'resize', () => {
 const mm = document.getElementById('minimap'), mmx = mm.getContext('2d'), MM = mm.width, mmS = MM/CONFIG.mapSize;
 const mmStatic = document.createElement('canvas'); mmStatic.width = MM; mmStatic.height = MM;
 const sx = mmStatic.getContext('2d');
-function w2m(x,z){ return [ (x+half)*mmS, (z+half)*mmS ]; }
+// LUL-1093: clamped so a bog coordinate (z up to zMax=240, engine/tuning.js
+// CONFIG.bogDepth) pins to the canvas edge instead of being drawn off it and
+// vanishing. mmS is still one scalar for both axes -- splitting into mmSx/mmSz
+// is E2's job once the world stops being a 240x360 rectangle (see LUL-1483's
+// spec, specs/bigger-wrapping-world-e2-e6 in the wiki). This clamp is defence
+// in depth only, not a geometry fix.
+function w2m(x,z){
+  return [ Math.max(0, Math.min(MM, (x+half)*mmS)), Math.max(0, Math.min(MM, (z+half)*mmS)) ];
+}
 function drawMinimapStatic(){
   sx.clearRect(0,0,MM,MM);
   sx.fillStyle = 'rgba(10,14,21,0.5)'; sx.fillRect(0,0,MM,MM);
   sx.strokeStyle = 'rgba(150,175,215,0.25)'; sx.lineWidth = 1; sx.strokeRect(1,1,MM-2,MM-2);
   sx.fillStyle = 'rgba(120,150,120,0.5)';
   for(let i=0;i<treeData.length;i+=4){ const [px,py] = w2m(treeData[i].x, treeData[i].z); sx.fillRect(px, py, 1.2, 1.2); }
+  // LUL-1093: bogTreeData/landmarkData were never drawn here -- both are
+  // populated by generateBogTrees()/placeLandmarks(), which used to run AFTER
+  // this function was called from generateMap() (see the generateMap() edit
+  // below), so both arrays were always empty at this point. Same subsample
+  // stride and fill style as the forest-tree loop above; landmarks get a
+  // bigger square (3x3 vs 1.2x1.2) so they read as distinct points -- this is
+  // a minimal legibility choice for a bugfix, not a final art pass.
+  for(let i=0;i<bogTreeData.length;i+=4){ const [px,py] = w2m(bogTreeData[i].x, bogTreeData[i].z); sx.fillRect(px, py, 1.2, 1.2); }
+  for(const l of landmarkData){ const [px,py] = w2m(l.x, l.z); sx.fillRect(px-1.5, py-1.5, 3, 3); }
   const [lx,ly] = w2m(CONFIG.lake.x, CONFIG.lake.z);
   sx.beginPath(); sx.arc(lx, ly, CONFIG.lake.r*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(134,184,255,0.55)'; sx.fill();
 }
