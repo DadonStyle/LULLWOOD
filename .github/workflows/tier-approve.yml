@@ -97,6 +97,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # LUL-1699: a run's own top-level head_branch/head_sha (what `gh api
+      # .../actions/runs` reports, and what an audit will naturally filter
+      # on) always reflects this workflow FILE's own context for a
+      # workflow_run-triggered run -- i.e. the default branch -- never the
+      # triggering PR's branch/sha. That field is not the one that matters;
+      # the real per-PR resolution only happened inside the job's own log
+      # ("candidate PRs" below). Filtering runs by the top-level field
+      # produced a false "trigger never fires for feature branches" report:
+      # investigation (LUL-1699) found the trigger firing and evaluating
+      # correctly for every cited PR, each correctly classified Tier C via
+      # scripts/pr-tier.mjs (they touch engine/ and/or .github/), which is
+      # why they read as unapproved -- not a trigger miss. Log the real event
+      # payload up front so the next audit reads this step instead of
+      # re-deriving the trap. Wiki: systems/tier-approve-head-field-trap.
+      - name: log trigger event
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WR_ID: ${{ github.event.workflow_run.id }}
+          WR_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          WR_NAME: ${{ github.event.workflow_run.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "event_name=$EVENT_NAME"
+          echo "workflow_run: id=$WR_ID name=$WR_NAME head_branch=$WR_HEAD_BRANCH head_sha=$WR_HEAD_SHA"
+          echo "pull_request: number=$PR_NUMBER"
+          {
+            echo "### tier-approve trigger"
+            echo "- event: \`$EVENT_NAME\`"
+            echo "- workflow_run: id=\`$WR_ID\` head_branch=\`$WR_HEAD_BRANCH\` head_sha=\`$WR_HEAD_SHA\`"
+            echo "- pull_request: number=\`$PR_NUMBER\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # workflow_run does not inherit the triggering run's ref: an unpinned
       # checkout here resolves to the workflow FILE's own branch (main),
       # not the PR head whose CI just finished. scripts/pr-tier.mjs (guard

@@ -86,7 +86,7 @@ jobs:
           echo "::notice::ahead_by=$ahead event=$EVENT should_cut=$should_cut"
 
   combined-suite:
-    name: build the merge tree and run the full suite (shard ${{ matrix.shard }}/4)
+    name: build the merge tree and run the full suite (shard ${{ matrix.shard }}/6)
     needs: decide
     if: needs.decide.outputs.should_cut == 'true'
     runs-on: ubuntu-latest
@@ -102,11 +102,14 @@ jobs:
       # LUL-554 diagnosed at smaller scale on 2026-08-20. Sharding across separate
       # runners (each its own CPU, its own fresh browser process) fixes the
       # contention without touching playwright.config.ts's workers:1 -- local and
-      # per-PR runs (which don't use this workflow) are unaffected. 4-way lands
-      # each shard near the suite's original single-project cost; revisit if the
-      # suite grows enough to blow that budget again.
+      # per-PR runs (which don't use this workflow) are unaffected.
+      #
+      # LUL-1702: widened 4->6 after the 4-way split (sized against a smaller
+      # suite) started running 32-47min/shard against a ~26min budget, with
+      # widespread unrelated-spec timeouts. 6-way gives each shard more margin
+      # against the same per-test cost without needing a bigger/pricier runner.
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -142,9 +145,11 @@ jobs:
 
       # Non-playwright checks are identical on every shard's tree (same merge
       # commit) -- run them once, on shard 1, not 4x. A failure here still
-      # fails that matrix job, which still fails the aggregate `combined-suite`
-      # result the PR step below reads (`needs.combined-suite.result` is
-      # 'success' only if every matrix job succeeded).
+      # fails that matrix job, and (unlike the playwright step below, which
+      # has continue-on-error: true as of LUL-1702) still fails the aggregate
+      # `combined-suite` job and the workflow run itself -- these checks were
+      # never part of PR #314's advisory-only carve-out, only the playwright
+      # combined-suite result was.
       - name: unit tests
         if: matrix.shard == 1
         run: npm test
@@ -169,8 +174,58 @@ jobs:
       - name: install playwright browsers + system deps
         run: npx playwright install --with-deps chromium
 
-      - name: playwright smoke suite (shard ${{ matrix.shard }}/4)
-        run: npx playwright test --shard=${{ matrix.shard }}/4
+      # LUL-1702: this job has no `container:` key -- it's a bare VM runner, not
+      # a Docker container -- so /dev/shm should default to ~50% of RAM (a few
+      # GB), not the 64MB Docker-container default LUL-1110's `--disable-dev-shm-
+      # usage` fix (playwright.config.ts) was reasoning from. That assumption was
+      # never actually measured on this runner. Logging it here costs nothing and
+      # gives the next incident real numbers instead of another guess.
+      - name: log runner resources (shm/mem) for CI-sizing diagnosis
+        run: |
+          echo "--- /dev/shm ---"; df -h /dev/shm
+          echo "--- memory ---"; free -h
+          echo "--- cpu ---"; nproc
+
+      # LUL-1702: `replay` (e2e/replay/**, always-on video recording) was
+      # running here on every shard even though its own project comment in
+      # playwright.config.ts says it's "run by hand ... never as part of the
+      # required checks" -- there was no --project filter to actually enforce
+      # that, so the gated suite was silently paying for video encoding it was
+      # never meant to run. Restricting to the two projects this workflow
+      # actually intends (chromium, mobile) cuts real work off every shard.
+      #
+      # LUL-1702: `continue-on-error: true` here (and only here -- not on the
+      # job, not on unit tests/lint/typecheck/build above) is the actual
+      # run-conclusion/suite-signal decoupling this ticket was reassigned for.
+      # The combined-suite playwright result has been advisory-only for the
+      # cut PR's auto-merge arming since PR #314 (2026-09-05, issue #311) --
+      # but this step failing was still failing this job, which was still
+      # failing the whole workflow run, which is exactly the signal the
+      # LUL-685 watchdog alerts on. That's alerting correctly on a real red
+      # run, but on a signal the studio already decided not to gate on. This
+      # flag stops a playwright failure from failing the job/run by itself;
+      # the "record playwright outcome" step below preserves the real
+      # per-shard result so the PR comment two jobs down stays exactly as
+      # accurate as it was before -- see aggregate-suite-result.
+      - name: playwright smoke suite (shard ${{ matrix.shard }}/6)
+        id: playwright
+        continue-on-error: true
+        run: npx playwright test --shard=${{ matrix.shard }}/6 --project=chromium --project=mobile
+
+      - name: record playwright outcome
+        if: always()
+        run: |
+          mkdir -p shard-outcome
+          echo "${{ steps.playwright.outcome }}" > "shard-outcome/${{ matrix.shard }}.txt"
+
+      - name: upload playwright outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-cut-shard-outcome-${{ matrix.shard }}
+          path: shard-outcome/
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: upload playwright test results
         if: always()
@@ -181,11 +236,61 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  aggregate-suite-result:
+    name: aggregate real playwright result across shards
+    needs: [decide, combined-suite]
+    if: always() && needs.decide.outputs.should_cut == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      suite_result: ${{ steps.aggregate.outputs.suite_result }}
+    steps:
+      # `needs.combined-suite.result` is now 'success' even when a shard's
+      # playwright step failed (that's the point of continue-on-error above)
+      # -- but it still correctly reports 'failure' if a *non-advisory* step
+      # (unit tests/lint/typecheck/build, or a hard crash before the outcome
+      # file could be written) broke a shard job. Trust that first; only fall
+      # back to reading the real per-shard playwright outcomes when the job
+      # result alone says everything was fine.
+      - name: download per-shard playwright outcomes
+        if: needs.combined-suite.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: version-cut-shard-outcome-*
+          path: shard-outcomes
+          merge-multiple: true
+
+      - name: aggregate
+        id: aggregate
+        run: |
+          set -euo pipefail
+          if [ "${{ needs.combined-suite.result }}" != "success" ]; then
+            echo "suite_result=failure" >> "$GITHUB_OUTPUT"
+            echo "::notice::combined-suite job result was ${{ needs.combined-suite.result }} (a non-advisory step failed) -- suite_result=failure"
+            exit 0
+          fi
+
+          result=success
+          shopt -s nullglob
+          files=(shard-outcomes/*.txt)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::warning::no shard-outcome artifacts found despite a successful combined-suite job -- treating as failure rather than trusting an absence of data."
+            result=failure
+          fi
+          for f in "${files[@]}"; do
+            outcome="$(cat "$f")"
+            echo "::notice::shard outcome file $f = $outcome"
+            if [ "$outcome" != "success" ]; then
+              result=failure
+            fi
+          done
+          echo "suite_result=$result" >> "$GITHUB_OUTPUT"
+
   open-or-refresh-cut-pr:
     name: open or refresh the cut PR
-    needs: [decide, combined-suite]
-    # Runs even if combined-suite failed -- a silent red run nobody looks at
-    # is worse than a PR that says DO NOT MERGE in plain sight.
+    needs: [decide, combined-suite, aggregate-suite-result]
+    # Runs even if combined-suite/aggregate-suite-result failed -- a silent
+    # red run nobody looks at is worse than a PR that says DO NOT MERGE in
+    # plain sight.
     if: always() && needs.decide.outputs.should_cut == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -194,7 +299,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHIP_REVIEW_TOKEN: ${{ secrets.SHIP_REVIEW_PAT }}
           REPO: ${{ github.repository }}
-          SUITE_RESULT: ${{ needs.combined-suite.result }}
+          SUITE_RESULT: ${{ needs.aggregate-suite-result.outputs.suite_result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
