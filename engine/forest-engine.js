@@ -1374,6 +1374,32 @@ function updatePredators(dt, noiseRadius){
         if(cs.phase !== 'telegraph'){ desx = p.chargeDirX; desz = p.chargeDirZ; speed = chargeSpeed(cs.distance); }
       }
     }
+    // LUL-1482 fix (review LUL-1728): this branch must run *before* the
+    // generic `p.alert > 0` check below. It mirrors the tell's remaining
+    // time into p.alert every frame it runs (for the shared rear-up
+    // animation), which means the very next frame `p.alert > 0` would also
+    // be true -- if that check came first (as originally written) it would
+    // win priority, decrement p.alert on its own independent schedule, and
+    // never call stepSightLock or re-check canSee() again until p.alert
+    // decayed back to 0. Net effect measured in review: the tell took ~4.1s
+    // to resolve instead of the spec's 0.35s (~12x), because `t` only
+    // advanced by one frame's dt per ~20-frame detour through the alert
+    // branch. Giving p.sightLock priority here means it owns facePlayer/
+    // speed/alert every single frame while active, so stepSightLock (and
+    // therefore the LOS re-check) runs every frame as intended.
+    else if(p.sightLock){
+      // LUL-1482: mid carry-only sight-acquisition tell (lib/game/sightLock.ts).
+      // Frozen, facing the player -- reuses the alert>0 branch's own rear-up
+      // animation for free (`alerting = p.alert > 0`, :1548) by mirroring the
+      // tell's remaining time into p.alert every frame; there is no second
+      // animation to build.
+      facePlayer = true; speed = 0;
+      const stillVisible = canSee(p, dist);
+      p.sightLock = stepSightLock(p.sightLock, dt, stillVisible);
+      p.alert = p.sightLock.phase === 'spotting' ? SIGHT_TELL_TIME - p.sightLock.t : 0;
+      if(p.sightLock.phase === 'locked'){ p.sightLock = null; spotOnto(p, { skipAlert: true }); }
+      else if(p.sightLock.phase === 'cancelled'){ p.sightLock = null; }
+    }
     // spot "alert": brief rear-up + freeze the instant it locks on
     else if(p.alert > 0){
       p.alert -= dt; facePlayer = true; speed = 0;
@@ -1391,18 +1417,6 @@ function updatePredators(dt, noiseRadius){
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
-    } else if(p.sightLock){
-      // LUL-1482: mid carry-only sight-acquisition tell (lib/game/sightLock.ts).
-      // Frozen, facing the player -- reuses the alert>0 branch's own rear-up
-      // animation for free (`alerting = p.alert > 0`, :1548) by mirroring the
-      // tell's remaining time into p.alert every frame; there is no second
-      // animation to build.
-      facePlayer = true; speed = 0;
-      const stillVisible = canSee(p, dist);
-      p.sightLock = stepSightLock(p.sightLock, dt, stillVisible);
-      p.alert = p.sightLock.phase === 'spotting' ? SIGHT_TELL_TIME - p.sightLock.t : 0;
-      if(p.sightLock.phase === 'locked'){ p.sightLock = null; spotOnto(p, { skipAlert: true }); }
-      else if(p.sightLock.phase === 'cancelled'){ p.sightLock = null; }
     } else if(p.state === 'roam'){
       // LUL-437: a predator lands in `roam` right on top of the scent point
       // that pulled it into investigate/flank in the first place (that's why
