@@ -98,6 +98,15 @@ export function triggerDeath(s: RunState): RunState {
   return { ...s, dead: true };
 }
 
+/** Gate for regenMap() (the admin-panel "New map" dev tool, LUL-1585): a fresh
+ * map mid-outcome would pull the ground out from under an in-progress win/death
+ * cutscene. Mirrors canTriggerDeath's dead/won shape; deliberately does not gate
+ * on pickingUp/carrying -- regenerating while carrying is a dev-tool footgun,
+ * not a state-machine violation, so it's left alone (wiki systems/unit-testing-standard). */
+export function canRegenMap(s: RunState): boolean {
+  return !s.dead && !s.won;
+}
+
 /** Gate for both the HUD "pick up stone" prompt and the grab input itself. Mirrors
  * canPickUp()'s shape (proximity + one flag) but the flag is "already holding one",
  * not run-phase -- you can grab a throwable in any playable state, including while
