@@ -90,7 +90,7 @@ declare global {
       qaStagePredatorGiveUp?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-1620: teleports predator[idx] onto its own current roam waypoint so the next tick's arrival/repick runs immediately; returns {x,z} or null if idx doesn't resolve. */
       qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
-      /** LUL-212: teleports the player to the nearest hiding spot (bramble/log), no predator involved. Returns the spot's kind, or null if none were generated. */
+      /** LUL-212: teleports the player to the first generated hiding spot (bramble/log), no predator involved. Returns the spot's kind, or null if none were generated. */
       qaTeleportToHideSpot?: () => string | null;
       /** LUL-211: the player's world position and heading -- the only way a test can
        * see where movement actually ended up (player is init()-closure-local). */

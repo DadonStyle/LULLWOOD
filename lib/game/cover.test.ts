@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  coverKindBlocksPlayerMovement,
+  coverKindBlocksMovement,
   distanceToCoverEdge,
   overlapsTreeCanopy,
   overlapsTreeTrunk,
@@ -13,6 +13,7 @@ import {
   coverBlockedR,
   canopyBlockedR,
   blocked,
+  blockedForPredator,
   segRayVsAABB,
   hasLOS,
   findHideSpot,
@@ -206,26 +207,26 @@ test('overlapsTreeCanopy finds a match anywhere in a multi-tree list, not just t
   assert.equal(overlapsTreeCanopy(0, 0, 0.8, trees), true);
 });
 
-// ---- coverKindBlocksPlayerMovement (LUL-384) -------------------------------
+// ---- coverKindBlocksMovement (LUL-384) -------------------------------
 
-test('coverKindBlocksPlayerMovement is false for tree (own circle-grid collision handles it)', () => {
-  assert.equal(coverKindBlocksPlayerMovement('tree'), false);
+test('coverKindBlocksMovement is false for tree (own circle-grid collision handles it)', () => {
+  assert.equal(coverKindBlocksMovement('tree'), false);
 });
 
-test('coverKindBlocksPlayerMovement is false for log -- walkable, run/jump over it naturally', () => {
-  assert.equal(coverKindBlocksPlayerMovement('log'), false);
+test('coverKindBlocksMovement is false for log -- walkable, run/jump over it naturally', () => {
+  assert.equal(coverKindBlocksMovement('log'), false);
 });
 
-test('coverKindBlocksPlayerMovement is true for rock -- unchanged, still solid', () => {
-  assert.equal(coverKindBlocksPlayerMovement('rock'), true);
+test('coverKindBlocksMovement is true for rock -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksMovement('rock'), true);
 });
 
-test('coverKindBlocksPlayerMovement is false for bramble -- LUL-1642, walkable like log so hasLOS() unifies with the log hiding case', () => {
-  assert.equal(coverKindBlocksPlayerMovement('bramble'), false);
+test('coverKindBlocksMovement is false for bramble -- LUL-1642, walkable like log so hasLOS() unifies with the log hiding case', () => {
+  assert.equal(coverKindBlocksMovement('bramble'), false);
 });
 
-test('coverKindBlocksPlayerMovement is true for reed -- unchanged, still solid', () => {
-  assert.equal(coverKindBlocksPlayerMovement('reed'), true);
+test('coverKindBlocksMovement is true for reed -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksMovement('reed'), true);
 });
 
 // ============================================================================
@@ -295,7 +296,7 @@ for (const ry of [Math.PI / 4, -Math.PI / 4]) {
     assert.ok(Math.abs(lx - 2.0) < 1e-9 && Math.abs(lz) < 1e-9, 'sanity: local coords recovered');
 
     // kind 'rock' (not 'log'): LUL-384 made 'log' walkable/non-blocking in
-    // coverBlockedR (coverKindBlocksPlayerMovement), so a blocking fixture
+    // coverBlockedR (coverKindBlocksMovement), so a blocking fixture
     // for this rotation test needs a kind that still blocks -- see the
     // dedicated log-skip test below for that behaviour.
     const correctGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'rock', ry }]);
@@ -338,7 +339,7 @@ test('coverBlockedR: skips kind === "tree" entries entirely, regardless of rotat
 });
 
 // LUL-384 (release/next, merged in under LUL-582): 'log' is walkable, so
-// coverBlockedR routes its skip through coverKindBlocksPlayerMovement()
+// coverBlockedR routes its skip through coverKindBlocksMovement()
 // rather than a literal kind === 'tree' check -- pin that a log no longer
 // blocks the player's own movement, even dead center, even though it is
 // still real LOS-blocking cover (see the hasLOS asymmetry test below) and
@@ -425,11 +426,45 @@ test('blockedR: exactly at the combined radius is not blocked (strict <)', () =>
   assert.equal(blockedR(0.001, 0, 2, grid), true); // just inside
 });
 
+// ---- blockedForPredator (LUL-1643: predators now collide with rock/reed) ---
+
+test('blockedForPredator: rock blocks a predator the same way it blocks the player', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(blockedForPredator(0.5, 0, 0.6, grid, coverGrid), true);
+});
+
+test('blockedForPredator: reed blocks a predator', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 0.5, hz: 0.5, kind: 'reed', ry: 0 }]);
+  assert.equal(blockedForPredator(0, 0, 0.6, grid, coverGrid), true);
+});
+
+test('blockedForPredator: log does not block a predator (HIDE_KINDS stays walkable for both actors)', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 2, hz: 1, kind: 'log', ry: 0 }]);
+  assert.equal(blockedForPredator(0, 0, 0.6, grid, coverGrid), false);
+});
+
+test('blockedForPredator: bramble does not block a predator', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'bramble', ry: 0 }]);
+  assert.equal(blockedForPredator(0, 0, 0.6, grid, coverGrid), false);
+});
+
+test('blockedForPredator: tree circle grid still blocks a predator (unchanged, unrelated to cover)', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 1 }]);
+  const coverGrid = makeGrid<CoverAABB>([]);
+  assert.equal(blockedForPredator(0.5, 0, 0.6, grid, coverGrid), true);
+});
+
 // ---- pickAvoidDirection (LUL-593, predator obstacle-avoidance steering) ----
+
+const emptyCoverGrid: SpatialGrid<CoverAABB> = new Map();
 
 test('pickAvoidDirection: open path returns the original heading unchanged', () => {
   const grid = makeGrid<CircleCollider>([]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   assert.equal(rx, 1);
   assert.equal(rz, 0);
 });
@@ -437,7 +472,7 @@ test('pickAvoidDirection: open path returns the original heading unchanged', () 
 test('pickAvoidDirection: obstacle dead ahead but clear at the first fallback angle deflects to it', () => {
   // tiny blocker exactly at the look-ahead point of the raw heading (0,0)+(1,0)*3
   const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   assert.ok(Math.abs(rx - Math.cos(0.5)) < 1e-9);
   assert.ok(Math.abs(rz - Math.sin(0.5)) < 1e-9);
 });
@@ -445,7 +480,7 @@ test('pickAvoidDirection: obstacle dead ahead but clear at the first fallback an
 test('pickAvoidDirection: when both +/-0.5 are equally clear, prefers +0.5 (angle-list order, not just any clear angle)', () => {
   // blocks only the raw heading -- (3,0) -- leaving every fallback angle open
   const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   // +0.5 is tried before -0.5 in AVOID_ANGLES -- confirm it's the one picked
   const negRx = Math.cos(-0.5), negRz = Math.sin(-0.5);
   assert.ok(!(Math.abs(rx - negRx) < 1e-9 && Math.abs(rz - negRz) < 1e-9));
@@ -457,7 +492,7 @@ test('pickAvoidDirection: every angle blocked returns the least-blocked candidat
   // near or far, at any angle, is within `far` (3) of the origin, well
   // inside rr (10.6) -- a guaranteed all-blocked wedge.
   const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 10 }]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   // never the known-bad heading already confirmed blocked
   assert.ok(!(rx === 1 && rz === 0));
   // every candidate ties at clearDistance 0 here, so the tie is broken by
@@ -471,7 +506,7 @@ test('pickAvoidDirection: obstacle within the near probe is caught even though t
   // it, but a single far-only probe (rad+2.4=3.0) would have missed it
   // entirely, walking the predator straight into the trunk.
   const grid = makeGrid<CircleCollider>([{ x: 1.0, z: 0, cr: 0.3 }]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   assert.ok(!(rx === 1 && rz === 0));
 });
 
@@ -479,11 +514,27 @@ test('pickAvoidDirection: respects a custom lookAhead distance', () => {
   // blocker sits exactly at the widened look-ahead point (look=rad+5.4=6),
   // well past the default look-ahead point (look=rad+2.4=3)
   const grid = makeGrid<CircleCollider>([{ x: 6, z: 0, cr: 0.3 }]);
-  const [rxDefault, rzDefault] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rxDefault, rzDefault] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   assert.equal(rxDefault, 1); // default lookAhead doesn't reach the blocker
   assert.equal(rzDefault, 0);
-  const [rxWide] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, CELL, 5.4); // look=6, lands right on it
+  const [rxWide] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid, CELL, 5.4); // look=6, lands right on it
   assert.notEqual(rxWide, 1);
+});
+
+test('pickAvoidDirection: a rock AABB dead ahead deflects the predator (LUL-1643)', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  // rock centered at (3,0), hx=hz=0.5 -- sits on the raw heading's look-ahead point.
+  const coverGrid = makeGrid<CoverAABB>([{ x: 3, z: 0, hx: 0.5, hz: 0.5, kind: 'rock', ry: 0 }]);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, coverGrid);
+  assert.ok(!(rx === 1 && rz === 0), 'must deflect away from the raw heading');
+});
+
+test('pickAvoidDirection: a log AABB dead ahead does NOT trigger avoidance (walkable, matches player parity)', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 3, z: 0, hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, coverGrid);
+  assert.equal(rx, 1);
+  assert.equal(rz, 0);
 });
 
 // ---- slideVelocity (LUL-1091d: wall slide instead of axis-damping) --------

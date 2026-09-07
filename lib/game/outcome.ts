@@ -97,3 +97,17 @@ export function triggerDeath(s: RunState): RunState {
   if (!canTriggerDeath(s)) return s;
   return { ...s, dead: true };
 }
+
+/** Gate for both the HUD "pick up stone" prompt and the grab input itself. Mirrors
+ * canPickUp()'s shape (proximity + one flag) but the flag is "already holding one",
+ * not run-phase -- you can grab a throwable in any playable state, including while
+ * carrying the child (CTO plan decision 6: carry-leg is the intended beneficiary). */
+export function canGrabThrowable(heldThrowable: boolean, distToThrowable: number, radius: number): boolean {
+  return !heldThrowable && distToThrowable < radius;
+}
+
+/** Gate for the throw input: must actually be holding one. No other precondition --
+ * throwing while carrying, while investigate/chase is active, etc. are all allowed. */
+export function canThrowThrowable(heldThrowable: boolean): boolean {
+  return heldThrowable;
+}
