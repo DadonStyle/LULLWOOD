@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4164 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3708, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4168 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3712, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -196,6 +196,13 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   glow stays legible through the tide's own added fog density (Fog above) —
   the two effects (denser fog, longer-reaching glow) are meant to roughly
   offset, not one cancel the other out unintentionally.
+- **As of `LUL-1486`**, the `fogTideAmount` fed into `fogTideGlowMul`/
+  `fogTideGlowRangeMul` above is no longer the whole-world constant — it's
+  `fogTideAmountAt(x, z, fogTideAmount, ...)` (`lib/game/fogTide.ts`), a
+  proximity blend against a fixed set of `FOG_TIDE_SITES`. Sampled at the
+  player's position while carried (colocated with the child) or the child's
+  own idle spawn position otherwise; a child outside every site's radius
+  sees no tide glow boost regardless of the global clock's phase.
 - **As of `LUL-1480`** (rules `LUL-1438`/`LUL-1414`), the unscaled idle/carry
   glow and halo curves live in `lib/game/childGlow.ts` (pure, unit tested),
   not inline in `tick()`: `idleGlowIntensity()`/`idleHaloOpacity()` for the
@@ -730,6 +737,12 @@ one geometry builder (`makePredator()`), differentiated by the
   map's `rng()` stream (see wiki `game/lul27-fog-tide` for the full
   reasoning). See Follow-light and Child below for the tide's other two
   effect surfaces (detect radius, child glow).
+- **As of `LUL-1486`**, the `fogTideAmount` above is sampled at the player's
+  own position via `fogTideAmountAt(player.x, player.z, fogTideAmount, ...)`
+  (`lib/game/fogTide.ts`) rather than being a whole-world constant — the fog
+  boost applies only within a fixed set of Fog Tide sites (`FOG_TIDE_SITES`),
+  not globally; standing outside every site's radius adds no boost
+  regardless of the global clock's phase.
 - **As of `LUL-1709`**, an additive `timeOfRun * TIME_OF_RUN_FOG_DELTA` term
   (`TIME_OF_RUN_FOG_DELTA = 0.10 - CONFIG.fog`) on top of the veil/tide terms
   above, driven by `timeOfRun` — a live 0→1 pacing clock that rises over
@@ -843,6 +856,12 @@ one geometry builder (`makePredator()`), differentiated by the
   (fogTideAmount)` (floor `FOG_TIDE_DETECT_MUL` 0.65 — a further 35% cut at
   full tide) in the same product as `veilDetectMul(veilAmount)` and the
   difficulty preset's own `detectMul` — all three stack multiplicatively.
+- **As of `LUL-1486`** (D2, ruled `LUL-1489`), the `fogTideAmount` fed into
+  `fogTideDetectMul` above is sampled at **the predator's own position**
+  (`fogTideAmountAt(p.x, p.z, fogTideAmount, ...)`, `lib/game/fogTide.ts`),
+  not the player's — a predator standing outside every `FOG_TIDE_SITES`
+  radius is not blinded by a tide it isn't standing in, even if the player
+  is inside one.
 - **As of `LUL-1709`/`LUL-1714`**, `timeOfRunDetectMul(timeOfRun)`
   (`lib/game/dayNight.ts`, unit tested — see `lib/game/dayNight.test.ts`,
   same pure-module split as `veilDetectMul()`/`fogTideDetectMul()`) — up to a
@@ -864,6 +883,13 @@ one geometry builder (`makePredator()`), differentiated by the
   cue reads as responsive. Only applied to this calm-bed audio mix — a
   chase already wins the audio outright, so the tide never fights the hunt
   cue.
+- **As of `LUL-1486`**, both `fogTideBuild`/`fogTideAmount` above are sampled
+  at **the player's position** (`fogTideBuildAt`/`fogTideAmountAt(player.x,
+  player.z, ...)`, `lib/game/fogTide.ts`) rather than being whole-world
+  constants — the camera and the listener are the player, so this is the
+  same physical-coherence rule D2 established for predators, applied to the
+  scene-fog/audio observer. Standing outside every `FOG_TIDE_SITES` radius
+  mutes the drone/wind-duck effect regardless of the global clock's phase.
 
 **What it CANNOT do**
 - Cannot be occluded by anything — **no shadow-casting exists anywhere in

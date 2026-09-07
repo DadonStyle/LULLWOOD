@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   FOG_TIDE_CONFIG,
+  FOG_TIDE_SITES,
   FOG_TIDE_DETECT_MUL,
   FOG_TIDE_GLOW_MUL,
   FOG_TIDE_GLOW_RANGE_MUL,
@@ -17,7 +18,10 @@ import {
   fogTideFogBoost,
   fogTideDroneGainMul,
   fogTideWindGainMul,
+  fogTideAmountAt,
+  fogTideBuildAt,
 } from './fogTide.ts';
+import type { EventSite } from './eventSites.ts';
 
 test('config matches the ticket spec: ~90s cycle, ~10s signpost lead', () => {
   assert.equal(FOG_TIDE_CONFIG.period, 90);
@@ -60,4 +64,43 @@ test('drone gain multiplier rises with buildAmount, wind gain multiplier falls w
 test('multipliers are monotonic between 0 and 1', () => {
   assert.ok(fogTideDetectMul(0.5) < fogTideDetectMul(0) && fogTideDetectMul(0.5) > fogTideDetectMul(1));
   assert.ok(fogTideGlowMul(0.5) > 1 && fogTideGlowMul(0.5) < FOG_TIDE_GLOW_MUL);
+});
+
+test('fogTideAmountAt is 0 far from every default site', () => {
+  assert.equal(fogTideAmountAt(400, 400, 0.8), 0);
+});
+
+test('fogTideAmountAt equals tideAmount exactly at a default site center', () => {
+  const site = FOG_TIDE_SITES[0];
+  assert.equal(fogTideAmountAt(site.x, site.z, 0.8), 0.8);
+});
+
+test('fogTideAmountAt degenerate case: a single world-covering site reproduces old global behavior', () => {
+  const worldSite: readonly EventSite[] = [{ x: 0, z: 0, radius: 100000, kind: 'fogTide' }];
+  const tideAmount = 0.73;
+  // radius (100000) dwarfs the real map bounds (+/-240), so the falloff term
+  // (dist/radius, max ~339/100000 at the corners checked here) is negligible
+  // but not exactly 0 in floating point -- a tight epsilon still proves this
+  // reproduces the old whole-world constant, without requiring a literal
+  // Infinity radius the real site list would never use.
+  for (const [x, z] of [[0, 0], [240, 240], [-240, -240]] as const) {
+    assert.ok(Math.abs(fogTideAmountAt(x, z, tideAmount, Infinity, Infinity, worldSite) - tideAmount) < 0.005);
+  }
+});
+
+test('fogTideBuildAt is 0 far from every default site', () => {
+  assert.equal(fogTideBuildAt(400, 400, 0.5), 0);
+});
+
+test('fogTideBuildAt equals buildAmount exactly at a default site center', () => {
+  const site = FOG_TIDE_SITES[0];
+  assert.equal(fogTideBuildAt(site.x, site.z, 0.5), 0.5);
+});
+
+test('fogTideBuildAt degenerate case: a single world-covering site reproduces old global behavior', () => {
+  const worldSite: readonly EventSite[] = [{ x: 0, z: 0, radius: 100000, kind: 'fogTide' }];
+  const buildAmount = 0.42;
+  for (const [x, z] of [[0, 0], [240, 240], [-240, -240]] as const) {
+    assert.ok(Math.abs(fogTideBuildAt(x, z, buildAmount, Infinity, Infinity, worldSite) - buildAmount) < 0.005);
+  }
 });
