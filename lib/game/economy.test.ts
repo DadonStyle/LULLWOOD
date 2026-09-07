@@ -53,9 +53,9 @@ test('a win pays carried + home + depth + survival', () => {
   const p = computeWinPayout(78, 110);
   assert.equal(p.depth, 19);
   assert.equal(p.survival, 5);
-  assert.equal(p.carried, 60);
-  assert.equal(p.home, 25);
-  assert.equal(p.total, 60 + 25 + 19 + 5);
+  assert.equal(p.carried, 120);
+  assert.equal(p.home, 50);
+  assert.equal(p.total, 120 + 50 + 19 + 5);
 });
 
 test('a death pays only depth + survival -- carried and home are zero', () => {
@@ -81,12 +81,12 @@ test('a death that got deep pays more than a death that never left the treeline'
 test('dying on the doorstep (carrying, at the win-median depth/survival) costs exactly carried+home vs. the equivalent win', () => {
   const win = computeWinPayout(78, 110);
   const death = computeDeathPayout(78, 110, 78);
-  assert.equal(win.total - death.total, 60 + 25);
+  assert.equal(win.total - death.total, 120 + 50);
 });
 
 test('a win at zero distance and zero seconds still pays the flat carried+home', () => {
   const p = computeWinPayout(0, 0);
-  assert.equal(p.total, 60 + 25);
+  assert.equal(p.total, 120 + 50);
 });
 
 // LUL-1192: depth cap on death at objective distance (farm exploit fix)
@@ -115,8 +115,8 @@ test('blackout regression test: bogward death at 200m far, child at 220m objecti
 test('win depth is uncapped even at far distances: M2 Deepwater at 212m maxDist keeps depth 53', () => {
   const p = computeWinPayout(212, 50);
   assert.equal(p.depth, 53, 'win depth is never capped by objective distance');
-  assert.equal(p.carried, 60);
-  assert.equal(p.home, 25);
+  assert.equal(p.carried, 120);
+  assert.equal(p.home, 50);
 });
 
 // ---- LUL-1258: M2 Deepwater's mission bonus ------------------------------
@@ -147,14 +147,14 @@ test('the mission bonus is not payable on death -- computeDeathPayout has no mis
 //   night:   ×1.75 win / ×1.35 loss
 //   blackout: ×2.00 win / ×1.25 loss
 
-// Win at d=96 (lantern band top, t=100s): base = depth(24)+survival(5)+carried(60)+home(25)=114
+// Win at d=96 (lantern band top, t=100s): base = depth(24)+survival(5)+carried(120)+home(50)=199
 test('computeWinPayout tier multipliers pin the three win amounts', () => {
   const lw = computeWinPayout(96, 100, 'lantern');
   const nw = computeWinPayout(96, 100, 'night');
   const bw = computeWinPayout(96, 100, 'blackout');
-  assert.equal(lw.total, 114);                        // ×1.00
-  assert.equal(nw.total, Math.round(114 * 1.75));     // 200
-  assert.equal(bw.total, Math.round(114 * 2.00));     // 228
+  assert.equal(lw.total, 199);                        // ×1.00
+  assert.equal(nw.total, Math.round(199 * 1.75));     // 348
+  assert.equal(bw.total, Math.round(199 * 2.00));     // 398
 });
 
 // Death at d=44, t=0: base = depth(11)+survival(0)=11; objective>=44 so cap doesn't bind
