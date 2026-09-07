@@ -67,16 +67,26 @@ export function computeSurvival(survivedSeconds: number): number {
 // game/economy/mission-rewards §2 ("the greed comes from the depth").
 export const MISSION_DEEPWATER_REWARD = 12;
 
+// LUL-1640 forward-fix (LUL-1412): every RunPayout field is scaled and rounded
+// individually, and `total` is the sum of those already-rounded fields --
+// never an independent round of the raw sum. This guarantees
+// depth+survival+carried+home===total by construction (the invariant
+// components/Hud.tsx's RunRecap renders), instead of only holding at ×1.00.
+// missionBonus has no RunPayout field of its own (LUL-1258, unchanged here)
+// and is folded straight into total, scaled the same as everything else.
 export function computeWinPayout(
   maxDistFromHome: number,
   survivedSeconds: number,
   tier: DifficultyTier = 'lantern',
   missionBonus = 0,
 ): RunPayout {
-  const depth = computeDepth(maxDistFromHome);
-  const survival = computeSurvival(survivedSeconds);
-  const total = Math.round((depth + survival + CARRIED + HOME + missionBonus) * TIER_MULTIPLIERS[tier].win);
-  return { depth, survival, carried: CARRIED, home: HOME, total };
+  const mult = TIER_MULTIPLIERS[tier].win;
+  const depth = Math.round(computeDepth(maxDistFromHome) * mult);
+  const survival = Math.round(computeSurvival(survivedSeconds) * mult);
+  const carried = Math.round(CARRIED * mult);
+  const home = Math.round(HOME * mult);
+  const total = depth + survival + carried + home + Math.round(missionBonus * mult);
+  return { depth, survival, carried, home, total };
 }
 
 export function computeDeathPayout(
@@ -85,9 +95,11 @@ export function computeDeathPayout(
   objectiveDistFromHome: number,
   tier: DifficultyTier = 'lantern',
 ): RunPayout {
-  const depth = Math.min(computeDepth(maxDistFromHome), computeDepth(objectiveDistFromHome));
-  const survival = computeSurvival(survivedSeconds);
-  const total = Math.round((depth + survival) * TIER_MULTIPLIERS[tier].loss);
+  const mult = TIER_MULTIPLIERS[tier].loss;
+  const cappedDepth = Math.min(computeDepth(maxDistFromHome), computeDepth(objectiveDistFromHome));
+  const depth = Math.round(cappedDepth * mult);
+  const survival = Math.round(computeSurvival(survivedSeconds) * mult);
+  const total = depth + survival;
   return { depth, survival, carried: 0, home: 0, total };
 }
 
