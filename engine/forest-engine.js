@@ -1463,6 +1463,9 @@ function updatePredators(dt, noiseRadius){
     if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
     const dx = player.x - p.x, dz = player.z - p.z, dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
+    // LUL-1309: predators wade too -- same per-position terrain sample the
+    // player already gets at :3173/:3179, applied to this predator's own (x,z).
+    const pTerrainMul = bogSpeedMultiplier(inBog(p.x, p.z)) * lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
     // ticks in every state, so a lock set during `chase` has actually
@@ -1540,13 +1543,13 @@ function updatePredators(dt, noiseRadius){
     } else if(p.reroute > 0){                        // stuck → back up along its trail, then a different way
       p.reroute -= dt;
       const bx=p.rrX-p.x, bz=p.rrZ-p.z, bd=Math.hypot(bx,bz);
-      if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7; }
+      if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pTerrainMul; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
       if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
-        else { desx=ux; desz=uz; speed=p.spec.speed; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pTerrainMul; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -1608,7 +1611,7 @@ function updatePredators(dt, noiseRadius){
         // through the cover prop breaking canSee() right now, since
         // predators never physically collide with cover (LUL-119/LUL-211).
         if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, 'chase'); }   // LUL-1194: run down mid-chase, in the open
-        else { desx=ux; desz=uz; speed=p.spec.speed; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pTerrainMul; }
         if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -1649,7 +1652,7 @@ function updatePredators(dt, noiseRadius){
           adist = Math.hypot(ndx, ndz) || 0.0001;
           aux = ndx / adist; auz = ndz / adist;
         }
-        const step = stepApproach(aux, auz, p.spec.speed, adist, p.rad);
+        const step = stepApproach(aux, auz, p.spec.speed*pTerrainMul, adist, p.rad);
         desx = step.desx; desz = step.desz; speed = step.speed;
         if(step.enterSniff){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
         if(p.noiseTarget){
@@ -1668,7 +1671,7 @@ function updatePredators(dt, noiseRadius){
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5; }
+        if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pTerrainMul; }
       }
     } else if(p.state === 'flank'){
       // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
@@ -1696,7 +1699,7 @@ function updatePredators(dt, noiseRadius){
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
         if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(rng, 3); p.sniffTimer=rnd(1,4); sniff(); }
-        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL; }
+        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL*pTerrainMul; }
       }
     }
 
