@@ -426,13 +426,6 @@ const CANOPY_GEO = { canopyR: CANOPY_R, cone1Height: CONE1_HEIGHT, apexY: CONE1_
 const trunkMat   = new THREE.MeshStandardMaterial({ color: CONFIG.trunk,   roughness: 1 });
 const foliageMat = new THREE.MeshStandardMaterial({ color: CONFIG.foliage, roughness: 1 });
 
-const parts = [
-  new THREE.InstancedMesh(trunkGeo, trunkMat,   CONFIG.trees),
-  new THREE.InstancedMesh(cone1Geo, foliageMat, CONFIG.trees),
-  new THREE.InstancedMesh(cone2Geo, foliageMat, CONFIG.trees),
-];
-parts.forEach(p => { p.frustumCulled = false; scene.add(p); });
-
 // ---- Bog tree cover (LUL-25) -----------------------------------------------
 // Same trunk/foliage geometry, own InstancedMesh trio sized much smaller than
 // CONFIG.trees -- "thinner tree cover" per the ticket. A separate pool, not a
@@ -721,6 +714,88 @@ function layoutTreePool(meshParts, data, count){
   if(meshParts[1].instanceColor) meshParts[1].instanceColor.needsUpdate = true;
   if(meshParts[2].instanceColor) meshParts[2].instanceColor.needsUpdate = true;
 }
+// ---- E6: chunk the main forest pool so three.js can frustum-cull whole chunks ----
+// FogExp2 (density 0.04) already hides anything past ~40-60 units; the old single
+// map-spanning InstancedMesh submitted all 5200 trees every frame regardless
+// (frustumCulled=false, because a single mesh spanning the whole map is *always*
+// at least partly in view, so per-mesh culling was never an option before this).
+// Chunking lets the renderer skip whole chunks that are outside the view frustum
+// for free -- no new per-frame code, exactly the win the ticket asks for.
+const TREE_CHUNK_SIZE = 60;   // world units/edge; CONFIG.mapSize=480 -> 8x8 = 64 chunks
+const TREE_CHUNKS_PER_AXIS = Math.ceil(CONFIG.mapSize / TREE_CHUNK_SIZE);
+
+function treeChunkIndex(x, z){
+  const cx = Math.min(TREE_CHUNKS_PER_AXIS-1, Math.max(0, Math.floor((x+half)/TREE_CHUNK_SIZE)));
+  const cz = Math.min(TREE_CHUNKS_PER_AXIS-1, Math.max(0, Math.floor((z+half)/TREE_CHUNK_SIZE)));
+  return cx*TREE_CHUNKS_PER_AXIS + cz;
+}
+
+// Sparse array indexed by chunk id; each populated entry is [trunk, cone1, cone2]
+// for that chunk, or absent/undefined for a chunk with zero trees in it.
+let treeChunkTrios = [];
+
+function layoutTreeChunks(data){
+  // Regenerate on every generateMap() call (restart/new seed draws a different
+  // tree count and placement per chunk) -- dispose the previous chunk meshes'
+  // own instanceMatrix/instanceColor GPU buffers via .dispose() before dropping
+  // the reference. Do NOT call .geometry.dispose() or .material.dispose() here:
+  // trunkGeo/cone1Geo/cone2Geo/trunkMat/foliageMat are shared with every other
+  // chunk AND with bogParts -- disposing them would break the bog tree pool.
+  for(const trio of treeChunkTrios){
+    if(!trio) continue;
+    for(const m of trio){ scene.remove(m); m.dispose(); }
+  }
+  treeChunkTrios = [];
+
+  const nChunks = TREE_CHUNKS_PER_AXIS * TREE_CHUNKS_PER_AXIS;
+  const buckets = Array.from({length: nChunks}, () => []);
+  // Bucketing reads only t.x/t.z, already fixed in `data` before this runs --
+  // no rng() draw here, so this cannot perturb the seeded stream.
+  for(let i=0; i<data.length; i++) buckets[treeChunkIndex(data[i].x, data[i].z)].push(i);
+
+  const localIndex = new Array(data.length);
+  for(let c=0; c<nChunks; c++) buckets[c].forEach((treeIdx, slot) => { localIndex[treeIdx] = slot; });
+
+  for(let c=0; c<nChunks; c++){
+    const count = buckets[c].length;
+    if(count === 0) continue;
+    const trio = [
+      new THREE.InstancedMesh(trunkGeo, trunkMat,   count),
+      new THREE.InstancedMesh(cone1Geo, foliageMat, count),
+      new THREE.InstancedMesh(cone2Geo, foliageMat, count),
+    ];
+    // frustumCulled left at the Object3D default (true) -- this is the whole point.
+    trio.forEach(m => scene.add(m));
+    treeChunkTrios[c] = trio;
+  }
+
+  // Same rng() draw, same order (tree index 0..data.length-1), same count as the
+  // old layoutTreePool loop -- only the destination mesh/slot differs, and that's
+  // decided above from x/z alone. This is why NO QA_PINNED_SEED re-pin is needed:
+  // the RNG stream this produces is byte-identical to before this ticket.
+  for(let i=0; i<data.length; i++){
+    const t = data[i];
+    dummy.position.set(t.x, 0, t.z);
+    dummy.rotation.set(0, rng()*Math.PI*2, 0);
+    dummy.scale.setScalar(t.s);
+    dummy.updateMatrix();
+    const trio = treeChunkTrios[treeChunkIndex(t.x, t.z)];
+    const slot = localIndex[i];
+    for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
+    const b = 0.72 + rng()*0.5;
+    tintCol.setRGB(b*0.92, b, b*0.86);
+    trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
+  }
+
+  for(const trio of treeChunkTrios){
+    if(!trio) continue;
+    for(const m of trio){
+      m.instanceMatrix.needsUpdate = true;
+      if(m.instanceColor) m.instanceColor.needsUpdate = true;
+      m.computeBoundingSphere();   // static after layout -- compute once, not per frame
+    }
+  }
+}
 // ---- Bog map band (LUL-25) --------------------------------------------------
 // generateBogTrees()/generateReeds()/applyHardBabySpawn() are all called from
 // the tail of generateMap(), strictly after every existing rng() draw (baby,
@@ -811,7 +886,7 @@ function generateMap(seed){
     const s = 0.7 + rng()*1.7;
     treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
-  layoutTreePool(parts, treeData, CONFIG.trees);
+  layoutTreeChunks(treeData);
   buildGrid();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
@@ -2563,6 +2638,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       calls: renderer.info.render.calls,
       triangles: renderer.info.render.triangles,
       elapsedTime: clock.elapsedTime,
+    };
+  };
+
+  // LUL-1487 (E6): sanity check the chunked tree pool retains exactly one
+  // instance per generated tree -- no silent drop or double-count in the
+  // chunk bucketing.
+  window.ForestEngine.qaProbeTreeChunks = function(){
+    const trios = treeChunkTrios.filter(Boolean);
+    return {
+      chunks: trios.length,
+      totalInstances: trios.reduce((n, t) => n + t[0].count, 0),
+      expected: treeData.length,
     };
   };
 
