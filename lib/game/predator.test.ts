@@ -23,6 +23,7 @@ import {
   tickTimers,
 } from './predator.ts';
 import { ROAM_STEP_FRAC } from '../../engine/tuning.js';
+import { wrapCoord } from './wrap.ts';
 
 // ---- rollSniffs --------------------------------------------------------------
 
@@ -412,4 +413,52 @@ test('pickRoamWaypoint is inclusive at exactly the repeat radius boundary', () =
   const rng = () => 0;
   const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, 2, LKP_REPEAT_RADIUS, /*half*/240);
   assert.equal(pick.sweepsLeft, 1);
+});
+
+// ---- wrap span (LUL-1485) ----------------------------------------------------
+const SPAN = 240;
+function acrossSeam(v: number): number {
+  return wrapCoord(v + SPAN / 2, SPAN);
+}
+
+test('backOffPoint: span=Infinity matches the pre-wrap call exactly (still clamps)', () => {
+  assert.deepEqual(backOffPoint(0, 0, -1, 0, 100, 10, 10, Infinity), backOffPoint(0, 0, -1, 0, 100, 10));
+});
+
+test('backOffPoint: with a finite span, wraps instead of clamping (no map-bound margin applied)', () => {
+  // Same inputs as the "clamps to the map bound" test above (half=10, would
+  // clamp to 6), but with a finite span the hard-bound clamp branch is
+  // skipped entirely in favor of a pure wrap.
+  const [x] = backOffPoint(0, 0, -1, 0, 100, 10, 10, SPAN);
+  assert.equal(x, wrapCoord(100, SPAN));
+  assert.notEqual(x, 6);
+});
+
+test('backOffPoint: a seam result equals the identical interior result translated by SPAN/2', () => {
+  const [ix, iz] = backOffPoint(0, 0, 1, 0, 8, 1000, 1000, SPAN);
+  const [sx, sz] = backOffPoint(acrossSeam(0), acrossSeam(0), 1, 0, 8, 1000, 1000, SPAN);
+  assert.equal(sx, acrossSeam(ix));
+  assert.equal(sz, acrossSeam(iz));
+});
+
+test('predatorSeparationPush: span=Infinity matches the pre-wrap call exactly', () => {
+  assert.deepEqual(
+    predatorSeparationPush(0, 0, 1, [{ x: 1, z: 0, rad: 1 }], Infinity),
+    predatorSeparationPush(0, 0, 1, [{ x: 1, z: 0, rad: 1 }]),
+  );
+});
+
+test('predatorSeparationPush: a seam push equals the identical interior push translated by SPAN/2', () => {
+  const interior = predatorSeparationPush(0, 0, 1, [{ x: 1, z: 0, rad: 1 }], SPAN);
+  const seam = predatorSeparationPush(acrossSeam(0), acrossSeam(0), 1, [{ x: acrossSeam(1), z: acrossSeam(0), rad: 1 }], SPAN);
+  assert.deepEqual(seam, interior);
+});
+
+test('predatorSeparationPush: two predators straddling the seam, close the wrap-short way, still separate', () => {
+  // x=-119 and x=119.5: raw distance 238.5, wrap-short distance 1.5. rad 1
+  // each -> minDist 2, so this is a real overlap the wrap-short way even
+  // though the raw coordinates put them near opposite edges of the map.
+  const [px, pz] = predatorSeparationPush(-119, 0, 1, [{ x: 119.5, z: 0, rad: 1 }], SPAN);
+  assert.ok(px !== 0, 'must detect the seam-adjacent overlap, not read raw ~238.5 as "far apart"');
+  assert.equal(pz, 0);
 });

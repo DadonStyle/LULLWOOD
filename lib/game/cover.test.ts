@@ -27,9 +27,11 @@ import {
   STILL_DETECT_CUT,
   CARRY_DETECT_MUL,
   PLAYER_COLLISION_RADIUS,
+  neighbourhood,
 } from './cover.ts';
 import type { SpatialGrid, CircleCollider, CoverAABB, DetectionState } from './cover.ts';
 import { veilDetectMul, VEIL_DETECT_MUL } from './veil.ts';
+import { wrapCoord } from './wrap.ts';
 
 // Builds a spatial grid the same way the engine's buildGrid()/buildCoverGrid()
 // do: bucket every entry by floor(x/CELL),floor(z/CELL).
@@ -872,4 +874,195 @@ test('rollCoverPropShape: draws exactly 3 rng() calls for a log, 2 for a rock, 1
   calls = 0; rollCoverPropShape(0.1, counting); assert.equal(calls, 3);
   calls = 0; rollCoverPropShape(0.5, counting); assert.equal(calls, 2);
   calls = 0; rollCoverPropShape(0.9, counting); assert.equal(calls, 1);
+});
+
+// ---- wrap span (LUL-1485) ----------------------------------------------------
+// Every function above that compares two world positions now takes a trailing
+// `span` (default Infinity, wrap disabled). Two properties anchor this suite,
+// per docs/specs/lul-1485-wrap.md's Verification section:
+//   (1) span=Infinity is byte-identical to the pre-wrap call (flag-off no-op).
+//   (2) a torus is translation-invariant: the exact same relative geometry,
+//       shifted by SPAN/2 so it straddles the seam in canonical coordinates,
+//       must produce the identical result. Any diff here is a real bug, not a
+//       fixture quirk -- `acrossSeam` uses wrapCoord (the same primitive the
+//       functions under test use internally) so the shifted fixture is always
+//       canonical, regardless of hand arithmetic.
+const SPAN = 240; // arbitrary finite span, independent of CONFIG.mapSize
+function acrossSeam(v: number): number {
+  return wrapCoord(v + SPAN / 2, SPAN);
+}
+
+// ---- neighbourhood (LUL-1485 (b)/(c)) ---------------------------------------
+
+test('neighbourhood: span=Infinity is byte-identical to the un-spanned call', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 9, z: 0, cr: 1 }]);
+  assert.deepEqual(neighbourhood(grid, 0, 0, CELL, Infinity), neighbourhood(grid, 0, 0, CELL));
+});
+
+test('neighbourhood: a query near the high edge finds an entry registered near the low edge via cell-index wraparound', () => {
+  const entry = { x: 119, z: 0, cr: 1 };
+  const grid = makeGrid<CircleCollider>([entry]);
+  assert.deepEqual(neighbourhood(grid, -119, 0, CELL, SPAN), [entry]);
+  // Without span, the same query never finds it -- confirms wraparound did the work.
+  assert.deepEqual(neighbourhood(grid, -119, 0, CELL), []);
+});
+
+// ---- blockedR ----------------------------------------------------------------
+
+test('blockedR: span=Infinity matches the pre-wrap call exactly', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 9, z: 0, cr: 1 }]);
+  assert.equal(blockedR(9.5, 0, 0.6, grid, CELL, Infinity), blockedR(9.5, 0, 0.6, grid));
+});
+
+test('blockedR: a seam collision equals the identical interior collision translated by SPAN/2', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 9, z: 0, cr: 1 }]);
+  const interior = blockedR(9.5, 0, 0.6, grid, CELL, SPAN);
+  const seamGrid = makeGrid<CircleCollider>([{ x: acrossSeam(9), z: 0, cr: 1 }]);
+  const seam = blockedR(acrossSeam(9.5), 0, 0.6, seamGrid, CELL, SPAN);
+  assert.equal(seam, interior);
+  assert.equal(interior, true); // sanity: the interior fixture is a real hit
+});
+
+// ---- coverBlockedR -------------------------------------------------------------
+
+test('coverBlockedR: span=Infinity matches the pre-wrap call exactly', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(coverBlockedR(0.5, 0, 0.6, coverGrid, CELL, Infinity), coverBlockedR(0.5, 0, 0.6, coverGrid));
+});
+
+test('coverBlockedR: a seam collision equals the identical interior collision translated by SPAN/2 (wrap applied before rotation)', () => {
+  const ry = Math.PI / 5;
+  const interior = coverBlockedR(0.5, 0, 0.6, makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry }]), CELL, SPAN);
+  const seam = coverBlockedR(
+    acrossSeam(0.5), acrossSeam(0), 0.6,
+    makeGrid<CoverAABB>([{ x: acrossSeam(0), z: acrossSeam(0), hx: 1, hz: 1, kind: 'rock', ry }]),
+    CELL, SPAN,
+  );
+  assert.equal(seam, interior);
+  assert.equal(interior, true);
+});
+
+// ---- canopyBlockedR ------------------------------------------------------------
+
+test('canopyBlockedR: span=Infinity matches the pre-wrap call exactly (cached crCanopy path)', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 1, crCanopy: 3 }]);
+  assert.equal(canopyBlockedR(1, 0, grid, CELL, undefined, undefined, Infinity), canopyBlockedR(1, 0, grid));
+});
+
+test('canopyBlockedR: a seam hit equals the identical interior hit translated by SPAN/2', () => {
+  const interior = canopyBlockedR(1, 0, makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 1, crCanopy: 3 }]), CELL, undefined, undefined, SPAN);
+  const seam = canopyBlockedR(
+    acrossSeam(1), acrossSeam(0),
+    makeGrid<CircleCollider>([{ x: acrossSeam(0), z: acrossSeam(0), cr: 1, crCanopy: 3 }]),
+    CELL, undefined, undefined, SPAN,
+  );
+  assert.equal(seam, interior);
+  assert.equal(interior, true);
+});
+
+// ---- blockedForPredator --------------------------------------------------------
+
+test('blockedForPredator: span=Infinity matches the pre-wrap call exactly', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(blockedForPredator(0.5, 0, 0.6, grid, coverGrid, CELL, Infinity), blockedForPredator(0.5, 0, 0.6, grid, coverGrid));
+});
+
+test('blockedForPredator: a seam collision equals the identical interior collision translated by SPAN/2', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const interior = blockedForPredator(0.5, 0, 0.6, grid, makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]), CELL, SPAN);
+  const seam = blockedForPredator(
+    acrossSeam(0.5), acrossSeam(0), 0.6, grid,
+    makeGrid<CoverAABB>([{ x: acrossSeam(0), z: acrossSeam(0), hx: 1, hz: 1, kind: 'rock', ry: 0 }]),
+    CELL, SPAN,
+  );
+  assert.equal(seam, interior);
+  assert.equal(interior, true);
+});
+
+// ---- pickAvoidDirection ---------------------------------------------------------
+
+test('pickAvoidDirection: span=Infinity matches the pre-wrap call exactly', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
+  const withSpan = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid, CELL, 2.4, 0.8, Infinity);
+  const noSpan = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
+  assert.deepEqual(withSpan, noSpan);
+});
+
+test('pickAvoidDirection: a seam deflection equals the identical interior deflection translated by SPAN/2 (direction vector is translation-invariant)', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
+  const interior = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid, CELL, 2.4, 0.8, SPAN);
+  const seamGrid = makeGrid<CircleCollider>([{ x: acrossSeam(3), z: acrossSeam(0), cr: 0.05 }]);
+  const seam = pickAvoidDirection(acrossSeam(0), acrossSeam(0), 0.6, 1, 0, seamGrid, emptyCoverGrid, CELL, 2.4, 0.8, SPAN);
+  assert.deepEqual(seam, interior);
+});
+
+// ---- hasLOS (LUL-1485 (f), the highest-risk conversion) ------------------------
+
+test('hasLOS: span=Infinity matches the pre-wrap call exactly', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(hasLOS(-5, 0, 5, 0, coverGrid, CELL, Infinity), hasLOS(-5, 0, 5, 0, coverGrid));
+});
+
+test('hasLOS: a sightline blocked by cover across the seam equals the identical interior case translated by SPAN/2', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  const interior = hasLOS(-5, 0, 5, 0, coverGrid, CELL, SPAN);
+  const seamCoverGrid = makeGrid<CoverAABB>([{ x: acrossSeam(0), z: acrossSeam(0), hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  const seam = hasLOS(acrossSeam(-5), acrossSeam(0), acrossSeam(5), acrossSeam(0), seamCoverGrid, CELL, SPAN);
+  assert.equal(seam, interior);
+  assert.equal(interior, false); // sanity: the interior fixture really is blocked
+});
+
+test('hasLOS: a clear sightline whose raw endpoints sit on opposite sides of the map is unobstructed once wrapped -- the segment is short the wrap way, not 238 units the raw way', () => {
+  const coverGrid = makeGrid<CoverAABB>([]);
+  // -119 and 119 are 238 apart raw, but 2 apart the wrap-short way; nothing sits
+  // on that short 2-unit path, so this must read as clear.
+  assert.equal(hasLOS(-119, 0, 119, 0, coverGrid, CELL, SPAN), true);
+});
+
+test('hasLOS: cover sitting exactly on the short wrap-path between two seam-straddling points blocks the sightline', () => {
+  // Same -119/119 endpoints as above, but this time a rock sits on the true
+  // (short) path between them, at the seam itself (canonical -120/120 boundary).
+  const coverGrid = makeGrid<CoverAABB>([{ x: -120, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(hasLOS(-119, 0, 119, 0, coverGrid, CELL, SPAN), false);
+});
+
+// ---- findHideSpot (LUL-1485: also closes the third independent 3x3 scan copy) --
+
+test('findHideSpot: span=Infinity matches the pre-wrap call exactly', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]);
+  assert.deepEqual(findHideSpot(0, 0, coverGrid, CELL, Infinity), findHideSpot(0, 0, coverGrid));
+});
+
+test('findHideSpot: a seam find equals the identical interior find translated by SPAN/2', () => {
+  const interior = findHideSpot(0, 0, makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]), CELL, SPAN);
+  const seam = findHideSpot(
+    acrossSeam(0), acrossSeam(0),
+    makeGrid<CoverAABB>([{ x: acrossSeam(1), z: acrossSeam(0), hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]),
+    CELL, SPAN,
+  );
+  assert.ok(interior !== null);
+  assert.ok(seam !== null);
+  assert.equal(seam?.kind, interior?.kind);
+  assert.equal(seam?.hx, interior?.hx);
+});
+
+// ---- canSee (composition) -------------------------------------------------------
+
+test('canSee: span=Infinity matches the pre-wrap call exactly', () => {
+  const coverGrid = makeGrid<CoverAABB>([]);
+  const state: DetectionState = { hidden: false, hideTime: 0 };
+  assert.equal(
+    canSee(5, 20, 1, state, 0, 0, 5, 0, coverGrid, CELL, Infinity),
+    canSee(5, 20, 1, state, 0, 0, 5, 0, coverGrid, CELL),
+  );
+});
+
+test('canSee: a seam-crossing sightline equals the identical interior case translated by SPAN/2', () => {
+  const coverGrid = makeGrid<CoverAABB>([]);
+  const state: DetectionState = { hidden: false, hideTime: 0 };
+  const interior = canSee(5, 20, 1, state, 0, 0, 5, 0, coverGrid, CELL, SPAN);
+  const seam = canSee(5, 20, 1, state, acrossSeam(0), acrossSeam(0), acrossSeam(5), acrossSeam(0), coverGrid, CELL, SPAN);
+  assert.equal(seam, interior);
+  assert.equal(interior, true);
 });
