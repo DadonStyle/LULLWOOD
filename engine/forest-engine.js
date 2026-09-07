@@ -1711,7 +1711,7 @@ function updatePredators(dt, noiseRadius){
         // predators never physically collide with cover (LUL-119/LUL-211).
         if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, 'chase'); }   // LUL-1194: run down mid-chase, in the open
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
-        if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
+        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
