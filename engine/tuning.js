@@ -39,19 +39,38 @@ export const CONFIG = {
   carryPaceMul: 0.72,                                 // LUL-38: burden while carrying the child, not a cripple
 };
 
-// LUL-25: four fixed navigational landmarks, "visible over the fog line" so
+// LUL-25: six fixed navigational landmarks, "visible over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() in forest-engine.js).
 // Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home.
 // `cr` is the movement-collision radius (LUL-374) -- deliberately much
 // smaller than `clear` (which only keeps trees/cover from generating too
 // close to the landmark's nudge target).
+// LUL-1782: radioMast/chapelSteeple added when the map grew to 480x480
+// (LUL-1484) left everything past radius ~134 without a landmark, and the
+// child now spawns at radius 120-192 -- beyond the original four entirely.
+// Placed at radius ~178-179, in the two widest angular gaps between the
+// original four (the empty arc through `oak` at ~10 deg, and the empty arc
+// between `fireTower` at 225 deg and `stoneMarker` at 323 deg).
 export const LANDMARKS = [
-  { kind: 'fireTower',   x: -95, z: -95, clear: 12, cr: 1.6 },
-  { kind: 'stoneMarker', x: 100, z: -75, clear: 9,  cr: 1.1 },
-  { kind: 'oak',         x: 22,  z: 4,   clear: 10, cr: 1.3 },
-  { kind: 'drownedCar',  x: -95, z: 46,  clear: 11, cr: 2.3 },
+  { kind: 'fireTower',     x: -95, z: -95, clear: 12, cr: 1.6 },
+  { kind: 'stoneMarker',   x: 100, z: -75, clear: 9,  cr: 1.1 },
+  { kind: 'oak',           x: 22,  z: 4,   clear: 10, cr: 1.3 },
+  { kind: 'drownedCar',    x: -95, z: 46,  clear: 11, cr: 2.3 },
+  { kind: 'radioMast',     x: 30,  z: 175, clear: 10, cr: 1.0 },
+  { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
+
+// LUL-1808: roam waypoint step, expressed as a fraction of `half` the same way
+// child spawn radius (half*(0.5+rng()*0.3), forest-engine.js:788) and predator
+// spawn radius (half*(0.42+rng()*0.45), forest-engine.js:1204) already scale
+// with map size. LUL-1484 grew mapSize 240->480 (half 120->240) but this step
+// stayed a hardcoded 15-55 units, so predators shuffled a ~70-unit patch of
+// their own spawn point against a map twice as wide (wiki
+// game/mechanics/empty-outbound-leg). 15/120=0.125, 40/120=1/3 reproduces
+// today's 15-55 range exactly at half=120, and gives ~30-110 at the current
+// half=240.
+export const ROAM_STEP_FRAC = { min: 0.125, range: 1 / 3 };
 
 // ---- Lighting --------------------------------------------------------------
 // LUL-975: r155 dropped the `Math.PI` "artist-friendly" scaling factor that used to

@@ -22,6 +22,8 @@ import {
   canArriveHome,
   arriveHome as outcomeArriveHome,
   triggerDeath as outcomeTriggerDeath,
+  canGrabThrowable,
+  canThrowThrowable,
 } from '@/lib/game/outcome';
 import {
   shouldTriggerCharge,
@@ -68,7 +70,7 @@ import {
   COVER_URGENT_RANGE,
   COVER_PROBE_HZ,
 } from '@/lib/game/cover';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -147,7 +149,7 @@ import {
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
   STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
-  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END,
+  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, ROAM_STEP_FRAC,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -196,7 +198,8 @@ const margin = 4;
 // site-by-site rename -- it is not a second world boundary, just an alias.
 // inBog()/isInBog() are gone; biomeAt(x, z) (lib/game/bog.ts) replaces both.
 const zMax = half;
-// LUL-25: four fixed navigational landmarks, "visible over the fog line" so
+// LUL-25: six fixed navigational landmarks (two added by LUL-1782), "visible
+// over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() below, both untouched).
 // Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home
@@ -446,6 +449,10 @@ bogParts.forEach(p => { p.frustumCulled = false; scene.add(p); });
 // colliders (see predatorBlocked() below and blockedForPredator() in
 // lib/game/cover.ts); log/bramble stay walkable for predators, matching the
 // player's own exemption.
+const THROWABLE_COUNT = 10;             // Scout MVP number
+const THROWABLE_PICKUP_RADIUS = 3;      // matches canPickUp's baby radius scale
+const THROWABLE_THROW_DISTANCE = 18;    // landing point = player pos + facing * this
+const THROWABLE_INVESTIGATE_TIME = [3, 5]; // rnd() range, seconds
 const logGeo = new THREE.BoxGeometry(1, 1, 1);
 const rockGeo = new THREE.DodecahedronGeometry(1, 0);
 const brambleGeo = new THREE.IcosahedronGeometry(1, 1);
@@ -466,6 +473,15 @@ const coverMeshes = {
   reed: new THREE.InstancedMesh(reedGeo, reedMat, COVER_PROPS),   // capacity reused, see layoutCoverMeshes()
 };
 Object.values(coverMeshes).forEach(m => { m.frustumCulled = false; scene.add(m); });
+
+// ---- Throwable distractions (LUL-1623) ------------------------------------
+// Not coverData/HIDE_KINDS per CTO plan decision 3 -- no LOS block, no
+// collision, own spawn list and own instanced mesh.
+const throwableGeo = rockGeo; // reuse, scaled down at layout time -- see layoutThrowableMeshes()
+const throwableMat = new THREE.MeshStandardMaterial({ color: 0x4a4238, roughness: 1 });
+const throwableMesh = new THREE.InstancedMesh(throwableGeo, throwableMat, THROWABLE_COUNT);
+throwableMesh.frustumCulled = false;
+scene.add(throwableMesh);
 
 // ---- Hiding spots (LUL-212) -------------------------------------------
 // Every cover prop still blocks line of sight the same way (see canSee()/
@@ -498,6 +514,7 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
 let coverGrid = new Map();     // same CELL keying as `grid`, built from coverData
+let throwableData = [];   // {x,z,taken} -- ambient pickup props, own spawn list, no LOS/collision role
 
 function inLake(x,z){ return inLakeClearance(x, z, CONFIG.lake); }
 function inSpawn(x,z){ return x*x+z*z < 40; }
@@ -539,7 +556,11 @@ function buildGrid(){
 // cover.ts's own coverBlockedR(), so geoBlocked() below still treats 'log'
 // as non-blocking, same as release/next did before this extraction.
 function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid); }
-function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid); }
+// LUL-273: pass the live eyeH (not a fixed CONFIG.eye) so canopyBlockedR()
+// recomputes each tree's canopy radius against the player's actual current
+// eye height -- fixes the under-protection window right after exiting a
+// hide spot while moving, while eyeH is still lerping back up from 1.05.
+function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid,CELL,eyeH,CANOPY_GEO); }
 // LUL-1643: predator movement now consults cover the same way blocked() does
 // for the player, minus canopyBlockedR (camera-only, LUL-267 -- see
 // blockedForPredator()'s own comment in cover.ts for why canopy stays excluded).
@@ -609,6 +630,24 @@ function generateCover(){
   }
   buildCoverGrid();
 }
+function generateThrowables(){
+  throwableData = [];
+  let placed = 0, tries = 0;
+  while(placed < THROWABLE_COUNT && tries < THROWABLE_COUNT * 40){
+    tries++;
+    const x = (rng() - 0.5) * (half * 2 - 8);
+    const z = (rng() - 0.5) * (half * 2 - 8);
+    // reject too close to home/spawn or overlapping existing cover/tree geometry --
+    // reuse the same rejection test generateCover() uses against tree trunks
+    // (overlapsTreeTrunk()) plus a check against already-placed throwables so they
+    // don't stack visually.
+    if(overlapsTreeTrunk(x, z, 1.5, treesNear(x, z))) continue;
+    if(Math.hypot(x - CONFIG.home.x, z - CONFIG.home.z) < 12) continue;
+    if(throwableData.some(t => Math.hypot(t.x - x, t.z - z) < 6)) continue;
+    throwableData.push({ x, z, taken: false });
+    placed++;
+  }
+}
 function layoutCoverMeshes(){
   const counts = { log: 0, rock: 0, bramble: 0, reed: 0 };
   for(const c of coverData){
@@ -628,6 +667,29 @@ function layoutCoverMeshes(){
     }
     m.instanceMatrix.needsUpdate = true;
   }
+}
+const _throwMat4 = new THREE.Matrix4();
+function layoutThrowableMeshes(){
+  for(let i = 0; i < THROWABLE_COUNT; i++){
+    const t = throwableData[i];
+    if(!t || t.taken){
+      // park hidden props off-map rather than resizing the InstancedMesh --
+      // same "move it away" pattern used elsewhere for consumed/inactive instances.
+      _throwMat4.compose(
+        new THREE.Vector3(0, -50, 0),
+        new THREE.Quaternion(),
+        new THREE.Vector3(0.001, 0.001, 0.001),
+      );
+    } else {
+      _throwMat4.compose(
+        new THREE.Vector3(t.x, 0.25, t.z),
+        new THREE.Quaternion(),
+        new THREE.Vector3(0.28, 0.28, 0.28), // small stone scale vs. full-size rock cover
+      );
+    }
+    throwableMesh.setMatrixAt(i, _throwMat4);
+  }
+  throwableMesh.instanceMatrix.needsUpdate = true;
 }
 
 function nearLandmarks(x, z, pad){
@@ -751,6 +813,7 @@ function generateMap(seed){
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
   generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
+  generateThrowables(); layoutThrowableMeshes();
   generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
   pushState({ windX, windZ });   // LUL-1724: map-constant, pushed once, not per-frame
   // LUL-25: everything below is new and runs last -- see the comment on
@@ -861,11 +924,38 @@ function buildSplitOak(){
   const glow = new THREE.PointLight(0xcfe6ff, 0.4 * LEGACY_LIGHT_SCALE, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
   return g;
 }
+function buildRadioMast(){
+  const g = new THREE.Group();
+  const mastMat = new THREE.MeshStandardMaterial({ color: 0x4a4f55, roughness: 0.8, metalness: 0.4 });
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.22, 11, 5), mastMat);
+  mast.position.y = 5.5; g.add(mast);
+  for(const y of [3, 6, 9]){
+    const brace = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 4), mastMat);
+    brace.position.y = y; brace.rotation.z = Math.PI/2; g.add(brace);
+  }
+  const beacon = new THREE.PointLight(0xff2a2a, 0.5 * LEGACY_LIGHT_SCALE, 18, 2);
+  beacon.position.set(0, 11.2, 0); g.add(beacon);
+  g.rotation.z = 0.05;   // slight lean
+  return g;
+}
+function buildChapelSteeple(){
+  const g = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x3d3831, roughness: 0.95 });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.4, 2.4), stoneMat);
+  base.position.y = 1.7; g.add(base);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.9, 3.2, 4), stoneMat);
+  roof.position.y = 5.0; roof.rotation.y = Math.PI/4; g.add(roof);
+  const glow = new THREE.PointLight(0xd8c9a0, 0.45 * LEGACY_LIGHT_SCALE, 15, 2);
+  glow.position.set(0, 3.2, 0); g.add(glow);
+  return g;
+}
 const landmarkGroups = {
   fireTower: buildFireTower(),
   stoneMarker: buildStoneMarker(),
   drownedCar: buildDrownedCar(),
   oak: buildSplitOak(),
+  radioMast: buildRadioMast(),
+  chapelSteeple: buildChapelSteeple(),
 };
 Object.values(landmarkGroups).forEach(g => scene.add(g));
 // Nudges (x,z) away from any tree/cover prop this seed actually generated
@@ -1080,7 +1170,8 @@ function makePredator(kind){
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
-    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false, sightLock:null };
+    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false, sightLock:null,
+    noiseTarget:null, noiseTargetT:0 };
 }
 const predators = [];
 // `speciesIdx` (0..2 within its species) is what LUL-26's `activePerSpecies`
@@ -1230,6 +1321,18 @@ function hearNoise(p){
     pushState({ caption: `${p.kind} heard you · ${near} · ${b.side}`, captionId: ++captionSeq });
   }
 }
+// LUL-1623: same investigate/approach/sniff/back loop as hearNoise(), but the
+// approach sub-phase targets the thrown object's landing point instead of the
+// live player -- see the noiseTarget override in updatePredators()'s approach
+// branch below. No new p.state/p.inv value; see spec §4.6 for the correctness
+// fix this makes to the CTO plan's literal "reuse hearNoise() unchanged."
+function hearThrowableNoise(p, tx, tz){
+  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.callTimer = rnd(2.6, 4.2);
+  p.noiseTarget = { x: tx, z: tz };
+  p.noiseTargetT = rnd(THROWABLE_INVESTIGATE_TIME[0], THROWABLE_INVESTIGATE_TIME[1]);
+  if(captionsOn) pushState({ caption: `${p.kind} investigates a noise`, captionId: ++captionSeq });
+}
 
 // LUL-1258: the mission waypoint's hum -- same tempo-carries-distance shape
 // Ship 1 specs for the child's cry (docs/specs/lul-1255-wayfinding-ship1.md
@@ -1360,6 +1463,9 @@ function updatePredators(dt, noiseRadius){
     if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
     const dx = player.x - p.x, dz = player.z - p.z, dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
+    // LUL-1309: predators wade too -- same per-position terrain sample the
+    // player already gets at :3173/:3179, applied to this predator's own (x,z).
+    const pTerrainMul = bogSpeedMultiplier(inBog(p.x, p.z)) * lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
     // ticks in every state, so a lock set during `chase` has actually
@@ -1437,13 +1543,13 @@ function updatePredators(dt, noiseRadius){
     } else if(p.reroute > 0){                        // stuck → back up along its trail, then a different way
       p.reroute -= dt;
       const bx=p.rrX-p.x, bz=p.rrZ-p.z, bd=Math.hypot(bx,bz);
-      if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7; }
+      if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pTerrainMul; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
       if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
-        else { desx=ux; desz=uz; speed=p.spec.speed; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pTerrainMul; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -1465,7 +1571,7 @@ function updatePredators(dt, noiseRadius){
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
-        if(wd < 2.5){ const a=rng()*Math.PI*2, r=15+rng()*40;
+        if(wd < 2.5){ const a=rng()*Math.PI*2, r=half*(ROAM_STEP_FRAC.min+rng()*ROAM_STEP_FRAC.range);
           let nwx=clamp(p.x+Math.cos(a)*r,-half+4,half-4), nwz=clamp(p.z+Math.sin(a)*r,-half+4,zMax-4);
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
           p.wpx=clamp(kept.x,-half+4,half-4); p.wpz=clamp(kept.z,-half+4,zMax-4); }
@@ -1505,7 +1611,7 @@ function updatePredators(dt, noiseRadius){
         // through the cover prop breaking canSee() right now, since
         // predators never physically collide with cover (LUL-119/LUL-211).
         if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, 'chase'); }   // LUL-1194: run down mid-chase, in the open
-        else { desx=ux; desz=uz; speed=p.spec.speed; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pTerrainMul; }
         if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -1534,9 +1640,25 @@ function updatePredators(dt, noiseRadius){
         // let the chase<->investigate/sniff bounce (LUL-562) freeze bear solid
         // at point-blank range instead of resolving into a real chase.
         facePlayer = true;
-        const step = stepApproach(ux, uz, p.spec.speed, dist, p.rad);
+        // LUL-1623: while a thrown decoy is active, redirect the approach
+        // target to its landing point instead of the live player -- ux/uz/dist
+        // themselves (computed above, per-predator) are untouched and every
+        // other branch/consumer keeps using live-player distance/direction
+        // exactly as today. See spec §4.6 for why hearNoise()'s unmodified
+        // approach (always live-player) would have made throwing a no-op.
+        let aux = ux, auz = uz, adist = dist;
+        if(p.noiseTarget){
+          const ndx = p.noiseTarget.x - p.x, ndz = p.noiseTarget.z - p.z;
+          adist = Math.hypot(ndx, ndz) || 0.0001;
+          aux = ndx / adist; auz = ndz / adist;
+        }
+        const step = stepApproach(aux, auz, p.spec.speed*pTerrainMul, adist, p.rad);
         desx = step.desx; desz = step.desz; speed = step.speed;
         if(step.enterSniff){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
+        if(p.noiseTarget){
+          p.noiseTargetT -= dt;
+          if(p.noiseTargetT <= 0 || step.enterSniff) p.noiseTarget = null;
+        }
       } else if(p.inv === 'sniff'){
         facePlayer = true; p.sniffTimer -= dt;
         const sniffOutcome = stepSniffLoop(p.sniffTimer, p.sniffsLeft);
@@ -1549,7 +1671,7 @@ function updatePredators(dt, noiseRadius){
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5; }
+        if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pTerrainMul; }
       }
     } else if(p.state === 'flank'){
       // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
@@ -1577,7 +1699,7 @@ function updatePredators(dt, noiseRadius){
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
         if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(rng, 3); p.sniffTimer=rnd(1,4); sniff(); }
-        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL; }
+        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL*pTerrainMul; }
       }
     }
 
@@ -1720,6 +1842,7 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false;   // LUL-1258: recomputed every tick alongside canPickup, below
+let heldThrowable = false;
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
 // LUL-1194: the death cutscene is full-length and unskippable exactly once --
 // the player's first-ever death -- and skippable by any input after that.
@@ -1788,6 +1911,7 @@ on(window, 'keydown', e => {
   if(e.code === 'KeyE' && playing && !paused){
     if(canPickup) pickup();
     else if(missionCanComplete) completeMissionSequence();
+    else grabThrowable();
   }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
   // LUL-213: jumping stands you up first (same as any movement key already
@@ -1830,7 +1954,8 @@ if(mode === 'desktop'){
   on(document, 'pointerlockerror', () => { locked = false; });
   on(el, 'mousedown', () => {
     if(paused){ setPaused(false); requestLock(); return; }   // click to look again
-    if(!locked){ dragging = true; el.style.cursor = 'grabbing'; }
+    if(!locked){ dragging = true; el.style.cursor = 'grabbing'; return; }
+    if(locked && heldThrowable && isPlaying(runState())) throwThrowable();
   });
   on(window, 'mouseup', () => { dragging = false; el.style.cursor = 'default'; });
   on(window, 'mousemove', e => {
@@ -2305,6 +2430,11 @@ let hudState = {
   // `lastPayout` is the most recent win/death breakdown (null before the
   // first run ends this session), reset to null on restart().
   embersBalance: 0, embersDeeperLungsTier: 0, lastPayout: null,
+  // LUL-1623: throwable distractions -- heldThrowable gates the desktop/mobile
+  // throw prompt (components/GameCanvas.tsx, components/MobileControls.tsx);
+  // canGrabThrowable is the HUD gate for the "pick up stone" prompt, mirroring
+  // canPickup/objectiveReady's role for the child.
+  heldThrowable: false, canGrabThrowable: false,
 };
 function pushState(patch){
   let changed = false;
@@ -3007,6 +3137,33 @@ function pickup(){
   armsGroup.visible = true;
   playPickupCue();
 }
+function grabThrowable(){
+  if(heldThrowable) return;
+  let nearest = -1, nearestD = THROWABLE_PICKUP_RADIUS;
+  for(let i = 0; i < throwableData.length; i++){
+    const t = throwableData[i];
+    if(t.taken) continue;
+    const d = Math.hypot(t.x - player.x, t.z - player.z);
+    if(canGrabThrowable(heldThrowable, d, THROWABLE_PICKUP_RADIUS) && d < nearestD){ nearest = i; nearestD = d; }
+  }
+  if(nearest < 0) return;
+  throwableData[nearest].taken = true;
+  heldThrowable = true;
+  layoutThrowableMeshes();
+}
+function throwThrowable(){
+  if(!canThrowThrowable(heldThrowable)) return;
+  heldThrowable = false;
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  const landX = player.x + fx * THROWABLE_THROW_DISTANCE;
+  const landZ = player.z + fz * THROWABLE_THROW_DISTANCE;
+  leafRustle(false);   // landing thud reuses the existing percussive-hit primitive (CTO plan decision 7) -- player-audible, same call already used by hearNoise()
+  for(const p of predators){
+    if(p.inert) continue;
+    const dist = Math.hypot(p.x - landX, p.z - landZ);
+    if(checkThrowableNoise(dist, THROWABLE_NOISE_RADIUS)) hearThrowableNoise(p, landX, landZ);
+  }
+}
 function finishPickup(){
   // LUL-1307: pickup is just the gather now -- the fanfare (playWinMusic,
   // fireBoom) moved to arriveHome(), the actual win. Reset the glow
@@ -3121,6 +3278,7 @@ function restart(){
   hidden = false; hideTime = 0; hideKind = null; lastHideSpot = null; coverProbeAccum = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
+  heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
@@ -3605,6 +3763,16 @@ function tick(){
   // objective + status HUD
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
   canPickup = canPickUp(runState(), distBaby, 3.6);
+  // LUL-1623: nearest-throwable distance computed once per frame, reused only
+  // for the HUD gate below -- grabThrowable() re-scans on its own discrete
+  // keypress/tap event, not every frame.
+  let nearestThrowableD = Infinity;
+  for(let ti = 0; ti < throwableData.length; ti++){
+    const t = throwableData[ti];
+    if(t.taken) continue;
+    const d = Math.hypot(t.x - player.x, t.z - player.z);
+    if(d < nearestThrowableD) nearestThrowableD = d;
+  }
   const distHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);   // LUL-38
   // LUL-1258: M2 Deepwater -- distance/completion gate for the mission target,
   // computed the same way canPickup is above.
@@ -3653,13 +3821,14 @@ function tick(){
       statusVisible, statusText,
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,
+      heldThrowable, canGrabThrowable: canGrabThrowable(heldThrowable, nearestThrowableD, THROWABLE_PICKUP_RADIUS),
       // LUL-1258: mission HUD panel -- null/null while carrying so the panel
       // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
       missionKind: mission && !carrying ? mission.target.kind : null,
       missionStatus: mission && !carrying ? mission.status : null,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, missionKind: null, missionStatus: null });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null });
   }
   // the child's idle glow (outside the cinematic)
   if(!baby.taken){
@@ -3684,7 +3853,7 @@ function tick(){
     audio.plfo.frequency.setTargetAtTime(2.3 + esc*3.2, audio.ctx.currentTime, 0.4);   // throb speeds up
   }
   if(audio && soundOn && playing){
-    const move01 = Math.min(1, spd / (walk*1.8)), now = audio.ctx.currentTime;
+    const move01 = Math.min(1, spd / (walk*STAMINA_SPRINT_MUL)), now = audio.ctx.currentTime;
     if(hunting){                                     // calm bed drops out
       audio.wg.gain.setTargetAtTime(0.0001, now, 0.3);
       audio.dg.gain.setTargetAtTime(0.0001, now, 0.3);
@@ -3816,8 +3985,14 @@ tick();
   }
   function triggerTouchInteract() {
     const playing = isPlaying(runState());
-    if(canPickup && playing && !paused) pickup();
-    else if(missionCanComplete && playing && !paused) completeMissionSequence();
+    if(!playing || paused) return;
+    if(canPickup) pickup();
+    else if(missionCanComplete) completeMissionSequence();
+    else grabThrowable();
+  }
+  function triggerTouchThrow() {
+    const playing = isPlaying(runState());
+    if(playing && !paused && heldThrowable) throwThrowable();
   }
   // LUL-529: touch analogue of the Space keydown handler (forest-engine.js
   // keydown listener above) -- same guards, same beginJump()/jumpPressed
@@ -3855,6 +4030,7 @@ tick();
 
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchInteract,
+           triggerTouchThrow,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
            setEmbers, purchaseDeeperLungs };
