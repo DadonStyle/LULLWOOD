@@ -220,6 +220,7 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #objective,
   body[data-high-contrast="1"] #status,
   body[data-high-contrast="1"] #actionPrompt,
+  body[data-high-contrast="1"] #throwPrompt,
   body[data-high-contrast="1"] #captionToast,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
   body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
@@ -227,6 +228,7 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
   body[data-high-contrast="1"] #actionPrompt { color: #ffe6b0; border-color: #ffcf7a; }
   body[data-high-contrast="1"] #actionPrompt.urgent { color: #ff9f9f; border-color: #ff6b6b; }
+  body[data-high-contrast="1"] #throwPrompt { color: #ffe6b0; border-color: #ffcf7a; }
 
   /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
@@ -331,6 +333,19 @@ const OVERLAY_STYLE = `
   .buyBtn:hover:not(:disabled) { background: rgba(150,175,215,0.24); }
   .buyBtn:disabled { opacity: 0.45; cursor: default; }
   .buyBtn:focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
+
+  /* LUL-1623: holding-a-throwable affordance. Sits above #status (74px) so it
+     never overlaps the hidden/hunted line or #actionPrompt (92px) -- all three
+     can in principle be visible together (holding a stone while hidden). */
+  #throwPrompt { position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 12;
+    display: flex; align-items: center; gap: 0; pointer-events: none;
+    padding: 7px 16px; border-radius: 999px; white-space: nowrap;
+    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+  #throwKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
 
   /* status line (hiding / hunted) */
   #status { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 12;
