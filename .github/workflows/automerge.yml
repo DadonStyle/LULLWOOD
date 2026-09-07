@@ -199,38 +199,48 @@ jobs:
           # Fail closed if the gate is missing rather than merging ungated. This
           # should not happen in normal operation -- if it does, silence would
           # look identical to "nothing to do here," so say it on the PR too.
-          if [ ! -x ./.github/scripts/ship-allowed.sh ]; then
-            echo "::warning::no ship-allowed.sh on main; refusing to auto-merge #$number."
+          if [ ! -x ./.github/scripts/ship-allowed.sh ] || [ ! -x ./.github/scripts/tier-b-allowed.sh ]; then
+            echo "::warning::ship-allowed.sh or tier-b-allowed.sh missing on main; refusing to auto-merge #$number."
             printf '%s\n' \
               '<!-- SHIP_NO_ALLOWLIST -->' \
-              '`[ship]` is on this branch and CI is green, but `main` has no' \
-              '`.github/scripts/ship-allowed.sh` to check it against, so this refuses' \
-              'to self-merge rather than shipping ungated. This should not happen in' \
-              'normal operation -- if you are seeing this, the allowlist script itself' \
-              'is missing from `main`.' > /tmp/ship-no-allowlist.md
+              '`[ship]` is on this branch and CI is green, but `main` is missing one of' \
+              '`.github/scripts/ship-allowed.sh` / `.github/scripts/tier-b-allowed.sh` to' \
+              'check it against, so this refuses to self-merge rather than shipping' \
+              'ungated. This should not happen in normal operation -- if you are seeing' \
+              'this, one of the allowlist scripts is missing from `main`.' > /tmp/ship-no-allowlist.md
             comment_once 'SHIP_NO_ALLOWLIST' /tmp/ship-no-allowlist.md
             exit 0
           fi
 
-          # auto-pr.yml applies the same gate at push time and comments
-          # SHIP_DENIED there if it fails; this re-checks at merge time because
-          # `gh pr view --json files` reflects the PR's *current* base, which can
-          # differ from what auto-pr.yml saw at push. comment_once skips posting
-          # a duplicate when auto-pr.yml already explained it.
-          if ! blocked="$(gh pr view "$number" --json files --jq '.files[].path' \
-                          | ./.github/scripts/ship-allowed.sh)"; then
+          # auto-pr.yml applies the same two-step gate at push time and
+          # comments SHIP_DENIED there if it fails; this re-checks at merge
+          # time because `gh pr view --json files` reflects the PR's
+          # *current* base, which can differ from what auto-pr.yml saw at
+          # push. comment_once skips posting a duplicate when auto-pr.yml
+          # already explained it.
+          #
+          # LUL-1064 / decisions/0014-tier-b-automation: try Tier A first,
+          # then Tier B, same [ship] marker either way -- the script decides
+          # the tier, never the author. Only refuse (Tier C) if both deny.
+          pr_files="$(gh pr view "$number" --json files --jq '.files[].path')"
+          if printf '%s\n' "$pr_files" | ./.github/scripts/ship-allowed.sh > /dev/null; then
+            echo "::notice::#$number is Tier A (ship-allowed.sh)."
+          elif blocked="$(printf '%s\n' "$pr_files" | ./.github/scripts/tier-b-allowed.sh)"; then
+            echo "::notice::#$number is Tier B (tier-b-allowed.sh)."
+          else
             echo "::warning::#$number carries [ship] but changes files that need the Code Reviewer:"
             printf '  %s\n' "$blocked"
             printf '%s\n' \
               '<!-- SHIP_DENIED -->' \
               '`[ship]` was found on a commit in this branch, but the branch changes files' \
-              'outside the docs/CI/tests allowlist, so it will **not** self-merge:' \
+              'outside the Tier A and Tier B allowlists, so it will **not** self-merge:' \
               '' \
               "$(printf '%s\n' "$blocked" | sed 's/^/- `/; s/$/`/')" \
               '' \
               'This is not a failure — the PR is open and CI is running. It needs a' \
               '`REVIEW: APPROVED` from the Code Reviewer, then someone merges it.' \
-              'Policy: LUL-73. Allowlist: `.github/scripts/ship-allowed.sh`.' > /tmp/ship-denied.md
+              'Policy: LUL-73 / decisions/0014-tier-b-automation. Allowlists:' \
+              '`.github/scripts/ship-allowed.sh`, `.github/scripts/tier-b-allowed.sh`.' > /tmp/ship-denied.md
             comment_once 'SHIP_DENIED' /tmp/ship-denied.md
             exit 0
           fi
