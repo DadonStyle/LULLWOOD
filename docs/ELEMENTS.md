@@ -282,6 +282,13 @@ one geometry builder (`makePredator()`), differentiated by the
   `lib/game/predator.ts`) before it truly forgets and reverts to the
   original uniform-random pick -- a predator that camping used to shake for
   good now circles back a few times first (LUL-1573/LUL-1620).
+- A `chase`'s distance-based give-up (`shouldGiveUpChase()`,
+  `lib/game/predator.ts`) now compares against `effectiveDetect(p)` instead
+  of the raw `PSPEC[kind].detect`, so the give-up radius scales with the
+  same multipliers that widen acquisition -- difficulty, veil, fog tide, and
+  `CARRY_DETECT_MUL` (1.35x while carrying). Before this fix a wolf/lion
+  chase begun during the carry leg could never end, since the give-up
+  distance didn't grow with the carry's wider acquisition range (LUL-1600).
 - Detect the player through three independent channels: **sight**
   (`canSee()`, LOS raycast + shrinking-with-stillness range),
   **scent** (`checkScent()`, radius+wind, no LOS check at all),
