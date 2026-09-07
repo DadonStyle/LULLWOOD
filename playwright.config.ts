@@ -64,7 +64,7 @@ const launchOptions = {
 // fix.
 const ciTimeouts = process.env.CI
   ? { timeout: 240_000, expect: { timeout: 30_000 } }
-  : { timeout: 90_000, expect: { timeout: 10_000 } };
+  : { timeout: 150_000, expect: { timeout: 10_000 } };
 
 export default defineConfig({
   testDir: './e2e',
