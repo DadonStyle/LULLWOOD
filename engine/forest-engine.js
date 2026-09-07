@@ -24,6 +24,7 @@ import {
   triggerDeath as outcomeTriggerDeath,
   canGrabThrowable,
   canThrowThrowable,
+  canRegenMap,
 } from '@/lib/game/outcome';
 import {
   shouldTriggerCharge,
@@ -86,6 +87,8 @@ import {
   CATCH_MARGIN,
   isCaught,
   isSniffImmune,
+  LKP_MAX_SWEEPS,
+  pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
   shouldGiveUpChase,
@@ -108,6 +111,8 @@ import {
   veilMaxHoldForTier,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
+  computeDepth,
+  computeSurvival,
 } from '@/lib/game/economy';
 // LUL-1258: M2 Deepwater. Pure mission-state helpers, no Three.js -- mirrors
 // how lib/game/outcome.ts's transitions are imported above.
@@ -144,12 +149,13 @@ import {
   TIME_OF_DAY_AUDIO,
 } from '@/lib/game/timeOfDay';
 import { timeOfRunDetectMul } from '@/lib/game/dayNight';
+import { nearestLandmarkName } from '@/lib/game/chronicle';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
   STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
-  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, ROAM_STEP_FRAC,
+  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -424,13 +430,6 @@ const CANOPY_GEO = { canopyR: CANOPY_R, cone1Height: CONE1_HEIGHT, apexY: CONE1_
 const trunkMat   = new THREE.MeshStandardMaterial({ color: CONFIG.trunk,   roughness: 1 });
 const foliageMat = new THREE.MeshStandardMaterial({ color: CONFIG.foliage, roughness: 1 });
 
-const parts = [
-  new THREE.InstancedMesh(trunkGeo, trunkMat,   CONFIG.trees),
-  new THREE.InstancedMesh(cone1Geo, foliageMat, CONFIG.trees),
-  new THREE.InstancedMesh(cone2Geo, foliageMat, CONFIG.trees),
-];
-parts.forEach(p => { p.frustumCulled = false; scene.add(p); });
-
 // ---- Bog tree cover (LUL-25) -----------------------------------------------
 // Same trunk/foliage geometry, own InstancedMesh trio sized much smaller than
 // CONFIG.trees -- "thinner tree cover" per the ticket. A separate pool, not a
@@ -449,7 +448,8 @@ bogParts.forEach(p => { p.frustumCulled = false; scene.add(p); });
 // colliders (see predatorBlocked() below and blockedForPredator() in
 // lib/game/cover.ts); log/bramble stay walkable for predators, matching the
 // player's own exemption.
-const THROWABLE_COUNT = 10;             // Scout MVP number
+const THROWABLE_COUNT = 90;             // ~1 stone found per run at an 8u acquisition
+                                        // radius; see wiki game/economy/throwable-price
 const THROWABLE_PICKUP_RADIUS = 3;      // matches canPickUp's baby radius scale
 const THROWABLE_THROW_DISTANCE = 18;    // landing point = player pos + facing * this
 const THROWABLE_INVESTIGATE_TIME = [3, 5]; // rnd() range, seconds
@@ -718,6 +718,88 @@ function layoutTreePool(meshParts, data, count){
   if(meshParts[1].instanceColor) meshParts[1].instanceColor.needsUpdate = true;
   if(meshParts[2].instanceColor) meshParts[2].instanceColor.needsUpdate = true;
 }
+// ---- E6: chunk the main forest pool so three.js can frustum-cull whole chunks ----
+// FogExp2 (density 0.04) already hides anything past ~40-60 units; the old single
+// map-spanning InstancedMesh submitted all 5200 trees every frame regardless
+// (frustumCulled=false, because a single mesh spanning the whole map is *always*
+// at least partly in view, so per-mesh culling was never an option before this).
+// Chunking lets the renderer skip whole chunks that are outside the view frustum
+// for free -- no new per-frame code, exactly the win the ticket asks for.
+const TREE_CHUNK_SIZE = 60;   // world units/edge; CONFIG.mapSize=480 -> 8x8 = 64 chunks
+const TREE_CHUNKS_PER_AXIS = Math.ceil(CONFIG.mapSize / TREE_CHUNK_SIZE);
+
+function treeChunkIndex(x, z){
+  const cx = Math.min(TREE_CHUNKS_PER_AXIS-1, Math.max(0, Math.floor((x+half)/TREE_CHUNK_SIZE)));
+  const cz = Math.min(TREE_CHUNKS_PER_AXIS-1, Math.max(0, Math.floor((z+half)/TREE_CHUNK_SIZE)));
+  return cx*TREE_CHUNKS_PER_AXIS + cz;
+}
+
+// Sparse array indexed by chunk id; each populated entry is [trunk, cone1, cone2]
+// for that chunk, or absent/undefined for a chunk with zero trees in it.
+let treeChunkTrios = [];
+
+function layoutTreeChunks(data){
+  // Regenerate on every generateMap() call (restart/new seed draws a different
+  // tree count and placement per chunk) -- dispose the previous chunk meshes'
+  // own instanceMatrix/instanceColor GPU buffers via .dispose() before dropping
+  // the reference. Do NOT call .geometry.dispose() or .material.dispose() here:
+  // trunkGeo/cone1Geo/cone2Geo/trunkMat/foliageMat are shared with every other
+  // chunk AND with bogParts -- disposing them would break the bog tree pool.
+  for(const trio of treeChunkTrios){
+    if(!trio) continue;
+    for(const m of trio){ scene.remove(m); m.dispose(); }
+  }
+  treeChunkTrios = [];
+
+  const nChunks = TREE_CHUNKS_PER_AXIS * TREE_CHUNKS_PER_AXIS;
+  const buckets = Array.from({length: nChunks}, () => []);
+  // Bucketing reads only t.x/t.z, already fixed in `data` before this runs --
+  // no rng() draw here, so this cannot perturb the seeded stream.
+  for(let i=0; i<data.length; i++) buckets[treeChunkIndex(data[i].x, data[i].z)].push(i);
+
+  const localIndex = new Array(data.length);
+  for(let c=0; c<nChunks; c++) buckets[c].forEach((treeIdx, slot) => { localIndex[treeIdx] = slot; });
+
+  for(let c=0; c<nChunks; c++){
+    const count = buckets[c].length;
+    if(count === 0) continue;
+    const trio = [
+      new THREE.InstancedMesh(trunkGeo, trunkMat,   count),
+      new THREE.InstancedMesh(cone1Geo, foliageMat, count),
+      new THREE.InstancedMesh(cone2Geo, foliageMat, count),
+    ];
+    // frustumCulled left at the Object3D default (true) -- this is the whole point.
+    trio.forEach(m => scene.add(m));
+    treeChunkTrios[c] = trio;
+  }
+
+  // Same rng() draw, same order (tree index 0..data.length-1), same count as the
+  // old layoutTreePool loop -- only the destination mesh/slot differs, and that's
+  // decided above from x/z alone. This is why NO QA_PINNED_SEED re-pin is needed:
+  // the RNG stream this produces is byte-identical to before this ticket.
+  for(let i=0; i<data.length; i++){
+    const t = data[i];
+    dummy.position.set(t.x, 0, t.z);
+    dummy.rotation.set(0, rng()*Math.PI*2, 0);
+    dummy.scale.setScalar(t.s);
+    dummy.updateMatrix();
+    const trio = treeChunkTrios[treeChunkIndex(t.x, t.z)];
+    const slot = localIndex[i];
+    for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
+    const b = 0.72 + rng()*0.5;
+    tintCol.setRGB(b*0.92, b, b*0.86);
+    trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
+  }
+
+  for(const trio of treeChunkTrios){
+    if(!trio) continue;
+    for(const m of trio){
+      m.instanceMatrix.needsUpdate = true;
+      if(m.instanceColor) m.instanceColor.needsUpdate = true;
+      m.computeBoundingSphere();   // static after layout -- compute once, not per frame
+    }
+  }
+}
 // ---- Bog map band (LUL-25) --------------------------------------------------
 // generateBogTrees()/generateReeds()/applyHardBabySpawn() are all called from
 // the tail of generateMap(), strictly after every existing rng() draw (baby,
@@ -808,7 +890,7 @@ function generateMap(seed){
     const s = 0.7 + rng()*1.7;
     treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
-  layoutTreePool(parts, treeData, CONFIG.trees);
+  layoutTreeChunks(treeData);
   buildGrid();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
@@ -1170,6 +1252,7 @@ function makePredator(kind){
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
+    lkpX:0, lkpZ:0, lkpSweeps:0,
     charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false, sightLock:null,
     noiseTarget:null, noiseTargetT:0 };
 }
@@ -1180,6 +1263,7 @@ const predators = [];
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
 let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
 let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
+let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
 let coverAmt = 0;   // LUL-144: eased 0..1 desaturation driven by the cover-feedback scan below
 function placePredators(){
   // LUL-26: `night` (default) has activePerSpecies:3, so `p.inert` is false
@@ -1214,6 +1298,7 @@ function placePredators(){
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
+    p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
@@ -1284,6 +1369,7 @@ function scentOnto(p){
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
   predatorCall(p.kind, false, p);
+  logChronicle('scent_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home, CONFIG.lake) });
 }
 
 // ---- Sound: footstep noise as a third detection channel (LUL-39) ---------
@@ -1465,7 +1551,9 @@ function updatePredators(dt, noiseRadius){
     const ux = dx/dist, uz = dz/dist;
     // LUL-1309: predators wade too -- same per-position terrain sample the
     // player already gets at :3173/:3179, applied to this predator's own (x,z).
-    const pTerrainMul = bogSpeedMultiplier(inBog(p.x, p.z)) * lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
+    // LUL-1861: bog component dropped here -- LUL-1483's speed *= bogSpeedMultiplier(biomeAt(...))
+    // below already applies bog once, terminally; keeping it here too double-applies it.
+    const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
     // ticks in every state, so a lock set during `chase` has actually
@@ -1543,13 +1631,13 @@ function updatePredators(dt, noiseRadius){
     } else if(p.reroute > 0){                        // stuck → back up along its trail, then a different way
       p.reroute -= dt;
       const bx=p.rrX-p.x, bz=p.rrZ-p.z, bd=Math.hypot(bx,bz);
-      if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pTerrainMul; }
+      if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pLakeMul; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
       if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
-        else { desx=ux; desz=uz; speed=p.spec.speed*pTerrainMul; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -1571,8 +1659,11 @@ function updatePredators(dt, noiseRadius){
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
-        if(wd < 2.5){ const a=rng()*Math.PI*2, r=half*(ROAM_STEP_FRAC.min+rng()*ROAM_STEP_FRAC.range);
-          let nwx=clamp(p.x+Math.cos(a)*r,-half+4,half-4), nwz=clamp(p.z+Math.sin(a)*r,-half+4,zMax-4);
+        if(wd < 2.5){
+          const distFromLkp = Math.hypot(player.x - p.lkpX, player.z - p.lkpZ);
+          const pick = pickRoamWaypoint(rng, p.x, p.z, p.lkpX, p.lkpZ, p.lkpSweeps, distFromLkp, half);
+          p.lkpSweeps = pick.sweepsLeft;
+          let nwx=clamp(pick.x,-half+4,half-4), nwz=clamp(pick.z,-half+4,zMax-4);
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
           p.wpx=clamp(kept.x,-half+4,half-4); p.wpz=clamp(kept.z,-half+4,zMax-4); }
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
@@ -1611,8 +1702,8 @@ function updatePredators(dt, noiseRadius){
         // through the cover prop breaking canSee() right now, since
         // predators never physically collide with cover (LUL-119/LUL-211).
         if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, 'chase'); }   // LUL-1194: run down mid-chase, in the open
-        else { desx=ux; desz=uz; speed=p.spec.speed*pTerrainMul; }
-        if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
+        if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -1652,7 +1743,7 @@ function updatePredators(dt, noiseRadius){
           adist = Math.hypot(ndx, ndz) || 0.0001;
           aux = ndx / adist; auz = ndz / adist;
         }
-        const step = stepApproach(aux, auz, p.spec.speed*pTerrainMul, adist, p.rad);
+        const step = stepApproach(aux, auz, p.spec.speed*pLakeMul, adist, p.rad);
         desx = step.desx; desz = step.desz; speed = step.speed;
         if(step.enterSniff){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
         if(p.noiseTarget){
@@ -1667,11 +1758,11 @@ function updatePredators(dt, noiseRadius){
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax); }
-          else { p.state='roam'; p.spotted=false; }
+          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pTerrainMul; }
+        if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       }
     } else if(p.state === 'flank'){
       // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
@@ -1694,12 +1785,12 @@ function updatePredators(dt, noiseRadius){
           p.sniffsLeft = holdOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(holdOutcome.next === 'hold') p.sniffTimer = rnd(1,4);
-          else { p.state='roam'; p.spotted=false; p.inv=''; }
+          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); }
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
         if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(rng, 3); p.sniffTimer=rnd(1,4); sniff(); }
-        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL*pTerrainMul; }
+        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL*pLakeMul; }
       }
     }
 
@@ -1844,6 +1935,18 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     missionCanComplete = false;   // LUL-1258: recomputed every tick alongside canPickup, below
 let heldThrowable = false;
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
+// LUL-1103: The Run Chronicle. Flat {t, code, args} buffer, reset per-run in
+// enter() (covers restart() too, which calls enter()). Handed to React once,
+// in the same pushState() call as winVisible/deathVisible -- NOT streamed
+// live, because pushState's patch-merge does a shallow `!==` compare and a
+// fresh array is always "changed", so logging this every frame would re-emit
+// to React every frame. lib/game/chronicle.ts's formatChronicle() (pure, no
+// DOM/Three.js) turns it into display lines; this file only appends codes.
+let chronicle = [];
+function logChronicle(code, args){
+  chronicle.push({ t: Math.max(0, clock.elapsedTime - enteredAt), code, args: args || null });
+  if(chronicle.length > 40) chronicle.shift();   // hard cap -- formatChronicle() also caps what it renders
+}
 // LUL-1194: the death cutscene is full-length and unskippable exactly once --
 // the player's first-ever death -- and skippable by any input after that.
 // Persisted across sessions (not just page load, unlike carryDeathExplained
@@ -2147,7 +2250,7 @@ function playHideSfx(kind, entering){ if(kind === 'log') hollowLogSound(entering
 // shadowed toggleHidden() carried that track() call but was dead code (a
 // later function declaration in the same scope wins in JS), so the event
 // never fired.
-function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); }
+function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); logChronicle('hide', { kind: spot.kind }); }
 function exitHide(){ if(!hidden) return; playHideSfx(hideKind, false); hidden = false; hideKind = null; }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
@@ -2430,6 +2533,7 @@ let hudState = {
   // `lastPayout` is the most recent win/death breakdown (null before the
   // first run ends this session), reset to null on restart().
   embersBalance: 0, embersDeeperLungsTier: 0, lastPayout: null,
+  livePileEmbers: 0,   // LUL-1315: live unbanked depth+survival total, run-only
   // LUL-1623: throwable distractions -- heldThrowable gates the desktop/mobile
   // throw prompt (components/GameCanvas.tsx, components/MobileControls.tsx);
   // canGrabThrowable is the HUD gate for the "pick up stone" prompt, mirroring
@@ -2491,7 +2595,8 @@ function enter(){
   enteredAt = clock.elapsedTime;
   runElapsed = 0;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
-  pushState({ entered: true });
+  chronicle = [];   // LUL-1103: fresh run, fresh chronicle
+  pushState({ entered: true, livePileEmbers: 0 });
   // LUL-1425: the real "a run begins" moment on both input modes -- enter() is
   // called by the gate click (Hud.tsx) and by restart(). Fires once per RUN, not
   // once per page load; see docs/specs. Previously lived in the desktop-only
@@ -2555,6 +2660,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       calls: renderer.info.render.calls,
       triangles: renderer.info.render.triangles,
       elapsedTime: clock.elapsedTime,
+    };
+  };
+
+  // LUL-1487 (E6): sanity check the chunked tree pool retains exactly one
+  // instance per generated tree -- no silent drop or double-count in the
+  // chunk bucketing.
+  window.ForestEngine.qaProbeTreeChunks = function(){
+    const trios = treeChunkTrios.filter(Boolean);
+    return {
+      chunks: trios.length,
+      totalInstances: trios.reduce((n, t) => n + t[0].count, 0),
+      expected: treeData.length,
     };
   };
 
@@ -2845,6 +2962,50 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!p) return null;
     p.state = 'roam'; p.spotted = false; p.scentLock = 0; p.scentCalls = 0;
     p.hunt = false; p.alert = 0; p.sniffsLeft = 0; p.sightLock = null;
+    return { x: p.x, z: p.z };
+  };
+
+  window.ForestEngine.qaGetPredatorLkp = function(idx){
+    const p = predators[idx];
+    if(!p) return null;
+    return { lkpX: p.lkpX, lkpZ: p.lkpZ, lkpSweeps: p.lkpSweeps };
+  };
+
+  // LUL-1620: finds the given species, places it `dx/dz` from the player's
+  // *current* position (does not move the player, so KeyH/hidden staging
+  // done before this call survives it), and arms it one tick away from the
+  // investigate/sniff give-up transition (:1520-1525). Driving the real
+  // sniffsLeft/sniffTimer countdown to reach that transition is what
+  // qaSetPredatorRoam's own comment warns off (destroys whatever staging a
+  // test already set up) -- this hook manipulates state directly instead,
+  // same philosophy. Clears the higher-priority branches (charge/sightLock/
+  // alert/reroute/hunt) that would otherwise pre-empt the investigate/sniff
+  // branch this tick. Returns the predator's index (for qaGetPredatorLkp)
+  // and placed position, or null if the species doesn't resolve.
+  window.ForestEngine.qaStagePredatorGiveUp = function(kind, dx, dz){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    p.x = player.x + dx; p.z = player.z + dz;
+    p.vx = p.vz = 0; p.charge = null; p.sightLock = null; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.hunt = false;
+    p.state = 'investigate'; p.inv = 'sniff'; p.sniffsLeft = 1; p.sniffTimer = 0.001;
+    return { idx, x: p.x, z: p.z };
+  };
+
+  window.ForestEngine.qaIsApproachPianoActive = function(){
+    return approachPianoActive;
+  };
+
+  // LUL-1620: teleports predator[idx] onto its own current roam waypoint so
+  // the very next tick's `wd < 2.5` arrival check (engine/forest-engine.js
+  // roam branch) fires immediately, running the real pickRoamWaypoint()
+  // repick instead of waiting out the actual travel time -- lets a test
+  // drive the bounded LKP_MAX_SWEEPS count down to exhaustion in a handful
+  // of ticks instead of the ~10-20s of real navigation each sweep leg takes.
+  window.ForestEngine.qaFastForwardPredatorToWaypoint = function(idx){
+    const p = predators[idx];
+    if(!p) return null;
+    p.x = p.wpx; p.z = p.wpz;
     return { x: p.x, z: p.z };
   };
 
@@ -3176,6 +3337,7 @@ function finishPickup(){
   babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.55;
   halo.material.opacity = CARRY_HALO_BASE; babyLight.intensity = CARRY_GLOW_BASE;
+  logChronicle('pickup');
 }
 // LUL-1258: M2 Deepwater's completion sting -- reuses hollowLogSound's
 // noise-burst + oscillator chain (same procedural building blocks, no new
@@ -3226,8 +3388,9 @@ function arriveHome(){
   const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
   const payout = computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus);
   embers = applyPayout(embers, payout);
+  logChronicle('win');
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance });
+    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice() });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 function triggerDeath(kind, cause){
@@ -3252,12 +3415,13 @@ function triggerDeath(kind, cause){
   activeCharges = 0;
   const deathCarrying = carrying && !carryDeathExplained;
   if(deathCarrying) carryDeathExplained = true;
+  logChronicle('death', { kind, landmark: nearestLandmarkName(player.x, player.z, LANDMARKS, CONFIG.home, CONFIG.lake) });
   // LUL-1194: full-length + unskippable only on the player's first-ever death
   // (persisted, see HAS_DIED_KEY above) -- skippable by any input every death after.
   cutsceneSkippable = hasDiedBefore;
   if(!hasDiedBefore){ hasDiedBefore = true; try { localStorage.setItem(HAS_DIED_KEY, '1'); } catch(e){} }
   pushState({ deathVisible: true, deathKind: kind, deathCause: cause, lossRevealed: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying });
+    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying, chronicle: chronicle.slice() });
   track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty });
   playDeathVideo();
   deathAudio(kind);
@@ -3301,7 +3465,7 @@ function toggleSound(){
   if(audio) audio.master.gain.setTargetAtTime(soundOn ? 0.6 : 0.0001, audio.ctx.currentTime, 0.1);
   pushState({ soundOn });
 }
-function regenMap(){ generateMap((Math.random()*1e9)>>>0); }
+function regenMap(){ if(!canRegenMap(runState())) return; generateMap((Math.random()*1e9)>>>0); }
 
 // LUL-26: difficulty + accessibility actions. Mirrors setPace/setFog above --
 // the engine applies the change and echoes the new value back via pushState
@@ -3546,6 +3710,9 @@ function tick(){
     playerLight.intensity = cfg.intensity;
     playerLight.distance = cfg.distance;
     pushState({ lightDimmed });
+    // LUL-1317: mirrors enterHide's feature_engagement('hide') -- fires once per
+    // activation (the rising edge), not every frame the veil is held.
+    if(dimmed) track({ event: 'feature_engagement', feature: 'veil', action: 'used' });
   }
   dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
   applyVignette(dimAmount);
@@ -3575,9 +3742,11 @@ function tick(){
   if(fogTidePhaseNow === 'active' && !fogTideActive){
     fogTideActive = true;
     track({ event: 'feature_engagement', feature: 'fog_tide', action: 'start' });
+    logChronicle('fog_tide_start');
   } else if(fogTidePhaseNow !== 'active' && fogTideActive){
     fogTideActive = false;
     track({ event: 'feature_engagement', feature: 'fog_tide', action: 'end' });
+    logChronicle('fog_tide_end');
   }
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
@@ -3635,6 +3804,9 @@ function tick(){
   if(entered){
     const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
     if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
+    if(!won && !dead){
+      pushState({ livePileEmbers: computeDepth(maxDistFromHome) + computeSurvival(clock.elapsedTime - enteredAt) });
+    }
   }
 
   if(pickingUp){
@@ -3709,7 +3881,7 @@ function tick(){
       if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
       const dpd = Math.hypot(player.x - p.x, player.z - p.z);
       if(dpd < nearDist){ nearDist = dpd; nearP = p; }
-      if(p.state==='chase' || p.hunt || (p.state==='investigate' && p.inv!=='back')) approaching = true;
+      if(p.state==='chase' || p.hunt || (p.state==='investigate' && p.inv!=='back') || (p.state==='roam' && p.lkpSweeps > 0)) approaching = true;
       if(dpd < effectiveDetect(p)){
         if(hasLOS(p.x, p.z, player.x, player.z)) exposedNow = true; else coveredNow = true;
       }
@@ -3718,7 +3890,8 @@ function tick(){
     if(nearDist < 20) sinceClose = 0; else sinceClose += dt;
     if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; nearP.sightLock = null; spotOnto(nearP); sinceClose = 12; }
     // approach piano note: quicker + higher the nearer it is
-    if(approaching && nearDist < 46 && !hidden){
+    if(approaching && nearDist < 46){
+      approachPianoActive = true;
       pianoTimer -= dt;
       if(pianoTimer <= 0){
         const near01 = clamp(1 - nearDist/46, 0, 1);           // 0 far … 1 close
@@ -3731,8 +3904,8 @@ function tick(){
         pianoNote(98 * Math.pow(2, steps/12), 0.5 + near01*0.6, bearingPan(bearing));
         if(bearing.side !== 'ahead'){ bearingPulseSide = bearing.side; bearingPulseT = 1; }
       }
-    } else pianoTimer = 0;
-  } else { sinceClose = 0; }
+    } else { pianoTimer = 0; approachPianoActive = false; }
+  } else { sinceClose = 0; approachPianoActive = false; }
 
   // LUL-144: the player-facing half of the scan above. `covered` is the
   // instantaneous, un-eased signal (a real predator, in range, LOS blocked,

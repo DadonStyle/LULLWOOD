@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3981 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3538, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4154 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3702, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -268,7 +268,13 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What they can do (shared)**
 - Roam via random waypoints when nothing has noticed the player
-  (`state==='roam'`, L1010-1019).
+  (`state==='roam'`, L1010-1019). A predator that gives up an
+  investigate/sniff or flank/hold loop (never a chase's distance-based
+  give-up) stashes the player's position and gets a bounded number of
+  ring-biased return-sweep waypoints (`LKP_MAX_SWEEPS`, `pickRoamWaypoint()`,
+  `lib/game/predator.ts`) before it truly forgets and reverts to the
+  original uniform-random pick -- a predator that camping used to shake for
+  good now circles back a few times first (LUL-1573/LUL-1620).
 - Detect the player through three independent channels: **sight**
   (`canSee()`, LOS raycast + shrinking-with-stillness range),
   **scent** (`checkScent()`, radius+wind, no LOS check at all),
@@ -560,7 +566,9 @@ one geometry builder (`makePredator()`), differentiated by the
 - No economy cost, cooldown, or respawn for v1 (Economist territory, later).
 
 **Behaviours & logic**
-- 10 fixed spawn points per map (`THROWABLE_COUNT`), rejection-sampled at
+- 90 fixed spawn points per map (`THROWABLE_COUNT`, LUL-1839 — up from the
+  Scout MVP's 10, ~1 stone found per run at an 8u acquisition radius, wiki
+  `game/economy/throwable-price`), rejection-sampled at
   `generateMap()` time clear of tree trunks, home/spawn (12u), and each other
   (6u) — `generateThrowables()`. Picked-up stones are hidden (parked
   off-map, not removed from the array) via `layoutThrowableMeshes()`.
@@ -911,6 +919,24 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   read-only `EngineHudState` fields (`windX`/`windZ`), pushed once per map
   generation (not per-frame) — the only HUD element driven by map-constant
   rather than per-frame or per-event engine state.
+  LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
+  below the existing time/payout line: a short chronological log of the run
+  ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
+  a stat dump. Engine-owned: `logChronicle(code, args)` in
+  `engine/forest-engine.js` appends a flat `{t, code, args}` entry at each of
+  ~8 call sites (`scentOnto()`, the three chase/investigate/flank give-up
+  transitions, `enterHide()`, `finishPickup()`, `arriveHome()`,
+  `triggerDeath()`, the fog-tide start/end branch) into a run-local `chronicle`
+  buffer, reset in `enter()`. The buffer is handed to React exactly once, in
+  the same `pushState()` call as `winVisible`/`deathVisible` — **not** streamed
+  live, because `pushState`'s shallow `!==` compare would treat a fresh array
+  as "changed" every frame if this were logged per-frame (see that function's
+  own comment). `lib/game/chronicle.ts` is the pure formatter (`formatChronicle()`,
+  `nearestLandmarkName()`) — no DOM, no Three.js, unit-testable on its own; it
+  also gives the four fixed navigational landmarks (`LANDMARKS` in
+  `engine/tuning.ts`) their first player-facing names. `#winText`/`#deathText`
+  both gained `max-height: calc(100dvh - 48px); overflow-y: auto` in the same
+  PR so a long chronicle can't overflow a phone viewport silently.
   LUL-1194: the death screen copy names the *cause*, not the predator species
   — a new `deathCause: 'charge'|'hunt'|'chase'` field, set by `triggerDeath()`
   (three call sites in `updatePredators()`) and mapped to player-facing text
@@ -996,14 +1022,18 @@ design doc as turning horror into radar.
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
-  scales the total by a tier multiplier (LUL-1412): lantern ×1.00/×1.00,
-  night ×1.75 win/×1.35 loss, blackout ×2.00 win/×1.25 loss. The engine passes
-  `difficulty` at both call sites.
+  scales every `RunPayout` field (`depth`/`survival`/`carried`/`home`, each
+  rounded individually) by a tier multiplier (LUL-1412, reconciled LUL-1640):
+  lantern ×1.00/×1.00, night ×1.75 win/×1.35 loss, blackout ×2.00 win/×1.25
+  loss. `total` is the sum of the already-rounded fields, so
+  depth+survival+carried+home always equals total on every tier (`RunRecap` in
+  `components/Hud.tsx` renders that sum). The engine passes `difficulty` at
+  both call sites.
 - `lastPayout`: breakdown of earnings from the run that just ended (null
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3219) and `triggerDeath()` (L3249).
+  both `track()` call sites in `arriveHome()` (L3389) and `triggerDeath()` (L3420).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1012,6 +1042,22 @@ design doc as turning horror into radar.
   tier (tiers 0–3, `DEEPER_LUNGS_COSTS` array), persisted alongside balance as
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
+- `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
+  run in progress — `hudState` field (`engine/forest-engine.js` L2443),
+  reset to 0 on `enter()` (L2595) and recomputed every `tick()` while the run
+  is neither won nor dead (L3693: `computeDepth(maxDistFromHome) +
+  computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
+  `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
+  `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
+  screen is showing. It previews what `computeWinPayout()`'s depth+survival
+  terms will bank if the run ends now — it does not include the win-only
+  `CARRIED`/`HOME` terms, since those only pay out on a live arrival.
+- Death forfeiture display: `RunRecap`'s death branch
+  (`components/Hud.tsx` L339-340) shows a red
+  `-{CARRIED + HOME} lost (child & home, forfeited)` fragment instead of the
+  win branch's `+carried`/`+home` lines, making explicit that the win-only
+  `CARRIED`/`HOME` terms (both now exported from `lib/game/economy.ts` for
+  this display) are forfeited on death rather than silently omitted.
 
 **What it can do**
 - Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
@@ -1053,7 +1099,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3587): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L3737): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
