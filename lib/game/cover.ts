@@ -176,6 +176,11 @@ export interface CircleCollider {
   z: number;
   cr: number;
   crCanopy?: number;
+  // LUL-273: per-tree scale, present exactly where crCanopy is (trees, not
+  // landmarks) -- lets canopyBlockedR() below recompute the canopy radius
+  // live against the caller's current eye height instead of trusting the
+  // crCanopy baked in at map-gen time for a fixed CONFIG.eye.
+  s?: number;
 }
 
 // LOS/movement-blocking AABBs: tagged trees (kind: 'tree', no `ry`, treated
@@ -327,9 +332,27 @@ export function coverBlockedR(x: number, z: number, pr: number, coverGrid: Spati
 // blockedR) for the same predators-call-blockedR-directly reason
 // coverBlockedR documents: this only ever affects the player's own movement
 // block via blocked(), so predator pathing near trees is unchanged.
-export function canopyBlockedR(x: number, z: number, grid: SpatialGrid<CircleCollider>, cell: number = CELL): boolean {
+// `eye`/`geo` are optional and both required together (LUL-273): when given,
+// and the tree entry carries a scale (`t.s`), the radius is recomputed live
+// via canopyRadiusAtEye(t.s, eye, geo) instead of trusting the cached
+// `crCanopy`, which was baked in at map-gen time for a fixed CONFIG.eye and
+// under-protects for ~0.3s right after exiting a hide spot while moving,
+// while the damped `eyeH` is still rising back toward CONFIG.eye (see
+// game/lul267-canopy-collision-fix in the wiki). Falls back to the cached
+// `crCanopy` whenever eye/geo aren't passed, or the entry has no scale (e.g.
+// a landmark) -- same never-blocks NaN-comparison behaviour as before.
+export function canopyBlockedR(
+  x: number,
+  z: number,
+  grid: SpatialGrid<CircleCollider>,
+  cell: number = CELL,
+  eye?: number,
+  geo?: CanopyGeometry,
+): boolean {
   for (const t of neighbourhood(grid, x, z, cell)) {
-    const rr = t.crCanopy;
+    const rr = (eye !== undefined && geo !== undefined && t.s !== undefined)
+      ? canopyRadiusAtEye(t.s, eye, geo)
+      : t.crCanopy;
     const dx = x - t.x, dz = z - t.z;
     if (dx * dx + dz * dz < (rr as number) * (rr as number)) return true;
   }
@@ -342,17 +365,22 @@ export function canopyBlockedR(x: number, z: number, grid: SpatialGrid<CircleCol
 export const PLAYER_COLLISION_RADIUS = 0.6;
 
 // ---- composite player movement block ----------------------------------------
+// `eye`/`geo` (LUL-273): forwarded straight to canopyBlockedR() so its live
+// eyeH recompute (see that function's own comment) applies to the player's
+// real movement-block path, not just a direct canopyBlockedR() call.
 export function blocked(
   x: number,
   z: number,
   grid: SpatialGrid<CircleCollider>,
   coverGrid: SpatialGrid<CoverAABB>,
   cell: number = CELL,
+  eye?: number,
+  geo?: CanopyGeometry,
 ): boolean {
   return (
     blockedR(x, z, PLAYER_COLLISION_RADIUS, grid, cell) ||
     coverBlockedR(x, z, PLAYER_COLLISION_RADIUS, coverGrid, cell) ||
-    canopyBlockedR(x, z, grid, cell)
+    canopyBlockedR(x, z, grid, cell, eye, geo)
   );
 }
 

@@ -66,36 +66,27 @@ jobs:
           # `isRequired` on the rollup is unreliable on this repo (measured
           # null for every check on every PR, systems/ci-github-token-blind-spot),
           # so match main's ruleset contexts against the rollup explicitly.
-          gh api "repos/$REPO/rules/branches/main" \
-            --jq '.[] | select(.type == "required_status_checks")
-                      | .parameters.required_status_checks[].context' | sort -u > required.txt
-          echo "checks required by main's ruleset:"; cat required.txt
-          if [ ! -s required.txt ]; then
-            echo "::error::main's ruleset declares no required status checks. Refusing to merge an unverified head."
-            exit 1
-          fi
-
-          gh pr view "$PR" --repo "$REPO" --json statusCheckRollup \
-            --jq '.statusCheckRollup[] | "\(.name // .context)\t\(.conclusion // .state)"' > rollup.tsv
-          echo "PR #$PR rollup:"; cat rollup.tsv
-
-          fail=0
-          while IFS= read -r ctx; do
-            state="$(awk -F'\t' -v c="$ctx" '$1 == c {print $2}' rollup.tsv | tail -1)"
-            echo "  required '$ctx' -> ${state:-<ABSENT>}"
-            if [ "$state" != "SUCCESS" ]; then
-              echo "::error::required check '$ctx' is ${state:-absent from the PR rollup} on PR #$PR."
-              fail=1
-            fi
-          done < required.txt
-          if [ "$fail" -ne 0 ]; then
+          BASE_BRANCH="main"
+          . ./.github/scripts/check-required-checks.sh
+          if [ "$required_checks_ok" -ne 1 ]; then
             echo "::error::Refusing to merge PR #$PR -- not every ruleset-required check is green."
             exit 1
           fi
 
-          approvals="$(gh api "repos/$REPO/pulls/$PR/reviews" --jq '[.[] | select(.state == "APPROVED")] | length')"
-          if [ "$approvals" -eq 0 ]; then
-            echo "::error::PR #$PR has no approving review. Record the version-review verdict with .github/workflows/bot-approve.yml first, then dispatch this workflow. LUL-1041."
+          # LUL-1053: scope the approval to the PR's CURRENT head sha, not
+          # just "an approval exists somewhere in the review history". main's
+          # ruleset does not dismiss stale reviews on push
+          # (dismiss_stale_reviews_on_push is false repo-wide) and
+          # release/next keeps taking feature PRs while the cut PR is open
+          # (strict=false by design, wiki systems/release-train), so an
+          # approval recorded at an earlier head must not authorize merging
+          # content it never actually reviewed. Same fix automerge.yml
+          # already applies to its own self-merge gate.
+          pr_head="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')"
+          fresh_approval="$(gh api "repos/$REPO/pulls/$PR/reviews" --paginate \
+            --jq '[.[] | select(.state == "APPROVED" and .commit_id == "'"$pr_head"'")] | length')"
+          if [ "$fresh_approval" -eq 0 ]; then
+            echo "::error::PR #$PR has no approving review at current head $pr_head. Record the version-review verdict with .github/workflows/bot-approve.yml first, then dispatch this workflow. LUL-1041/LUL-1053."
             exit 1
           fi
 
