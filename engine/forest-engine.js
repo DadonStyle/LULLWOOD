@@ -24,6 +24,7 @@ import {
   triggerDeath as outcomeTriggerDeath,
   canGrabThrowable,
   canThrowThrowable,
+  canRegenMap,
 } from '@/lib/game/outcome';
 import {
   shouldTriggerCharge,
@@ -3349,7 +3350,7 @@ function toggleSound(){
   if(audio) audio.master.gain.setTargetAtTime(soundOn ? 0.6 : 0.0001, audio.ctx.currentTime, 0.1);
   pushState({ soundOn });
 }
-function regenMap(){ generateMap((Math.random()*1e9)>>>0); }
+function regenMap(){ if(!canRegenMap(runState())) return; generateMap((Math.random()*1e9)>>>0); }
 
 // LUL-26: difficulty + accessibility actions. Mirrors setPace/setFog above --
 // the engine applies the change and echoes the new value back via pushState
