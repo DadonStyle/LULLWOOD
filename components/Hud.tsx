@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
 import OrientationGate from './OrientationGate';
@@ -8,7 +8,7 @@ import SettingsPanel from './SettingsPanel';
 import GameMenu from './GameMenu';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
-import { nextDeeperLungsCost, veilMaxHoldForTier, type RunPayout } from '@/lib/game/economy';
+import { nextDeeperLungsCost, veilMaxHoldForTier, CARRIED, HOME, type RunPayout } from '@/lib/game/economy';
 import type { MissionKind } from '@/lib/game/mission';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
@@ -89,6 +89,7 @@ export interface EngineHudState {
   // `lastPayout` is the breakdown for the run that just ended (null before
   // the first win/death this session), read alongside winVisible/deathVisible.
   embersBalance: number;
+  livePileEmbers: number;   // LUL-1315: live unbanked total, run-only, 0 outside a run
   embersDeeperLungsTier: number;
   lastPayout: RunPayout | null;
   // LUL-1623: throwable distractions. heldThrowable gates the "holding a
@@ -186,6 +187,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   caption: null,
   captionId: 0,
   embersBalance: 0,
+  livePileEmbers: 0,
   embersDeeperLungsTier: 0,
   lastPayout: null,
   heldThrowable: false,
@@ -326,7 +328,7 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
 // first pushState after arriveHome()/triggerDeath() lands, so this never
 // renders with stale data from a previous run (lastPayout is set in the
 // same pushState call as winVisible/deathVisible).
-function RunRecap({ survivedSeconds, payout, balance }: { survivedSeconds: number; payout: RunPayout | null; balance: number }) {
+function RunRecap({ survivedSeconds, payout, balance, isDeath }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean }) {
   return (
     <p id="runRecap">
       time survived: {formatDuration(survivedSeconds)}
@@ -334,8 +336,14 @@ function RunRecap({ survivedSeconds, payout, balance }: { survivedSeconds: numbe
         <>
           <br />
           +{payout.depth} depth · +{payout.survival} survival
-          {payout.carried > 0 && <> · +{payout.carried} child</>}
-          {payout.home > 0 && <> · +{payout.home} home</>}
+          {isDeath ? (
+            <> · <span className="emberLoss">-{CARRIED + HOME} lost</span> (child &amp; home, forfeited)</>
+          ) : (
+            <>
+              {payout.carried > 0 && <> · +{payout.carried} child</>}
+              {payout.home > 0 && <> · +{payout.home} home</>}
+            </>
+          )}
           {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
         </>
       )}
@@ -477,6 +485,9 @@ export default function Hud({
             #panel hide the same way lightState/veilState are (GameCanvas.tsx),
             since this is core game progress, not a dev-tuning control. */}
         <span id="embersBalance">Embers: {state.embersBalance}</span>
+        {state.entered && !state.winVisible && !state.deathVisible && (
+          <span id="embersPile">Unbanked: {state.livePileEmbers}</span>
+        )}
         <button id="regen" onClick={() => actions?.regenMap()}>
           New map
         </button>
@@ -673,7 +684,7 @@ export default function Hud({
           <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
             <h1>YOU WON</h1>
             <p>the child is safe — you carried them home through the Lullwood</p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} />
             <button
               ref={winRestartRef}
               className="restartBtn"
@@ -700,7 +711,7 @@ export default function Hud({
               {DEATH_CAUSE_TEXT[state.deathCause]}
               {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} />
             <button
               ref={deathRestartRef}
               className="restartBtn"

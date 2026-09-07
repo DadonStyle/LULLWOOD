@@ -46,8 +46,8 @@ export function freshEmbersState(): EmbersState {
 
 // ---- Earn ------------------------------------------------------------
 
-const CARRIED = 120; // win only -- the child's warmth
-const HOME = 50; // win only -- the doorstep
+export const CARRIED = 120; // win only -- the child's warmth
+export const HOME = 50; // win only -- the doorstep
 const DEPTH_DIVISOR = 4; // "how far out you dared"
 const SURVIVAL_UNIT_SECONDS = 20;
 const SURVIVAL_CAP = 6; // load-bearing: stalling in a bush stops paying past 120s

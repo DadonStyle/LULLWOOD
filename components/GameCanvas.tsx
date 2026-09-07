@@ -299,6 +299,7 @@ const OVERLAY_STYLE = `
     color: #ffe6c8; text-shadow: 0 2px 44px rgba(255,190,130,0.5); }
   #winText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
   .emberGain { color: #ffdca8; font-weight: 500; }
+  .emberLoss { color: #ff8a8a; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px;
     /* LUL-1088 CASCADE-ORDER BUG GUARD: the mobile-only .restartBtn override up
