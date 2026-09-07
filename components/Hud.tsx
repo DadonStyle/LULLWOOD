@@ -36,10 +36,18 @@ export interface EngineHudState {
   winRevealed: boolean;
   deathVisible: boolean;
   deathKind: string;
+  // LUL-1194: what actually killed the player (dodge miss / forced hunt / run down
+  // mid-chase) -- the death screen names this, not deathKind's species; deathKind
+  // stays around for the #deathKind test hook (e2e/*.spec.ts key on it directly).
+  deathCause: 'charge' | 'hunt' | 'chase';
+  deathCarrying: boolean;   // LUL-1438: show carry-death clause on first carry death only
   lossRevealed: boolean;
   survivedSeconds: number;
   pace: number;
   fog: number;
+  // LUL-1709: live time-of-run pacing clock, plain "h:mm AM/PM" text -- ticks from
+  // dawn to full night over the run. Engine-driven like pace/fog above.
+  timeOfRunClock: string;
   soundOn: boolean;
   // LUL-40/LUL-382: hold-to-veil (mist ramp + follow-light dim + sight-detect cut),
   // engine-driven (see engine/forest-engine.js tick()) -- read-only here, there's no
@@ -83,11 +91,20 @@ export interface EngineHudState {
   embersBalance: number;
   embersDeeperLungsTier: number;
   lastPayout: RunPayout | null;
+  // LUL-1623: throwable distractions. heldThrowable gates the "holding a
+  // stone — click/tap to throw" prompt; canGrabThrowable gates the "pick up
+  // a stone" prompt, mirroring objectiveReady's role for the child.
+  heldThrowable: boolean;
+  canGrabThrowable: boolean;
   // LUL-1258: M2 Deepwater's minimal HUD panel. Both null whenever no mission
   // exists or the player is carrying (the engine never sends non-null values
   // in that case) -- Hud never has to know about `carrying` itself.
   missionKind: MissionKind | null;
   missionStatus: 'active' | 'complete' | null;
+  // LUL-1724: wind direction, engine-driven, map-constant (set once per
+  // generateMap(), pushed once -- not a per-frame value like veilCharge).
+  windX: number;
+  windZ: number;
 }
 
 export interface EngineActions {
@@ -103,6 +120,7 @@ export interface EngineActions {
   setTouchSprint: (v: boolean) => void;
   triggerTouchHide: () => void;
   triggerTouchInteract: () => void;
+  triggerTouchThrow: () => void;
   // LUL-529: mobile parity for jump/pause/mist-veil/toggle-run -- see
   // MobileControls.tsx and forest-engine.js's triggerTouchJump/Pause/ToggleRun
   // and setTouchVeil.
@@ -140,10 +158,13 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   winRevealed: false,
   deathVisible: false,
   deathKind: 'wolf',
+  deathCause: 'chase',
+  deathCarrying: false,
   lossRevealed: false,
   survivedSeconds: 0,
   pace: 6,
   fog: 0.04,
+  timeOfRunClock: '6:00 AM',
   soundOn: true,
   lightDimmed: false,
   veilCharge: 1,
@@ -167,14 +188,28 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   embersBalance: 0,
   embersDeeperLungsTier: 0,
   lastPayout: null,
+  heldThrowable: false,
+  canGrabThrowable: false,
   missionKind: null,
   missionStatus: null,
+  windX: 1,
+  windZ: 0,
 };
 
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
 // M1/M3/M4/M5 extends this map, not the render logic below.
 const MISSION_NAMES: Record<MissionKind, string> = {
   deepwater: 'Deepwater',
+};
+
+// LUL-1194: the death screen names the cause, not the species -- a death the
+// player can name produces "one more run," one they can't produces a closed
+// tab. Keyed on engine/forest-engine.js's triggerDeath() call sites (charge
+// dodge miss, the 30s force-hunt escalation, a normal chase run-down).
+const DEATH_CAUSE_TEXT: Record<EngineHudState['deathCause'], string> = {
+  charge: "you didn't clear its charge in time",
+  hunt: 'you went quiet too long, and it came looking',
+  chase: 'it ran you down before you could break away',
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -360,12 +395,29 @@ export default function Hud({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const captionVisible = useCaptionToast(state.captionsOn, state.captionId);
 
+  // LUL-1194: the keyboard is otherwise dead on end screens (isPlaying() gates
+  // every keydown branch in the engine on !won && !dead) -- focusing the
+  // restart button once the screen actually reveals gives Enter/Space a path
+  // back in for free via the browser's native focused-button activation.
+  // Deliberately keyed on *Revealed, not *Visible: focusing early (while the
+  // death screen is still opacity:0 during the unskippable first-death
+  // cutscene) would let a stray Enter restart through native button
+  // activation, bypassing the cutscene entirely.
+  const winRestartRef = useRef<HTMLButtonElement>(null);
+  const deathRestartRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (state.winRevealed) winRestartRef.current?.focus();
+  }, [state.winRevealed]);
+  useEffect(() => {
+    if (state.lossRevealed) deathRestartRef.current?.focus();
+  }, [state.lossRevealed]);
+
   return (
     <>
       <OrientationGate />
 
       {mobile ? (
-        <MobileControls actions={actions} entered={state.entered} runMode={state.runMode} />
+        <MobileControls actions={actions} entered={state.entered} runMode={state.runMode} heldThrowable={state.heldThrowable} />
       ) : (
         <DesktopControls />
       )}
@@ -417,6 +469,10 @@ export default function Hud({
         <span id="staminaState">
           Stamina: {Math.round(state.staminaCharge * 100)}%
         </span>
+        {/* LUL-1709: plain-text day/night pacing clock, ticks from dawn to night
+            over the run. Read-only readout, same one-directional engine->HUD
+            pattern as lightState/veilState/staminaState above it. */}
+        <span id="timeOfRunClock">Time: {state.timeOfRunClock}</span>
         {/* LUL-1043: the run currency's balance -- exempted from admin-mode's
             #panel hide the same way lightState/veilState are (GameCanvas.tsx),
             since this is core game progress, not a dev-tuning control. */}
@@ -511,6 +567,16 @@ export default function Hud({
         </div>
       )}
 
+      {state.entered && (
+        <div
+          id="windIndicator"
+          title="Wind direction -- move into the arrow to reduce your scent trail"
+          style={{ transform: `rotate(${Math.atan2(state.windZ, state.windX)}rad)` }}
+        >
+          {'→'}
+        </div>
+      )}
+
       {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;
           cover wins (engine enforces via !coverPromptVisible in veil condition).
           Key/button name uses the same #actionKey pill style as #chargeKey above.
@@ -556,6 +622,20 @@ export default function Hud({
         );
       })()}
 
+      {/* LUL-1623: holding-a-throwable affordance -- there's no held-item mesh
+          in first person, so this is the only way the player knows they're
+          carrying a stone. Styled like the existing pickup/interact prompt
+          (#objective.ready); own id/position (#throwPrompt, see GameCanvas.tsx's
+          OVERLAY_STYLE) since it can be visible at the same time as #objective
+          (e.g. "Find the lost child" while also holding a stone). */}
+      {state.heldThrowable && (
+        <div id="throwPrompt">
+          {mobile
+            ? <>{'Holding a stone — tap  '}<span id="throwKey">Throw</span></>
+            : <>{'Holding a stone — click to throw'}</>}
+        </div>
+      )}
+
       {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
           forces React to remount this element on every fresh charge (not on
           overlapping ones, see beginChargeHud in the engine), which restarts
@@ -594,7 +674,12 @@ export default function Hud({
             <h1>YOU WON</h1>
             <p>the child is safe — you carried them home through the Lullwood</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
-            <button className="restartBtn" onClick={() => actions?.restart()}>
+            <button
+              ref={winRestartRef}
+              className="restartBtn"
+              disabled={!state.winRevealed}
+              onClick={() => actions?.restart()}
+            >
               Play again
             </button>
             <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
@@ -607,10 +692,21 @@ export default function Hud({
           <div id="deathText" style={{ opacity: state.lossRevealed ? 1 : 0 }}>
             <h1>YOU LOSE</h1>
             <p>
-              a <span id="deathKind">{state.deathKind}</span> caught you in the dark
+              {/* LUL-1194: #deathKind carries species for the existing e2e hooks
+                  (e2e/*.spec.ts assert on it directly) but is no longer the copy
+                  shown to the player -- that's DEATH_CAUSE_TEXT below, keyed on
+                  the cause, not the animal. */}
+              <span id="deathKind" style={{ display: 'none' }}>{state.deathKind}</span>
+              {DEATH_CAUSE_TEXT[state.deathCause]}
+              {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
-            <button className="restartBtn" onClick={() => actions?.restart()}>
+            <button
+              ref={deathRestartRef}
+              className="restartBtn"
+              disabled={!state.lossRevealed}
+              onClick={() => actions?.restart()}
+            >
               Try again
             </button>
             <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />

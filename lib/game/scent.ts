@@ -109,3 +109,17 @@ export function isScentDetected(
   const r = scentPickupRadius(point.radius, age, lifetime, noseMultiplier);
   return dx * dx + dz * dz < r * r;
 }
+
+export const WIND_AGAINST_RADIUS_MULTIPLIER = 0.8; // CEO-accepted: 20% reduction
+
+/** True when a movement direction (mvx,mvz, need not be unit) is more against
+ * the wind than with it -- dot product with the wind unit vector is negative.
+ * Zero movement or exactly-perpendicular (dot === 0) is not "against". */
+export function isMovingAgainstWind(
+  mvx: number,
+  mvz: number,
+  windX: number,
+  windZ: number,
+): boolean {
+  return mvx * windX + mvz * windZ < 0;
+}

@@ -15,9 +15,8 @@
 // ---- Knobs ---------------------------------------------------------------
 export const CONFIG = {
   seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
-  mapSize: 240,          // the forest is a fixed square this many units across
-  bogDepth: 120,         // LUL-25: the bog band appended past the forest's +z edge
-  trees:   1300,
+  mapSize: 480,          // the forest is a fixed square this many units across
+  trees:   5200,
   walk:    6,            // walking speed (units/s); Shift multiplies it
   fog:     0.04,
   eye:     2.2,          // eye height
@@ -25,23 +24,41 @@ export const CONFIG = {
   trunk:   0x171b20,
   foliage: 0x102420,
   ground:  0x0c1117,
+  // LUL-874: keep this well clear of the map edge (half = mapSize/2 = 240).
+  // updatePredators()'s waypoint-pick sites clamp to map bounds, call
+  // keepWaypointOffLake() (lib/game/lake.ts) -- which can push a waypoint out
+  // to `r + margin` (~17 units) from the lake's center -- then clamp to
+  // bounds *again*. If the lake ever sat within that push distance of an
+  // edge, the second clamp could silently snap the waypoint back into the
+  // water, reopening the bug PR #183 fixed, with no test or CI signal since
+  // nothing currently asserts this. Today's (34,-28) is ~206 units from the
+  // nearest edge, comfortably clear -- re-check this distance before moving
+  // the lake or shrinking mapSize (wiki game/lul857-review-pr183).
   lake:    { x: 34, z: -28, r: 15, clear: 22, glow: 0x86b8ff },
   home:    { x: 0, z: 0, r: 3.6, glow: 0xffd9b0 },   // LUL-38: reuses the spawn point, no new rng draw
   carryPaceMul: 0.72,                                 // LUL-38: burden while carrying the child, not a cripple
 };
 
-// LUL-25: four fixed navigational landmarks, "visible over the fog line" so
+// LUL-25: six fixed navigational landmarks, "visible over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() in forest-engine.js).
 // Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home.
 // `cr` is the movement-collision radius (LUL-374) -- deliberately much
 // smaller than `clear` (which only keeps trees/cover from generating too
 // close to the landmark's nudge target).
+// LUL-1782: radioMast/chapelSteeple added when the map grew to 480x480
+// (LUL-1484) left everything past radius ~134 without a landmark, and the
+// child now spawns at radius 120-192 -- beyond the original four entirely.
+// Placed at radius ~178-179, in the two widest angular gaps between the
+// original four (the empty arc through `oak` at ~10 deg, and the empty arc
+// between `fireTower` at 225 deg and `stoneMarker` at 323 deg).
 export const LANDMARKS = [
-  { kind: 'fireTower',   x: -95, z: -95, clear: 12, cr: 1.6 },
-  { kind: 'stoneMarker', x: 100, z: -75, clear: 9,  cr: 1.1 },
-  { kind: 'oak',         x: -65, z: 135, clear: 10, cr: 1.3 },
-  { kind: 'drownedCar',  x: 55,  z: 205, clear: 11, cr: 2.3 },
+  { kind: 'fireTower',     x: -95, z: -95, clear: 12, cr: 1.6 },
+  { kind: 'stoneMarker',   x: 100, z: -75, clear: 9,  cr: 1.1 },
+  { kind: 'oak',           x: 22,  z: 4,   clear: 10, cr: 1.3 },
+  { kind: 'drownedCar',    x: -95, z: 46,  clear: 11, cr: 2.3 },
+  { kind: 'radioMast',     x: 30,  z: 175, clear: 10, cr: 1.0 },
+  { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
 
 // ---- Lighting --------------------------------------------------------------
@@ -78,8 +95,8 @@ export const LW = 50;             // lake wisps
 export const DUST = 350;          // ambient dust particles
 export const BW = 26;             // baby beacon wisps
 export const BSP = 70;            // win-burst particles
-export const BOG_TREES = 90;
-export const COVER_PROPS = 220;
+export const BOG_TREES = 360;
+export const COVER_PROPS = 880;
 
 // LUL-195: wind silently decides scent outcomes; the ambient dust drift is the
 // only player-visible tell. Speed is tuned for legibility, not to match
