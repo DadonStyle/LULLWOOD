@@ -154,7 +154,8 @@ function ActionBtn({ label, onTap, testId, small }: ActionBtnProps) {
     background: 'rgba(180,200,230,0.14)',
     border: '1.5px solid rgba(180,200,230,0.28)',
     color: 'rgba(185,200,221,0.9)',
-    fontSize: small ? 10 : 11,
+    // LUL-1088: was 10/11px -- under lib/ui/hygiene.ts's MIN_FONT_PX (12) floor.
+    fontSize: 12,
     fontFamily: 'inherit',
     letterSpacing: '0.05em',
     display: 'flex',
@@ -197,7 +198,8 @@ function HoldBtn({ label, onHold, testId }: { label: string; onHold: (v: boolean
     background: 'rgba(180,200,230,0.14)',
     border: '1.5px solid rgba(180,200,230,0.28)',
     color: 'rgba(185,200,221,0.9)',
-    fontSize: 11,
+    // LUL-1088: was 11px -- under lib/ui/hygiene.ts's MIN_FONT_PX (12) floor.
+    fontSize: 12,
     fontFamily: 'inherit',
     letterSpacing: '0.05em',
     display: 'flex',
@@ -242,10 +244,12 @@ export default function MobileControls({
   actions,
   entered,
   runMode,
+  heldThrowable,
 }: {
   actions: EngineActions | null;
   entered: boolean;
   runMode: 'hold' | 'toggle';
+  heldThrowable: boolean;
 }) {
   if (!actions) return null;
 
@@ -307,6 +311,12 @@ export default function MobileControls({
           {entered && (
             <div style={row}>
               <ActionBtn label="E" onTap={() => actions.triggerTouchInteract()} />
+              {/* LUL-1623: only visible while actually holding a throwable --
+                  grab itself reuses the Interact ("E") button above via the
+                  engine's own context-dispatch, no separate grab button. */}
+              {heldThrowable && (
+                <ActionBtn label="Throw" onTap={() => actions.triggerTouchThrow()} />
+              )}
               {/* LUL-213/LUL-529: jump is the only way to clear a charging
                   wolf/lion -- survival-critical, not cosmetic, so it sits in
                   the same reachable row as pickup rather than being buried. */}
