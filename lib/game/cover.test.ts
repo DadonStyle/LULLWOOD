@@ -579,6 +579,39 @@ test('canopyBlockedR: an entry with no crCanopy (e.g. a landmark) never blocks -
   assert.equal(canopyBlockedR(0, 0, grid), false);
 });
 
+// LUL-273: crCanopy is baked at map-gen time for a fixed CONFIG.eye (2.2),
+// but eyeH is damped, not snapped, so it briefly sits well below 2.2 right
+// after exiting a hide spot while moving. During that window the true safe
+// radius is wider than the cached crCanopy (the cone tapers -- a lower eye
+// height sits closer to the wider base). Passing the live eye height + the
+// canopy geometry recomputes the radius on the spot instead of trusting the
+// stale cache.
+const geo = { canopyR: 1, cone1Height: 4, apexY: 2 }; // canopyRadiusAtEye(s,eye) = 0.25*(2s-eye)
+test('canopyBlockedR: with no eye/geo passed, falls back to the cached crCanopy (baked for CONFIG.eye) and under-protects during the transition', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 0.3, crCanopy: 0.45, s: 2 }]); // crCanopy = canopyRadiusAtEye(2, 2.2, geo)
+  assert.equal(canopyBlockedR(0.5, 0, grid), false); // 0.5 > cached 0.45 -- misses it
+});
+
+test('canopyBlockedR: with live eye + geo passed, recomputes the wider transitional radius and catches what the cache misses', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 0.3, crCanopy: 0.45, s: 2 }]);
+  // eyeH mid-transition back up from 1.05 toward CONFIG.eye (2.2)
+  assert.equal(canopyBlockedR(0.5, 0, grid, CELL, 1.2, geo), true); // live radius = 0.25*(4-1.2) = 0.7 > 0.5
+});
+
+test('canopyBlockedR: an entry with no scale (s) falls back to the cached crCanopy even when eye/geo are passed', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 5, crCanopy: 0.45 }]); // no s -- e.g. a landmark
+  assert.equal(canopyBlockedR(0.5, 0, grid, CELL, 1.2, geo), false);
+});
+
+test('blocked: forwards eye/geo through to canopyBlockedR, catching the same transitional under-protection', () => {
+  // cr=0.3 keeps the trunk check (cr+PLAYER_COLLISION_RADIUS 0.6 = 0.9) clear
+  // of the query point at distance 1.0, so only the canopy check is at play.
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 0.3, crCanopy: 0.95, s: 3 }]);
+  const coverGrid = makeGrid<CoverAABB>([]);
+  assert.equal(blocked(1.0, 0, grid, coverGrid), false); // no eye/geo -- cached (0.95), misses
+  assert.equal(blocked(1.0, 0, grid, coverGrid, CELL, 1.2, geo), true); // live (1.2) -- catches it
+});
+
 test('blocked: true from the tree-circle check alone', () => {
   const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 1 }]);
   const coverGrid = makeGrid<CoverAABB>([]);
