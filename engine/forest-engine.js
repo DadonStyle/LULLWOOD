@@ -61,6 +61,7 @@ import {
   HIDE_KINDS,
   CELL,
   gridKey as key,
+  neighbourhood,
   blockedR as geoBlockedR,
   blocked as geoBlocked,
   blockedForPredator as geoBlockedForPredator,
@@ -71,8 +72,10 @@ import {
   COVER_URGENT_RANGE,
   COVER_PROBE_HZ,
 } from '@/lib/game/cover';
+import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
+import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
   biomeAt,
   bogSpeedMultiplier,
@@ -93,6 +96,8 @@ import {
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
   SNIFF_IMMUNITY_TIME,
+  SNIFF_STATUS_RANGE,
+  sniffStandoffPoint,
   stepApproach,
   stepFlankHold,
   stepSniffLoop,
@@ -141,6 +146,8 @@ import {
   fogTideFogBoost,
   fogTideDroneGainMul,
   fogTideWindGainMul,
+  fogTideAmountAt,
+  fogTideBuildAt,
 } from '@/lib/game/fogTide';
 import {
   timeOfDayFromHour,
@@ -154,7 +161,7 @@ import {
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
   STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
-  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END,
+  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -203,6 +210,13 @@ const margin = 4;
 // site-by-site rename -- it is not a second world boundary, just an alias.
 // inBog()/isInBog() are gone; biomeAt(x, z) (lib/game/bog.ts) replaces both.
 const zMax = half;
+// LUL-1485: collapses every distance/LOS/detection call below to today's
+// exact behavior (Infinity is a no-op by construction, see lib/game/wrap.ts)
+// while the flag is off. Hard-bound clamp sites (world wall, waypoints,
+// backoff/flank retreat points) branch on Number.isFinite(WRAP_SPAN)
+// explicitly instead, since clamp-with-margin and wrap are different
+// formulas, not the same one parameterized by span.
+const WRAP_SPAN = CONFIG.wrapEnabled ? CONFIG.mapSize : Infinity;
 // LUL-25: six fixed navigational landmarks (two added by LUL-1782), "visible
 // over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
@@ -429,13 +443,6 @@ const CANOPY_GEO = { canopyR: CANOPY_R, cone1Height: CONE1_HEIGHT, apexY: CONE1_
 const trunkMat   = new THREE.MeshStandardMaterial({ color: CONFIG.trunk,   roughness: 1 });
 const foliageMat = new THREE.MeshStandardMaterial({ color: CONFIG.foliage, roughness: 1 });
 
-const parts = [
-  new THREE.InstancedMesh(trunkGeo, trunkMat,   CONFIG.trees),
-  new THREE.InstancedMesh(cone1Geo, foliageMat, CONFIG.trees),
-  new THREE.InstancedMesh(cone2Geo, foliageMat, CONFIG.trees),
-];
-parts.forEach(p => { p.frustumCulled = false; scene.add(p); });
-
 // ---- Bog tree cover (LUL-25) -----------------------------------------------
 // Same trunk/foliage geometry, own InstancedMesh trio sized much smaller than
 // CONFIG.trees -- "thinner tree cover" per the ticket. A separate pool, not a
@@ -561,16 +568,16 @@ function buildGrid(){
 // skip (coverKindBlocksMovement(), imported above) is preserved inside
 // cover.ts's own coverBlockedR(), so geoBlocked() below still treats 'log'
 // as non-blocking, same as release/next did before this extraction.
-function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid); }
+function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid,CELL,WRAP_SPAN); }
 // LUL-273: pass the live eyeH (not a fixed CONFIG.eye) so canopyBlockedR()
 // recomputes each tree's canopy radius against the player's actual current
 // eye height -- fixes the under-protection window right after exiting a
 // hide spot while moving, while eyeH is still lerping back up from 1.05.
-function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid,CELL,eyeH,CANOPY_GEO); }
+function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid,CELL,eyeH,CANOPY_GEO,WRAP_SPAN); }
 // LUL-1643: predator movement now consults cover the same way blocked() does
 // for the player, minus canopyBlockedR (camera-only, LUL-267 -- see
 // blockedForPredator()'s own comment in cover.ts for why canopy stays excluded).
-function predatorBlocked(x,z,pr){ return geoBlockedForPredator(x,z,pr,grid,coverGrid); }
+function predatorBlocked(x,z,pr){ return geoBlockedForPredator(x,z,pr,grid,coverGrid,CELL,WRAP_SPAN); }
 
 function buildCoverGrid(){
   coverGrid = new Map();
@@ -610,14 +617,7 @@ function buildCoverGrid(){
 // the exact set and layout of cover props for a given seed will shift from
 // pre-fix `main` wherever a rejected overlap used to land. That is the fix
 // working, not a regression.
-function treesNear(x, z){
-  const cx = Math.floor(x/CELL), cz = Math.floor(z/CELL);
-  const nearby = [];
-  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
-    const arr = grid.get(key(gx,gz)); if(arr) nearby.push(...arr);
-  }
-  return nearby;
-}
+function treesNear(x, z){ return neighbourhood(grid, x, z, CELL, WRAP_SPAN); }
 function generateCover(){
   coverData = [];
   for(const t of treeData) if(t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
@@ -724,6 +724,88 @@ function layoutTreePool(meshParts, data, count){
   if(meshParts[1].instanceColor) meshParts[1].instanceColor.needsUpdate = true;
   if(meshParts[2].instanceColor) meshParts[2].instanceColor.needsUpdate = true;
 }
+// ---- E6: chunk the main forest pool so three.js can frustum-cull whole chunks ----
+// FogExp2 (density 0.04) already hides anything past ~40-60 units; the old single
+// map-spanning InstancedMesh submitted all 5200 trees every frame regardless
+// (frustumCulled=false, because a single mesh spanning the whole map is *always*
+// at least partly in view, so per-mesh culling was never an option before this).
+// Chunking lets the renderer skip whole chunks that are outside the view frustum
+// for free -- no new per-frame code, exactly the win the ticket asks for.
+const TREE_CHUNK_SIZE = 60;   // world units/edge; CONFIG.mapSize=480 -> 8x8 = 64 chunks
+const TREE_CHUNKS_PER_AXIS = Math.ceil(CONFIG.mapSize / TREE_CHUNK_SIZE);
+
+function treeChunkIndex(x, z){
+  const cx = Math.min(TREE_CHUNKS_PER_AXIS-1, Math.max(0, Math.floor((x+half)/TREE_CHUNK_SIZE)));
+  const cz = Math.min(TREE_CHUNKS_PER_AXIS-1, Math.max(0, Math.floor((z+half)/TREE_CHUNK_SIZE)));
+  return cx*TREE_CHUNKS_PER_AXIS + cz;
+}
+
+// Sparse array indexed by chunk id; each populated entry is [trunk, cone1, cone2]
+// for that chunk, or absent/undefined for a chunk with zero trees in it.
+let treeChunkTrios = [];
+
+function layoutTreeChunks(data){
+  // Regenerate on every generateMap() call (restart/new seed draws a different
+  // tree count and placement per chunk) -- dispose the previous chunk meshes'
+  // own instanceMatrix/instanceColor GPU buffers via .dispose() before dropping
+  // the reference. Do NOT call .geometry.dispose() or .material.dispose() here:
+  // trunkGeo/cone1Geo/cone2Geo/trunkMat/foliageMat are shared with every other
+  // chunk AND with bogParts -- disposing them would break the bog tree pool.
+  for(const trio of treeChunkTrios){
+    if(!trio) continue;
+    for(const m of trio){ scene.remove(m); m.dispose(); }
+  }
+  treeChunkTrios = [];
+
+  const nChunks = TREE_CHUNKS_PER_AXIS * TREE_CHUNKS_PER_AXIS;
+  const buckets = Array.from({length: nChunks}, () => []);
+  // Bucketing reads only t.x/t.z, already fixed in `data` before this runs --
+  // no rng() draw here, so this cannot perturb the seeded stream.
+  for(let i=0; i<data.length; i++) buckets[treeChunkIndex(data[i].x, data[i].z)].push(i);
+
+  const localIndex = new Array(data.length);
+  for(let c=0; c<nChunks; c++) buckets[c].forEach((treeIdx, slot) => { localIndex[treeIdx] = slot; });
+
+  for(let c=0; c<nChunks; c++){
+    const count = buckets[c].length;
+    if(count === 0) continue;
+    const trio = [
+      new THREE.InstancedMesh(trunkGeo, trunkMat,   count),
+      new THREE.InstancedMesh(cone1Geo, foliageMat, count),
+      new THREE.InstancedMesh(cone2Geo, foliageMat, count),
+    ];
+    // frustumCulled left at the Object3D default (true) -- this is the whole point.
+    trio.forEach(m => scene.add(m));
+    treeChunkTrios[c] = trio;
+  }
+
+  // Same rng() draw, same order (tree index 0..data.length-1), same count as the
+  // old layoutTreePool loop -- only the destination mesh/slot differs, and that's
+  // decided above from x/z alone. This is why NO QA_PINNED_SEED re-pin is needed:
+  // the RNG stream this produces is byte-identical to before this ticket.
+  for(let i=0; i<data.length; i++){
+    const t = data[i];
+    dummy.position.set(t.x, 0, t.z);
+    dummy.rotation.set(0, rng()*Math.PI*2, 0);
+    dummy.scale.setScalar(t.s);
+    dummy.updateMatrix();
+    const trio = treeChunkTrios[treeChunkIndex(t.x, t.z)];
+    const slot = localIndex[i];
+    for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
+    const b = 0.72 + rng()*0.5;
+    tintCol.setRGB(b*0.92, b, b*0.86);
+    trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
+  }
+
+  for(const trio of treeChunkTrios){
+    if(!trio) continue;
+    for(const m of trio){
+      m.instanceMatrix.needsUpdate = true;
+      if(m.instanceColor) m.instanceColor.needsUpdate = true;
+      m.computeBoundingSphere();   // static after layout -- compute once, not per frame
+    }
+  }
+}
 // ---- Bog map band (LUL-25) --------------------------------------------------
 // generateBogTrees()/generateReeds()/applyHardBabySpawn() are all called from
 // the tail of generateMap(), strictly after every existing rng() draw (baby,
@@ -814,7 +896,7 @@ function generateMap(seed){
     const s = 0.7 + rng()*1.7;
     treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
-  layoutTreePool(parts, treeData, CONFIG.trees);
+  layoutTreeChunks(treeData);
   buildGrid();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
@@ -930,6 +1012,22 @@ function buildSplitOak(){
   const glow = new THREE.PointLight(0xcfe6ff, 0.4 * LEGACY_LIGHT_SCALE, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
   return g;
 }
+// LUL-1855: soft radial-gradient canvas texture for the radio mast's
+// fog-exempt beacon glow (see buildRadioMast() below) -- same canvas-texture
+// idiom already used for the sky gradient above (:306-312), applied to a
+// small square instead, so the sprite reads as a soft point of light rather
+// than a hard-edged disc.
+function buildBeaconGlowTexture(hex){
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const col = '#' + hex.toString(16).padStart(6, '0');
+  const grd = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, col); grd.addColorStop(0.4, col); grd.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grd; ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+let radioMastBeaconGlow = null;   // LUL-1855: sprite ref for tick()'s pulse, set once below
 function buildRadioMast(){
   const g = new THREE.Group();
   const mastMat = new THREE.MeshStandardMaterial({ color: 0x4a4f55, roughness: 0.8, metalness: 0.4 });
@@ -941,6 +1039,20 @@ function buildRadioMast(){
   }
   const beacon = new THREE.PointLight(0xff2a2a, 0.5 * LEGACY_LIGHT_SCALE, 18, 2);
   beacon.position.set(0, 11.2, 0); g.add(beacon);
+  // LUL-1855: fog-exempt beacon glow -- the PointLight above only lights
+  // surfaces within its 18-unit cutoff, which FogExp2 erases by ~43 units
+  // anyway (wiki game/mechanics/landmarks-below-the-fog-line). This sprite is
+  // a separate, unlit, fog:false marker so the beacon stays visible past the
+  // fog line as a bearing, not a lit scene -- same idiom as stars/moon
+  // (:318, :323-325) and the win burst (:1061-1067).
+  radioMastBeaconGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: buildBeaconGlowTexture(RADIO_MAST_BEACON_GLOW.color),
+    transparent: true, opacity: RADIO_MAST_BEACON_GLOW.opacityBase,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+  }));
+  radioMastBeaconGlow.position.set(0, 11.2, 0);
+  radioMastBeaconGlow.scale.set(RADIO_MAST_BEACON_GLOW.scale, RADIO_MAST_BEACON_GLOW.scale, 1);
+  g.add(radioMastBeaconGlow);
   g.rotation.z = 0.05;   // slight lean
   return g;
 }
@@ -1173,7 +1285,7 @@ function makePredator(kind){
   return { g, kind, spec:s, legs, neck, head, torso, tail, tail2, rad:s.rad,
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:rng()*6, spotted:false, callTimer:0,
-    inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
+    inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0, standX:0, standZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
@@ -1186,6 +1298,7 @@ const predators = [];
 // need to re-derive array position every restart.
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
 let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
+let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
 let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
 let coverAmt = 0;   // LUL-144: eased 0..1 desaturation driven by the cover-feedback scan below
 function placePredators(){
@@ -1226,7 +1339,7 @@ function placePredators(){
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   mm.style.display = preset.minimap ? '' : 'none';
-  sinceClose = 0; huntTime = 0; spotFlash = 0;
+  sinceClose = 0; huntTime = 0; spotFlash = 0; bearingPulseT = 0; bearingPulseSide = null;
   activeCharges = 0; pushState({ chargeVisible: false });
 }
 // steer a desired direction around trees the predator would otherwise walk into
@@ -1234,7 +1347,7 @@ function placePredators(){
 // (pickAvoidDirection, unit tested there) -- this stays a thin wrapper that
 // injects the engine's own tree/landmark `grid` closure state, same pattern
 // as blockedR/blocked/hasLOS/findHideSpot above.
-function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz, grid, coverGrid); }
+function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz, grid, coverGrid, CELL, undefined, undefined, WRAP_SPAN); }
 // ---- Scent trail + wind (LUL-23) ------------------------------------------
 // The player leaves scent while moving (see the deposit call in tick()'s
 // movement block -- nothing is deposited while `hidden` or standing still, so
@@ -1277,7 +1390,7 @@ function depositScent(hot, againstWind){
 function checkScent(p){
   for(let i = scentPoints.length - 1; i >= 0; i--){
     const s = scentPoints[i], age = clock.elapsedTime - s.t0;
-    if(isScentDetected(s, age, p.x, p.z, windX, windZ, p.spec.nose)) return true;
+    if(isScentDetected(s, age, p.x, p.z, windX, windZ, p.spec.nose, SCENT_LIFETIME, WRAP_SPAN)) return true;
   }
   return false;
 }
@@ -1325,13 +1438,9 @@ function hearNoise(p){
   p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
   leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
   if(captionsOn){
-    const dx = p.x - player.x, dz = p.z - player.z, dist = Math.hypot(dx, dz);
-    const near = dist < 30 ? 'near' : 'far';
-    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
-    const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-    const fwd = dx*fx + dz*fz, right = dx*rx + dz*rz;
-    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
-    pushState({ caption: `${p.kind} heard you · ${near} · ${side}`, captionId: ++captionSeq });
+    const b = bearingOf(p.x, p.z, player.x, player.z, player.yaw);
+    const near = b.dist < 30 ? 'near' : 'far';
+    pushState({ caption: `${p.kind} heard you · ${near} · ${b.side}`, captionId: ++captionSeq });
   }
 }
 // LUL-1623: same investigate/approach/sniff/back loop as hearNoise(), but the
@@ -1411,18 +1520,20 @@ function missionWaypointHum(m, distToPlayer){
 // search treats smoke/flare tools as breaking line-of-sight specifically) --
 // a predator can still scent-lock you through the veil, keeping scent-trail
 // play (LUL-23/LUL-65) meaningful.
-function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid); }
-function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid); }
-// LUL-27: fogTideDetectMul(fogTideAmount) stacks the same way veilDetectMul
-// already does -- multiplicatively, sight only. A player who's also holding
-// the veil during a tide gets both cuts; that's intended, not a double-count
-// bug (the two systems represent different things -- a spent resource vs. a
-// free world event -- and nothing says they shouldn't compound).
+function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid,CELL,WRAP_SPAN); }
+function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN); }
+// LUL-27: fogTideDetectMul(fogTideAmountAt(p.x, p.z, ...)) stacks the same way
+// veilDetectMul does -- multiplicatively, sight only. A player who's also
+// holding the veil during a tide gets both cuts; that's intended, not a
+// double-count bug (the two systems represent different things -- a spent
+// resource vs. a free world event -- and nothing says they shouldn't
+// compound). LUL-1486: the tide amount is now sampled at the predator's own
+// position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
 function effectiveDetect(p){
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying });
 }
 function canSee(p, dist){
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -1456,7 +1567,7 @@ function updateWolfPack(dt){
   for(const p of wolves){
     if(p === leader || chasers.includes(p)) continue;   // already hunting on its own -- not a flanker
     if(p.packTimer > 0) continue;                        // recompute cap
-    const [fx, fz] = flankTarget(player.x, player.z, escX, escZ, side, p.x, p.z, { half, zMax });
+    const [fx, fz] = flankTarget(player.x, player.z, escX, escZ, side, p.x, p.z, { half, zMax }, WRAP_SPAN);
     side *= -1;
     p.flankX = fx; p.flankZ = fz;
     p.state = 'flank'; p.inv = ''; p.packTimer = FLANK_RECOMPUTE;
@@ -1474,7 +1585,7 @@ function updatePredators(dt, noiseRadius){
   updateWolfPack(dt);
   for(const p of predators){
     if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
-    const dx = player.x - p.x, dz = player.z - p.z, dist = Math.hypot(dx, dz) || 0.0001;
+    const dx = wrapDelta(player.x, p.x, WRAP_SPAN), dz = wrapDelta(player.z, p.z, WRAP_SPAN), dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
     // LUL-1309: predators wade too -- same per-position terrain sample the
     // player already gets at :3173/:3179, applied to this predator's own (x,z).
@@ -1590,9 +1701,11 @@ function updatePredators(dt, noiseRadius){
           const distFromLkp = Math.hypot(player.x - p.lkpX, player.z - p.lkpZ);
           const pick = pickRoamWaypoint(rng, p.x, p.z, p.lkpX, p.lkpZ, p.lkpSweeps, distFromLkp, half);
           p.lkpSweeps = pick.sweepsLeft;
-          let nwx=clamp(pick.x,-half+4,half-4), nwz=clamp(pick.z,-half+4,zMax-4);
+          let nwx = Number.isFinite(WRAP_SPAN) ? wrapCoord(pick.x, WRAP_SPAN) : clamp(pick.x,-half+4,half-4);
+          let nwz = Number.isFinite(WRAP_SPAN) ? wrapCoord(pick.z, WRAP_SPAN) : clamp(pick.z,-half+4,zMax-4);
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
-          p.wpx=clamp(kept.x,-half+4,half-4); p.wpz=clamp(kept.z,-half+4,zMax-4); }
+          p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.x, WRAP_SPAN) : clamp(kept.x,-half+4,half-4);
+          p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.z, WRAP_SPAN) : clamp(kept.z,-half+4,zMax-4); }
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
       }
     } else if(p.state === 'chase'){
@@ -1630,7 +1743,7 @@ function updatePredators(dt, noiseRadius){
         // predators never physically collide with cover (LUL-119/LUL-211).
         if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, 'chase'); }   // LUL-1194: run down mid-chase, in the open
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
-        if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
+        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -1643,11 +1756,13 @@ function updatePredators(dt, noiseRadius){
       // ticket is explicit: don't retune this loop's timing.
       //
       // LUL-562: restricted to the 'sniff'/'back' sub-phases this comment is
-      // actually about -- a freshly-entered 'approach' (every chase->investigate
-      // transition sets p.inv='approach') used to hit this same instant revert
-      // before its own movement branch below ever ran, and chase's re-entry
-      // condition was still true a frame later since nothing had moved --
-      // volleying chase<->investigate forever at zero velocity. See
+      // actually about (LUL-1090 added 'standoff' to that same set -- see
+      // shouldRevertInvestigateToChase()'s comment for why it's safe there) --
+      // a freshly-entered 'approach' (every chase->investigate transition sets
+      // p.inv='approach') used to hit this same instant revert before its own
+      // movement branch below ever ran, and chase's re-entry condition was
+      // still true a frame later since nothing had moved -- volleying
+      // chase<->investigate forever at zero velocity. See
       // shouldRevertInvestigateToChase()'s comment in lib/game/predator.ts and
       // wiki game/lul223-chase-investigate-livelock for the confirmed repro.
       if(shouldRevertInvestigateToChase(p.inv, hidden)){ p.state='chase'; }
@@ -1672,11 +1787,28 @@ function updatePredators(dt, noiseRadius){
         }
         const step = stepApproach(aux, auz, p.spec.speed*pLakeMul, adist, p.rad);
         desx = step.desx; desz = step.desz; speed = step.speed;
-        if(step.enterSniff){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
+        if(step.enterSniff){
+          // LUL-1090: a hidden player gets walked back to SNIFF_STANDOFF
+          // before the predator settles into 'sniff' -- stepApproach() alone
+          // stops at rad+SNIFF_APPROACH_MARGIN, only 2.5-3.2 units out. A
+          // player caught in the open (not hidden) is unaffected: this
+          // predator has them in the open and should still close.
+          const standoff = hidden ? sniffStandoffPoint(p.x, p.z, aux, auz, adist, half, zMax) : null;
+          if(standoff){ p.inv='standoff'; [p.standX, p.standZ] = standoff; }
+          else { p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
+        }
         if(p.noiseTarget){
           p.noiseTargetT -= dt;
           if(p.noiseTargetT <= 0 || step.enterSniff) p.noiseTarget = null;
         }
+      } else if(p.inv === 'standoff'){
+        // LUL-1090: walk to the standoff point computed above, facing the
+        // player the whole way (retreating from a threat while watching it),
+        // then settle into the normal sniff loop unchanged.
+        facePlayer = true;
+        const sx=p.standX-p.x, sz=p.standZ-p.z, sd=Math.hypot(sx,sz);
+        if(sd < 2){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
+        else { desx=sx/sd; desz=sz/sd; speed=p.spec.speed*0.45*pLakeMul; }
       } else if(p.inv === 'sniff'){
         facePlayer = true; p.sniffTimer -= dt;
         const sniffOutcome = stepSniffLoop(p.sniffTimer, p.sniffsLeft);
@@ -1684,7 +1816,7 @@ function updatePredators(dt, noiseRadius){
           p.sniffsLeft = sniffOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
-            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax); }
+            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN); }
           else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         }
       } else if(p.inv === 'back'){
@@ -1735,7 +1867,8 @@ function updatePredators(dt, noiseRadius){
     p.vx += (dvx - p.vx) * Math.min(1, dt*accel);
     p.vz += (dvz - p.vz) * Math.min(1, dt*accel);
     const px0 = p.x, pz0 = p.z;
-    const nx = clamp(p.x + p.vx*dt, -half+2, half-2), nz = clamp(p.z + p.vz*dt, -half+2, zMax-2);
+    const nx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + p.vx*dt, WRAP_SPAN) : clamp(p.x + p.vx*dt, -half+2, half-2);
+    const nz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + p.vz*dt, WRAP_SPAN) : clamp(p.z + p.vz*dt, -half+2, zMax-2);
     const blockedX = predatorBlocked(nx, p.z, p.rad), blockedZ = predatorBlocked(p.x, nz, p.rad);
     if(!blockedX) p.x = nx;
     if(!blockedZ) p.z = nz;
@@ -1752,11 +1885,11 @@ function updatePredators(dt, noiseRadius){
         const back = p.trail[0] || [p.x - ux*6, p.z - uz*6];
         p.rrX = back[0]; p.rrZ = back[1]; p.reroute = 1.4; p.stuckT = 0;
         // fresh, different waypoint (LUL-857: kept off the water same as the roam pick above)
-        const freshx = clamp(p.x + (rng()-0.5)*40, -half+4, half-4);
-        const freshz = clamp(p.z + (rng()-0.5)*40, -half+4, zMax-4);
+        const freshx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.x + (rng()-0.5)*40, -half+4, half-4);
+        const freshz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.z + (rng()-0.5)*40, -half+4, zMax-4);
         const freshKept = keepWaypointOffLake(freshx, freshz, CONFIG.lake);
-        p.wpx = clamp(freshKept.x, -half+4, half-4);
-        p.wpz = clamp(freshKept.z, -half+4, zMax-4);
+        p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.x, WRAP_SPAN) : clamp(freshKept.x, -half+4, half-4);
+        p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.z, WRAP_SPAN) : clamp(freshKept.z, -half+4, zMax-4);
       }
     }
 
@@ -1828,9 +1961,10 @@ function updatePredators(dt, noiseRadius){
     if(p.inert) continue;
     const others = predators.filter(q => q !== p && !q.inert);
     if(!others.length) continue;
-    const [pushX, pushZ] = predatorSeparationPush(p.x, p.z, p.rad, others);
+    const [pushX, pushZ] = predatorSeparationPush(p.x, p.z, p.rad, others, WRAP_SPAN);
     if(!pushX && !pushZ) continue;
-    const nx = clamp(p.x + pushX, -half+2, half-2), nz = clamp(p.z + pushZ, -half+2, zMax-2);
+    const nx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + pushX, WRAP_SPAN) : clamp(p.x + pushX, -half+2, half-2);
+    const nz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + pushZ, WRAP_SPAN) : clamp(p.z + pushZ, -half+2, zMax-2);
     if(!predatorBlocked(nx, p.z, p.rad)) p.x = nx;
     if(!predatorBlocked(p.x, nz, p.rad)) p.z = nz;
     p.g.position.x = p.x; p.g.position.z = p.z;
@@ -2285,20 +2419,18 @@ function announceCaption(kind, big, p){
   let where;
   if(!p){ where = 'right on you'; }
   else {
-    const dx = p.x - player.x, dz = p.z - player.z, dist = Math.hypot(dx, dz);
-    const near = dist < 30 ? 'near' : 'far';
-    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
-    const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-    const fwd = dx*fx + dz*fz, right = dx*rx + dz*rz;
-    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
-    where = `${near} · ${side}`;
+    const b = bearingOf(p.x, p.z, player.x, player.z, player.yaw);
+    const near = b.dist < 30 ? 'near' : 'far';
+    where = `${near} · ${b.side}`;
   }
   pushState({ caption: `${kind} ${verb}${big ? ' (close)' : ''} · ${where}`, captionId: ++captionSeq });
 }
 function predatorCall(kind, big, p){
   if(captionsOn) announceCaption(kind, big, p);
   if(!audio || !soundOn) return;
-  const { ctx, master, conv } = audio, t = ctx.currentTime, vol = big ? 1.0 : 0.6;
+  const { ctx, master, conv } = audio, t = ctx.currentTime;
+  const baseVol = big ? 1.0 : 0.6;
+  const vol = p ? baseVol * callVolumeMul(Math.hypot(p.x - player.x, p.z - player.z)) : baseVol;
   if(kind === 'wolf'){                              // howl: gliding tone with vibrato
     const o=ctx.createOscillator(); o.type='sawtooth';
     o.frequency.setValueAtTime(300,t); o.frequency.linearRampToValueAtTime(560,t+0.4);
@@ -2384,15 +2516,23 @@ function spotSting(){
   lo.connect(lg); lg.connect(master); lo.start(t); lo.stop(t+0.45);
 }
 // a dissonant piano note; caller raises pitch/volume as the animal gets nearer
-function pianoNote(freq, vol){
+// LUL-1308: `pan` (defaults to 0, center) feeds a single shared StereoPannerNode --
+// one node total for the whole note, not one per oscillator/harmonic, per the
+// design doc's "costs one node" budget. Only the dry path (`master`) is panned;
+// the reverb send (`conv`) stays unpanned, same as before -- a convolution
+// reverb's own diffuse character does the work there, panning it too would just
+// smear the direct cue's localization.
+function pianoNote(freq, vol, pan = 0){
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t = ctx.currentTime;
+  const panner = ctx.createStereoPanner(); panner.pan.value = Math.max(-1, Math.min(1, pan));
+  panner.connect(master);
   const parts = [[1,1],[2,0.5],[3,0.25],[4,0.12]];
   const play = (f, amp) => parts.forEach(([h,ha]) => { const o=ctx.createOscillator(); o.type='sine';
     o.frequency.value = f*h*(1+0.0007*h*h);
     const g=ctx.createGain(); const a=amp*ha*vol; g.gain.setValueAtTime(0.0001,t);
     g.gain.exponentialRampToValueAtTime(a, t+0.005); g.gain.exponentialRampToValueAtTime(0.0001, t+1.6);
-    o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+1.65); });
+    o.connect(g); g.connect(panner); g.connect(conv); o.start(t); o.stop(t+1.65); });
   play(freq, 0.12); play(freq*1.414, 0.05);   // + tritone shadow for dread
 }
 // big explosion when the child bursts into the sky
@@ -2581,6 +2721,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       calls: renderer.info.render.calls,
       triangles: renderer.info.render.triangles,
       elapsedTime: clock.elapsedTime,
+    };
+  };
+
+  // LUL-1487 (E6): sanity check the chunked tree pool retains exactly one
+  // instance per generated tree -- no silent drop or double-count in the
+  // chunk bucketing.
+  window.ForestEngine.qaProbeTreeChunks = function(){
+    const trios = treeChunkTrios.filter(Boolean);
+    return {
+      chunks: trios.length,
+      totalInstances: trios.reduce((n, t) => n + t[0].count, 0),
+      expected: treeData.length,
     };
   };
 
@@ -3192,6 +3344,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
 const spotFlashEl = document.getElementById('spotFlash');
+const bearingPulseEl = document.getElementById('bearingPulse');
 const deathVideo = document.getElementById('deathVideo');
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
@@ -3618,6 +3771,9 @@ function tick(){
     playerLight.intensity = cfg.intensity;
     playerLight.distance = cfg.distance;
     pushState({ lightDimmed });
+    // LUL-1317: mirrors enterHide's feature_engagement('hide') -- fires once per
+    // activation (the rising edge), not every frame the veil is held.
+    if(dimmed) track({ event: 'feature_engagement', feature: 'veil', action: 'used' });
   }
   dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
   applyVignette(dimAmount);
@@ -3626,7 +3782,7 @@ function tick(){
   // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
   // the sight-detect cut ramps in step with what the player actually sees.
   veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
-  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmount) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
+  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
   hemiLight.intensity = HEMI_BASE_INTENSITY * (1 - timeOfRun * 0.7);
   pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, staminaCharge: Math.round(staminaCharge * 100) / 100, timeOfRunClock: formatTimeOfRunClock(timeOfRun) });
 
@@ -3686,8 +3842,12 @@ function tick(){
       mvx /= mag; mvz /= mag; spd = maxSpd;
       escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
       const step = maxSpd*dt, lim = half - margin, zLim = zMax - margin;
-      const nx = Math.max(-lim, Math.min(lim, player.x + mvx*step));
-      const nz = Math.max(-lim, Math.min(zLim, player.z + mvz*step));
+      const nx = Number.isFinite(WRAP_SPAN)
+        ? wrapCoord(player.x + mvx*step, WRAP_SPAN)
+        : Math.max(-lim, Math.min(lim, player.x + mvx*step));
+      const nz = Number.isFinite(WRAP_SPAN)
+        ? wrapCoord(player.z + mvz*step, WRAP_SPAN)
+        : Math.max(-lim, Math.min(zLim, player.z + mvz*step));
       if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }  // slide along trunks
       if(!blocked(player.x, nz)){ dist += Math.abs(nz - player.z); player.z = nz; }
       // LUL-23: lay scent while actually moving -- holding still (or being hidden,
@@ -3748,9 +3908,9 @@ function tick(){
     // LUL-38: carrying phase — child rides at the player's feet, glowing
     babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = carryHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.intensity = carryGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
+    halo.material.opacity = carryHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+    babyLight.intensity = carryGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
     const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
@@ -3802,7 +3962,12 @@ function tick(){
         const near01 = clamp(1 - nearDist/46, 0, 1);           // 0 far … 1 close
         pianoTimer = 1.3 - near01*0.95;                        // interval shortens as it nears
         const steps = [0,3,5,7,10,12][Math.min(5, Math.floor(near01*6))];
-        pianoNote(98 * Math.pow(2, steps/12), 0.5 + near01*0.6);   // low, scary; rises as it closes
+        // LUL-1308: bearing drives both the note's stereo pan and the screen-edge
+        // glow. 'ahead' is skipped for the glow -- the player's own view already
+        // covers it, see lib/game/bearing.ts's Bearing.side doc.
+        const bearing = bearingOf(nearP.x, nearP.z, player.x, player.z, player.yaw);
+        pianoNote(98 * Math.pow(2, steps/12), 0.5 + near01*0.6, bearingPan(bearing));
+        if(bearing.side !== 'ahead'){ bearingPulseSide = bearing.side; bearingPulseT = 1; }
       }
     } else { pianoTimer = 0; approachPianoActive = false; }
   } else { sinceClose = 0; approachPianoActive = false; }
@@ -3824,6 +3989,12 @@ function tick(){
 
   spotFlash = Math.max(0, spotFlash - dt*1.6);
   spotFlashEl.style.opacity = (spotFlash*0.55).toFixed(3);
+  // LUL-1308: decays slower than spotFlash (1.6) -- spotFlash is a one-shot
+  // "you were just spotted" event; this is a repeating ambient cue and should
+  // linger a beat between piano notes rather than fully blink out.
+  bearingPulseT = Math.max(0, bearingPulseT - dt*1.1);
+  if(bearingPulseSide) bearingPulseEl.className = bearingPulseSide;
+  bearingPulseEl.style.opacity = (bearingPulseT*0.5).toFixed(3);
 
   const distLake = Math.hypot(player.x - CONFIG.lake.x, player.z - CONFIG.lake.z);
 
@@ -3849,7 +4020,7 @@ function tick(){
     let statusVisible = false, statusText = '';
     if(hidden){
       statusVisible = true;
-      const sniffer = predators.some(p => p.state==='investigate' && Math.hypot(player.x-p.x, player.z-p.z) < 6);
+      const sniffer = predators.some(p => p.state==='investigate' && Math.hypot(player.x-p.x, player.z-p.z) < SNIFF_STATUS_RANGE);
       statusText = sniffer ? 'Hidden · something is sniffing you — DON’T MOVE'
                             : 'Hidden · ' + hideTime.toFixed(1) + 's   (moving breaks cover)';
     }
@@ -3857,7 +4028,7 @@ function tick(){
     coverProbeAccum += dt;
     if(coverProbeAccum >= 1 / COVER_PROBE_HZ){
       coverProbeAccum = 0;
-      lastHideSpot = !hidden ? geoFindHideSpot(player.x, player.z, coverGrid) : null;
+      lastHideSpot = !hidden ? geoFindHideSpot(player.x, player.z, coverGrid, CELL, WRAP_SPAN) : null;
     }
     // LUL-1089: contextual action prompts
     const coverPromptVisible = !hidden && lastHideSpot !== null;
@@ -3901,9 +4072,9 @@ function tick(){
   if(!baby.taken){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = idleHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.intensity = idleGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
+    halo.material.opacity = idleHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(babyGroup.position.x, babyGroup.position.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+    babyLight.intensity = idleGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(babyGroup.position.x, babyGroup.position.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmountAt(babyGroup.position.x, babyGroup.position.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
     const bp = bwisps.geometry.attributes.position.array;
     for(let i=0;i<BW;i++){ bp[i*3+1] += dt*0.4; if(bp[i*3+1] > 3.4) bp[i*3+1] = 0.2; }
     bwisps.geometry.attributes.position.needsUpdate = true;
@@ -3931,9 +4102,9 @@ function tick(){
       // drone" reads as the tide arriving, not the drone just getting louder.
       // Only applied in the calm bed, same as everything else in this branch --
       // a chase already wins the audio mix outright (see the `hunting` branch above).
-      audio.wg.gain.setTargetAtTime((0.05 + move01*0.10) * fogTideWindGainMul(fogTideAmount) * TOD_AUDIO.windGainMul, now, 0.3);
+      audio.wg.gain.setTargetAtTime((0.05 + move01*0.10) * fogTideWindGainMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * TOD_AUDIO.windGainMul, now, 0.3);
       audio.wf.frequency.setTargetAtTime(320 + move01*900, now, 0.3);
-      audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuild) * TOD_AUDIO.droneGainMul, now, 0.3);
+      audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuildAt(player.x, player.z, fogTideBuild, WRAP_SPAN, WRAP_SPAN)) * TOD_AUDIO.droneGainMul, now, 0.3);
       audio.twinkle -= dt;
       if(audio.twinkle <= 0){
         const near = distLake < CONFIG.lake.r*3;
@@ -3950,6 +4121,10 @@ function tick(){
 
   // home landmark breathes, gently (LUL-38)
   homeRing.material.opacity = 0.16 + Math.sin(t*0.9)*0.06;
+
+  // LUL-1855: radio mast beacon glow pulses slowly, reads as a beacon not a glitch
+  radioMastBeaconGlow.material.opacity = RADIO_MAST_BEACON_GLOW.opacityBase
+    + Math.sin(t * RADIO_MAST_BEACON_GLOW.pulseHz) * RADIO_MAST_BEACON_GLOW.opacityAmp;
 
   // pool breathes; its wisps rise
   ring.material.opacity = 0.14 + Math.sin(t*0.8)*0.05;

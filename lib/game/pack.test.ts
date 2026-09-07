@@ -7,6 +7,7 @@ import {
   FLANK_DIST_MUL,
   type Point,
 } from './pack.ts';
+import { wrapCoord } from './wrap.ts';
 
 // ---- selectPackLeaderIndex --------------------------------------------------
 
@@ -86,4 +87,41 @@ test('flankTarget at zero distance from the player returns the player position, 
   const [fx, fz] = flankTarget(0, 0, 1, 0, 1, 0, 0, BOUNDS);
   assert.equal(fx, 0);
   assert.equal(fz, 0);
+});
+
+// ---- wrap span (LUL-1485) ----------------------------------------------------
+const SPAN = 240;
+function acrossSeam(v: number): number {
+  return wrapCoord(v + SPAN / 2, SPAN);
+}
+
+test('flankTarget: span=Infinity matches the pre-wrap call exactly (still clamps)', () => {
+  assert.deepEqual(
+    flankTarget(95, 95, 1, 1, 1, 200, 200, { half: 100, zMax: 100 }, Infinity),
+    flankTarget(95, 95, 1, 1, 1, 200, 200, { half: 100, zMax: 100 }),
+  );
+});
+
+test('flankTarget: with a finite span, wraps instead of clamping (no map-bound margin applied)', () => {
+  const [fx] = flankTarget(95, 95, 1, 1, 1, 200, 200, { half: 100, zMax: 100 }, SPAN);
+  // With clamping this would sit at exactly half-4=96; wrapping instead
+  // ignores that margin entirely and folds the raw target into [-100,100).
+  assert.notEqual(fx, 96);
+});
+
+test('flankTarget: a seam result equals the identical interior result translated by SPAN/2', () => {
+  const [ix, iz] = flankTarget(0, 0, 1, 0, 1, 10, 0, BOUNDS, SPAN);
+  const [sx, sz] = flankTarget(acrossSeam(0), acrossSeam(0), 1, 0, 1, acrossSeam(10), acrossSeam(0), BOUNDS, SPAN);
+  assert.ok(Math.abs(sx - acrossSeam(ix)) < 1e-9);
+  assert.ok(Math.abs(sz - acrossSeam(iz)) < 1e-9);
+});
+
+test('flankTarget: the flanker\'s own distance from the player is measured the wrap-short way, not the raw 238', () => {
+  // Wolf at x=119.5, player at x=-119: player-to-wolf wrap-short delta is
+  // +1.5 (raw would be -238.5). Same relative geometry, interior: player at
+  // 0, wolf at -1.5 (delta +1.5). The flank offset from the player must
+  // match between the two, once re-based off each scenario's own player x.
+  const [nearX] = flankTarget(-119, 0, 1, 0, 1, 119.5, 0, BOUNDS, SPAN);
+  const [interiorNearX] = flankTarget(0, 0, 1, 0, 1, -1.5, 0, BOUNDS, SPAN);
+  assert.ok(Math.abs(nearX - wrapCoord(-119 + interiorNearX, SPAN)) < 1e-9);
 });

@@ -234,21 +234,18 @@ const OVERLAY_STYLE = `
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
      Default OFF hides the tuning/dev HUD (#panel's pace/mist/sound/regen/fullscreen
      controls, plus #minimap); ON is today's behaviour, unchanged.
-     #settingsBtn lives inside #panel but is deliberately exempted here -- hiding
-     it along with the rest of #panel would strand a player who just turned admin
-     mode off with no way to reopen Settings and turn it back on. Flagged as a
-     declared deviation from the literal "hide id=panel" ticket wording; see the
-     LUL-650 PR body.
-     #lightState/#veilState (LUL-656) are also exempted: they're the hold-to-veil
-     readout (LUL-40/382), not a dev-tuning control, and were caught by this
-     blanket selector unintentionally -- the primary in-world feedback (vignette
-     dim + fog billow) still works without them, but every player lost the exact
-     charge % and the "(recharging)" explanation by default.
+     LUL-650/LUL-656 originally carved #settingsBtn and #lightState/#veilState out
+     of this rule so a player who turned admin mode off wouldn't lose Settings or
+     the hold-to-veil readout. LUL-1085 (hamburger-menu migration) superseded that:
+     #settingsBtn moved out of #panel entirely into components/GameMenu.tsx, and
+     #panel was re-scoped to dev-only monitoring (pace/fog/lightState/veilState/
+     embersBalance) with no exemption selector. There is no carve-out left --
+     every #panel child, #lightState/#veilState included, is hidden by default
+     (LUL-1824/game/lul1724-panel-dev-only-finding). The real player-facing tell
+     for veil/light is the in-world vignette dim + fog billow, not this HUD.
      #minimap needs !important: the engine writes its own inline
      mm.style.display (blackout difficulty preset, forest-engine.js), which
-     beats a plain rule.
-     LUL-1085: #panel is now dev-only (pace/fog/lightState/veilState/embersBalance
-     for monitoring). Player-facing menu moved to components/GameMenu.tsx. */
+     beats a plain rule. */
   body[data-admin-mode="0"] #panel { display: none !important; }
   body[data-admin-mode="0"] #minimap { display: none !important; }
 
@@ -398,6 +395,16 @@ const OVERLAY_STYLE = `
   /* death: video cutscene + loss text */
   #spotFlash { position: fixed; inset: 0; z-index: 12; pointer-events: none; opacity: 0;
     background: radial-gradient(circle at 50% 45%, rgba(255,20,20,0) 40%, rgba(200,0,0,0.5) 100%); }
+  /* LUL-1308: off-screen predator bearing. z-index one below spotFlash so a
+     real spot event (the more urgent, full-screen signal) reads on top if both
+     are active at once. Class name ('left'/'right'/'behind') set by the engine
+     off bearingOf(nearP,...).side; opacity is the only per-frame mutation. */
+  #bearingPulse { position: fixed; inset: 0; z-index: 11; pointer-events: none; opacity: 0; }
+  #bearingPulse.left { background: linear-gradient(to right, rgba(255,60,40,0.55) 0%, rgba(255,60,40,0) 22%); }
+  #bearingPulse.right { background: linear-gradient(to left, rgba(255,60,40,0.55) 0%, rgba(255,60,40,0) 22%); }
+  #bearingPulse.behind { background:
+    linear-gradient(to right, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%),
+    linear-gradient(to left, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%); }
   #flash { position: fixed; inset: 0; z-index: 23; pointer-events: none; opacity: 0; background: #fff; }
   #deathVideo { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
     z-index: 24; display: none; background: #000; pointer-events: none; }
@@ -424,6 +431,7 @@ function overlayMarkup(mobile: boolean) {
   return `
 <div id="vignette"></div>
 <div id="spotFlash"></div>
+<div id="bearingPulse"></div>
 <div id="flash"></div>
 <canvas id="minimap" width="160" height="160"></canvas>
 <div id="hint">${hint}</div>

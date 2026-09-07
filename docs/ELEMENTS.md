@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4048 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3610, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4223 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3763, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -196,6 +196,13 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   glow stays legible through the tide's own added fog density (Fog above) —
   the two effects (denser fog, longer-reaching glow) are meant to roughly
   offset, not one cancel the other out unintentionally.
+- **As of `LUL-1486`**, the `fogTideAmount` fed into `fogTideGlowMul`/
+  `fogTideGlowRangeMul` above is no longer the whole-world constant — it's
+  `fogTideAmountAt(x, z, fogTideAmount, ...)` (`lib/game/fogTide.ts`), a
+  proximity blend against a fixed set of `FOG_TIDE_SITES`. Sampled at the
+  player's position while carried (colocated with the child) or the child's
+  own idle spawn position otherwise; a child outside every site's radius
+  sees no tide glow boost regardless of the global clock's phase.
 - **As of `LUL-1480`** (rules `LUL-1438`/`LUL-1414`), the unscaled idle/carry
   glow and halo curves live in `lib/game/childGlow.ts` (pure, unit tested),
   not inline in `tick()`: `idleGlowIntensity()`/`idleHaloOpacity()` for the
@@ -275,6 +282,13 @@ one geometry builder (`makePredator()`), differentiated by the
   `lib/game/predator.ts`) before it truly forgets and reverts to the
   original uniform-random pick -- a predator that camping used to shake for
   good now circles back a few times first (LUL-1573/LUL-1620).
+- A `chase`'s distance-based give-up (`shouldGiveUpChase()`,
+  `lib/game/predator.ts`) now compares against `effectiveDetect(p)` instead
+  of the raw `PSPEC[kind].detect`, so the give-up radius scales with the
+  same multipliers that widen acquisition -- difficulty, veil, fog tide, and
+  `CARRY_DETECT_MUL` (1.35x while carrying). Before this fix a wolf/lion
+  chase begun during the carry leg could never end, since the give-up
+  distance didn't grow with the carry's wider acquisition range (LUL-1600).
 - Detect the player through three independent channels: **sight**
   (`canSee()`, LOS raycast + shrinking-with-stillness range),
   **scent** (`checkScent()`, radius+wind, no LOS check at all),
@@ -292,7 +306,16 @@ one geometry builder (`makePredator()`), differentiated by the
   state change (LUL-1482). Scent and noise acquisition are unaffected in
   every state, carrying or not.
 - Chase, losing/regaining track via `investigate`→`sniff`→`back` (LUL-22,
-  explicitly "not to be retuned").
+  explicitly "not to be retuned"). LUL-1090: when the `approach` sub-phase
+  reaches sniff range (`hasReachedSniffRange()`, `rad+SNIFF_APPROACH_MARGIN`
+  ≈2.5-3.2 units) **while the player is `hidden`**, the predator first walks
+  itself back to `SNIFF_STANDOFF` (4.5 units, `lib/game/predator.ts`
+  `sniffStandoffPoint()`) via a new `standoff` sub-phase before entering
+  `sniff` — a player caught in the open is unaffected and closes to the old
+  distance as before. The "Hidden · something is sniffing you" status line
+  (`tick()`) uses a separate, wider `SNIFF_STATUS_RANGE` (8 units, declared
+  next to `SNIFF_STANDOFF` so the two can't drift apart) so the warning still
+  reads once the predator has settled at its standoff distance.
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
   nearest predator switches straight to `hunt` (relentless, ignores LOS
   break) — `tick()`.
@@ -730,6 +753,12 @@ one geometry builder (`makePredator()`), differentiated by the
   map's `rng()` stream (see wiki `game/lul27-fog-tide` for the full
   reasoning). See Follow-light and Child below for the tide's other two
   effect surfaces (detect radius, child glow).
+- **As of `LUL-1486`**, the `fogTideAmount` above is sampled at the player's
+  own position via `fogTideAmountAt(player.x, player.z, fogTideAmount, ...)`
+  (`lib/game/fogTide.ts`) rather than being a whole-world constant — the fog
+  boost applies only within a fixed set of Fog Tide sites (`FOG_TIDE_SITES`),
+  not globally; standing outside every site's radius adds no boost
+  regardless of the global clock's phase.
 - **As of `LUL-1709`**, an additive `timeOfRun * TIME_OF_RUN_FOG_DELTA` term
   (`TIME_OF_RUN_FOG_DELTA = 0.10 - CONFIG.fog`) on top of the veil/tide terms
   above, driven by `timeOfRun` — a live 0→1 pacing clock that rises over
@@ -843,6 +872,12 @@ one geometry builder (`makePredator()`), differentiated by the
   (fogTideAmount)` (floor `FOG_TIDE_DETECT_MUL` 0.65 — a further 35% cut at
   full tide) in the same product as `veilDetectMul(veilAmount)` and the
   difficulty preset's own `detectMul` — all three stack multiplicatively.
+- **As of `LUL-1486`** (D2, ruled `LUL-1489`), the `fogTideAmount` fed into
+  `fogTideDetectMul` above is sampled at **the predator's own position**
+  (`fogTideAmountAt(p.x, p.z, fogTideAmount, ...)`, `lib/game/fogTide.ts`),
+  not the player's — a predator standing outside every `FOG_TIDE_SITES`
+  radius is not blinded by a tide it isn't standing in, even if the player
+  is inside one.
 - **As of `LUL-1709`/`LUL-1714`**, `timeOfRunDetectMul(timeOfRun)`
   (`lib/game/dayNight.ts`, unit tested — see `lib/game/dayNight.test.ts`,
   same pure-module split as `veilDetectMul()`/`fogTideDetectMul()`) — up to a
@@ -864,6 +899,13 @@ one geometry builder (`makePredator()`), differentiated by the
   cue reads as responsive. Only applied to this calm-bed audio mix — a
   chase already wins the audio outright, so the tide never fights the hunt
   cue.
+- **As of `LUL-1486`**, both `fogTideBuild`/`fogTideAmount` above are sampled
+  at **the player's position** (`fogTideBuildAt`/`fogTideAmountAt(player.x,
+  player.z, ...)`, `lib/game/fogTide.ts`) rather than being whole-world
+  constants — the camera and the listener are the player, so this is the
+  same physical-coherence rule D2 established for predators, applied to the
+  scene-fog/audio observer. Standing outside every `FOG_TIDE_SITES` radius
+  mutes the drone/wind-duck effect regardless of the global clock's phase.
 
 **What it CANNOT do**
 - Cannot be occluded by anything — **no shadow-casting exists anywhere in
@@ -896,7 +938,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 - **Engine-owned DOM** (`document.getElementById(...)`, created by
   `components/GameCanvas.tsx`, mutated directly by the engine): `#vignette`,
-  `#spotFlash`, `#flash`, `#minimap` (canvas, drawn every frame by
+  `#spotFlash`, `#bearingPulse`, `#flash`, `#minimap` (canvas, drawn every frame by
   `drawMinimap()`/`drawMinimapStatic()`), `#hint`, `#pausePrompt`,
   `#deathVideo`.
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
@@ -962,6 +1004,20 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   without a CSS change; the ref-focus effects already only fire on reveal,
   so this doesn't fight them.
 
+LUL-1308 adds `#bearingPulse`, a screen-edge glow answering "which side is the nearest
+approaching predator on" for players who can't rely on the caption toggle (LUL-26) or
+the direction-free `#spotFlash`. Driven off the same `pianoTimer`-gated approach-cue
+block that fires `pianoNote()` (`updatePredators`'s threat-metrics scan): every note,
+`bearingOf(nearP, player, ...)` (`lib/game/bearing.ts`) resolves a side, and unless it's
+`'ahead'` (the player's own view already covers that case) the engine sets
+`bearingPulseSide`/`bearingPulseT` and the element's class/opacity follow. The same
+`bearingOf()` call also feeds `pianoNote()`'s new `pan` argument (a single
+`StereoPannerNode` per note, `lib/game/bearing.ts`'s `bearingPan()`), and
+`predatorCall()`'s volume now falls off with distance (`callVolumeMul()`, same module,
+folded in per the CEO's LUL-1282 addendum) instead of the old binary `big ? 1.0 : 0.6`.
+Not present: any compass, minimap dot, or degrees readout — deliberately rejected in the
+design doc as turning horror into radar.
+
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
   a patch when a value actually changed).
@@ -1019,7 +1075,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3277) and `triggerDeath()` (L3304).
+  both `track()` call sites in `arriveHome()` (L3455) and `triggerDeath()` (L3486).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1029,9 +1085,9 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L2443),
-  reset to 0 on `enter()` (L2514) and recomputed every `tick()` while the run
-  is neither won nor dead (L3693: `computeDepth(maxDistFromHome) +
+  run in progress — `hudState` field (`engine/forest-engine.js` L2597),
+  reset to 0 on `enter()` (L2660) and recomputed every `tick()` while the run
+  is neither won nor dead (L3873: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1085,7 +1141,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3587): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L3737): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1383,7 +1439,12 @@ and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit
 inside an actual bog patch now that the bog is no longer a fixed band),
 `radioMast` and `chapelSteeple` (LUL-1782) sit in the outer ring, radius
 ~178-179, restoring fixed orientation geography on the leg past the original
-four that LUL-1484's map growth left featureless. and
+four that LUL-1484's map growth left featureless. As of LUL-1855, `radioMast`
+additionally carries a small fog-exempt additive sprite on its beacon
+(`RADIO_MAST_BEACON_GLOW`, `engine/tuning.js`) so it stays visible as a dim,
+slowly-pulsing point past the fog line that erases the other five -- a
+bearing, not a lit scene; the other five landmarks are unchanged and still
+fog-occluded at the same distances documented above. and
 the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
 boolean, so a patch edge scales speed/noise in rather than stepping. It
 scales player/predator walk speed down and noise radius up while standing in

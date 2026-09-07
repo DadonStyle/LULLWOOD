@@ -8,6 +8,8 @@
 // a point expired, where has it drifted to, and how big is its pickup
 // radius. Time is always a parameter here, never a wall-clock read.
 
+import { wrapDelta } from './wrap.ts';
+
 export interface ScentPoint {
   x: number;
   z: number;
@@ -101,11 +103,12 @@ export function isScentDetected(
   windZ: number,
   noseMultiplier: number,
   lifetime: number = SCENT_LIFETIME,
+  span: number = Infinity,
 ): boolean {
   if (isScentExpired(age, lifetime)) return false;
   const { x: dx0, z: dz0 } = driftedScentPosition(point, age, windX, windZ);
-  const dx = queryX - dx0;
-  const dz = queryZ - dz0;
+  const dx = wrapDelta(queryX, dx0, span);
+  const dz = wrapDelta(queryZ, dz0, span);
   const r = scentPickupRadius(point.radius, age, lifetime, noseMultiplier);
   return dx * dx + dz * dz < r * r;
 }
