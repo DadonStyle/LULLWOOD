@@ -307,6 +307,7 @@ const OVERLAY_STYLE = `
     letter-spacing: 0.03em; color: #a99; text-align: left; max-width: 360px; }
   #runChronicle li { margin: 2px 0; }
   .emberGain { color: #ffdca8; font-weight: 500; }
+  .emberLoss { color: #ff8a8a; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px;
     /* LUL-1088 CASCADE-ORDER BUG GUARD: the mobile-only .restartBtn override up

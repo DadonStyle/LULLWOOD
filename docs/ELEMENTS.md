@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4042 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3607, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4048 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3610, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1008,14 +1008,18 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
-  scales the total by a tier multiplier (LUL-1412): lantern ×1.00/×1.00,
-  night ×1.75 win/×1.35 loss, blackout ×2.00 win/×1.25 loss. The engine passes
-  `difficulty` at both call sites.
+  scales every `RunPayout` field (`depth`/`survival`/`carried`/`home`, each
+  rounded individually) by a tier multiplier (LUL-1412, reconciled LUL-1640):
+  lantern ×1.00/×1.00, night ×1.75 win/×1.35 loss, blackout ×2.00 win/×1.25
+  loss. `total` is the sum of the already-rounded fields, so
+  depth+survival+carried+home always equals total on every tier (`RunRecap` in
+  `components/Hud.tsx` renders that sum). The engine passes `difficulty` at
+  both call sites.
 - `lastPayout`: breakdown of earnings from the run that just ended (null
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3274) and `triggerDeath()` (L3304).
+  both `track()` call sites in `arriveHome()` (L3277) and `triggerDeath()` (L3304).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1024,6 +1028,22 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   tier (tiers 0–3, `DEEPER_LUNGS_COSTS` array), persisted alongside balance as
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
+- `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
+  run in progress — `hudState` field (`engine/forest-engine.js` L2443),
+  reset to 0 on `enter()` (L2514) and recomputed every `tick()` while the run
+  is neither won nor dead (L3693: `computeDepth(maxDistFromHome) +
+  computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
+  `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
+  `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
+  screen is showing. It previews what `computeWinPayout()`'s depth+survival
+  terms will bank if the run ends now — it does not include the win-only
+  `CARRIED`/`HOME` terms, since those only pay out on a live arrival.
+- Death forfeiture display: `RunRecap`'s death branch
+  (`components/Hud.tsx` L339-340) shows a red
+  `-{CARRIED + HOME} lost (child & home, forfeited)` fragment instead of the
+  win branch's `+carried`/`+home` lines, making explicit that the win-only
+  `CARRIED`/`HOME` terms (both now exported from `lib/game/economy.ts` for
+  this display) are forfeited on death rather than silently omitted.
 
 **What it can do**
 - Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
