@@ -91,6 +91,11 @@ export interface EngineHudState {
   embersBalance: number;
   embersDeeperLungsTier: number;
   lastPayout: RunPayout | null;
+  // LUL-1623: throwable distractions. heldThrowable gates the "holding a
+  // stone — click/tap to throw" prompt; canGrabThrowable gates the "pick up
+  // a stone" prompt, mirroring objectiveReady's role for the child.
+  heldThrowable: boolean;
+  canGrabThrowable: boolean;
   // LUL-1258: M2 Deepwater's minimal HUD panel. Both null whenever no mission
   // exists or the player is carrying (the engine never sends non-null values
   // in that case) -- Hud never has to know about `carrying` itself.
@@ -115,6 +120,7 @@ export interface EngineActions {
   setTouchSprint: (v: boolean) => void;
   triggerTouchHide: () => void;
   triggerTouchInteract: () => void;
+  triggerTouchThrow: () => void;
   // LUL-529: mobile parity for jump/pause/mist-veil/toggle-run -- see
   // MobileControls.tsx and forest-engine.js's triggerTouchJump/Pause/ToggleRun
   // and setTouchVeil.
@@ -182,6 +188,8 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   embersBalance: 0,
   embersDeeperLungsTier: 0,
   lastPayout: null,
+  heldThrowable: false,
+  canGrabThrowable: false,
   missionKind: null,
   missionStatus: null,
   windX: 1,
@@ -409,7 +417,7 @@ export default function Hud({
       <OrientationGate />
 
       {mobile ? (
-        <MobileControls actions={actions} entered={state.entered} runMode={state.runMode} />
+        <MobileControls actions={actions} entered={state.entered} runMode={state.runMode} heldThrowable={state.heldThrowable} />
       ) : (
         <DesktopControls />
       )}
@@ -613,6 +621,20 @@ export default function Hud({
           </div>
         );
       })()}
+
+      {/* LUL-1623: holding-a-throwable affordance -- there's no held-item mesh
+          in first person, so this is the only way the player knows they're
+          carrying a stone. Styled like the existing pickup/interact prompt
+          (#objective.ready); own id/position (#throwPrompt, see GameCanvas.tsx's
+          OVERLAY_STYLE) since it can be visible at the same time as #objective
+          (e.g. "Find the lost child" while also holding a stone). */}
+      {state.heldThrowable && (
+        <div id="throwPrompt">
+          {mobile
+            ? <>{'Holding a stone — tap  '}<span id="throwKey">Throw</span></>
+            : <>{'Holding a stone — click to throw'}</>}
+        </div>
+      )}
 
       {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
           forces React to remount this element on every fresh charge (not on
