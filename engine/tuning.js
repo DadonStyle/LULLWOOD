@@ -61,6 +61,17 @@ export const LANDMARKS = [
   { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
 
+// LUL-1808: roam waypoint step, expressed as a fraction of `half` the same way
+// child spawn radius (half*(0.5+rng()*0.3), forest-engine.js:788) and predator
+// spawn radius (half*(0.42+rng()*0.45), forest-engine.js:1204) already scale
+// with map size. LUL-1484 grew mapSize 240->480 (half 120->240) but this step
+// stayed a hardcoded 15-55 units, so predators shuffled a ~70-unit patch of
+// their own spawn point against a map twice as wide (wiki
+// game/mechanics/empty-outbound-leg). 15/120=0.125, 40/120=1/3 reproduces
+// today's 15-55 range exactly at half=120, and gives ~30-110 at the current
+// half=240.
+export const ROAM_STEP_FRAC = { min: 0.125, range: 1 / 3 };
+
 // ---- Lighting --------------------------------------------------------------
 // LUL-975: r155 dropped the `Math.PI` "artist-friendly" scaling factor that used to
 // sit between a light's `intensity` and the render output. Every light intensity in

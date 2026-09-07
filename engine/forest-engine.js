@@ -150,7 +150,7 @@ import {
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
   STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
-  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END,
+  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, ROAM_STEP_FRAC,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -557,7 +557,11 @@ function buildGrid(){
 // cover.ts's own coverBlockedR(), so geoBlocked() below still treats 'log'
 // as non-blocking, same as release/next did before this extraction.
 function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid); }
-function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid); }
+// LUL-273: pass the live eyeH (not a fixed CONFIG.eye) so canopyBlockedR()
+// recomputes each tree's canopy radius against the player's actual current
+// eye height -- fixes the under-protection window right after exiting a
+// hide spot while moving, while eyeH is still lerping back up from 1.05.
+function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid,CELL,eyeH,CANOPY_GEO); }
 // LUL-1643: predator movement now consults cover the same way blocked() does
 // for the player, minus canopyBlockedR (camera-only, LUL-267 -- see
 // blockedForPredator()'s own comment in cover.ts for why canopy stays excluded).
@@ -1571,7 +1575,7 @@ function updatePredators(dt, noiseRadius){
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
-        if(wd < 2.5){ const a=rng()*Math.PI*2, r=15+rng()*40;
+        if(wd < 2.5){ const a=rng()*Math.PI*2, r=half*(ROAM_STEP_FRAC.min+rng()*ROAM_STEP_FRAC.range);
           let nwx=clamp(p.x+Math.cos(a)*r,-half+4,half-4), nwz=clamp(p.z+Math.sin(a)*r,-half+4,zMax-4);
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
           p.wpx=clamp(kept.x,-half+4,half-4); p.wpz=clamp(kept.z,-half+4,zMax-4); }
