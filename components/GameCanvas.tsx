@@ -125,6 +125,18 @@ const OVERLAY_STYLE = `
        the screen than on desktop, which is the point (small map = useless
        map): shrinking it to "save space" would fight the same "legible on a
        phone screen" requirement this block exists for. */
+    /* LUL-1935: MobileControls' Pause button (pauseWrapper) is fixed at
+       top: calc(16px + env(safe-area-inset-top)), left: calc(16px + ...),
+       44px circle + 1.5px border -- bottom edge lands at ~63px + the inset.
+       #missionPanel defaults to that identical top:16/left:16 corner, so on
+       mobile (any width, any orientation -- this query catches landscape
+       too, unlike a bare max-width check) it sat directly under the button
+       and got covered. Push it below the button with a clear gap instead of
+       moving Pause -- Pause's corner is deliberately chosen for reachability
+       (see MobileControls.tsx LUL-529 comment); #missionPanel is
+       pointer-events:none display text with no touch target of its own, so
+       it's the one with nothing to lose by moving. */
+    #missionPanel { top: calc(76px + env(safe-area-inset-top)); }
   }
 
   /* LUL-69: mobile-only, portrait-only -- see components/OrientationGate.tsx.
@@ -267,8 +279,11 @@ const OVERLAY_STYLE = `
 
   /* LUL-1258: M2 Deepwater's minimal mission panel -- two collapsed lines,
      top-left, per decisions/missions-accepted-2026-09-01 §2. Small and
-     read-only (no touch target), so it needs no mobile media-query override:
-     it never grows past a couple of words at any viewport. */
+     read-only (no touch target). LUL-1935: it does need a mobile override --
+     MobileControls' Pause button (components/MobileControls.tsx pauseWrapper)
+     is fixed to that exact same top:16/left:16 corner, so on mobile the two
+     sit on top of each other regardless of how short the mission text is.
+     See the mobile media query below for the fix. */
   #missionPanel { position: fixed; top: 16px; left: 16px; z-index: 10;
     display: flex; align-items: center; gap: 8px; pointer-events: none;
     padding: 6px 12px; border-radius: 999px;
