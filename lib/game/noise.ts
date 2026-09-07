@@ -19,6 +19,20 @@ export const NOISE_RADIUS_RUN = 24;
 /** dt-scaled roll: being in radius is a chance to notice per second, not an instant catch. */
 export const HEAR_CHANCE_PER_SEC = 0.5;
 
+/** A thrown object's landing noise is a one-shot event, not a per-frame roll like
+ * isNoiseHeard() -- reuses NOISE_RADIUS_RUN's scale per the CTO plan (decision 5). */
+export const THROWABLE_NOISE_RADIUS = NOISE_RADIUS_RUN;
+
+/**
+ * Whether a predator at `dist` from a throwable's landing point notices it. Pure
+ * distance check, deliberately not probabilistic like isNoiseHeard() -- a thrown
+ * object either lands loud enough to notice or it doesn't; there is no "roll again
+ * next frame" because the event fires once, on landing, not every tick.
+ */
+export function checkThrowableNoise(dist: number, radius: number = THROWABLE_NOISE_RADIUS): boolean {
+  return dist < radius;
+}
+
 export type RNG = () => number;
 
 /**

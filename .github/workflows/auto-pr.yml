@@ -223,9 +223,27 @@ jobs:
             fi
             chmod +x "$RUNNER_TEMP/ship-allowed.sh"
 
+            # LUL-1064 / decisions/0014-tier-b-automation: Tier B
+            # (components/**, app/**, lib/** minus the Tier C carve-outs) gets
+            # the same automated path as Tier A once ship-allowed.sh denies it.
+            # Read tier-b-allowed.sh from the same base ref, for the same
+            # reason ship-allowed.sh is: the branch under judgement must never
+            # supply its own rule. Fail closed if it's missing.
+            if ! git show FETCH_HEAD:.github/scripts/tier-b-allowed.sh \
+                 > "$RUNNER_TEMP/tier-b-allowed.sh" 2>/dev/null; then
+              echo "::warning::no tier-b-allowed.sh on main; refusing to auto-merge #$number."
+              exit 0
+            fi
+            chmod +x "$RUNNER_TEMP/tier-b-allowed.sh"
+
             # Three dots: diff from the merge-base, so commits that landed on
             # main since this branch forked are not counted as ours.
-            if ! blocked="$(git diff --name-only FETCH_HEAD...HEAD | "$RUNNER_TEMP/ship-allowed.sh")"; then
+            diff_paths="$(git diff --name-only FETCH_HEAD...HEAD)"
+            if printf '%s\n' "$diff_paths" | "$RUNNER_TEMP/ship-allowed.sh" > /dev/null; then
+              echo "::notice::#$number is Tier A (ship-allowed.sh)."
+            elif blocked="$(printf '%s\n' "$diff_paths" | "$RUNNER_TEMP/tier-b-allowed.sh")"; then
+              echo "::notice::#$number is Tier B (tier-b-allowed.sh)."
+            else
               echo "::warning::[ship] ignored on #$number — this diff needs the Code Reviewer."
 
               # Every push re-runs this workflow, so say it once per PR.
@@ -238,13 +256,14 @@ jobs:
               printf '%s\n' \
                 '<!-- SHIP_DENIED -->' \
                 '`[ship]` was found on a commit in this branch, but the branch changes files outside' \
-                'the docs/CI/tests allowlist, so it will **not** self-merge:' \
+                'the Tier A and Tier B allowlists, so it will **not** self-merge:' \
                 '' \
                 "$(printf '%s\n' "$blocked" | sed 's/^/- `/; s/$/`/')" \
                 '' \
                 'This is not a failure — the PR is open and CI is running. It needs a' \
                 '`REVIEW: APPROVED` from the Code Reviewer, then someone merges it.' \
-                'Policy: LUL-73. Allowlist: `.github/scripts/ship-allowed.sh`.' > /tmp/ship-denied.md
+                'Policy: LUL-73 / decisions/0014-tier-b-automation. Allowlists:' \
+                '`.github/scripts/ship-allowed.sh`, `.github/scripts/tier-b-allowed.sh`.' > /tmp/ship-denied.md
               # Best-effort: losing this comment doesn't disarm anything, it's
               # just the explanation, so it stays retried-but-non-fatal.
               gh_retry gh pr comment "$number" --body-file /tmp/ship-denied.md || true

@@ -220,6 +220,7 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #objective,
   body[data-high-contrast="1"] #status,
   body[data-high-contrast="1"] #actionPrompt,
+  body[data-high-contrast="1"] #throwPrompt,
   body[data-high-contrast="1"] #captionToast,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
   body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
@@ -227,6 +228,7 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
   body[data-high-contrast="1"] #actionPrompt { color: #ffe6b0; border-color: #ffcf7a; }
   body[data-high-contrast="1"] #actionPrompt.urgent { color: #ff9f9f; border-color: #ff6b6b; }
+  body[data-high-contrast="1"] #throwPrompt { color: #ffe6b0; border-color: #ffcf7a; }
 
   /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
@@ -292,11 +294,20 @@ const OVERLAY_STYLE = `
   #winText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column;
     align-items: center; gap: 6px; pointer-events: auto;
     background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86));
-    padding: 24px; border-radius: 4px; }
+    padding: 24px; border-radius: 4px;
+    /* LUL-1103: #runChronicle can add up to 10 lines below the recap -- without
+       this, a landscape phone (e.g. 851x393) has ~250px for h1+recap+button and
+       the chronicle silently scrolls off-screen. Same pattern as #settingsPanel's
+       own max-height (GameCanvas.tsx, "narrow" media query above). */
+    max-height: calc(100dvh - 48px); overflow-y: auto; }
   #winText h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
     color: #ffe6c8; text-shadow: 0 2px 44px rgba(255,190,130,0.5); }
   #winText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
+  #runChronicle { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px;
+    letter-spacing: 0.03em; color: #a99; text-align: left; max-width: 360px; }
+  #runChronicle li { margin: 2px 0; }
   .emberGain { color: #ffdca8; font-weight: 500; }
+  .emberLoss { color: #ff8a8a; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px;
     /* LUL-1088 CASCADE-ORDER BUG GUARD: the mobile-only .restartBtn override up
@@ -323,6 +334,19 @@ const OVERLAY_STYLE = `
   .buyBtn:hover:not(:disabled) { background: rgba(150,175,215,0.24); }
   .buyBtn:disabled { opacity: 0.45; cursor: default; }
   .buyBtn:focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
+
+  /* LUL-1623: holding-a-throwable affordance. Sits above #status (74px) so it
+     never overlaps the hidden/hunted line or #actionPrompt (92px) -- all three
+     can in principle be visible together (holding a stone while hidden). */
+  #throwPrompt { position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 12;
+    display: flex; align-items: center; gap: 0; pointer-events: none;
+    padding: 7px 16px; border-radius: 999px; white-space: nowrap;
+    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+  #throwKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
 
   /* status line (hiding / hunted) */
   #status { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 12;
@@ -380,7 +404,9 @@ const OVERLAY_STYLE = `
   #deathScreen { position: fixed; inset: 0; z-index: 25; display: none;
     align-items: center; justify-content: center; text-align: center; padding: 24px;
     background: rgba(4,3,5,0); pointer-events: none; }
-  #deathText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: auto; }
+  #deathText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: auto;
+    /* LUL-1103: see #winText's identical rule above -- same phone-viewport overflow risk from #runChronicle. */
+    max-height: calc(100dvh - 48px); overflow-y: auto; }
   #deathText h1 { margin: 0; font-size: 44px; font-weight: 400; letter-spacing: 0.2em;
     color: #e8554a; text-shadow: 0 2px 50px rgba(255,40,30,0.5); }
   #deathText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #b98f88; }

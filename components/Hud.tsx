@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DesktopControls from './DesktopControls';
 import MobileControls from './MobileControls';
 import OrientationGate from './OrientationGate';
@@ -8,8 +8,9 @@ import SettingsPanel from './SettingsPanel';
 import GameMenu from './GameMenu';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
-import { nextDeeperLungsCost, veilMaxHoldForTier, type RunPayout } from '@/lib/game/economy';
+import { nextDeeperLungsCost, veilMaxHoldForTier, CARRIED, HOME, type RunPayout } from '@/lib/game/economy';
 import type { MissionKind } from '@/lib/game/mission';
+import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -89,8 +90,14 @@ export interface EngineHudState {
   // `lastPayout` is the breakdown for the run that just ended (null before
   // the first win/death this session), read alongside winVisible/deathVisible.
   embersBalance: number;
+  livePileEmbers: number;   // LUL-1315: live unbanked total, run-only, 0 outside a run
   embersDeeperLungsTier: number;
   lastPayout: RunPayout | null;
+  // LUL-1623: throwable distractions. heldThrowable gates the "holding a
+  // stone — click/tap to throw" prompt; canGrabThrowable gates the "pick up
+  // a stone" prompt, mirroring objectiveReady's role for the child.
+  heldThrowable: boolean;
+  canGrabThrowable: boolean;
   // LUL-1258: M2 Deepwater's minimal HUD panel. Both null whenever no mission
   // exists or the player is carrying (the engine never sends non-null values
   // in that case) -- Hud never has to know about `carrying` itself.
@@ -100,6 +107,11 @@ export interface EngineHudState {
   // generateMap(), pushed once -- not a per-frame value like veilCharge).
   windX: number;
   windZ: number;
+  // LUL-1103: The Run Chronicle. Engine-owned {t, code, args} buffer, handed
+  // over once in the same pushState() call as winVisible/deathVisible (never
+  // streamed per-frame -- see engine/forest-engine.js's logChronicle()
+  // comment). lib/game/chronicle.ts's formatChronicle() renders it.
+  chronicle: ChronicleEvent[];
 }
 
 export interface EngineActions {
@@ -115,6 +127,7 @@ export interface EngineActions {
   setTouchSprint: (v: boolean) => void;
   triggerTouchHide: () => void;
   triggerTouchInteract: () => void;
+  triggerTouchThrow: () => void;
   // LUL-529: mobile parity for jump/pause/mist-veil/toggle-run -- see
   // MobileControls.tsx and forest-engine.js's triggerTouchJump/Pause/ToggleRun
   // and setTouchVeil.
@@ -180,12 +193,16 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   caption: null,
   captionId: 0,
   embersBalance: 0,
+  livePileEmbers: 0,
   embersDeeperLungsTier: 0,
   lastPayout: null,
+  heldThrowable: false,
+  canGrabThrowable: false,
   missionKind: null,
   missionStatus: null,
   windX: 1,
   windZ: 0,
+  chronicle: [],
 };
 
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
@@ -318,20 +335,34 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
 // first pushState after arriveHome()/triggerDeath() lands, so this never
 // renders with stale data from a previous run (lastPayout is set in the
 // same pushState call as winVisible/deathVisible).
-function RunRecap({ survivedSeconds, payout, balance }: { survivedSeconds: number; payout: RunPayout | null; balance: number }) {
+function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[] }) {
+  const lines = formatChronicle(chronicle);
   return (
-    <p id="runRecap">
-      time survived: {formatDuration(survivedSeconds)}
-      {payout && (
-        <>
-          <br />
-          +{payout.depth} depth · +{payout.survival} survival
-          {payout.carried > 0 && <> · +{payout.carried} child</>}
-          {payout.home > 0 && <> · +{payout.home} home</>}
-          {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
-        </>
+    <>
+      <p id="runRecap">
+        time survived: {formatDuration(survivedSeconds)}
+        {payout && (
+          <>
+            <br />
+            +{payout.depth} depth · +{payout.survival} survival
+            {isDeath ? (
+              <> · <span className="emberLoss">-{CARRIED + HOME} lost</span> (child &amp; home, forfeited)</>
+            ) : (
+              <>
+                {payout.carried > 0 && <> · +{payout.carried} child</>}
+                {payout.home > 0 && <> · +{payout.home} home</>}
+              </>
+            )}
+            {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
+          </>
+        )}
+      </p>
+      {lines.length > 0 && (
+        <ul id="runChronicle">
+          {lines.map((line, i) => <li key={i}>{line}</li>)}
+        </ul>
       )}
-    </p>
+    </>
   );
 }
 
@@ -409,7 +440,7 @@ export default function Hud({
       <OrientationGate />
 
       {mobile ? (
-        <MobileControls actions={actions} entered={state.entered} runMode={state.runMode} />
+        <MobileControls actions={actions} entered={state.entered} runMode={state.runMode} heldThrowable={state.heldThrowable} />
       ) : (
         <DesktopControls />
       )}
@@ -469,6 +500,9 @@ export default function Hud({
             #panel hide the same way lightState/veilState are (GameCanvas.tsx),
             since this is core game progress, not a dev-tuning control. */}
         <span id="embersBalance">Embers: {state.embersBalance}</span>
+        {state.entered && !state.winVisible && !state.deathVisible && (
+          <span id="embersPile">Unbanked: {state.livePileEmbers}</span>
+        )}
         <button id="regen" onClick={() => actions?.regenMap()}>
           New map
         </button>
@@ -614,6 +648,20 @@ export default function Hud({
         );
       })()}
 
+      {/* LUL-1623: holding-a-throwable affordance -- there's no held-item mesh
+          in first person, so this is the only way the player knows they're
+          carrying a stone. Styled like the existing pickup/interact prompt
+          (#objective.ready); own id/position (#throwPrompt, see GameCanvas.tsx's
+          OVERLAY_STYLE) since it can be visible at the same time as #objective
+          (e.g. "Find the lost child" while also holding a stone). */}
+      {state.heldThrowable && (
+        <div id="throwPrompt">
+          {mobile
+            ? <>{'Holding a stone — tap  '}<span id="throwKey">Throw</span></>
+            : <>{'Holding a stone — click to throw'}</>}
+        </div>
+      )}
+
       {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
           forces React to remount this element on every fresh charge (not on
           overlapping ones, see beginChargeHud in the engine), which restarts
@@ -651,7 +699,7 @@ export default function Hud({
           <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
             <h1>YOU WON</h1>
             <p>the child is safe — you carried them home through the Lullwood</p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} />
             <button
               ref={winRestartRef}
               className="restartBtn"
@@ -678,7 +726,7 @@ export default function Hud({
               {DEATH_CAUSE_TEXT[state.deathCause]}
               {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} />
             <button
               ref={deathRestartRef}
               className="restartBtn"

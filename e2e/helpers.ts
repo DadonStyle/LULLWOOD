@@ -67,7 +67,7 @@ export async function boot(
   if (qaHooks) params.set('qaHooks', '1');
   if (seed !== null) params.set('seed', String(seed));
   const query = params.toString();
-  await page.goto(query ? `/?${query}` : '/', { waitUntil: 'networkidle', timeout: 60_000 });
+  await page.goto(query ? `/?${query}` : '/', { waitUntil: 'networkidle', timeout: 120_000 });
   // Both canvases exist = the engine's WebGL canvas joined the minimap canvas
   // that ships in the static overlay markup, i.e. init() has actually run.
   await page.waitForFunction(

@@ -7,6 +7,10 @@ import {
   hasReachedSniffRange,
   isCaught,
   isSniffImmune,
+  LKP_MAX_SWEEPS,
+  LKP_RING_RADIUS,
+  LKP_REPEAT_RADIUS,
+  pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
   shouldGiveUpChase,
@@ -18,6 +22,7 @@ import {
   stepSniffLoop,
   tickTimers,
 } from './predator.ts';
+import { ROAM_STEP_FRAC } from '../../engine/tuning.js';
 
 // ---- rollSniffs --------------------------------------------------------------
 
@@ -362,4 +367,49 @@ test('predatorSeparationPush: an empty others list is a no-op', () => {
   const [px, pz] = predatorSeparationPush(0, 0, 1, []);
   assert.equal(px, 0);
   assert.equal(pz, 0);
+});
+
+// ---- pickRoamWaypoint (LUL-1620) ------------------------------------------------
+
+test('pickRoamWaypoint with no live memory (sweepsLeft=0) reproduces the LUL-1808 map-size-scaled uniform pick around the predator', () => {
+  const calls = [0.25, 0.5];
+  const rng = () => calls.shift()!;
+  const half = 240;
+  const pick = pickRoamWaypoint(rng, /*px*/10, /*pz*/20, /*lkpX*/0, /*lkpZ*/0, /*sweepsLeft*/0, /*dist*/999, half);
+  const a = 0.25 * Math.PI * 2, r = half * (ROAM_STEP_FRAC.min + 0.5 * ROAM_STEP_FRAC.range);
+  assert.equal(pick.x, 10 + Math.cos(a) * r);
+  assert.equal(pick.z, 20 + Math.sin(a) * r);
+  assert.equal(pick.sweepsLeft, 0);
+});
+
+test('pickRoamWaypoint with live memory centers the waypoint on the remembered point, not the predator', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, /*px*/500, /*pz*/500, /*lkpX*/10, /*lkpZ*/20, /*sweepsLeft*/2, /*dist*/0, /*half*/240);
+  // a=0 -> cos=1, sin=0; r = LKP_RING_RADIUS + 0*LKP_RING_JITTER
+  assert.equal(pick.x, 10 + LKP_RING_RADIUS);
+  assert.equal(pick.z, 20);
+});
+
+test('pickRoamWaypoint decrements sweepsLeft while the player is still within the repeat radius', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, 2, LKP_REPEAT_RADIUS - 1, /*half*/240);
+  assert.equal(pick.sweepsLeft, 1);
+});
+
+test('pickRoamWaypoint clears memory once the bounded sweep count is exhausted, even if the player is still close', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, 1, 0, /*half*/240);
+  assert.equal(pick.sweepsLeft, 0);
+});
+
+test('pickRoamWaypoint clears memory early when the player has left the repeat radius, even with sweeps remaining', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, LKP_MAX_SWEEPS, LKP_REPEAT_RADIUS + 0.01, /*half*/240);
+  assert.equal(pick.sweepsLeft, 0);
+});
+
+test('pickRoamWaypoint is inclusive at exactly the repeat radius boundary', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, 2, LKP_REPEAT_RADIUS, /*half*/240);
+  assert.equal(pick.sweepsLeft, 1);
 });
