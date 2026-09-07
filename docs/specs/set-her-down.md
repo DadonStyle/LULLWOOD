@@ -1,30 +1,45 @@
-# Spec: "Set her down" — cheap version (LUL-1815)
+# SPEC — LUL-1815 "Set her down" — carry leg set-down/pick-up verb (cheap version)
 
-Source: wiki `game/mechanics/set-her-down` (accepted proposal), ticket LUL-1815.
-Cheap version only — no predator reaction, no abandon ending, no payout change.
-Re-derived against `release/next` @ `85a4ba3`. All line numbers below are current
-as of that commit; if the executor's checkout differs, re-find by grepping for the
-cited identifier before editing — do not hand-adjust line numbers blind.
+Tier: **C** (`engine/forest-engine.js` carrying/pickup simulation, `lib/game/outcome.ts`
+run-outcome state machine used by win/lose conditions). Requires `REVIEW: APPROVED`
+before merge — do not merge on green CI alone.
 
-**Tier: C** — touches `engine/forest-engine.js` win/lose-adjacent carry state
-(`lib/game/outcome.ts` RunState). Needs `REVIEW: APPROVED` before merge.
+Written against `origin/release/next` @ `ec8f30d`, **re-verified and re-numbered against
+`85a4ba3`** (16 commits landed on `engine/forest-engine.js`/`docs/ELEMENTS.md` in between;
+`lib/game/outcome.ts` was untouched, so §1/§2 below needed no renumbering). All line
+numbers below are current as of `85a4ba3`. If the file has moved on again by
+implementation time, re-locate by the cited symbol name, not the raw number, and report a
+spec bug if the symbol itself is gone.
 
-## Player experience being built
+Source: wiki `game/mechanics/set-her-down` (Feature Scout proposal, accepted by CEO
+2026-09-07, cheap version only) and the LUL-1815 ticket description. Full design
+rationale lives there — this spec is the exact edit list, not the reasoning.
 
-While carrying the child, pressing the interact key (`KeyE` desktop, the existing
-touch-interact button mobile — no new input on either platform) sets her down at
-the player's current position. She stays there, glowing, visible. The player is
-instantly light again (not `carrying`). Walking back to her and pressing the same
-key lifts her again, replaying the normal pickup cinematic. No timer, no decay, no
-new ending — the only cost is the walk back.
+## Scope — CHEAP VERSION ONLY
 
-## Files and exact changes
+Set-down and pick-back-up. No predator reaction to an unattended child (LUL-393 stays
+deferred), no third run outcome/ending, no payout change, no new key on either platform.
+Do not build any of that in this ticket.
 
-### 1. `lib/game/outcome.ts`
+## Files touched
 
-Add a `setDown` field to `RunState`, threaded through `freshRunState`, and add
-three functions mirroring the existing `pickupAllowed`/`beginPickup`/`canPickUp`
-shape.
+1. `lib/game/outcome.ts` — new `RunState.setDown` field + `setDownAllowed()` /
+   `canSetDown()` / `beginSetDown()`, plus a one-line change to `pickupAllowed()` and
+   `beginPickup()`
+2. `lib/game/outcome.test.ts` — update one exact-shape assertion, add new tests
+3. `engine/forest-engine.js` — new `setDown()` function, new `babySetDown` local,
+   `runState()`/`restart()` wiring, `KeyE` chain, `triggerTouchInteract()`, HUD
+   `objectiveText`, idle-glow gate
+4. `docs/ELEMENTS.md` — update the Child element's "what it cannot do" bullet (required,
+   same PR)
+
+---
+
+## §1. `lib/game/outcome.ts`
+
+### 1.1 `RunState` — add a field
+
+At line 10-17, add `setDown` after `carrying`:
 
 ```ts
 export interface RunState {
@@ -33,28 +48,38 @@ export interface RunState {
   dead: boolean;
   pickingUp: boolean;
   carrying: boolean;
-  babyTaken: boolean;
   setDown: boolean;
-}
-
-export function freshRunState(): RunState {
-  return { entered: false, won: false, dead: false, pickingUp: false, carrying: false, babyTaken: false, setDown: false };
+  babyTaken: boolean;
 }
 ```
 
-`pickupAllowed` (currently `lib/game/outcome.ts:39`) changes its `babyTaken` guard
-from `!s.babyTaken` to `(!s.babyTaken || s.setDown)` — the only way `babyTaken` can
-be true while pickup is still allowed is when she's currently set down:
+### 1.2 `freshRunState()` — line 19-21
+
+```ts
+export function freshRunState(): RunState {
+  return { entered: false, won: false, dead: false, pickingUp: false, carrying: false, setDown: false, babyTaken: false };
+}
+```
+
+### 1.3 `pickupAllowed()` — line 34-40
+
+Change the `!s.babyTaken` term so a set-down child can be lifted again:
 
 ```ts
 function pickupAllowed(s: RunState): boolean {
+  // `!s.babyTaken` alone would permanently block re-pickup once she's ever been taken --
+  // `s.setDown` (LUL-1815) is the one case where a true babyTaken must still allow it.
   return (!s.babyTaken || s.setDown) && !s.won && !s.dead && !s.pickingUp && !s.carrying;
 }
 ```
 
-`beginPickup` (currently `outcome.ts:53-56`) must also clear `setDown` on a
-successful transition (a repickup ends the set-down state same as a first pickup
-starts it):
+Do not touch `canPickUp()` (line 46-48) — it already just wraps `pickupAllowed(s) &&
+distToBaby < radius` and needs no change.
+
+### 1.4 `beginPickup()` — line 53-56
+
+Clear `setDown` on every successful pickup (initial or re-pickup), so the flag never
+carries stale into a fresh `carrying` state:
 
 ```ts
 export function beginPickup(s: RunState): RunState {
@@ -63,280 +88,317 @@ export function beginPickup(s: RunState): RunState {
 }
 ```
 
-New functions, placed after `arriveHome`/before `canTriggerDeath` (i.e. near the
-other carry-state transitions, `outcome.ts:~85`):
+### 1.5 New: set-down transition — add after `beginPickup`/`completePickup` (after line 65,
+before the `arriveHomeAllowed` comment block at line 67), mirroring the
+`pickupAllowed`/`canPickUp`/`beginPickup` trio:
 
 ```ts
-/** Unlike pickupAllowed, no proximity term — you can set her down anywhere while
- * carrying, so there is no separate canSetDown(s, dist, radius) shape to mirror
- * canPickUp's. This is the one deliberate deviation from the "mirror the pickup
- * trio" instruction in the proposal; the pair still has a boolean-allowed +
- * transition shape. */
+/** Gate for the set-down input: only while actually carrying, and not mid-win/-death
+ * (both already imply !carrying via their own transitions, but this stays explicit --
+ * same reasoning as pickupAllowed's explicit !s.carrying, see its comment above). No
+ * proximity term: unlike pickup, set-down has no target to be near, so there is no
+ * canSetDown(state, dist, radius) wrapper the way canPickUp wraps pickupAllowed. */
 function setDownAllowed(s: RunState): boolean {
   return s.carrying && !s.won && !s.dead;
 }
 
+/** Gate for the HUD prompt / KeyE-enabled state while carrying. Thin export of
+ * setDownAllowed(), kept as its own function (not just exporting setDownAllowed
+ * directly) for the same reason canPickUp exists alongside pickupAllowed: callers
+ * outside this module should never reach for the private `*Allowed` name. */
 export function canSetDown(s: RunState): boolean {
   return setDownAllowed(s);
 }
 
+/** Puts the child down at the player's current position. No-ops (returns `s` unchanged)
+ * when not currently allowed, mirroring beginPickup(). The engine caller is responsible
+ * for writing baby.x/z to the player's position -- this module has no coordinates. */
 export function beginSetDown(s: RunState): RunState {
   if (!setDownAllowed(s)) return s;
   return { ...s, carrying: false, setDown: true };
 }
 ```
 
-(`!s.pickingUp` is omitted from `setDownAllowed` — `pickingUp` and `carrying` are
-already mutually exclusive in every reachable RunState, so it would be redundant,
-not a new safety net. Do not add it back "for symmetry"; that's dead weight.)
+---
 
-### 2. `lib/game/outcome.test.ts`
+## §2. `lib/game/outcome.test.ts`
 
-Two required edits to keep the suite passing, plus new coverage:
+### 2.1 Fix the now-broken exact-shape assertion (existing test, ~line 26-30)
 
-- `outcome.test.ts:29-31` (`freshRunState clears every flag...` — a `deepEqual`
-  against a literal object) — add `setDown: false` to the expected object or the
-  test fails on the new field, for a reason that has nothing to do with a real
-  regression. Do this in the same commit as the `outcome.ts` change, not as an
-  afterthought.
-- Add test cases (mirror the existing `canPickUp`/`beginPickup` block's style,
-  `outcome.test.ts:60+`):
-  - `canSetDown` is true only when `carrying: true` and not `won`/`dead`.
-  - `beginSetDown` on an allowed state returns `{ carrying: false, setDown: true }`
-    merged over the input, and is a no-op (`return s` unchanged, same object shape)
-    when not allowed (e.g. not carrying).
-  - `beginPickup` succeeds when `babyTaken: true, setDown: true` (the repickup
-    path) and the result has `setDown: false`.
-  - `beginPickup` still rejects when `babyTaken: true, setDown: false` (the
-    existing "already taken, not set down" case — pins the pre-existing
-    behaviour, must not regress).
+```ts
+test('freshRunState clears every flag, including babyTaken', () => {
+  const s = freshRunState();
+  assert.deepEqual(s, {
+    entered: false, won: false, dead: false, pickingUp: false, carrying: false, setDown: false, babyTaken: false,
+  });
+});
+```
 
-### 3. `engine/forest-engine.js`
+### 2.2 Add imports — extend the existing import block (line 3-16) with `canSetDown`,
+`beginSetDown`.
 
-**New local, alongside the existing `carrying` declaration** (`engine/forest-engine.js:1991-1996`,
-the big `let entered = ..., carrying = false, ...` chain) — add `setDown = false,`
-to that same declaration list.
+### 2.3 New tests — add near the pickup tests:
 
-**Import** `beginSetDown` alongside the existing `outcome.ts` imports (find the
-`import { ... } from './outcome' ` or `'../lib/game/outcome'`-style block that
-already imports `beginPickup`, `completePickup`, `canPickUp`, etc. — add
-`beginSetDown` to it. Do not add `canSetDown`/`setDownAllowed` to the engine's
-import list; the engine checks the `carrying` local directly at the call site
-(see below), matching how `pickup()`'s own gating already reads `canPickup`
-directly rather than re-deriving it inline).
+```ts
+test('pickupAllowed (via canPickUp) rejects a fresh not-yet-taken-back child the same as always', () => {
+  assert.equal(canPickUp(state(), 1, RADIUS), true);
+});
 
-**`runState()`** (`engine/forest-engine.js:2031-2033`) — add the new field:
+test('canPickUp allows re-pickup of a set-down child even though babyTaken is still true', () => {
+  const s = state({ babyTaken: true, setDown: true });
+  assert.equal(canPickUp(s, 1, RADIUS), true);
+});
+
+test('canPickUp still rejects a taken, not-set-down child (ordinary carrying-not-yet-set-down case)', () => {
+  const s = state({ babyTaken: true, setDown: false });
+  assert.equal(canPickUp(s, 1, RADIUS), false);
+});
+
+test('beginPickup on a set-down child clears setDown and re-enters pickingUp', () => {
+  const s = state({ babyTaken: true, setDown: true });
+  const next = beginPickup(s);
+  assert.deepEqual(next, { ...s, babyTaken: true, pickingUp: true, setDown: false });
+});
+
+test('canSetDown is true only while carrying', () => {
+  assert.equal(canSetDown(state({ carrying: true })), true);
+  assert.equal(canSetDown(state({ carrying: false })), false);
+});
+
+test('canSetDown rejects while dead or won even if carrying is (inconsistently) still true', () => {
+  assert.equal(canSetDown(state({ carrying: true, dead: true })), false);
+  assert.equal(canSetDown(state({ carrying: true, won: true })), false);
+});
+
+test('beginSetDown clears carrying and sets setDown on a legitimate call', () => {
+  const s = state({ carrying: true, babyTaken: true });
+  const next = beginSetDown(s);
+  assert.deepEqual(next, { ...s, carrying: false, setDown: true });
+});
+
+test('beginSetDown is a no-op when not carrying', () => {
+  const s = state({ carrying: false });
+  assert.deepEqual(beginSetDown(s), s);
+});
+
+test('a second beginSetDown in the same frame is rejected (carrying already false)', () => {
+  const first = beginSetDown(state({ carrying: true }));
+  const second = beginSetDown(first);
+  assert.deepEqual(second, first);
+});
+```
+
+---
+
+## §3. `engine/forest-engine.js`
+
+### 3.1 Import — extend the `@/lib/game/outcome` import block (line 16-28) with
+`canSetDown` and `beginSetDown`:
+
+```js
+import {
+  freshRunState,
+  isPlaying,
+  canPickUp,
+  beginPickup,
+  completePickup,
+  canArriveHome,
+  arriveHome as outcomeArriveHome,
+  triggerDeath as outcomeTriggerDeath,
+  canGrabThrowable,
+  canThrowThrowable,
+  canSetDown,
+  beginSetDown,
+} from '@/lib/game/outcome';
+```
+
+### 3.2 New local — line 1991-1996, add `babySetDown = false,` to the same `let` chain
+that declares `carrying`:
+
+```js
+let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
+    dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
+```
+
+(rest of that statement unchanged)
+
+### 3.3 `runState()` — line 2031-2033, add the field:
 
 ```js
 function runState(){
-  return { entered, won, dead, pickingUp, carrying, babyTaken: baby.taken, setDown };
+  return { entered, won, dead, pickingUp, carrying, setDown: babySetDown, babyTaken: baby.taken };
 }
 ```
 
-**New function**, placed directly after `pickup()` (which ends at
-`engine/forest-engine.js:3361`, right before `function grabThrowable(){`):
+### 3.4 New `setDown()` function — add immediately after `pickup()` (after line 3361, before
+`function grabThrowable(){` at line 3362):
+
+**Correction to an earlier draft of this spec (caught before implementation, no code
+shipped with the bug): `bwisps.visible = true` alone is not enough.** `bwArr` (the wisp
+particle ring feeding `bwisps`'s geometry) is only ever written by `placeBabyWisps()`
+(`engine/forest-engine.js:1155-1159`), which seeds each particle relative to the
+`baby.x/z` **at the moment it's called** — the per-frame wisp update
+(`engine/forest-engine.js:4078-4079` on current `release/next`) only animates each
+particle's height, never its X/Z. `placeBabyWisps()` is already called at both existing
+spawn sites (`:871`, `:888`) for exactly this reason. Skipping it here would show the
+sparkle ring hovering at the **original spawn point**, not at the drop point — a visible
+bug, not a cosmetic gap. Call it explicitly:
 
 ```js
-function setDownChild(){
+function setDown(){
   const next = beginSetDown(runState());
   if(next.carrying === carrying) return;   // rejected -- see setDownAllowed() in lib/game/outcome.ts
-  carrying = next.carrying; setDown = next.setDown;
+  carrying = next.carrying; babySetDown = next.setDown;
   baby.x = player.x; baby.z = player.z;
-  babyGroup.visible = true; babyGroup.position.set(baby.x, 0, baby.z); babyGroup.scale.setScalar(1);
-  bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;   // back to idle level, was 0.55 while carrying
-  logChronicle('setDown');
+  babyGroup.position.set(baby.x, 0, baby.z);
+  babyGroup.visible = true; babyGroup.scale.setScalar(1);
+  placeBabyWisps();         // re-seed the ring around the NEW baby.x/z -- see correction above
+  bwisps.visible = true;    // LUL-38's beacon wisps, hidden by pickup() at :3355 -- back on so she's spottable through fog again
+  // reset glow to the idle baseline finishPickup()/restart() also use (:3399/:3508) --
+  // the per-frame idle-glow block (§3.7 below) takes over the animated curve from here.
+  bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
 }
 ```
 
-Do **not** re-show `bwisps` here (deviation from the wiki proposal, declared —
-see "Deviation from the recorded proposal" below).
-
-**`pickup()`** (`engine/forest-engine.js:3350-3361`) — sync the new field on a
-successful transition, same line that already syncs `babyTaken`/`pickingUp`:
+### 3.5 `KeyE` keydown handler — line 2075-2079, add a third arm between `canPickup` and
+`missionCanComplete`:
 
 ```js
-function pickup(){
-  const next = beginPickup(runState());
-  if(next.pickingUp === pickingUp) return;
-  baby.taken = next.babyTaken; pickingUp = next.pickingUp; setDown = next.setDown;
-  ...
+  // LUL-1258: no new key -- mission completion reuses the interact action.
+  // LUL-1815: set-down is a third arm of the same multiplex -- carrying is mutually
+  // exclusive with canPickup (pickupAllowed requires !carrying), so ordering vs.
+  // canPickup doesn't matter, but it must come before missionCanComplete/grabThrowable
+  // since carrying is already true whenever this arm should fire.
+  if(e.code === 'KeyE' && playing && !paused){
+    if(canPickup) pickup();
+    else if(carrying) setDown();
+    else if(missionCanComplete) completeMissionSequence();
+    else grabThrowable();
+  }
 ```
-(only the one added `setDown = next.setDown;` — everything else in `pickup()` is
-unchanged.)
 
-**`restart()`** (`engine/forest-engine.js:3502`) — add `setDown` to the reset line
-that already restores `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` from
-`freshRunState()`:
+### 3.6 `triggerTouchInteract()` — line 4228-4234, same third arm (mobile parity,
+`decisions/0012-mobile-parity-mandate`):
 
 ```js
-won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; baby.taken = fresh.babyTaken; setDown = fresh.setDown;
+  function triggerTouchInteract() {
+    const playing = isPlaying(runState());
+    if(!playing || paused) return;
+    if(canPickup) pickup();
+    else if(carrying) setDown();
+    else if(missionCanComplete) completeMissionSequence();
+    else grabThrowable();
+  }
 ```
 
-**KeyE keydown handler** (`engine/forest-engine.js:2075-2079`) — insert a
-`carrying` arm. Order matters: `canPickup` must stay first (it already implies
-`!carrying`, so it only fires for a genuine pickup/repickup), the new `carrying`
-check goes second, before the mission/throwable arms (which are already
-unreachable while carrying per `engine/forest-engine.js:4045`'s `!carrying` mission
-gate, but making the new arm explicit and first avoids relying on that other gate
-to keep working):
+### 3.7 Idle-glow gate — line 4072 currently reads `if(!baby.taken){`. A set-down child
+has `baby.taken === true` forever (one-way door, unchanged) but must still get the idle
+bob/glow/wisp-drift treatment while she's on the ground awaiting re-pickup. Change the
+condition:
 
 ```js
-if(e.code === 'KeyE' && playing && !paused){
-  if(canPickup) pickup();
-  else if(carrying) setDownChild();
-  else if(missionCanComplete) completeMissionSequence();
-  else grabThrowable();
-}
+  // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
+  // baby.taken stays true forever once first picked up, so babySetDown is the only signal
+  // that she's back on the ground.
+  if(!baby.taken || babySetDown){
 ```
 
-**`triggerTouchInteract()`** (`engine/forest-engine.js:4228-4234`) — identical arm,
-same order, same reasoning (this function already mirrors the KeyE chain
-exactly):
+The body of that block (line 4073-4079) is unchanged — it already reads `baby.x/z`
+indirectly via `babyGroup`'s already-set position and drives `halo`/`babyLight`/`bwisps`
+generically, with no reference to `pickingUp`/`carrying` that would need updating.
+
+### 3.8 `restart()` — line 3498-3514. Line 3502 resets the RunState-backed locals from
+`freshRunState()`; add `babySetDown`:
 
 ```js
-function triggerTouchInteract() {
-  const playing = isPlaying(runState());
-  if(!playing || paused) return;
-  if(canPickup) pickup();
-  else if(carrying) setDownChild();
-  else if(missionCanComplete) completeMissionSequence();
-  else grabThrowable();
-}
+  won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; babySetDown = fresh.setDown; baby.taken = fresh.babyTaken;
 ```
-This is the entire mobile-parity change this ticket needs — no new touch control,
-no `EngineActions`/`Hud.tsx` change, because `triggerTouchInteract` is already
-wired to the same interact button used for pickup/mission-complete/throwable-grab.
 
-**Idle-glow render block** (`engine/forest-engine.js:4072`, `if(!baby.taken){`) —
-this is the block that animates `babyGroup`'s bob, halo, and light for the
-not-yet-carried child. It must also run while the child is set down (baby.taken
-stays permanently true after the first pickup — this spec does not change that):
+### 3.9 HUD `objectiveText` — line 4053-4058:
 
 ```js
-if(!baby.taken || setDown){
-```
-No other line inside that block changes — it already reads `baby.x`/`baby.z`
-generically, which `setDownChild()` above has already repointed at the drop spot,
-and only ever writes `babyGroup.position.y` (not `.x`/`.z`), which is why
-`setDownChild()` must set the full `.position` once as shown above.
-
-**HUD `objectiveText`** (`engine/forest-engine.js:4053-4058`) — the full three-way
-branch is now:
-
-```js
-objectiveText: carrying
-  ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm  ·  E  to set her down'
-  : (canPickup
-      ? (setDown ? 'Press  E  to lift her again' : 'Press  E  to lift the child')
-      : (missionCanComplete ? 'Press  E  at the drowned car'
-         : (setDown ? 'She’s where you left her  ·  ' + Math.round(distBaby) + 'm'
-            : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'))),
-```
-Copy taken verbatim from the proposal §6 (`game/mechanics/set-her-down`) for the
-"carrying" and "standing over her" lines; the "away from a set-down child" line
-(`She’s where you left her`) is this spec's own addition — the proposal explicitly
-left that one to the spec (§6, last bullet). Register constraint from the same
-proposal section applies: no mechanic words ("detection", "penalty", "safe") in
-any of it. Note the curly apostrophe (`’`) to match the file's existing house
-style (see `DON’T MOVE`, `engine/forest-engine.js:4024`).
-
-**QA hook** (optional but cheap, `engine/forest-engine.js:2711-2714`,
-`qaProbeBabyLight`) — add `setDown` to the returned object so a Playwright test
-can assert the new state without a screenshot diff:
-
-```js
-window.ForestEngine.qaProbeBabyLight = function(){
-  return { intensity: babyLight.intensity, distance: babyLight.distance,
-           carrying, pickingUp, setDown, taken: baby.taken };
-};
+    pushState({
+      objectiveVisible: true, objectiveReady: canPickup,
+      objectiveText: carrying
+        ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm  ·  E  to set her down'
+        : (canPickup ? (babySetDown ? 'Press  E  to lift her again' : 'Press  E  to lift the child')
+           : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
 ```
 
-### 4. `docs/ELEMENTS.md`
+(rest of the `pushState` call, line 4059-4067, unchanged)
 
-Two updates, both in the Child section (`docs/ELEMENTS.md:170-232`):
+---
 
-- `docs/ELEMENTS.md:230` currently reads *"Cannot be dropped, lost, or re-hidden
-  once picked up — `baby.taken` only ever goes false→true, reset by
-  `generateMap()`/`restart()`."* This is no longer true and must move out of
-  "What it CANNOT do." Replace it with a "What it can do" bullet (append after
-  the existing carry-ride bullet, `docs/ELEMENTS.md:179-182`):
-  > While carrying, can be **set down** at the player's current position
-  > (`setDownChild()`) and picked up again from there (`pickup()`'s `setDown`
-  > branch) — any number of times, no cost beyond the walk. `baby.taken` still
-  > only ever goes false→true; the new `setDown` flag (not `baby.taken`) is what
-  > toggles on drop/re-lift.
-- Run `node scripts/check-elements-citations.mjs --fix` after editing — this file
-  shifts other citations' line numbers below it, and the script auto-corrects the
-  ones it can prove.
+## §4. `docs/ELEMENTS.md`
 
-## Deviation from the recorded proposal — declare this, don't bury it
+Update the Child element's "What it CANNOT do" bullet (currently line 230-231):
 
-The proposal (`game/mechanics/set-her-down` §5, cheap version) says `setDown()`
-"re-shows `babyGroup` **and `bwisps`**" and cites the fresh-map re-show mechanism
-at `:764` as proof it already exists. That citation is about **spawn-time**
-placement, not re-anchoring: `bwArr` (the wisp particle ring, `engine/forest-engine.js:1151-1158`)
-is computed once, around `baby.x/z` **at spawn**, and the per-frame wisp update
-(`engine/forest-engine.js:4078-4079`) only animates each particle's height — X/Z
-are never recomputed relative to a moving `baby.x/z`. Re-showing `bwisps.visible = true`
-after a set-down at a new location would show the sparkle ring floating at the
-**original spawn point**, not at the drop point — a visible bug, not a faithful
-port of the proposal. This spec deliberately drops the "and bwisps" half of that
-line: `setDownChild()` re-shows only `babyGroup` (mesh + halo + light, all of
-which correctly track `baby.x/z` every frame via the idle-glow block). Re-seeding
-`bwArr` around the new position is possible but is scope growth beyond "cheap
-version, nothing else changes" — out of scope here, worth a follow-up ticket if
-the set-down spot reads as needing the sparkle cue in playtesting.
+```
+- Cannot be dropped, lost, or re-hidden once picked up — `baby.taken` only
+  ever goes false→true, reset by `generateMap()`/`restart()`.
+```
 
-## Constraints
+replace with:
 
-- No new predator behavior, no abandon ending, no payout/telemetry change — full
-  version is explicitly out of scope (proposal §5).
-- No new input on either platform — reuses `KeyE` / the existing touch-interact
-  button.
-- `lib/game/outcome.ts` changes must stay pure — no engine/DOM/Three.js
-  reference, consistent with the rest of the file.
-- Preserve existing behavior: a player who never sets the child down must see
-  zero change (this is purely additive to the state machine and the KeyE
-  if-chain's new arm is only reachable while `carrying`, which was previously a
-  dead end for that keypress).
+```
+- Cannot be lost or re-hidden once picked up — `baby.taken` only ever goes
+  false→true, reset by `generateMap()`/`restart()`. **As of `LUL-1815`**, she
+  *can* be set back down while carried (`setDown()`, same `KeyE`/touch-interact
+  input as pickup — no new key) — this returns her to a fixed point on the
+  ground (glowing, idle-animated, re-spottable via the beacon wisps) and the
+  player to full speed/no carry-detect penalty until she's picked up again
+  from that spot. `carrying` itself does still round-trip true→false→true;
+  only `baby.taken` is one-way.
+```
 
-## Out of scope (explicitly, per the proposal)
+Also add one line to the "What it can do" list (after line 182, the `arriveHome()`
+bullet) noting the new verb exists, for anyone scanning that list alone:
 
-- Predators reacting to an unattended set-down child (discharges LUL-393) — full
-  version only.
-- A third run outcome / "abandon" ending, its payout, and its telemetry — full
-  version only, blocked on Economist numbers (proposal §7).
-- The "floor version" (set-down only while hidden) — not needed since the cheap
-  version ships in full per the proposal's own recommendation.
-- Re-seeding `bwisps` at the drop location (see Deviation section above).
-- Any change to `CARRY_DETECT_MUL`, carry glow curves, or carry pace — untouched.
+```
+- **As of `LUL-1815`**, be set back down mid-carry (`setDown()`) and picked
+  back up from where she was left (`pickupAllowed()`'s `babyTaken` guard is
+  relaxed by a `setDown` flag in `lib/game/outcome.ts`) — see "cannot do"
+  below for the exact boundary.
+```
+
+---
+
+## Constraints — what must NOT change in this ticket
+
+- No new predator behavior of any kind. A predator standing on a set-down child still has
+  zero reaction (LUL-393 stays exactly as filed — do not touch anything under
+  `updatePredators()`).
+- No new run outcome, no new payout, no telemetry change. `arriveHomeAllowed()` still
+  requires `s.carrying`; walking home without her is still not a way to end a run.
+- No new input binding on either platform — `KeyE` and `triggerTouchInteract()` are the
+  only two call sites that change, and both are pure reordering/insertion into an
+  existing if-chain.
+- `lib/game/outcome.ts` stays pure — no `Math`/wall-clock/DOM reads added to it. All new
+  functions take only `RunState` (and, for the existing `canPickUp`, primitives already
+  in its signature).
+- Do not add a `canSetDown(state, dist, radius)` proximity wrapper — set-down has no
+  target position to be near (unlike pickup), so `canSetDown(s)` takes only `RunState`.
 
 ## Verification
 
-1. `cd` to the repo root (wherever this branch is checked out) and run:
-   ```
-   npx tsc --noEmit
-   npm test
-   ```
-   Both must pass. `npm test` covers the new/edited `outcome.test.ts` cases above
-   — a red run there is a real regression, not one of the two CI guard scripts
-   (this change adds no new top-level engine identifier that collides with a
-   `lib/game` export, and touches no cited line ranges in `docs/ELEMENTS.md`
-   other than the one edited and re-fixed by `--fix` above).
-2. `node scripts/check-elements-citations.mjs --fix` — must exit clean (0 findings
-   left) after the `docs/ELEMENTS.md` edit above.
-3. `npx eslint .` (the `lint` script) clean.
-4. `next build` passes.
-5. Manual/Playwright smoke (new test, not required to exist before merge but
-   strongly recommended given this is Tier C): via `?qaHooks=1`, teleport near
-   baby, pick up, walk a few steps, press the interact key again, assert
-   `qaProbeBabyLight().carrying === false && qaProbeBabyLight().setDown === true`
-   and `#objectiveText` reads "Press  E  to lift her again" once back in range;
-   then repickup and assert `setDown === false` again and the normal carry text
-   returns.
+1. `npx tsc --noEmit` — clean.
+2. `npm test -- lib/game/outcome.test.ts` (or the project's full `npm test` if that's the
+   only wired entry point) — all existing tests still pass with the `setDown: false`
+   field added to every `freshRunState()`-based fixture, and every new §2.3 test passes.
+3. `npx eslint engine/forest-engine.js lib/game/outcome.ts` — clean.
+4. `next build` — passes.
+5. Manual/engine-level smoke (gameplay correctness is unverified by Founding Engineer
+   per role; Game Engineer/tester should confirm): pick up the child, press `E` while
+   carrying → she appears on the ground where you're standing, glowing and bobbing, HUD
+   reads "Press  E  to lift her again"; walk away and back, press `E` again → carrying
+   resumes, HUD reverts to the carry line with the "E to set her down" suffix; repeat on
+   a touch/mobile viewport via `triggerTouchInteract()`.
 
-Gameplay/visual correctness (does it feel right, is the glow readable at the new
-position, mobile touch ergonomics) is **unverified by this spec** — flag that
-explicitly in the implementation PR per the studio's "coding agents assert code
-correctness only" rule. This is Tier C, so `REVIEW: APPROVED` is required before
-merge regardless.
+## Out of scope (deferred, not declined — do not build any of this here)
+
+- Predators reacting to an unattended set-down child (LUL-393).
+- A third run outcome / abandon ending / abandon payout.
+- Any per-second cost or farm-safety check on the set-down+re-pickup loop (Game
+  Economist's three numbers in the wiki page's §7 — none of them block this ticket).
+- The floor version (set-down only while hidden) — not needed, cheap version ships in
+  full per the accepted proposal.
