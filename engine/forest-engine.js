@@ -75,6 +75,7 @@ import {
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
+import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
   biomeAt,
   bogSpeedMultiplier,
@@ -1263,6 +1264,7 @@ const predators = [];
 // need to re-derive array position every restart.
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
 let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
+let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
 let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
 let coverAmt = 0;   // LUL-144: eased 0..1 desaturation driven by the cover-feedback scan below
 function placePredators(){
@@ -1303,7 +1305,7 @@ function placePredators(){
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   mm.style.display = preset.minimap ? '' : 'none';
-  sinceClose = 0; huntTime = 0; spotFlash = 0;
+  sinceClose = 0; huntTime = 0; spotFlash = 0; bearingPulseT = 0; bearingPulseSide = null;
   activeCharges = 0; pushState({ chargeVisible: false });
 }
 // steer a desired direction around trees the predator would otherwise walk into
@@ -1402,13 +1404,9 @@ function hearNoise(p){
   p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
   leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
   if(captionsOn){
-    const dx = p.x - player.x, dz = p.z - player.z, dist = Math.hypot(dx, dz);
-    const near = dist < 30 ? 'near' : 'far';
-    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
-    const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-    const fwd = dx*fx + dz*fz, right = dx*rx + dz*rz;
-    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
-    pushState({ caption: `${p.kind} heard you · ${near} · ${side}`, captionId: ++captionSeq });
+    const b = bearingOf(p.x, p.z, player.x, player.z, player.yaw);
+    const near = b.dist < 30 ? 'near' : 'far';
+    pushState({ caption: `${p.kind} heard you · ${near} · ${b.side}`, captionId: ++captionSeq });
   }
 }
 // LUL-1623: same investigate/approach/sniff/back loop as hearNoise(), but the
@@ -2366,20 +2364,18 @@ function announceCaption(kind, big, p){
   let where;
   if(!p){ where = 'right on you'; }
   else {
-    const dx = p.x - player.x, dz = p.z - player.z, dist = Math.hypot(dx, dz);
-    const near = dist < 30 ? 'near' : 'far';
-    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
-    const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-    const fwd = dx*fx + dz*fz, right = dx*rx + dz*rz;
-    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
-    where = `${near} · ${side}`;
+    const b = bearingOf(p.x, p.z, player.x, player.z, player.yaw);
+    const near = b.dist < 30 ? 'near' : 'far';
+    where = `${near} · ${b.side}`;
   }
   pushState({ caption: `${kind} ${verb}${big ? ' (close)' : ''} · ${where}`, captionId: ++captionSeq });
 }
 function predatorCall(kind, big, p){
   if(captionsOn) announceCaption(kind, big, p);
   if(!audio || !soundOn) return;
-  const { ctx, master, conv } = audio, t = ctx.currentTime, vol = big ? 1.0 : 0.6;
+  const { ctx, master, conv } = audio, t = ctx.currentTime;
+  const baseVol = big ? 1.0 : 0.6;
+  const vol = p ? baseVol * callVolumeMul(Math.hypot(p.x - player.x, p.z - player.z)) : baseVol;
   if(kind === 'wolf'){                              // howl: gliding tone with vibrato
     const o=ctx.createOscillator(); o.type='sawtooth';
     o.frequency.setValueAtTime(300,t); o.frequency.linearRampToValueAtTime(560,t+0.4);
@@ -2465,15 +2461,23 @@ function spotSting(){
   lo.connect(lg); lg.connect(master); lo.start(t); lo.stop(t+0.45);
 }
 // a dissonant piano note; caller raises pitch/volume as the animal gets nearer
-function pianoNote(freq, vol){
+// LUL-1308: `pan` (defaults to 0, center) feeds a single shared StereoPannerNode --
+// one node total for the whole note, not one per oscillator/harmonic, per the
+// design doc's "costs one node" budget. Only the dry path (`master`) is panned;
+// the reverb send (`conv`) stays unpanned, same as before -- a convolution
+// reverb's own diffuse character does the work there, panning it too would just
+// smear the direct cue's localization.
+function pianoNote(freq, vol, pan = 0){
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t = ctx.currentTime;
+  const panner = ctx.createStereoPanner(); panner.pan.value = Math.max(-1, Math.min(1, pan));
+  panner.connect(master);
   const parts = [[1,1],[2,0.5],[3,0.25],[4,0.12]];
   const play = (f, amp) => parts.forEach(([h,ha]) => { const o=ctx.createOscillator(); o.type='sine';
     o.frequency.value = f*h*(1+0.0007*h*h);
     const g=ctx.createGain(); const a=amp*ha*vol; g.gain.setValueAtTime(0.0001,t);
     g.gain.exponentialRampToValueAtTime(a, t+0.005); g.gain.exponentialRampToValueAtTime(0.0001, t+1.6);
-    o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+1.65); });
+    o.connect(g); g.connect(panner); g.connect(conv); o.start(t); o.stop(t+1.65); });
   play(freq, 0.12); play(freq*1.414, 0.05);   // + tritone shadow for dread
 }
 // big explosion when the child bursts into the sky
@@ -3285,6 +3289,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
 const spotFlashEl = document.getElementById('spotFlash');
+const bearingPulseEl = document.getElementById('bearingPulse');
 const deathVideo = document.getElementById('deathVideo');
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
@@ -3902,7 +3907,12 @@ function tick(){
         const near01 = clamp(1 - nearDist/46, 0, 1);           // 0 far … 1 close
         pianoTimer = 1.3 - near01*0.95;                        // interval shortens as it nears
         const steps = [0,3,5,7,10,12][Math.min(5, Math.floor(near01*6))];
-        pianoNote(98 * Math.pow(2, steps/12), 0.5 + near01*0.6);   // low, scary; rises as it closes
+        // LUL-1308: bearing drives both the note's stereo pan and the screen-edge
+        // glow. 'ahead' is skipped for the glow -- the player's own view already
+        // covers it, see lib/game/bearing.ts's Bearing.side doc.
+        const bearing = bearingOf(nearP.x, nearP.z, player.x, player.z, player.yaw);
+        pianoNote(98 * Math.pow(2, steps/12), 0.5 + near01*0.6, bearingPan(bearing));
+        if(bearing.side !== 'ahead'){ bearingPulseSide = bearing.side; bearingPulseT = 1; }
       }
     } else { pianoTimer = 0; approachPianoActive = false; }
   } else { sinceClose = 0; approachPianoActive = false; }
@@ -3924,6 +3934,12 @@ function tick(){
 
   spotFlash = Math.max(0, spotFlash - dt*1.6);
   spotFlashEl.style.opacity = (spotFlash*0.55).toFixed(3);
+  // LUL-1308: decays slower than spotFlash (1.6) -- spotFlash is a one-shot
+  // "you were just spotted" event; this is a repeating ambient cue and should
+  // linger a beat between piano notes rather than fully blink out.
+  bearingPulseT = Math.max(0, bearingPulseT - dt*1.1);
+  if(bearingPulseSide) bearingPulseEl.className = bearingPulseSide;
+  bearingPulseEl.style.opacity = (bearingPulseT*0.5).toFixed(3);
 
   const distLake = Math.hypot(player.x - CONFIG.lake.x, player.z - CONFIG.lake.z);
 
