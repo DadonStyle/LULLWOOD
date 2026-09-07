@@ -3705,6 +3705,9 @@ function tick(){
     playerLight.intensity = cfg.intensity;
     playerLight.distance = cfg.distance;
     pushState({ lightDimmed });
+    // LUL-1317: mirrors enterHide's feature_engagement('hide') -- fires once per
+    // activation (the rising edge), not every frame the veil is held.
+    if(dimmed) track({ event: 'feature_engagement', feature: 'veil', action: 'used' });
   }
   dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
   applyVignette(dimAmount);
