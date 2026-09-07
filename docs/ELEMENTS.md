@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3962 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3530, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3965 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3533, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -623,6 +623,11 @@ one geometry builder (`makePredator()`), differentiated by the
   `maxSpd` while `inLakeWater()` is true — the visible water radius
   `CONFIG.lake.r` (15), a tighter circle than the `clear` ring spawn checks
   use, so the slow starts exactly where the water mesh does. LUL-791/LUL-392.
+- Slow predators too, the same way: `updatePredators()` samples
+  `lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake))` (and the bog's
+  equivalent) per predator per tick and folds it into every roam/hunt/chase/
+  investigate/flank speed — a predator that wades in pays the same cost the
+  player does. The `charge` dash is explicitly exempt (LUL-1309).
 - Bias the ambient "twinkle" chime to play brighter/more often when the
   player is near it (`distLake < CONFIG.lake.r*3`, `tick()`).
 - Deflect a predator's roam/stuck-recovery waypoint: `updatePredators()`'s
