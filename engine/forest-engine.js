@@ -107,6 +107,8 @@ import {
   veilMaxHoldForTier,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
+  computeDepth,
+  computeSurvival,
 } from '@/lib/game/economy';
 // LUL-1258: M2 Deepwater. Pure mission-state helpers, no Three.js -- mirrors
 // how lib/game/outcome.ts's transitions are imported above.
@@ -2419,6 +2421,7 @@ let hudState = {
   // `lastPayout` is the most recent win/death breakdown (null before the
   // first run ends this session), reset to null on restart().
   embersBalance: 0, embersDeeperLungsTier: 0, lastPayout: null,
+  livePileEmbers: 0,   // LUL-1315: live unbanked depth+survival total, run-only
   // LUL-1623: throwable distractions -- heldThrowable gates the desktop/mobile
   // throw prompt (components/GameCanvas.tsx, components/MobileControls.tsx);
   // canGrabThrowable is the HUD gate for the "pick up stone" prompt, mirroring
@@ -2480,7 +2483,7 @@ function enter(){
   enteredAt = clock.elapsedTime;
   runElapsed = 0;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
-  pushState({ entered: true });
+  pushState({ entered: true, livePileEmbers: 0 });
   // LUL-1425: the real "a run begins" moment on both input modes -- enter() is
   // called by the gate click (Hud.tsx) and by restart(). Fires once per RUN, not
   // once per page load; see docs/specs. Previously lived in the desktop-only
@@ -3623,6 +3626,9 @@ function tick(){
   if(entered){
     const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
     if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
+    if(!won && !dead){
+      pushState({ livePileEmbers: computeDepth(maxDistFromHome) + computeSurvival(clock.elapsedTime - enteredAt) });
+    }
   }
 
   if(pickingUp){
