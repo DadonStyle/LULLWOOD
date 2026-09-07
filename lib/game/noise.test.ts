@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isNoiseHeard,
+  checkThrowableNoise,
   NOISE_RADIUS_WALK,
   NOISE_RADIUS_RUN,
   HEAR_CHANCE_PER_SEC,
@@ -57,4 +58,18 @@ test('isNoiseHeard scales the hit chance linearly with dt', () => {
 test('isNoiseHeard defaults rand to Math.random (no crash, boolean result)', () => {
   const result = isNoiseHeard(1, NOISE_RADIUS_WALK, 1 / 60);
   assert.equal(typeof result, 'boolean');
+});
+
+// ---- checkThrowableNoise: one-shot distance check --------------------------
+
+test('checkThrowableNoise: inside radius hears', () => {
+  assert.equal(checkThrowableNoise(10, 24), true);
+});
+
+test('checkThrowableNoise: at radius is a miss (boundary, exclusive)', () => {
+  assert.equal(checkThrowableNoise(24, 24), false);
+});
+
+test('checkThrowableNoise: beyond radius is a miss', () => {
+  assert.equal(checkThrowableNoise(30, 24), false);
 });

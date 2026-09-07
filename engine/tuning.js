@@ -16,6 +16,8 @@
 export const CONFIG = {
   seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
   mapSize: 480,          // the forest is a fixed square this many units across
+  wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
+                          // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
   walk:    6,            // walking speed (units/s); Shift multiplies it
   fog:     0.04,
@@ -24,24 +26,53 @@ export const CONFIG = {
   trunk:   0x171b20,
   foliage: 0x102420,
   ground:  0x0c1117,
+  // LUL-874: keep this well clear of the map edge (half = mapSize/2 = 240).
+  // updatePredators()'s waypoint-pick sites clamp to map bounds, call
+  // keepWaypointOffLake() (lib/game/lake.ts) -- which can push a waypoint out
+  // to `r + margin` (~17 units) from the lake's center -- then clamp to
+  // bounds *again*. If the lake ever sat within that push distance of an
+  // edge, the second clamp could silently snap the waypoint back into the
+  // water, reopening the bug PR #183 fixed, with no test or CI signal since
+  // nothing currently asserts this. Today's (34,-28) is ~206 units from the
+  // nearest edge, comfortably clear -- re-check this distance before moving
+  // the lake or shrinking mapSize (wiki game/lul857-review-pr183).
   lake:    { x: 34, z: -28, r: 15, clear: 22, glow: 0x86b8ff },
   home:    { x: 0, z: 0, r: 3.6, glow: 0xffd9b0 },   // LUL-38: reuses the spawn point, no new rng draw
   carryPaceMul: 0.72,                                 // LUL-38: burden while carrying the child, not a cripple
 };
 
-// LUL-25: four fixed navigational landmarks, "visible over the fog line" so
+// LUL-25: six fixed navigational landmarks, "visible over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() in forest-engine.js).
 // Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home.
 // `cr` is the movement-collision radius (LUL-374) -- deliberately much
 // smaller than `clear` (which only keeps trees/cover from generating too
 // close to the landmark's nudge target).
+// LUL-1782: radioMast/chapelSteeple added when the map grew to 480x480
+// (LUL-1484) left everything past radius ~134 without a landmark, and the
+// child now spawns at radius 120-192 -- beyond the original four entirely.
+// Placed at radius ~178-179, in the two widest angular gaps between the
+// original four (the empty arc through `oak` at ~10 deg, and the empty arc
+// between `fireTower` at 225 deg and `stoneMarker` at 323 deg).
 export const LANDMARKS = [
-  { kind: 'fireTower',   x: -95, z: -95, clear: 12, cr: 1.6 },
-  { kind: 'stoneMarker', x: 100, z: -75, clear: 9,  cr: 1.1 },
-  { kind: 'oak',         x: 22,  z: 4,   clear: 10, cr: 1.3 },
-  { kind: 'drownedCar',  x: -95, z: 46,  clear: 11, cr: 2.3 },
+  { kind: 'fireTower',     x: -95, z: -95, clear: 12, cr: 1.6 },
+  { kind: 'stoneMarker',   x: 100, z: -75, clear: 9,  cr: 1.1 },
+  { kind: 'oak',           x: 22,  z: 4,   clear: 10, cr: 1.3 },
+  { kind: 'drownedCar',    x: -95, z: 46,  clear: 11, cr: 2.3 },
+  { kind: 'radioMast',     x: 30,  z: 175, clear: 10, cr: 1.0 },
+  { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
+
+// LUL-1808: roam waypoint step, expressed as a fraction of `half` the same way
+// child spawn radius (half*(0.5+rng()*0.3), forest-engine.js:788) and predator
+// spawn radius (half*(0.42+rng()*0.45), forest-engine.js:1204) already scale
+// with map size. LUL-1484 grew mapSize 240->480 (half 120->240) but this step
+// stayed a hardcoded 15-55 units, so predators shuffled a ~70-unit patch of
+// their own spawn point against a map twice as wide (wiki
+// game/mechanics/empty-outbound-leg). 15/120=0.125, 40/120=1/3 reproduces
+// today's 15-55 range exactly at half=120, and gives ~30-110 at the current
+// half=240.
+export const ROAM_STEP_FRAC = { min: 0.125, range: 1 / 3 };
 
 // ---- Lighting --------------------------------------------------------------
 // LUL-975: r155 dropped the `Math.PI` "artist-friendly" scaling factor that used to

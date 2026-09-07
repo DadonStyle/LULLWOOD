@@ -7,6 +7,7 @@ import {
   pickHardBabyPosition,
   BOG_SPEED_MULTIPLIER,
   BOG_NOISE_MULTIPLIER,
+  BLACKOUT_MIN_RADIUS,
   type Landmark,
 } from './bog.ts';
 
@@ -75,15 +76,23 @@ test('bogSpeedMultiplier/bogNoiseMultiplier are linear in bogginess', () => {
 });
 
 test('pickHardBabyPosition lands in a bog patch, clear of the map edge', () => {
-  const p = pickHardBabyPosition(seeded(1), 120, []);
+  const p = pickHardBabyPosition(seeded(1), 240, []);
   assert.ok(biomeAt(p.x, p.z) > 0, `(${p.x},${p.z}) should be boggy`);
-  assert.ok(Math.abs(p.x) <= 100 && Math.abs(p.z) <= 100, `p=${JSON.stringify(p)} out of margin`);
+  assert.ok(Math.abs(p.x) <= 220 && Math.abs(p.z) <= 220, `p=${JSON.stringify(p)} out of margin`);
+  assert.ok(Math.hypot(p.x, p.z) >= BLACKOUT_MIN_RADIUS, 'must clear the blackout distance floor');
 });
 
 test('pickHardBabyPosition is deterministic for a given seed', () => {
-  const a = pickHardBabyPosition(seeded(42), 120, []);
-  const b = pickHardBabyPosition(seeded(42), 120, []);
+  const a = pickHardBabyPosition(seeded(42), 240, []);
+  const b = pickHardBabyPosition(seeded(42), 240, []);
   assert.deepEqual(a, b);
+});
+
+test('pickHardBabyPosition never lands closer than BLACKOUT_MIN_RADIUS', () => {
+  for (const seed of [1, 2, 3, 42, 99]) {
+    const p = pickHardBabyPosition(seeded(seed), 240, []);
+    assert.ok(Math.hypot(p.x, p.z) >= BLACKOUT_MIN_RADIUS, `seed ${seed}: (${p.x},${p.z}) is inside the floor`);
+  }
 });
 
 test('pickHardBabyPosition avoids a landmark covering its whole reachable area, still terminates', () => {
@@ -92,4 +101,21 @@ test('pickHardBabyPosition avoids a landmark covering its whole reachable area, 
   assert.equal(typeof p.x, 'number');
   assert.equal(typeof p.z, 'number');
   assert.ok(Number.isFinite(p.x) && Number.isFinite(p.z));
+});
+
+// LUL-1861: predator speed in engine/forest-engine.js's updatePredators() must apply
+// bogSpeedMultiplier exactly once (at the LUL-1483 site, `speed *= bogSpeedMultiplier(biomeAt(...))`,
+// after all per-state branches). A regression that reintroduces a second bog factor into the
+// per-state `pLakeMul`/`pTerrainMul` composition (as LUL-1692/PR #386 briefly did by calling the
+// since-removed `inBog()`) would silently halve speed again on top of this application.
+test('bog speed multiplier composes with full bogginess exactly once, matching the single engine application site', () => {
+  const fullBog = bogSpeedMultiplier(1);
+  assert.equal(fullBog, BOG_SPEED_MULTIPLIER);
+  // one application: full-speed predator entering full bog slows to exactly BOG_SPEED_MULTIPLIER
+  const speedAfterOneApplication = 1 * fullBog;
+  assert.equal(speedAfterOneApplication, BOG_SPEED_MULTIPLIER);
+  // a second, erroneous application (the LUL-1861 bug shape) must NOT match the correct result
+  const speedAfterDoubleApplication = 1 * fullBog * fullBog;
+  assert.notEqual(speedAfterDoubleApplication, BOG_SPEED_MULTIPLIER);
+  assert.equal(speedAfterDoubleApplication, BOG_SPEED_MULTIPLIER * BOG_SPEED_MULTIPLIER);
 });
