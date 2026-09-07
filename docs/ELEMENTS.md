@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4028 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3592, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4048 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3610, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -919,6 +919,24 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   read-only `EngineHudState` fields (`windX`/`windZ`), pushed once per map
   generation (not per-frame) — the only HUD element driven by map-constant
   rather than per-frame or per-event engine state.
+  LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
+  below the existing time/payout line: a short chronological log of the run
+  ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
+  a stat dump. Engine-owned: `logChronicle(code, args)` in
+  `engine/forest-engine.js` appends a flat `{t, code, args}` entry at each of
+  ~8 call sites (`scentOnto()`, the three chase/investigate/flank give-up
+  transitions, `enterHide()`, `finishPickup()`, `arriveHome()`,
+  `triggerDeath()`, the fog-tide start/end branch) into a run-local `chronicle`
+  buffer, reset in `enter()`. The buffer is handed to React exactly once, in
+  the same `pushState()` call as `winVisible`/`deathVisible` — **not** streamed
+  live, because `pushState`'s shallow `!==` compare would treat a fresh array
+  as "changed" every frame if this were logged per-frame (see that function's
+  own comment). `lib/game/chronicle.ts` is the pure formatter (`formatChronicle()`,
+  `nearestLandmarkName()`) — no DOM, no Three.js, unit-testable on its own; it
+  also gives the four fixed navigational landmarks (`LANDMARKS` in
+  `engine/tuning.ts`) their first player-facing names. `#winText`/`#deathText`
+  both gained `max-height: calc(100dvh - 48px); overflow-y: auto` in the same
+  PR so a long chronicle can't overflow a phone viewport silently.
   LUL-1194: the death screen copy names the *cause*, not the predator species
   — a new `deathCause: 'charge'|'hunt'|'chase'` field, set by `triggerDeath()`
   (three call sites in `updatePredators()`) and mapped to player-facing text
@@ -1001,7 +1019,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3274) and `triggerDeath()` (L3304).
+  both `track()` call sites in `arriveHome()` (L3277) and `triggerDeath()` (L3304).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1012,7 +1030,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2443),
-  reset to 0 on `enter()` (L2505) and recomputed every `tick()` while the run
+  reset to 0 on `enter()` (L2514) and recomputed every `tick()` while the run
   is neither won nor dead (L3693: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to

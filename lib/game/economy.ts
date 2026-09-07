@@ -81,7 +81,8 @@ export function computeWinPayout(
   missionBonus = 0,
 ): RunPayout {
   const mult = TIER_MULTIPLIERS[tier].win;
-  const depth = Math.round(computeDepth(maxDistFromHome) * mult);
+  const cappedDepth = Math.min(computeDepth(maxDistFromHome), 62); // caps blackout's 2.0x win multiplier at 476E (post-LUL-1806 CARRIED/HOME); inert for lantern/night, whose max depth is 48
+  const depth = Math.round(cappedDepth * mult);
   const survival = Math.round(computeSurvival(survivedSeconds) * mult);
   const carried = Math.round(CARRIED * mult);
   const home = Math.round(HOME * mult);
