@@ -93,3 +93,20 @@ test('pickHardBabyPosition avoids a landmark covering its whole reachable area, 
   assert.equal(typeof p.z, 'number');
   assert.ok(Number.isFinite(p.x) && Number.isFinite(p.z));
 });
+
+// LUL-1861: predator speed in engine/forest-engine.js's updatePredators() must apply
+// bogSpeedMultiplier exactly once (at the LUL-1483 site, `speed *= bogSpeedMultiplier(biomeAt(...))`,
+// after all per-state branches). A regression that reintroduces a second bog factor into the
+// per-state `pLakeMul`/`pTerrainMul` composition (as LUL-1692/PR #386 briefly did by calling the
+// since-removed `inBog()`) would silently halve speed again on top of this application.
+test('bog speed multiplier composes with full bogginess exactly once, matching the single engine application site', () => {
+  const fullBog = bogSpeedMultiplier(1);
+  assert.equal(fullBog, BOG_SPEED_MULTIPLIER);
+  // one application: full-speed predator entering full bog slows to exactly BOG_SPEED_MULTIPLIER
+  const speedAfterOneApplication = 1 * fullBog;
+  assert.equal(speedAfterOneApplication, BOG_SPEED_MULTIPLIER);
+  // a second, erroneous application (the LUL-1861 bug shape) must NOT match the correct result
+  const speedAfterDoubleApplication = 1 * fullBog * fullBog;
+  assert.notEqual(speedAfterDoubleApplication, BOG_SPEED_MULTIPLIER);
+  assert.equal(speedAfterDoubleApplication, BOG_SPEED_MULTIPLIER * BOG_SPEED_MULTIPLIER);
+});

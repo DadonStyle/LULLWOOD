@@ -126,30 +126,9 @@ jobs:
           # "all green" test -- so this must never be reduced back to a rollup
           # filter (wiki systems/ci-github-token-blind-spot: a green rollup can
           # be an empty set).
-          base=$(gh api "repos/$REPO/pulls/$PR" --jq '.base.ref')
-          gh api "repos/$REPO/rules/branches/$(printf '%s' "$base" | sed 's|/|%2F|g')" \
-            --jq '.[] | select(.type == "required_status_checks")
-                      | .parameters.required_status_checks[].context' | sort -u > required.txt
-          echo "checks required by $base's ruleset:"; cat required.txt
-          if [ ! -s required.txt ]; then
-            echo "::error::$base's ruleset declares no required status checks. Refusing to approve an unverified head."
-            exit 1
-          fi
-
-          gh pr view "$PR" --repo "$REPO" --json statusCheckRollup \
-            --jq '.statusCheckRollup[] | "\(.name // .context)\t\(.conclusion // .state)"' > rollup.tsv
-          echo "PR #$PR rollup:"; cat rollup.tsv
-
-          fail=0
-          while IFS= read -r ctx; do
-            state=$(awk -F'\t' -v c="$ctx" '$1 == c {print $2}' rollup.tsv | tail -1)
-            echo "  required '$ctx' -> ${state:-<ABSENT>}"
-            if [ "$state" != "SUCCESS" ]; then
-              echo "::error::required check '$ctx' is ${state:-absent from the PR rollup} on PR #$PR."
-              fail=1
-            fi
-          done < required.txt
-          if [ "$fail" -ne 0 ]; then
+          BASE_BRANCH=$(gh api "repos/$REPO/pulls/$PR" --jq '.base.ref')
+          . ./.github/scripts/check-required-checks.sh
+          if [ "$required_checks_ok" -ne 1 ]; then
             # Say WHY, not just THAT. See the LUL-826 note in this file's
             # header: a bare "absent from the PR rollup" is ambiguous between
             # "CI never ran", "still running", "red", and "green but produced

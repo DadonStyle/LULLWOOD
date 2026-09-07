@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3971 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3536, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4028 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3592, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -268,7 +268,13 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What they can do (shared)**
 - Roam via random waypoints when nothing has noticed the player
-  (`state==='roam'`, L1010-1019).
+  (`state==='roam'`, L1010-1019). A predator that gives up an
+  investigate/sniff or flank/hold loop (never a chase's distance-based
+  give-up) stashes the player's position and gets a bounded number of
+  ring-biased return-sweep waypoints (`LKP_MAX_SWEEPS`, `pickRoamWaypoint()`,
+  `lib/game/predator.ts`) before it truly forgets and reverts to the
+  original uniform-random pick -- a predator that camping used to shake for
+  good now circles back a few times first (LUL-1573/LUL-1620).
 - Detect the player through three independent channels: **sight**
   (`canSee()`, LOS raycast + shrinking-with-stillness range),
   **scent** (`checkScent()`, radius+wind, no LOS check at all),
@@ -560,7 +566,9 @@ one geometry builder (`makePredator()`), differentiated by the
 - No economy cost, cooldown, or respawn for v1 (Economist territory, later).
 
 **Behaviours & logic**
-- 10 fixed spawn points per map (`THROWABLE_COUNT`), rejection-sampled at
+- 90 fixed spawn points per map (`THROWABLE_COUNT`, LUL-1839 — up from the
+  Scout MVP's 10, ~1 stone found per run at an 8u acquisition radius, wiki
+  `game/economy/throwable-price`), rejection-sampled at
   `generateMap()` time clear of tree trunks, home/spawn (12u), and each other
   (6u) — `generateThrowables()`. Picked-up stones are hidden (parked
   off-map, not removed from the array) via `layoutThrowableMeshes()`.
@@ -989,7 +997,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3219) and `triggerDeath()` (L3249).
+  both `track()` call sites in `arriveHome()` (L3274) and `triggerDeath()` (L3304).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
