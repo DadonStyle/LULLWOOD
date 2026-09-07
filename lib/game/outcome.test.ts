@@ -10,6 +10,9 @@ import {
   arriveHome,
   canTriggerDeath,
   triggerDeath,
+  canRegenMap,
+  canGrabThrowable,
+  canThrowThrowable,
   type RunState,
 } from './outcome.ts';
 
@@ -176,4 +179,39 @@ test('triggerDeath on a clean state only sets dead, leaves won/carrying untouche
   assert.equal(next.dead, true);
   assert.equal(next.won, false);
   assert.equal(next.carrying, false);
+});
+
+// ---- regenMap (LUL-1585) -------------------------------------------------------
+
+test('canRegenMap allows a fresh map on a clean, in-progress run', () => {
+  assert.equal(canRegenMap(state()), true);
+});
+
+test('canRegenMap allows regenerating while carrying -- a dev-tool footgun, not a state-machine violation', () => {
+  assert.equal(canRegenMap(state({ carrying: true })), true);
+});
+
+test('canRegenMap rejects once won', () => {
+  assert.equal(canRegenMap(state({ won: true })), false);
+});
+
+test('canRegenMap rejects once dead', () => {
+  assert.equal(canRegenMap(state({ dead: true })), false);
+});
+
+test('canGrabThrowable: in range and empty-handed can grab', () => {
+  assert.equal(canGrabThrowable(false, 2, 3), true);
+});
+
+test('canGrabThrowable: already holding one cannot grab another', () => {
+  assert.equal(canGrabThrowable(true, 2, 3), false);
+});
+
+test('canGrabThrowable: out of range cannot grab', () => {
+  assert.equal(canGrabThrowable(false, 5, 3), false);
+});
+
+test('canThrowThrowable: only true while holding one', () => {
+  assert.equal(canThrowThrowable(true), true);
+  assert.equal(canThrowThrowable(false), false);
 });
