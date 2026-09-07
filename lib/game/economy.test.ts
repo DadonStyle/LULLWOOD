@@ -112,11 +112,25 @@ test('blackout regression test: bogward death at 200m far, child at 220m objecti
   assert.equal(computeDepth(200), 50, 'but player only reached 200m = depth 50, so that is the cap');
 });
 
-test('win depth is uncapped even at far distances: M2 Deepwater at 212m maxDist keeps depth 53', () => {
+test('win depth is unaffected by objective distance below the depth-62 ceiling: M2 Deepwater at 212m maxDist keeps depth 53', () => {
   const p = computeWinPayout(212, 50);
   assert.equal(p.depth, 53, 'win depth is never capped by objective distance');
   assert.equal(p.carried, 120);
   assert.equal(p.home, 50);
+});
+
+test('win depth caps at 62 past that distance -- this is the blackout farm fix (LUL-1792)', () => {
+  const p = computeWinPayout(1000, 50);
+  assert.equal(p.depth, 62, 'depth must not scale past the cap');
+  assert.equal(computeDepth(1000), 250, 'uncapped depth would have been 250');
+});
+
+test('blackout win at the depth cap pays exactly 476E (depth 62 + survival 6 + carried 120 + home 50, x2.00 blackout, fields pre-scaled per LUL-1640)', () => {
+  const p = computeWinPayout(1000, 120, 'blackout');
+  assert.equal(p.depth, 124, 'depth field is already scaled by the tier multiplier (LUL-1640)');
+  assert.equal(p.survival, 12, 'survival field is already scaled by the tier multiplier (LUL-1640)');
+  assert.equal(p.total, 476);
+  assert.equal(p.depth + p.survival + p.carried + p.home, p.total, 'fields must sum to total by construction');
 });
 
 // ---- LUL-1258: M2 Deepwater's mission bonus ------------------------------
@@ -148,13 +162,19 @@ test('the mission bonus is not payable on death -- computeDeathPayout has no mis
 //   blackout: ×2.00 win / ×1.25 loss
 
 // Win at d=96 (lantern band top, t=100s): base = depth(24)+survival(5)+carried(120)+home(50)=199
+// LUL-1640: total is the sum of each field scaled+rounded individually, not a
+// single round(sum*mult) -- night's 349 (not round(199*1.75)=348) is the
+// visible effect: home(50*1.75=87.5) rounds up to 88 on its own, one more
+// than round(199*1.75) would credit. This is intentional: it is what makes
+// depth+survival+carried+home reconcile with total (see the reconciliation
+// tests below), which round(sum*mult) cannot guarantee in general.
 test('computeWinPayout tier multipliers pin the three win amounts', () => {
   const lw = computeWinPayout(96, 100, 'lantern');
   const nw = computeWinPayout(96, 100, 'night');
   const bw = computeWinPayout(96, 100, 'blackout');
-  assert.equal(lw.total, 199);                        // ×1.00
-  assert.equal(nw.total, Math.round(199 * 1.75));     // 348
-  assert.equal(bw.total, Math.round(199 * 2.00));     // 398
+  assert.equal(lw.total, 199);  // ×1.00
+  assert.equal(nw.total, 349);  // 24*1.75 + round(5*1.75) + 120*1.75 + round(50*1.75) = 42+9+210+88
+  assert.equal(bw.total, 398);  // ×2.00 has no fractional component, matches round(199*2.00)
 });
 
 // Death at d=44, t=0: base = depth(11)+survival(0)=11; objective>=44 so cap doesn't bind
@@ -185,6 +205,24 @@ test('night death payout strictly exceeds lantern for identical non-zero inputs'
 test('computeWinPayout and computeDeathPayout default to lantern when tier is omitted', () => {
   assert.equal(computeWinPayout(96, 100).total, computeWinPayout(96, 100, 'lantern').total);
   assert.equal(computeDeathPayout(44, 0, 44).total, computeDeathPayout(44, 0, 44, 'lantern').total);
+});
+
+// LUL-1640: RunRecap (components/Hud.tsx) renders
+// `+depth · +survival · +carried · +home = total` and implies that sum --
+// true before LUL-1412 by coincidence (no multiplier existed), broken after
+// it because only `total` was scaled. Every tier must reconcile, not just lantern.
+test('win payout breakdown reconciles with total on all three tiers (LUL-1640)', () => {
+  for (const tier of ['lantern', 'night', 'blackout'] as const) {
+    const p = computeWinPayout(96, 100, tier);
+    assert.equal(p.depth + p.survival + p.carried + p.home, p.total, `${tier} win breakdown must sum to total`);
+  }
+});
+
+test('death payout breakdown reconciles with total on all three tiers (LUL-1640)', () => {
+  for (const tier of ['lantern', 'night', 'blackout'] as const) {
+    const p = computeDeathPayout(44, 0, 44, tier);
+    assert.equal(p.depth + p.survival + p.carried + p.home, p.total, `${tier} death breakdown must sum to total`);
+  }
 });
 
 // ---- applyPayout --------------------------------------------------------
