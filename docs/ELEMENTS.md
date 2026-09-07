@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4168 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3712, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4277 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3804, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1066,7 +1066,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3389) and `triggerDeath()` (L3420).
+  both `track()` call sites in `arriveHome()` (L3496) and `triggerDeath()` (L3527).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1077,8 +1077,8 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2443),
-  reset to 0 on `enter()` (L2604) and recomputed every `tick()` while the run
-  is neither won nor dead (L3693: `computeDepth(maxDistFromHome) +
+  reset to 0 on `enter()` (L2679) and recomputed every `tick()` while the run
+  is neither won nor dead (L3914: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1132,7 +1132,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3737): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L3870): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1422,15 +1422,20 @@ not a 240×360 rectangle.
 **New elements it adds**: `BogTree` (90-instance thinner-cover twin of Tree,
 own `bogTreeData` array, merged into the shared `grid` for collision),
 `Reed` (tall `coverData` kind `'reed'`, LOS-blocking like Rock/Log/Bramble
-but **not** in `HIDE_KINDS` — not a hiding spot), six fixed `Landmark`
+but **not** in `HIDE_KINDS` — not a hiding spot), seven fixed `Landmark`
 groups (fire tower, stone marker, drowned car, lightning-split oak, radio
-mast, chapel steeple — static,
+mast, chapel steeple, cave — static,
 no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`; `oak`
 and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit
 inside an actual bog patch now that the bog is no longer a fixed band),
 `radioMast` and `chapelSteeple` (LUL-1782) sit in the outer ring, radius
 ~178-179, restoring fixed orientation geography on the leg past the original
-four that LUL-1484's map growth left featureless. and
+four that LUL-1484's map growth left featureless. `cave` (LUL-1904) is the
+first landmark whose spawn and visibility are conditional per-round (~50%
+via a seeded coin-flip in `generateMap()`, drawn last in the rng stream)
+rather than always-present; walking into its `interactR` grants a one-shot
+25s sight+scent detection immunity (`CAVE_IMMUNITY_TIME`, `lib/game/cave.ts`),
+hooked into `effectiveDetect()`/`canSee()`/`checkScent()`. and
 the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
 boolean, so a patch edge scales speed/noise in rather than stepping. It
 scales player/predator walk speed down and noise radius up while standing in
