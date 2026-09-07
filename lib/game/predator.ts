@@ -14,6 +14,8 @@
 // were never fed the seeded `rng()` (see rnd()) that other systems use, and
 // that split is preserved exactly, not unified.
 
+import { ROAM_STEP_FRAC } from '../../engine/tuning.js';
+
 export type RNG = () => number;
 
 // ---- sniff-count rolls ------------------------------------------------------
@@ -180,15 +182,16 @@ export interface RoamWaypointPick {
 
 // Replaces the roam waypoint pick inline at engine/forest-engine.js:1377-1380.
 // `sweepsLeft > 0` selects the ring-biased branch (search around the
-// remembered point); `sweepsLeft === 0` reproduces the original uniform-
-// random pick byte-for-byte (same two rng() draws, same formula), so a
-// predator that has never had a memory, or whose memory already cleared,
-// behaves exactly as it does on `release/next` today.
+// remembered point); `sweepsLeft === 0` reproduces LUL-1808's map-size-scaled
+// uniform pick byte-for-byte (same two rng() draws, same formula, `half` is
+// the map half-size), so a predator that has never had a memory, or whose
+// memory already cleared, behaves exactly as it does on `release/next` today.
 export function pickRoamWaypoint(
   rng: () => number,
   px: number, pz: number,
   lkpX: number, lkpZ: number, sweepsLeft: number,
   playerDistFromLkp: number,
+  half: number,
 ): RoamWaypointPick {
   if (sweepsLeft > 0) {
     const a = rng() * Math.PI * 2;
@@ -196,7 +199,7 @@ export function pickRoamWaypoint(
     const continues = sweepsLeft - 1 > 0 && playerDistFromLkp <= LKP_REPEAT_RADIUS;
     return { x: lkpX + Math.cos(a) * r, z: lkpZ + Math.sin(a) * r, sweepsLeft: continues ? sweepsLeft - 1 : 0 };
   }
-  const a = rng() * Math.PI * 2, r = 15 + rng() * 40;
+  const a = rng() * Math.PI * 2, r = half * (ROAM_STEP_FRAC.min + rng() * ROAM_STEP_FRAC.range);
   return { x: px + Math.cos(a) * r, z: pz + Math.sin(a) * r, sweepsLeft: 0 };
 }
 

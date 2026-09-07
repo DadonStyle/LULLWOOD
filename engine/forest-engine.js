@@ -557,7 +557,11 @@ function buildGrid(){
 // cover.ts's own coverBlockedR(), so geoBlocked() below still treats 'log'
 // as non-blocking, same as release/next did before this extraction.
 function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid); }
-function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid); }
+// LUL-273: pass the live eyeH (not a fixed CONFIG.eye) so canopyBlockedR()
+// recomputes each tree's canopy radius against the player's actual current
+// eye height -- fixes the under-protection window right after exiting a
+// hide spot while moving, while eyeH is still lerping back up from 1.05.
+function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid,CELL,eyeH,CANOPY_GEO); }
 // LUL-1643: predator movement now consults cover the same way blocked() does
 // for the player, minus canopyBlockedR (camera-only, LUL-267 -- see
 // blockedForPredator()'s own comment in cover.ts for why canopy stays excluded).
@@ -1576,7 +1580,7 @@ function updatePredators(dt, noiseRadius){
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){
           const distFromLkp = Math.hypot(player.x - p.lkpX, player.z - p.lkpZ);
-          const pick = pickRoamWaypoint(rng, p.x, p.z, p.lkpX, p.lkpZ, p.lkpSweeps, distFromLkp);
+          const pick = pickRoamWaypoint(rng, p.x, p.z, p.lkpX, p.lkpZ, p.lkpSweeps, distFromLkp, half);
           p.lkpSweeps = pick.sweepsLeft;
           let nwx=clamp(pick.x,-half+4,half-4), nwz=clamp(pick.z,-half+4,zMax-4);
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);

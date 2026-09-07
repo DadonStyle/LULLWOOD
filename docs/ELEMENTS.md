@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4014 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3581, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4018 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3585, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -138,9 +138,14 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   button, and `tick()`'s movement-breaks-cover check) already funnel
   through, so `feature_engagement('hide')` fires on every hide entry again.
 - Eye height (`eyeH`) is damped toward `hidden ? 1.05 : CONFIG.eye` (2.2) at
-  an ~0.3s time constant (`Math.min(1, dt*8)`, L2272), not snapped — see
-  wiki `game/lul267-canopy-collision-fix` for a documented edge case where
-  this damping outlives the `hidden` flag for a few frames.
+  an ~0.3s time constant (`Math.min(1, dt*8)`, L2272), not snapped. **Fixed,
+  LUL-273:** `canopyBlockedR()`/`blocked()` now recompute each tree's canopy
+  radius live against this same `eyeH` (`canopyRadiusAtEye(t.s, eyeH,
+  CANOPY_GEO)`) instead of the `crCanopy` cached at map-gen time for a fixed
+  `CONFIG.eye` — the cached value under-protected for the ~0.3s window right
+  after exiting a hide spot while moving, since the cone tapers and a lower
+  eye height sits closer to its wider base. See wiki
+  `game/lul267-canopy-collision-fix`.
 - Player FOV for "can the player see the charging predator" gating is ~130°
   total (`PLAYER_FOV_COS`, `cos(65°)`, L1679) — independent of the render
   camera's own 70° vertical FOV (`camera`); this is a gameplay cone, not
