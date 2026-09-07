@@ -13,6 +13,8 @@ import {
   canRegenMap,
   canGrabThrowable,
   canThrowThrowable,
+  canSetDown,
+  beginSetDown,
   type RunState,
 } from './outcome.ts';
 
@@ -27,7 +29,7 @@ function state(overrides: Partial<RunState> = {}): RunState {
 test('freshRunState clears every flag, including babyTaken', () => {
   const s = freshRunState();
   assert.deepEqual(s, {
-    entered: false, won: false, dead: false, pickingUp: false, carrying: false, babyTaken: false,
+    entered: false, won: false, dead: false, pickingUp: false, carrying: false, setDown: false, babyTaken: false,
   });
 });
 
@@ -96,6 +98,53 @@ test('beginPickup sets babyTaken and pickingUp on a clean state', () => {
 test('a second beginPickup in the same frame is rejected (pickingUp already true)', () => {
   const first = beginPickup(state());
   const second = beginPickup(first);
+  assert.deepEqual(second, first);
+});
+
+test('pickupAllowed (via canPickUp) rejects a fresh not-yet-taken-back child the same as always', () => {
+  assert.equal(canPickUp(state(), 1, RADIUS), true);
+});
+
+test('canPickUp allows re-pickup of a set-down child even though babyTaken is still true', () => {
+  const s = state({ babyTaken: true, setDown: true });
+  assert.equal(canPickUp(s, 1, RADIUS), true);
+});
+
+test('canPickUp still rejects a taken, not-set-down child (ordinary carrying-not-yet-set-down case)', () => {
+  const s = state({ babyTaken: true, setDown: false });
+  assert.equal(canPickUp(s, 1, RADIUS), false);
+});
+
+test('beginPickup on a set-down child clears setDown and re-enters pickingUp', () => {
+  const s = state({ babyTaken: true, setDown: true });
+  const next = beginPickup(s);
+  assert.deepEqual(next, { ...s, babyTaken: true, pickingUp: true, setDown: false });
+});
+
+test('canSetDown is true only while carrying', () => {
+  assert.equal(canSetDown(state({ carrying: true })), true);
+  assert.equal(canSetDown(state({ carrying: false })), false);
+});
+
+test('canSetDown rejects while dead or won even if carrying is (inconsistently) still true', () => {
+  assert.equal(canSetDown(state({ carrying: true, dead: true })), false);
+  assert.equal(canSetDown(state({ carrying: true, won: true })), false);
+});
+
+test('beginSetDown clears carrying and sets setDown on a legitimate call', () => {
+  const s = state({ carrying: true, babyTaken: true });
+  const next = beginSetDown(s);
+  assert.deepEqual(next, { ...s, carrying: false, setDown: true });
+});
+
+test('beginSetDown is a no-op when not carrying', () => {
+  const s = state({ carrying: false });
+  assert.deepEqual(beginSetDown(s), s);
+});
+
+test('a second beginSetDown in the same frame is rejected (carrying already false)', () => {
+  const first = beginSetDown(state({ carrying: true }));
+  const second = beginSetDown(first);
   assert.deepEqual(second, first);
 });
 
