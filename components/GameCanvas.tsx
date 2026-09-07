@@ -278,9 +278,15 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #missionGlyph { color: #7fa6dd; }
 
-  #windIndicator { position: fixed; top: 20px; right: 20px; z-index: 12;
+  #windIndicator { position: fixed; top: 184px; right: 16px; z-index: 12;
     font-size: 28px; color: #ddd; text-shadow: 0 0 4px rgba(0,0,0,0.6);
     transform-origin: 50% 50%; pointer-events: none; }
+
+  #windIndicatorHint { position: fixed; top: 214px; right: 8px; width: 76px; z-index: 12;
+    font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none;
+    animation: windHintFade 7s ease forwards; }
+  @keyframes windHintFade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;
