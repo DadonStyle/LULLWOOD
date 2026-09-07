@@ -3696,7 +3696,7 @@ function tick(){
     audio.plfo.frequency.setTargetAtTime(2.3 + esc*3.2, audio.ctx.currentTime, 0.4);   // throb speeds up
   }
   if(audio && soundOn && playing){
-    const move01 = Math.min(1, spd / (walk*1.8)), now = audio.ctx.currentTime;
+    const move01 = Math.min(1, spd / (walk*STAMINA_SPRINT_MUL)), now = audio.ctx.currentTime;
     if(hunting){                                     // calm bed drops out
       audio.wg.gain.setTargetAtTime(0.0001, now, 0.3);
       audio.dg.gain.setTargetAtTime(0.0001, now, 0.3);
