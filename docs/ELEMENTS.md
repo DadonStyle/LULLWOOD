@@ -960,7 +960,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   LUL-1724 adds `#windIndicator`, a fixed top-right arrow rendered from two new
   read-only `EngineHudState` fields (`windX`/`windZ`), pushed once per map
   generation (not per-frame) — the only HUD element driven by map-constant
-  rather than per-frame or per-event engine state.
+  rather than per-frame or per-event engine state. LUL-1912 repositions it to
+  `top:184px; right:16px` (was stacked on top of `#minimap`'s own box,
+  `top:16px; right:16px; 160x160`, which read as a child-position pointer) and
+  adds `#windIndicatorHint`, a static one-time label below the arrow that
+  fades out after 7s via CSS animation (`windHintFade`, mirrors the existing
+  `#hint` movement-controls pattern) — no new engine state.
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
