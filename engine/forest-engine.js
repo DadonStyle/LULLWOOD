@@ -60,6 +60,7 @@ import {
   HIDE_KINDS,
   CELL,
   gridKey as key,
+  neighbourhood,
   blockedR as geoBlockedR,
   blocked as geoBlocked,
   blockedForPredator as geoBlockedForPredator,
@@ -70,6 +71,7 @@ import {
   COVER_URGENT_RANGE,
   COVER_PROBE_HZ,
 } from '@/lib/game/cover';
+import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import {
@@ -199,6 +201,13 @@ const margin = 4;
 // site-by-site rename -- it is not a second world boundary, just an alias.
 // inBog()/isInBog() are gone; biomeAt(x, z) (lib/game/bog.ts) replaces both.
 const zMax = half;
+// LUL-1485: collapses every distance/LOS/detection call below to today's
+// exact behavior (Infinity is a no-op by construction, see lib/game/wrap.ts)
+// while the flag is off. Hard-bound clamp sites (world wall, waypoints,
+// backoff/flank retreat points) branch on Number.isFinite(WRAP_SPAN)
+// explicitly instead, since clamp-with-margin and wrap are different
+// formulas, not the same one parameterized by span.
+const WRAP_SPAN = CONFIG.wrapEnabled ? CONFIG.mapSize : Infinity;
 // LUL-25: six fixed navigational landmarks (two added by LUL-1782), "visible
 // over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
@@ -557,16 +566,16 @@ function buildGrid(){
 // skip (coverKindBlocksMovement(), imported above) is preserved inside
 // cover.ts's own coverBlockedR(), so geoBlocked() below still treats 'log'
 // as non-blocking, same as release/next did before this extraction.
-function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid); }
+function blockedR(x,z,pr){ return geoBlockedR(x,z,pr,grid,CELL,WRAP_SPAN); }
 // LUL-273: pass the live eyeH (not a fixed CONFIG.eye) so canopyBlockedR()
 // recomputes each tree's canopy radius against the player's actual current
 // eye height -- fixes the under-protection window right after exiting a
 // hide spot while moving, while eyeH is still lerping back up from 1.05.
-function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid,CELL,eyeH,CANOPY_GEO); }
+function blocked(x,z){ return geoBlocked(x,z,grid,coverGrid,CELL,eyeH,CANOPY_GEO,WRAP_SPAN); }
 // LUL-1643: predator movement now consults cover the same way blocked() does
 // for the player, minus canopyBlockedR (camera-only, LUL-267 -- see
 // blockedForPredator()'s own comment in cover.ts for why canopy stays excluded).
-function predatorBlocked(x,z,pr){ return geoBlockedForPredator(x,z,pr,grid,coverGrid); }
+function predatorBlocked(x,z,pr){ return geoBlockedForPredator(x,z,pr,grid,coverGrid,CELL,WRAP_SPAN); }
 
 function buildCoverGrid(){
   coverGrid = new Map();
@@ -606,14 +615,7 @@ function buildCoverGrid(){
 // the exact set and layout of cover props for a given seed will shift from
 // pre-fix `main` wherever a rejected overlap used to land. That is the fix
 // working, not a regression.
-function treesNear(x, z){
-  const cx = Math.floor(x/CELL), cz = Math.floor(z/CELL);
-  const nearby = [];
-  for(let gx=cx-1; gx<=cx+1; gx++) for(let gz=cz-1; gz<=cz+1; gz++){
-    const arr = grid.get(key(gx,gz)); if(arr) nearby.push(...arr);
-  }
-  return nearby;
-}
+function treesNear(x, z){ return neighbourhood(grid, x, z, CELL, WRAP_SPAN); }
 function generateCover(){
   coverData = [];
   for(const t of treeData) if(t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
@@ -1230,7 +1232,7 @@ function placePredators(){
 // (pickAvoidDirection, unit tested there) -- this stays a thin wrapper that
 // injects the engine's own tree/landmark `grid` closure state, same pattern
 // as blockedR/blocked/hasLOS/findHideSpot above.
-function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz, grid, coverGrid); }
+function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz, grid, coverGrid, CELL, undefined, undefined, WRAP_SPAN); }
 // ---- Scent trail + wind (LUL-23) ------------------------------------------
 // The player leaves scent while moving (see the deposit call in tick()'s
 // movement block -- nothing is deposited while `hidden` or standing still, so
@@ -1273,7 +1275,7 @@ function depositScent(hot, againstWind){
 function checkScent(p){
   for(let i = scentPoints.length - 1; i >= 0; i--){
     const s = scentPoints[i], age = clock.elapsedTime - s.t0;
-    if(isScentDetected(s, age, p.x, p.z, windX, windZ, p.spec.nose)) return true;
+    if(isScentDetected(s, age, p.x, p.z, windX, windZ, p.spec.nose, SCENT_LIFETIME, WRAP_SPAN)) return true;
   }
   return false;
 }
@@ -1406,8 +1408,8 @@ function missionWaypointHum(m, distToPlayer){
 // search treats smoke/flare tools as breaking line-of-sight specifically) --
 // a predator can still scent-lock you through the veil, keeping scent-trail
 // play (LUL-23/LUL-65) meaningful.
-function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid); }
-function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid); }
+function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid,CELL,WRAP_SPAN); }
+function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN); }
 // LUL-27: fogTideDetectMul(fogTideAmount) stacks the same way veilDetectMul
 // already does -- multiplicatively, sight only. A player who's also holding
 // the veil during a tide gets both cuts; that's intended, not a double-count
@@ -1417,7 +1419,7 @@ function effectiveDetect(p){
   return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying });
 }
 function canSee(p, dist){
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -1451,7 +1453,7 @@ function updateWolfPack(dt){
   for(const p of wolves){
     if(p === leader || chasers.includes(p)) continue;   // already hunting on its own -- not a flanker
     if(p.packTimer > 0) continue;                        // recompute cap
-    const [fx, fz] = flankTarget(player.x, player.z, escX, escZ, side, p.x, p.z, { half, zMax });
+    const [fx, fz] = flankTarget(player.x, player.z, escX, escZ, side, p.x, p.z, { half, zMax }, WRAP_SPAN);
     side *= -1;
     p.flankX = fx; p.flankZ = fz;
     p.state = 'flank'; p.inv = ''; p.packTimer = FLANK_RECOMPUTE;
@@ -1469,7 +1471,7 @@ function updatePredators(dt, noiseRadius){
   updateWolfPack(dt);
   for(const p of predators){
     if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
-    const dx = player.x - p.x, dz = player.z - p.z, dist = Math.hypot(dx, dz) || 0.0001;
+    const dx = wrapDelta(player.x, p.x, WRAP_SPAN), dz = wrapDelta(player.z, p.z, WRAP_SPAN), dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
     // LUL-1309: predators wade too -- same per-position terrain sample the
     // player already gets at :3173/:3179, applied to this predator's own (x,z).
@@ -1583,9 +1585,11 @@ function updatePredators(dt, noiseRadius){
           const distFromLkp = Math.hypot(player.x - p.lkpX, player.z - p.lkpZ);
           const pick = pickRoamWaypoint(rng, p.x, p.z, p.lkpX, p.lkpZ, p.lkpSweeps, distFromLkp, half);
           p.lkpSweeps = pick.sweepsLeft;
-          let nwx=clamp(pick.x,-half+4,half-4), nwz=clamp(pick.z,-half+4,zMax-4);
+          let nwx = Number.isFinite(WRAP_SPAN) ? wrapCoord(pick.x, WRAP_SPAN) : clamp(pick.x,-half+4,half-4);
+          let nwz = Number.isFinite(WRAP_SPAN) ? wrapCoord(pick.z, WRAP_SPAN) : clamp(pick.z,-half+4,zMax-4);
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
-          p.wpx=clamp(kept.x,-half+4,half-4); p.wpz=clamp(kept.z,-half+4,zMax-4); }
+          p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.x, WRAP_SPAN) : clamp(kept.x,-half+4,half-4);
+          p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.z, WRAP_SPAN) : clamp(kept.z,-half+4,zMax-4); }
         else { desx=wx/wd; desz=wz/wd; speed=2.3; }
       }
     } else if(p.state === 'chase'){
@@ -1677,7 +1681,7 @@ function updatePredators(dt, noiseRadius){
           p.sniffsLeft = sniffOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
-            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax); }
+            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN); }
           else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; }
         }
       } else if(p.inv === 'back'){
@@ -1728,7 +1732,8 @@ function updatePredators(dt, noiseRadius){
     p.vx += (dvx - p.vx) * Math.min(1, dt*accel);
     p.vz += (dvz - p.vz) * Math.min(1, dt*accel);
     const px0 = p.x, pz0 = p.z;
-    const nx = clamp(p.x + p.vx*dt, -half+2, half-2), nz = clamp(p.z + p.vz*dt, -half+2, zMax-2);
+    const nx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + p.vx*dt, WRAP_SPAN) : clamp(p.x + p.vx*dt, -half+2, half-2);
+    const nz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + p.vz*dt, WRAP_SPAN) : clamp(p.z + p.vz*dt, -half+2, zMax-2);
     const blockedX = predatorBlocked(nx, p.z, p.rad), blockedZ = predatorBlocked(p.x, nz, p.rad);
     if(!blockedX) p.x = nx;
     if(!blockedZ) p.z = nz;
@@ -1745,11 +1750,11 @@ function updatePredators(dt, noiseRadius){
         const back = p.trail[0] || [p.x - ux*6, p.z - uz*6];
         p.rrX = back[0]; p.rrZ = back[1]; p.reroute = 1.4; p.stuckT = 0;
         // fresh, different waypoint (LUL-857: kept off the water same as the roam pick above)
-        const freshx = clamp(p.x + (rng()-0.5)*40, -half+4, half-4);
-        const freshz = clamp(p.z + (rng()-0.5)*40, -half+4, zMax-4);
+        const freshx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.x + (rng()-0.5)*40, -half+4, half-4);
+        const freshz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.z + (rng()-0.5)*40, -half+4, zMax-4);
         const freshKept = keepWaypointOffLake(freshx, freshz, CONFIG.lake);
-        p.wpx = clamp(freshKept.x, -half+4, half-4);
-        p.wpz = clamp(freshKept.z, -half+4, zMax-4);
+        p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.x, WRAP_SPAN) : clamp(freshKept.x, -half+4, half-4);
+        p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.z, WRAP_SPAN) : clamp(freshKept.z, -half+4, zMax-4);
       }
     }
 
@@ -1821,9 +1826,10 @@ function updatePredators(dt, noiseRadius){
     if(p.inert) continue;
     const others = predators.filter(q => q !== p && !q.inert);
     if(!others.length) continue;
-    const [pushX, pushZ] = predatorSeparationPush(p.x, p.z, p.rad, others);
+    const [pushX, pushZ] = predatorSeparationPush(p.x, p.z, p.rad, others, WRAP_SPAN);
     if(!pushX && !pushZ) continue;
-    const nx = clamp(p.x + pushX, -half+2, half-2), nz = clamp(p.z + pushZ, -half+2, zMax-2);
+    const nx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + pushX, WRAP_SPAN) : clamp(p.x + pushX, -half+2, half-2);
+    const nz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + pushZ, WRAP_SPAN) : clamp(p.z + pushZ, -half+2, zMax-2);
     if(!predatorBlocked(nx, p.z, p.rad)) p.x = nx;
     if(!predatorBlocked(p.x, nz, p.rad)) p.z = nz;
     p.g.position.x = p.x; p.g.position.z = p.z;
@@ -3660,8 +3666,12 @@ function tick(){
       mvx /= mag; mvz /= mag; spd = maxSpd;
       escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
       const step = maxSpd*dt, lim = half - margin, zLim = zMax - margin;
-      const nx = Math.max(-lim, Math.min(lim, player.x + mvx*step));
-      const nz = Math.max(-lim, Math.min(zLim, player.z + mvz*step));
+      const nx = Number.isFinite(WRAP_SPAN)
+        ? wrapCoord(player.x + mvx*step, WRAP_SPAN)
+        : Math.max(-lim, Math.min(lim, player.x + mvx*step));
+      const nz = Number.isFinite(WRAP_SPAN)
+        ? wrapCoord(player.z + mvz*step, WRAP_SPAN)
+        : Math.max(-lim, Math.min(zLim, player.z + mvz*step));
       if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }  // slide along trunks
       if(!blocked(player.x, nz)){ dist += Math.abs(nz - player.z); player.z = nz; }
       // LUL-23: lay scent while actually moving -- holding still (or being hidden,
@@ -3828,7 +3838,7 @@ function tick(){
     coverProbeAccum += dt;
     if(coverProbeAccum >= 1 / COVER_PROBE_HZ){
       coverProbeAccum = 0;
-      lastHideSpot = !hidden ? geoFindHideSpot(player.x, player.z, coverGrid) : null;
+      lastHideSpot = !hidden ? geoFindHideSpot(player.x, player.z, coverGrid, CELL, WRAP_SPAN) : null;
     }
     // LUL-1089: contextual action prompts
     const coverPromptVisible = !hidden && lastHideSpot !== null;

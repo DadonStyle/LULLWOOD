@@ -15,6 +15,7 @@
 // that split is preserved exactly, not unified.
 
 import { ROAM_STEP_FRAC } from '../../engine/tuning.js';
+import { wrapCoord, wrapDelta } from './wrap.ts';
 
 export type RNG = () => number;
 
@@ -295,9 +296,12 @@ export function backOffPoint(
   dist: number,
   half: number,
   zMax: number = half,
+  span: number = Infinity,
 ): [number, number] {
+  const rawX = x - ux * dist, rawZ = z - uz * dist;
+  if (Number.isFinite(span)) return [wrapCoord(rawX, span), wrapCoord(rawZ, span)];
   const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
-  return [clamp(x - ux * dist, -half + 4, half - 4), clamp(z - uz * dist, -half + 4, zMax - 4)];
+  return [clamp(rawX, -half + 4, half - 4), clamp(rawZ, -half + 4, zMax - 4)];
 }
 
 // ---- LUL-394: predator-vs-predator separation -----------------------------
@@ -323,10 +327,11 @@ export function predatorSeparationPush(
   z: number,
   rad: number,
   others: { x: number; z: number; rad: number }[],
+  span: number = Infinity,
 ): [number, number] {
   let px = 0, pz = 0;
   for (const o of others) {
-    const dx = x - o.x, dz = z - o.z;
+    const dx = wrapDelta(x, o.x, span), dz = wrapDelta(z, o.z, span);
     const dist = Math.hypot(dx, dz);
     const minDist = rad + o.rad;
     if (dist >= minDist) continue;

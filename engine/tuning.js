@@ -16,6 +16,8 @@
 export const CONFIG = {
   seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
   mapSize: 480,          // the forest is a fixed square this many units across
+  wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
+                          // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
   walk:    6,            // walking speed (units/s); Shift multiplies it
   fog:     0.04,
