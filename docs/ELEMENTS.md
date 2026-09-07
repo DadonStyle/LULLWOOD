@@ -960,12 +960,20 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   LUL-1724 adds `#windIndicator`, a fixed top-right arrow rendered from two new
   read-only `EngineHudState` fields (`windX`/`windZ`), pushed once per map
   generation (not per-frame) — the only HUD element driven by map-constant
-  rather than per-frame or per-event engine state. LUL-1912 repositions it to
-  `top:184px; right:16px` (was stacked on top of `#minimap`'s own box,
-  `top:16px; right:16px; 160x160`, which read as a child-position pointer) and
-  adds `#windIndicatorHint`, a static one-time label below the arrow that
-  fades out after 7s via CSS animation (`windHintFade`, mirrors the existing
-  `#hint` movement-controls pattern) — no new engine state.
+  rather than per-frame or per-event engine state. LUL-1912 repositioned it to
+  `top:184px; right:16px` to clear `#minimap`'s own box (`top:16px; right:16px;
+  160x160`, which read as a child-position pointer), and added
+  `#windIndicatorHint`, a static one-time label below the arrow that fades out
+  after 7s via CSS animation (`windHintFade`, mirrors the existing `#hint`
+  movement-controls pattern) — no new engine state. LUL-1933 found that push
+  unconditional, so it followed every real player (`#minimap` is
+  `display:none` under `data-admin-mode="0"`, see above) and collided with
+  `MobileControls.tsx`'s bottom-anchored Hide/Veil column on short landscape
+  phones. `top:184px; right:16px`/`#windIndicatorHint`'s `top:214px` now apply
+  only under `body[data-admin-mode="1"]`; the default (real player) position
+  reverts to LUL-1724's original `top:20px; right:20px` (`#windIndicatorHint`
+  `top:50px; right:8px`), verified clear of `MobileControls` at every tested
+  viewport.
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
