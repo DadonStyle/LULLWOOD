@@ -292,10 +292,18 @@ const OVERLAY_STYLE = `
   #winText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column;
     align-items: center; gap: 6px; pointer-events: auto;
     background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86));
-    padding: 24px; border-radius: 4px; }
+    padding: 24px; border-radius: 4px;
+    /* LUL-1103: #runChronicle can add up to 10 lines below the recap -- without
+       this, a landscape phone (e.g. 851x393) has ~250px for h1+recap+button and
+       the chronicle silently scrolls off-screen. Same pattern as #settingsPanel's
+       own max-height (GameCanvas.tsx, "narrow" media query above). */
+    max-height: calc(100dvh - 48px); overflow-y: auto; }
   #winText h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
     color: #ffe6c8; text-shadow: 0 2px 44px rgba(255,190,130,0.5); }
   #winText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
+  #runChronicle { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px;
+    letter-spacing: 0.03em; color: #a99; text-align: left; max-width: 360px; }
+  #runChronicle li { margin: 2px 0; }
   .emberGain { color: #ffdca8; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px;
@@ -380,7 +388,9 @@ const OVERLAY_STYLE = `
   #deathScreen { position: fixed; inset: 0; z-index: 25; display: none;
     align-items: center; justify-content: center; text-align: center; padding: 24px;
     background: rgba(4,3,5,0); pointer-events: none; }
-  #deathText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: auto; }
+  #deathText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: auto;
+    /* LUL-1103: see #winText's identical rule above -- same phone-viewport overflow risk from #runChronicle. */
+    max-height: calc(100dvh - 48px); overflow-y: auto; }
   #deathText h1 { margin: 0; font-size: 44px; font-weight: 400; letter-spacing: 0.2em;
     color: #e8554a; text-shadow: 0 2px 50px rgba(255,40,30,0.5); }
   #deathText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #b98f88; }

@@ -10,6 +10,7 @@ import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 import { nextDeeperLungsCost, veilMaxHoldForTier, type RunPayout } from '@/lib/game/economy';
 import type { MissionKind } from '@/lib/game/mission';
+import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -96,6 +97,11 @@ export interface EngineHudState {
   // generateMap(), pushed once -- not a per-frame value like veilCharge).
   windX: number;
   windZ: number;
+  // LUL-1103: The Run Chronicle. Engine-owned {t, code, args} buffer, handed
+  // over once in the same pushState() call as winVisible/deathVisible (never
+  // streamed per-frame -- see engine/forest-engine.js's logChronicle()
+  // comment). lib/game/chronicle.ts's formatChronicle() renders it.
+  chronicle: ChronicleEvent[];
 }
 
 export interface EngineActions {
@@ -181,6 +187,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   missionStatus: null,
   windX: 1,
   windZ: 0,
+  chronicle: [],
 };
 
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
@@ -303,20 +310,28 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
 // first pushState after arriveHome()/triggerDeath() lands, so this never
 // renders with stale data from a previous run (lastPayout is set in the
 // same pushState call as winVisible/deathVisible).
-function RunRecap({ survivedSeconds, payout, balance }: { survivedSeconds: number; payout: RunPayout | null; balance: number }) {
+function RunRecap({ survivedSeconds, payout, balance, chronicle }: { survivedSeconds: number; payout: RunPayout | null; balance: number; chronicle: ChronicleEvent[] }) {
+  const lines = formatChronicle(chronicle);
   return (
-    <p id="runRecap">
-      time survived: {formatDuration(survivedSeconds)}
-      {payout && (
-        <>
-          <br />
-          +{payout.depth} depth · +{payout.survival} survival
-          {payout.carried > 0 && <> · +{payout.carried} child</>}
-          {payout.home > 0 && <> · +{payout.home} home</>}
-          {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
-        </>
+    <>
+      <p id="runRecap">
+        time survived: {formatDuration(survivedSeconds)}
+        {payout && (
+          <>
+            <br />
+            +{payout.depth} depth · +{payout.survival} survival
+            {payout.carried > 0 && <> · +{payout.carried} child</>}
+            {payout.home > 0 && <> · +{payout.home} home</>}
+            {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
+          </>
+        )}
+      </p>
+      {lines.length > 0 && (
+        <ul id="runChronicle">
+          {lines.map((line, i) => <li key={i}>{line}</li>)}
+        </ul>
       )}
-    </p>
+    </>
   );
 }
 
@@ -619,7 +634,7 @@ export default function Hud({
           <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
             <h1>YOU WON</h1>
             <p>the child is safe — you carried them home through the Lullwood</p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} chronicle={state.chronicle} />
             <button className="restartBtn" onClick={() => actions?.restart()}>
               Play again
             </button>
@@ -636,7 +651,7 @@ export default function Hud({
               a <span id="deathKind">{state.deathKind}</span> caught you in the dark
               {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} chronicle={state.chronicle} />
             <button className="restartBtn" onClick={() => actions?.restart()}>
               Try again
             </button>

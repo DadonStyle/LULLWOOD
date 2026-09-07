@@ -141,6 +141,7 @@ import {
   TIME_OF_DAY_AUDIO,
 } from '@/lib/game/timeOfDay';
 import { timeOfRunDetectMul } from '@/lib/game/dayNight';
+import { nearestLandmarkName } from '@/lib/game/chronicle';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -1191,6 +1192,7 @@ function scentOnto(p){
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
   predatorCall(p.kind, false, p);
+  logChronicle('scent_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home, CONFIG.lake) });
 }
 
 // ---- Sound: footstep noise as a third detection channel (LUL-39) ---------
@@ -1508,7 +1510,7 @@ function updatePredators(dt, noiseRadius){
         // predators never physically collide with cover (LUL-119/LUL-211).
         if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind); }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
-        if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; }
+        if(shouldGiveUpChase(p.scentLock, dist, p.spec.detect)){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -1547,7 +1549,7 @@ function updatePredators(dt, noiseRadius){
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax); }
-          else { p.state='roam'; p.spotted=false; }
+          else { p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
@@ -1574,7 +1576,7 @@ function updatePredators(dt, noiseRadius){
           p.sniffsLeft = holdOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(holdOutcome.next === 'hold') p.sniffTimer = rnd(1,4);
-          else { p.state='roam'; p.spotted=false; p.inv=''; }
+          else { p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); }
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
@@ -1723,6 +1725,18 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false;   // LUL-1258: recomputed every tick alongside canPickup, below
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
+// LUL-1103: The Run Chronicle. Flat {t, code, args} buffer, reset per-run in
+// enter() (covers restart() too, which calls enter()). Handed to React once,
+// in the same pushState() call as winVisible/deathVisible -- NOT streamed
+// live, because pushState's patch-merge does a shallow `!==` compare and a
+// fresh array is always "changed", so logging this every frame would re-emit
+// to React every frame. lib/game/chronicle.ts's formatChronicle() (pure, no
+// DOM/Three.js) turns it into display lines; this file only appends codes.
+let chronicle = [];
+function logChronicle(code, args){
+  chronicle.push({ t: Math.max(0, clock.elapsedTime - enteredAt), code, args: args || null });
+  if(chronicle.length > 40) chronicle.shift();   // hard cap -- formatChronicle() also caps what it renders
+}
 // LUL-1043: Embers. `maxDistFromHome` is the run's displacement high-water
 // mark (not `dist` below, which is path length) -- reset in enter(), read by
 // arriveHome()/triggerDeath() for the payout's `depth` term. `embers` is the
@@ -2010,7 +2024,7 @@ function playHideSfx(kind, entering){ if(kind === 'log') hollowLogSound(entering
 // shadowed toggleHidden() carried that track() call but was dead code (a
 // later function declaration in the same scope wins in JS), so the event
 // never fired.
-function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); }
+function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); logChronicle('hide', { kind: spot.kind }); }
 function exitHide(){ if(!hidden) return; playHideSfx(hideKind, false); hidden = false; hideKind = null; }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
@@ -2343,6 +2357,7 @@ function enter(){
   enteredAt = clock.elapsedTime;
   runElapsed = 0;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
+  chronicle = [];   // LUL-1103: fresh run, fresh chronicle
   pushState({ entered: true });
   // LUL-1425: the real "a run begins" moment on both input modes -- enter() is
   // called by the gate click (Hud.tsx) and by restart(). Fires once per RUN, not
@@ -3000,6 +3015,7 @@ function finishPickup(){
   babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.55;
   halo.material.opacity = CARRY_HALO_BASE; babyLight.intensity = CARRY_GLOW_BASE;
+  logChronicle('pickup');
 }
 // LUL-1258: M2 Deepwater's completion sting -- reuses hollowLogSound's
 // noise-burst + oscillator chain (same procedural building blocks, no new
@@ -3050,8 +3066,9 @@ function arriveHome(){
   const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
   const payout = computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus);
   embers = applyPayout(embers, payout);
+  logChronicle('win');
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance });
+    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice() });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 function triggerDeath(kind){
@@ -3076,8 +3093,9 @@ function triggerDeath(kind){
   activeCharges = 0;
   const deathCarrying = carrying && !carryDeathExplained;
   if(deathCarrying) carryDeathExplained = true;
+  logChronicle('death', { kind, landmark: nearestLandmarkName(player.x, player.z, LANDMARKS, CONFIG.home, CONFIG.lake) });
   pushState({ deathVisible: true, deathKind: kind, lossRevealed: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying });
+    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying, chronicle: chronicle.slice() });
   track({ event: 'loss', predator_kind: kind, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty });
   playDeathVideo();
   deathAudio(kind);
@@ -3394,9 +3412,11 @@ function tick(){
   if(fogTidePhaseNow === 'active' && !fogTideActive){
     fogTideActive = true;
     track({ event: 'feature_engagement', feature: 'fog_tide', action: 'start' });
+    logChronicle('fog_tide_start');
   } else if(fogTidePhaseNow !== 'active' && fogTideActive){
     fogTideActive = false;
     track({ event: 'feature_engagement', feature: 'fog_tide', action: 'end' });
+    logChronicle('fog_tide_end');
   }
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0;
