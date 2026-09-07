@@ -197,7 +197,8 @@ const margin = 4;
 // site-by-site rename -- it is not a second world boundary, just an alias.
 // inBog()/isInBog() are gone; biomeAt(x, z) (lib/game/bog.ts) replaces both.
 const zMax = half;
-// LUL-25: four fixed navigational landmarks, "visible over the fog line" so
+// LUL-25: six fixed navigational landmarks (two added by LUL-1782), "visible
+// over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() below, both untouched).
 // Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home
@@ -918,11 +919,38 @@ function buildSplitOak(){
   const glow = new THREE.PointLight(0xcfe6ff, 0.4 * LEGACY_LIGHT_SCALE, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
   return g;
 }
+function buildRadioMast(){
+  const g = new THREE.Group();
+  const mastMat = new THREE.MeshStandardMaterial({ color: 0x4a4f55, roughness: 0.8, metalness: 0.4 });
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.22, 11, 5), mastMat);
+  mast.position.y = 5.5; g.add(mast);
+  for(const y of [3, 6, 9]){
+    const brace = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 4), mastMat);
+    brace.position.y = y; brace.rotation.z = Math.PI/2; g.add(brace);
+  }
+  const beacon = new THREE.PointLight(0xff2a2a, 0.5 * LEGACY_LIGHT_SCALE, 18, 2);
+  beacon.position.set(0, 11.2, 0); g.add(beacon);
+  g.rotation.z = 0.05;   // slight lean
+  return g;
+}
+function buildChapelSteeple(){
+  const g = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x3d3831, roughness: 0.95 });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.4, 2.4), stoneMat);
+  base.position.y = 1.7; g.add(base);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(1.9, 3.2, 4), stoneMat);
+  roof.position.y = 5.0; roof.rotation.y = Math.PI/4; g.add(roof);
+  const glow = new THREE.PointLight(0xd8c9a0, 0.45 * LEGACY_LIGHT_SCALE, 15, 2);
+  glow.position.set(0, 3.2, 0); g.add(glow);
+  return g;
+}
 const landmarkGroups = {
   fireTower: buildFireTower(),
   stoneMarker: buildStoneMarker(),
   drownedCar: buildDrownedCar(),
   oak: buildSplitOak(),
+  radioMast: buildRadioMast(),
+  chapelSteeple: buildChapelSteeple(),
 };
 Object.values(landmarkGroups).forEach(g => scene.add(g));
 // Nudges (x,z) away from any tree/cover prop this seed actually generated
@@ -3802,7 +3830,7 @@ function tick(){
     audio.plfo.frequency.setTargetAtTime(2.3 + esc*3.2, audio.ctx.currentTime, 0.4);   // throb speeds up
   }
   if(audio && soundOn && playing){
-    const move01 = Math.min(1, spd / (walk*1.8)), now = audio.ctx.currentTime;
+    const move01 = Math.min(1, spd / (walk*STAMINA_SPRINT_MUL)), now = audio.ctx.currentTime;
     if(hunting){                                     // calm bed drops out
       audio.wg.gain.setTargetAtTime(0.0001, now, 0.3);
       audio.dg.gain.setTargetAtTime(0.0001, now, 0.3);
