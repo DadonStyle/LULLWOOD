@@ -96,6 +96,8 @@ import {
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
   SNIFF_IMMUNITY_TIME,
+  SNIFF_STATUS_RANGE,
+  sniffStandoffPoint,
   stepApproach,
   stepFlankHold,
   stepSniffLoop,
@@ -1296,7 +1298,7 @@ function makePredator(kind){
   return { g, kind, spec:s, legs, neck, head, torso, tail, tail2, rad:s.rad,
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:rng()*6, spotted:false, callTimer:0,
-    inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0,
+    inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0, standX:0, standZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
@@ -1793,11 +1795,13 @@ function updatePredators(dt, noiseRadius){
       // ticket is explicit: don't retune this loop's timing.
       //
       // LUL-562: restricted to the 'sniff'/'back' sub-phases this comment is
-      // actually about -- a freshly-entered 'approach' (every chase->investigate
-      // transition sets p.inv='approach') used to hit this same instant revert
-      // before its own movement branch below ever ran, and chase's re-entry
-      // condition was still true a frame later since nothing had moved --
-      // volleying chase<->investigate forever at zero velocity. See
+      // actually about (LUL-1090 added 'standoff' to that same set -- see
+      // shouldRevertInvestigateToChase()'s comment for why it's safe there) --
+      // a freshly-entered 'approach' (every chase->investigate transition sets
+      // p.inv='approach') used to hit this same instant revert before its own
+      // movement branch below ever ran, and chase's re-entry condition was
+      // still true a frame later since nothing had moved -- volleying
+      // chase<->investigate forever at zero velocity. See
       // shouldRevertInvestigateToChase()'s comment in lib/game/predator.ts and
       // wiki game/lul223-chase-investigate-livelock for the confirmed repro.
       if(shouldRevertInvestigateToChase(p.inv, hidden)){ p.state='chase'; }
@@ -1822,11 +1826,28 @@ function updatePredators(dt, noiseRadius){
         }
         const step = stepApproach(aux, auz, p.spec.speed*pLakeMul, adist, p.rad);
         desx = step.desx; desz = step.desz; speed = step.speed;
-        if(step.enterSniff){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
+        if(step.enterSniff){
+          // LUL-1090: a hidden player gets walked back to SNIFF_STANDOFF
+          // before the predator settles into 'sniff' -- stepApproach() alone
+          // stops at rad+SNIFF_APPROACH_MARGIN, only 2.5-3.2 units out. A
+          // player caught in the open (not hidden) is unaffected: this
+          // predator has them in the open and should still close.
+          const standoff = hidden ? sniffStandoffPoint(p.x, p.z, aux, auz, adist, half, zMax) : null;
+          if(standoff){ p.inv='standoff'; [p.standX, p.standZ] = standoff; }
+          else { p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
+        }
         if(p.noiseTarget){
           p.noiseTargetT -= dt;
           if(p.noiseTargetT <= 0 || step.enterSniff) p.noiseTarget = null;
         }
+      } else if(p.inv === 'standoff'){
+        // LUL-1090: walk to the standoff point computed above, facing the
+        // player the whole way (retreating from a threat while watching it),
+        // then settle into the normal sniff loop unchanged.
+        facePlayer = true;
+        const sx=p.standX-p.x, sz=p.standZ-p.z, sd=Math.hypot(sx,sz);
+        if(sd < 2){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
+        else { desx=sx/sd; desz=sz/sd; speed=p.spec.speed*0.45*pLakeMul; }
       } else if(p.inv === 'sniff'){
         facePlayer = true; p.sniffTimer -= dt;
         const sniffOutcome = stepSniffLoop(p.sniffTimer, p.sniffsLeft);
@@ -4061,7 +4082,7 @@ function tick(){
     let statusVisible = false, statusText = '';
     if(hidden){
       statusVisible = true;
-      const sniffer = predators.some(p => p.state==='investigate' && Math.hypot(player.x-p.x, player.z-p.z) < 6);
+      const sniffer = predators.some(p => p.state==='investigate' && Math.hypot(player.x-p.x, player.z-p.z) < SNIFF_STATUS_RANGE);
       statusText = sniffer ? 'Hidden · something is sniffing you — DON’T MOVE'
                             : 'Hidden · ' + hideTime.toFixed(1) + 's   (moving breaks cover)';
     }

@@ -17,6 +17,9 @@ import {
   shouldRevertInvestigateToChase,
   SNIFF_APPROACH_MARGIN,
   SNIFF_IMMUNITY_TIME,
+  SNIFF_STANDOFF,
+  SNIFF_STATUS_RANGE,
+  sniffStandoffPoint,
   stepApproach,
   stepFlankHold,
   stepSniffLoop,
@@ -256,6 +259,14 @@ test('shouldRevertInvestigateToChase is false for "back" while still hidden', ()
   assert.equal(shouldRevertInvestigateToChase('back', true), false);
 });
 
+test('shouldRevertInvestigateToChase is true for "standoff" (LUL-1090) when not hidden', () => {
+  assert.equal(shouldRevertInvestigateToChase('standoff', false), true);
+});
+
+test('shouldRevertInvestigateToChase is false for "standoff" while still hidden', () => {
+  assert.equal(shouldRevertInvestigateToChase('standoff', true), false);
+});
+
 // ---- stepApproach (LUL-658) -------------------------------------------------------
 
 test('stepApproach reports movement toward the player when still outside sniff range', () => {
@@ -320,6 +331,51 @@ test('backOffPoint with dist=0 (coincident points) leaves the point where it sta
   const [x, z] = backOffPoint(5, -3, 1, 0, 0, 1000);
   assert.equal(x, 5);
   assert.equal(z, -3);
+});
+
+// ---- sniffStandoffPoint (LUL-1090) -----------------------------------------------
+
+test('sniffStandoffPoint returns null when already at or past SNIFF_STANDOFF', () => {
+  assert.equal(sniffStandoffPoint(0, 0, 1, 0, SNIFF_STANDOFF, 1000), null);
+  assert.equal(sniffStandoffPoint(0, 0, 1, 0, SNIFF_STANDOFF + 5, 1000), null);
+});
+
+test('sniffStandoffPoint places the predator exactly SNIFF_STANDOFF from the player, regardless of starting distance', () => {
+  // Predator at origin, player 2 units away along +x (ux=1,uz=0) -- point-blank
+  // sniff range. The player sits at (2,0); the standoff point must be
+  // SNIFF_STANDOFF back from *that*, i.e. (2 - SNIFF_STANDOFF, 0).
+  const [x, z] = sniffStandoffPoint(0, 0, 1, 0, 2, 1000)!;
+  assert.equal(x, 2 - SNIFF_STANDOFF);
+  assert.equal(z, 0);
+});
+
+test('sniffStandoffPoint at dist just under SNIFF_STANDOFF only retreats the small remaining gap', () => {
+  const dist = SNIFF_STANDOFF - 0.1;
+  const [x] = sniffStandoffPoint(0, 0, 1, 0, dist, 1000)!;
+  assert.ok(Math.abs(x - (dist - SNIFF_STANDOFF)) < 1e-9);
+});
+
+test('sniffStandoffPoint clamps to the map bound on the positive side', () => {
+  // dist=0 -> full SNIFF_STANDOFF (4.5) retreat, which overshoots a half=6
+  // map's -half+4..half-4 = -2..2 bound.
+  const [x] = sniffStandoffPoint(0, 0, -1, 0, 0, 6)!;
+  assert.equal(x, 2);
+});
+
+test('sniffStandoffPoint clamps to the map bound on the negative side', () => {
+  const [x] = sniffStandoffPoint(0, 0, 1, 0, 0, 6)!;
+  assert.equal(x, -2);
+});
+
+test('sniffStandoffPoint respects a separate zMax for asymmetric maps (LUL-25 bog band)', () => {
+  // dist=0, uz=-1 -> full SNIFF_STANDOFF retreat pushes rawZ to +4.5, which
+  // is inside -half+4..half-4 (-6..6) but past a narrower zMax-4 (10..1).
+  const [, z] = sniffStandoffPoint(0, 0, 0, -1, 0, 10, 5)!;
+  assert.equal(z, 5 - 4);
+});
+
+test('SNIFF_STATUS_RANGE stays comfortably above SNIFF_STANDOFF so the warning line never drops before the predator settles', () => {
+  assert.ok(SNIFF_STATUS_RANGE > SNIFF_STANDOFF);
 });
 
 // ---- predatorSeparationPush (LUL-394) --------------------------------------

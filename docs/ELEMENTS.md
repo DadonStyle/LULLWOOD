@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4277 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3804, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4298 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3825, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -306,7 +306,16 @@ one geometry builder (`makePredator()`), differentiated by the
   state change (LUL-1482). Scent and noise acquisition are unaffected in
   every state, carrying or not.
 - Chase, losing/regaining track via `investigate`→`sniff`→`back` (LUL-22,
-  explicitly "not to be retuned").
+  explicitly "not to be retuned"). LUL-1090: when the `approach` sub-phase
+  reaches sniff range (`hasReachedSniffRange()`, `rad+SNIFF_APPROACH_MARGIN`
+  ≈2.5-3.2 units) **while the player is `hidden`**, the predator first walks
+  itself back to `SNIFF_STANDOFF` (4.5 units, `lib/game/predator.ts`
+  `sniffStandoffPoint()`) via a new `standoff` sub-phase before entering
+  `sniff` — a player caught in the open is unaffected and closes to the old
+  distance as before. The "Hidden · something is sniffing you" status line
+  (`tick()`) uses a separate, wider `SNIFF_STATUS_RANGE` (8 units, declared
+  next to `SNIFF_STANDOFF` so the two can't drift apart) so the warning still
+  reads once the predator has settled at its standoff distance.
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
   nearest predator switches straight to `hunt` (relentless, ignores LOS
   break) — `tick()`.
@@ -1076,9 +1085,9 @@ design doc as turning horror into radar.
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L2443),
-  reset to 0 on `enter()` (L2679) and recomputed every `tick()` while the run
-  is neither won nor dead (L3914: `computeDepth(maxDistFromHome) +
+  run in progress — `hudState` field (`engine/forest-engine.js` L2637),
+  reset to 0 on `enter()` (L2700) and recomputed every `tick()` while the run
+  is neither won nor dead (L3935: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
