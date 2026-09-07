@@ -144,6 +144,8 @@ import {
   fogTideFogBoost,
   fogTideDroneGainMul,
   fogTideWindGainMul,
+  fogTideAmountAt,
+  fogTideBuildAt,
 } from '@/lib/game/fogTide';
 import {
   timeOfDayFromHour,
@@ -1488,16 +1490,18 @@ function missionWaypointHum(m, distToPlayer){
 // play (LUL-23/LUL-65) meaningful.
 function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid,CELL,WRAP_SPAN); }
 function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN); }
-// LUL-27: fogTideDetectMul(fogTideAmount) stacks the same way veilDetectMul
-// already does -- multiplicatively, sight only. A player who's also holding
-// the veil during a tide gets both cuts; that's intended, not a double-count
-// bug (the two systems represent different things -- a spent resource vs. a
-// free world event -- and nothing says they shouldn't compound).
+// LUL-27: fogTideDetectMul(fogTideAmountAt(p.x, p.z, ...)) stacks the same way
+// veilDetectMul does -- multiplicatively, sight only. A player who's also
+// holding the veil during a tide gets both cuts; that's intended, not a
+// double-count bug (the two systems represent different things -- a spent
+// resource vs. a free world event -- and nothing says they shouldn't
+// compound). LUL-1486: the tide amount is now sampled at the predator's own
+// position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
 function effectiveDetect(p){
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying });
 }
 function canSee(p, dist){
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmount) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -3727,7 +3731,7 @@ function tick(){
   // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
   // the sight-detect cut ramps in step with what the player actually sees.
   veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
-  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmount) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
+  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
   hemiLight.intensity = HEMI_BASE_INTENSITY * (1 - timeOfRun * 0.7);
   pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, staminaCharge: Math.round(staminaCharge * 100) / 100, timeOfRunClock: formatTimeOfRunClock(timeOfRun) });
 
@@ -3853,9 +3857,9 @@ function tick(){
     // LUL-38: carrying phase — child rides at the player's feet, glowing
     babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = carryHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.intensity = carryGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
+    halo.material.opacity = carryHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+    babyLight.intensity = carryGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
     const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
@@ -4017,9 +4021,9 @@ function tick(){
   if(!baby.taken){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
     babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = idleHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.intensity = idleGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmount);
-    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmount);
+    halo.material.opacity = idleHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(babyGroup.position.x, babyGroup.position.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+    babyLight.intensity = idleGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(babyGroup.position.x, babyGroup.position.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmountAt(babyGroup.position.x, babyGroup.position.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
     const bp = bwisps.geometry.attributes.position.array;
     for(let i=0;i<BW;i++){ bp[i*3+1] += dt*0.4; if(bp[i*3+1] > 3.4) bp[i*3+1] = 0.2; }
     bwisps.geometry.attributes.position.needsUpdate = true;
@@ -4047,9 +4051,9 @@ function tick(){
       // drone" reads as the tide arriving, not the drone just getting louder.
       // Only applied in the calm bed, same as everything else in this branch --
       // a chase already wins the audio mix outright (see the `hunting` branch above).
-      audio.wg.gain.setTargetAtTime((0.05 + move01*0.10) * fogTideWindGainMul(fogTideAmount) * TOD_AUDIO.windGainMul, now, 0.3);
+      audio.wg.gain.setTargetAtTime((0.05 + move01*0.10) * fogTideWindGainMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * TOD_AUDIO.windGainMul, now, 0.3);
       audio.wf.frequency.setTargetAtTime(320 + move01*900, now, 0.3);
-      audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuild) * TOD_AUDIO.droneGainMul, now, 0.3);
+      audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuildAt(player.x, player.z, fogTideBuild, WRAP_SPAN, WRAP_SPAN)) * TOD_AUDIO.droneGainMul, now, 0.3);
       audio.twinkle -= dt;
       if(audio.twinkle <= 0){
         const near = distLake < CONFIG.lake.r*3;
