@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4018 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3585, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4019 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3586, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -566,7 +566,9 @@ one geometry builder (`makePredator()`), differentiated by the
 - No economy cost, cooldown, or respawn for v1 (Economist territory, later).
 
 **Behaviours & logic**
-- 10 fixed spawn points per map (`THROWABLE_COUNT`), rejection-sampled at
+- 90 fixed spawn points per map (`THROWABLE_COUNT`, LUL-1839 — up from the
+  Scout MVP's 10, ~1 stone found per run at an 8u acquisition radius, wiki
+  `game/economy/throwable-price`), rejection-sampled at
   `generateMap()` time clear of tree trunks, home/spawn (12u), and each other
   (6u) — `generateThrowables()`. Picked-up stones are hidden (parked
   off-map, not removed from the array) via `layoutThrowableMeshes()`.
