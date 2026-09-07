@@ -496,9 +496,11 @@ export default function Hud({
             over the run. Read-only readout, same one-directional engine->HUD
             pattern as lightState/veilState/staminaState above it. */}
         <span id="timeOfRunClock">Time: {state.timeOfRunClock}</span>
-        {/* LUL-1043: the run currency's balance -- exempted from admin-mode's
-            #panel hide the same way lightState/veilState are (GameCanvas.tsx),
-            since this is core game progress, not a dev-tuning control. */}
+        {/* LUL-1043: the run currency's balance. LUL-1085 re-scoped #panel to
+            dev-only monitoring with no exemptions (GameCanvas.tsx) -- this span
+            is hidden by default like every other #panel child. The real
+            player-facing balance is #embersShopBalance (EmbersShop, above),
+            which this duplicates for dev monitoring only. */}
         <span id="embersBalance">Embers: {state.embersBalance}</span>
         {state.entered && !state.winVisible && !state.deathVisible && (
           <span id="embersPile">Unbanked: {state.livePileEmbers}</span>
