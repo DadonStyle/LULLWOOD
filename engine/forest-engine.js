@@ -450,7 +450,7 @@ bogParts.forEach(p => { p.frustumCulled = false; scene.add(p); });
 // colliders (see predatorBlocked() below and blockedForPredator() in
 // lib/game/cover.ts); log/bramble stay walkable for predators, matching the
 // player's own exemption.
-const THROWABLE_COUNT = 10;             // Scout MVP number
+const THROWABLE_COUNT = 90;             // ~1 stone/run at 8u radius; wiki game/economy/throwable-price
 const THROWABLE_PICKUP_RADIUS = 3;      // matches canPickUp's baby radius scale
 const THROWABLE_THROW_DISTANCE = 18;    // landing point = player pos + facing * this
 const THROWABLE_INVESTIGATE_TIME = [3, 5]; // rnd() range, seconds

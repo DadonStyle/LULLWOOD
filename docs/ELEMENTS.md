@@ -566,9 +566,9 @@ one geometry builder (`makePredator()`), differentiated by the
 - No economy cost, cooldown, or respawn for v1 (Economist territory, later).
 
 **Behaviours & logic**
-- 10 fixed spawn points per map (`THROWABLE_COUNT`), rejection-sampled at
-  `generateMap()` time clear of tree trunks, home/spawn (12u), and each other
-  (6u) — `generateThrowables()`. Picked-up stones are hidden (parked
+- 90 fixed spawn points per map (`THROWABLE_COUNT`, LUL-1839), rejection-sampled
+  at `generateMap()` time clear of tree trunks, home/spawn (12u), and each
+  other (6u) — `generateThrowables()`. Picked-up stones are hidden (parked
   off-map, not removed from the array) via `layoutThrowableMeshes()`.
 - Predator targeting override is confined to the `approach` sub-phase only:
   `updatePredators()`'s live-player `ux/uz/dist` are untouched for every
