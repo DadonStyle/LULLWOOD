@@ -161,7 +161,7 @@ import {
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
   STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
-  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END,
+  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -1012,6 +1012,22 @@ function buildSplitOak(){
   const glow = new THREE.PointLight(0xcfe6ff, 0.4 * LEGACY_LIGHT_SCALE, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
   return g;
 }
+// LUL-1855: soft radial-gradient canvas texture for the radio mast's
+// fog-exempt beacon glow (see buildRadioMast() below) -- same canvas-texture
+// idiom already used for the sky gradient above (:306-312), applied to a
+// small square instead, so the sprite reads as a soft point of light rather
+// than a hard-edged disc.
+function buildBeaconGlowTexture(hex){
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const col = '#' + hex.toString(16).padStart(6, '0');
+  const grd = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, col); grd.addColorStop(0.4, col); grd.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grd; ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+let radioMastBeaconGlow = null;   // LUL-1855: sprite ref for tick()'s pulse, set once below
 function buildRadioMast(){
   const g = new THREE.Group();
   const mastMat = new THREE.MeshStandardMaterial({ color: 0x4a4f55, roughness: 0.8, metalness: 0.4 });
@@ -1023,6 +1039,20 @@ function buildRadioMast(){
   }
   const beacon = new THREE.PointLight(0xff2a2a, 0.5 * LEGACY_LIGHT_SCALE, 18, 2);
   beacon.position.set(0, 11.2, 0); g.add(beacon);
+  // LUL-1855: fog-exempt beacon glow -- the PointLight above only lights
+  // surfaces within its 18-unit cutoff, which FogExp2 erases by ~43 units
+  // anyway (wiki game/mechanics/landmarks-below-the-fog-line). This sprite is
+  // a separate, unlit, fog:false marker so the beacon stays visible past the
+  // fog line as a bearing, not a lit scene -- same idiom as stars/moon
+  // (:318, :323-325) and the win burst (:1061-1067).
+  radioMastBeaconGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: buildBeaconGlowTexture(RADIO_MAST_BEACON_GLOW.color),
+    transparent: true, opacity: RADIO_MAST_BEACON_GLOW.opacityBase,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+  }));
+  radioMastBeaconGlow.position.set(0, 11.2, 0);
+  radioMastBeaconGlow.scale.set(RADIO_MAST_BEACON_GLOW.scale, RADIO_MAST_BEACON_GLOW.scale, 1);
+  g.add(radioMastBeaconGlow);
   g.rotation.z = 0.05;   // slight lean
   return g;
 }
@@ -4091,6 +4121,10 @@ function tick(){
 
   // home landmark breathes, gently (LUL-38)
   homeRing.material.opacity = 0.16 + Math.sin(t*0.9)*0.06;
+
+  // LUL-1855: radio mast beacon glow pulses slowly, reads as a beacon not a glitch
+  radioMastBeaconGlow.material.opacity = RADIO_MAST_BEACON_GLOW.opacityBase
+    + Math.sin(t * RADIO_MAST_BEACON_GLOW.pulseHz) * RADIO_MAST_BEACON_GLOW.opacityAmp;
 
   // pool breathes; its wisps rise
   ring.material.opacity = 0.14 + Math.sin(t*0.8)*0.05;
