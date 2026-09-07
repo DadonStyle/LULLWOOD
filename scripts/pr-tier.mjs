@@ -21,21 +21,38 @@
 //     engine/", but nothing mechanical can tell a tuning constant from a
 //     change to the collision solver, and guessing wrong here ships a broken
 //     game. A human can still approve those normally.
-//   - `lib/game/**` is C, not the generic Tier B `lib/**` bucket. Every module
-//     here (cover.ts, predator.ts, scent.ts, stamina.ts, outcome.ts, ...) is
-//     simulation logic imported into engine/forest-engine.js by name (that's
-//     what scripts/check-duplicate-logic.mjs's allowlist mechanism assumes) --
-//     it is AGENTS.md's Tier C "engine simulation" list (hiding, detection,
-//     scent, win/lose) living under lib/ for import reasons, not app-surface
-//     code. Found LUL-1664: PR #351 (lib/game/cover.ts, hiding/detection) was
-//     treated as "squarely Tier C" by the humans/AGENTS.md prose reasoning
-//     about the ticket, but this script would have classified it Tier B and
-//     let tier-approve.yml auto-approve it with zero Code Reviewer involved,
-//     bot or human -- a strictly worse hole than the one LUL-1664 is actually
-//     about (a manual bypass at least required a person to act; this one is
-//     fully automatic). This rule is listed after the Tier A test/spec rule
+//   - `lib/game/{predator,scent,cover,outcome,pack,charge,sightLock,dayNight,
+//     veil,fogTide,noise,bog,lake,stamina}.ts` are C by name, not the whole
+//     directory. LUL-1664 made all of `lib/game/**` Tier C on the rationale
+//     that "every module here is simulation logic" -- true when the directory
+//     had 5 files (predator/scent/cover/outcome/pack, decisions/0014
+//     Amendment 2's actual list), false at 21: modules like economy.ts
+//     (reward math run *after* an outcome is already decided) or chronicle.ts
+//     (a post-hoc formatter) have nothing to do with AGENTS.md's Tier C
+//     definition ("movement, collision, predator AI, scent, hiding,
+//     detection, win/lose conditions") and got dragged along for the ride --
+//     confirmed live blocking PR #436/LUL-1640 on exactly this over-reach
+//     (LUL-1880). The named list above is every lib/game/ file whose exports
+//     feed that definition directly: predator/scent/cover/outcome/pack (the
+//     original five); charge.ts (predator charge decision + the "caught"
+//     resolution -- a win/lose condition); sightLock.ts (pre-chase sight-lock
+//     tell, gates when a chase starts); dayNight.ts/veil.ts/fogTide.ts (each
+//     exports a predator detect-radius multiplier consumed directly by
+//     canSee()); noise.ts (the hearing detection channel); bog.ts/lake.ts
+//     (terrain speed multipliers -- movement); stamina.ts (sprint speed
+//     multiplier -- also movement, and the margin between escaping a chase
+//     and not). Everything else in lib/game/ (economy, mission, chronicle,
+//     eventScheduler, timeOfDay, childGlow, jump -- reward, side-objective
+//     tracking, narrative text, a generic phase-cycle timer, and cosmetic
+//     glow/camera-arc math with no detection or collision math in them) falls
+//     through to the generic `lib/**` -> B rule below, same as any other
+//     app-surface module. This rule is listed after the Tier A test/spec rule
 //     (so lib/game/*.test.ts stays A, like every other test file) but before
-//     the generic `lib/**` -> B rule, since first match wins.
+//     the generic `lib/**` -> B rule, since first match wins. A future
+//     lib/game/ addition that isn't named here defaults to B -- a conscious
+//     choice now that this is a named list, not a fail-closed directory rule
+//     -- so classify new simulation files here by hand against the same
+//     definition rather than assuming the old blanket rule still applies.
 //   - `package.json` / lockfile are C: a dependency bump is arbitrary code.
 //
 // Usage: node scripts/pr-tier.mjs <file> [file...]
@@ -66,7 +83,7 @@ const rules = [
   [/^public\//, 'A'],
   [/\.md$/, 'A'],
 
-  [/^lib\/game\//, 'C'],
+  [/^lib\/game\/(predator|scent|cover|outcome|pack|charge|sightLock|dayNight|veil|fogTide|noise|bog|lake|stamina)\.ts$/, 'C'],
 
   // --- Tier B: app surface. Merge on green, review after. ---
   [/^app\//, 'B'],
