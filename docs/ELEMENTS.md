@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4189 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3733, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4223 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3763, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1075,7 +1075,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3425) and `triggerDeath()` (L3456).
+  both `track()` call sites in `arriveHome()` (L3455) and `triggerDeath()` (L3486).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1085,9 +1085,9 @@ design doc as turning horror into radar.
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L2443),
-  reset to 0 on `enter()` (L2630) and recomputed every `tick()` while the run
-  is neither won nor dead (L3693: `computeDepth(maxDistFromHome) +
+  run in progress — `hudState` field (`engine/forest-engine.js` L2597),
+  reset to 0 on `enter()` (L2660) and recomputed every `tick()` while the run
+  is neither won nor dead (L3873: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1439,7 +1439,12 @@ and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit
 inside an actual bog patch now that the bog is no longer a fixed band),
 `radioMast` and `chapelSteeple` (LUL-1782) sit in the outer ring, radius
 ~178-179, restoring fixed orientation geography on the leg past the original
-four that LUL-1484's map growth left featureless. and
+four that LUL-1484's map growth left featureless. As of LUL-1855, `radioMast`
+additionally carries a small fog-exempt additive sprite on its beacon
+(`RADIO_MAST_BEACON_GLOW`, `engine/tuning.js`) so it stays visible as a dim,
+slowly-pulsing point past the fog line that erases the other five -- a
+bearing, not a lit scene; the other five landmarks are unchanged and still
+fog-occluded at the same distances documented above. and
 the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
 boolean, so a patch edge scales speed/noise in rather than stepping. It
 scales player/predator walk speed down and noise radius up while standing in
