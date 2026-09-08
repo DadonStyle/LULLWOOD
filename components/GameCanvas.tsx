@@ -50,6 +50,18 @@ const OVERLAY_STYLE = `
   #hint { position: fixed; top: 64px; left: 0; right: 0; z-index: 1; text-align: center;
     font-size: 12px; letter-spacing: 0.05em; color: #9fb2cd; pointer-events: none;
     text-shadow: 0 1px 8px rgba(0,0,0,0.8); transition: opacity 1.4s ease; opacity: 0; }
+  /* LUL-2158 (LUL-2147 finding): #hint is engine-owned (forest-engine.js's enter()
+     sets opacity 0.85 and fades it out 5s later, out of CSS's control and out of
+     this ticket's scope to touch) -- a fast second death restarts that 5s timer
+     (restart() calls enter()) and can land the death/win screen while the hint is
+     still mid-fade-in. #deathText has no opaque backdrop of its own (unlike
+     #winText's gradient), so the hint's text visibly overlapped "YOU LOSE" (94%
+     box coverage, mobile-pixel5/iphone-se landscape). :has() reacts purely to
+     whichever end screen React has actually mounted, with no engine change.
+     transition: none is deliberate -- an opacity fade here would still overlap
+     for up to 1.4s; the hint must be gone the instant the screen mounts. */
+  body:has(#winScreen) #hint,
+  body:has(#deathScreen) #hint { opacity: 0 !important; transition: none !important; }
 
   #minimap { position: fixed; top: 16px; right: 16px; z-index: 10;
     width: 160px; height: 160px; border-radius: 10px;
