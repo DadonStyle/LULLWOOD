@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4492 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3980, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4530 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4006, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1101,7 +1101,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3668) and `triggerDeath()` (L3699).
+  both `track()` call sites in `arriveHome()` (L3673) and `triggerDeath()` (L3700).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1112,7 +1112,7 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L2834) and recomputed every `tick()` while the run
+  reset to 0 on `enter()` (L2850) and recomputed every `tick()` while the run
   is neither won nor dead (L4097: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
@@ -1232,33 +1232,52 @@ design doc as turning horror into radar.
 
 ---
 
-### Wayfinding (LUL-1255 Ship 1: S2/S3/S5/S6)
+### Wayfinding (LUL-1255 Ship 1: S2/S3/S4/S5/S6)
 
 **What it is**
-- **Implemented (LUL-1674), S2/S3/S5/S6 of the Ship 1 wayfinding spec.** No new verbs and no
-  new collision for any of the three pieces below — all three are passive visual/audio anchors.
-  S1 (home-light reach) and S4 (carried-noise floor) are separate tickets (LUL-1851, LUL-1857)
-  and are not covered here.
+- **Implemented (LUL-1674), S2/S3/S5/S6 of the Ship 1 wayfinding spec; S4 (carried-noise
+  floor) implemented separately (LUL-1857).** No new verbs and no new collision for any of the
+  pieces below — all are passive visual/audio anchors, plus one new passive predator-detection
+  channel (S4, carry-leg only). S1 (home-light reach) is a separate ticket (LUL-1851) and is not
+  covered here.
 - **Landmark navigability cue (S2).** The four original `LANDMARKS` entries (`fireTower`,
   `stoneMarker`, `oak`, `drownedCar`, `engine/tuning.js`) already function as a navigable
   coordinate system; `enter()` (`engine/forest-engine.js`) now fires a one-time, unconditional
   (not gated on `captionsOn`) caption on run start — `"landmarks in the fog are safe to
   navigate by"` — as a nav tip, not a repeating audio-cue caption.
-- **The child's cry (S3).** `childCry(distToPlayer)` (`engine/forest-engine.js`) is a
-  procedural, panned-by-bearing tone toward `baby.x/z`, same tempo/pitch-carries-distance shape
-  as the mission hum it predates in design (`missionWaypointHum()` mirrors it), driven by a
-  `cryTimer` countdown (5.5s far / 2s close) inside the same block that already renders the
-  child's idle glow. A roaming predator can also hear it: `checkNoise(p,
-  Math.hypot(baby.x-p.x, baby.z-p.z), cryNoiseRadius, dt)` is a second, independent hearing
-  check (last in the roam state's detection chain — sight, scent, footstep, then cry) against
-  the child's own fixed position, not the live player, resolved via `hearCry(p)` which reuses
-  LUL-1623's `p.noiseTarget`/`p.noiseTargetT` point-target primitive (`p.noiseTargetT =
-  Infinity` — the cry doesn't time out like a thrown decoy's landing spot, it keeps sounding
-  until the predator arrives). Gated off entirely once `baby.taken`. `CRY_NOISE_RADIUS = 32`
-  (`lib/game/noise.ts`), fog-tide-scaled at the child's position
-  (`fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z, ...))`); predator spawn exclusion around
-  the child raised from 26 to 34 units so nothing spawns already inside the cry's audible range.
-  Caption (gated on `captionsOn`): `"a child crying · <near|far> · <side>"`.
+- **The child's cry (S3).** `childCry(distToPlayer, srcX, srcZ)` (`engine/forest-engine.js`) is
+  a procedural, panned-by-bearing tone toward an explicit source position, same tempo/pitch-
+  carries-distance shape as the mission hum it predates in design (`missionWaypointHum()`
+  mirrors it), driven by a `cryTimer` countdown (5.5s far / 2s close outbound; pinned to 2s —
+  the closest-tempo floor — while carrying, LUL-1857) inside the same block that already renders
+  the child's idle glow (outbound) or the carrying-phase update (carry leg). Outbound, a roaming
+  predator can also hear it: `checkNoise(p, Math.hypot(baby.x-p.x, baby.z-p.z), cryNoiseRadius,
+  dt)` is a second, independent hearing check (last in the roam state's detection chain — sight,
+  scent, footstep, then cry) against the child's own fixed position, not the live player,
+  resolved via `hearCry(p)` which reuses LUL-1623's `p.noiseTarget`/`p.noiseTargetT`
+  point-target primitive (`p.noiseTargetT = Infinity` — the cry doesn't time out like a thrown
+  decoy's landing spot, it keeps sounding until the predator arrives). This outbound channel is
+  gated off entirely once `baby.taken`. `CRY_NOISE_RADIUS = 32` (`lib/game/noise.ts`),
+  fog-tide-scaled at the child's position (`fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z,
+  ...))`); predator spawn exclusion around the child raised from 26 to 34 units so nothing spawns
+  already inside the cry's audible range. Caption (gated on `captionsOn`): `"a child crying ·
+  <near|far> · <side>"`.
+- **Carried-noise floor (S4, LUL-1857).** While `carrying`, the same `cryTimer` (reused, not a
+  second clock) pulses `childCry(0, player.x, player.z)` every 2s — always "near", centered pan
+  (source = player position, since `baby.x/z` is a stale snapshot during carry, not live). Each
+  pulse also sets a one-tick `carriedCryPulse` flag, consumed the same frame inside
+  `updatePredators`'s `roam` state: `else if(!sniffImmune && carrying && carriedCryPulse && dist
+  < CARRIED_NOISE_FLOOR){ hearNoise(p); }` — a deterministic proximity check at the moment of the
+  pulse, not a per-frame `isNoiseHeard()` roll, and (unlike the outbound cry) resolved via
+  `hearNoise(p)` so it targets the *live player position*, since the noise source moves with the
+  player on the return leg. `CARRIED_NOISE_FLOOR = 0.4 * NOISE_RADIUS_WALK = 5.6` units
+  (`lib/game/noise.ts`), deliberately **not** fog-tide-scaled (kept under the 8u sniff-backoff
+  bound with margin). Only active for a still carrier — a *moving* carrier's footstep
+  `noiseRadius` channel is unchanged and unaffected. Also, a predator's terminal sniff-loop
+  give-up (`p.inv === 'sniff'`, `stepSniffLoop` returns not-`'back'`) now routes through a new
+  `p.inv = 'leave'` phase — walking away via `backOffPoint()`, same retreat speed as the
+  mid-loop `'back'` phase — instead of flipping to `roam` in place, when the give-up happens
+  `hidden && carrying`; ungated (non-carrying) give-up keeps its prior in-place behavior.
 - **Home fire crackle (S5).** `homeFireCrackle(dist)` (`engine/forest-engine.js`) is a
   filtered-noise burst (reuses `hollowLogSound()`'s bandpass-noise chain, minus its sine thump)
   panned by bearing to `CONFIG.home`, driven by a `homeFireTimer` on the same tempo-carries-
@@ -1267,21 +1286,26 @@ design doc as turning horror into radar.
   crackling · <near|far> · <side>"`.
 
 **What it can do**
-- All three are passive: no new key binding, no new `EngineActions` method, no new touch
-  target. Nothing here changes what the player or a predator can physically do beyond the
-  cry's one new hearing channel described above.
+- All pieces are passive: no new key binding, no new `EngineActions` method, no new touch
+  target. Nothing here changes what the player or a predator can physically do beyond the two
+  hearing channels described above (outbound cry, S3; carried-noise floor, S4).
 
 **What it CANNOT do**
-- Cannot be re-triggered manually or skipped — all three cues are driven purely by elapsed-time
+- Cannot be re-triggered manually or skipped — all cues are driven purely by elapsed-time
   timers and world state (`carrying`, `baby.taken`), not player input.
-- The cry cannot pull a predator toward the live player — that's the exact bug this design
-  fixes by targeting `baby.x/z` via `p.noiseTarget`, not the live-player-anchored `checkNoise`/
-  `hearNoise` path every other hearing channel uses.
+- The outbound cry cannot pull a predator toward the live player — that's the exact bug this
+  design fixes by targeting `baby.x/z` via `p.noiseTarget`, not the live-player-anchored
+  `checkNoise`/`hearNoise` path every other hearing channel uses. The carried-noise floor (S4)
+  is the deliberate opposite: it targets the live player, because on the carry leg the noise
+  source (the child, in the player's arms) *is* the live player position.
+- The carried-noise floor cannot fire on a *moving* carrier — it's pulse-gated to the still-
+  carrying case; a moving carrier is only subject to the ordinary continuous footstep
+  `noiseRadius` roll, unchanged by this feature.
 
 **Collision & physics profile**
-- N/A for all three — no new geometry, no new spatial structure. The cry's hearing check reuses
-  ordinary Euclidean distance to a fixed point and the existing `checkNoise`/`isNoiseHeard`
-  predicates unchanged.
+- N/A for all pieces — no new geometry, no new spatial structure. Both hearing checks reuse
+  ordinary Euclidean distance and the existing `checkNoise`/`isNoiseHeard`/`hearNoise` predicates
+  unchanged; the carried-noise floor adds a distance threshold constant, not new geometry.
 
 ---
 
