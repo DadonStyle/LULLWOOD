@@ -186,6 +186,48 @@ declare global {
         dist: number;
         trace: { t: number; dist: number; canSee: boolean; dead: boolean }[];
       } | null>;
+      /** LUL-1461: places `kind` in a blind scent-chase (state='chase',
+       * scentLock=SCENT_TRACK_TIME) straddling a real tree trunk -- predator and
+       * player sit on opposite sides of the trunk's own z, `margin` units
+       * beyond the trunk radius plus each actor's own collision radius (so
+       * the actual standoff is derived per-tree, not a fixed distance), and
+       * its collision circle sits squarely on the segment between them. Also
+       * rejects any tree with a neighbour close enough to crowd the direct
+       * line or a reasonable sidestep around it, so the scenario stays a
+       * single-obstacle case (see the comment above the implementation for
+       * why: a fixed large standoff measured as timing out even on
+       * already-fixed code, for bear, by putting other trees in the gap).
+       * Regression coverage for LUL-1091 (predators pathing around trees):
+       * before that fix a predator staged this way grinds into the trunk and
+       * never arrives. Every other predator is marked `inert` for the rest of
+       * the page's life (same isolation qaStageBlindChaseThroughCover uses).
+       * Returns the predator's index/kind/staged distance and the tree's
+       * position/radius, or null if no tree in this seed left both staged
+       * points clear of every other obstacle and neighbour-isolated. Prefer
+       * qaStageAndTraceBehindTree for an actual assertion -- this alone races
+       * the exact scenario it stages. */
+      qaStageBehindTree?: (
+        kind: 'wolf' | 'bear' | 'lion',
+        margin: number,
+      ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; treeX: number; treeZ: number; treeCr: number; dist: number } | null;
+      /** LUL-1461: stages (as qaStageBehindTree) then, in the same synchronous
+       * call, starts an in-page rAF loop recording `{t, dist, state, reached}`
+       * once per frame until `reached` (dist < rad + CATCH_MARGIN, the same
+       * contact definition isCaught() uses) or `maxMs` elapses. Staging and
+       * the first observed frame must happen in one page.evaluate() round
+       * trip, not two -- see qaStageAndTraceBlindChase's comment for the
+       * measured reason. Returns null if staging failed (see
+       * qaStageBehindTree). */
+      qaStageAndTraceBehindTree?: (
+        kind: 'wolf' | 'bear' | 'lion',
+        margin: number,
+        maxMs: number,
+      ) => Promise<{
+        idx: number;
+        kind: 'wolf' | 'bear' | 'lion';
+        dist: number;
+        trace: { t: number; dist: number; state: string; reached: boolean }[];
+      } | null>;
       /** LUL-69: the live camera vertical FOV (degrees) -- confirms the
        * mobile/desktop CAMERA_FOV split in init() actually took effect. */
       qaCameraFov?: () => number;
