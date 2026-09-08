@@ -3837,7 +3837,7 @@ function arriveHome(){
   embers = applyPayout(embers, payout);
   logChronicle('win');
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice() });
+    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 function triggerDeath(kind, cause){

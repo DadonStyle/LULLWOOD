@@ -340,12 +340,13 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
 // first pushState after arriveHome()/triggerDeath() lands, so this never
 // renders with stale data from a previous run (lastPayout is set in the
 // same pushState call as winVisible/deathVisible).
-function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[] }) {
+function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, difficulty }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[]; difficulty: 'lantern' | 'night' | 'blackout' }) {
   const lines = formatChronicle(chronicle);
+  const tierLabel = difficulty === 'lantern' ? 'Lantern' : difficulty === 'night' ? 'Night' : 'Blackout';
   return (
     <>
       <p id="runRecap">
-        time survived: {formatDuration(survivedSeconds)}
+        {tierLabel} · time survived: {formatDuration(survivedSeconds)}
         {payout && (
           <>
             <br />
@@ -726,7 +727,7 @@ export default function Hud({
           <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
             <h1>YOU WON</h1>
             <p>the child is safe — you carried them home through the Lullwood</p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} />
             <button
               ref={winRestartRef}
               className="restartBtn"
@@ -753,7 +754,7 @@ export default function Hud({
               {DEATH_CAUSE_TEXT[state.deathCause]}
               {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} difficulty={state.difficulty} />
             <button
               ref={deathRestartRef}
               className="restartBtn"
