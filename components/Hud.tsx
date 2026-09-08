@@ -447,7 +447,14 @@ export default function Hud({
       <OrientationGate />
 
       {mobile ? (
-        <MobileControls actions={actions} entered={state.entered} runMode={state.runMode} heldThrowable={state.heldThrowable} />
+        <MobileControls
+          actions={actions}
+          entered={state.entered}
+          runMode={state.runMode}
+          heldThrowable={state.heldThrowable}
+          winVisible={state.winVisible}
+          deathVisible={state.deathVisible}
+        />
       ) : (
         <DesktopControls />
       )}
@@ -525,7 +532,11 @@ export default function Hud({
           `key` forces a remount per captionId so a caption that arrives while
           the previous one is still fading restarts the toast cleanly instead
           of the old text lingering under a re-triggered fade. */}
-      {captionVisible && state.caption && (
+      {/* LUL-2131: predator calls stop while playing===false but captionVisible/
+          state.caption are toast state, not reset by triggerDeath/arriveHome --
+          a caption in flight at the exact moment of win/death would otherwise
+          keep fading in over the end screen. */}
+      {captionVisible && state.caption && !state.winVisible && !state.deathVisible && (
         <div id="captionToast" key={state.captionId} role="status" aria-live="polite">
           {state.caption}
         </div>
@@ -617,7 +628,12 @@ export default function Hud({
         </div>
       )}
 
-      {state.entered && (
+      {/* LUL-2131: gate on !winVisible/!deathVisible too -- entered stays true
+          through the end screens (restart() never clears it), so this used to
+          keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
+          It's below the modals visually either way, but it's still a live,
+          ticking readout that has no business rendering once the run is over. */}
+      {state.entered && !state.winVisible && !state.deathVisible && (
         <div
           id="windIndicator"
           title="Wind direction -- move into the arrow to reduce your scent trail"
@@ -627,15 +643,19 @@ export default function Hud({
         </div>
       )}
 
-      {state.entered && (
+      {state.entered && !state.winVisible && !state.deathVisible && (
         <div id="windIndicatorHint">wind — move into the arrow to lower your scent trail</div>
       )}
 
       {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;
           cover wins (engine enforces via !coverPromptVisible in veil condition).
           Key/button name uses the same #actionKey pill style as #chargeKey above.
-          Double-spaces around the key name are house style (match "Press  E  to lift the child"). */}
-      {(state.coverPromptVisible || state.veilPromptVisible) && (() => {
+          Double-spaces around the key name are house style (match "Press  E  to lift the child").
+          LUL-2131: coverPromptVisible/veilPromptVisible are only recomputed `if(playing)`
+          in the engine (forest-engine.js) and aren't reset by triggerDeath/arriveHome, so a
+          prompt live at the exact moment of win/death otherwise keeps rendering over the end
+          screen. Gate here rather than in the engine to keep this a render-layer fix. */}
+      {!state.winVisible && !state.deathVisible && (state.coverPromptVisible || state.veilPromptVisible) && (() => {
         const noun = state.coverPromptKind === 'log' ? 'hollow log' : 'bush';
         const urgentKeyStyle = state.reducedMotion
           ? { animation: 'none', background: '#e8554a', boxShadow: '0 2px 26px rgba(232,85,74,0.85)' } as const
@@ -681,8 +701,10 @@ export default function Hud({
           carrying a stone. Styled like the existing pickup/interact prompt
           (#objective.ready); own id/position (#throwPrompt, see GameCanvas.tsx's
           OVERLAY_STYLE) since it can be visible at the same time as #objective
-          (e.g. "Find the lost child" while also holding a stone). */}
-      {state.heldThrowable && (
+          (e.g. "Find the lost child" while also holding a stone).
+          LUL-2131: heldThrowable is only reset in restart() (forest-engine.js), not
+          triggerDeath/arriveHome, so it can still read true into the end screen. */}
+      {state.heldThrowable && !state.winVisible && !state.deathVisible && (
         <div id="throwPrompt">
           {mobile
             ? <>{'Holding a stone — tap  '}<span id="throwKey">Throw</span></>
