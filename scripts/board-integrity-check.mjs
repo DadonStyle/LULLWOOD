@@ -400,6 +400,62 @@ function findAssignedBacklogNoGate(backlogIssues) {
   return backlogIssues.filter(isAssignedBacklogNoGate);
 }
 
+// LUL-2048 (synthesis B-1): the tombstone/unowned-PR/zero-pullable alarms
+// dedup only against `hasOpenWakeTicket`, which scans todo/in_progress. A
+// freshly-filed wake ticket can die almost immediately (observed:
+// `acpx_turn_failed`) and auto-recovery flips it to `blocked` -- at which
+// point it is neither "open" (todo/in_progress) nor "closed" (done/
+// cancelled), it just falls out of both scans, and the next sweep re-files
+// an identical ticket. Each re-file is an assignment wake, which forces a
+// session reset (confirmed ground truth) -- against a run that is already
+// dead on arrival. Live case: LUL-1085/1156/1205 re-filed at 02:45, 03:00,
+// 03:15 (LUL-1252/3/4).
+//
+// This generalizes the LUL-827 pattern above one step further: instead of
+// only asking "was the most recent CLOSE of a matching wake ticket recent",
+// ask "was a matching wake ticket CREATED (in any status at all) recently".
+// That covers open, blocked, in_review, done, and cancelled uniformly, at
+// the cost of also suppressing a case where the underlying condition is
+// fixed and should legitimately re-fire before the cooldown elapses -- the
+// same tradeoff LUL-827 already made and shipped.
+//
+// Cooldown length (WAKE_REFILE_COOLDOWN_DAYS, 1 day) is deliberately NOT
+// STALE_CONFIRMATION_DAYS. Those measure different things and must not share a
+// number by accident:
+//   - STALE_CONFIRMATION_DAYS (7) is how long a HUMAN may reasonably take to
+//     answer a request_confirmation. Waiting a week on a person is correct.
+//   - This cooldown is how long to stay quiet about an OPERATIONAL fault (a
+//     wake ticket whose run died). Nobody is being waited on, so a week of
+//     silence is not patience, it is blindness: the tombstone detector is the
+//     board's main safety net, and muting it for 7 days can hide a genuinely
+//     stranded ticket for a week.
+// One day is ample to kill the observed failure (a re-file every 15 minutes --
+// 96 sweeps/day), and it is deliberately wider than nothing but far narrower
+// than a week. Note the server ALSO dedups identical-title issues in
+// non-terminal statuses for 48h, so for the blocked/in_review case this check
+// is belt-and-braces; where it genuinely earns its keep is done/cancelled,
+// which server dedup explicitly excludes -- and that is exactly the case where
+// re-nagging within a week is desirable if the tombstone survived.
+//
+// allKnownWakeIssues: issues in ANY status this run already fetched --
+// callers already hold the full set (todo/in_progress + blocked/in_review +
+// done/cancelled) in hand, so this adds no new API calls.
+// marker: one of tombstoneWakeMarker/unownedPrWakeMarker/zeroPullableWorkWakeMarker's output.
+// nowMs: Date.now() -- injected so tests don't depend on wall clock.
+const WAKE_REFILE_COOLDOWN_DAYS = 1;
+
+function isRecentWakeTicketSuppressed(allKnownWakeIssues, marker, nowMs, cooldownDays = WAKE_REFILE_COOLDOWN_DAYS) {
+  let mostRecentCreateMs = -Infinity;
+  for (const issue of allKnownWakeIssues ?? []) {
+    if (!(issue.title ?? '').startsWith(marker)) continue;
+    const createdMs = new Date(issue.createdAt).getTime();
+    if (createdMs > mostRecentCreateMs) mostRecentCreateMs = createdMs;
+  }
+  if (mostRecentCreateMs === -Infinity) return false;
+  const daysSinceCreate = (nowMs - mostRecentCreateMs) / (1000 * 60 * 60 * 24);
+  return daysSinceCreate < cooldownDays;
+}
+
 // classifiedTombstones: [{ issue, disposition, referencedPrs, mergedPrs }],
 // the shape classifyTombstones() produces.
 // zeroPullable: the result of zeroPullableWorkAlarm(), or null to skip Alarm C.
@@ -746,6 +802,10 @@ function nonPausedAssigneeId(assigneeAgentId, agentsById) {
 // assignedBacklogNoGate: result of findAssignedBacklogNoGate() (LUL-1934), or [] to skip Alarm E
 // agentsById: Map<id, agent>, for the LUL-2066 paused-assignee guard above --
 // defaults to empty so existing single-call-shape tests are unaffected.
+// otherStatusIssues: blocked/in_review issues (LUL-2048) -- the tombstone/unowned-PR/
+// zero-pullable wake tickets a prior sweep filed can land here (auto-recovery flips a
+// failed run's ticket to `blocked`), so isRecentWakeTicketSuppressed needs this set
+// too or it only ever sees the todo/in_progress and done/cancelled slices.
 async function fileWakeTickets(
   apiBase,
   companyId,
@@ -759,6 +819,7 @@ async function fileWakeTickets(
   nowMs = Date.now(),
   assignedBacklogNoGate = [],
   agentsById = new Map(),
+  otherStatusIssues = [],
 ) {
   // Resolve lazily and cache -- a quiet run (no alarms) should never touch
   // /api/agents/me at all, and a run with several alarms should only resolve
@@ -774,10 +835,13 @@ async function fileWakeTickets(
     return selfId;
   };
   const filed = [];
+  // Every status this run knows about, for the LUL-2048 "was a matching wake
+  // ticket created recently, in ANY status" suppression check below.
+  const allKnownWakeIssues = [...openIssues, ...otherStatusIssues, ...closedWakeIssues];
 
   if (zeroPullable?.alarm) {
     const marker = zeroPullableWorkWakeMarker();
-    if (!hasOpenWakeTicket(openIssues, marker)) {
+    if (!hasOpenWakeTicket(openIssues, marker) && !isRecentWakeTicketSuppressed(allKnownWakeIssues, marker, nowMs)) {
       const assigneeAgentId = await resolveSelfId();
       await createWakeIssue(apiBase, companyId, apiKey, {
         title: `${marker} (LUL-810 detector)`,
@@ -818,6 +882,7 @@ async function fileWakeTickets(
     const { issue, disposition } = classified;
     const marker = tombstoneWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
+    if (isRecentWakeTicketSuppressed(allKnownWakeIssues, marker, nowMs)) continue;
     const assigneeAgentId = nonPausedAssigneeId(issue.assigneeAgentId, agentsById) ?? (await resolveSelfId());
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: tombstoneWakeTitle(marker, disposition),
@@ -831,6 +896,7 @@ async function fileWakeTickets(
   for (const pr of unownedPrs) {
     const marker = unownedPrWakeMarker(pr);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
+    if (isRecentWakeTicketSuppressed(allKnownWakeIssues, marker, nowMs)) continue;
     const assigneeAgentId = await resolveSelfId();
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-672 detector)`,
@@ -971,6 +1037,7 @@ async function main() {
       nowMs,
       assignedBacklogNoGate,
       agentsById,
+      tombstoneCandidates,
     );
     if (filed.length === 0) {
       console.error('--post: every alarm already has an open wake ticket, filed nothing new.');
@@ -1016,6 +1083,8 @@ export {
   zeroPullableWorkAlarm,
   findStaleConfirmations,
   isStaleConfirmationSuppressed,
+  isRecentWakeTicketSuppressed,
+  WAKE_REFILE_COOLDOWN_DAYS,
   STALE_CONFIRMATION_DAYS,
   isAssignedBacklogNoGate,
   findAssignedBacklogNoGate,
