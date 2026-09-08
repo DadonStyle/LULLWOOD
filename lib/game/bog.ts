@@ -5,14 +5,12 @@
 // (half, landmark positions) and calls these back in, same split as
 // lib/game/scent.ts and lib/game/charge.ts.
 //
-// LUL-1483: the world used to be a rectangle (x in [-half,half], z in
-// [-half, half+bogDepth]) with the bog a strip past the forest's +z edge --
-// isInBog(z, bounds) tested z alone. Re-centring z to match x makes "the far
-// strip of +z" meaningless on a square, so the bog is now a biome distributed
-// by 2D noise over the whole square instead of a directional band. biomeAt()
-// replaces isInBog(): same role (what does this patch of ground cost to
-// cross), continuous instead of boolean so a patch edge feels like terrain,
-// not a wall the player's speed instantly steps through.
+// LUL-1902: the bog was a biome scattered by 2D noise over the whole square
+// (~30-37% of the map, many separate patches) -- a mechanical side effect of
+// squaring the world (LUL-1483), not a deliberate design call. Consolidated
+// to one discoverable place: a single fixed center + radial falloff, same
+// smoothstepped-edge softness as before so a patch edge still reads as
+// terrain, not a wall.
 
 export interface Point {
   x: number;
@@ -23,79 +21,87 @@ export interface Landmark extends Point {
   clear: number; // radius to keep clear of, in world units
 }
 
-// ---- Bog biome noise -------------------------------------------------------
+// ---- Bog biome geometry ----------------------------------------------------
 // Fixed geography, like CONFIG.lake/CONFIG.home/LANDMARKS -- a place you can
-// actually learn, not something that reshuffles with the per-game rng seed
-// (mulberry32(CONFIG.seed) in the engine, resolveInitialSeed()/generateMap()).
-// BOG_NOISE_SEED is its own constant, untouched by either: every player's bog
-// patches sit in the same places: only the trees/predators/cover scattered
-// around them vary per seed.
-const BOG_NOISE_SEED = 20260906;
-// World units per noise lattice cell -- big enough that a patch reads as a
-// biome you walk across for several seconds, not a speckle underfoot.
-const BOG_NOISE_CELL = 48;
-// Raw noise below this reads as dry land (bogginess 0). ~30% of the 240x240
-// square is boggy at this cutoff (checked by direct sampling of the formula
-// below at 2-unit resolution) -- a substantial biome, not a rare pocket.
-const BOG_THRESHOLD = 0.55;
+// actually learn, not something that reshuffles with the per-game rng seed.
+//
+// Numbers below were chosen by numeric search against three constraints that
+// all had to hold simultaneously: both oak/drownedCar (engine/tuning.js
+// LANDMARKS) land inside the zone without repositioning; fireTower/
+// stoneMarker/radioMast/chapelSteeple stay outside it; and the zone reaches
+// far enough from the origin that pickHardBabyPosition's existing
+// biomeAt>0 && hypot>=BLACKOUT_MIN_RADIUS requirement stays satisfiable (it
+// is NOT satisfiable at every center/radius pair -- verify BLACKOUT_MIN_RADIUS
+// reachability before changing these). Do not "clean up" these values without
+// re-running that check.
+export const BOG_CENTER: Point = { x: -70, z: 44 };
+export const BOG_INNER_RADIUS = 35; // full bogginess (1.0) inside this distance from BOG_CENTER
+export const BOG_OUTER_RADIUS = 135; // bogginess reaches 0 at this distance; smoothstep between inner and outer
+
 // Home/spawn (CONFIG.home = {x:0,z:0}; generateMap() also sets player.x =
-// player.z = 0) must never be boggy -- see this spec's "design gap" note.
-// Fully dry inside HOME_CLEAR_RADIUS, blends up to the unmodified noise value
-// by HOME_FADE_RADIUS. If CONFIG.home ever moves off the origin, this must
-// move with it.
+// player.z = 0) must never be boggy. Fully dry inside HOME_CLEAR_RADIUS,
+// blends up to the unmodified bog value by HOME_FADE_RADIUS. If CONFIG.home
+// ever moves off the origin, this must move with it.
 const HOME_CLEAR_RADIUS = 8;
 const HOME_FADE_RADIUS = 16;
 
-// Deterministic hash of an integer lattice point -> [0, 1). Integer-only
-// multiply/xor/shift, same shape as the engine's own mulberry32 (LUL-153) --
-// no floating point drift, same output on every platform.
-function bogLatticeHash(ix: number, iz: number): number {
-  let h =
-    (Math.imul(ix, 374761393) ^ Math.imul(iz, 668265263) ^ Math.imul(BOG_NOISE_SEED, 2246822519)) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  h = h ^ (h >>> 16);
-  return (h >>> 0) / 4294967296;
-}
+// LUL-1902: BOG_CENTER/BOG_OUTER_RADIUS put CONFIG.lake (engine/tuning.js,
+// {x:34,z:-28}) ~119 units from BOG_CENTER -- inside BOG_OUTER_RADIUS, so
+// without this carve-out the lake would go from always-dry to measurably
+// boggy, breaking the existing invariant nothing in this ticket's decision
+// asked to change. Mirrors HOME_* exactly, keyed off the lake's own
+// position. If CONFIG.lake ever moves, this must move with it.
+const LAKE_CENTER: Point = { x: 34, z: -28 };
+const LAKE_CLEAR_RADIUS = 20;
+const LAKE_FADE_RADIUS = 32;
 
 function smoothstep(t: number): number {
   return t * t * (3 - 2 * t);
 }
 
-// Bilinear-interpolated value noise: smooth, O(1) per call (four hash
-// lookups + two lerps), no precomputed grid/array -- cheap enough to call
-// once per predator per frame (updatePredators()) as well as at map-gen time.
-function bogValueNoise(x: number, z: number): number {
-  const gx = x / BOG_NOISE_CELL, gz = z / BOG_NOISE_CELL;
-  const ix = Math.floor(gx), iz = Math.floor(gz);
-  const fx = smoothstep(gx - ix), fz = smoothstep(gz - iz);
-  const h00 = bogLatticeHash(ix, iz);
-  const h10 = bogLatticeHash(ix + 1, iz);
-  const h01 = bogLatticeHash(ix, iz + 1);
-  const h11 = bogLatticeHash(ix + 1, iz + 1);
-  const a = h00 + (h10 - h00) * fx;
-  const b = h01 + (h11 - h01) * fx;
-  return a + (b - a) * fz;
+// Shared by both carve-outs above: 1 (no effect) past `fadeR`, 0 (fully
+// cleared) inside `clearR`, smoothstepped between -- same shape either one
+// used inline before this ticket.
+function radialFade(x: number, z: number, center: Point, clearR: number, fadeR: number): number {
+  const dist = Math.hypot(x - center.x, z - center.z);
+  if (dist >= fadeR) return 1;
+  if (dist <= clearR) return 0;
+  return smoothstep((dist - clearR) / (fadeR - clearR));
 }
 
 /**
- * Replaces isInBog(z, bounds) (LUL-1483). Bogginess at a world point, 0
- * (dry) to 1 (deepest bog) -- continuous, not boolean, so the movement/noise
- * multipliers below ease in across a patch edge instead of stepping. Takes
- * `x` (isInBog never did) because a patch is a 2D region, not a z-band.
- * Deterministic and pure: same (x, z) always returns the same value, no rng,
- * no dependency on the per-game seed.
+ * Bogginess at a world point, 0 (dry) to 1 (deepest bog) -- continuous, not
+ * boolean, so the movement/noise multipliers below ease in across a patch
+ * edge instead of stepping. Deterministic and pure: same (x, z) always
+ * returns the same value, no rng, no dependency on the per-game seed.
  */
 export function biomeAt(x: number, z: number): number {
-  const n = bogValueNoise(x, z);
-  const t = (n - BOG_THRESHOLD) / (1 - BOG_THRESHOLD);
-  const raw = t <= 0 ? 0 : t >= 1 ? 1 : t;
-  const distFromHome = Math.hypot(x, z);
-  if (distFromHome >= HOME_FADE_RADIUS) return raw;
-  const fade =
-    distFromHome <= HOME_CLEAR_RADIUS
-      ? 0
-      : smoothstep((distFromHome - HOME_CLEAR_RADIUS) / (HOME_FADE_RADIUS - HOME_CLEAR_RADIUS));
-  return raw * fade;
+  const dist = Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z);
+  const t = (BOG_OUTER_RADIUS - dist) / (BOG_OUTER_RADIUS - BOG_INNER_RADIUS);
+  const raw = t <= 0 ? 0 : t >= 1 ? 1 : smoothstep(t);
+  const homeFade = radialFade(x, z, { x: 0, z: 0 }, HOME_CLEAR_RADIUS, HOME_FADE_RADIUS);
+  const lakeFade = radialFade(x, z, LAKE_CENTER, LAKE_CLEAR_RADIUS, LAKE_FADE_RADIUS);
+  return raw * homeFade * lakeFade;
+}
+
+// LUL-1902: how long the wolf-scent-mask (see checkScent() in the engine)
+// takes to fade to 0 after the player leaves the bog. Not an instant on/off
+// at the patch edge -- decision doc calls for "decaying over a short window
+// after leaving."
+export const BOG_MASK_DECAY_TIME = 6; // seconds
+
+/** Rises instantly to `currentBogginess` when it's higher than `prevMask`
+ * (no lag entering the bog), decays linearly to 0 over `decayTime` seconds
+ * once the player leaves (currentBogginess drops below prevMask). Pure,
+ * called once per frame by the engine with its own persisted `prevMask`. */
+export function bogMaskLevel(
+  currentBogginess: number,
+  prevMask: number,
+  dt: number,
+  decayTime: number = BOG_MASK_DECAY_TIME,
+): number {
+  if (currentBogginess >= prevMask) return currentBogginess;
+  return Math.max(currentBogginess, prevMask - dt / decayTime);
 }
 
 export const BLACKOUT_MIN_RADIUS = 192; // lantern's spawn annulus tops out at half*0.8=192u at half=240 -- floor blackout at exactly that so it never spawns closer than lantern's hardest draw

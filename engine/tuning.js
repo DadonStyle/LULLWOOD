@@ -158,6 +158,12 @@ export const PSPEC = {
   bear: { body:0x3d2c22, sz:1.8, len:2.0, h:1.45, mane:false, ears:false, speed:6.8, detect:30, eye:0xff5a2a, rad:1.5, budget:9, nose:1.4 },
   lion: { body:0xc79a5b, sz:1.2, len:1.7, h:1.0,  mane:true,  ears:true,  speed:9.2, detect:48, eye:0xffcf3a, rad:1.0, budget:4, nose:0.75 },
 };
+// LUL-1902: wolf-only nose-multiplier reduction while the player's bog-mask
+// (lib/game/bog.ts bogMaskLevel()) is active. 0.7, not 1.0 -- the decision
+// doc explicitly rejects a hard safe-room, so a wolf already close/fresh on
+// the trail can still catch a masked scent, just at reduced range. Bears and
+// lions are untouched -- see checkScent() in the engine.
+export const WOLF_BOG_MASK_STRENGTH = 0.7;
 // Size each animal's speed from its warning budget: from the moment it SEES you and you
 // flee at top speed, the fastest (lion) still gives >=4s, the bear >=9s. All are faster
 // than the player, so you can't simply outrun them -- hiding is the real escape.
