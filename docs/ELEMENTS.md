@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4378 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3889, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4487 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3976, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1101,7 +1101,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3581) and `triggerDeath()` (L3612).
+  both `track()` call sites in `arriveHome()` (L3668) and `triggerDeath()` (L3699).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1112,8 +1112,8 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L2737) and recomputed every `tick()` while the run
-  is neither won nor dead (L3935: `computeDepth(maxDistFromHome) +
+  reset to 0 on `enter()` (L2830) and recomputed every `tick()` while the run
+  is neither won nor dead (L4092: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1167,7 +1167,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3870): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L4048): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1229,6 +1229,59 @@ design doc as turning horror into radar.
 - N/A — not a spatial/world object. The mission *target* (the drowned car) is a `LANDMARKS`
   entry with its own existing decorative/navigational collision profile, unchanged by this
   entry; the mission struct only reads that entry's coordinates, it does not add new geometry.
+
+---
+
+### Wayfinding (LUL-1255 Ship 1: S2/S3/S5/S6)
+
+**What it is**
+- **Implemented (LUL-1674), S2/S3/S5/S6 of the Ship 1 wayfinding spec.** No new verbs and no
+  new collision for any of the three pieces below — all three are passive visual/audio anchors.
+  S1 (home-light reach) and S4 (carried-noise floor) are separate tickets (LUL-1851, LUL-1857)
+  and are not covered here.
+- **Landmark navigability cue (S2).** The four original `LANDMARKS` entries (`fireTower`,
+  `stoneMarker`, `oak`, `drownedCar`, `engine/tuning.js`) already function as a navigable
+  coordinate system; `enter()` (`engine/forest-engine.js`) now fires a one-time, unconditional
+  (not gated on `captionsOn`) caption on run start — `"landmarks in the fog are safe to
+  navigate by"` — as a nav tip, not a repeating audio-cue caption.
+- **The child's cry (S3).** `childCry(distToPlayer)` (`engine/forest-engine.js`) is a
+  procedural, panned-by-bearing tone toward `baby.x/z`, same tempo/pitch-carries-distance shape
+  as the mission hum it predates in design (`missionWaypointHum()` mirrors it), driven by a
+  `cryTimer` countdown (5.5s far / 2s close) inside the same block that already renders the
+  child's idle glow. A roaming predator can also hear it: `checkNoise(p,
+  Math.hypot(baby.x-p.x, baby.z-p.z), cryNoiseRadius, dt)` is a second, independent hearing
+  check (last in the roam state's detection chain — sight, scent, footstep, then cry) against
+  the child's own fixed position, not the live player, resolved via `hearCry(p)` which reuses
+  LUL-1623's `p.noiseTarget`/`p.noiseTargetT` point-target primitive (`p.noiseTargetT =
+  Infinity` — the cry doesn't time out like a thrown decoy's landing spot, it keeps sounding
+  until the predator arrives). Gated off entirely once `baby.taken`. `CRY_NOISE_RADIUS = 32`
+  (`lib/game/noise.ts`), fog-tide-scaled at the child's position
+  (`fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z, ...))`); predator spawn exclusion around
+  the child raised from 26 to 34 units so nothing spawns already inside the cry's audible range.
+  Caption (gated on `captionsOn`): `"a child crying · <near|far> · <side>"`.
+- **Home fire crackle (S5).** `homeFireCrackle(dist)` (`engine/forest-engine.js`) is a
+  filtered-noise burst (reuses `hollowLogSound()`'s bandpass-noise chain, minus its sine thump)
+  panned by bearing to `CONFIG.home`, driven by a `homeFireTimer` on the same tempo-carries-
+  distance curve as the cry, firing only while `carrying`. Not predator-audible — this is the
+  return leg's audio cue, not a detection channel. Caption (gated on `captionsOn`): `"home fire
+  crackling · <near|far> · <side>"`.
+
+**What it can do**
+- All three are passive: no new key binding, no new `EngineActions` method, no new touch
+  target. Nothing here changes what the player or a predator can physically do beyond the
+  cry's one new hearing channel described above.
+
+**What it CANNOT do**
+- Cannot be re-triggered manually or skipped — all three cues are driven purely by elapsed-time
+  timers and world state (`carrying`, `baby.taken`), not player input.
+- The cry cannot pull a predator toward the live player — that's the exact bug this design
+  fixes by targeting `baby.x/z` via `p.noiseTarget`, not the live-player-anchored `checkNoise`/
+  `hearNoise` path every other hearing channel uses.
+
+**Collision & physics profile**
+- N/A for all three — no new geometry, no new spatial structure. The cry's hearing check reuses
+  ordinary Euclidean distance to a fixed point and the existing `checkNoise`/`isNoiseHeard`
+  predicates unchanged.
 
 ---
 

@@ -75,7 +75,7 @@ import {
   COVER_PROBE_HZ,
 } from '@/lib/game/cover';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -1178,6 +1178,8 @@ function inBaby(x,z){ const dx=x-baby.x, dz=z-baby.z; return dx*dx+dz*dz < 20; }
 // call (see the tail of generateMap() below) from the same seeded rng stream
 // map/predator generation already consumes -- never player-selected.
 let mission = null;
+let cryTimer = 2;   // LUL-1255 (Ship 1 wayfinding S3d): first cry fires quickly, not after a full interval
+let homeFireTimer = 2;   // LUL-1255 (Ship 1 wayfinding S5): same init as cryTimer
 let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- first hum fires quickly, not after a full interval
 
 const babyGroup = new THREE.Group();
@@ -1376,7 +1378,7 @@ function placePredators(){
     // not just when the retry budget exhausts.
     let x, z, tries = 0;
     do { const ang=rng()*Math.PI*2, d=half*(0.42+rng()*0.45); x=Math.cos(ang)*d; z=Math.sin(ang)*d; tries++; }
-    while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 26 || blockedR(x, z, p.rad+0.5)) && tries < 60);
+    while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 34 || blockedR(x, z, p.rad+0.5)) && tries < 60);
     if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
@@ -1527,6 +1529,20 @@ function hearThrowableNoise(p, tx, tz){
   p.noiseTargetT = rnd(THROWABLE_INVESTIGATE_TIME[0], THROWABLE_INVESTIGATE_TIME[1]);
   if(captionsOn) pushState({ caption: `${p.kind} investigates a noise`, captionId: ++captionSeq });
 }
+// LUL-1255 (Ship 1 wayfinding S3): modeled on hearThrowableNoise() above, not
+// hearNoise() -- this needs the point-target override (p.noiseTarget), not
+// hearNoise()'s live-player commit. Unlike a thrown decoy's landing spot, the
+// cry's source doesn't move and keeps sounding, so there is no timeout:
+// p.noiseTargetT stays Infinity and only clears when stepApproach's own
+// enterSniff fires (arrival), never by expiry reverting to the live player --
+// an expiry-revert here would silently reintroduce the live-player-target bug
+// this section exists to fix (see S3a of the wayfinding spec).
+function hearCry(p){
+  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.callTimer = rnd(2.6, 4.2);
+  p.noiseTarget = { x: baby.x, z: baby.z };
+  p.noiseTargetT = Infinity;
+}
 
 // LUL-1258: the mission waypoint's hum -- same tempo-carries-distance shape
 // Ship 1 specs for the child's cry (docs/specs/lul-1255-wayfinding-ship1.md
@@ -1534,6 +1550,38 @@ function hearThrowableNoise(p, tx, tz){
 // predator-audible (unlike the child's cry) -- this is a detour aid, not a
 // second "wayfinding that makes the forest more dangerous" mechanic; scope
 // per this ticket is the nav cue only, not a new detection surface (S4).
+// LUL-1255 (Ship 1 wayfinding S3d): procedural cry, panned by bearing to the
+// child's fixed spawn point. Same tempo/pitch-carries-distance shape as
+// missionWaypointHum() below (LUL-1258 built that one by mirroring this
+// unbuilt spec), just target = baby.x/z instead of a mission target, and a
+// higher/brighter base frequency so the two cues stay distinguishable by ear.
+function childCry(distToPlayer){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const near = Math.max(0, Math.min(1, 1 - distToPlayer / 140));   // 0 far .. 1 close
+  const pan = ctx.createStereoPanner();
+  const dx = baby.x - player.x, dz = baby.z - player.z;
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  const right = dx*rx + dz*rz, fwd = dx*fx + dz*fz;
+  pan.pan.value = Math.max(-1, Math.min(1, right / Math.max(1, Math.hypot(right, fwd))));
+  const o = ctx.createOscillator(); o.type = 'sine';
+  const baseF = 420 + near * 90;   // higher/brighter than the mission hum (220 + near*60)
+  o.frequency.setValueAtTime(baseF, t);
+  o.frequency.exponentialRampToValueAtTime(baseF * 1.25, t + 0.22);
+  o.frequency.exponentialRampToValueAtTime(baseF, t + 0.6);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.04 + near * 0.05, t + 0.06);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+  o.connect(g); g.connect(pan); pan.connect(master); pan.connect(conv);
+  o.start(t); o.stop(t + 0.75);
+  if(captionsOn){
+    const cnear = distToPlayer < 30 ? 'near' : 'far';
+    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
+    pushState({ caption: `a child crying · ${cnear} · ${side}`, captionId: ++captionSeq });
+  }
+}
 function missionWaypointHum(m, distToPlayer){
   if(!audio || !soundOn || !m || m.status !== 'active') return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
@@ -1654,7 +1702,7 @@ function updateWolfPack(dt){
 // exactly where they were. Long enough to read as "that's over," short
 // enough that a second charge later in the same chase is still in play.
 
-function updatePredators(dt, noiseRadius){
+function updatePredators(dt, noiseRadius, cryNoiseRadius){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
   for(const p of predators){
@@ -1769,6 +1817,15 @@ function updatePredators(dt, noiseRadius){
       }
       else if(!sniffImmune && checkScent(p)){ scentOnto(p); }
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
+      // LUL-1255 (Ship 1 wayfinding S3): the cry is a second, independent
+      // hearing check against the child's actual position, not the player's --
+      // see S3 of the wayfinding spec for why this can't reuse
+      // checkNoise/hearNoise's live-player target. Cry stays last since it's
+      // the newest, lowest-priority-to-reach channel (sight, scent, footstep,
+      // then cry).
+      else if(!sniffImmune && !baby.taken && checkNoise(p, Math.hypot(baby.x - p.x, baby.z - p.z), cryNoiseRadius, dt)){
+        hearCry(p);
+      }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){
@@ -2361,6 +2418,33 @@ function leafRustle(entering){
 // Hollow log: a low resonant knock (short bandpassed noise burst + a falling
 // sine thump, the same "hollow body" pairing a real knock on dead wood
 // produces) plus, on entry only, a soft dry creak as the player settles in.
+// LUL-1255 (Ship 1 wayfinding S5): home-fire crackle, panned by bearing to
+// CONFIG.home. Reuses hollowLogSound()'s filtered-noise-burst chain below,
+// minus its sine thump -- a crackle is timbrally close to the log's dry-wood
+// knock, just softer and unpitched. Density (call interval), not pan, rises
+// as the player nears home -- see homeFireTimer's countdown in tick().
+function homeFireCrackle(dist){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const near = Math.max(0, Math.min(1, 1 - dist / 140));
+  const pan = ctx.createStereoPanner();
+  const dx = CONFIG.home.x - player.x, dz = CONFIG.home.z - player.z;
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  const right = dx*rx + dz*rz, fwd = dx*fx + dz*fz;
+  pan.pan.value = Math.max(-1, Math.min(1, right / Math.max(1, Math.hypot(right, fwd))));
+  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.1, false);
+  const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = 220; bp.Q.value = 6;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.15 + near * 0.1, t+0.008); ng.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
+  nb.connect(bp); bp.connect(ng); ng.connect(pan); pan.connect(master); pan.connect(conv);
+  nb.start(t); nb.stop(t+0.18);
+  if(captionsOn){
+    const cnear = dist < 30 ? 'near' : 'far';
+    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
+    pushState({ caption: `home fire crackling · ${cnear} · ${side}`, captionId: ++captionSeq });
+  }
+}
 function hollowLogSound(entering){
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
@@ -2735,6 +2819,9 @@ function setPaused(p){
 }
 function enter(){
   entered = true;
+  // LUL-1255 (Ship 1 wayfinding S2): one-time nav tip, not a repeating audio-cue
+  // caption -- fires unconditionally, not gated on captionsOn.
+  pushState({ caption: 'landmarks in the fog are safe to navigate by', captionId: ++captionSeq });
   enteredAt = clock.elapsedTime;
   runElapsed = 0;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
@@ -4046,6 +4133,14 @@ function tick(){
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
     const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
+    // LUL-1255 (Ship 1 wayfinding S5): same tempo-carries-distance shape as
+    // cryTimer (S3d) -- 5.5s far, 2s close, density rising as dh shrinks.
+    homeFireTimer -= dt;
+    if(homeFireTimer <= 0){
+      homeFireCrackle(dh);
+      const nearH = Math.max(0, Math.min(1, 1 - dh / 140));
+      homeFireTimer = 5.5 - nearH * 3.5;
+    }
     // LUL-596: canArriveHome() also requires !dead && !won -- this call site
     // used to be the only thing keeping a dead player from winning (positional
     // safety, not a precondition). Do not drop this guard.
@@ -4060,7 +4155,12 @@ function tick(){
     camera.rotation.set(player.pitch, player.yaw, 0);
   }
 
-  if(playing) updatePredators(dt, noiseRadius);   // predators only hunt while you're actually playing
+  // LUL-1255 (Ship 1 wayfinding S3c): cry radius is fog-tide-scaled at the
+  // child's own position, same fogTideAmountAt() pattern as babyLight's other
+  // two call sites (idle glow uses babyGroup position, carry uses player
+  // position) -- the cry originates at the child, so it uses baby.x/z.
+  const cryNoiseRadius = CRY_NOISE_RADIUS * fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
@@ -4233,6 +4333,15 @@ function tick(){
     const bp = bwisps.geometry.attributes.position.array;
     for(let i=0;i<BW;i++){ bp[i*3+1] += dt*0.4; if(bp[i*3+1] > 3.4) bp[i*3+1] = 0.2; }
     bwisps.geometry.attributes.position.needsUpdate = true;
+    // LUL-1255 (Ship 1 wayfinding S3d): same tempo-carries-distance shape
+    // missionHumTimer mirrors -- 5.5s far, 2s close.
+    const cryDist = Math.hypot(baby.x - player.x, baby.z - player.z);
+    cryTimer -= dt;
+    if(cryTimer <= 0){
+      childCry(cryDist);
+      const near = Math.max(0, Math.min(1, 1 - cryDist / 140));
+      cryTimer = 5.5 - near * 3.5;
+    }
   }
 
   // scary music plays ONLY while an animal actually sees you (chasing or bee-lining).
