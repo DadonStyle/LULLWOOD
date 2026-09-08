@@ -24,6 +24,16 @@
 // worth a human look -- at that threshold, only the genuinely stalled PRs
 // in the measured population (#123, #131, #128) would have fired.
 //
+// LUL-1111: a Tier-A-only PR (docs/**, *.md, e2e/**, *.test.*, comment-only,
+// public/, copy -- AGENTS.md's development-first tiers) ships on green with
+// no review by studio policy, so it is never a real gap and must not fire
+// this detector. PR #240, which landed that policy, was itself Tier A and
+// sat unreviewed for 55+ hours specifically because this detector had no
+// notion of tier -- exactly the false-positive noise Tier A exists to
+// eliminate. Reuses scripts/pr-tier.mjs's tierOf() (the same classifier
+// tier-approve.yml uses) rather than re-deriving tier rules here. A PR with
+// any non-Tier-A file (Tier B or C) still fires as before.
+//
 // Usage:
 //   node scripts/check-review-gap.mjs
 //
@@ -41,6 +51,7 @@
 // so a red run here means "go look," not "block a merge").
 import { pathToFileURL } from 'node:url';
 import { ghFetch } from './lib/github-fetch.mjs';
+import { tierOf } from './pr-tier.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
 const DEFAULT_THRESHOLD_MINUTES = 360;
@@ -50,16 +61,37 @@ function reviewsFor(reviewsByPrNumber, prNumber) {
   return reviewsByPrNumber[prNumber] ?? [];
 }
 
+// `filesByPrNumber` is optional (existing callers/tests that omit it entirely
+// get `null` back here, meaning "unknown" -- never skip on unknown data).
+function filesFor(filesByPrNumber, prNumber) {
+  if (!filesByPrNumber) return null;
+  if (filesByPrNumber instanceof Map) return filesByPrNumber.get(prNumber) ?? null;
+  return filesByPrNumber[prNumber] ?? null;
+}
+
+// `files` is the shape of GitHub's `GET /pulls/{n}/files` response (needs
+// `.filename`). Empty/missing files list is never Tier-A-only -- fail open
+// to "still a candidate gap" rather than silently skipping on no data.
+function isTierAOnly(files) {
+  if (!files || files.length === 0) return false;
+  return files.every((f) => tierOf(f.filename) === 'A');
+}
+
 // Pure, unit-testable core. `openPrs` is the shape of GitHub's
 // `GET /pulls?state=open` response (needs number/title/html_url/created_at).
 // `reviewsByPrNumber` maps a PR number to that PR's `GET /pulls/{n}/reviews`
-// array (or is empty/absent for a PR with no reviews at all). Returns the
-// list of gap PRs, oldest-first.
-function findReviewGaps(openPrs, reviewsByPrNumber, nowMs, thresholdMinutes) {
+// array (or is empty/absent for a PR with no reviews at all). `filesByPrNumber`
+// (optional) maps a PR number to its `GET /pulls/{n}/files` array; a PR whose
+// every changed file classifies Tier A is skipped (LUL-1111 -- Tier A ships on
+// green with no review by policy, so it's never a real gap). Returns the list
+// of gap PRs, oldest-first.
+function findReviewGaps(openPrs, reviewsByPrNumber, nowMs, thresholdMinutes, filesByPrNumber) {
   const gaps = [];
   for (const pr of openPrs) {
     const reviews = reviewsFor(reviewsByPrNumber, pr.number);
     if (reviews.length > 0) continue;
+
+    if (isTierAOnly(filesFor(filesByPrNumber, pr.number))) continue;
 
     const createdMs = Date.parse(pr.created_at);
     const ageMinutes = (nowMs - createdMs) / 60_000;
@@ -83,15 +115,22 @@ async function fetchOpenPrsAndReviews(repo, token) {
   );
 
   const reviewsByPrNumber = new Map();
+  const filesByPrNumber = new Map();
   for (const pr of openPrs) {
     const reviews = await ghFetch(
       `https://api.github.com/repos/${repo}/pulls/${pr.number}/reviews?per_page=100`,
       token,
     );
     reviewsByPrNumber.set(pr.number, reviews);
+
+    const files = await ghFetch(
+      `https://api.github.com/repos/${repo}/pulls/${pr.number}/files?per_page=100`,
+      token,
+    );
+    filesByPrNumber.set(pr.number, files);
   }
 
-  return { openPrs, reviewsByPrNumber };
+  return { openPrs, reviewsByPrNumber, filesByPrNumber };
 }
 
 function formatAge(ageMinutes) {
@@ -104,8 +143,8 @@ async function main() {
   const token = process.env.GITHUB_TOKEN;
   const thresholdMinutes = Number(process.env.REVIEW_GAP_THRESHOLD_MINUTES) || DEFAULT_THRESHOLD_MINUTES;
 
-  const { openPrs, reviewsByPrNumber } = await fetchOpenPrsAndReviews(repo, token);
-  const gaps = findReviewGaps(openPrs, reviewsByPrNumber, Date.now(), thresholdMinutes);
+  const { openPrs, reviewsByPrNumber, filesByPrNumber } = await fetchOpenPrsAndReviews(repo, token);
+  const gaps = findReviewGaps(openPrs, reviewsByPrNumber, Date.now(), thresholdMinutes, filesByPrNumber);
 
   if (gaps.length > 0) {
     console.error('review-gap detector: FAILED');
