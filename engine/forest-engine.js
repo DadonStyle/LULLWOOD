@@ -3674,8 +3674,12 @@ function arriveHome(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
   playWinMusic(); fireBoom(CONFIG.home.x, 2.2, CONFIG.home.z);   // LUL-1307: the win, not the midpoint
-  // LUL-1609: reveal the win text 100ms after the burst finishes (updateBoom retires at e>1.8s)
-  later(() => pushState({ winRevealed: true }), 1900);
+  // LUL-1611: winRevealed used to fire off a wall-clock later(...,1900) timer,
+  // which can outrun the dt-clamped boom burst (dt clamped to 0.05/frame,
+  // wiki systems/dt-clamp-vs-walltime) on a sustained sub-20fps device -- the
+  // reveal is now polled against boomStart in tick() instead, so it fires
+  // exactly when the burst itself retires (undilated mirror of revealLoss()'s
+  // CUT_END poll on the death path).
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
   // LUL-303: updatePredators() (the only other place that clears the charge
   // HUD) stops running once `playing` goes false here, so a charge/telegraph
@@ -4179,6 +4183,12 @@ function stepFrame(dt, t){
     const bob = spd > 0 && !motionReduced() ? Math.sin(bobPhase) * 0.06 : 0;
     camera.position.set(player.x, eyeH + bob + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
+    // LUL-1611: reveal the win text once the boom burst itself retires
+    // (boomStart resets to -1 in updateBoom() at e>1.8s) instead of a
+    // wall-clock timer -- see arriveHome() for why. fireBoom() only ever
+    // fires from arriveHome(), so boomStart<0 here unambiguously means the
+    // win burst that just played has finished, not "no burst yet".
+    if(hudState.winVisible && !hudState.winRevealed && boomStart < 0) pushState({ winRevealed: true });
   }
 
   // LUL-1255 (Ship 1 wayfinding S3c): cry radius is fog-tide-scaled at the
