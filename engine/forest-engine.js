@@ -959,7 +959,7 @@ lakeLight.position.set(CONFIG.lake.x, 7, CONFIG.lake.z); scene.add(lakeLight);
 // Deliberately minimal -- "reuse the spawn point" per the ticket's own scope,
 // a lit waypoint rather than a new art pass. Static (no rng draw), so map
 // generation stays byte-identical for existing seeds.
-const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0 * LEGACY_LIGHT_SCALE, 24, 2);
+const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0 * LEGACY_LIGHT_SCALE, 240, 2);
 homeLight.position.set(CONFIG.home.x, 3, CONFIG.home.z); scene.add(homeLight);
 const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG.home.r*1.1, 40),
   new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
@@ -2914,6 +2914,29 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
 
+  // LUL-2071: deterministic test clock. qaSetFixedStep() parks the real RAF
+  // loop (cancels the pending frame) so wall-clock jitter/GPU contention can
+  // never inject an extra or partial frame on top of what the test drives.
+  // qaAdvance() is then the *only* thing that moves simulation time, by
+  // exactly dtSeconds per call, through the same stepFrame() the real RAF
+  // loop calls -- fixed-step and real-time frames run identical game logic,
+  // only the dt source differs. Advancing clock.elapsedTime directly (rather
+  // than intercepting every read site) keeps both the dilated `+= dt`
+  // category and the undilated `clock.elapsedTime`-diff category (see wiki
+  // systems/dt-clamp-vs-walltime) correct with one change, since both derive
+  // from this same shared THREE.Clock instance.
+  window.ForestEngine.qaSetFixedStep = function(dtSeconds){
+    qaFixedDt = dtSeconds;
+    if(rafId !== null){ cancelAnimationFrame(rafId); rafId = null; }
+  };
+  window.ForestEngine.qaAdvance = function(steps = 1){
+    if(qaFixedDt === null) throw new Error('qaAdvance: call qaSetFixedStep(dt) first');
+    for(let i = 0; i < steps; i++){
+      clock.elapsedTime += qaFixedDt;
+      stepFrame(qaFixedDt, clock.elapsedTime);
+    }
+  };
+
   // LUL-1484: before/after perf baseline for the map-size growth (E3), and
   // the baseline E6's chunking work later has to justify itself against.
   window.ForestEngine.qaProbePerf = function(){
@@ -3677,8 +3700,12 @@ function arriveHome(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
   playWinMusic(); fireBoom(CONFIG.home.x, 2.2, CONFIG.home.z);   // LUL-1307: the win, not the midpoint
-  // LUL-1609: reveal the win text 100ms after the burst finishes (updateBoom retires at e>1.8s)
-  later(() => pushState({ winRevealed: true }), 1900);
+  // LUL-1611: winRevealed used to fire off a wall-clock later(...,1900) timer,
+  // which can outrun the dt-clamped boom burst (dt clamped to 0.05/frame,
+  // wiki systems/dt-clamp-vs-walltime) on a sustained sub-20fps device -- the
+  // reveal is now polled against boomStart in tick() instead, so it fires
+  // exactly when the burst itself retires (undilated mirror of revealLoss()'s
+  // CUT_END poll on the death path).
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
   // LUL-303: updatePredators() (the only other place that clears the charge
   // HUD) stops running once `playing` goes false here, so a charge/telegraph
@@ -3958,13 +3985,11 @@ function formatTimeOfRunClock(t){
 // ---- Build the first map, then run ---------------------------------------
 generateMap(resolveInitialSeed());
 const clock = new THREE.Clock();
+let qaFixedDt = null;   // LUL-2071: non-null while a test has parked the RAF loop via qaSetFixedStep()
 let bobPhase = 0;
 let rafId = null;
 
-function tick(){
-  rafId = requestAnimationFrame(tick);
-  const dt = clampDt(clock.getDelta()), t = clock.elapsedTime;
-
+function stepFrame(dt, t){
   // LUL-68: right stick look rate applied each frame before movement.
   // LUL-276: mobile-only -- in desktop mode this whole block is dead, not
   // merely fed zeroes, because setTouchLook is a no-op there (see below) and
@@ -4195,6 +4220,12 @@ function tick(){
     const bob = spd > 0 && !motionReduced() ? Math.sin(bobPhase) * 0.06 : 0;
     camera.position.set(player.x, eyeH + bob + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
+    // LUL-1611: reveal the win text once the boom burst itself retires
+    // (boomStart resets to -1 in updateBoom() at e>1.8s) instead of a
+    // wall-clock timer -- see arriveHome() for why. fireBoom() only ever
+    // fires from arriveHome(), so boomStart<0 here unambiguously means the
+    // win burst that just played has finished, not "no burst yet".
+    if(hudState.winVisible && !hudState.winRevealed && boomStart < 0) pushState({ winRevealed: true });
   }
 
   // LUL-1255 (Ship 1 wayfinding S3c): cry radius is fog-tide-scaled at the
@@ -4468,6 +4499,11 @@ function tick(){
   updateBoom(dt);
   if(!dead){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
   adaptResolution(dt, t);
+}
+function tick(){
+  rafId = requestAnimationFrame(tick);
+  const dt = clampDt(clock.getDelta()), t = clock.elapsedTime;
+  stepFrame(dt, t);
 }
 tick();
 
