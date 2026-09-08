@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4332 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3855, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4354 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3875, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -180,6 +180,10 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   (`carrying` branch, `tick()`), until the player crosses
   `CONFIG.home.r` (3.6u) of the home landmark, which wins the run
   (`arriveHome()`).
+- **As of `LUL-1815`**, be set back down mid-carry (`setDown()`) and picked
+  back up from where she was left (`pickupAllowed()`'s `babyTaken` guard is
+  relaxed by a `setDown` flag in `lib/game/outcome.ts`) — see "cannot do"
+  below for the exact boundary.
 - **NOT live on `main`** — idle/carry glow intensity scaled by a difficulty
   preset's `glowMul` was built on the unmerged LUL-26 branch
   (`DIFFICULTY_PRESETS`); `engine/forest-engine.js` on `main` has no
@@ -227,8 +231,14 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   of it — `Math.hypot(x-baby.x,z-baby.z)<26` in `placePredators()`).
   Once the map is generated, a predator can stand directly on the
   un-collected child with zero effect. `UNDEFINED` — see matrix.
-- Cannot be dropped, lost, or re-hidden once picked up — `baby.taken` only
-  ever goes false→true, reset by `generateMap()`/`restart()`.
+- Cannot be lost or re-hidden once picked up — `baby.taken` only ever goes
+  false→true, reset by `generateMap()`/`restart()`. **As of `LUL-1815`**, she
+  *can* be set back down while carried (`setDown()`, same `KeyE`/touch-interact
+  input as pickup — no new key) — this returns her to a fixed point on the
+  ground (glowing, idle-animated, re-spottable via the beacon wisps) and the
+  player to full speed/no carry-detect penalty until she's picked up again
+  from that spot. `carrying` itself does still round-trip true→false→true;
+  only `baby.taken` is one-way.
 - Cannot collide with anything (no collider function reads its position).
 
 **Behaviours & logic**
@@ -1099,7 +1109,7 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L2730) and recomputed every `tick()` while the run
+  reset to 0 on `enter()` (L2737) and recomputed every `tick()` while the run
   is neither won nor dead (L3935: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to

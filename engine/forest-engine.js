@@ -25,6 +25,8 @@ import {
   canGrabThrowable,
   canThrowThrowable,
   canRegenMap,
+  canSetDown,
+  beginSetDown,
 } from '@/lib/game/outcome';
 import {
   shouldTriggerCharge,
@@ -2058,7 +2060,7 @@ const player = { x:0, z:0, yaw:0, pitch:-0.02 };
 const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
-    dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
+    dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
@@ -2098,7 +2100,7 @@ let maxDistFromHome = 0, embers = freshEmbersState();
 // state of its own) -- this snapshots them into the RunState shape the
 // module's pure functions read, on demand, right before each call.
 function runState(){
-  return { entered, won, dead, pickingUp, carrying, babyTaken: baby.taken };
+  return { entered, won, dead, pickingUp, carrying, setDown: babySetDown, babyTaken: baby.taken };
 }
 // LUL-24: last normalized heading the player actually moved along -- the "escape
 // vector" the wolf pack flanks off of. Only updated while moving (see tick()'s
@@ -2141,8 +2143,13 @@ on(window, 'keydown', e => {
     toggleRunOn = !toggleRunOn;
   }
   // LUL-1258: no new key -- mission completion reuses the interact action.
+  // LUL-1815: set-down is a third arm of the same multiplex -- carrying is mutually
+  // exclusive with canPickup (pickupAllowed requires !carrying), so ordering vs.
+  // canPickup doesn't matter, but it must come before missionCanComplete/grabThrowable
+  // since carrying is already true whenever this arm should fire.
   if(e.code === 'KeyE' && playing && !paused){
     if(canPickup) pickup();
+    else if(carrying) setDown();
     else if(missionCanComplete) completeMissionSequence();
     else grabThrowable();
   }
@@ -3420,7 +3427,7 @@ if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
   const next = beginPickup(runState());
   if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
-  baby.taken = next.babyTaken; pickingUp = next.pickingUp;
+  baby.taken = next.babyTaken; pickingUp = next.pickingUp; babySetDown = next.setDown;
   pickStart = clock.elapsedTime; hidden = false; lastHideSpot = null; coverProbeAccum = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found; carrying starts now
   pushState({ objectiveVisible: false, statusVisible: false });
@@ -3428,6 +3435,19 @@ function pickup(){
   document.body.style.cursor = 'none';
   armsGroup.visible = true;
   playPickupCue();
+}
+function setDown(){
+  const next = beginSetDown(runState());
+  if(next.carrying === carrying) return;   // rejected -- see setDownAllowed() in lib/game/outcome.ts
+  carrying = next.carrying; babySetDown = next.setDown;
+  baby.x = player.x; baby.z = player.z;
+  babyGroup.position.set(baby.x, 0, baby.z);
+  babyGroup.visible = true; babyGroup.scale.setScalar(1);
+  placeBabyWisps();         // re-seed the ring around the NEW baby.x/z -- see correction above
+  bwisps.visible = true;    // LUL-38's beacon wisps, hidden by pickup() at :3355 -- back on so she's spottable through fog again
+  // reset glow to the idle baseline finishPickup()/restart() also use (:3399/:3508) --
+  // the per-frame idle-glow block (§3.7 below) takes over the animated curve from here.
+  bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
 }
 function grabThrowable(){
   if(heldThrowable) return;
@@ -3591,7 +3611,7 @@ function restart(){
   pushState({ winVisible: false, winRevealed: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   const fresh = freshRunState();
-  won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; baby.taken = fresh.babyTaken;
+  won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; babySetDown = fresh.setDown; baby.taken = fresh.babyTaken;
   hidden = false; hideTime = 0; hideKind = null; lastHideSpot = null; coverProbeAccum = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
@@ -4160,8 +4180,8 @@ function tick(){
     pushState({
       objectiveVisible: true, objectiveReady: canPickup,
       objectiveText: carrying
-        ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm'
-        : (canPickup ? 'Press  E  to lift the child'
+        ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm  ·  E  to set her down'
+        : (canPickup ? (babySetDown ? 'Press  E  to lift her again' : 'Press  E  to lift the child')
            : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
       statusVisible, statusText,
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
@@ -4177,8 +4197,10 @@ function tick(){
   } else {
     pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null, caveImmuneActive: false });
   }
-  // the child's idle glow (outside the cinematic)
-  if(!baby.taken){
+  // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
+  // baby.taken stays true forever once first picked up, so babySetDown is the only signal
+  // that she's back on the ground.
+  if(!baby.taken || babySetDown){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
     babyGroup.rotation.y = t * 0.4;
     halo.material.opacity = idleHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(babyGroup.position.x, babyGroup.position.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
@@ -4338,6 +4360,7 @@ tick();
     const playing = isPlaying(runState());
     if(!playing || paused) return;
     if(canPickup) pickup();
+    else if(carrying) setDown();
     else if(missionCanComplete) completeMissionSequence();
     else grabThrowable();
   }
