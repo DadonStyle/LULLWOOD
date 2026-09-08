@@ -63,6 +63,18 @@ export const LANDMARKS = [
   { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
 
+// LUL-1914: startled roosts, slice (a) -- fixed canopy sites that flush when a
+// predator passes through at speed. Same "static list, no rng() draw" contract
+// as LANDMARKS immediately above -- generateMap() stays byte-identical per seed.
+export const ROOSTS = [
+  { kind: 'canopyNE', x: 110,  z: 90,   radius: 20 },
+  { kind: 'canopyN',  x: 55,   z: 135,  radius: 20 },
+  { kind: 'canopyW',  x: -140, z: 15,   radius: 20 },
+  { kind: 'canopyS',  x: -30,  z: -140, radius: 20 },
+  { kind: 'canopyE',  x: 150,  z: -25,  radius: 20 },
+];
+export const ROOST_COOLDOWN = 32;   // seconds a roost stays quiet after firing
+
 // LUL-1210: Stone Marker veil-charm interact radius -- same shape as
 // MISSION_POOL's interactRadius (lib/game/mission.ts).
 export const VEIL_CHARM_INTERACT_RADIUS = 4;

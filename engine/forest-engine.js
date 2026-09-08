@@ -168,7 +168,7 @@ import {
   STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
-  VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH,
+  VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -1236,6 +1236,29 @@ const bspPts = new THREE.Points(new THREE.BufferGeometry(),
 bspPts.geometry.setAttribute('position', new THREE.BufferAttribute(bspArr, 3));
 boomGroup.add(boomFlash, boomRing, bspPts);
 let boomStart = -1;
+// LUL-1914: startled roosts, slice (a) -- one small persistent THREE.Points burst
+// per fixed roost site (not fireBoom/boomGroup: that's a single shared instance
+// built for one radial burst at a time; two roosts can flush within the same
+// few seconds from different predators, so each site needs its own timer).
+const ROOST_BURST_PTS = 10;   // bird-lift silhouette, not an explosion -- keep small
+const roostCooldown = new Float32Array(ROOSTS.length);      // seconds remaining, 0 = ready
+const roostBurstStart = new Float32Array(ROOSTS.length).fill(-1);  // seconds since flush, -1 = idle
+const roostBurstVel = ROOSTS.map(() => []);
+const roostGroups = ROOSTS.map(r => {
+  const g = new THREE.Group();
+  g.position.set(r.x, 14, r.z);   // canopy height, above ground cover/fog line
+  g.visible = false;
+  const arr = new Float32Array(ROOST_BURST_PTS * 3);
+  const pts = new THREE.Points(new THREE.BufferGeometry(),
+    new THREE.PointsMaterial({ color: 0x2a2620, size: 0.35, transparent: true, opacity: 1,
+      depthWrite: false, fog: false }));   // fog:false: must read above the fog line at range (proposal §3)
+  pts.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+  pts.userData.arr = arr;
+  g.add(pts);
+  g.userData.pts = pts;
+  scene.add(g);
+  return g;
+});
 function fireBoom(x, y, z){
   boomGroup.position.set(x, y, z); boomGroup.visible = true; boomStart = 0;
   for(let i=0;i<BSP;i++){ const a=Math.random()*Math.PI*2, e=Math.acos(2*Math.random()-1), sp=8+Math.random()*24;
@@ -1256,6 +1279,80 @@ function updateBoom(dt){
   bspPts.material.opacity = Math.max(0, 1 - e/1.6);
   if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*3.5));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
+}
+// LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
+// spread, ~0.9s rise-and-fade. Keyed by roost index, independent of boomGroup.
+function triggerRoostBurst(i){
+  const g = roostGroups[i], pts = g.userData.pts, arr = pts.userData.arr;
+  const vel = roostBurstVel[i];
+  vel.length = 0;
+  for(let k=0;k<ROOST_BURST_PTS;k++){
+    const a = Math.random()*Math.PI*2;
+    vel.push([Math.cos(a)*1.2, 3 + Math.random()*2.5, Math.sin(a)*1.2]);
+    arr[k*3] = arr[k*3+1] = arr[k*3+2] = 0;
+  }
+  pts.geometry.attributes.position.needsUpdate = true;
+  pts.material.opacity = 1;
+  g.visible = true;
+  roostBurstStart[i] = 0;
+}
+function updateRoostBursts(dt){
+  for(let i=0;i<roostGroups.length;i++){
+    if(roostBurstStart[i] < 0) continue;
+    roostBurstStart[i] += dt;
+    const e = roostBurstStart[i];
+    const pts = roostGroups[i].userData.pts, arr = pts.userData.arr, vel = roostBurstVel[i];
+    for(let k=0;k<ROOST_BURST_PTS;k++){
+      arr[k*3]   += vel[k][0]*dt;
+      arr[k*3+1] += vel[k][1]*dt;
+      arr[k*3+2] += vel[k][2]*dt;
+    }
+    pts.geometry.attributes.position.needsUpdate = true;
+    pts.material.opacity = Math.max(0, 1 - e/0.9);
+    if(e > 0.9){ roostGroups[i].visible = false; roostBurstStart[i] = -1; }
+  }
+}
+// LUL-1914: positional wing-clatter -- modeled on scheduleBirdChirp's bandpass-noise
+// graph, made positional via missionWaypointHum's own panner/falloff math (both
+// referenced by file:line in the wiki proposal and CTO plan). 3-4 chirps in quick
+// succession so it reads as a flock lifting, not one bird. Math.random(), not the
+// seeded rng -- same scope-exemption the existing ambient bird chirp already has.
+function roostFlushSound(x, z){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio;
+  const dx = x - player.x, dz = z - player.z;
+  const dist = Math.hypot(dx, dz);
+  const near = Math.max(0, Math.min(1, 1 - dist / 140));
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  const right = dx*rx + dz*rz, fwd = dx*fx + dz*fz;
+  const panVal = Math.max(-1, Math.min(1, right / Math.max(1, Math.hypot(right, fwd))));
+  const bursts = 3 + Math.floor(Math.random()*2);   // 3-4
+  let delay = 0;
+  for(let n=0;n<bursts;n++){
+    delay += 0.04 + Math.random()*0.05;   // 40-90ms apart
+    const t = ctx.currentTime + delay;
+    const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.08, false);
+    const f = ctx.createBiquadFilter(); f.type = 'bandpass';
+    f.frequency.value = 2200 + Math.random() * 1800; f.Q.value = 4;
+    const pan = ctx.createStereoPanner(); pan.pan.value = panVal;
+    const g = ctx.createGain();
+    const peak = (0.05 + near * 0.12);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    src.connect(f); f.connect(pan); pan.connect(g); g.connect(master); g.connect(conv);
+    src.start(t);
+  }
+  if(captionsOn){
+    const cnear = dist < 60 ? 'near' : 'far';
+    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
+    pushState({ caption: `birds scatter · ${cnear} · ${side}`, captionId: ++captionSeq });
+  }
+}
+function flushRoost(i){
+  triggerRoostBurst(i);
+  roostFlushSound(ROOSTS[i].x, ROOSTS[i].z);
 }
 const lookM = new THREE.Matrix4(), lookQ = new THREE.Quaternion();
 function key3(time, keys){   // smoothstep-interpolated keyframes
@@ -2129,6 +2226,25 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     if(!predatorBlocked(nx, p.z, p.rad)) p.x = nx;
     if(!predatorBlocked(p.x, nz, p.rad)) p.z = nz;
     p.g.position.x = p.x; p.g.position.z = p.z;
+  }
+}
+// LUL-1914: slice (a), one-way feedback only. Reads p.x/p.z/p.state/p.inert on each
+// active predator; writes nothing on any predator. Does not call effectiveDetect(),
+// canSee(), or hearThrowableNoise() -- this is a spectator of predator state, not a
+// participant. Cooldown array is reset in restart().
+function updateRoosts(dt){
+  updateRoostBursts(dt);
+  for(let i=0;i<ROOSTS.length;i++){
+    if(roostCooldown[i] > 0){ roostCooldown[i] -= dt; continue; }
+    const r = ROOSTS[i];
+    for(const p of predators){
+      if(p.inert || p.state !== 'chase') continue;
+      if(Math.hypot(p.x-r.x, p.z-r.z) < r.radius){
+        flushRoost(i);
+        roostCooldown[i] = ROOST_COOLDOWN;
+        break;
+      }
+    }
   }
 }
 // lock onto the player: stinger, roar, screen flash, and a rear-up alert beat.
@@ -3777,6 +3893,7 @@ function restart(){
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
+  roostCooldown.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
@@ -4234,6 +4351,7 @@ function stepFrame(dt, t){
   // position) -- the cry originates at the child, so it uses baby.x/z.
   const cryNoiseRadius = CRY_NOISE_RADIUS * fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
   if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
+  if(playing) updateRoosts(dt);   // LUL-1914: roost feedback, same gate as predator AI
   carriedCryPulse = false;   // LUL-1857: one-tick pulse, consumed above -- clear so it isn't sticky
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
