@@ -75,7 +75,7 @@ import {
   COVER_PROBE_HZ,
 } from '@/lib/game/cover';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -1180,6 +1180,7 @@ function inBaby(x,z){ const dx=x-baby.x, dz=z-baby.z; return dx*dx+dz*dz < 20; }
 // map/predator generation already consumes -- never player-selected.
 let mission = null;
 let cryTimer = 2;   // LUL-1255 (Ship 1 wayfinding S3d): first cry fires quickly, not after a full interval
+let cryPulseFired = false;   // LUL-1857 (S4): true for exactly the tick a cry pulse sounds -- see updatePredators()'s carriedCryPulse param
 let homeFireTimer = 2;   // LUL-1255 (Ship 1 wayfinding S5): same init as cryTimer
 let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- first hum fires quickly, not after a full interval
 
@@ -1479,6 +1480,7 @@ function activateCavePower(){
 // without a tutorial or a status readout.
 function scentOnto(p){
   if(p.scentLock > 0) return;   // already tracking off a scent cue: don't re-trigger the roar
+  p.alertedBy = null;   // LUL-1857: scent-driven, not the carried cry
   p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
@@ -1512,6 +1514,7 @@ function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRa
 // stored point), so "last noisy position" falls out of that existing
 // approach behavior for free.
 function hearNoise(p){
+  p.alertedBy = null;   // LUL-1857: footstep-driven, not the carried cry -- see triggerDeath(:1879)'s cause override
   p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
   leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
@@ -1542,6 +1545,7 @@ function hearThrowableNoise(p, tx, tz){
 // an expiry-revert here would silently reintroduce the live-player-target bug
 // this section exists to fix (see S3a of the wayfinding spec).
 function hearCry(p){
+  p.alertedBy = 'cry';   // LUL-1857 mitigation 4: lets triggerDeath(:1879) name "heard the child"
   p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: baby.x, z: baby.z };
@@ -1559,12 +1563,19 @@ function hearCry(p){
 // missionWaypointHum() below (LUL-1258 built that one by mirroring this
 // unbuilt spec), just target = baby.x/z instead of a mission target, and a
 // higher/brighter base frequency so the two cues stay distinguishable by ear.
-function childCry(distToPlayer){
+// LUL-1857 (S4): srcX/srcZ default to the ground position (baby.x/z) for the outbound
+// cry, same as before this ticket. The carry-leg pulse passes player.x/z explicitly
+// instead -- baby.x/z is deliberately NOT kept synced to the player while carrying (it
+// stays at the pickup point, which computeDeathPayout's objectiveDistFromHome depth-farm
+// cap at :3685 depends on staying put -- syncing it to the live player would silently
+// collapse that cap to maxDistFromHome on every carry-leg death). So the carry-leg cry
+// needs its own source position passed in, not a baby.x/z read.
+function childCry(distToPlayer, srcX = baby.x, srcZ = baby.z){
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
   const near = Math.max(0, Math.min(1, 1 - distToPlayer / 140));   // 0 far .. 1 close
   const pan = ctx.createStereoPanner();
-  const dx = baby.x - player.x, dz = baby.z - player.z;
+  const dx = srcX - player.x, dz = srcZ - player.z;
   const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
   const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
   const right = dx*rx + dz*rz, fwd = dx*fx + dz*fz;
@@ -1706,7 +1717,7 @@ function updateWolfPack(dt){
 // exactly where they were. Long enough to read as "that's over," short
 // enough that a second charge later in the same chase is still in play.
 
-function updatePredators(dt, noiseRadius, cryNoiseRadius){
+function updatePredators(dt, noiseRadius, cryNoiseRadius, carriedCryPulse){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
   for(const p of predators){
@@ -1821,6 +1832,21 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       }
       else if(!sniffImmune && checkScent(p)){ scentOnto(p); }
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
+      // LUL-1857 (Ship 1 wayfinding S4): the carried child's cry, return leg only.
+      // Deliberately NOT folded into `noiseRadius`/checkNoise's continuous 0.5/s-per-
+      // frame roll above -- the LUL-1647 fairness verdict's mitigation 2 requires the
+      // hearing roll to fire on the audible cry pulse itself, not silently underneath
+      // it (that continuous-draw shape is exactly what verdict §2 traced as the
+      // non-terminating "harassment" case). `carriedCryPulse` is true for exactly the
+      // one frame each cry pulse sounds (tick(), where cryPulseFired is set), so this
+      // is a deterministic in-range-at-the-pulse check, not a probabilistic draw --
+      // mitigation 1's "one source, two consumers" requires the detection-relevant
+      // radius and the audible radius to be the literal same event, which a second
+      // independent roll against a same-sized radius would not guarantee.
+      // CARRIED_NOISE_FLOOR (5.6u) targets the live player via hearNoise(), not
+      // hearCry()'s fixed noiseTarget -- the source is carried, so it moves with you,
+      // unlike the outbound cry's stationary ground position.
+      else if(!sniffImmune && carriedCryPulse && dist < CARRIED_NOISE_FLOOR){ hearNoise(p); p.alertedBy = 'cry'; }
       // LUL-1255 (Ship 1 wayfinding S3): the cry is a second, independent
       // hearing check against the child's actual position, not the player's --
       // see S3 of the wayfinding spec for why this can't reuse
@@ -1876,7 +1902,11 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // mid-blind-chase (scentLock > 0) can catch the player straight
         // through the cover prop breaking canSee() right now, since
         // predators never physically collide with cover (LUL-119/LUL-211).
-        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, 'chase'); }   // LUL-1194: run down mid-chase, in the open
+        // LUL-1857 mitigation 4 (recommended): a chase this predator only entered because
+        // it heard the carried child's cry gets a distinguishable death cause -- see
+        // hearCry()/the carriedCryPulse branch below for where p.alertedBy is set, and
+        // hearNoise()/scentOnto()/spotOnto() for where it's cleared by every other channel.
+        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase'); }   // LUL-1194: run down mid-chase, in the open
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
@@ -1952,11 +1982,25 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN); }
-          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
+          // LUL-1857 (S4, LUL-1647 verdict amendment §A5): the terminal give-up used to
+          // flip p.state='roam' right here, in place at sniff range (2.5-3.2u -- inside
+          // the 5.6u CARRIED_NOISE_FLOOR), so a carrying player's very next cry pulse
+          // could re-hook this predator before it had moved at all. Route it through the
+          // same backOffPoint() retreat the 'back' sub-phase above already uses instead
+          // of finalizing the give-up immediately -- 'leaving' (below) walks it out 8-16u
+          // first, so giving up is an observable "the animal leaves," not a state flip
+          // with the animal still standing there. p.lkpX/Z/sweeps/spotted/roam are set on
+          // arrival in the 'leaving' branch, not here.
+          else { p.inv='leaving'; const bd = 8 + rng()*8;
+            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN); }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
+      } else if(p.inv === 'leaving'){
+        const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
+        if(bd < 2){ p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); }
+        else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       }
     } else if(p.state === 'flank'){
       // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
@@ -2114,6 +2158,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
 // force-hunt escalation) omits opts and keeps today's behavior exactly.
 function spotOnto(p, opts){
   const skipAlert = !!(opts && opts.skipAlert);
+  p.alertedBy = null;   // LUL-1857: sight-driven, not the carried cry
   p.state='chase'; p.callTimer=rnd(2.6,4.2); if(!skipAlert) p.alert = 0.55;
   if(!p.spotted){ p.spotted=true; }
   predatorCall(p.kind, false, p); spotSting(); spotFlash = 1;
@@ -4160,12 +4205,36 @@ function tick(){
     camera.rotation.set(player.pitch, player.yaw, 0);
   }
 
+  // LUL-1255 (Ship 1 wayfinding S3d) / LUL-1857 (S4): same tempo-carries-distance cry
+  // pulse, now also kept alive on the carry leg. Computed here, right before
+  // updatePredators() below reads cryPulseFired, rather than down in the ground-visual
+  // idle-glow block (which must stay off while carrying -- the "carrying" render branch
+  // earlier in this function already positions babyGroup at the player) -- the LUL-1647
+  // fairness verdict's mitigation 1 forbids the cry going silent on the return leg while
+  // it still feeds detection (see game/psychology/carry-detection-fairness §3's
+  // babyLight mixdown mistake -- this is the same trap one channel over, on hearing).
+  // Carry-leg distance is pinned to 0 (always "closest") and the source position passed
+  // to childCry() is the live player, not baby.x/z (see childCry()'s own comment for why
+  // baby.x/z can't track the player during carry). cryPulseFired must be set before
+  // updatePredators() runs this same tick, not after -- mitigation 2 requires the
+  // detection roll to fire on this exact pulse, not one frame behind it.
+  cryPulseFired = false;
+  if(!baby.taken || babySetDown || carrying){
+    const cryDist = carrying ? 0 : Math.hypot(baby.x - player.x, baby.z - player.z);
+    cryTimer -= dt;
+    if(cryTimer <= 0){
+      childCry(cryDist, carrying ? player.x : baby.x, carrying ? player.z : baby.z);
+      cryPulseFired = true;
+      const near = Math.max(0, Math.min(1, 1 - cryDist / 140));
+      cryTimer = 5.5 - near * 3.5;
+    }
+  }
   // LUL-1255 (Ship 1 wayfinding S3c): cry radius is fog-tide-scaled at the
   // child's own position, same fogTideAmountAt() pattern as babyLight's other
   // two call sites (idle glow uses babyGroup position, carry uses player
   // position) -- the cry originates at the child, so it uses baby.x/z.
   const cryNoiseRadius = CRY_NOISE_RADIUS * fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
-  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
+  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius, carrying && cryPulseFired);   // predators only hunt while you're actually playing
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
@@ -4338,17 +4407,7 @@ function tick(){
     const bp = bwisps.geometry.attributes.position.array;
     for(let i=0;i<BW;i++){ bp[i*3+1] += dt*0.4; if(bp[i*3+1] > 3.4) bp[i*3+1] = 0.2; }
     bwisps.geometry.attributes.position.needsUpdate = true;
-    // LUL-1255 (Ship 1 wayfinding S3d): same tempo-carries-distance shape
-    // missionHumTimer mirrors -- 5.5s far, 2s close.
-    const cryDist = Math.hypot(baby.x - player.x, baby.z - player.z);
-    cryTimer -= dt;
-    if(cryTimer <= 0){
-      childCry(cryDist);
-      const near = Math.max(0, Math.min(1, 1 - cryDist / 140));
-      cryTimer = 5.5 - near * 3.5;
-    }
   }
-
   // scary music plays ONLY while an animal actually sees you (chasing or bee-lining).
   // lose sight → it starts sniffing/searching and the music falls back to the calm bed;
   // it finds you again (investigate → chase) and the music returns.

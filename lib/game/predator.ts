@@ -240,8 +240,13 @@ export function pickRoamWaypoint(
 // it after a real player action (breaking cover) flips `hidden` false
 // between frames -- never on the same tick 'standoff' is set, unlike
 // 'approach' which can be freshly (re-)entered with `hidden` already false.
+// LUL-1857: 'leaving' (the terminal give-up's backOffPoint() retreat, same shape as
+// 'back' above but ending in 'roam' instead of re-entering 'approach' -- see the
+// engine's investigate/sniff branch) joins the same close-range set for the same
+// reason as 'back': the predator is still within a few sniff-ranges of the player
+// while walking out, so a player who breaks cover mid-retreat is still spottable.
 export function shouldRevertInvestigateToChase(inv: string, hidden: boolean): boolean {
-  return !hidden && (inv === 'sniff' || inv === 'back' || inv === 'standoff');
+  return !hidden && (inv === 'sniff' || inv === 'back' || inv === 'standoff' || inv === 'leaving');
 }
 
 // ---- investigate approach step (LUL-658) ------------------------------------------
