@@ -283,8 +283,12 @@ const OVERLAY_STYLE = `
      MobileControls' Pause button (components/MobileControls.tsx pauseWrapper)
      is fixed to that exact same top:16/left:16 corner, so on mobile the two
      sit on top of each other regardless of how short the mission text is.
-     See the mobile media query below for the fix. */
-  #missionPanel { position: fixed; top: 16px; left: 16px; z-index: 10;
+     See the mobile media query below for the fix.
+     LUL-1942: pushed past #gameMenu's 48px toggle button (components/GameMenu.tsx,
+     also top:16/left:16) so the pill no longer prints under the hamburger icon --
+     this held on every viewport/state the QA layout audit measured, not just
+     mobile, since #gameMenu is never hidden or repositioned on desktop. */
+  #missionPanel { position: fixed; top: 76px; left: 16px; z-index: 10;
     display: flex; align-items: center; gap: 8px; pointer-events: none;
     padding: 6px 12px; border-radius: 999px;
     background: rgba(12,17,26,0.55); border: 1px solid rgba(150,175,215,0.14);
