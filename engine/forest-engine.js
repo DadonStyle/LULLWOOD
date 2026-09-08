@@ -2888,6 +2888,29 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
 
+  // LUL-2071: deterministic test clock. qaSetFixedStep() parks the real RAF
+  // loop (cancels the pending frame) so wall-clock jitter/GPU contention can
+  // never inject an extra or partial frame on top of what the test drives.
+  // qaAdvance() is then the *only* thing that moves simulation time, by
+  // exactly dtSeconds per call, through the same stepFrame() the real RAF
+  // loop calls -- fixed-step and real-time frames run identical game logic,
+  // only the dt source differs. Advancing clock.elapsedTime directly (rather
+  // than intercepting every read site) keeps both the dilated `+= dt`
+  // category and the undilated `clock.elapsedTime`-diff category (see wiki
+  // systems/dt-clamp-vs-walltime) correct with one change, since both derive
+  // from this same shared THREE.Clock instance.
+  window.ForestEngine.qaSetFixedStep = function(dtSeconds){
+    qaFixedDt = dtSeconds;
+    if(rafId !== null){ cancelAnimationFrame(rafId); rafId = null; }
+  };
+  window.ForestEngine.qaAdvance = function(steps = 1){
+    if(qaFixedDt === null) throw new Error('qaAdvance: call qaSetFixedStep(dt) first');
+    for(let i = 0; i < steps; i++){
+      clock.elapsedTime += qaFixedDt;
+      stepFrame(qaFixedDt, clock.elapsedTime);
+    }
+  };
+
   // LUL-1484: before/after perf baseline for the map-size growth (E3), and
   // the baseline E6's chunking work later has to justify itself against.
   window.ForestEngine.qaProbePerf = function(){
@@ -3932,13 +3955,11 @@ function formatTimeOfRunClock(t){
 // ---- Build the first map, then run ---------------------------------------
 generateMap(resolveInitialSeed());
 const clock = new THREE.Clock();
+let qaFixedDt = null;   // LUL-2071: non-null while a test has parked the RAF loop via qaSetFixedStep()
 let bobPhase = 0;
 let rafId = null;
 
-function tick(){
-  rafId = requestAnimationFrame(tick);
-  const dt = clampDt(clock.getDelta()), t = clock.elapsedTime;
-
+function stepFrame(dt, t){
   // LUL-68: right stick look rate applied each frame before movement.
   // LUL-276: mobile-only -- in desktop mode this whole block is dead, not
   // merely fed zeroes, because setTouchLook is a no-op there (see below) and
@@ -4430,6 +4451,11 @@ function tick(){
   updateBoom(dt);
   if(!dead){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
   adaptResolution(dt, t);
+}
+function tick(){
+  rafId = requestAnimationFrame(tick);
+  const dt = clampDt(clock.getDelta()), t = clock.elapsedTime;
+  stepFrame(dt, t);
 }
 tick();
 
