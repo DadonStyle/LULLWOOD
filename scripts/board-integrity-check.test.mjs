@@ -38,6 +38,7 @@ import {
   durableToken,
   resolveSelfAgentId,
   fileWakeTickets,
+  nonPausedAssigneeId,
 } from './board-integrity-check.mjs';
 
 // ---- isTombstone / findTombstones ------------------------------------------
@@ -1240,6 +1241,125 @@ test('resolveSelfAgentId returns null (not a throw) when the company-agents fall
   } finally {
     if (prevEnv === undefined) delete process.env.BOARD_INTEGRITY_SELF_AGENT_ID;
     else process.env.BOARD_INTEGRITY_SELF_AGENT_ID = prevEnv;
+    globalThis.fetch = prevFetch;
+  }
+});
+
+// ---- nonPausedAssigneeId (LUL-2066: never inherit a paused agent's assignee) -
+//
+// Live bug: the detector opened LUL-2040/LUL-2039 assigned to Task Runner
+// because LUL-1659/LUL-1661 (the flagged issues) were themselves assigned to
+// Task Runner, which is paused (manual pauseReason). Assigning an issue wakes
+// its assignee immediately regardless of status, so this made the detector
+// itself repeatedly try to wake a founder-paused agent.
+
+test('nonPausedAssigneeId returns null (falls back) when the inherited assignee is paused', () => {
+  const agentsById = new Map([['task-runner', { id: 'task-runner', status: 'paused' }]]);
+  assert.equal(nonPausedAssigneeId('task-runner', agentsById), null);
+});
+
+test('nonPausedAssigneeId returns the assignee unchanged when it is not paused', () => {
+  const agentsById = new Map([['founding-engineer', { id: 'founding-engineer', status: 'running' }]]);
+  assert.equal(nonPausedAssigneeId('founding-engineer', agentsById), 'founding-engineer');
+});
+
+test('nonPausedAssigneeId returns null when there is no assignee at all', () => {
+  assert.equal(nonPausedAssigneeId(null, new Map()), null);
+  assert.equal(nonPausedAssigneeId(undefined, new Map()), null);
+});
+
+test('nonPausedAssigneeId returns the assignee unchanged when it is missing from the agents map (defaults safe, matches pre-fix behavior)', () => {
+  assert.equal(nonPausedAssigneeId('unknown-agent', new Map()), 'unknown-agent');
+});
+
+test('fileWakeTickets never assigns a tombstone wake ticket to the flagged issue\'s paused assignee -- falls back to self-resolution instead', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) return { ok: true, json: async () => ({ id: 'cto-agent-id' }) };
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const agentsById = new Map([['task-runner', { id: 'task-runner', status: 'paused' }]]);
+    const classifiedTombstones = [
+      {
+        issue: { id: 'issue-1', identifier: 'LUL-1659', title: 'stale ticket', status: 'blocked', assigneeAgentId: 'task-runner' },
+        disposition: 'STRANDED',
+        referencedPrs: [],
+        mergedPrs: [],
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      classifiedTombstones,
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].assigneeAgentId, 'cto-agent-id', 'must not inherit the paused Task Runner assignee');
+    assert.equal(postedIssue.assigneeAgentId, 'cto-agent-id');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets still inherits a non-paused assignee for a stale confirmation, unchanged from before this fix', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const agentsById = new Map([['founding-engineer', { id: 'founding-engineer', status: 'running' }]]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-2', identifier: 'LUL-438', title: 'PAT leak', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'ix-1', createdAt: '2026-08-19T00:00:00.000Z' },
+        ageDays: 8,
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      staleConfirmations,
+      [],
+      Date.now(),
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].assigneeAgentId, 'founding-engineer');
+    assert.equal(postedIssue.assigneeAgentId, 'founding-engineer');
+  } finally {
     globalThis.fetch = prevFetch;
   }
 });
