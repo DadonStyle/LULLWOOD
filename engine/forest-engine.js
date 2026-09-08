@@ -3678,6 +3678,119 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     });
   };
 
+  // LUL-1461: regression coverage for LUL-1091 (PR #251, "predators path
+  // around trees instead of grinding into them") at the engine-integration
+  // level. lib/game/cover.test.ts already unit-tests pickAvoidDirection()/
+  // slideVelocity() in isolation, but nothing before this proved
+  // updatePredators() actually calls them, every tick, against a real tree
+  // from the live spatial grid, for a predator that has to go all the way
+  // around one to reach the player.
+  //
+  // Deliberately not qaLurePredator(Kind): its `hunt` flag requires canSee()
+  // to keep chasing at all (`if(!canSee(p,dist)){ ...; p.hunt=false; }`
+  // above) -- placed behind a tree, hunt would drop to investigate on the
+  // very first tick, never touching the pathing code this ticket needs to
+  // exercise. `chase` + a live scentLock instead keeps closing blind while
+  // scentLock holds (LUL-23's contract), the same mechanism
+  // qaStageAndTraceBlindChase above already relies on.
+  //
+  // Both staged points sit on the tree's own z, straddling its trunk
+  // symmetrically along +/-x: since the trunk's collision circle is centred
+  // on that exact line, it always intersects the straight segment between
+  // predator and player regardless of `margin`, with no segment-vs-circle
+  // math needed. The actual standoff is derived per-tree (t.cr + p.rad +
+  // margin) rather than taking a caller-supplied distance directly -- a
+  // fixed standoff large enough to satisfy every tree's radius (e.g. 6)
+  // measured in practice (LUL-1461) as often putting 12 units of open field,
+  // and any other trees that happen to sit in it, between predator and
+  // player: the trace then measures open-field multi-obstacle navigation,
+  // not the single-trunk case this hook exists to isolate, and timed out for
+  // bear even on already-fixed code. Hugging the trunk as tightly as
+  // collision allows keeps the scenario to exactly the one obstacle, and the
+  // isolation check below rejects any tree with a neighbour close enough to
+  // still crowd it.
+  function stageBehindTree(kind, margin){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    outer: for(const t of treeData){
+      const standoff = t.cr + p.rad + margin;
+      const px = t.x - standoff, pz = t.z;
+      const qx = t.x + standoff, qz = t.z;
+      if(predatorBlocked(px, pz, p.rad) || blocked(qx, qz)) continue;
+      // Reject any tree with a neighbour close enough to crowd the direct
+      // line or a reasonable sidestep around it -- otherwise a far-apart
+      // pair (large margin) can silently route through a second, third tree
+      // and the trace measures multi-obstacle open-field navigation instead
+      // of the single-trunk case this hook exists to isolate. Lane is a
+      // generous box around the straight segment (standoff+3 half-width in
+      // x, neighbour's own clearance + 2.5 in z).
+      const laneHalfWidth = standoff + 3;
+      for(const o of treeData){
+        if(o === t) continue;
+        const withinX = o.x > t.x - laneHalfWidth && o.x < t.x + laneHalfWidth;
+        const withinZ = Math.abs(o.z - t.z) < (o.cr + p.rad + 2.5);
+        if(withinX && withinZ) continue outer;
+      }
+      p.x = px; p.z = pz;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
+      p.charge = null; p.chargeCooldown = 999;
+      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+      player.x = qx; player.z = qz;
+      // Isolate, same rationale as stageBlindChaseThroughCover above: nine
+      // predators roam independently, and relocating the player next to a
+      // tree can easily land it inside a different, untouched predator's
+      // own detect range.
+      for(let i = 0; i < predators.length; i++) if(i !== idx) predators[i].inert = true;
+      return { idx, kind, treeX: t.x, treeZ: t.z, treeCr: t.cr, dist: Math.hypot(px-qx, pz-qz) };
+    }
+    return null;
+  }
+  window.ForestEngine.qaStageBehindTree = function(kind, margin){
+    return stageBehindTree(kind, margin);
+  };
+
+  // LUL-1461: records {t, dist, state, reached} once per rendered frame via
+  // its own rAF loop, staged and started in one synchronous call for the
+  // same reason qaStageAndTraceBlindChase's comment gives (an IPC round trip
+  // between staging and the first observed frame lets the predator move in
+  // between).
+  //
+  // Originally resolved on an independently-computed isCaught(d, p.rad)
+  // instead of the game's own `dead` flag. Measured live (2026-09-08): the
+  // wolf case's in-page trace resolved fine (reached:true at t=2100ms) and
+  // page.evaluate() returned the trace to Node, but the Playwright test then
+  // hung to its own timeout anyway, and the next test (bear) failed
+  // immediately at boot -- cross-test contamination. traceBlindChase()
+  // (above) resolves on `dead` instead and blind-chase-cover.spec.ts passes
+  // in CI today, including through a real death/video sequence, so the
+  // independently-computed condition -- not the death/video sequence itself
+  // -- is the difference. Matching that proven pattern here: resolve once
+  // the real triggerDeath() (engine/forest-engine.js:1447) has actually
+  // flipped `dead`, not one frame earlier on our own geometric guess.
+  function traceApproach(idx, maxMs){
+    return new Promise(function(resolve){
+      const trace = [];
+      const t0 = performance.now();
+      function frame(){
+        const p = predators[idx];
+        if(!p){ resolve(trace); return; }
+        const d = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
+        trace.push({ t: performance.now()-t0, dist: d, state: p.state, reached: dead });
+        if(dead || performance.now()-t0 > maxMs){ resolve(trace); return; }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+  window.ForestEngine.qaStageAndTraceBehindTree = function(kind, margin, maxMs){
+    const staged = stageBehindTree(kind, margin);
+    if(staged === null) return Promise.resolve(null);
+    return traceApproach(staged.idx, maxMs).then(function(trace){
+      return { idx: staged.idx, kind: staged.kind, dist: staged.dist, trace: trace };
+    });
+  };
+
   // LUL-69: camera.fov is closure-local (created fresh per init(), see
   // CAMERA_FOV above) -- nothing outside init() could otherwise confirm the
   // mobile/desktop FOV split actually took effect.
