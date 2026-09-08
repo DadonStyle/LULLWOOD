@@ -6,6 +6,11 @@ import {
   distToMissionTarget,
   canCompleteMission,
   completeMission,
+  canCompleteRetrieval,
+  completeRetrieval,
+  secondaryComplete,
+  RETRIEVAL_ITEM,
+  MISSION_DEEPWATER_SPEEDRUN_SECONDS,
   type MissionState,
 } from './mission.ts';
 
@@ -73,4 +78,164 @@ test('completeMission is idempotent -- calling it on an already-complete mission
   const m: MissionState = { target: MISSION_POOL[0], status: 'complete', secondary: null };
   const next = completeMission(m);
   assert.equal(next, m); // same reference -- the no-op branch, not just an equal-shaped copy
+});
+
+// ---- LUL-1666: pickMission's secondaryChoice gating branch --------------
+// MISSION_POOL currently has exactly one member (deepwater) and it is in
+// SECONDARY_SUPPORTED_MISSIONS, so every draw below hits the "supported"
+// branch when a choice is passed -- there is no pool member today that
+// would exercise the "drawn mission doesn't support a secondary" half of
+// the gate.
+
+test('pickMission with no secondaryChoice leaves secondary null (default, unchanged from before LUL-1666)', () => {
+  const m = pickMission(fixedRng(0));
+  assert.equal(m.secondary, null);
+});
+
+test('pickMission with secondaryChoice "retrieval" attaches a fresh, unretrieved retrieval secondary', () => {
+  const m = pickMission(fixedRng(0), 'retrieval');
+  assert.deepEqual(m.secondary, { data: { kind: 'retrieval', retrieved: false } });
+});
+
+test('pickMission with secondaryChoice "speedrun" attaches a fresh speedrun secondary at the deepwater time limit', () => {
+  const m = pickMission(fixedRng(0), 'speedrun');
+  assert.deepEqual(m.secondary, { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } });
+});
+
+test('pickMission is deterministic with a secondaryChoice too -- same rng and choice always produce the same state', () => {
+  const a = pickMission(fixedRng(0), 'retrieval');
+  const b = pickMission(fixedRng(0), 'retrieval');
+  assert.deepEqual(a, b);
+});
+
+// ---- canCompleteRetrieval boundary (strict <, mirrors canCompleteMission) --
+
+test('canCompleteRetrieval is false when the mission has no secondary', () => {
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
+  assert.equal(canCompleteRetrieval(m, 0), false);
+});
+
+test('canCompleteRetrieval is false when the secondary is a speedrun, not a retrieval', () => {
+  const m: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } },
+  };
+  assert.equal(canCompleteRetrieval(m, 0), false);
+});
+
+test('canCompleteRetrieval is false at exactly RETRIEVAL_ITEM.interactRadius', () => {
+  const m: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'retrieval', retrieved: false } },
+  };
+  assert.equal(canCompleteRetrieval(m, RETRIEVAL_ITEM.interactRadius), false);
+});
+
+test('canCompleteRetrieval is true just inside RETRIEVAL_ITEM.interactRadius', () => {
+  const m: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'retrieval', retrieved: false } },
+  };
+  assert.equal(canCompleteRetrieval(m, RETRIEVAL_ITEM.interactRadius - 0.001), true);
+});
+
+test('canCompleteRetrieval is false once the item has already been retrieved', () => {
+  const m: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'retrieval', retrieved: true } },
+  };
+  assert.equal(canCompleteRetrieval(m, 0), false);
+});
+
+// ---- completeRetrieval no-ops and idempotence ----------------------------
+
+test('completeRetrieval flips an unretrieved retrieval secondary to retrieved', () => {
+  const m: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'retrieval', retrieved: false } },
+  };
+  const next = completeRetrieval(m);
+  assert.deepEqual(next.secondary, { data: { kind: 'retrieval', retrieved: true } });
+  assert.equal(next.target, m.target);
+});
+
+test('completeRetrieval is idempotent -- calling it on an already-retrieved secondary returns the same value', () => {
+  const m: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'retrieval', retrieved: true } },
+  };
+  const next = completeRetrieval(m);
+  assert.equal(next, m); // same reference -- the no-op branch
+});
+
+test('completeRetrieval is a no-op when there is no secondary at all', () => {
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
+  const next = completeRetrieval(m);
+  assert.equal(next, m);
+});
+
+test('completeRetrieval is a no-op on a speedrun secondary -- callers do not need to pre-check kind', () => {
+  const m: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } },
+  };
+  const next = completeRetrieval(m);
+  assert.equal(next, m);
+});
+
+// ---- secondaryComplete: pure evaluation at arrive-home time --------------
+
+test('secondaryComplete is false when the mission has no secondary', () => {
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
+  assert.equal(secondaryComplete(m, 9999), false);
+});
+
+test('secondaryComplete for retrieval is true only once the item was retrieved', () => {
+  const notYet: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'retrieval', retrieved: false } },
+  };
+  const done: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'retrieval', retrieved: true } },
+  };
+  assert.equal(secondaryComplete(notYet, 0), false);
+  assert.equal(secondaryComplete(done, 0), true);
+});
+
+test('secondaryComplete for retrieval ignores survivedSeconds entirely', () => {
+  const done: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'retrieval', retrieved: true } },
+  };
+  assert.equal(secondaryComplete(done, 100000), true);
+});
+
+test('secondaryComplete for speedrun is true at or under the time limit (inclusive boundary)', () => {
+  const m: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } },
+  };
+  assert.equal(secondaryComplete(m, MISSION_DEEPWATER_SPEEDRUN_SECONDS), true);
+  assert.equal(secondaryComplete(m, MISSION_DEEPWATER_SPEEDRUN_SECONDS - 1), true);
+});
+
+test('secondaryComplete for speedrun is false once survivedSeconds exceeds the time limit', () => {
+  const m: MissionState = {
+    target: MISSION_POOL[0],
+    status: 'active',
+    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } },
+  };
+  assert.equal(secondaryComplete(m, MISSION_DEEPWATER_SPEEDRUN_SECONDS + 1), false);
 });
