@@ -45,6 +45,11 @@
 //                          durable token (which carries no bound agent
 //                          identity). Recommended for an unattended cron.
 //
+// Alarms, in the order the report shows them: C (zero pullable work), B
+// (tombstoned blocked/in_review issue), A (approved+green PR with no owning
+// ticket), E (an assigned issue parked in `backlog` with no named gate --
+// CEO ruling LUL-1125, LUL-1934), D (stale request_confirmation).
+//
 // --post files a new `todo` wake ticket per alarm, NOT a comment on a shared
 // "standing" issue. Paperclip's write boundary follows the assignee: an
 // agent gets a 403 commenting on (or PATCHing) an issue assigned to someone
@@ -359,14 +364,59 @@ function isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, now
   return daysSinceClose < reAlarmDays;
 }
 
+// ---- Alarm E: assigned issue parked in backlog with no named gate ---------
+//
+// CEO ruling LUL-1125: "backlog must never contain an assigned, ungated
+// ticket." Confirmed live twice (LUL-1923, LUL-1913, wiki
+// systems/issue-creation-backlog-status-trap): a review-request child issue
+// filed with a real assigneeAgentId and status "backlog" never wakes its
+// assignee -- backlog is not scanned by the platform's own wake machinery --
+// and once the issue is assigned away its own creator cannot even PATCH the
+// mistake (403 outside this actor's authorization boundary). Both sat
+// 10-16+ hours before a human found them on a manual sweep. This is the
+// structural detector that page's own second half asked for (LUL-1934):
+// catch the shape within one cron interval instead of during someone's next
+// heartbeat sweep.
+//
+// Deliberately checks only the STRUCTURAL gate (`blockedBy`, the read
+// projection of the write key `blockedByIssueIds` -- wiki
+// playbooks/paperclip-api-traps), not whether some comment's prose claims a
+// gate. Wiki assigned-backlog-time-gates documents that a genuinely
+// time-gated backlog ticket (LUL-1082) can be comment-only with no
+// `blockedBy` entry -- this alarm will also report that shape. Same
+// tradeoff Alarm D already makes for legitimately human-gated stale
+// confirmations (it keeps re-reporting LUL-481 every sweep, on purpose,
+// because the point of this class of alarm is visibility, not silence).
+//
+// issue: shape of `GET /api/issues/{id}` (needs `blockedBy`, which the list
+// endpoint omits -- same reason findTombstones needs the per-issue fetch).
+function isAssignedBacklogNoGate(issue) {
+  if (issue.status !== 'backlog') return false;
+  if (!issue.assigneeAgentId) return false;
+  return (issue.blockedBy ?? []).length === 0;
+}
+
+function findAssignedBacklogNoGate(backlogIssues) {
+  return backlogIssues.filter(isAssignedBacklogNoGate);
+}
+
 // classifiedTombstones: [{ issue, disposition, referencedPrs, mergedPrs }],
 // the shape classifyTombstones() produces.
 // zeroPullable: the result of zeroPullableWorkAlarm(), or null to skip Alarm C.
 // staleConfirmations: the result of findStaleConfirmations(), or [] to skip Alarm D.
-function formatReport(classifiedTombstones, unownedPrs, repo, zeroPullable = null, staleConfirmations = []) {
+// assignedBacklogNoGate: the result of findAssignedBacklogNoGate(), or [] to skip Alarm E.
+function formatReport(
+  classifiedTombstones,
+  unownedPrs,
+  repo,
+  zeroPullable = null,
+  staleConfirmations = [],
+  assignedBacklogNoGate = [],
+) {
   const hasAlarms =
     classifiedTombstones.length > 0 ||
     unownedPrs.length > 0 ||
+    assignedBacklogNoGate.length > 0 ||
     zeroPullable?.alarm ||
     staleConfirmations.length > 0;
   if (!hasAlarms) return null;
@@ -397,6 +447,16 @@ function formatReport(classifiedTombstones, unownedPrs, repo, zeroPullable = nul
     lines.push('', `${unownedPrs.length} mergeable, approved PR(s) on ${repo} with no owning ticket:`);
     for (const pr of unownedPrs) {
       lines.push(`  - #${pr.number} "${pr.title}" -- ${pr.html_url}`);
+    }
+  }
+  if (assignedBacklogNoGate.length > 0) {
+    lines.push(
+      '',
+      `${assignedBacklogNoGate.length} issue(s) assigned and parked in backlog with no named gate ` +
+        '(CEO ruling LUL-1125: backlog must never contain an assigned, ungated ticket):',
+    );
+    for (const issue of assignedBacklogNoGate) {
+      lines.push(`  - ${issue.identifier ?? issue.id}: "${issue.title}" (assignee ${issue.assigneeAgentId})`);
     }
   }
   if (staleConfirmations.length > 0) {
@@ -433,6 +493,10 @@ function zeroPullableWorkWakeMarker() {
 
 function staleConfirmationWakeMarker(issue) {
   return `${WAKE_MARKER_PREFIX} ${issue.identifier ?? issue.id} has a stale request_confirmation`;
+}
+
+function assignedBacklogNoGateWakeMarker(issue) {
+  return `${WAKE_MARKER_PREFIX} ${issue.identifier ?? issue.id} is assigned and parked in backlog with no gate`;
 }
 
 function hasOpenWakeTicket(openIssues, marker) {
@@ -665,6 +729,7 @@ function tombstoneWakeDescription({ issue, disposition, mergedPrs }) {
 // zeroPullable: result of zeroPullableWorkAlarm() -- { alarm, availableAgentCount, openCount }
 // staleConfirmations: result of findStaleConfirmations()
 // closedWakeIssues: done/cancelled issues, for Alarm D's re-alarm cooldown (LUL-827)
+// assignedBacklogNoGate: result of findAssignedBacklogNoGate() (LUL-1934), or [] to skip Alarm E
 async function fileWakeTickets(
   apiBase,
   companyId,
@@ -676,6 +741,7 @@ async function fileWakeTickets(
   staleConfirmations,
   closedWakeIssues = [],
   nowMs = Date.now(),
+  assignedBacklogNoGate = [],
 ) {
   // Resolve lazily and cache -- a quiet run (no alarms) should never touch
   // /api/agents/me at all, and a run with several alarms should only resolve
@@ -762,6 +828,30 @@ async function fileWakeTickets(
     filed.push({ kind: 'unowned-pr', number: pr.number, assigneeAgentId });
   }
 
+  for (const issue of assignedBacklogNoGate) {
+    const marker = assignedBacklogNoGateWakeMarker(issue);
+    if (hasOpenWakeTicket(openIssues, marker)) continue;
+    // The predicate itself requires a real assigneeAgentId, so this is
+    // never the resolveSelfId fallback -- the whole point of the alarm is
+    // that a real assignee already exists and nothing is waking them.
+    const assigneeAgentId = issue.assigneeAgentId;
+    await createWakeIssue(apiBase, companyId, apiKey, {
+      title: `${marker} (LUL-1934 detector)`,
+      description:
+        `Detected by scripts/board-integrity-check.mjs: ${issue.identifier ?? issue.id} ` +
+        `("${issue.title}") is status \`backlog\`, assigned to you, with no blockedByIssueIds ` +
+        `gate -- exactly the shape CEO ruling LUL-1125 bans ("backlog must never contain an ` +
+        `assigned, ungated ticket"). Nothing will wake this automatically: backlog is not ` +
+        `scanned by the platform's wake machinery. Either move it to \`todo\` if it is ready ` +
+        `to work, or give it a real \`blockedByIssueIds\` gate (a comment naming a date/reason ` +
+        `is not enough -- see wiki playbooks/paperclip-api-traps and assigned-backlog-time-gates). ` +
+        `See wiki systems/issue-creation-backlog-status-trap.`,
+      assigneeAgentId,
+      priority: 'high',
+    });
+    filed.push({ kind: 'assigned-backlog-no-gate', identifier: issue.identifier ?? issue.id, assigneeAgentId });
+  }
+
   return filed;
 }
 
@@ -800,13 +890,17 @@ async function main() {
   }
   const ghToken = resolvedToken.token;
 
-  const [openPrs, { tombstoneCandidates, allCandidates }, openIssuesForOwnership, agents, closedWakeIssues] =
+  const [openPrs, { tombstoneCandidates, allCandidates }, openIssuesForOwnership, agents, closedWakeIssues, backlogIssues] =
     await Promise.all([
       ghFetch(`https://api.github.com/repos/${repo}/pulls?state=open&per_page=100`, ghToken),
       fetchTombstoneCandidates(apiBase, companyId, apiKey),
       fetchOpenIssuesForOwnershipCheck(apiBase, companyId, apiKey),
       fetchAgents(apiBase, companyId, apiKey),
       fetchClosedIssuesForSuppressionCheck(apiBase, companyId, apiKey),
+      // LUL-1934: LIST omits blockedBy (same reason fetchTombstoneCandidates
+      // needs a per-issue fetch), so Alarm E needs the full backlog issues,
+      // not just the summaries.
+      fetchIssuesFullByStatus(apiBase, companyId, apiKey, 'backlog'),
     ]);
 
   const prContexts = [];
@@ -823,7 +917,15 @@ async function main() {
   const unownedPrs = findUnownedPrs(prContexts, openIssuesForOwnership);
   const zeroPullable = zeroPullableWorkAlarm(openIssuesForOwnership, agents);
   const staleConfirmations = findStaleConfirmations(allCandidates, nowMs);
-  const report = formatReport(classifiedTombstones, unownedPrs, repo, zeroPullable, staleConfirmations);
+  const assignedBacklogNoGate = findAssignedBacklogNoGate(backlogIssues);
+  const report = formatReport(
+    classifiedTombstones,
+    unownedPrs,
+    repo,
+    zeroPullable,
+    staleConfirmations,
+    assignedBacklogNoGate,
+  );
 
   if (!report) {
     console.log(
@@ -846,6 +948,7 @@ async function main() {
       staleConfirmations,
       closedWakeIssues,
       nowMs,
+      assignedBacklogNoGate,
     );
     if (filed.length === 0) {
       console.error('--post: every alarm already has an open wake ticket, filed nothing new.');
@@ -892,6 +995,9 @@ export {
   findStaleConfirmations,
   isStaleConfirmationSuppressed,
   STALE_CONFIRMATION_DAYS,
+  isAssignedBacklogNoGate,
+  findAssignedBacklogNoGate,
+  assignedBacklogNoGateWakeMarker,
   authJsonPath,
   durableToken,
   resolveSelfAgentId,

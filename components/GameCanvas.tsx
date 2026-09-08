@@ -125,6 +125,18 @@ const OVERLAY_STYLE = `
        the screen than on desktop, which is the point (small map = useless
        map): shrinking it to "save space" would fight the same "legible on a
        phone screen" requirement this block exists for. */
+    /* LUL-1935: MobileControls' Pause button (pauseWrapper) is fixed at
+       top: calc(16px + env(safe-area-inset-top)), left: calc(16px + ...),
+       44px circle + 1.5px border -- bottom edge lands at ~63px + the inset.
+       #missionPanel defaults to that identical top:16/left:16 corner, so on
+       mobile (any width, any orientation -- this query catches landscape
+       too, unlike a bare max-width check) it sat directly under the button
+       and got covered. Push it below the button with a clear gap instead of
+       moving Pause -- Pause's corner is deliberately chosen for reachability
+       (see MobileControls.tsx LUL-529 comment); #missionPanel is
+       pointer-events:none display text with no touch target of its own, so
+       it's the one with nothing to lose by moving. */
+    #missionPanel { top: calc(76px + env(safe-area-inset-top)); }
   }
 
   /* LUL-69: mobile-only, portrait-only -- see components/OrientationGate.tsx.
@@ -267,9 +279,16 @@ const OVERLAY_STYLE = `
 
   /* LUL-1258: M2 Deepwater's minimal mission panel -- two collapsed lines,
      top-left, per decisions/missions-accepted-2026-09-01 §2. Small and
-     read-only (no touch target), so it needs no mobile media-query override:
-     it never grows past a couple of words at any viewport. */
-  #missionPanel { position: fixed; top: 16px; left: 16px; z-index: 10;
+     read-only (no touch target). LUL-1935: it does need a mobile override --
+     MobileControls' Pause button (components/MobileControls.tsx pauseWrapper)
+     is fixed to that exact same top:16/left:16 corner, so on mobile the two
+     sit on top of each other regardless of how short the mission text is.
+     See the mobile media query below for the fix.
+     LUL-1942: pushed past #gameMenu's 48px toggle button (components/GameMenu.tsx,
+     also top:16/left:16) so the pill no longer prints under the hamburger icon --
+     this held on every viewport/state the QA layout audit measured, not just
+     mobile, since #gameMenu is never hidden or repositioned on desktop. */
+  #missionPanel { position: fixed; top: 76px; left: 16px; z-index: 10;
     display: flex; align-items: center; gap: 8px; pointer-events: none;
     padding: 6px 12px; border-radius: 999px;
     background: rgba(12,17,26,0.55); border: 1px solid rgba(150,175,215,0.14);
@@ -278,9 +297,31 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #missionGlyph { color: #7fa6dd; }
 
+  /* LUL-1904: cave detection-immunity countdown -- always visible while active,
+     top-center below #objective so it never overlaps the mission panel or the
+     wind indicator. */
+  #caveImmunePanel { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 12;
+    padding: 6px 14px; border-radius: 999px; pointer-events: none;
+    background: rgba(20,40,36,0.6); border: 1px solid rgba(111,214,196,0.4);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    font-size: 13px; letter-spacing: 0.04em; color: #a8f0e0;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+
   #windIndicator { position: fixed; top: 20px; right: 20px; z-index: 12;
     font-size: 28px; color: #ddd; text-shadow: 0 0 4px rgba(0,0,0,0.6);
     transform-origin: 50% 50%; pointer-events: none; }
+
+  #windIndicatorHint { position: fixed; top: 50px; right: 8px; width: 76px; z-index: 12;
+    font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none;
+    animation: windHintFade 7s ease forwards; }
+  @keyframes windHintFade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* LUL-1912's minimap-clearance push only matters in admin/dev view -- #minimap is
+     display:none for every real player (data-admin-mode="0"), so top:20/right:20 above
+     is what players and the QA tester actually see; push down only under admin mode. */
+  body[data-admin-mode="1"] #windIndicator { top: 184px; }
+  body[data-admin-mode="1"] #windIndicatorHint { top: 214px; }
 
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;
