@@ -620,6 +620,10 @@ export default function Hud({
         </div>
       )}
 
+      {state.entered && (
+        <div id="windIndicatorHint">wind — move into the arrow to lower your scent trail</div>
+      )}
+
       {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;
           cover wins (engine enforces via !coverPromptVisible in veil condition).
           Key/button name uses the same #actionKey pill style as #chargeKey above.

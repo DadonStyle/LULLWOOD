@@ -72,6 +72,20 @@ export const LANDMARKS = [
 // `clear`.
 export const CAVE = { kind: 'cave', x: -70, z: 130, clear: 12, cr: 1.6, interactR: 6 };
 
+// LUL-1855: fog-exempt beacon glow on the radio mast -- a small additive
+// sprite, separate from the mast's existing PointLight (which FogExp2 erases
+// by ~43 units at default density regardless of intensity -- see wiki
+// game/mechanics/landmarks-below-the-fog-line). Deliberately dim: a bearing,
+// not a light source -- the CEO-accepted cheap slice covers this one
+// landmark only, not all six.
+export const RADIO_MAST_BEACON_GLOW = {
+  color: 0xff2a2a,     // same hue as the existing PointLight beacon, forest-engine.js buildRadioMast()
+  scale: 1.4,           // sprite width/height in world units (billboard quad)
+  opacityBase: 0.4,     // dim -- must not read as a lit scene
+  opacityAmp: 0.15,      // pulse amplitude around opacityBase
+  pulseHz: 0.5,          // slow pulse (~12.6s period) so it reads as a beacon, not a rendering glitch
+};
+
 // LUL-1808: roam waypoint step, expressed as a fraction of `half` the same way
 // child spawn radius (half*(0.5+rng()*0.3), forest-engine.js:788) and predator
 // spawn radius (half*(0.42+rng()*0.45), forest-engine.js:1204) already scale

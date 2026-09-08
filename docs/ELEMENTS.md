@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4298 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3825, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4332 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3855, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -960,7 +960,20 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   LUL-1724 adds `#windIndicator`, a fixed top-right arrow rendered from two new
   read-only `EngineHudState` fields (`windX`/`windZ`), pushed once per map
   generation (not per-frame) — the only HUD element driven by map-constant
-  rather than per-frame or per-event engine state.
+  rather than per-frame or per-event engine state. LUL-1912 repositioned it to
+  `top:184px; right:16px` to clear `#minimap`'s own box (`top:16px; right:16px;
+  160x160`, which read as a child-position pointer), and added
+  `#windIndicatorHint`, a static one-time label below the arrow that fades out
+  after 7s via CSS animation (`windHintFade`, mirrors the existing `#hint`
+  movement-controls pattern) — no new engine state. LUL-1933 found that push
+  unconditional, so it followed every real player (`#minimap` is
+  `display:none` under `data-admin-mode="0"`, see above) and collided with
+  `MobileControls.tsx`'s bottom-anchored Hide/Veil column on short landscape
+  phones. `top:184px; right:16px`/`#windIndicatorHint`'s `top:214px` now apply
+  only under `body[data-admin-mode="1"]`; the default (real player) position
+  reverts to LUL-1724's original `top:20px; right:20px` (`#windIndicatorHint`
+  `top:50px; right:8px`), verified clear of `MobileControls` at every tested
+  viewport.
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
@@ -1075,7 +1088,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3496) and `triggerDeath()` (L3527).
+  both `track()` call sites in `arriveHome()` (L3547) and `triggerDeath()` (L3578).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1086,7 +1099,7 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L2700) and recomputed every `tick()` while the run
+  reset to 0 on `enter()` (L2730) and recomputed every `tick()` while the run
   is neither won nor dead (L3935: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
@@ -1444,7 +1457,13 @@ first landmark whose spawn and visibility are conditional per-round (~50%
 via a seeded coin-flip in `generateMap()`, drawn last in the rng stream)
 rather than always-present; walking into its `interactR` grants a one-shot
 25s sight+scent detection immunity (`CAVE_IMMUNITY_TIME`, `lib/game/cave.ts`),
-hooked into `effectiveDetect()`/`canSee()`/`checkScent()`. and
+hooked into `effectiveDetect()`/`canSee()`/`checkScent()`. As of LUL-1855,
+`radioMast` additionally carries a small fog-exempt additive sprite on its
+beacon (`RADIO_MAST_BEACON_GLOW`, `engine/tuning.js`) so it stays visible as a
+dim, slowly-pulsing point past the fog line that erases the other five -- a
+bearing, not a lit scene; the other five landmarks (other than `cave` and
+`radioMast`) are unchanged and still fog-occluded at the same distances
+documented above. and
 the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
 boolean, so a patch edge scales speed/noise in rather than stepping. It
 scales player/predator walk speed down and noise radius up while standing in
