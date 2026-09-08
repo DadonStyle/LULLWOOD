@@ -38,7 +38,7 @@ test('pickMission clamps a near-1 rng draw to the last pool member, not past it'
 // ---- distToMissionTarget ------------------------------------------------
 
 test('distToMissionTarget is the straight-line distance to the target', () => {
-  const m: MissionState = { target: MISSION_POOL[0], status: 'active' };
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
   const d = distToMissionTarget(m, m.target.x, m.target.z + 5);
   assert.equal(d, 5);
 });
@@ -46,31 +46,31 @@ test('distToMissionTarget is the straight-line distance to the target', () => {
 // ---- canCompleteMission boundary (strict <, mirrors canPickUp) ---------
 
 test('canCompleteMission is false at exactly interactRadius', () => {
-  const m: MissionState = { target: MISSION_POOL[0], status: 'active' };
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
   assert.equal(canCompleteMission(m, m.target.interactRadius), false);
 });
 
 test('canCompleteMission is true just inside interactRadius', () => {
-  const m: MissionState = { target: MISSION_POOL[0], status: 'active' };
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
   assert.equal(canCompleteMission(m, m.target.interactRadius - 0.001), true);
 });
 
 test('canCompleteMission is false once the mission is already complete', () => {
-  const m: MissionState = { target: MISSION_POOL[0], status: 'complete' };
+  const m: MissionState = { target: MISSION_POOL[0], status: 'complete', secondary: null };
   assert.equal(canCompleteMission(m, 0), false);
 });
 
 // ---- completeMission idempotence ----------------------------------------
 
 test('completeMission flips an active mission to complete', () => {
-  const m: MissionState = { target: MISSION_POOL[0], status: 'active' };
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
   const next = completeMission(m);
   assert.equal(next.status, 'complete');
   assert.equal(next.target, m.target);
 });
 
 test('completeMission is idempotent -- calling it on an already-complete mission returns the same value', () => {
-  const m: MissionState = { target: MISSION_POOL[0], status: 'complete' };
+  const m: MissionState = { target: MISSION_POOL[0], status: 'complete', secondary: null };
   const next = completeMission(m);
   assert.equal(next, m); // same reference -- the no-op branch, not just an equal-shaped copy
 });

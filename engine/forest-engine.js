@@ -100,6 +100,8 @@ import {
   veilMaxHoldForTier,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
+  DEEPWATER_RETRIEVAL_BONUS,
+  DEEPWATER_SPEEDRUN_BONUS,
 } from '@/lib/game/economy';
 // LUL-1258: M2 Deepwater. Pure mission-state helpers, no Three.js -- mirrors
 // how lib/game/outcome.ts's transitions are imported above.
@@ -108,6 +110,10 @@ import {
   distToMissionTarget,
   canCompleteMission,
   completeMission,
+  canCompleteRetrieval,
+  completeRetrieval,
+  secondaryComplete,
+  RETRIEVAL_ITEM,
 } from '@/lib/game/mission';
 import {
   inLakeWater,
@@ -733,7 +739,7 @@ function generateMap(seed){
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
   // LUL-1258: draw this run's mission last, after every other rng() consumer
   // above, so it never shifts the stream any existing seed/replay depends on.
-  mission = pickMission(rng);
+  mission = pickMission(rng, secondaryChoice);
   missionHumTimer = 2;
 }
 
@@ -884,6 +890,15 @@ function inBaby(x,z){ const dx=x-baby.x, dz=z-baby.z; return dx*dx+dz*dz < 20; }
 // map/predator generation already consumes -- never player-selected.
 let mission = null;
 let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- first hum fires quickly, not after a full interval
+// LUL-1666: cross-session record of which missions have had their secondary
+// unlocked (completed baseline once). Engine-owned, synced from
+// components/Hud.tsx's localStorage read via setMissionUnlocks(), same split
+// as `embers` (line ~1646). Keyed by MissionKind for forward-compatibility
+// with M1/M4/M5 once they ship, even though only 'deepwater' is reachable today.
+let missionUnlocks = { deepwater: false };
+// LUL-1666: the player's pre-run menu choice for the *next* draw -- 'none' by
+// default. Read once at pickMission() time in generateMap(), not re-read mid-run.
+let secondaryChoice = null;
 
 const babyGroup = new THREE.Group();
 const bundle = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12),
@@ -1635,7 +1650,8 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     deathStart = 0, deathShown = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
-    missionCanComplete = false;   // LUL-1258: recomputed every tick alongside canPickup, below
+    missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
+    secondaryCanComplete = false;   // LUL-1666: same shape, for the retrieval item
 // LUL-1043: Embers. `maxDistFromHome` is the run's displacement high-water
 // mark (not `dist` below, which is path length) -- reset in enter(), read by
 // arriveHome()/triggerDeath() for the payout's `depth` term. `embers` is the
@@ -1689,6 +1705,7 @@ on(window, 'keydown', e => {
   if(e.code === 'KeyE' && playing && !paused){
     if(canPickup) pickup();
     else if(missionCanComplete) completeMissionSequence();
+    else if(secondaryCanComplete) completeSecondarySequence();
   }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
   // LUL-213: jumping stands you up first (same as any movement key already
@@ -2189,6 +2206,16 @@ let hudState = {
   // LUL-1258: M2 Deepwater's minimal HUD panel -- null/null whenever no
   // mission is active or the player is carrying (see the tick() pushState).
   missionKind: null, missionStatus: null,
+  // LUL-1666: secondary objectives (deepwater only, Phase 1). `missionUnlocks`
+  // is cross-session like embersBalance above (Hud.tsx persists it).
+  // `secondaryChoice` is the player's pre-run pick, reset only by
+  // setSecondaryChoice() itself (i.e. it persists across restarts, matching
+  // difficulty's own persistence). `secondaryKind`/`secondaryStatus`/
+  // `secondaryProgress` describe the *active run's* secondary and are always
+  // null/null/null when no secondary is attached to the current mission.
+  missionUnlocks: { deepwater: false },
+  secondaryChoice: null,
+  secondaryKind: null, secondaryStatus: null, secondaryProgress: null,
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
   // and persists it to localStorage (see components/Hud.tsx).
@@ -2918,6 +2945,15 @@ function completeMissionSequence(){
   pushState({ caption: 'the drowned car -- found it', captionId: ++captionSeq });   // unconditional, matches the landmark first-run caption's precedent
   missionCompleteSting();
 }
+// LUL-1666: retrieval's completion -- mirrors completeMissionSequence()'s
+// shape exactly (guard, pure-fn update, caption, sting), no cinematic lock,
+// same rationale ("a detour bonus, not the core objective").
+function completeSecondarySequence(){
+  if(mission.secondary?.data.kind !== 'retrieval' || mission.secondary.data.retrieved) return;
+  mission = completeRetrieval(mission);
+  pushState({ caption: 'the stone marker -- retrieved', captionId: ++captionSeq });
+  missionCompleteSting();
+}
 function arriveHome(){
   const next = outcomeArriveHome(runState());
   won = next.won; carrying = next.carrying;
@@ -2938,7 +2974,23 @@ function arriveHome(){
   // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
   // like carried/home, since computeDeathPayout's signature is untouched.
   const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
-  const payout = computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus);
+  // LUL-1666: secondary bonus is independent of missionBonus -- a player can
+  // win the secondary without ever completing the deepwater baseline this
+  // run (already unlocked from a prior run), or complete the baseline and
+  // still miss the secondary. Never gates arriveHome() itself (see spec S1).
+  const secondaryWon = mission ? secondaryComplete(mission, survivedSeconds) : false;
+  const secondaryBonus = secondaryWon
+    ? (mission.secondary.data.kind === 'retrieval' ? DEEPWATER_RETRIEVAL_BONUS : DEEPWATER_SPEEDRUN_BONUS)
+    : 0;
+  const payout = computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus);
+  // LUL-1666: unlock is keyed on the *baseline* completing, independent of
+  // whether a secondary was even attempted this run -- guardrail is "complete
+  // the mission once", not "complete a secondary once". Persisted by
+  // components/Hud.tsx same as embersBalance below.
+  if(mission?.status === 'complete' && !missionUnlocks[mission.target.kind]){
+    missionUnlocks = { ...missionUnlocks, [mission.target.kind]: true };
+    pushState({ missionUnlocks: { ...missionUnlocks } });
+  }
   embers = applyPayout(embers, payout);
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance });
@@ -3051,6 +3103,23 @@ function setEmbers(balance, deeperLungsTier){
 function purchaseDeeperLungs(){
   embers = economyPurchaseDeeperLungs(embers);
   pushState({ embersBalance: embers.balance, embersDeeperLungsTier: embers.tiers.deeperLungs });
+}
+// LUL-1666: sync from components/Hud.tsx's localStorage read, once on mount
+// -- identical split to setEmbers() above (engine owns the state, React
+// persists it). `unlocks` may be a partial/stale-shaped object (schema
+// could predate a future mission); only known keys are trusted.
+function setMissionUnlocks(unlocks){
+  missionUnlocks = { deepwater: !!(unlocks && unlocks.deepwater) };
+  pushState({ missionUnlocks: { ...missionUnlocks } });
+}
+// LUL-1666: player's pre-run menu pick for the *next* draw. No-ops outside
+// the pre-run menu the same way setDifficulty tolerates a bad value -- an
+// unrecognized kind is treated as 'none'. Deliberately does not re-roll the
+// current mission's secondary mid-run; per GameMenu.tsx (S4/S5), the control
+// itself is only rendered while `!state.entered`.
+function setSecondaryChoice(kind){
+  secondaryChoice = (kind === 'retrieval' || kind === 'speedrun') ? kind : null;
+  pushState({ secondaryChoice });
 }
 on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -3428,6 +3497,10 @@ function tick(){
   // computed the same way canPickup is above.
   const distMission = mission ? distToMissionTarget(mission, player.x, player.z) : Infinity;
   missionCanComplete = mission ? canCompleteMission(mission, distMission) : false;
+  const distSecondaryItem = (mission?.secondary?.data.kind === 'retrieval')
+    ? Math.hypot(player.x - RETRIEVAL_ITEM.x, player.z - RETRIEVAL_ITEM.z)
+    : Infinity;
+  secondaryCanComplete = mission ? canCompleteRetrieval(mission, distSecondaryItem) : false;
   if(playing){
     let statusVisible = false, statusText = '';
     if(hidden){
@@ -3475,9 +3548,21 @@ function tick(){
       // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
       missionKind: mission && !carrying ? mission.target.kind : null,
       missionStatus: mission && !carrying ? mission.status : null,
+      secondaryKind: mission && !carrying && mission.secondary ? mission.secondary.data.kind : null,
+      secondaryStatus: mission && !carrying && mission.secondary
+        ? (secondaryComplete(mission, clock.elapsedTime - enteredAt) ? 'complete' : 'active')
+        : null,
+      // LUL-1666: retrieval -> whole meters/distance for the Hud's progress
+      // indicator; speedrun -> seconds remaining for its countdown. One field,
+      // shape keyed by kind, mirrors lastPayout's discriminated-by-caller shape.
+      secondaryProgress: mission && !carrying && mission.secondary
+        ? (mission.secondary.data.kind === 'retrieval'
+            ? { kind: 'retrieval', retrieved: mission.secondary.data.retrieved, distance: Math.round(distSecondaryItem) }
+            : { kind: 'speedrun', remainingSeconds: Math.max(0, Math.round(mission.secondary.data.timeLimitSeconds - (clock.elapsedTime - enteredAt))) })
+        : null,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, missionKind: null, missionStatus: null });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, missionKind: null, missionStatus: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null });
   }
   // the child's idle glow (outside the cinematic)
   if(!baby.taken){
@@ -3636,6 +3721,7 @@ tick();
     const playing = isPlaying(runState());
     if(canPickup && playing && !paused) pickup();
     else if(missionCanComplete && playing && !paused) completeMissionSequence();
+    else if(secondaryCanComplete && playing && !paused) completeSecondarySequence();
   }
   // LUL-529: touch analogue of the Space keydown handler (forest-engine.js
   // keydown listener above) -- same guards, same beginJump()/jumpPressed

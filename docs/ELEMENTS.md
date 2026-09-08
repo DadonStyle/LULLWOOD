@@ -41,12 +41,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3668-3672, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  `triggerTouchToggleRun()` (L3754-3758, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3645-3651, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
+  `triggerTouchJump()` (L3731-3737, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
   target on mobile, wired to the same `triggerTouchJump()` — it used to
@@ -55,7 +55,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3657-3661, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
+  (L3743-3747, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3630 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3210, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L3715 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3279, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -828,7 +828,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L3046-3050 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  and synced to `hudState` via `setEmbers()` (L3098-3102 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
@@ -880,12 +880,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1859-1867): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()` L1876-1884): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
 - Gate the player's sprint speed (`tick()` at L3243): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
-- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L2987, alongside `staminaLowCuePlayed`).
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L3039, alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
 - Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.
@@ -941,10 +941,69 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   and has no mobile-unreachable action.
 - Cannot pay out on death — the completion bonus is win-only, exactly like `CARRIED`/`HOME`.
 
+**Secondary objectives (LUL-1666, Phase 1 — `deepwater` only)**
+- **Implemented.** `MissionState.secondary: MissionSecondaryState | null` (`lib/game/mission.ts`)
+  — an optional bonus layered on top of `deepwater`'s baseline, never a replacement for it.
+  Drawn at `pickMission(rng, secondaryChoice)` time, where `secondaryChoice` is the player's
+  pre-run menu pick (`components/GameMenu.tsx`'s `menuSecondary` control), gated on
+  `SECONDARY_SUPPORTED_MISSIONS` (`deepwater` only today) and on the pool member actually drawn
+  — the choice is a request, not a guarantee.
+- Two kinds: `retrieval` (reach the existing `stoneMarker` landmark, see below, and press
+  interact — completion is a one-time flag, does not require still holding/standing on it at
+  arrive-home) and `speedrun` (arrive home within `MISSION_DEEPWATER_SPEEDRUN_SECONDS` = 240s of
+  entering). Evaluated once, at `arriveHome()`, via `secondaryComplete()`.
+- Pays an additive bonus on top of `MISSION_DEEPWATER_REWARD` at the moment of winning:
+  `DEEPWATER_RETRIEVAL_BONUS` = 15 or `DEEPWATER_SPEEDRUN_BONUS` = 18 Embers
+  (`lib/game/economy.ts`), passed as `computeWinPayout()`'s new fifth argument. Win-only —
+  `computeDeathPayout()` is unmodified, same rule as the baseline mission bonus.
+- **Never gates the baseline win.** Failing (or not attempting) the secondary never fails
+  `arriveHome()` — `lib/game/outcome.ts` is untouched by this feature.
+- Gated behind a cross-session unlock: the secondary picker in the pre-run menu only renders
+  once the player has completed `deepwater`'s baseline at least once
+  (`missionUnlocks.deepwater`), persisted to `localStorage` by `components/Hud.tsx`'s
+  `useMissionUnlocks()` exactly like Embers' `useEmbers()`.
+- Retrieval reuses the existing interact channel (`KeyE` / `triggerTouchInteract()`), the same
+  key/button that completes the baseline mission and lifts the child — no new keybinding, no new
+  touch target. Completion fires `completeSecondarySequence()`: a caption + the same completion
+  sting as the baseline mission, no cinematic lock.
+- HUD: a second collapsed top-left panel (`#secondaryPanel` in `components/Hud.tsx`), same
+  family as `#missionPanel` above — progress-to-target in meters (retrieval) or a countdown
+  (speedrun), hidden whenever no secondary is attached or the player is carrying the child.
+
 **Collision & physics profile**
 - N/A — not a spatial/world object. The mission *target* (the drowned car) is a `LANDMARKS`
   entry with its own existing decorative/navigational collision profile, unchanged by this
   entry; the mission struct only reads that entry's coordinates, it does not add new geometry.
+  The retrieval secondary's target is the `stoneMarker` landmark, below — also unchanged
+  geometry, no new mesh or light.
+
+---
+
+### Stone Marker (`stoneMarker` landmark)
+
+**What it is**
+- A permanent, always-rendered decorative `LANDMARKS` entry (`engine/tuning.js`, `kind:
+  'stoneMarker', x: 100, z: -75`) with its own glow light, built by `buildStoneMarker()`. It
+  predates LUL-1666 and its appearance is unchanged by that ticket.
+
+**What it can do**
+- **LUL-1666:** when the player's pre-run secondary choice is `retrieval` (see Missions above),
+  this landmark doubles as the retrieval target — walking within `RETRIEVAL_ITEM.interactRadius`
+  (`lib/game/mission.ts`, 4 units) and pressing interact flags `mission.secondary` complete via
+  `completeRetrieval()`. When retrieval is not the active secondary, nothing about the landmark
+  changes — same mesh, same light, no interaction.
+
+**What it CANNOT do**
+- Cannot be picked up, carried, or moved — completion is a one-time flag on the mission struct,
+  not an object-carry state (no position tracking, no drop-on-death).
+- Cannot be interacted with outside a `retrieval`-secondary run — `canCompleteRetrieval()` is
+  false whenever no secondary is attached or the attached secondary is `speedrun`.
+- Gains no new geometry, particle, or glow-intensity change from LUL-1666 — the existing
+  always-on glow is the only signal that it is the active objective.
+
+**Collision & physics profile**
+- Unchanged by LUL-1666 — same decorative-landmark collision profile `buildStoneMarker()` always
+  had.
 
 ---
 

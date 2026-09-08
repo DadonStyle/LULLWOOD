@@ -9,7 +9,7 @@ import GameMenu from './GameMenu';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 import { nextDeeperLungsCost, veilMaxHoldForTier, type RunPayout } from '@/lib/game/economy';
-import type { MissionKind } from '@/lib/game/mission';
+import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -88,6 +88,16 @@ export interface EngineHudState {
   // in that case) -- Hud never has to know about `carrying` itself.
   missionKind: MissionKind | null;
   missionStatus: 'active' | 'complete' | null;
+  // LUL-1666: secondary objectives (deepwater only, Phase 1). See
+  // engine/forest-engine.js's hudState defaults for field semantics.
+  missionUnlocks: { deepwater: boolean };
+  secondaryChoice: SecondaryKind | null;
+  secondaryKind: SecondaryKind | null;
+  secondaryStatus: 'active' | 'complete' | null;
+  secondaryProgress:
+    | { kind: 'retrieval'; retrieved: boolean; distance: number }
+    | { kind: 'speedrun'; remainingSeconds: number }
+    | null;
 }
 
 export interface EngineActions {
@@ -120,6 +130,9 @@ export interface EngineActions {
   // LUL-1043
   setEmbers: (balance: number, deeperLungsTier: number) => void;
   purchaseDeeperLungs: () => void;
+  // LUL-1666
+  setMissionUnlocks: (unlocks: { deepwater: boolean }) => void;
+  setSecondaryChoice: (kind: SecondaryKind | null) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -169,6 +182,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lastPayout: null,
   missionKind: null,
   missionStatus: null,
+  missionUnlocks: { deepwater: false },
+  secondaryChoice: null,
+  secondaryKind: null, secondaryStatus: null, secondaryProgress: null,
 };
 
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
@@ -248,6 +264,48 @@ function useEmbers(actions: EngineActions | null, balance: number, deeperLungsTi
     if (!appliedRef.current) return;
     writeEmbers({ balance, tiers: { deeperLungs: deeperLungsTier } });
   }, [balance, deeperLungsTier]);
+}
+
+// LUL-1666: cross-session unlock record -- same split as useEmbers() above
+// (engine owns state, this hook only seeds it once on mount and persists
+// on change). Key deliberately distinct from EMBERS_KEY.
+const MISSION_UNLOCKS_KEY = 'lullwood:mission-unlocks';
+
+function readMissionUnlocks(): { deepwater: boolean } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(MISSION_UNLOCKS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<{ deepwater: boolean }>;
+    return { deepwater: !!parsed.deepwater };
+  } catch {
+    return null;
+  }
+}
+
+function writeMissionUnlocks(unlocks: { deepwater: boolean }) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(MISSION_UNLOCKS_KEY, JSON.stringify(unlocks));
+  } catch {
+    // private mode / quota exceeded -- unlock still applies this session, just won't persist
+  }
+}
+
+function useMissionUnlocks(actions: EngineActions | null, unlocks: { deepwater: boolean }) {
+  const appliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!actions) return;
+    appliedRef.current = true;
+    const stored = readMissionUnlocks();
+    if (stored) actions.setMissionUnlocks(stored);
+  }, [actions]);
+
+  useEffect(() => {
+    if (!appliedRef.current) return;
+    writeMissionUnlocks(unlocks);
+  }, [unlocks]);
 }
 
 // LUL-26: captions are the only channel carrying predator warnings for a deaf/
@@ -352,6 +410,7 @@ export default function Hud({
   actions: EngineActions | null;
 }) {
   useEmbers(actions, state.embersBalance, state.embersDeeperLungsTier);
+  useMissionUnlocks(actions, state.missionUnlocks);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
@@ -499,6 +558,34 @@ export default function Hud({
         <div id="missionPanel">
           {MISSION_NAMES[state.missionKind]}
           <span id="missionGlyph">{state.missionStatus === 'complete' ? '●' : '○'}</span>
+        </div>
+      )}
+
+      {/* LUL-1666: secondary objective panel -- progress indicator (retrieval) or
+          countdown (speedrun). Same collapsed, top-left, non-blocking treatment as
+          #missionPanel above (decisions/missions-accepted-2026-09-01 §2's rule
+          extends naturally here -- it's the same panel family). Desktop+mobile
+          parity is rendering-only: no new input, this is read-only like
+          #missionPanel already is. */}
+      {state.secondaryKind && state.secondaryProgress && (
+        <div id="secondaryPanel" className={state.secondaryStatus === 'complete' ? 'complete' : undefined}>
+          {state.secondaryKind === 'retrieval' ? (
+            <>
+              Retrieve the Stone Marker
+              <span id="secondaryGlyph">
+                {state.secondaryProgress.kind === 'retrieval' && state.secondaryProgress.retrieved
+                  ? '●'
+                  : `${(state.secondaryProgress.kind === 'retrieval' && state.secondaryProgress.distance) ?? 0}m`}
+              </span>
+            </>
+          ) : (
+            <>
+              Speedrun
+              <span id="secondaryGlyph">
+                {state.secondaryProgress.kind === 'speedrun' ? formatDuration(state.secondaryProgress.remainingSeconds) : ''}
+              </span>
+            </>
+          )}
         </div>
       )}
 

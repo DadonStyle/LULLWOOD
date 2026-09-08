@@ -67,15 +67,25 @@ export function computeSurvival(survivedSeconds: number): number {
 // game/economy/mission-rewards §2 ("the greed comes from the depth").
 export const MISSION_DEEPWATER_REWARD = 12;
 
+// LUL-1666: secondary-objective bonuses for deepwater, additive on top of
+// MISSION_DEEPWATER_REWARD (never a replacement) -- CEO-accepted reward
+// schedule, decisions/secondary-objectives-accepted-2026-09-06. M1/M4/M5 rows
+// from the same table are deferred until those missions ship (CTO scope
+// ruling, decisions/lul-1666-scope-deepwater-only-2026-09-06) -- do not add
+// them here without a MISSION_POOL entry to key them off.
+export const DEEPWATER_RETRIEVAL_BONUS = 15;
+export const DEEPWATER_SPEEDRUN_BONUS = 18;
+
 export function computeWinPayout(
   maxDistFromHome: number,
   survivedSeconds: number,
   tier: DifficultyTier = 'lantern',
   missionBonus = 0,
+  secondaryBonus = 0,
 ): RunPayout {
   const depth = computeDepth(maxDistFromHome);
   const survival = computeSurvival(survivedSeconds);
-  const total = Math.round((depth + survival + CARRIED + HOME + missionBonus) * TIER_MULTIPLIERS[tier].win);
+  const total = Math.round((depth + survival + CARRIED + HOME + missionBonus + secondaryBonus) * TIER_MULTIPLIERS[tier].win);
   return { depth, survival, carried: CARRIED, home: HOME, total };
 }
 
