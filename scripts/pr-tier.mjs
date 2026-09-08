@@ -59,6 +59,7 @@
 //        node scripts/pr-tier.mjs --stdin   (newline-separated paths)
 
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 const rules = [
   // --- Tier C: never auto-approved. Checked first; first match wins. ---
@@ -98,25 +99,40 @@ function tierOf(file) {
 
 const rank = { A: 0, B: 1, C: 2 };
 
-let files = process.argv.slice(2);
-if (files[0] === '--stdin') {
-  files = readFileSync(0, 'utf8')
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean);
+// Classifies a whole file list to the single worst tier. Shared with
+// check-review-gap.mjs (LUL-1111) so it doesn't re-derive tier rules to
+// decide whether a zero-review PR is Tier-A-only and can be skipped.
+function classify(files) {
+  let worst = 'A';
+  for (const f of files) {
+    const t = tierOf(f);
+    if (rank[t] > rank[worst]) worst = t;
+    if (process.env.PR_TIER_VERBOSE) console.error(`  ${t}  ${f}`);
+  }
+  return worst;
 }
 
-if (files.length === 0) {
-  // An empty diff is not a safe thing to rubber-stamp.
-  console.error('pr-tier: no files given; refusing to classify an empty diff');
-  console.log('C');
-  process.exit(0);
+function main() {
+  let files = process.argv.slice(2);
+  if (files[0] === '--stdin') {
+    files = readFileSync(0, 'utf8')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  if (files.length === 0) {
+    // An empty diff is not a safe thing to rubber-stamp.
+    console.error('pr-tier: no files given; refusing to classify an empty diff');
+    console.log('C');
+    process.exit(0);
+  }
+
+  console.log(classify(files));
 }
 
-let worst = 'A';
-for (const f of files) {
-  const t = tierOf(f);
-  if (rank[t] > rank[worst]) worst = t;
-  if (process.env.PR_TIER_VERBOSE) console.error(`  ${t}  ${f}`);
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  main();
 }
-console.log(worst);
+
+export { tierOf, classify };
