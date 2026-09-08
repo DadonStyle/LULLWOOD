@@ -34,9 +34,11 @@ function makeReq(body: unknown, ip: string, extraHeaders: Record<string, string>
 function withCredential<T>(fn: () => Promise<T>): Promise<T> {
   process.env.SUGGESTIONS_PAPERCLIP_TOKEN = 'test-token';
   process.env.SUGGESTIONS_PAPERCLIP_API_URL = 'https://example.invalid';
+  process.env.SUGGESTIONS_PAPERCLIP_COMPANY_ID = 'test-company-id';
   return fn().finally(() => {
     delete process.env.SUGGESTIONS_PAPERCLIP_TOKEN;
     delete process.env.SUGGESTIONS_PAPERCLIP_API_URL;
+    delete process.env.SUGGESTIONS_PAPERCLIP_COMPANY_ID;
   });
 }
 
@@ -63,12 +65,12 @@ test('valid text + credential set -> 204 and posts exactly one create-issue call
 
   restore();
   assert.equal(calls.length, 1);
-  assert.match(calls[0].url, /\/api\/issues$/);
+  assert.match(calls[0].url, /\/api\/companies\/test-company-id\/issues$/);
   const sent = JSON.parse(calls[0].body);
   assert.equal(sent.title, '[SUGGESTION] add a second forest map');
   assert.equal(sent.status, 'backlog');
-  assert.match(sent.body, /Untrusted player text/);
-  assert.match(sent.body, /add a second forest map/);
+  assert.match(sent.description, /Untrusted player text/);
+  assert.match(sent.description, /add a second forest map/);
 });
 
 test('digits, punctuation and uppercase are rejected -> 400, no fetch call', async () => {
