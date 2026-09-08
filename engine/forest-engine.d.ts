@@ -205,6 +205,13 @@ declare global {
         soundOn: boolean;
         masterGain: number | null;
       };
+      /** LUL-2071: parks the real RAF loop and switches simulation time to a
+       * fixed step of `dtSeconds`, only advanced by qaAdvance(). See the
+       * qaSetFixedStep block in init() for the full rationale. */
+      qaSetFixedStep?: (dtSeconds: number) => void;
+      /** LUL-2071: advances simulation time by `steps` fixed-size ticks (see
+       * qaSetFixedStep). Throws if qaSetFixedStep() was never called. */
+      qaAdvance?: (steps?: number) => void;
     };
   }
 }

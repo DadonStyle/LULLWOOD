@@ -47,8 +47,42 @@
 // either radius that quietly lets this test start entering `hidden` gets
 // caught here instead of silently changing what "still gets you caught" is
 // proving. See wiki: game/qa-precondition-drift-lesson.
+//
+// LUL-2107: the wolf/bear cover cases below drive time via
+// qaSetFixedStep/qaAdvance (docs/specs/lul-2071-deterministic-qa-clock.md)
+// instead of expect.poll against the real RAF loop -- that poll only worked
+// because swiftshader's dt clamp saturated to a de facto fixed step (wiki
+// systems/e2e-post-gpu-nondeterminism), which real GPU rendering (LUL-1910)
+// no longer guarantees. Advancing in small fixed chunks and checking the
+// predicate after each chunk keeps the same "wait for the state machine to
+// get there" intent with no wall-clock component. The lion cover case and
+// the two death-race cases (open-lion, hold-still-wolf) are out of this
+// ticket's listed scope and are left on the real RAF loop.
 import { test, expect } from '@playwright/test';
-import { assertInViewport, boot, enter } from './helpers';
+import { assertInViewport, boot, enter, qaHook } from './helpers';
+
+// Fixed step for the deterministic cases, matching charge-dodge.spec.ts /
+// cover-feedback.spec.ts and the hook's own qa-fixed-clock.spec.ts.
+const FIXED_DT = 0.02;
+const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
+
+// Advances game time in fixed chunks, checking `predicate` after each one,
+// until it's true or `maxSeconds` of game time is exhausted. Replaces
+// expect.poll's wall-clock timeout with a game-time budget -- same "don't
+// give up too early" intent, deterministic units.
+async function advanceUntil(
+  page: import('@playwright/test').Page,
+  predicate: () => Promise<boolean>,
+  { chunkSeconds = 1, maxSeconds = 20 }: { chunkSeconds?: number; maxSeconds?: number } = {},
+): Promise<boolean> {
+  const chunkSteps = stepsFor(chunkSeconds);
+  const chunks = Math.ceil(maxSeconds / chunkSeconds);
+  for (let i = 0; i < chunks; i++) {
+    await qaHook(page, 'qaAdvance', chunkSteps);
+    if (await predicate()) return true;
+  }
+  return false;
+}
 
 test.describe('positional hiding (LUL-22 / LUL-43)', () => {
   test('hiding in the open near a lion still gets you caught', async ({ page }) => {
@@ -107,9 +141,16 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
   async function assertCoverHidesFromSpecies(
     page: import('@playwright/test').Page,
     kind: 'wolf' | 'bear' | 'lion',
+    { fixedClock = false }: { fixedClock?: boolean } = {},
   ) {
     await boot(page, { qaHooks: true });
     await enter(page);
+
+    if (fixedClock) {
+      // LUL-2107: park the real RAF loop -- from here only advanceUntil()
+      // moves simulation time.
+      await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    }
 
     const result = await page.evaluate(
       (k) => window.ForestEngine?.qaHideBehindCoverKind?.(k) ?? null,
@@ -129,15 +170,21 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     // Transition 1: predator was placed in 'chase' with cover between it and
     // the player. On its next tick canSee() returns false; it flips to
     // 'investigate' and sets sniffsLeft = 1 + rand(0..3).
-    await expect
-      .poll(
-        () => page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i)?.state ?? null, idx),
-        {
+    const readState = () => page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i)?.state ?? null, idx);
+    if (fixedClock) {
+      const reached = await advanceUntil(page, async () => (await readState()) === 'investigate');
+      expect(
+        reached,
+        `${kind}: predator never left "chase" for "investigate" after LOS was blocked by cover`,
+      ).toBe(true);
+    } else {
+      await expect
+        .poll(readState, {
           message: `${kind}: predator never left "chase" for "investigate" after LOS was blocked by cover`,
           timeout: 20_000,
-        },
-      )
-      .toBe('investigate');
+        })
+        .toBe('investigate');
+    }
 
     const afterTransition = await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx);
     expect(afterTransition, 'qaPredatorState went stale between poll and read').not.toBeNull();
@@ -149,15 +196,21 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
 
     // Transition 2: predator approaches into sniff range. Proves the cycle
     // actually runs, not just that the flag flipped.
-    await expect
-      .poll(
-        () => page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i)?.inv ?? null, idx),
-        {
+    const readInv = () => page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i)?.inv ?? null, idx);
+    if (fixedClock) {
+      const reached = await advanceUntil(page, async () => (await readInv()) === 'sniff');
+      expect(
+        reached,
+        `${kind}: predator reached "investigate" but never approached into sniff range/state`,
+      ).toBe(true);
+    } else {
+      await expect
+        .poll(readInv, {
           message: `${kind}: predator reached "investigate" but never approached into sniff range/state`,
           timeout: 20_000,
-        },
-      )
-      .toBe('sniff');
+        })
+        .toBe('sniff');
+    }
 
     // The player must still be alive -- cover did its job.
     await expect(
@@ -170,14 +223,14 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     page,
   }) => {
     test.setTimeout(60_000);
-    await assertCoverHidesFromSpecies(page, 'wolf');
+    await assertCoverHidesFromSpecies(page, 'wolf', { fixedClock: true });
   });
 
   test('bear: hiding behind cover makes the predator lose the player and sniff instead of catching them', async ({
     page,
   }) => {
     test.setTimeout(60_000);
-    await assertCoverHidesFromSpecies(page, 'bear');
+    await assertCoverHidesFromSpecies(page, 'bear', { fixedClock: true });
   });
 
   test('lion: hiding behind cover makes the predator lose the player and sniff instead of catching them', async ({
