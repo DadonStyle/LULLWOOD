@@ -41,12 +41,12 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
   `running` derivation at L2802. In toggle mode, touch's analogue is
-  `triggerTouchToggleRun()` (L3816-3820, gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
+  `triggerTouchToggleRun()` (gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
   `JUMP_DURATION`/`JUMP_HEIGHT` in `lib/game/jump.ts`. The same
   arc is the predator-charge dodge (LUL-213). Touch equivalent is
-  `triggerTouchJump()` (L3793-3799, same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
+  `triggerTouchJump()` (same guards as the desktop `Space`  keydown handler, minus the `e.repeat` check since a tap is already
   discrete; `MobileControls.tsx`'s `touchJump` button). LUL-617: during a
   charge, the centered `#chargePrompt` pill (`Hud.tsx`) is *also* a tap
   target on mobile, wired to the same `triggerTouchJump()` — it used to
@@ -55,7 +55,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   works too.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
-  (L3805-3809, `MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
+  (`MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L3778 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3357, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4684 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4148, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -138,9 +138,14 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   button, and `tick()`'s movement-breaks-cover check) already funnel
   through, so `feature_engagement('hide')` fires on every hide entry again.
 - Eye height (`eyeH`) is damped toward `hidden ? 1.05 : CONFIG.eye` (2.2) at
-  an ~0.3s time constant (`Math.min(1, dt*8)`, L2272), not snapped — see
-  wiki `game/lul267-canopy-collision-fix` for a documented edge case where
-  this damping outlives the `hidden` flag for a few frames.
+  an ~0.3s time constant (`Math.min(1, dt*8)`, L2272), not snapped. **Fixed,
+  LUL-273:** `canopyBlockedR()`/`blocked()` now recompute each tree's canopy
+  radius live against this same `eyeH` (`canopyRadiusAtEye(t.s, eyeH,
+  CANOPY_GEO)`) instead of the `crCanopy` cached at map-gen time for a fixed
+  `CONFIG.eye` — the cached value under-protected for the ~0.3s window right
+  after exiting a hide spot while moving, since the cone tapers and a lower
+  eye height sits closer to its wider base. See wiki
+  `game/lul267-canopy-collision-fix`.
 - Player FOV for "can the player see the charging predator" gating is ~130°
   total (`PLAYER_FOV_COS`, `cos(65°)`, L1679) — independent of the render
   camera's own 70° vertical FOV (`camera`); this is a gameplay cone, not
@@ -175,6 +180,10 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   (`carrying` branch, `tick()`), until the player crosses
   `CONFIG.home.r` (3.6u) of the home landmark, which wins the run
   (`arriveHome()`).
+- **As of `LUL-1815`**, be set back down mid-carry (`setDown()`) and picked
+  back up from where she was left (`pickupAllowed()`'s `babyTaken` guard is
+  relaxed by a `setDown` flag in `lib/game/outcome.ts`) — see "cannot do"
+  below for the exact boundary.
 - **NOT live on `main`** — idle/carry glow intensity scaled by a difficulty
   preset's `glowMul` was built on the unmerged LUL-26 branch
   (`DIFFICULTY_PRESETS`); `engine/forest-engine.js` on `main` has no
@@ -191,6 +200,13 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   glow stays legible through the tide's own added fog density (Fog above) —
   the two effects (denser fog, longer-reaching glow) are meant to roughly
   offset, not one cancel the other out unintentionally.
+- **As of `LUL-1486`**, the `fogTideAmount` fed into `fogTideGlowMul`/
+  `fogTideGlowRangeMul` above is no longer the whole-world constant — it's
+  `fogTideAmountAt(x, z, fogTideAmount, ...)` (`lib/game/fogTide.ts`), a
+  proximity blend against a fixed set of `FOG_TIDE_SITES`. Sampled at the
+  player's position while carried (colocated with the child) or the child's
+  own idle spawn position otherwise; a child outside every site's radius
+  sees no tide glow boost regardless of the global clock's phase.
 - **As of `LUL-1480`** (rules `LUL-1438`/`LUL-1414`), the unscaled idle/carry
   glow and halo curves live in `lib/game/childGlow.ts` (pure, unit tested),
   not inline in `tick()`: `idleGlowIntensity()`/`idleHaloOpacity()` for the
@@ -215,8 +231,14 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   of it — `Math.hypot(x-baby.x,z-baby.z)<26` in `placePredators()`).
   Once the map is generated, a predator can stand directly on the
   un-collected child with zero effect. `UNDEFINED` — see matrix.
-- Cannot be dropped, lost, or re-hidden once picked up — `baby.taken` only
-  ever goes false→true, reset by `generateMap()`/`restart()`.
+- Cannot be lost or re-hidden once picked up — `baby.taken` only ever goes
+  false→true, reset by `generateMap()`/`restart()`. **As of `LUL-1815`**, she
+  *can* be set back down while carried (`setDown()`, same `KeyE`/touch-interact
+  input as pickup — no new key) — this returns her to a fixed point on the
+  ground (glowing, idle-animated, re-spottable via the beacon wisps) and the
+  player to full speed/no carry-detect penalty until she's picked up again
+  from that spot. `carrying` itself does still round-trip true→false→true;
+  only `baby.taken` is one-way.
 - Cannot collide with anything (no collider function reads its position).
 
 **Behaviours & logic**
@@ -263,7 +285,20 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What they can do (shared)**
 - Roam via random waypoints when nothing has noticed the player
-  (`state==='roam'`, L1010-1019).
+  (`state==='roam'`, L1010-1019). A predator that gives up an
+  investigate/sniff or flank/hold loop (never a chase's distance-based
+  give-up) stashes the player's position and gets a bounded number of
+  ring-biased return-sweep waypoints (`LKP_MAX_SWEEPS`, `pickRoamWaypoint()`,
+  `lib/game/predator.ts`) before it truly forgets and reverts to the
+  original uniform-random pick -- a predator that camping used to shake for
+  good now circles back a few times first (LUL-1573/LUL-1620).
+- A `chase`'s distance-based give-up (`shouldGiveUpChase()`,
+  `lib/game/predator.ts`) now compares against `effectiveDetect(p)` instead
+  of the raw `PSPEC[kind].detect`, so the give-up radius scales with the
+  same multipliers that widen acquisition -- difficulty, veil, fog tide, and
+  `CARRY_DETECT_MUL` (1.35x while carrying). Before this fix a wolf/lion
+  chase begun during the carry leg could never end, since the give-up
+  distance didn't grow with the carry's wider acquisition range (LUL-1600).
 - Detect the player through three independent channels: **sight**
   (`canSee()`, LOS raycast + shrinking-with-stillness range),
   **scent** (`checkScent()`, radius+wind, no LOS check at all),
@@ -281,7 +316,16 @@ one geometry builder (`makePredator()`), differentiated by the
   state change (LUL-1482). Scent and noise acquisition are unaffected in
   every state, carrying or not.
 - Chase, losing/regaining track via `investigate`→`sniff`→`back` (LUL-22,
-  explicitly "not to be retuned").
+  explicitly "not to be retuned"). LUL-1090: when the `approach` sub-phase
+  reaches sniff range (`hasReachedSniffRange()`, `rad+SNIFF_APPROACH_MARGIN`
+  ≈2.5-3.2 units) **while the player is `hidden`**, the predator first walks
+  itself back to `SNIFF_STANDOFF` (4.5 units, `lib/game/predator.ts`
+  `sniffStandoffPoint()`) via a new `standoff` sub-phase before entering
+  `sniff` — a player caught in the open is unaffected and closes to the old
+  distance as before. The "Hidden · something is sniffing you" status line
+  (`tick()`) uses a separate, wider `SNIFF_STATUS_RANGE` (8 units, declared
+  next to `SNIFF_STANDOFF` so the two can't drift apart) so the warning still
+  reads once the predator has settled at its standoff distance.
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
   nearest predator switches straight to `hunt` (relentless, ignores LOS
   break) — `tick()`.
@@ -518,6 +562,69 @@ one geometry builder (`makePredator()`), differentiated by the
 
 ---
 
+### Throwable (stone/twig) — LUL-1623
+
+**What it can do**
+- Grab: `E`/Interact, desktop and mobile, context-dispatched on the same key
+  as child pickup (`canPickup` takes priority; `grabThrowable()`,
+  `triggerTouchInteract()`) — no separate grab button on either platform.
+- Throw: left-click desktop (`mousedown`, only while pointer-locked and not
+  dragging/paused) / a dedicated "Throw" button on mobile
+  (`triggerTouchThrow()`, `EngineActions`), both call `throwThrowable()`.
+  Lands at `player pos + facing * THROWABLE_THROW_DISTANCE` (18u); the same
+  landing-point formula on both platforms, so throw behavior doesn't diverge
+  by input method.
+- On landing, plays a percussive thud (`leafRustle(false)`, player-audible)
+  and rolls `checkThrowableNoise()` (`lib/game/noise.ts`) against every
+  non-inert predator's distance to the landing point. Any predator within
+  `THROWABLE_NOISE_RADIUS` (24u, = `NOISE_RADIUS_RUN`) is redirected into
+  `investigate`/`approach` **targeting the landing point**, not the live
+  player, for a randomized 3–5s (`hearThrowableNoise()`) before reverting via
+  the existing sniff/back/roam loop.
+- Usable in any playable state, including while carrying the child (CTO plan
+  decision 6) — grab/throw have no `carrying` gate.
+
+**What it CANNOT do**
+- Not a hiding spot, not LOS-blocking, not a movement collider for either
+  actor — deliberately not `coverData`/`HIDE_KINDS` (CTO plan decision 3).
+  Own spawn list (`throwableData`) and own `InstancedMesh`, independent of
+  the cover-prop system above.
+- Cannot be held two at once (`canGrabThrowable()`/`canThrowThrowable()`,
+  `lib/game/outcome.ts` — one `heldThrowable` boolean, not a stack).
+- Does not change `hearNoise()`/`isNoiseHeard()`/`checkNoise()` — those stay
+  exactly as before; a throw is an additive, parallel noise source.
+- No projectile arc / travel animation for v1 — landing is instant/computed,
+  not a simulated flight (Scout proposal's "cheap version"; a visible arc is
+  a possible follow-up).
+- No economy cost, cooldown, or respawn for v1 (Economist territory, later).
+
+**Behaviours & logic**
+- 90 fixed spawn points per map (`THROWABLE_COUNT`, LUL-1839 — up from the
+  Scout MVP's 10, ~1 stone found per run at an 8u acquisition radius, wiki
+  `game/economy/throwable-price`), rejection-sampled at
+  `generateMap()` time clear of tree trunks, home/spawn (12u), and each other
+  (6u) — `generateThrowables()`. Picked-up stones are hidden (parked
+  off-map, not removed from the array) via `layoutThrowableMeshes()`.
+- Predator targeting override is confined to the `approach` sub-phase only:
+  `updatePredators()`'s live-player `ux/uz/dist` are untouched for every
+  other consumer (`canSee()`, `hunt`, `chase`, roam's investigate-entry
+  check); only the local `approach`-branch target redirects to
+  `p.noiseTarget` while it's set. No new `p.state`/`p.inv` value — this is a
+  **deliberate, declared deviation from the CTO PLAN's literal "reuse
+  hearNoise() unchanged"** (spec §4.6): wiring a throw through `hearNoise()`
+  unmodified would have made the predator walk toward the live player, not
+  the landing spot, defeating the mechanic.
+- `shouldRevertInvestigateToChase()` (`lib/game/predator.ts`) is untouched —
+  hiding during the investigate window still works exactly like a normal
+  noise-hear; only the physical approach target differs while a decoy noise
+  is active.
+
+**Collision & physics profile**
+- No collider of any kind (neither actor). Detection-only: a one-shot
+  distance check on landing, not a per-frame roll like footstep noise.
+
+---
+
 ### Ground / terrain
 
 **What it can do**
@@ -557,6 +664,11 @@ one geometry builder (`makePredator()`), differentiated by the
   `maxSpd` while `inLakeWater()` is true — the visible water radius
   `CONFIG.lake.r` (15), a tighter circle than the `clear` ring spawn checks
   use, so the slow starts exactly where the water mesh does. LUL-791/LUL-392.
+- Slow predators too, the same way: `updatePredators()` samples
+  `lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake))` (and the bog's
+  equivalent) per predator per tick and folds it into every roam/hunt/chase/
+  investigate/flank speed — a predator that wades in pays the same cost the
+  player does. The `charge` dash is explicitly exempt (LUL-1309).
 - Bias the ambient "twinkle" chime to play brighter/more often when the
   player is near it (`distLake < CONFIG.lake.r*3`, `tick()`).
 - Deflect a predator's roam/stuck-recovery waypoint: `updatePredators()`'s
@@ -651,6 +763,12 @@ one geometry builder (`makePredator()`), differentiated by the
   map's `rng()` stream (see wiki `game/lul27-fog-tide` for the full
   reasoning). See Follow-light and Child below for the tide's other two
   effect surfaces (detect radius, child glow).
+- **As of `LUL-1486`**, the `fogTideAmount` above is sampled at the player's
+  own position via `fogTideAmountAt(player.x, player.z, fogTideAmount, ...)`
+  (`lib/game/fogTide.ts`) rather than being a whole-world constant — the fog
+  boost applies only within a fixed set of Fog Tide sites (`FOG_TIDE_SITES`),
+  not globally; standing outside every site's radius adds no boost
+  regardless of the global clock's phase.
 - **As of `LUL-1709`**, an additive `timeOfRun * TIME_OF_RUN_FOG_DELTA` term
   (`TIME_OF_RUN_FOG_DELTA = 0.10 - CONFIG.fog`) on top of the veil/tide terms
   above, driven by `timeOfRun` — a live 0→1 pacing clock that rises over
@@ -764,6 +882,12 @@ one geometry builder (`makePredator()`), differentiated by the
   (fogTideAmount)` (floor `FOG_TIDE_DETECT_MUL` 0.65 — a further 35% cut at
   full tide) in the same product as `veilDetectMul(veilAmount)` and the
   difficulty preset's own `detectMul` — all three stack multiplicatively.
+- **As of `LUL-1486`** (D2, ruled `LUL-1489`), the `fogTideAmount` fed into
+  `fogTideDetectMul` above is sampled at **the predator's own position**
+  (`fogTideAmountAt(p.x, p.z, fogTideAmount, ...)`, `lib/game/fogTide.ts`),
+  not the player's — a predator standing outside every `FOG_TIDE_SITES`
+  radius is not blinded by a tide it isn't standing in, even if the player
+  is inside one.
 - **As of `LUL-1709`/`LUL-1714`**, `timeOfRunDetectMul(timeOfRun)`
   (`lib/game/dayNight.ts`, unit tested — see `lib/game/dayNight.test.ts`,
   same pure-module split as `veilDetectMul()`/`fogTideDetectMul()`) — up to a
@@ -785,6 +909,13 @@ one geometry builder (`makePredator()`), differentiated by the
   cue reads as responsive. Only applied to this calm-bed audio mix — a
   chase already wins the audio outright, so the tide never fights the hunt
   cue.
+- **As of `LUL-1486`**, both `fogTideBuild`/`fogTideAmount` above are sampled
+  at **the player's position** (`fogTideBuildAt`/`fogTideAmountAt(player.x,
+  player.z, ...)`, `lib/game/fogTide.ts`) rather than being whole-world
+  constants — the camera and the listener are the player, so this is the
+  same physical-coherence rule D2 established for predators, applied to the
+  scene-fog/audio observer. Standing outside every `FOG_TIDE_SITES` radius
+  mutes the drone/wind-duck effect regardless of the global clock's phase.
 
 **What it CANNOT do**
 - Cannot be occluded by anything — **no shadow-casting exists anywhere in
@@ -817,7 +948,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 - **Engine-owned DOM** (`document.getElementById(...)`, created by
   `components/GameCanvas.tsx`, mutated directly by the engine): `#vignette`,
-  `#spotFlash`, `#flash`, `#minimap` (canvas, drawn every frame by
+  `#spotFlash`, `#bearingPulse`, `#flash`, `#minimap` (canvas, drawn every frame by
   `drawMinimap()`/`drawMinimapStatic()`), `#hint`, `#pausePrompt`,
   `#deathVideo`.
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
@@ -839,7 +970,79 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   LUL-1724 adds `#windIndicator`, a fixed top-right arrow rendered from two new
   read-only `EngineHudState` fields (`windX`/`windZ`), pushed once per map
   generation (not per-frame) — the only HUD element driven by map-constant
-  rather than per-frame or per-event engine state.
+  rather than per-frame or per-event engine state. LUL-1912 repositioned it to
+  `top:184px; right:16px` to clear `#minimap`'s own box (`top:16px; right:16px;
+  160x160`, which read as a child-position pointer), and added
+  `#windIndicatorHint`, a static one-time label below the arrow that fades out
+  after 7s via CSS animation (`windHintFade`, mirrors the existing `#hint`
+  movement-controls pattern) — no new engine state. LUL-1933 found that push
+  unconditional, so it followed every real player (`#minimap` is
+  `display:none` under `data-admin-mode="0"`, see above) and collided with
+  `MobileControls.tsx`'s bottom-anchored Hide/Veil column on short landscape
+  phones. `top:184px; right:16px`/`#windIndicatorHint`'s `top:214px` now apply
+  only under `body[data-admin-mode="1"]`; the default (real player) position
+  reverts to LUL-1724's original `top:20px; right:20px` (`#windIndicatorHint`
+  `top:50px; right:8px`), verified clear of `MobileControls` at every tested
+  viewport. LUL-2057 found the arrow's own ~54px rendered box (28px font,
+  ~1.2 line-height) still overlapped the hint's first line at that 30px gap;
+  `#windIndicatorHint`'s `top` moved to `64px` (default) / `228px`
+  (`data-admin-mode="1"`), a 14px increase in both, to clear it.
+  LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
+  below the existing time/payout line: a short chronological log of the run
+  ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
+  a stat dump. Engine-owned: `logChronicle(code, args)` in
+  `engine/forest-engine.js` appends a flat `{t, code, args}` entry at each of
+  ~8 call sites (`scentOnto()`, the three chase/investigate/flank give-up
+  transitions, `enterHide()`, `finishPickup()`, `arriveHome()`,
+  `triggerDeath()`, the fog-tide start/end branch) into a run-local `chronicle`
+  buffer, reset in `enter()`. The buffer is handed to React exactly once, in
+  the same `pushState()` call as `winVisible`/`deathVisible` — **not** streamed
+  live, because `pushState`'s shallow `!==` compare would treat a fresh array
+  as "changed" every frame if this were logged per-frame (see that function's
+  own comment). `lib/game/chronicle.ts` is the pure formatter (`formatChronicle()`,
+  `nearestLandmarkName()`) — no DOM, no Three.js, unit-testable on its own; it
+  also gives the four fixed navigational landmarks (`LANDMARKS` in
+  `engine/tuning.ts`) their first player-facing names. `#winText`/`#deathText`
+  both gained `max-height: calc(100dvh - 48px); overflow-y: auto` in the same
+  PR so a long chronicle can't overflow a phone viewport silently.
+  LUL-1194: the death screen copy names the *cause*, not the predator species
+  — a new `deathCause: 'charge'|'hunt'|'chase'` field, set by `triggerDeath()`
+  (three call sites in `updatePredators()`) and mapped to player-facing text
+  by `DEATH_CAUSE_TEXT` in `components/Hud.tsx`. `deathKind` (species) still
+  exists in state and DOM (`#deathKind`, now `display:none`) purely so the
+  existing e2e specs that assert on it keep working — it is no longer
+  rendered to the player. The death cutscene (`#deathVideo`, `CUT_END`=3.7s)
+  stays full-length and unskippable on the player's first-ever death only
+  (persisted via `localStorage['lullwood:hasDied']`, not per-page-load);
+  every death after that, any keydown or pointerdown skips straight to
+  `revealLoss()` (`skipCutsceneIfAllowed()`). Both end screens' restart
+  button also gains a `ref`-based focus-on-reveal in `Hud.tsx` (not raw
+  `autoFocus`, which would fire before the screen reveals and let a stray
+  Enter bypass the unskippable first cutscene via native button activation),
+  giving Enter/Space a keyboard path back into a new run for free.
+  Follow-up in the same ticket: both restart buttons are now `disabled`
+  until their screen's `*Revealed` flag is true. `#deathText`/`#winText`
+  are `opacity:0` but `pointer-events:auto` while unrevealed
+  (`components/GameCanvas.tsx`) — an un-disabled button there was a live,
+  invisible hitbox that a stray click (or the focus-then-Enter path just
+  added) could fire, restarting straight through the "unskippable" first
+  death cutscene. `disabled` blocks both click and keyboard activation
+  without a CSS change; the ref-focus effects already only fire on reveal,
+  so this doesn't fight them.
+
+LUL-1308 adds `#bearingPulse`, a screen-edge glow answering "which side is the nearest
+approaching predator on" for players who can't rely on the caption toggle (LUL-26) or
+the direction-free `#spotFlash`. Driven off the same `pianoTimer`-gated approach-cue
+block that fires `pianoNote()` (`updatePredators`'s threat-metrics scan): every note,
+`bearingOf(nearP, player, ...)` (`lib/game/bearing.ts`) resolves a side, and unless it's
+`'ahead'` (the player's own view already covers that case) the engine sets
+`bearingPulseSide`/`bearingPulseT` and the element's class/opacity follow. The same
+`bearingOf()` call also feeds `pianoNote()`'s new `pan` argument (a single
+`StereoPannerNode` per note, `lib/game/bearing.ts`'s `bearingPan()`), and
+`predatorCall()`'s volume now falls off with distance (`callVolumeMul()`, same module,
+folded in per the CEO's LUL-1282 addendum) instead of the old binary `big ? 1.0 : 0.6`.
+Not present: any compass, minimap dot, or degrees readout — deliberately rejected in the
+design doc as turning horror into radar.
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
@@ -883,18 +1086,22 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `embersBalance`: player's persisted currency balance (runs completed,
   predator kills, or other events), stored in `localStorage['lullwood:embers']`
-  and synced to `hudState` via `setEmbers()` (L3158-3162 in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
+  and synced to `hudState` via `setEmbers()` (in  `engine/forest-engine.js`). Earnable via `computeWinPayout()` /
   `computeDeathPayout()` in `lib/game/economy.ts`, applied via `applyPayout()`
   on win/death via `arriveHome()` / `triggerDeath()`. Both payout functions
   accept a `DifficultyTier` argument (`'lantern'`/`'night'`/`'blackout'`) that
-  scales the total by a tier multiplier (LUL-1412): lantern ×1.00/×1.00,
-  night ×1.75 win/×1.35 loss, blackout ×2.00 win/×1.25 loss. The engine passes
-  `difficulty` at both call sites.
+  scales every `RunPayout` field (`depth`/`survival`/`carried`/`home`, each
+  rounded individually) by a tier multiplier (LUL-1412, reconciled LUL-1640):
+  lantern ×1.00/×1.00, night ×1.75 win/×1.35 loss, blackout ×2.00 win/×1.25
+  loss. `total` is the sum of the already-rounded fields, so
+  depth+survival+carried+home always equals total on every tier (`RunRecap` in
+  `components/Hud.tsx` renders that sum). The engine passes `difficulty` at
+  both call sites.
 - `lastPayout`: breakdown of earnings from the run that just ended (null
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3045) and `triggerDeath()` (L3071).
+  both `track()` call sites in `arriveHome()` (L3841) and `triggerDeath()` (L3872).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -903,6 +1110,24 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   tier (tiers 0–3, `DEEPER_LUNGS_COSTS` array), persisted alongside balance as
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
+- `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
+  run in progress — `hudState` field (`engine/forest-engine.js` L2637),
+  reset to 0 on `enter()` (L2976) and recomputed every frame (`stepFrame()`,
+  called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
+  so a QA test clock can call it directly) while the run
+  is neither won nor dead (L4265: `computeDepth(maxDistFromHome) +
+  computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
+  `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
+  `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
+  screen is showing. It previews what `computeWinPayout()`'s depth+survival
+  terms will bank if the run ends now — it does not include the win-only
+  `CARRIED`/`HOME` terms, since those only pay out on a live arrival.
+- Death forfeiture display: `RunRecap`'s death branch
+  (`components/Hud.tsx` L339-340) shows a red
+  `-{CARRIED + HOME} lost (child & home, forfeited)` fragment instead of the
+  win branch's `+carried`/`+home` lines, making explicit that the win-only
+  `CARRIED`/`HOME` terms (both now exported from `lib/game/economy.ts` for
+  this display) are forfeited on death rather than silently omitted.
 
 **What it can do**
 - Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
@@ -941,12 +1166,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 **What it is**
 - `staminaCharge`: player's sprint-capacity meter, state in `engine/forest-engine.js` (L327), driven by `stepStamina()` and `sprintSpeedMul()` in `lib/game/stamina.ts`. Tracks the player's ability to sprint — the meter drains while running and refills while walking or idle.
 - **Live as of `LUL-1113`**: The player's top sprint speed is no longer uncapped — sprinting at full stamina approaches `CONFIG.walk*1.8` (10.8 u/s), but this multiplier decays as the stamina meter drops toward zero, scaling movement speed via `sprintSpeedMul(staminaCharge)`. Prevents unlimited outrunning of predators.
-- Audio cue (`staminaExertionCue()` L1946-1954): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
+- Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3344): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L4109, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
-- Reset to full on each new run: `staminaCharge = 1` on `restart()` (L3093-3108, alongside `staminaLowCuePlayed`).
+- Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
 - Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.
@@ -1006,6 +1231,135 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - N/A — not a spatial/world object. The mission *target* (the drowned car) is a `LANDMARKS`
   entry with its own existing decorative/navigational collision profile, unchanged by this
   entry; the mission struct only reads that entry's coordinates, it does not add new geometry.
+
+---
+
+### Wayfinding (LUL-1255 Ship 1: S2/S3/S4/S5/S6)
+
+**What it is**
+- **Implemented (LUL-1674), S2/S3/S5/S6 of the Ship 1 wayfinding spec; S4 (carried-noise
+  floor) implemented separately (LUL-1857).** No new verbs and no new collision for any of the
+  pieces below — all are passive visual/audio anchors, plus one new passive predator-detection
+  channel (S4, carry-leg only). S1 (home-light reach) is a separate ticket (LUL-1851) and is not
+  covered here.
+- **Landmark navigability cue (S2).** The four original `LANDMARKS` entries (`fireTower`,
+  `stoneMarker`, `oak`, `drownedCar`, `engine/tuning.js`) already function as a navigable
+  coordinate system; `enter()` (`engine/forest-engine.js`) now fires a one-time, unconditional
+  (not gated on `captionsOn`) caption on run start — `"landmarks in the fog are safe to
+  navigate by"` — as a nav tip, not a repeating audio-cue caption.
+- **The child's cry (S3).** `childCry(distToPlayer, srcX, srcZ)` (`engine/forest-engine.js`) is
+  a procedural, panned-by-bearing tone toward an explicit source position, same tempo/pitch-
+  carries-distance shape as the mission hum it predates in design (`missionWaypointHum()`
+  mirrors it), driven by a `cryTimer` countdown (5.5s far / 2s close outbound; pinned to 2s —
+  the closest-tempo floor — while carrying, LUL-1857) inside the same block that already renders
+  the child's idle glow (outbound) or the carrying-phase update (carry leg). Outbound, a roaming
+  predator can also hear it: `checkNoise(p, Math.hypot(baby.x-p.x, baby.z-p.z), cryNoiseRadius,
+  dt)` is a second, independent hearing check (last in the roam state's detection chain — sight,
+  scent, footstep, then cry) against the child's own fixed position, not the live player,
+  resolved via `hearCry(p)` which reuses LUL-1623's `p.noiseTarget`/`p.noiseTargetT`
+  point-target primitive (`p.noiseTargetT = Infinity` — the cry doesn't time out like a thrown
+  decoy's landing spot, it keeps sounding until the predator arrives). This outbound channel is
+  gated off entirely once `baby.taken`. `CRY_NOISE_RADIUS = 32` (`lib/game/noise.ts`),
+  fog-tide-scaled at the child's position (`fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z,
+  ...))`); predator spawn exclusion around the child raised from 26 to 34 units so nothing spawns
+  already inside the cry's audible range. Caption (gated on `captionsOn`): `"a child crying ·
+  <near|far> · <side>"`.
+- **Carried-noise floor (S4, LUL-1857).** While `carrying`, the same `cryTimer` (reused, not a
+  second clock) pulses `childCry(0, player.x, player.z)` every 2s — always "near", centered pan
+  (source = player position, since `baby.x/z` is a stale snapshot during carry, not live). Each
+  pulse also sets a one-tick `carriedCryPulse` flag, consumed the same frame inside
+  `updatePredators`'s `roam` state: `else if(!sniffImmune && carrying && carriedCryPulse && dist
+  < CARRIED_NOISE_FLOOR){ hearNoise(p); }` — a deterministic proximity check at the moment of the
+  pulse, not a per-frame `isNoiseHeard()` roll, and (unlike the outbound cry) resolved via
+  `hearNoise(p)` so it targets the *live player position*, since the noise source moves with the
+  player on the return leg. `CARRIED_NOISE_FLOOR = 0.4 * NOISE_RADIUS_WALK = 5.6` units
+  (`lib/game/noise.ts`), deliberately **not** fog-tide-scaled (kept under the 8u sniff-backoff
+  bound with margin). Only active for a still carrier — a *moving* carrier's footstep
+  `noiseRadius` channel is unchanged and unaffected. Also, a predator's terminal sniff-loop
+  give-up (`p.inv === 'sniff'`, `stepSniffLoop` returns not-`'back'`) now routes through a new
+  `p.inv = 'leave'` phase — walking away via `backOffPoint()`, same retreat speed as the
+  mid-loop `'back'` phase — instead of flipping to `roam` in place, when the give-up happens
+  `hidden && carrying`; ungated (non-carrying) give-up keeps its prior in-place behavior.
+- **Home fire crackle (S5).** `homeFireCrackle(dist)` (`engine/forest-engine.js`) is a
+  filtered-noise burst (reuses `hollowLogSound()`'s bandpass-noise chain, minus its sine thump)
+  panned by bearing to `CONFIG.home`, driven by a `homeFireTimer` on the same tempo-carries-
+  distance curve as the cry, firing only while `carrying`. Not predator-audible — this is the
+  return leg's audio cue, not a detection channel. Caption (gated on `captionsOn`): `"home fire
+  crackling · <near|far> · <side>"`.
+
+**What it can do**
+- All pieces are passive: no new key binding, no new `EngineActions` method, no new touch
+  target. Nothing here changes what the player or a predator can physically do beyond the two
+  hearing channels described above (outbound cry, S3; carried-noise floor, S4).
+
+**What it CANNOT do**
+- Cannot be re-triggered manually or skipped — all cues are driven purely by elapsed-time
+  timers and world state (`carrying`, `baby.taken`), not player input.
+- The outbound cry cannot pull a predator toward the live player — that's the exact bug this
+  design fixes by targeting `baby.x/z` via `p.noiseTarget`, not the live-player-anchored
+  `checkNoise`/`hearNoise` path every other hearing channel uses. The carried-noise floor (S4)
+  is the deliberate opposite: it targets the live player, because on the carry leg the noise
+  source (the child, in the player's arms) *is* the live player position.
+- The carried-noise floor cannot fire on a *moving* carrier — it's pulse-gated to the still-
+  carrying case; a moving carrier is only subject to the ordinary continuous footstep
+  `noiseRadius` roll, unchanged by this feature.
+
+**Collision & physics profile**
+- N/A for all pieces — no new geometry, no new spatial structure. Both hearing checks reuse
+  ordinary Euclidean distance and the existing `checkNoise`/`isNoiseHeard`/`hearNoise` predicates
+  unchanged; the carried-noise floor adds a distance threshold constant, not new geometry.
+
+---
+
+### Stone Marker veil-charm (LUL-1210)
+
+**What it is**
+- **Implemented (LUL-2067/LUL-1210).** A one-shot in-run spend at the Stone Marker landmark
+  (mesh/collider already shipped, LUL-374): 15 unbanked Embers buys a "reserve" that snaps a
+  fully-drained mist-veil (`KeyF`) back to its unlock threshold instead of locking it out, the
+  next time a full drain would otherwise happen. Second in-run Embers spend site, after Deeper
+  Lungs (which is a between-run purchase, not in-run).
+- Purchase gate `canBuyVeilCharm`, computed every tick (`engine/forest-engine.js:4137`):
+  `!carrying && !veilReserve && distStoneMarker < VEIL_CHARM_INTERACT_RADIUS &&
+  computeDepth(maxDistFromHome) >= VEIL_CHARM_PRICE`. `VEIL_CHARM_INTERACT_RADIUS` (4 units,
+  `engine/tuning.js:68`) and `VEIL_CHARM_PRICE` (15, `lib/game/economy.ts:74`).
+- `buyVeilCharm()` (`engine/forest-engine.js:3445`): sets `veilReserve = true`, adds
+  `VEIL_CHARM_PRICE` to `embersSpent`, fires a caption + `feature_engagement`/`veil_charm`
+  telemetry event.
+- `stepVeilCharge()`'s `reserve` branch (`lib/game/veil.ts:59`): on a full drain, if `reserve` is
+  true it snaps `charge` back to the unlock threshold and clears `reserve` instead of setting
+  `locked`; identical to prior behaviour when `reserve` is false.
+
+**What it can do**
+- Reachable via both interact paths: desktop `KeyE` and mobile `triggerTouchInteract()` (the
+  existing tap-and-hold interact target — no new touch control), same shape as pickup/mission
+  completion.
+- Deduct the spend from the run's live unbanked pile display (`livePileEmbers`) immediately, and
+  from the final payout via `applySpend()` (`lib/game/economy.ts`), applied at both `arriveHome()`
+  and `triggerDeath()` so the spend is honestly reflected whether the run ends in a win or a death.
+
+**What it CANNOT do**
+- Never offered while `carrying` — same hard gate as every other landmark purchase.
+- Never a second currency/spend UI surface — a single in-world interact prompt, not a shop panel.
+- Cannot fail for lack of funds in normal play: by the Stone Marker's fixed 125-unit distance from
+  home, `computeDepth(maxDistFromHome) >= 31` by geometry at the point of purchase, a 16-point
+  margin over the 15-point price (the `computeDepth(...) >= VEIL_CHARM_PRICE` guard is kept as a
+  correctness backstop, not removed as dead code).
+- Only one reserve may be banked at a time (`!veilReserve` in the gate) — cannot stack multiple
+  charms.
+
+**Behaviours & logic**
+- Reset per-run: `veilReserve = false; embersSpent = 0;` in `enter()`.
+- HUD prompt text (`engine/forest-engine.js`, the `objectiveText`/`objectiveReady` `pushState()`
+  block): `'Press  E  for a mist-charm  ·  15 embers'` when `canBuyVeilCharm` and no higher-priority
+  prompt (pickup/carry/mission) applies; `objectiveReady` is `canPickup || canBuyVeilCharm`.
+- `RunRecap` (`components/Hud.tsx`) renders a `· −{payout.spent} charm` fragment when
+  `payout.spent > 0`, so the earnings breakdown still reads as sums to `total` after a spend.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object of its own. Uses the Stone Marker landmark's existing
+  decorative/navigational collision profile (`landmarkGroups.stoneMarker.position`, live post-nudge
+  position), unchanged by this entry.
 
 ---
 
@@ -1223,22 +1577,42 @@ registry's own merge.
 
 ---
 
-## The Bog (LUL-25 / LUL-1483) — live on `main`
+## The Bog (LUL-25 / LUL-1483 / LUL-1902)
 
-`isInBog()`/the fixed z-band this section used to describe are gone
-(LUL-1483). The bog is now a biome distributed by 2D value noise over the
-whole `[-half, half]` square (`biomeAt(x, z)`, `lib/game/bog.ts`), not a
-directional strip past the forest's old +z edge — the world is square again,
-not a 240×360 rectangle.
+LUL-1902 replaced the 2D-noise-scattered biome (many patches, ~30-37% of the map) with a
+single fixed zone: `biomeAt(x, z)` now derives bogginess from distance to `BOG_CENTER`
+(`lib/game/bog.ts`), radial falloff smoothstepped between `BOG_INNER_RADIUS` (full
+bogginess) and `BOG_OUTER_RADIUS` (dry), same edge-softness approach as before — the bog is
+now one discoverable place (~25% of the map), not ambient terrain variation. Cost model
+(`bogSpeedMultiplier`/`bogNoiseMultiplier`, reeds, bog trees, splash foley) is byte-for-byte
+unchanged from LUL-1483 — only *where* bogginess is nonzero changed. `oak`/`drownedCar`
+(below) still sit inside the zone without repositioning; `CONFIG.lake` and
+`CONFIG.home`/spawn are both explicitly carved out to stay dry, mirroring each other's
+pattern (`HOME_CLEAR_RADIUS`/`HOME_FADE_RADIUS`, `LAKE_CLEAR_RADIUS`/`LAKE_FADE_RADIUS`).
 
 **New elements it adds**: `BogTree` (90-instance thinner-cover twin of Tree,
 own `bogTreeData` array, merged into the shared `grid` for collision),
 `Reed` (tall `coverData` kind `'reed'`, LOS-blocking like Rock/Log/Bramble
-but **not** in `HIDE_KINDS` — not a hiding spot), four fixed `Landmark`
-groups (fire tower, stone marker, drowned car, lightning-split oak — static,
+but **not** in `HIDE_KINDS` — not a hiding spot), seven fixed `Landmark`
+groups (fire tower, stone marker, drowned car, lightning-split oak, radio
+mast, chapel steeple, cave — static,
 no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`; `oak`
 and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit
-inside an actual bog patch now that the bog is no longer a fixed band), and
+inside an actual bog patch now that the bog is no longer a fixed band),
+`radioMast` and `chapelSteeple` (LUL-1782) sit in the outer ring, radius
+~178-179, restoring fixed orientation geography on the leg past the original
+four that LUL-1484's map growth left featureless. `cave` (LUL-1904) is the
+first landmark whose spawn and visibility are conditional per-round (~50%
+via a seeded coin-flip in `generateMap()`, drawn last in the rng stream)
+rather than always-present; walking into its `interactR` grants a one-shot
+25s sight+scent detection immunity (`CAVE_IMMUNITY_TIME`, `lib/game/cave.ts`),
+hooked into `effectiveDetect()`/`canSee()`/`checkScent()`. As of LUL-1855,
+`radioMast` additionally carries a small fog-exempt additive sprite on its
+beacon (`RADIO_MAST_BEACON_GLOW`, `engine/tuning.js`) so it stays visible as a
+dim, slowly-pulsing point past the fog line that erases the other five -- a
+bearing, not a lit scene; the other five landmarks (other than `cave` and
+`radioMast`) are unchanged and still fog-occluded at the same distances
+documented above. and
 the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
 boolean, so a patch edge scales speed/noise in rather than stepping. It
 scales player/predator walk speed down and noise radius up while standing in
@@ -1247,6 +1621,19 @@ it (`bogSpeedMultiplier`/`bogNoiseMultiplier`, applied to both the player,
 multiplier in `updatePredators()`), and is kept fully dry around
 `CONFIG.home`/spawn regardless of the noise field (`HOME_CLEAR_RADIUS`/
 `HOME_FADE_RADIUS` in `lib/game/bog.ts`).
+
+**LUL-1902 — wolf-only scent-masking**: standing in (or having recently left) the bog
+suppresses the player's scent specifically against wolf-type predators. A persisted
+`playerBogMask` (`engine/forest-engine.js`) rises instantly with `biomeAt(player.x,
+player.z)` and decays linearly to 0 over `BOG_MASK_DECAY_TIME` (6s, `lib/game/bog.ts`)
+once the player leaves — not an instant on/off at the patch edge. `checkScent()` reduces
+only `p.spec.nose` for `p.kind === 'wolf'` by up to `WOLF_BOG_MASK_STRENGTH` (0.7, i.e. a
+70% nose-multiplier cut at full mask — not 100%, so a wolf already close on the trail can
+still catch it). Bears, lions, and all sight-based `detect`/`canSee` are untouched. This is
+a deliberate tradeoff, not a safe room: the bog already costs half walk speed and 1.6x
+noise radius, so using it to shake a wolf is a real bet against being heard by a bear or
+lion instead (`docs/decisions` — wiki `game/mechanics/bog-consolidation`, CEO decision
+2026-09-07, explicitly rejected a hard predator-exclusion zone for this reason).
 
 **What's already known and citable**: reeds reuse the exact same
 `coverMeshes`/`coverGrid`/`hasLOS()` machinery as Rock/Log/Bramble, with zero
@@ -1259,3 +1646,22 @@ Rock-shaped `C+LOS` for both actors as of LUL-1643 (²³), Log/Bramble-shaped
 LOS-only walkable cover) — Reed shares Rock's `coverKindBlocksMovement()`
 predicate (both `!HIDE_KINDS` kinds), so it also became a real predator
 collider in the same change, not just a player one.
+
+## Startled roosts, slice (a) (LUL-1914) — one-way predator-flush feedback
+
+Five fixed canopy sites (`ROOSTS`, `engine/tuning.js`, static list alongside
+`LANDMARKS` — no `rng()` draw, seeds stay byte-identical). Each tick,
+`updateRoosts(dt)` (`engine/forest-engine.js`) checks active, non-`inert`
+predators in `state === 'chase'` against each site's radius (20 units); on
+entry it fires a small upward `THREE.Points` burst (fog-exempt, reads above
+the fog line) and a positional wing-clatter (`roostFlushSound()`, modeled on
+`scheduleBirdChirp`'s synthesis graph and `missionWaypointHum`'s panner/
+falloff math), then puts that site on a 32s cooldown (`ROOST_COOLDOWN`).
+
+**One-way only in this slice**: the player never flushes a roost, and no
+`hearThrowableNoise()`-style noise event is created — `updateRoosts()` never
+calls `effectiveDetect()`, `canSee()`, or writes any field on a predator. This
+is a feedback/presentation layer, same class as `#bearingPulse` (LUL-1308) and
+LUL-1855's beacon glow. Slice (b) (two-way, player-triggered, Tier C) and slice
+(c) (`lib/game/eventSites.ts`-registered) are deferred — see wiki
+`decisions/startled-roosts-2026-09-07`.

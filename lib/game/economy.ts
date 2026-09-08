@@ -27,6 +27,7 @@ export interface RunPayout {
   survival: number;
   carried: number;
   home: number;
+  spent: number;
   total: number;
 }
 
@@ -46,8 +47,8 @@ export function freshEmbersState(): EmbersState {
 
 // ---- Earn ------------------------------------------------------------
 
-const CARRIED = 60; // win only -- the child's warmth
-const HOME = 25; // win only -- the doorstep
+export const CARRIED = 120; // win only -- the child's warmth
+export const HOME = 50; // win only -- the doorstep
 const DEPTH_DIVISOR = 4; // "how far out you dared"
 const SURVIVAL_UNIT_SECONDS = 20;
 const SURVIVAL_CAP = 6; // load-bearing: stalling in a bush stops paying past 120s
@@ -67,16 +68,32 @@ export function computeSurvival(survivedSeconds: number): number {
 // game/economy/mission-rewards §2 ("the greed comes from the depth").
 export const MISSION_DEEPWATER_REWARD = 12;
 
+// LUL-1210: Stone Marker veil-charm, priced against Deeper Lungs I (120) so it reads as
+// worse value than saving -- game/economy/veil-charm-price. 125-unit landmark distance ->
+// depth >= 31 at the point of purchase by geometry, 16-point margin.
+export const VEIL_CHARM_PRICE = 15;
+
+// LUL-1640 forward-fix (LUL-1412): every RunPayout field is scaled and rounded
+// individually, and `total` is the sum of those already-rounded fields --
+// never an independent round of the raw sum. This guarantees
+// depth+survival+carried+home===total by construction (the invariant
+// components/Hud.tsx's RunRecap renders), instead of only holding at ×1.00.
+// missionBonus has no RunPayout field of its own (LUL-1258, unchanged here)
+// and is folded straight into total, scaled the same as everything else.
 export function computeWinPayout(
   maxDistFromHome: number,
   survivedSeconds: number,
   tier: DifficultyTier = 'lantern',
   missionBonus = 0,
 ): RunPayout {
-  const depth = computeDepth(maxDistFromHome);
-  const survival = computeSurvival(survivedSeconds);
-  const total = Math.round((depth + survival + CARRIED + HOME + missionBonus) * TIER_MULTIPLIERS[tier].win);
-  return { depth, survival, carried: CARRIED, home: HOME, total };
+  const mult = TIER_MULTIPLIERS[tier].win;
+  const cappedDepth = Math.min(computeDepth(maxDistFromHome), 62); // caps blackout's 2.0x win multiplier at 476E (post-LUL-1806 CARRIED/HOME); inert for lantern/night, whose max depth is 48
+  const depth = Math.round(cappedDepth * mult);
+  const survival = Math.round(computeSurvival(survivedSeconds) * mult);
+  const carried = Math.round(CARRIED * mult);
+  const home = Math.round(HOME * mult);
+  const total = depth + survival + carried + home + Math.round(missionBonus * mult);
+  return { depth, survival, carried, home, spent: 0, total };
 }
 
 export function computeDeathPayout(
@@ -85,14 +102,25 @@ export function computeDeathPayout(
   objectiveDistFromHome: number,
   tier: DifficultyTier = 'lantern',
 ): RunPayout {
-  const depth = Math.min(computeDepth(maxDistFromHome), computeDepth(objectiveDistFromHome));
-  const survival = computeSurvival(survivedSeconds);
-  const total = Math.round((depth + survival) * TIER_MULTIPLIERS[tier].loss);
-  return { depth, survival, carried: 0, home: 0, total };
+  const mult = TIER_MULTIPLIERS[tier].loss;
+  const cappedDepth = Math.min(computeDepth(maxDistFromHome), computeDepth(objectiveDistFromHome));
+  const depth = Math.round(cappedDepth * mult);
+  const survival = Math.round(computeSurvival(survivedSeconds) * mult);
+  const total = depth + survival;
+  return { depth, survival, carried: 0, home: 0, spent: 0, total };
 }
 
 export function applyPayout(state: EmbersState, payout: RunPayout): EmbersState {
   return { ...state, balance: state.balance + payout.total };
+}
+
+/** Deducts an in-run unbanked spend (e.g. the Stone Marker charm) from a computed payout,
+ * clamped so `total` never goes negative. Does not touch depth/survival/carried/home --
+ * `spent` is a separate, honestly-labeled line item, not folded into the other four (which
+ * LUL-1640/LUL-1412 made sum to `total` by construction before any spend is applied). LUL-1210. */
+export function applySpend(payout: RunPayout, spentAmount: number): RunPayout {
+  const spent = Math.max(0, Math.min(spentAmount, payout.total));
+  return { ...payout, spent, total: payout.total - spent };
 }
 
 // ---- Spend: Deeper Lungs, the cheap version's one sink ----------------

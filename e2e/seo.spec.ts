@@ -17,6 +17,7 @@ test.describe('SEO metadata', () => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     await expect(page).toHaveTitle(SITE_TITLE);
+    expect(await page.locator('meta[name="google-site-verification"]').count()).toBe(0);
 
     const head = await page.evaluate(() => {
       const meta = (name: string, attr: 'name' | 'property' = 'property') =>

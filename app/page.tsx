@@ -1,3 +1,4 @@
+import Link from "next/link";
 import GameLoader from "@/components/GameLoader";
 
 // Server-rendered content shell, LUL-46 (M3b). The game itself stays
@@ -160,6 +161,15 @@ export default function Home() {
           <p>
             A successful run takes a few minutes. Dying is common early on,
             and each attempt generates a fresh forest layout.
+          </p>
+        </section>
+        <section>
+          <h2>Got an idea?</h2>
+          <p>
+            <Link href="/suggest" className="about-suggest-link">
+              Suggest something for Lullwood
+            </Link>{" "}
+            — the founder reads every suggestion by hand.
           </p>
         </section>
       </main>

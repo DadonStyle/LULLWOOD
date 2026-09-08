@@ -125,6 +125,18 @@ const OVERLAY_STYLE = `
        the screen than on desktop, which is the point (small map = useless
        map): shrinking it to "save space" would fight the same "legible on a
        phone screen" requirement this block exists for. */
+    /* LUL-1935: MobileControls' Pause button (pauseWrapper) is fixed at
+       top: calc(16px + env(safe-area-inset-top)), left: calc(16px + ...),
+       44px circle + 1.5px border -- bottom edge lands at ~63px + the inset.
+       #missionPanel defaults to that identical top:16/left:16 corner, so on
+       mobile (any width, any orientation -- this query catches landscape
+       too, unlike a bare max-width check) it sat directly under the button
+       and got covered. Push it below the button with a clear gap instead of
+       moving Pause -- Pause's corner is deliberately chosen for reachability
+       (see MobileControls.tsx LUL-529 comment); #missionPanel is
+       pointer-events:none display text with no touch target of its own, so
+       it's the one with nothing to lose by moving. */
+    #missionPanel { top: calc(76px + env(safe-area-inset-top)); }
   }
 
   /* LUL-69: mobile-only, portrait-only -- see components/OrientationGate.tsx.
@@ -220,6 +232,7 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #objective,
   body[data-high-contrast="1"] #status,
   body[data-high-contrast="1"] #actionPrompt,
+  body[data-high-contrast="1"] #throwPrompt,
   body[data-high-contrast="1"] #captionToast,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
   body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
@@ -227,26 +240,24 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
   body[data-high-contrast="1"] #actionPrompt { color: #ffe6b0; border-color: #ffcf7a; }
   body[data-high-contrast="1"] #actionPrompt.urgent { color: #ff9f9f; border-color: #ff6b6b; }
+  body[data-high-contrast="1"] #throwPrompt { color: #ffe6b0; border-color: #ffcf7a; }
 
   /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
      Default OFF hides the tuning/dev HUD (#panel's pace/mist/sound/regen/fullscreen
      controls, plus #minimap); ON is today's behaviour, unchanged.
-     #settingsBtn lives inside #panel but is deliberately exempted here -- hiding
-     it along with the rest of #panel would strand a player who just turned admin
-     mode off with no way to reopen Settings and turn it back on. Flagged as a
-     declared deviation from the literal "hide id=panel" ticket wording; see the
-     LUL-650 PR body.
-     #lightState/#veilState (LUL-656) are also exempted: they're the hold-to-veil
-     readout (LUL-40/382), not a dev-tuning control, and were caught by this
-     blanket selector unintentionally -- the primary in-world feedback (vignette
-     dim + fog billow) still works without them, but every player lost the exact
-     charge % and the "(recharging)" explanation by default.
+     LUL-650/LUL-656 originally carved #settingsBtn and #lightState/#veilState out
+     of this rule so a player who turned admin mode off wouldn't lose Settings or
+     the hold-to-veil readout. LUL-1085 (hamburger-menu migration) superseded that:
+     #settingsBtn moved out of #panel entirely into components/GameMenu.tsx, and
+     #panel was re-scoped to dev-only monitoring (pace/fog/lightState/veilState/
+     embersBalance) with no exemption selector. There is no carve-out left --
+     every #panel child, #lightState/#veilState included, is hidden by default
+     (LUL-1824/game/lul1724-panel-dev-only-finding). The real player-facing tell
+     for veil/light is the in-world vignette dim + fog billow, not this HUD.
      #minimap needs !important: the engine writes its own inline
      mm.style.display (blackout difficulty preset, forest-engine.js), which
-     beats a plain rule.
-     LUL-1085: #panel is now dev-only (pace/fog/lightState/veilState/embersBalance
-     for monitoring). Player-facing menu moved to components/GameMenu.tsx. */
+     beats a plain rule. */
   body[data-admin-mode="0"] #panel { display: none !important; }
   body[data-admin-mode="0"] #minimap { display: none !important; }
 
@@ -268,9 +279,16 @@ const OVERLAY_STYLE = `
 
   /* LUL-1258: M2 Deepwater's minimal mission panel -- two collapsed lines,
      top-left, per decisions/missions-accepted-2026-09-01 §2. Small and
-     read-only (no touch target), so it needs no mobile media-query override:
-     it never grows past a couple of words at any viewport. */
-  #missionPanel { position: fixed; top: 16px; left: 16px; z-index: 10;
+     read-only (no touch target). LUL-1935: it does need a mobile override --
+     MobileControls' Pause button (components/MobileControls.tsx pauseWrapper)
+     is fixed to that exact same top:16/left:16 corner, so on mobile the two
+     sit on top of each other regardless of how short the mission text is.
+     See the mobile media query below for the fix.
+     LUL-1942: pushed past #gameMenu's 48px toggle button (components/GameMenu.tsx,
+     also top:16/left:16) so the pill no longer prints under the hamburger icon --
+     this held on every viewport/state the QA layout audit measured, not just
+     mobile, since #gameMenu is never hidden or repositioned on desktop. */
+  #missionPanel { position: fixed; top: 76px; left: 16px; z-index: 10;
     display: flex; align-items: center; gap: 8px; pointer-events: none;
     padding: 6px 12px; border-radius: 999px;
     background: rgba(12,17,26,0.55); border: 1px solid rgba(150,175,215,0.14);
@@ -279,9 +297,31 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #missionGlyph { color: #7fa6dd; }
 
+  /* LUL-1904: cave detection-immunity countdown -- always visible while active,
+     top-center below #objective so it never overlaps the mission panel or the
+     wind indicator. */
+  #caveImmunePanel { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 12;
+    padding: 6px 14px; border-radius: 999px; pointer-events: none;
+    background: rgba(20,40,36,0.6); border: 1px solid rgba(111,214,196,0.4);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    font-size: 13px; letter-spacing: 0.04em; color: #a8f0e0;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+
   #windIndicator { position: fixed; top: 20px; right: 20px; z-index: 12;
     font-size: 28px; color: #ddd; text-shadow: 0 0 4px rgba(0,0,0,0.6);
     transform-origin: 50% 50%; pointer-events: none; }
+
+  #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
+    font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none;
+    animation: windHintFade 7s ease forwards; }
+  @keyframes windHintFade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* LUL-1912's minimap-clearance push only matters in admin/dev view -- #minimap is
+     display:none for every real player (data-admin-mode="0"), so top:20/right:20 above
+     is what players and the QA tester actually see; push down only under admin mode. */
+  body[data-admin-mode="1"] #windIndicator { top: 184px; }
+  body[data-admin-mode="1"] #windIndicatorHint { top: 228px; }
 
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;
@@ -292,11 +332,20 @@ const OVERLAY_STYLE = `
   #winText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column;
     align-items: center; gap: 6px; pointer-events: auto;
     background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86));
-    padding: 24px; border-radius: 4px; }
+    padding: 24px; border-radius: 4px;
+    /* LUL-1103: #runChronicle can add up to 10 lines below the recap -- without
+       this, a landscape phone (e.g. 851x393) has ~250px for h1+recap+button and
+       the chronicle silently scrolls off-screen. Same pattern as #settingsPanel's
+       own max-height (GameCanvas.tsx, "narrow" media query above). */
+    max-height: calc(100dvh - 48px); overflow-y: auto; }
   #winText h1 { margin: 0; font-size: 40px; font-weight: 400; letter-spacing: 0.14em;
     color: #ffe6c8; text-shadow: 0 2px 44px rgba(255,190,130,0.5); }
   #winText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #cbb7a4; }
+  #runChronicle { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px;
+    letter-spacing: 0.03em; color: #a99; text-align: left; max-width: 360px; }
+  #runChronicle li { margin: 2px 0; }
   .emberGain { color: #ffdca8; font-weight: 500; }
+  .emberLoss { color: #ff8a8a; font-weight: 500; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px;
     /* LUL-1088 CASCADE-ORDER BUG GUARD: the mobile-only .restartBtn override up
@@ -323,6 +372,19 @@ const OVERLAY_STYLE = `
   .buyBtn:hover:not(:disabled) { background: rgba(150,175,215,0.24); }
   .buyBtn:disabled { opacity: 0.45; cursor: default; }
   .buyBtn:focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
+
+  /* LUL-1623: holding-a-throwable affordance. Sits above #status (74px) so it
+     never overlaps the hidden/hunted line or #actionPrompt (92px) -- all three
+     can in principle be visible together (holding a stone while hidden). */
+  #throwPrompt { position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 12;
+    display: flex; align-items: center; gap: 0; pointer-events: none;
+    padding: 7px 16px; border-radius: 999px; white-space: nowrap;
+    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+  #throwKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
 
   /* status line (hiding / hunted) */
   #status { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 12;
@@ -374,13 +436,25 @@ const OVERLAY_STYLE = `
   /* death: video cutscene + loss text */
   #spotFlash { position: fixed; inset: 0; z-index: 12; pointer-events: none; opacity: 0;
     background: radial-gradient(circle at 50% 45%, rgba(255,20,20,0) 40%, rgba(200,0,0,0.5) 100%); }
+  /* LUL-1308: off-screen predator bearing. z-index one below spotFlash so a
+     real spot event (the more urgent, full-screen signal) reads on top if both
+     are active at once. Class name ('left'/'right'/'behind') set by the engine
+     off bearingOf(nearP,...).side; opacity is the only per-frame mutation. */
+  #bearingPulse { position: fixed; inset: 0; z-index: 11; pointer-events: none; opacity: 0; }
+  #bearingPulse.left { background: linear-gradient(to right, rgba(255,60,40,0.55) 0%, rgba(255,60,40,0) 22%); }
+  #bearingPulse.right { background: linear-gradient(to left, rgba(255,60,40,0.55) 0%, rgba(255,60,40,0) 22%); }
+  #bearingPulse.behind { background:
+    linear-gradient(to right, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%),
+    linear-gradient(to left, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%); }
   #flash { position: fixed; inset: 0; z-index: 23; pointer-events: none; opacity: 0; background: #fff; }
   #deathVideo { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
     z-index: 24; display: none; background: #000; pointer-events: none; }
   #deathScreen { position: fixed; inset: 0; z-index: 25; display: none;
     align-items: center; justify-content: center; text-align: center; padding: 24px;
     background: rgba(4,3,5,0); pointer-events: none; }
-  #deathText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: auto; }
+  #deathText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: auto;
+    /* LUL-1103: see #winText's identical rule above -- same phone-viewport overflow risk from #runChronicle. */
+    max-height: calc(100dvh - 48px); overflow-y: auto; }
   #deathText h1 { margin: 0; font-size: 44px; font-weight: 400; letter-spacing: 0.2em;
     color: #e8554a; text-shadow: 0 2px 50px rgba(255,40,30,0.5); }
   #deathText p { margin: 0 0 8px; font-size: 15px; letter-spacing: 0.05em; color: #b98f88; }
@@ -398,6 +472,7 @@ function overlayMarkup(mobile: boolean) {
   return `
 <div id="vignette"></div>
 <div id="spotFlash"></div>
+<div id="bearingPulse"></div>
 <div id="flash"></div>
 <canvas id="minimap" width="160" height="160"></canvas>
 <div id="hint">${hint}</div>

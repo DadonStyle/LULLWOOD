@@ -14,6 +14,9 @@
 // were never fed the seeded `rng()` (see rnd()) that other systems use, and
 // that split is preserved exactly, not unified.
 
+import { ROAM_STEP_FRAC } from '../../engine/tuning.js';
+import { wrapCoord, wrapDelta } from './wrap.ts';
+
 export type RNG = () => number;
 
 // ---- sniff-count rolls ------------------------------------------------------
@@ -157,6 +160,50 @@ export function isSniffImmune(sniffImmuneT: number, hidden: boolean): boolean {
   return hidden && sniffImmuneT > 0;
 }
 
+// ---- last-known-position return sweep (LUL-1573/LUL-1620) -----------------------
+// A predator that gives up (investigate/sniff or flank/hold, never chase's
+// distance-based give-up -- see spec) stashes where it lost the player and
+// gets a bounded number of ring-biased roam waypoints before it truly
+// forgets. Alien: Isolation's director shape: area, not point; bounded, not
+// permanent. `LKP_REPEAT_RADIUS` is the Game Economist's requirement
+// (predator-memory-depth-farming.md): a camper who stays near the spot they
+// were lost keeps getting re-swept; one who has genuinely moved on does not
+// burn the remaining bounded count for nothing.
+export const LKP_MAX_SWEEPS = 3;       // bounded return sweeps before permanent amnesia
+export const LKP_RING_RADIUS = 18;     // base distance (units) of a sweep waypoint from the remembered point
+export const LKP_RING_JITTER = 10;     // + 0..this: sweep waypoints land 18..28u from the remembered point
+export const LKP_REPEAT_RADIUS = 32;   // ~1.78x LKP_RING_RADIUS, inside the Economist's 1.5-2.0x band
+
+export interface RoamWaypointPick {
+  x: number;
+  z: number;
+  /** Write back onto p.lkpSweeps. 0 means memory is cleared for real this tick. */
+  sweepsLeft: number;
+}
+
+// Replaces the roam waypoint pick inline at engine/forest-engine.js:1377-1380.
+// `sweepsLeft > 0` selects the ring-biased branch (search around the
+// remembered point); `sweepsLeft === 0` reproduces LUL-1808's map-size-scaled
+// uniform pick byte-for-byte (same two rng() draws, same formula, `half` is
+// the map half-size), so a predator that has never had a memory, or whose
+// memory already cleared, behaves exactly as it does on `release/next` today.
+export function pickRoamWaypoint(
+  rng: () => number,
+  px: number, pz: number,
+  lkpX: number, lkpZ: number, sweepsLeft: number,
+  playerDistFromLkp: number,
+  half: number,
+): RoamWaypointPick {
+  if (sweepsLeft > 0) {
+    const a = rng() * Math.PI * 2;
+    const r = LKP_RING_RADIUS + rng() * LKP_RING_JITTER;
+    const continues = sweepsLeft - 1 > 0 && playerDistFromLkp <= LKP_REPEAT_RADIUS;
+    return { x: lkpX + Math.cos(a) * r, z: lkpZ + Math.sin(a) * r, sweepsLeft: continues ? sweepsLeft - 1 : 0 };
+  }
+  const a = rng() * Math.PI * 2, r = half * (ROAM_STEP_FRAC.min + rng() * ROAM_STEP_FRAC.range);
+  return { x: px + Math.cos(a) * r, z: pz + Math.sin(a) * r, sweepsLeft: 0 };
+}
+
 // ---- investigate re-escalation gate (LUL-562) -------------------------------------
 // `investigate`'s `if(!hidden){ p.state='chase'; }` (main, line 1364) fired
 // for *any* `p.inv` sub-phase, including a freshly-entered 'approach' --  but
@@ -185,8 +232,16 @@ export function isSniffImmune(sniffImmuneT: number, hidden: boolean): boolean {
 // the wiki page above), and closing it would mean touching the sniff/back
 // sub-loop's own timing, which the ticket is explicit about not retuning.
 // Flagged for the tester/VP R&D rather than built speculatively.
+//
+// LUL-1090: 'standoff' (the walk to SNIFF_STANDOFF before settling into
+// 'sniff') added to the same close-range set. No livelock risk here the way
+// 'approach' has: 'standoff' is only ever entered while `hidden` is already
+// true (see the engine's enterSniff branch), so this check can only fire on
+// it after a real player action (breaking cover) flips `hidden` false
+// between frames -- never on the same tick 'standoff' is set, unlike
+// 'approach' which can be freshly (re-)entered with `hidden` already false.
 export function shouldRevertInvestigateToChase(inv: string, hidden: boolean): boolean {
-  return !hidden && (inv === 'sniff' || inv === 'back');
+  return !hidden && (inv === 'sniff' || inv === 'back' || inv === 'standoff');
 }
 
 // ---- investigate approach step (LUL-658) ------------------------------------------
@@ -249,9 +304,49 @@ export function backOffPoint(
   dist: number,
   half: number,
   zMax: number = half,
+  span: number = Infinity,
 ): [number, number] {
+  const rawX = x - ux * dist, rawZ = z - uz * dist;
+  if (Number.isFinite(span)) return [wrapCoord(rawX, span), wrapCoord(rawZ, span)];
   const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
-  return [clamp(x - ux * dist, -half + 4, half - 4), clamp(z - uz * dist, -half + 4, zMax - 4)];
+  return [clamp(rawX, -half + 4, half - 4), clamp(rawZ, -half + 4, zMax - 4)];
+}
+
+// ---- LUL-1090: sniff standoff distance -------------------------------------------
+// stepApproach()'s enterSniff transition alone leaves a predator standing at
+// `rad + SNIFF_APPROACH_MARGIN` (2.5-3.2 units depending on species) from a
+// *hidden* player -- about two and a half metres against a 2.2-unit eye
+// height. The founder: "when hiding and predator is sniffing u take the
+// predator few meter back, its too close". This only changes WHERE a
+// predator stands when it starts sniffing a hidden player; it does not touch
+// SNIFF_IMMUNITY_TIME, rollSniffs, or stepSniffLoop's timing/re-detection.
+//
+// `SNIFF_STANDOFF` is the target distance from the *player*, not a retreat
+// amount from the predator's current position -- reusing backOffPoint's
+// placement math (which does take a retreat amount) with `SNIFF_STANDOFF -
+// dist` as that amount lands the predator exactly `SNIFF_STANDOFF` from the
+// player regardless of how close `dist` already was, same clamp-to-map-bound
+// behavior as every other waypoint here.
+//
+// `SNIFF_STATUS_RANGE` is the "something is sniffing you" status-line range
+// in engine/forest-engine.js (`p.state==='investigate' && dist < N`) --
+// declared here, next to SNIFF_STANDOFF, specifically so the two can never
+// drift apart: SNIFF_STATUS_RANGE must stay comfortably above SNIFF_STANDOFF
+// or a predator holding its standoff distance loses the warning line at the
+// worst possible moment.
+export const SNIFF_STANDOFF = 4.5;
+export const SNIFF_STATUS_RANGE = 8;
+export function sniffStandoffPoint(
+  x: number,
+  z: number,
+  ux: number,
+  uz: number,
+  dist: number,
+  half: number,
+  zMax: number = half,
+): [number, number] | null {
+  if (dist >= SNIFF_STANDOFF) return null;
+  return backOffPoint(x, z, ux, uz, SNIFF_STANDOFF - dist, half, zMax);
 }
 
 // ---- LUL-394: predator-vs-predator separation -----------------------------
@@ -277,10 +372,11 @@ export function predatorSeparationPush(
   z: number,
   rad: number,
   others: { x: number; z: number; rad: number }[],
+  span: number = Infinity,
 ): [number, number] {
   let px = 0, pz = 0;
   for (const o of others) {
-    const dx = x - o.x, dz = z - o.z;
+    const dx = wrapDelta(x, o.x, span), dz = wrapDelta(z, o.z, span);
     const dist = Math.hypot(dx, dz);
     const minDist = rad + o.rad;
     if (dist >= minDist) continue;

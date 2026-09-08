@@ -47,15 +47,47 @@ test('Tier C: engine, server routes, secrets and dependency manifests', () => {
   assert.equal(tier('lib/auth-helper.ts'), 'C', 'path naming a credential beats lib/**');
 });
 
-// LUL-1664: lib/game/** is simulation logic imported into engine/forest-engine.js
-// (hiding, detection, scent, predator AI, win/lose) -- it must not fall into the
-// generic Tier B lib/** bucket, or tier-approve.yml auto-approves engine-grade
-// changes with zero Code Reviewer involvement.
-test('Tier C: lib/game/** is simulation, not generic lib/** app surface', () => {
+// LUL-1664: the original 5 lib/game/ simulation files (decisions/0014
+// Amendment 2) must not fall into the generic Tier B lib/** bucket, or
+// tier-approve.yml auto-approves engine-grade changes with zero Code Reviewer
+// involvement.
+test('Tier C: the named lib/game/ simulation files, not generic lib/** app surface', () => {
   assert.equal(tier('lib/game/cover.ts'), 'C');
   assert.equal(tier('lib/game/predator.ts'), 'C');
   assert.equal(tier('lib/game/outcome.ts'), 'C', 'win/lose conditions');
+  assert.equal(tier('lib/game/scent.ts'), 'C');
+  assert.equal(tier('lib/game/pack.ts'), 'C');
   assert.equal(tier('lib/site.ts'), 'B', 'lib/** outside lib/game/ is unaffected');
+});
+
+// LUL-1880: lib/game/ grew from 5 files to 21 since Amendment 2; the directory-
+// wide rule this replaced silently over-classified all 16 newer modules as C,
+// which is what blocked PR #436/LUL-1640 (economy.ts, pure reward math) from
+// auto-approving on green as Tier B policy says it should. Each of these 16
+// is re-derived per-file against AGENTS.md's Tier C definition (movement,
+// collision, predator AI, scent, hiding, detection, win/lose conditions).
+test('Tier C: newer lib/game/ files whose exports feed detection/movement/win-lose', () => {
+  assert.equal(tier('lib/game/charge.ts'), 'C', 'predator charge decision + the "caught" resolution');
+  assert.equal(tier('lib/game/sightLock.ts'), 'C', 'pre-chase sight-lock tell gates when a chase starts');
+  assert.equal(tier('lib/game/dayNight.ts'), 'C', 'exports a predator detect-radius multiplier');
+  assert.equal(tier('lib/game/veil.ts'), 'C', 'exports a predator detect-radius multiplier');
+  assert.equal(tier('lib/game/fogTide.ts'), 'C', 'exports a predator detect-radius multiplier');
+  assert.equal(tier('lib/game/noise.ts'), 'C', 'the hearing detection channel');
+  assert.equal(tier('lib/game/bog.ts'), 'C', 'terrain speed multiplier -- movement');
+  assert.equal(tier('lib/game/lake.ts'), 'C', 'terrain speed multiplier -- movement');
+  assert.equal(tier('lib/game/stamina.ts'), 'C', 'sprint speed multiplier -- movement');
+});
+
+test('Tier B: lib/game/ reward, side-objective, narrative and cosmetic modules', () => {
+  assert.equal(tier('lib/game/economy.ts'), 'B', 'reward math run after an outcome is already decided');
+  assert.equal(tier('lib/game/economy.test.ts'), 'A');
+  assert.equal(tier('lib/game/economy.ts', 'lib/game/economy.test.ts', 'docs/ELEMENTS.md'), 'B', 'PR #436 must classify B, not C');
+  assert.equal(tier('lib/game/mission.ts'), 'B');
+  assert.equal(tier('lib/game/chronicle.ts'), 'B');
+  assert.equal(tier('lib/game/eventScheduler.ts'), 'B');
+  assert.equal(tier('lib/game/timeOfDay.ts'), 'B');
+  assert.equal(tier('lib/game/childGlow.ts'), 'B');
+  assert.equal(tier('lib/game/jump.ts'), 'B');
 });
 
 test('Tier A still wins for lib/game/*.test.ts (test files stay unreviewed-tier)', () => {

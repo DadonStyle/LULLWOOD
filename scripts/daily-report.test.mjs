@@ -290,3 +290,41 @@ test('generateRange: backmerges from main into release/next are excluded (merge 
   // But the real feature must still show
   assert.ok(entries22.some((e) => e.text.includes('real feature')), 'real feature commit must be present');
 });
+
+test('generateRange: empty-diff sync commits are excluded structurally, not by subject match (LUL-833)', () => {
+  const { dir, g, gAt } = makeSyntheticRepo();
+  // Real feature commit on release/next.
+  writeFileSync(path.join(dir, 'real2.txt'), 'real work 2');
+  g('add', '.');
+  gAt('2026-08-22T12:00:00+03:00', 'commit', '-q', '-m', 'LUL-101: another real feature (#7)');
+
+  // Produce a merge commit whose diff against its first parent is empty --
+  // the shape real release-train sync commits take -- but with a subject
+  // that BACKMERGE_RE ("^Merge branch") does NOT match, mirroring the real
+  // shapes catalogued in systems/daily-reports (e.g. "Sync release/next
+  // after vX (#N)").
+  g('branch', '-q', 'tmp-sync-source');
+  execFileSync(
+    'git',
+    ['merge', '--no-ff', '-m', 'Sync release/next after v2026.08.21-1 (#124)', 'tmp-sync-source'],
+    { cwd: dir, encoding: 'utf8', env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@test', GIT_AUTHOR_DATE: '2026-08-22T13:00:00+03:00',
+      GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@test', GIT_COMMITTER_DATE: '2026-08-22T13:00:00+03:00',
+    } },
+  );
+
+  const bareDir = mkdtempSync(path.join(os.tmpdir(), 'lul-833-bare-'));
+  execFileSync('git', ['clone', '--bare', dir, bareDir], { encoding: 'utf8' });
+
+  const byDay = buildEntriesByDay('release/next', bareDir);
+  const entries22 = byDay.get('2026-08-22') ?? [];
+  assert.ok(
+    !entries22.some((e) => e.text && e.text.includes('Sync release/next')),
+    'empty-diff sync commit must be excluded even though its subject does not match BACKMERGE_RE',
+  );
+  assert.ok(
+    entries22.some((e) => e.text.includes('another real feature')),
+    'real feature commit must still be present',
+  );
+});

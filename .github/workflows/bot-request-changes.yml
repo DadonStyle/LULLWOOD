@@ -1,0 +1,104 @@
+name: Bot request changes
+
+# LUL-1875 / LUL-1871 / LUL-1872. Records an already-completed Code Reviewer
+# CHANGES_REQUESTED verdict as a GitHub-native review, submitted by
+# `github-actions[bot]`. Mirror of `bot-approve.yml` for the opposite verdict.
+#
+# WHY THIS IS NOT A REVIEW BYPASS
+# -------------------------------
+# Every agent in this studio authenticates as the single studio PAT
+# (`DadonStyle`). When a PR ends up DadonStyle-authored -- which happens
+# whenever `auto-pr.yml` did not open it -- GitHub 422s any review submission
+# from that same identity ("Can not request changes on your own pull
+# request"), exactly as it does for `--approve` (confirmed on LUL-1823 and
+# again on LUL-1872's #422/#421). The review has already happened in
+# Paperclip; there is simply no identity left that can record it natively.
+#
+# `github-actions[bot]` is a genuinely distinct identity from `DadonStyle`.
+# For a PR the bot did NOT author, a GITHUB_TOKEN review submission is not
+# self-review.
+#
+# `scripts/check-review-gap.mjs` (the review-gap-detector watchdog) flags any
+# open PR with `reviews.length === 0` past 360m, counting ANY native review
+# state -- not just approvals. Without this workflow, a self-authored PR that
+# gets CHANGES_REQUESTED has no way to ever clear that detector: the plain
+# `gh pr comment` workaround records the verdict for a human reader but never
+# touches the PR's native review count.
+#
+# GUARDS
+# ------
+#   1. the bot refuses to review its own PRs (the real 422 case);
+#   2. it refuses if a REQUEST_CHANGES review already exists;
+#   3. it only runs when explicitly dispatched with a PR number and the
+#      Paperclip issue the verdict was recorded on. There is no push/schedule
+#      trigger and no default PR: `workflow_dispatch` inputs are the only
+#      source, so it can never fire on its own.
+#
+# WHY THERE IS NO "ALL REQUIRED CHECKS GREEN" GUARD (unlike bot-approve.yml)
+# ---------------------------------------------------------------------------
+# `bot-approve.yml`'s guard 2 exists because recording an approval is an
+# UNBLOCK action -- it must never substitute for CI passing. Recording a
+# CHANGES_REQUESTED verdict is the opposite: it is documenting why the PR is
+# NOT ready. Gating that on green CI would prevent recording the exact
+# verdict that explains a red or blocked PR, which is precisely the case this
+# workflow exists for.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to record the changes-requested verdict on
+        required: true
+      issue:
+        description: Paperclip issue holding the Code Reviewer verdict (e.g. LUL-1872)
+        required: true
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  request-changes:
+    name: record reviewer verdict as bot
+    runs-on: ubuntu-latest
+    steps:
+      - name: submit changes-requested review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ inputs.pr }}
+          ISSUE: ${{ inputs.issue }}
+        run: |
+          set -euo pipefail
+
+          author=$(gh api "repos/$REPO/pulls/$PR" --jq '.user.login')
+          echo "PR #$PR author: $author"
+          if [ "$author" = "github-actions[bot]" ]; then
+            echo "::error::PR #$PR is authored by github-actions[bot]; the bot cannot review its own PR (422). Record the verdict as the studio PAT instead."
+            exit 1
+          fi
+
+          existing=$(gh api "repos/$REPO/pulls/$PR/reviews" --jq '[.[] | select(.state == "CHANGES_REQUESTED")] | length')
+          if [ "$existing" -gt 0 ]; then
+            echo "::notice::PR #$PR already has $existing changes-requested review(s); nothing to do."
+            exit 0
+          fi
+
+          python3 - <<'PY' > body.json
+          import json, os
+          pr, issue = os.environ["PR"], os.environ["ISSUE"]
+          body = (
+              "Recording the Code Reviewer's CHANGES_REQUESTED verdict from "
+              f"Paperclip {issue} as a GitHub-native review.\n\n"
+              "Submitted by `github-actions[bot]` because this PR is authored "
+              "by `DadonStyle`, the studio's only PAT identity, so that "
+              "identity cannot review it (GitHub 422, self-review). The bot "
+              "is a distinct identity and did not author this PR.\n\n"
+              "See the Paperclip issue for the actual findings. See "
+              "`.github/workflows/bot-request-changes.yml` for why this "
+              "workflow carries no CI-green guard, unlike `bot-approve.yml`."
+          )
+          json.dump({"event": "REQUEST_CHANGES", "body": body}, open(1, "w", closefd=False))
+          PY
+
+          gh api --method POST "repos/$REPO/pulls/$PR/reviews" --input body.json \
+            --jq '"submitted review \(.id) state=\(.state) by=\(.user.login)"'

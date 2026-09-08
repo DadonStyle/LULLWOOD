@@ -191,7 +191,13 @@ test.describe('lift the child / carry home / win', () => {
   // screen. Reliable child-seeking navigation across arbitrary procedural terrain
   // is filed separately (see LUL-21 handoff comment).
   test('pressing E lifts the child; only reaching home (not the pickup) shows the win screen', async ({ page }) => {
-    test.setTimeout(45_000);
+    // LUL-1611: raised from 45s -- the win-reveal poll below is now dt-driven
+    // (see engine/forest-engine.js's tick(), mirroring the death path) instead
+    // of a wall-clock timer, so on this rig's slow software rendering the
+    // 1.8-game-second burst can take well over a real-time second to retire
+    // (wiki systems/dt-clamp-vs-walltime, same reasoning as the predator-hunt
+    // test above budgeting 120s for the same divergence).
+    test.setTimeout(75_000);
     await boot(page, { qaHooks: true });
     await enter(page);
 
@@ -221,6 +227,12 @@ test.describe('lift the child / carry home / win', () => {
     await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
     await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
     await assertInViewport(page.locator('#winScreen'), page, '#winScreen');
+
+    // LUL-1609/LUL-1611: #winText fades in on winRevealed, mirroring #deathText's
+    // reveal-once-the-cutscene-finishes check above -- this used to have no
+    // coverage at all, so a regression in the reveal timer/pushState wiring
+    // (the wall-clock-vs-dt-clamp mismatch LUL-1611 fixed) could ship silently.
+    await expect(page.locator('#winText')).toHaveCSS('opacity', '1', { timeout: 30_000 });
     await expect(page.locator('#winScreen h1')).toHaveText('YOU WON');
 
     // LUL-197: arriveHome() used to skip the exitPointerLock()/cursor reset that

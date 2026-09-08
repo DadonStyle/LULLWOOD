@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isNoiseHeard,
+  checkThrowableNoise,
   NOISE_RADIUS_WALK,
   NOISE_RADIUS_RUN,
   HEAR_CHANCE_PER_SEC,
+  CARRIED_NOISE_FLOOR,
 } from './noise.ts';
 
 // ---- constants (pin the current tuning) ------------------------------------
@@ -57,4 +59,30 @@ test('isNoiseHeard scales the hit chance linearly with dt', () => {
 test('isNoiseHeard defaults rand to Math.random (no crash, boolean result)', () => {
   const result = isNoiseHeard(1, NOISE_RADIUS_WALK, 1 / 60);
   assert.equal(typeof result, 'boolean');
+});
+
+// ---- checkThrowableNoise: one-shot distance check --------------------------
+
+test('checkThrowableNoise: inside radius hears', () => {
+  assert.equal(checkThrowableNoise(10, 24), true);
+});
+
+test('checkThrowableNoise: at radius is a miss (boundary, exclusive)', () => {
+  assert.equal(checkThrowableNoise(24, 24), false);
+});
+
+test('checkThrowableNoise: beyond radius is a miss', () => {
+  assert.equal(checkThrowableNoise(30, 24), false);
+});
+
+// ---- CARRIED_NOISE_FLOOR: LUL-1857 carry-leg detection floor ---------------
+
+test('CARRIED_NOISE_FLOOR is 0.4 * NOISE_RADIUS_WALK (5.6)', () => {
+  // 0.4 * 14 is not exactly representable in binary float (5.6000000000000005),
+  // so this pins the value within float epsilon rather than with strictEqual.
+  assert.ok(Math.abs(CARRIED_NOISE_FLOOR - 5.6) < 1e-9);
+});
+
+test('CARRIED_NOISE_FLOOR must stay under the sniff-backoff distance per carried-cry-fairness §A3', () => {
+  assert.ok(CARRIED_NOISE_FLOOR < 8, 'must stay under the sniff-backoff distance per carried-cry-fairness §A3');
 });
