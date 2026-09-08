@@ -999,6 +999,18 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   panel, z-index 20), which does the same. `#chargePrompt` needed no HUD-layer
   gate: the engine already resets `chargeVisible: false` in both `arriveHome()` and
   `triggerDeath()` (`engine/forest-engine.js`).
+  LUL-2158: `#hint` (engine-owned, see above) is *not* reset by `triggerDeath()`/
+  `arriveHome()` either, and can't be gated in React like the elements above since
+  it isn't React state — its opacity is a plain `enter()`-owned 5s fade timer
+  (`forest-engine.js`), and a fast second death (restart → enter() re-arms the
+  timer → death again before it clears) can land `#deathScreen`/`#winScreen` while
+  it's still visibly fading in. `#deathText` has no opaque backdrop of its own
+  (unlike `#winText`'s gradient), so the hint's text visibly overlapped "YOU LOSE".
+  Fixed purely in CSS (`components/GameCanvas.tsx`'s `OVERLAY_STYLE`): `body:has(#winScreen)
+  #hint, body:has(#deathScreen) #hint { opacity: 0 !important; transition: none !important; }`
+  — reacts to whichever end screen is actually mounted with no engine change, and
+  drops the transition so the hint can't still be fading (and overlapping) for up
+  to 1.4s after the screen mounts.
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
