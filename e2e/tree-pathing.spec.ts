@@ -62,7 +62,16 @@ const MAX_MS = 8_000;
 test.describe('predator behind a tree reaches the player (LUL-1091 regression)', () => {
   for (const kind of ['wolf', 'bear', 'lion'] as const) {
     test(`${kind}: staged directly behind a tree trunk, closes to contact range`, async ({ page }) => {
-      test.setTimeout(60_000);
+      // Deliberately no explicit test.setTimeout() override here -- the trace
+      // itself resolves in ~2s (MAX_MS above), but a real triggerDeath() plus
+      // Playwright's own trace-capture teardown measured ~57.5s wall-clock on
+      // this rig's swiftshader software rendering (LUL-1461, 2026-09-09). An
+      // earlier version of this spec set test.setTimeout(60_000), which is
+      // *tighter* than playwright.config.ts's own already-tuned defaults
+      // (90s locally, 240s on CI) and was the actual cause of every prior
+      // "Test timeout exceeded" failure here -- the in-page trace and the
+      // real death sequence were both completing fine; only the explicit
+      // override was too tight. Rely on the config defaults instead.
       await boot(page, { qaHooks: true });
       await enter(page);
 

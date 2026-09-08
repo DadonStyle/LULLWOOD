@@ -3018,10 +3018,20 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // its own rAF loop, staged and started in one synchronous call for the
   // same reason qaStageAndTraceBlindChase's comment gives (an IPC round trip
   // between staging and the first observed frame lets the predator move in
-  // between). `reached` mirrors isCaught()'s own contact definition (dist <
-  // rad + CATCH_MARGIN) directly -- this is a pathing/positional regression
-  // test, not a re-test of the chase kill gate (blind-chase-cover.spec.ts
-  // already owns that), so it doesn't also require canSee.
+  // between).
+  //
+  // Originally resolved on an independently-computed isCaught(d, p.rad)
+  // instead of the game's own `dead` flag. Measured live (2026-09-08): the
+  // wolf case's in-page trace resolved fine (reached:true at t=2100ms) and
+  // page.evaluate() returned the trace to Node, but the Playwright test then
+  // hung to its own timeout anyway, and the next test (bear) failed
+  // immediately at boot -- cross-test contamination. traceBlindChase()
+  // (above) resolves on `dead` instead and blind-chase-cover.spec.ts passes
+  // in CI today, including through a real death/video sequence, so the
+  // independently-computed condition -- not the death/video sequence itself
+  // -- is the difference. Matching that proven pattern here: resolve once
+  // the real triggerDeath() (engine/forest-engine.js:1447) has actually
+  // flipped `dead`, not one frame earlier on our own geometric guess.
   function traceApproach(idx, maxMs){
     return new Promise(function(resolve){
       const trace = [];
@@ -3030,9 +3040,8 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
         const p = predators[idx];
         if(!p){ resolve(trace); return; }
         const d = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
-        const reached = isCaught(d, p.rad);
-        trace.push({ t: performance.now()-t0, dist: d, state: p.state, reached: reached });
-        if(reached || performance.now()-t0 > maxMs){ resolve(trace); return; }
+        trace.push({ t: performance.now()-t0, dist: d, state: p.state, reached: dead });
+        if(dead || performance.now()-t0 > maxMs){ resolve(trace); return; }
         requestAnimationFrame(frame);
       }
       requestAnimationFrame(frame);

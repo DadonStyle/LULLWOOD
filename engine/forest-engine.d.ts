@@ -212,12 +212,14 @@ declare global {
       ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; treeX: number; treeZ: number; treeCr: number; dist: number } | null;
       /** LUL-1461: stages (as qaStageBehindTree) then, in the same synchronous
        * call, starts an in-page rAF loop recording `{t, dist, state, reached}`
-       * once per frame until `reached` (dist < rad + CATCH_MARGIN, the same
-       * contact definition isCaught() uses) or `maxMs` elapses. Staging and
-       * the first observed frame must happen in one page.evaluate() round
-       * trip, not two -- see qaStageAndTraceBlindChase's comment for the
-       * measured reason. Returns null if staging failed (see
-       * qaStageBehindTree). */
+       * once per frame until the game's own `dead` flag flips (matching
+       * traceBlindChase's proven pattern -- an independently-computed
+       * isCaught() check here resolved one frame early and left the test
+       * hanging after page.evaluate() returned; see the implementation
+       * comment) or `maxMs` elapses. Staging and the first observed frame
+       * must happen in one page.evaluate() round trip, not two -- see
+       * qaStageAndTraceBlindChase's comment for the measured reason. Returns
+       * null if staging failed (see qaStageBehindTree). */
       qaStageAndTraceBehindTree?: (
         kind: 'wolf' | 'bear' | 'lion',
         margin: number,
