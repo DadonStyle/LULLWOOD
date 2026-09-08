@@ -30,6 +30,8 @@ import {
   zeroPullableWorkAlarm,
   findStaleConfirmations,
   isStaleConfirmationSuppressed,
+  isRecentWakeTicketSuppressed,
+  WAKE_REFILE_COOLDOWN_DAYS,
   STALE_CONFIRMATION_DAYS,
   isAssignedBacklogNoGate,
   findAssignedBacklogNoGate,
@@ -1535,4 +1537,62 @@ test('fileWakeTickets never touches /api/agents/me when every alarm already has 
   } finally {
     globalThis.fetch = prevFetch;
   }
+});
+
+// ---- isRecentWakeTicketSuppressed (LUL-2048) -------------------------------
+// This function gates the board's main safety net, so its edge cases are
+// tested explicitly rather than only through fileWakeTickets.
+
+const MARKER = 'Board-integrity: LUL-1205 is a tombstone';
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NOW = Date.parse('2026-09-02T00:00:00.000Z');
+const wake = (marker, createdAt) => ({ title: `${marker} (LUL-672 detector) -- STRANDED, needs work`, createdAt });
+
+test('isRecentWakeTicketSuppressed: no matching wake ticket -> not suppressed', () => {
+  assert.equal(isRecentWakeTicketSuppressed([], MARKER, NOW), false);
+  assert.equal(
+    isRecentWakeTicketSuppressed([wake('Board-integrity: LUL-9999 is a tombstone', new Date(NOW).toISOString())], MARKER, NOW),
+    false,
+  );
+});
+
+test('isRecentWakeTicketSuppressed: a ticket created inside the cooldown suppresses re-filing', () => {
+  const recent = new Date(NOW - 0.25 * DAY_MS).toISOString();
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, recent)], MARKER, NOW), true);
+});
+
+test('isRecentWakeTicketSuppressed: suppression EXPIRES once the cooldown elapses (never permanent silence)', () => {
+  const old = new Date(NOW - (WAKE_REFILE_COOLDOWN_DAYS + 0.1) * DAY_MS).toISOString();
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, old)], MARKER, NOW), false);
+});
+
+test('isRecentWakeTicketSuppressed: suppresses regardless of status, incl. done/cancelled that server dedup ignores', () => {
+  const recent = new Date(NOW - 0.5 * DAY_MS).toISOString();
+  for (const status of ['todo', 'in_progress', 'blocked', 'in_review', 'done', 'cancelled']) {
+    assert.equal(isRecentWakeTicketSuppressed([{ ...wake(MARKER, recent), status }], MARKER, NOW), true, status);
+  }
+});
+
+test('isRecentWakeTicketSuppressed: uses the MOST RECENT matching ticket, not the oldest', () => {
+  const old = new Date(NOW - 30 * DAY_MS).toISOString();
+  const recent = new Date(NOW - 0.1 * DAY_MS).toISOString();
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, old), wake(MARKER, recent)], MARKER, NOW), true);
+  const bothOld = [wake(MARKER, old), wake(MARKER, new Date(NOW - 29 * DAY_MS).toISOString())];
+  assert.equal(isRecentWakeTicketSuppressed(bothOld, MARKER, NOW), false);
+});
+
+test('isRecentWakeTicketSuppressed: fails OPEN (no suppression) on missing/garbage createdAt or a null list', () => {
+  assert.equal(isRecentWakeTicketSuppressed(null, MARKER, NOW), false);
+  assert.equal(isRecentWakeTicketSuppressed(undefined, MARKER, NOW), false);
+  assert.equal(isRecentWakeTicketSuppressed([{ title: `${MARKER} x` }], MARKER, NOW), false);
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, 'not-a-date')], MARKER, NOW), false);
+  assert.equal(isRecentWakeTicketSuppressed([{ createdAt: new Date(NOW).toISOString() }], MARKER, NOW), false);
+});
+
+test('isRecentWakeTicketSuppressed: cooldown is 1 day and is NOT the 7-day human-confirmation window', () => {
+  assert.equal(WAKE_REFILE_COOLDOWN_DAYS, 1);
+  assert.notEqual(WAKE_REFILE_COOLDOWN_DAYS, STALE_CONFIRMATION_DAYS);
+  const threeDaysAgo = new Date(NOW - 3 * DAY_MS).toISOString();
+  // Under the old (reused) 7-day constant this would still be muted; it must not be.
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, threeDaysAgo)], MARKER, NOW), false);
 });
