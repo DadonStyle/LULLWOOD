@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4487 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3976, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4492 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3980, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1112,8 +1112,8 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L2830) and recomputed every `tick()` while the run
-  is neither won nor dead (L4092: `computeDepth(maxDistFromHome) +
+  reset to 0 on `enter()` (L2834) and recomputed every `tick()` while the run
+  is neither won nor dead (L4097: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1551,13 +1551,18 @@ registry's own merge.
 
 ---
 
-## The Bog (LUL-25 / LUL-1483) — live on `main`
+## The Bog (LUL-25 / LUL-1483 / LUL-1902)
 
-`isInBog()`/the fixed z-band this section used to describe are gone
-(LUL-1483). The bog is now a biome distributed by 2D value noise over the
-whole `[-half, half]` square (`biomeAt(x, z)`, `lib/game/bog.ts`), not a
-directional strip past the forest's old +z edge — the world is square again,
-not a 240×360 rectangle.
+LUL-1902 replaced the 2D-noise-scattered biome (many patches, ~30-37% of the map) with a
+single fixed zone: `biomeAt(x, z)` now derives bogginess from distance to `BOG_CENTER`
+(`lib/game/bog.ts`), radial falloff smoothstepped between `BOG_INNER_RADIUS` (full
+bogginess) and `BOG_OUTER_RADIUS` (dry), same edge-softness approach as before — the bog is
+now one discoverable place (~25% of the map), not ambient terrain variation. Cost model
+(`bogSpeedMultiplier`/`bogNoiseMultiplier`, reeds, bog trees, splash foley) is byte-for-byte
+unchanged from LUL-1483 — only *where* bogginess is nonzero changed. `oak`/`drownedCar`
+(below) still sit inside the zone without repositioning; `CONFIG.lake` and
+`CONFIG.home`/spawn are both explicitly carved out to stay dry, mirroring each other's
+pattern (`HOME_CLEAR_RADIUS`/`HOME_FADE_RADIUS`, `LAKE_CLEAR_RADIUS`/`LAKE_FADE_RADIUS`).
 
 **New elements it adds**: `BogTree` (90-instance thinner-cover twin of Tree,
 own `bogTreeData` array, merged into the shared `grid` for collision),
@@ -1590,6 +1595,19 @@ it (`bogSpeedMultiplier`/`bogNoiseMultiplier`, applied to both the player,
 multiplier in `updatePredators()`), and is kept fully dry around
 `CONFIG.home`/spawn regardless of the noise field (`HOME_CLEAR_RADIUS`/
 `HOME_FADE_RADIUS` in `lib/game/bog.ts`).
+
+**LUL-1902 — wolf-only scent-masking**: standing in (or having recently left) the bog
+suppresses the player's scent specifically against wolf-type predators. A persisted
+`playerBogMask` (`engine/forest-engine.js`) rises instantly with `biomeAt(player.x,
+player.z)` and decays linearly to 0 over `BOG_MASK_DECAY_TIME` (6s, `lib/game/bog.ts`)
+once the player leaves — not an instant on/off at the patch edge. `checkScent()` reduces
+only `p.spec.nose` for `p.kind === 'wolf'` by up to `WOLF_BOG_MASK_STRENGTH` (0.7, i.e. a
+70% nose-multiplier cut at full mask — not 100%, so a wolf already close on the trail can
+still catch it). Bears, lions, and all sight-based `detect`/`canSee` are untouched. This is
+a deliberate tradeoff, not a safe room: the bog already costs half walk speed and 1.6x
+noise radius, so using it to shake a wolf is a real bet against being heard by a bear or
+lion instead (`docs/decisions` — wiki `game/mechanics/bog-consolidation`, CEO decision
+2026-09-07, explicitly rejected a hard predator-exclusion zone for this reason).
 
 **What's already known and citable**: reeds reuse the exact same
 `coverMeshes`/`coverGrid`/`hasLOS()` machinery as Rock/Log/Bramble, with zero
