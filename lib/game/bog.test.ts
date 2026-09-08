@@ -5,9 +5,14 @@ import {
   bogSpeedMultiplier,
   bogNoiseMultiplier,
   pickHardBabyPosition,
+  bogMaskLevel,
   BOG_SPEED_MULTIPLIER,
   BOG_NOISE_MULTIPLIER,
   BLACKOUT_MIN_RADIUS,
+  BOG_MASK_DECAY_TIME,
+  BOG_CENTER,
+  BOG_INNER_RADIUS,
+  BOG_OUTER_RADIUS,
   type Landmark,
 } from './bog.ts';
 
@@ -26,8 +31,8 @@ test('biomeAt is deterministic for a given point', () => {
 });
 
 test('biomeAt stays within [0, 1] across the whole map square', () => {
-  for (let x = -120; x <= 120; x += 5) {
-    for (let z = -120; z <= 120; z += 5) {
+  for (let x = -240; x <= 240; x += 10) {
+    for (let z = -240; z <= 240; z += 10) {
       const b = biomeAt(x, z);
       assert.ok(b >= 0 && b <= 1, `biomeAt(${x},${z})=${b} out of range`);
     }
@@ -36,8 +41,8 @@ test('biomeAt stays within [0, 1] across the whole map square', () => {
 
 test('biomeAt finds both boggy and dry ground within the map square', () => {
   let sawBoggy = false, sawDry = false;
-  for (let x = -120; x <= 120; x += 5) {
-    for (let z = -120; z <= 120; z += 5) {
+  for (let x = -240; x <= 240; x += 10) {
+    for (let z = -240; z <= 240; z += 10) {
       const b = biomeAt(x, z);
       if (b > 0.5) sawBoggy = true;
       if (b === 0) sawDry = true;
@@ -53,8 +58,8 @@ test('home/spawn is kept dry regardless of the noise field', () => {
 });
 
 test('the relocated oak and drownedCar landmarks sit in a bog patch', () => {
-  assert.ok(biomeAt(22, 4) > 0.5, 'oak landmark should be well inside a bog patch');
-  assert.ok(biomeAt(-95, 46) > 0.5, 'drownedCar landmark should be well inside a bog patch');
+  assert.ok(biomeAt(22, 4) > 0.15, 'oak landmark should be inside the bog patch');
+  assert.ok(biomeAt(-95, 46) > 0.9, 'drownedCar landmark should be deep inside the bog patch');
 });
 
 test('the lake and the other two landmarks are not accidentally boggy', () => {
@@ -75,6 +80,25 @@ test('bogSpeedMultiplier/bogNoiseMultiplier are linear in bogginess', () => {
   assert.equal(bogNoiseMultiplier(0.5), 1 + 0.5 * (BOG_NOISE_MULTIPLIER - 1));
 });
 
+test('bogMaskLevel rises instantly when bogginess increases', () => {
+  assert.equal(bogMaskLevel(0.8, 0.2, 1/60), 0.8);
+  assert.equal(bogMaskLevel(1, 0, 1/60), 1);
+});
+
+test('bogMaskLevel decays linearly to 0 over BOG_MASK_DECAY_TIME once bogginess drops', () => {
+  let mask = 1;
+  const dt = 1; // 1s steps for a readable assertion
+  for (let i = 0; i < BOG_MASK_DECAY_TIME; i++) mask = bogMaskLevel(0, mask, dt);
+  assert.ok(Math.abs(mask) < 1e-9, `expected mask ~0 after ${BOG_MASK_DECAY_TIME}s, got ${mask}`);
+});
+
+test('bogMaskLevel never rises above currentBogginess and never drops below 0', () => {
+  let mask = bogMaskLevel(0.4, 0, 0.1);
+  assert.ok(mask <= 0.4 + 1e-9);
+  for (let i = 0; i < 200; i++) mask = bogMaskLevel(0, mask, 0.1);
+  assert.ok(mask >= 0);
+});
+
 test('pickHardBabyPosition lands in a bog patch, clear of the map edge', () => {
   const p = pickHardBabyPosition(seeded(1), 240, []);
   assert.ok(biomeAt(p.x, p.z) > 0, `(${p.x},${p.z}) should be boggy`);
@@ -93,6 +117,15 @@ test('pickHardBabyPosition never lands closer than BLACKOUT_MIN_RADIUS', () => {
     const p = pickHardBabyPosition(seeded(seed), 240, []);
     assert.ok(Math.hypot(p.x, p.z) >= BLACKOUT_MIN_RADIUS, `seed ${seed}: (${p.x},${p.z}) is inside the floor`);
   }
+});
+
+test('the single-zone bog geometry still lets pickHardBabyPosition satisfy BLACKOUT_MIN_RADIUS', () => {
+  // Regression check for LUL-1902: a center/radius pair that never reaches
+  // BLACKOUT_MIN_RADIUS from the origin makes this function's own contract
+  // impossible to satisfy -- it would silently fall back to a random,
+  // non-boggy point on every call. See docs/specs/lul-1902-*.md.
+  const reach = Math.hypot(BOG_CENTER.x, BOG_CENTER.z) + BOG_OUTER_RADIUS;
+  assert.ok(reach >= BLACKOUT_MIN_RADIUS, `zone only reaches ${reach} from origin, need >= ${BLACKOUT_MIN_RADIUS}`);
 });
 
 test('pickHardBabyPosition avoids a landmark covering its whole reachable area, still terminates', () => {
