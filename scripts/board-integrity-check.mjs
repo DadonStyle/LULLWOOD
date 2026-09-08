@@ -725,11 +725,27 @@ function tombstoneWakeDescription({ issue, disposition, mergedPrs }) {
   );
 }
 
+// LUL-2066: a finding ticket about issue X must never inherit X's own
+// assignee if that agent is paused -- assigning an issue wakes the assignee
+// immediately regardless of status (AGENTS.md's roster-pause rule), so
+// blindly inheriting turns every sweep of a paused agent's stale backlog
+// (LUL-1659/LUL-1661, both assigned to the paused Task Runner, producing
+// LUL-2040/LUL-2039) into the detector itself repeatedly trying to wake a
+// founder-paused agent. Treat a paused assignee exactly like no assignee at
+// all -- the caller already has a fallback path for that.
+function nonPausedAssigneeId(assigneeAgentId, agentsById) {
+  if (!assigneeAgentId) return null;
+  const agent = agentsById.get(assigneeAgentId);
+  return agent && !isAvailableAgent(agent) ? null : assigneeAgentId;
+}
+
 // classifiedTombstones: [{ issue, disposition, referencedPrs, mergedPrs }]
 // zeroPullable: result of zeroPullableWorkAlarm() -- { alarm, availableAgentCount, openCount }
 // staleConfirmations: result of findStaleConfirmations()
 // closedWakeIssues: done/cancelled issues, for Alarm D's re-alarm cooldown (LUL-827)
 // assignedBacklogNoGate: result of findAssignedBacklogNoGate() (LUL-1934), or [] to skip Alarm E
+// agentsById: Map<id, agent>, for the LUL-2066 paused-assignee guard above --
+// defaults to empty so existing single-call-shape tests are unaffected.
 async function fileWakeTickets(
   apiBase,
   companyId,
@@ -742,6 +758,7 @@ async function fileWakeTickets(
   closedWakeIssues = [],
   nowMs = Date.now(),
   assignedBacklogNoGate = [],
+  agentsById = new Map(),
 ) {
   // Resolve lazily and cache -- a quiet run (no alarms) should never touch
   // /api/agents/me at all, and a run with several alarms should only resolve
@@ -782,7 +799,7 @@ async function fileWakeTickets(
     const marker = staleConfirmationWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
     if (isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, nowMs)) continue;
-    const assigneeAgentId = issue.assigneeAgentId ?? (await resolveSelfId());
+    const assigneeAgentId = nonPausedAssigneeId(issue.assigneeAgentId, agentsById) ?? (await resolveSelfId());
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-810 detector)`,
       description:
@@ -801,7 +818,7 @@ async function fileWakeTickets(
     const { issue, disposition } = classified;
     const marker = tombstoneWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
-    const assigneeAgentId = issue.assigneeAgentId ?? (await resolveSelfId());
+    const assigneeAgentId = nonPausedAssigneeId(issue.assigneeAgentId, agentsById) ?? (await resolveSelfId());
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: tombstoneWakeTitle(marker, disposition),
       description: tombstoneWakeDescription(classified),
@@ -949,6 +966,7 @@ async function main() {
       closedWakeIssues,
       nowMs,
       assignedBacklogNoGate,
+      agentsById,
     );
     if (filed.length === 0) {
       console.error('--post: every alarm already has an open wake ticket, filed nothing new.');
@@ -1002,4 +1020,5 @@ export {
   durableToken,
   resolveSelfAgentId,
   fileWakeTickets,
+  nonPausedAssigneeId,
 };
