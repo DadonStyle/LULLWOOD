@@ -75,7 +75,7 @@ import {
   COVER_PROBE_HZ,
 } from '@/lib/game/cover';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -1182,6 +1182,7 @@ let mission = null;
 let cryTimer = 2;   // LUL-1255 (Ship 1 wayfinding S3d): first cry fires quickly, not after a full interval
 let homeFireTimer = 2;   // LUL-1255 (Ship 1 wayfinding S5): same init as cryTimer
 let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- first hum fires quickly, not after a full interval
+let carriedCryPulse = false;   // LUL-1857: one-tick pulse, set by the carry-leg cry timer, consumed by updatePredators() the same frame
 
 const babyGroup = new THREE.Group();
 const bundle = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12),
@@ -1559,12 +1560,12 @@ function hearCry(p){
 // missionWaypointHum() below (LUL-1258 built that one by mirroring this
 // unbuilt spec), just target = baby.x/z instead of a mission target, and a
 // higher/brighter base frequency so the two cues stay distinguishable by ear.
-function childCry(distToPlayer){
+function childCry(distToPlayer, srcX, srcZ){
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
   const near = Math.max(0, Math.min(1, 1 - distToPlayer / 140));   // 0 far .. 1 close
   const pan = ctx.createStereoPanner();
-  const dx = baby.x - player.x, dz = baby.z - player.z;
+  const dx = srcX - player.x, dz = srcZ - player.z;
   const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
   const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
   const right = dx*rx + dz*rz, fwd = dx*fx + dz*fz;
@@ -1830,6 +1831,16 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       else if(!sniffImmune && !baby.taken && checkNoise(p, Math.hypot(baby.x - p.x, baby.z - p.z), cryNoiseRadius, dt)){
         hearCry(p);
       }
+      else if(!sniffImmune && carrying && carriedCryPulse && dist < CARRIED_NOISE_FLOOR){
+        // LUL-1857: pulse-fired, not a continuous isNoiseHeard() roll (mitigation 2)
+        // -- deterministic proximity check at the moment the cry sounds, same shape
+        // as checkThrowableNoise()'s one-shot design (lib/game/noise.ts). `dist` here
+        // is already the live predator-to-*player* distance computed at the top of
+        // this loop -- correct source position for the carry leg since the child
+        // moves with the player and baby.x/z is not live during carry (see
+        // childCry() fix above).
+        hearNoise(p);   // commits to investigate/approach targeting the live player position -- exactly the carry-leg contract (the "noise source" moves with you)
+      }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
         if(wd < 2.5){
@@ -1952,11 +1963,26 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN); }
+          else if(hidden && carrying){
+            // LUL-1857 (carried-cry-fairness §A5): route the give-up through the
+            // same backoff helper the mid-loop 'back' path uses, but land in 'roam'
+            // on arrival (not 'approach' -- there's nothing left to sniff). Scoped to
+            // hidden+carrying only, per the verdict's own scope (§A5) -- the ordinary
+            // (non-carrying) give-up keeps its existing in-place behavior unchanged,
+            // an intentional, not-yet-asked-for-elsewhere deviation from a uniform fix.
+            const bd = 8 + rng()*8;
+            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN);
+            p.inv = 'leave';
+          }
           else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
+      } else if(p.inv === 'leave'){
+        const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
+        if(bd < 2){ p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); }
+        else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       }
     } else if(p.state === 'flank'){
       // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
@@ -4171,6 +4197,17 @@ function stepFrame(dt, t){
       const nearH = Math.max(0, Math.min(1, 1 - dh / 140));
       homeFireTimer = 5.5 - nearH * 3.5;
     }
+    // LUL-1857: carry-leg cry pulse -- reuses cryTimer (LUL-1674 S3d) rather than a
+    // second timer, so outbound and carry-leg cry cadence stay one clock (mitigation
+    // 1: "one source, two consumers"). The outbound pulse block below (`if(!baby.taken
+    // || babySetDown)`) is the exact logical negation of `carrying`, so the two never
+    // both fire in the same frame -- safe to share the module-level cryTimer.
+    cryTimer -= dt;
+    if(cryTimer <= 0){
+      childCry(0, player.x, player.z);   // in your arms: always "near" (near=1), centered (no pan)
+      cryTimer = 2;                      // closest-tempo floor -- matches the outbound block's own near=1 case (5.5 - 1*3.5)
+      carriedCryPulse = true;            // consumed by updatePredators() this same tick, cleared after
+    }
     // LUL-596: canArriveHome() also requires !dead && !won -- this call site
     // used to be the only thing keeping a dead player from winning (positional
     // safety, not a precondition). Do not drop this guard.
@@ -4197,6 +4234,7 @@ function stepFrame(dt, t){
   // position) -- the cry originates at the child, so it uses baby.x/z.
   const cryNoiseRadius = CRY_NOISE_RADIUS * fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
   if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
+  carriedCryPulse = false;   // LUL-1857: one-tick pulse, consumed above -- clear so it isn't sticky
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
@@ -4374,7 +4412,7 @@ function stepFrame(dt, t){
     const cryDist = Math.hypot(baby.x - player.x, baby.z - player.z);
     cryTimer -= dt;
     if(cryTimer <= 0){
-      childCry(cryDist);
+      childCry(cryDist, baby.x, baby.z);
       const near = Math.max(0, Math.min(1, 1 - cryDist / 140));
       cryTimer = 5.5 - near * 3.5;
     }
