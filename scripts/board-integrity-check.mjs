@@ -848,10 +848,14 @@ async function fileWakeTickets(
   for (const issue of assignedBacklogNoGate) {
     const marker = assignedBacklogNoGateWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
-    // The predicate itself requires a real assigneeAgentId, so this is
-    // never the resolveSelfId fallback -- the whole point of the alarm is
-    // that a real assignee already exists and nothing is waking them.
-    const assigneeAgentId = issue.assigneeAgentId;
+    // The predicate itself requires a real assigneeAgentId, so absent the
+    // LUL-2066 paused-agent guard this would never hit the resolveSelfId
+    // fallback -- the whole point of the alarm is that a real assignee
+    // already exists and nothing is waking them. But that assignee can
+    // still be paused (the exact shape LUL-2066 fixed for the other two
+    // loops), so guard it the same way and fall back to self so the
+    // ticket still files instead of silently vanishing (LUL-2081).
+    const assigneeAgentId = nonPausedAssigneeId(issue.assigneeAgentId, agentsById) ?? (await resolveSelfId());
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-1934 detector)`,
       description:
