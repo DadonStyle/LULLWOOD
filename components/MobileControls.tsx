@@ -245,13 +245,23 @@ export default function MobileControls({
   entered,
   runMode,
   heldThrowable,
+  winVisible,
+  deathVisible,
 }: {
   actions: EngineActions | null;
   entered: boolean;
   runMode: 'hold' | 'toggle';
   heldThrowable: boolean;
+  winVisible: boolean;
+  deathVisible: boolean;
 }) {
   if (!actions) return null;
+  // LUL-2131: sticks/buttons sit at z-index 30/31, above #winScreen/#deathScreen's
+  // z-index 25 (GameCanvas.tsx) -- they stayed mounted and tappable over the end
+  // screens because this component previously gated only on `entered`, which stays
+  // true through win/death. Unmount outright rather than fade: nothing here should
+  // still receive input once a run has ended.
+  if (winVisible || deathVisible) return null;
 
   // LUL-529: `env(safe-area-inset-*)` only resolves once app/layout.tsx's
   // viewport export carries `viewportFit: 'cover'` -- without it every one of
@@ -284,15 +294,23 @@ export default function MobileControls({
     gap: 10,
   };
 
-  // LUL-529: pause is the only route into the settings panel on a phone (no
-  // Escape key), so it lives top-left, well clear of the minimap (top-right,
-  // components/GameCanvas.tsx OVERLAY_STYLE #minimap) and the bottom action
-  // clusters -- it must stay reachable and visible even while every other
-  // mobile control is mid-gesture.
+  // LUL-529: pause is reachable without opening the menu first, so it lives
+  // top-left, well clear of the minimap (top-right, components/GameCanvas.tsx
+  // OVERLAY_STYLE #minimap) and the bottom action clusters -- it must stay
+  // reachable and visible even while every other mobile control is
+  // mid-gesture.
+  // LUL-2073: GameMenu.tsx's #gameMenu hamburger (menuToggle) also anchors at
+  // top:16/left:16 (z-index 20) -- added by LUL-1085 after this button
+  // already existed here, at the same corner. This wrapper's higher z-index
+  // (31) put it directly on top of menuToggle, silently eating every tap
+  // meant for the hamburger (e2e/mobile/pause.spec.ts timed out 150s waiting
+  // for menuToggle's click to register). Offset left past menuToggle's own
+  // 48px width plus a gap so both buttons sit side by side instead of
+  // stacked.
   const pauseWrapper: React.CSSProperties = {
     position: 'fixed',
     top: 'calc(16px + env(safe-area-inset-top))',
-    left: 'calc(16px + env(safe-area-inset-left))',
+    left: 'calc(76px + env(safe-area-inset-left))',
     zIndex: 31,
     pointerEvents: 'auto',
   };

@@ -9,7 +9,7 @@ import GameMenu from './GameMenu';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 import { nextDeeperLungsCost, veilMaxHoldForTier, CARRIED, HOME, type RunPayout } from '@/lib/game/economy';
-import type { MissionKind } from '@/lib/game/mission';
+import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
@@ -106,6 +106,16 @@ export interface EngineHudState {
   // in that case) -- Hud never has to know about `carrying` itself.
   missionKind: MissionKind | null;
   missionStatus: 'active' | 'complete' | null;
+  // LUL-1666: secondary objectives (deepwater only, Phase 1). See
+  // engine/forest-engine.js's hudState defaults for field semantics.
+  missionUnlocks: { deepwater: boolean };
+  secondaryChoice: SecondaryKind | null;
+  secondaryKind: SecondaryKind | null;
+  secondaryStatus: 'active' | 'complete' | null;
+  secondaryProgress:
+    | { kind: 'retrieval'; retrieved: boolean; distance: number }
+    | { kind: 'speedrun'; remainingSeconds: number }
+    | null;
   // LUL-1724: wind direction, engine-driven, map-constant (set once per
   // generateMap(), pushed once -- not a per-frame value like veilCharge).
   windX: number;
@@ -148,6 +158,9 @@ export interface EngineActions {
   // LUL-1043
   setEmbers: (balance: number, deeperLungsTier: number) => void;
   purchaseDeeperLungs: () => void;
+  // LUL-1666
+  setMissionUnlocks: (unlocks: { deepwater: boolean }) => void;
+  setSecondaryChoice: (kind: SecondaryKind | null) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -205,6 +218,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   canGrabThrowable: false,
   missionKind: null,
   missionStatus: null,
+  missionUnlocks: { deepwater: false },
+  secondaryChoice: null,
+  secondaryKind: null, secondaryStatus: null, secondaryProgress: null,
   windX: 1,
   windZ: 0,
   chronicle: [],
@@ -299,6 +315,48 @@ function useEmbers(actions: EngineActions | null, balance: number, deeperLungsTi
   }, [balance, deeperLungsTier]);
 }
 
+// LUL-1666: cross-session unlock record -- same split as useEmbers() above
+// (engine owns state, this hook only seeds it once on mount and persists
+// on change). Key deliberately distinct from EMBERS_KEY.
+const MISSION_UNLOCKS_KEY = 'lullwood:mission-unlocks';
+
+function readMissionUnlocks(): { deepwater: boolean } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(MISSION_UNLOCKS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<{ deepwater: boolean }>;
+    return { deepwater: !!parsed.deepwater };
+  } catch {
+    return null;
+  }
+}
+
+function writeMissionUnlocks(unlocks: { deepwater: boolean }) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(MISSION_UNLOCKS_KEY, JSON.stringify(unlocks));
+  } catch {
+    // private mode / quota exceeded -- unlock still applies this session, just won't persist
+  }
+}
+
+function useMissionUnlocks(actions: EngineActions | null, unlocks: { deepwater: boolean }) {
+  const appliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!actions) return;
+    appliedRef.current = true;
+    const stored = readMissionUnlocks();
+    if (stored) actions.setMissionUnlocks(stored);
+  }, [actions]);
+
+  useEffect(() => {
+    if (!appliedRef.current) return;
+    writeMissionUnlocks(unlocks);
+  }, [unlocks]);
+}
+
 // LUL-26: captions are the only channel carrying predator warnings for a deaf/
 // HoH player (every game sound is synthesized WebAudio, no other track exists),
 // so the toast needs its own visible lifetime -- the engine only ever sets
@@ -340,12 +398,13 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
 // first pushState after arriveHome()/triggerDeath() lands, so this never
 // renders with stale data from a previous run (lastPayout is set in the
 // same pushState call as winVisible/deathVisible).
-function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[] }) {
+function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, difficulty }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[]; difficulty: 'lantern' | 'night' | 'blackout' }) {
   const lines = formatChronicle(chronicle);
+  const tierLabel = difficulty === 'lantern' ? 'Lantern' : difficulty === 'night' ? 'Night' : 'Blackout';
   return (
     <>
       <p id="runRecap">
-        time survived: {formatDuration(survivedSeconds)}
+        {tierLabel} · time survived: {formatDuration(survivedSeconds)}
         {payout && (
           <>
             <br />
@@ -416,6 +475,7 @@ export default function Hud({
   actions: EngineActions | null;
 }) {
   useEmbers(actions, state.embersBalance, state.embersDeeperLungsTier);
+  useMissionUnlocks(actions, state.missionUnlocks);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
@@ -432,13 +492,36 @@ export default function Hud({
   // death screen is still opacity:0 during the unskippable first-death
   // cutscene) would let a stray Enter restart through native button
   // activation, bypassing the cutscene entirely.
+  //
+  // LUL-1614: focusing the instant *Revealed flips true was itself the bug --
+  // Space is also the jump key, so a player who was jumping (over the last
+  // obstacle on the carry leg, most commonly) right as they cross home has that
+  // keypress still in flight the moment the button gains focus, and the
+  // browser's native "activate the focused button on Space/Enter" fires before
+  // the player has consciously registered YOU WON, silently restarting the run
+  // -- reproduced live: press Space right after winRevealed and #winScreen is
+  // gone, #objective is back, with zero click on .restartBtn. This is the
+  // "game just resumes after finding the child" report. A short delay before
+  // focusing lets any already-in-flight key from active gameplay lapse first;
+  // a player who presses Space/Enter *after* actually seeing the screen still
+  // gets the same accessible path back in.
+  // 2000ms, not a round guess: #winText's own opacity transition (GameCanvas.tsx's
+  // OVERLAY_STYLE, `transition: opacity 0.9s ease`) means winRevealed flips true a full
+  // 0.9s before the text is actually visible on screen -- a shorter delay measured from
+  // winRevealed still lands within or just after that fade, before a player has had any
+  // real chance to read "YOU WON" and decide to press something.
+  const RESTART_FOCUS_DELAY_MS = 2000;
   const winRestartRef = useRef<HTMLButtonElement>(null);
   const deathRestartRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (state.winRevealed) winRestartRef.current?.focus();
+    if (!state.winRevealed) return;
+    const id = setTimeout(() => winRestartRef.current?.focus(), RESTART_FOCUS_DELAY_MS);
+    return () => clearTimeout(id);
   }, [state.winRevealed]);
   useEffect(() => {
-    if (state.lossRevealed) deathRestartRef.current?.focus();
+    if (!state.lossRevealed) return;
+    const id = setTimeout(() => deathRestartRef.current?.focus(), RESTART_FOCUS_DELAY_MS);
+    return () => clearTimeout(id);
   }, [state.lossRevealed]);
 
   return (
@@ -446,7 +529,14 @@ export default function Hud({
       <OrientationGate />
 
       {mobile ? (
-        <MobileControls actions={actions} entered={state.entered} runMode={state.runMode} heldThrowable={state.heldThrowable} />
+        <MobileControls
+          actions={actions}
+          entered={state.entered}
+          runMode={state.runMode}
+          heldThrowable={state.heldThrowable}
+          winVisible={state.winVisible}
+          deathVisible={state.deathVisible}
+        />
       ) : (
         <DesktopControls />
       )}
@@ -524,7 +614,11 @@ export default function Hud({
           `key` forces a remount per captionId so a caption that arrives while
           the previous one is still fading restarts the toast cleanly instead
           of the old text lingering under a re-triggered fade. */}
-      {captionVisible && state.caption && (
+      {/* LUL-2131: predator calls stop while playing===false but captionVisible/
+          state.caption are toast state, not reset by triggerDeath/arriveHome --
+          a caption in flight at the exact moment of win/death would otherwise
+          keep fading in over the end screen. */}
+      {captionVisible && state.caption && !state.winVisible && !state.deathVisible && (
         <div id="captionToast" key={state.captionId} role="status" aria-live="polite">
           {state.caption}
         </div>
@@ -597,6 +691,34 @@ export default function Hud({
         </div>
       )}
 
+      {/* LUL-1666: secondary objective panel -- progress indicator (retrieval) or
+          countdown (speedrun). Same collapsed, top-left, non-blocking treatment as
+          #missionPanel above (decisions/missions-accepted-2026-09-01 §2's rule
+          extends naturally here -- it's the same panel family). Desktop+mobile
+          parity is rendering-only: no new input, this is read-only like
+          #missionPanel already is. */}
+      {state.secondaryKind && state.secondaryProgress && (
+        <div id="secondaryPanel" className={state.secondaryStatus === 'complete' ? 'complete' : undefined}>
+          {state.secondaryKind === 'retrieval' ? (
+            <>
+              Retrieve the radio mast
+              <span id="secondaryGlyph">
+                {state.secondaryProgress.kind === 'retrieval' && state.secondaryProgress.retrieved
+                  ? '●'
+                  : `${(state.secondaryProgress.kind === 'retrieval' && state.secondaryProgress.distance) ?? 0}m`}
+              </span>
+            </>
+          ) : (
+            <>
+              Speedrun
+              <span id="secondaryGlyph">
+                {state.secondaryProgress.kind === 'speedrun' ? formatDuration(state.secondaryProgress.remainingSeconds) : ''}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
       {/* LUL-1904: cave detection-immunity countdown -- always visible while
           active so the player can never be surprised by a silent lapse. Raw
           seconds from the engine, formatted here (same "engine emits data, React
@@ -616,7 +738,12 @@ export default function Hud({
         </div>
       )}
 
-      {state.entered && (
+      {/* LUL-2131: gate on !winVisible/!deathVisible too -- entered stays true
+          through the end screens (restart() never clears it), so this used to
+          keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
+          It's below the modals visually either way, but it's still a live,
+          ticking readout that has no business rendering once the run is over. */}
+      {state.entered && !state.winVisible && !state.deathVisible && (
         <div
           id="windIndicator"
           title="Wind direction -- move into the arrow to reduce your scent trail"
@@ -626,15 +753,19 @@ export default function Hud({
         </div>
       )}
 
-      {state.entered && (
+      {state.entered && !state.winVisible && !state.deathVisible && (
         <div id="windIndicatorHint">wind — move into the arrow to lower your scent trail</div>
       )}
 
       {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;
           cover wins (engine enforces via !coverPromptVisible in veil condition).
           Key/button name uses the same #actionKey pill style as #chargeKey above.
-          Double-spaces around the key name are house style (match "Press  E  to lift the child"). */}
-      {(state.coverPromptVisible || state.veilPromptVisible) && (() => {
+          Double-spaces around the key name are house style (match "Press  E  to lift the child").
+          LUL-2131: coverPromptVisible/veilPromptVisible are only recomputed `if(playing)`
+          in the engine (forest-engine.js) and aren't reset by triggerDeath/arriveHome, so a
+          prompt live at the exact moment of win/death otherwise keeps rendering over the end
+          screen. Gate here rather than in the engine to keep this a render-layer fix. */}
+      {!state.winVisible && !state.deathVisible && (state.coverPromptVisible || state.veilPromptVisible) && (() => {
         const noun = state.coverPromptKind === 'log' ? 'hollow log' : 'bush';
         const urgentKeyStyle = state.reducedMotion
           ? { animation: 'none', background: '#e8554a', boxShadow: '0 2px 26px rgba(232,85,74,0.85)' } as const
@@ -680,8 +811,10 @@ export default function Hud({
           carrying a stone. Styled like the existing pickup/interact prompt
           (#objective.ready); own id/position (#throwPrompt, see GameCanvas.tsx's
           OVERLAY_STYLE) since it can be visible at the same time as #objective
-          (e.g. "Find the lost child" while also holding a stone). */}
-      {state.heldThrowable && (
+          (e.g. "Find the lost child" while also holding a stone).
+          LUL-2131: heldThrowable is only reset in restart() (forest-engine.js), not
+          triggerDeath/arriveHome, so it can still read true into the end screen. */}
+      {state.heldThrowable && !state.winVisible && !state.deathVisible && (
         <div id="throwPrompt">
           {mobile
             ? <>{'Holding a stone — tap  '}<span id="throwKey">Throw</span></>
@@ -726,7 +859,7 @@ export default function Hud({
           <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
             <h1>YOU WON</h1>
             <p>the child is safe — you carried them home through the Lullwood</p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} />
             <button
               ref={winRestartRef}
               className="restartBtn"
@@ -753,7 +886,7 @@ export default function Hud({
               {DEATH_CAUSE_TEXT[state.deathCause]}
               {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} difficulty={state.difficulty} />
             <button
               ref={deathRestartRef}
               className="restartBtn"

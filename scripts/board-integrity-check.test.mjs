@@ -30,6 +30,8 @@ import {
   zeroPullableWorkAlarm,
   findStaleConfirmations,
   isStaleConfirmationSuppressed,
+  isRecentWakeTicketSuppressed,
+  WAKE_REFILE_COOLDOWN_DAYS,
   STALE_CONFIRMATION_DAYS,
   isAssignedBacklogNoGate,
   findAssignedBacklogNoGate,
@@ -38,6 +40,7 @@ import {
   durableToken,
   resolveSelfAgentId,
   fileWakeTickets,
+  nonPausedAssigneeId,
 } from './board-integrity-check.mjs';
 
 // ---- isTombstone / findTombstones ------------------------------------------
@@ -1015,6 +1018,7 @@ test('fileWakeTickets files a todo issue assigned to the backlog ticket\'s own a
       throw new Error(`unexpected fetch: ${u}`);
     };
 
+    const agentsById = new Map([['code-reviewer-agent', { id: 'code-reviewer-agent', status: 'running' }]]);
     const assignedBacklogNoGate = [
       { id: 'issue-1923', identifier: 'LUL-1923', title: 'Review PR #458', status: 'backlog', assigneeAgentId: 'code-reviewer-agent' },
     ];
@@ -1031,6 +1035,7 @@ test('fileWakeTickets files a todo issue assigned to the backlog ticket\'s own a
       [],
       Date.now(),
       assignedBacklogNoGate,
+      agentsById,
     );
 
     assert.equal(filed.length, 1);
@@ -1039,7 +1044,7 @@ test('fileWakeTickets files a todo issue assigned to the backlog ticket\'s own a
     assert.ok(postedIssue, 'expected a POST to /issues');
     assert.equal(postedIssue.assigneeAgentId, 'code-reviewer-agent');
     assert.equal(postedIssue.status, 'todo');
-    assert.equal(meCalled, false, 'must not resolve self -- the backlog issue already names a real assignee');
+    assert.equal(meCalled, false, 'must not resolve self -- the backlog issue already names a real, non-paused assignee');
 
     // Second run: the wake ticket just filed now shows up as an open issue
     // (todo/in_progress) -- dedup must recognize it and file nothing new.
@@ -1060,8 +1065,56 @@ test('fileWakeTickets files a todo issue assigned to the backlog ticket\'s own a
       [],
       Date.now(),
       assignedBacklogNoGate,
+      agentsById,
     );
     assert.equal(filedAgain.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+// LUL-2081: PR #479 (LUL-2066) wired the paused-assignee guard into the
+// tombstone and stale-confirmation loops but missed Alarm E -- the exact
+// alarm (assignedBacklogNoGate) whose flood of duplicate tickets
+// (LUL-1990-2042) motivated LUL-2066 in the first place. This mirrors the
+// tombstone paused-agent test above, but for Alarm E.
+test('fileWakeTickets never assigns an assigned-backlog-no-gate wake ticket to a paused assignee -- falls back to self-resolution instead', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) return { ok: true, json: async () => ({ id: 'cto-agent-id' }) };
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-e2' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const agentsById = new Map([['task-runner', { id: 'task-runner', status: 'paused' }]]);
+    const assignedBacklogNoGate = [
+      { id: 'issue-1659', identifier: 'LUL-1659', title: 'stale backlog ticket', status: 'backlog', assigneeAgentId: 'task-runner' },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      assignedBacklogNoGate,
+      agentsById,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].assigneeAgentId, 'cto-agent-id', 'must not inherit the paused Task Runner assignee');
+    assert.equal(postedIssue.assigneeAgentId, 'cto-agent-id');
   } finally {
     globalThis.fetch = prevFetch;
   }
@@ -1244,6 +1297,125 @@ test('resolveSelfAgentId returns null (not a throw) when the company-agents fall
   }
 });
 
+// ---- nonPausedAssigneeId (LUL-2066: never inherit a paused agent's assignee) -
+//
+// Live bug: the detector opened LUL-2040/LUL-2039 assigned to Task Runner
+// because LUL-1659/LUL-1661 (the flagged issues) were themselves assigned to
+// Task Runner, which is paused (manual pauseReason). Assigning an issue wakes
+// its assignee immediately regardless of status, so this made the detector
+// itself repeatedly try to wake a founder-paused agent.
+
+test('nonPausedAssigneeId returns null (falls back) when the inherited assignee is paused', () => {
+  const agentsById = new Map([['task-runner', { id: 'task-runner', status: 'paused' }]]);
+  assert.equal(nonPausedAssigneeId('task-runner', agentsById), null);
+});
+
+test('nonPausedAssigneeId returns the assignee unchanged when it is not paused', () => {
+  const agentsById = new Map([['founding-engineer', { id: 'founding-engineer', status: 'running' }]]);
+  assert.equal(nonPausedAssigneeId('founding-engineer', agentsById), 'founding-engineer');
+});
+
+test('nonPausedAssigneeId returns null when there is no assignee at all', () => {
+  assert.equal(nonPausedAssigneeId(null, new Map()), null);
+  assert.equal(nonPausedAssigneeId(undefined, new Map()), null);
+});
+
+test('nonPausedAssigneeId returns the assignee unchanged when it is missing from the agents map (defaults safe, matches pre-fix behavior)', () => {
+  assert.equal(nonPausedAssigneeId('unknown-agent', new Map()), 'unknown-agent');
+});
+
+test('fileWakeTickets never assigns a tombstone wake ticket to the flagged issue\'s paused assignee -- falls back to self-resolution instead', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) return { ok: true, json: async () => ({ id: 'cto-agent-id' }) };
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const agentsById = new Map([['task-runner', { id: 'task-runner', status: 'paused' }]]);
+    const classifiedTombstones = [
+      {
+        issue: { id: 'issue-1', identifier: 'LUL-1659', title: 'stale ticket', status: 'blocked', assigneeAgentId: 'task-runner' },
+        disposition: 'STRANDED',
+        referencedPrs: [],
+        mergedPrs: [],
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      classifiedTombstones,
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].assigneeAgentId, 'cto-agent-id', 'must not inherit the paused Task Runner assignee');
+    assert.equal(postedIssue.assigneeAgentId, 'cto-agent-id');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets still inherits a non-paused assignee for a stale confirmation, unchanged from before this fix', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const agentsById = new Map([['founding-engineer', { id: 'founding-engineer', status: 'running' }]]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-2', identifier: 'LUL-438', title: 'PAT leak', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'ix-1', createdAt: '2026-08-19T00:00:00.000Z' },
+        ageDays: 8,
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      staleConfirmations,
+      [],
+      Date.now(),
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].assigneeAgentId, 'founding-engineer');
+    assert.equal(postedIssue.assigneeAgentId, 'founding-engineer');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
 // ---- fileWakeTickets under the durable-token 401 (the actual --post repro) -
 
 test('fileWakeTickets does not throw on a 401 from /api/agents/me -- files the tombstone wake ticket unassigned instead of exiting 2', async () => {
@@ -1365,4 +1537,62 @@ test('fileWakeTickets never touches /api/agents/me when every alarm already has 
   } finally {
     globalThis.fetch = prevFetch;
   }
+});
+
+// ---- isRecentWakeTicketSuppressed (LUL-2048) -------------------------------
+// This function gates the board's main safety net, so its edge cases are
+// tested explicitly rather than only through fileWakeTickets.
+
+const MARKER = 'Board-integrity: LUL-1205 is a tombstone';
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NOW = Date.parse('2026-09-02T00:00:00.000Z');
+const wake = (marker, createdAt) => ({ title: `${marker} (LUL-672 detector) -- STRANDED, needs work`, createdAt });
+
+test('isRecentWakeTicketSuppressed: no matching wake ticket -> not suppressed', () => {
+  assert.equal(isRecentWakeTicketSuppressed([], MARKER, NOW), false);
+  assert.equal(
+    isRecentWakeTicketSuppressed([wake('Board-integrity: LUL-9999 is a tombstone', new Date(NOW).toISOString())], MARKER, NOW),
+    false,
+  );
+});
+
+test('isRecentWakeTicketSuppressed: a ticket created inside the cooldown suppresses re-filing', () => {
+  const recent = new Date(NOW - 0.25 * DAY_MS).toISOString();
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, recent)], MARKER, NOW), true);
+});
+
+test('isRecentWakeTicketSuppressed: suppression EXPIRES once the cooldown elapses (never permanent silence)', () => {
+  const old = new Date(NOW - (WAKE_REFILE_COOLDOWN_DAYS + 0.1) * DAY_MS).toISOString();
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, old)], MARKER, NOW), false);
+});
+
+test('isRecentWakeTicketSuppressed: suppresses regardless of status, incl. done/cancelled that server dedup ignores', () => {
+  const recent = new Date(NOW - 0.5 * DAY_MS).toISOString();
+  for (const status of ['todo', 'in_progress', 'blocked', 'in_review', 'done', 'cancelled']) {
+    assert.equal(isRecentWakeTicketSuppressed([{ ...wake(MARKER, recent), status }], MARKER, NOW), true, status);
+  }
+});
+
+test('isRecentWakeTicketSuppressed: uses the MOST RECENT matching ticket, not the oldest', () => {
+  const old = new Date(NOW - 30 * DAY_MS).toISOString();
+  const recent = new Date(NOW - 0.1 * DAY_MS).toISOString();
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, old), wake(MARKER, recent)], MARKER, NOW), true);
+  const bothOld = [wake(MARKER, old), wake(MARKER, new Date(NOW - 29 * DAY_MS).toISOString())];
+  assert.equal(isRecentWakeTicketSuppressed(bothOld, MARKER, NOW), false);
+});
+
+test('isRecentWakeTicketSuppressed: fails OPEN (no suppression) on missing/garbage createdAt or a null list', () => {
+  assert.equal(isRecentWakeTicketSuppressed(null, MARKER, NOW), false);
+  assert.equal(isRecentWakeTicketSuppressed(undefined, MARKER, NOW), false);
+  assert.equal(isRecentWakeTicketSuppressed([{ title: `${MARKER} x` }], MARKER, NOW), false);
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, 'not-a-date')], MARKER, NOW), false);
+  assert.equal(isRecentWakeTicketSuppressed([{ createdAt: new Date(NOW).toISOString() }], MARKER, NOW), false);
+});
+
+test('isRecentWakeTicketSuppressed: cooldown is 1 day and is NOT the 7-day human-confirmation window', () => {
+  assert.equal(WAKE_REFILE_COOLDOWN_DAYS, 1);
+  assert.notEqual(WAKE_REFILE_COOLDOWN_DAYS, STALE_CONFIRMATION_DAYS);
+  const threeDaysAgo = new Date(NOW - 3 * DAY_MS).toISOString();
+  // Under the old (reused) 7-day constant this would still be muted; it must not be.
+  assert.equal(isRecentWakeTicketSuppressed([wake(MARKER, threeDaysAgo)], MARKER, NOW), false);
 });

@@ -38,6 +38,20 @@
 // non-precise backstops for "did resolution happen at all" (see the
 // toBeHidden waits below) -- just no longer the timing source.
 //
+// LUL-2107: rewritten to drive time via qaSetFixedStep/qaAdvance
+// (docs/specs/lul-2071-deterministic-qa-clock.md) instead of polling wall
+// time against the hand-accumulated ChargeState.t timer. That polling loop
+// only worked because swiftshader's <20fps rendering saturated the dt clamp
+// to a de facto fixed 0.05s/frame (wiki systems/e2e-post-gpu-nondeterminism,
+// root cause 1) -- real GPU rendering (LUL-1910) removed that accident, so
+// the wall-clock-vs-game-time ratio this spec's timeouts assumed no longer
+// holds. Advancing game time in known, exact dt steps removes the dependency
+// on rig speed entirely: `advanceGameTime()` below always moves exactly the
+// requested amount of simulation time regardless of how fast the underlying
+// browser/GPU actually is. #chargePrompt/#deathScreen waits keep short real
+// timeouts -- those are now just "did React flush the DOM after a step",
+// not "did enough wall time pass for game time to catch up".
+//
 // A prior version of this spec instead polled qaPredatorState().state for
 // 'chase' -> 'investigate' with a long (10s) timeout and got a false FAIL on
 // every run: the QA hook places the player in the open with no cover and
@@ -67,8 +81,8 @@
 // mechanic; it is a rendering/telegraph-reading concern, not a dodge-outcome
 // one. Not asserted on here for that reason -- see LUL-302 for its own fix.
 import { test, expect } from '@playwright/test';
-import { boot, enter, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
-import { CHARGE_TELL_TIME, CHARGE_RUN_TIME } from '../lib/game/charge';
+import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
+import { CHARGE_TELL_TIME, CHARGE_RUN_TIME, CHARGE_WINDOW } from '../lib/game/charge';
 
 // "Well into" the charging sub-phase. ChargeState.t is cumulative since the
 // charge started (spans telegraph *and* charging, not reset at the phase
@@ -76,8 +90,20 @@ import { CHARGE_TELL_TIME, CHARGE_RUN_TIME } from '../lib/game/charge';
 // t in [CHARGE_TELL_TIME, CHARGE_TELL_TIME + CHARGE_RUN_TIME). Target the
 // midpoint of that range: comfortably past the transition (so we're not
 // timing-racing the phase flip itself) and comfortably short of its end (so
-// a slow poll tick can't overshoot into 'caught').
+// an off-by-one step can't overshoot into 'caught').
 const MID_CHARGE_T = CHARGE_TELL_TIME + CHARGE_RUN_TIME * 0.5;
+
+// LUL-2107: fixed simulation step used for the whole test, matching the
+// hook's own qa-fixed-clock.spec.ts. Small enough to land close to
+// MID_CHARGE_T without overshooting past 'charging' into 'overshoot'.
+const FIXED_DT = 0.02;
+const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
+// Generous game-time budget to run any charge fully through to resolution
+// ('cleared' or 'caught') -- CHARGE_WINDOW (telegraph+charging) plus the
+// worst-case overshoot (CHARGE_RUN_TIME), doubled for slack. This replaces
+// the old spec's generous *wall-clock* timeouts (15s/30s) with a generous
+// *game-time* budget -- same "don't cut it close" intent, deterministic units.
+const RESOLVE_STEPS = stepsFor((CHARGE_WINDOW + CHARGE_RUN_TIME) * 2);
 
 test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', () => {
   for (const kind of ['wolf', 'lion'] as const) {
@@ -86,6 +112,10 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       const errors = trackConsoleErrors(page);
       await boot(page, { qaHooks: true });
       await enter(page);
+      // LUL-2107: park the real RAF loop for the rest of the test -- from
+      // here on, only advanceGameTime() moves simulation time.
+      await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+      const advanceGameTime = (steps: number) => qaHook(page, 'qaAdvance', steps);
 
       const chargePrompt = page.locator('#chargePrompt');
       const deathScreen = page.locator('#deathScreen');
@@ -101,37 +131,21 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
         return idxOrNull;
       }
 
-      // Polls the live ChargeState (qaChargePhase, LUL-373) for MID_CHARGE_T
-      // game-time seconds into 'charging', instead of a fixed wall-clock wait.
-      // A fixed ms wait only reliably lands at the same game-time point on the
-      // rig it was tuned against -- game-time accrues slower per wall-clock ms
-      // on a loaded/slower runner (dt clamp, see wiki systems/dt-clamp-vs-
-      // walltime), which is exactly what made CI flake on the original 1100ms
-      // version of this spec (LUL-373 review). Polling the engine's own clock
-      // is correct at any rig speed.
-      async function waitForMidCharge(idx: number): Promise<void> {
-        await expect
-          .poll(
-            async () => {
-              const cs = await page.evaluate((i) => window.ForestEngine?.qaChargePhase?.(i) ?? null, idx);
-              return cs && cs.phase === 'charging' ? cs.t : -1;
-            },
-            {
-              message: `${kind}: charge never reached ${MID_CHARGE_T.toFixed(2)}s into 'charging'`,
-              // LUL-421 (review on PR #60): was 3_000. `cs.t` is
-              // ChargeState's hand-accumulated `+= dt` timer (lib/game/
-              // charge.ts), the exact dilated-timer category wiki
-              // `systems/dt-clamp-vs-walltime` documents -- below 20fps,
-              // game time accrues slower than wall time and never catches
-              // up, so a wall-clock deadline this tight on a ~0.68s
-              // game-time target flakes on a loaded/slower CI runner.
-              // 20_000 matches this suite's own precedent for a comparable
-              // game-time-dependent poll (e2e/positional-hiding.spec.ts).
-              timeout: 20_000,
-              intervals: [20, 50, 100],
-            },
-          )
-          .toBeGreaterThanOrEqual(MID_CHARGE_T);
+      // LUL-2107: advances game time by exactly the number of fixed steps
+      // needed to reach MID_CHARGE_T, instead of polling wall time against
+      // the live ChargeState (qaChargePhase, LUL-373). The old version had
+      // to poll because it couldn't know in advance how much wall time a
+      // given amount of game time would take (dt clamp, see wiki
+      // systems/dt-clamp-vs-walltime) -- under a fixed step the ratio is
+      // exact, so a single deterministic advance() + one direct read
+      // replaces the poll loop entirely.
+      async function advanceToMidCharge(idx: number): Promise<void> {
+        await advanceGameTime(stepsFor(MID_CHARGE_T));
+        const cs = await page.evaluate((i) => window.ForestEngine?.qaChargePhase?.(i) ?? null, idx);
+        expect(
+          cs && cs.phase === 'charging' ? cs.t : -1,
+          `${kind}: charge never reached ${MID_CHARGE_T.toFixed(2)}s into 'charging' after ${stepsFor(MID_CHARGE_T)} fixed steps`,
+        ).toBeGreaterThanOrEqual(MID_CHARGE_T);
       }
 
       // Reads overshootDuration off the charge that just resolved for `idx`
@@ -151,10 +165,15 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       // case -- no fine timing needed to land inside it.
       const idx = await triggerAndGetIdx();
       await page.keyboard.press('Space');
+      // LUL-2107: drive the resolution ourselves instead of waiting on the
+      // real RAF loop -- RESOLVE_STEPS is a generous game-time budget, so
+      // the DOM-flush timeout below only needs to cover React's own paint,
+      // not any remaining game time.
+      await advanceGameTime(RESOLVE_STEPS);
       await expect(
         chargePrompt,
         `${kind}: an immediate/telegraph-phase dodge never cleared the charge HUD -- resolution stalled`,
-      ).toBeHidden({ timeout: 15_000 });
+      ).toBeHidden({ timeout: 2_000 });
       const earlyDied = await deathScreen.isVisible();
       expect(
         earlyDied,
@@ -170,18 +189,18 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       // player and predator at their fixed setup positions), so this reuses
       // the same page/session deliberately.
       //
-      // Wait for the live charge state to actually reach MID_CHARGE_T seconds
-      // into 'charging' (LUL-373) rather than guessing a wall-clock ms delay
-      // -- see waitForMidCharge's comment above for why the original 1100ms
-      // version of this line flaked on CI's slower rig.
+      // Advance the live charge state to exactly MID_CHARGE_T seconds into
+      // 'charging' (LUL-373) via advanceToMidCharge -- see its comment above
+      // for why this replaces the original poll.
       const idx2 = await triggerAndGetIdx();
-      await waitForMidCharge(idx2);
+      await advanceToMidCharge(idx2);
       await page.keyboard.press('Space');
+      await advanceGameTime(RESOLVE_STEPS);
       await expect(
         chargePrompt,
         `${kind}: a mid-charge dodge never cleared the charge HUD -- resolution stalled, or the predator caught ` +
           `the player outright (check #deathScreen/test output)`,
-      ).toBeHidden({ timeout: 15_000 });
+      ).toBeHidden({ timeout: 2_000 });
       const lateDied = await deathScreen.isVisible();
       expect(
         lateDied,
@@ -230,11 +249,10 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       // guards against a regression that accidentally made every charge
       // survivable). No Space press at all this time.
       await triggerAndGetIdx();
-      // LUL-421 (CI fix): CHARGE_WINDOW = 1s game-time. On a loaded CI runner where
-      // rAF is throttled and dt is capped at 0.05s, game time can run at ~1/20 of
-      // wall time (1fps * 0.05s/frame). Budget 30s wall to cover that worst case.
+      // LUL-2107: no Space press, just advance past CHARGE_WINDOW deterministically.
+      await advanceGameTime(RESOLVE_STEPS);
       await expect(deathScreen, `${kind}: failing to dodge did not kill the player`).toBeVisible({
-        timeout: 30_000,
+        timeout: 2_000,
       });
       await expect(page.locator('#deathKind')).toHaveText(kind);
 
