@@ -3038,6 +3038,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // depending on procedural-terrain pathing.
   window.ForestEngine.qaTeleportHome = function(){ player.x = CONFIG.home.x; player.z = CONFIG.home.z; };
 
+  // LUL-2169: same rationale as qaTeleportNearBaby/qaTeleportHome above, but for
+  // the death path -- the only way to reach a deterministic death otherwise is to
+  // wait out a predator's real hunt/chase/charge timer, which is exactly the kind
+  // of timing-dependent setup an e2e spec shouldn't depend on. Calls the real
+  // triggerDeath() (never fake state), so canTriggerDeath()'s guards (!dead &&
+  // !won && !pickingUp, lib/game/outcome.ts) still apply -- this is a
+  // deterministic *trigger* of the real transition, not a state bypass.
+  window.ForestEngine.qaTriggerDeath = function(kind = 'wolf', cause = 'chase'){ triggerDeath(kind, cause); };
+
   // LUL-25: sets difficulty for the *next* generateMap() call (restart/regen
   // -- the current map doesn't retroactively move the child). The real path
   // is setDifficulty('blackout') via the settings panel (LUL-372); this hook

@@ -33,6 +33,13 @@ declare global {
       // casting `window` to `any` and losing every other guarantee with it.
       qaTeleportNearBaby?: () => void;
       qaTeleportHome?: () => void;
+      /** LUL-2169: forces a deterministic death via the real triggerDeath() (not fake
+       * state) so an e2e spec doesn't have to wait out a real predator's hunt/chase/
+       * charge timer. `kind` defaults to 'wolf', `cause` to 'chase' -- both match the
+       * defaults forest-engine.js's own triggerDeath() calls use for the everyday
+       * chase-catch death. No-ops (mirrors triggerDeath/canTriggerDeath) if the run is
+       * already dead, won, or mid-pickup. */
+      qaTriggerDeath?: (kind?: 'wolf' | 'bear' | 'lion', cause?: 'charge' | 'hunt' | 'chase') => void;
       /** LUL-25: sets difficulty for the *next* generateMap() (restart/regen), not the
        * current map. No UI wires this yet (LUL-26) -- it's how a test exercises hard
        * mode's "child spawns beyond the bog" before that UI exists. */
