@@ -13,11 +13,12 @@ export interface RunState {
   dead: boolean;
   pickingUp: boolean;
   carrying: boolean;
+  setDown: boolean;
   babyTaken: boolean;
 }
 
 export function freshRunState(): RunState {
-  return { entered: false, won: false, dead: false, pickingUp: false, carrying: false, babyTaken: false };
+  return { entered: false, won: false, dead: false, pickingUp: false, carrying: false, setDown: false, babyTaken: false };
 }
 
 /** The `entered && !won && !dead && !pickingUp` predicate, duplicated at five
@@ -36,7 +37,9 @@ function pickupAllowed(s: RunState): boolean {
   // (carrying=true always implies babyTaken=true already, they're set
   // together in beginPickup/completePickup) -- made explicit per the ticket,
   // not a behaviour change.
-  return !s.babyTaken && !s.won && !s.dead && !s.pickingUp && !s.carrying;
+  // `!s.babyTaken` alone would permanently block re-pickup once she's ever been taken --
+  // `s.setDown` (LUL-1815) is the one case where a true babyTaken must still allow it.
+  return (!s.babyTaken || s.setDown) && !s.won && !s.dead && !s.pickingUp && !s.carrying;
 }
 
 /** Gate for the HUD prompt / KeyE-enabled state: proximity plus every flag
@@ -52,7 +55,7 @@ export function canPickUp(s: RunState, distToBaby: number, radius: number): bool
  * without a separate canPickUp() check first) is safely rejected. */
 export function beginPickup(s: RunState): RunState {
   if (!pickupAllowed(s)) return s;
-  return { ...s, babyTaken: true, pickingUp: true };
+  return { ...s, babyTaken: true, pickingUp: true, setDown: false };
 }
 
 /** Cinematic finished -- hands off from pickingUp to carrying. The ~11.3s
@@ -62,6 +65,31 @@ export function beginPickup(s: RunState): RunState {
 export function completePickup(s: RunState): RunState {
   if (!s.pickingUp) return s;
   return { ...s, pickingUp: false, carrying: true };
+}
+
+/** Gate for the set-down input: only while actually carrying, and not mid-win/-death
+ * (both already imply !carrying via their own transitions, but this stays explicit --
+ * same reasoning as pickupAllowed's explicit !s.carrying, see its comment above). No
+ * proximity term: unlike pickup, set-down has no target to be near, so there is no
+ * canSetDown(state, dist, radius) wrapper the way canPickUp wraps pickupAllowed. */
+function setDownAllowed(s: RunState): boolean {
+  return s.carrying && !s.won && !s.dead;
+}
+
+/** Gate for the HUD prompt / KeyE-enabled state while carrying. Thin export of
+ * setDownAllowed(), kept as its own function (not just exporting setDownAllowed
+ * directly) for the same reason canPickUp exists alongside pickupAllowed: callers
+ * outside this module should never reach for the private `*Allowed` name. */
+export function canSetDown(s: RunState): boolean {
+  return setDownAllowed(s);
+}
+
+/** Puts the child down at the player's current position. No-ops (returns `s` unchanged)
+ * when not currently allowed, mirroring beginPickup(). The engine caller is responsible
+ * for writing baby.x/z to the player's position -- this module has no coordinates. */
+export function beginSetDown(s: RunState): RunState {
+  if (!setDownAllowed(s)) return s;
+  return { ...s, carrying: false, setDown: true };
 }
 
 // LUL-596: this guard did not exist before the extraction. `arriveHome()`

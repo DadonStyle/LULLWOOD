@@ -23,6 +23,10 @@ export const HEAR_CHANCE_PER_SEC = 0.5;
  * isNoiseHeard() -- reuses NOISE_RADIUS_RUN's scale per the CTO plan (decision 5). */
 export const THROWABLE_NOISE_RADIUS = NOISE_RADIUS_RUN;
 
+/** The child's cry (LUL-1255 Ship 1 wayfinding) is audible further than any footstep --
+ * a sustained beacon, not an incidental sound. */
+export const CRY_NOISE_RADIUS = 32;
+
 /**
  * Whether a predator at `dist` from a throwable's landing point notices it. Pure
  * distance check, deliberately not probabilistic like isNoiseHeard() -- a thrown

@@ -21,6 +21,9 @@ export interface VeilChargeState {
   /** true from the frame a full drain happens until charge regenerates past
    * VEIL_UNLOCK_CHARGE -- while locked, holding the trigger key does nothing. */
   locked: boolean;
+  /** true if a Stone Marker charm is banked -- consumed instead of locking out
+   * the next time a full drain would otherwise happen. LUL-1210. */
+  reserve: boolean;
 }
 
 export const VEIL_MAX_HOLD = 5;          // seconds of continuous hold before a full drain
@@ -47,16 +50,24 @@ export function stepVeilCharge(
   dt: number,
   maxHold: number = VEIL_MAX_HOLD,
 ): VeilChargeState & { active: boolean } {
-  let { charge, locked } = state;
+  let { charge, locked, reserve } = state;
   if (locked && charge >= VEIL_UNLOCK_CHARGE * VEIL_MAX_HOLD / maxHold) locked = false;
   const active = held && !locked && charge > 0;
   if (active) {
     charge = Math.max(0, charge - dt / maxHold);
-    if (charge <= 0) locked = true;
+    if (charge <= 0) {
+      if (reserve) {
+        // LUL-1210: the Stone Marker charm -- spend it instead of locking out.
+        charge = VEIL_UNLOCK_CHARGE * VEIL_MAX_HOLD / maxHold;
+        reserve = false;
+      } else {
+        locked = true;
+      }
+    }
   } else {
     charge = Math.min(1, charge + (dt / maxHold) * VEIL_REGEN_MUL);
   }
-  return { charge, locked, active };
+  return { charge, locked, reserve, active };
 }
 
 /** `veilAmount` is the eased 0..1 ramp the engine drives off the veil's

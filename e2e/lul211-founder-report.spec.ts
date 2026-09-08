@@ -28,9 +28,10 @@
 //     lib/game/cover.ts) so walking/running over one feels natural, while LOS,
 //     hide-spot eligibility and predator catch are all untouched -- a log is
 //     still not a safe zone. That is an intentional, scoped exception, not a
-//     regression of this bug: rock and bramble are still fully solid to the
-//     player, and log is still solid to everything else. See the second
-//     describe block below.
+//     regression of this bug: rock is still fully solid to the player. LUL-1642
+//     (2026-09-06) extended the same walkable exemption from `log` alone to
+//     every HIDE_KINDS entry, so bramble now matches log exactly -- see the
+//     second describe block below, which covers both.
 import { test, expect } from '@playwright/test';
 import { boot, enter, readObjective } from './helpers';
 
@@ -134,10 +135,16 @@ test.describe('LUL-211: cover props are solid', () => {
   // trees (coverData's `s>1.4` subset) are the one element the interaction
   // matrix (docs/ELEMENTS.md) marks C+LOS same as rock, so player-vs-tree
   // collision belongs in this exact loop, not a separate spec.
-  // 'log' deliberately excluded here as of LUL-384 -- see the file header and
-  // the 'LUL-384: log is walkable' describe block below, which pins the new,
-  // intended behaviour instead of the old one.
-  for (const kind of ['rock', 'bramble', 'tree'] as const) {
+  // 'log' deliberately excluded here as of LUL-384, and 'bramble' as of
+  // LUL-1642 (2026-09-06, unified bramble with log's walkable-cover
+  // exemption -- see the file header) -- see the 'LUL-384/LUL-1642: walkable
+  // cover' describe block below, which pins the new, intended behaviour for
+  // both instead of the old one. Leaving 'bramble' in this loop is what
+  // produced LUL-2072's ~0.92-unit "overshoot": the player wasn't sliding
+  // past a face by extra frame slack, it was walking straight through a prop
+  // that stopped blocking movement three days earlier and only halting at
+  // whatever obstacle came next.
+  for (const kind of ['rock', 'tree'] as const) {
     test(`walking straight into a ${kind} does not pass through it`, async ({ page }) => {
       test.setTimeout(45_000);
       await boot(page, { qaHooks: true });
@@ -179,8 +186,13 @@ test.describe('LUL-211: cover props are solid', () => {
   }
 });
 
-test.describe('LUL-384: log is walkable', () => {
-  test('walking straight into a log passes over it instead of stopping at its face', async ({
+test.describe('LUL-384/LUL-1642: log and bramble are walkable', () => {
+  // LUL-1642 (2026-09-06) extended LUL-384's log-only walkable exemption to
+  // every HIDE_KINDS entry (coverKindBlocksMovement(), lib/game/cover.ts), so
+  // bramble now gets the exact same treatment as log. Parametrized rather
+  // than a second copy-pasted test -- the two kinds share one predicate.
+  for (const kind of ['log', 'bramble'] as const) {
+  test(`walking straight into a ${kind} passes over it instead of stopping at its face`, async ({
     page,
   }) => {
     test.setTimeout(45_000);
@@ -189,10 +201,10 @@ test.describe('LUL-384: log is walkable', () => {
 
     // Same staging hook as the solid-props test above -- it computes the
     // standoff a *blocking* prop of this footprint would need, which still
-    // works fine as a starting point for log: it just means the walk below
-    // starts at (and then crosses) where a wall would have been.
-    const staged = await page.evaluate(() => window.ForestEngine?.qaStageWalkIntoCover?.('log'));
-    expect(staged, 'no reachable log to stage against').not.toBeNull();
+    // works fine as a starting point for a walkable kind: it just means the
+    // walk below starts at (and then crosses) where a wall would have been.
+    const staged = await page.evaluate((k) => window.ForestEngine?.qaStageWalkIntoCover?.(k), kind);
+    expect(staged, `no reachable ${kind} to stage against`).not.toBeNull();
     const { prop, start } = staged!;
     expect(start.x, 'staged start is already inside the prop').toBeLessThan(prop.x - prop.hx);
 
@@ -207,18 +219,18 @@ test.describe('LUL-384: log is walkable', () => {
     const farFaceX = prop.x - faceDx;
 
     // A short real walk still proves actual keyboard-driven movement engages
-    // the log approach (a genuinely wedged player would fail this weak bar
-    // too) -- see the solid-props loop above for the same 0.3-unit floor.
+    // the approach (a genuinely wedged player would fail this weak bar too)
+    // -- see the solid-props loop above for the same 0.3-unit floor.
     await page.keyboard.down('KeyW');
     await page.waitForTimeout(1_000);
     await page.keyboard.up('KeyW');
     await page.waitForTimeout(200);
     const midway = (await page.evaluate(() => window.ForestEngine?.qaProbePlayer?.()))!;
-    expect(midway.x, 'the player never moved toward the log').toBeGreaterThan(start.x + 0.3);
+    expect(midway.x, `the player never moved toward the ${kind}`).toBeGreaterThan(start.x + 0.3);
 
-    // The definitive "no collision bug on the log" claim is checked by
+    // The definitive "no collision bug on this prop" claim is checked by
     // sampling blocked() -- the exact predicate real movement gates on --
-    // directly across the log's full footprint, near face to far face and a
+    // directly across the prop's full footprint, near face to far face and a
     // margin past it. This is deterministic and independent of how many
     // animation frames actually ran during the walk above, unlike asserting
     // a specific end position reached within a fixed wall-clock window
@@ -257,7 +269,8 @@ test.describe('LUL-384: log is walkable', () => {
     const firstBlocked = blockedSamples.find((s) => s.blocked);
     expect(
       firstBlocked,
-      `blocked(x=${firstBlocked?.x.toFixed(2)}, z=${prop.z.toFixed(2)}) is true somewhere across the log's span (near face x=${nearFaceX.toFixed(2)}, far face x=${farFaceX.toFixed(2)}) -- LUL-384 requires the whole log to be collision-free for the player`,
+      `blocked(x=${firstBlocked?.x.toFixed(2)}, z=${prop.z.toFixed(2)}) is true somewhere across the ${kind}'s span (near face x=${nearFaceX.toFixed(2)}, far face x=${farFaceX.toFixed(2)}) -- LUL-384/LUL-1642 require the whole ${kind} to be collision-free for the player`,
     ).toBeUndefined();
   });
+  }
 });

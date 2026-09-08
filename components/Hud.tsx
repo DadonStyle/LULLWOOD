@@ -59,6 +59,9 @@ export interface EngineHudState {
   // while locked, even if held.
   veilCharge: number;
   veilLocked: boolean;
+  // LUL-1904: cave detection-immunity countdown -- 0 while inactive.
+  caveImmuneActive:   boolean;
+  caveImmuneTimeLeft: number;
   // LUL-1089: contextual action prompts for hide and veil mechanics.
   coverPromptVisible: boolean;
   coverPromptUrgent:  boolean;
@@ -176,6 +179,8 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lightDimmed: false,
   veilCharge: 1,
   veilLocked: false,
+  caveImmuneActive: false,
+  caveImmuneTimeLeft: 0,
   coverPromptVisible: false,
   coverPromptUrgent: false,
   coverPromptKind: null,
@@ -353,6 +358,7 @@ function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle }: { su
                 {payout.home > 0 && <> · +{payout.home} home</>}
               </>
             )}
+            {payout.spent > 0 && <> · −{payout.spent} charm</>}
             {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
           </>
         )}
@@ -547,6 +553,8 @@ export default function Hud({
                 <b>Hide</b> / <b>E</b> / <b>Jump</b> &nbsp;·&nbsp; the buttons tell you when
                 <br />
                 <b>Veil</b> &nbsp;·&nbsp; holds off what is hunting you
+                <br />
+                <b>Deepwater</b> tag, top-left &nbsp;·&nbsp; reach the marked zone for a bonus Embers payout on a successful run
               </>
             ) : (
               <>
@@ -558,6 +566,9 @@ export default function Hud({
                 <br />
                 <b>F</b> — hold for the mist veil (dims your light, floods the world in mist, and cuts
                 how far predators can see you) — limited, watch the Veil meter
+                <br />
+                <b>Deepwater</b> tag, top-left — reach the marked zone for a bonus Embers payout on a
+                successful run
               </>
             )}
           </div>
@@ -586,6 +597,16 @@ export default function Hud({
         </div>
       )}
 
+      {/* LUL-1904: cave detection-immunity countdown -- always visible while
+          active so the player can never be surprised by a silent lapse. Raw
+          seconds from the engine, formatted here (same "engine emits data, React
+          renders" rule as fogDisplay/timeOfRunClock). */}
+      {state.caveImmuneActive && (
+        <div id="caveImmunePanel">
+          Immune · {Math.ceil(state.caveImmuneTimeLeft)}s
+        </div>
+      )}
+
       {/* `hiding` is not a second flag: status only ever appears while hidden
           (LUL-35 pass 2 removed the `statusHiding` field, which the engine only
           ever set to the same value as `statusVisible`). */}
@@ -603,6 +624,10 @@ export default function Hud({
         >
           {'→'}
         </div>
+      )}
+
+      {state.entered && (
+        <div id="windIndicatorHint">wind — move into the arrow to lower your scent trail</div>
       )}
 
       {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;

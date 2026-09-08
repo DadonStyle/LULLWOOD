@@ -63,6 +63,33 @@ export const LANDMARKS = [
   { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
 
+// LUL-1210: Stone Marker veil-charm interact radius -- same shape as
+// MISSION_POOL's interactRadius (lib/game/mission.ts).
+export const VEIL_CHARM_INTERACT_RADIUS = 4;
+
+// LUL-1904: the cave -- spawns in ~50% of rounds (coin-flip drawn in
+// generateMap(), see forest-engine.js), a fixed candidate slot like every
+// LANDMARKS entry above, but NOT pushed into LANDMARKS itself -- that array
+// is placed unconditionally every round (placeLandmarks(), forest-engine.js:1061-1069).
+// `interactR` is the walk-in trigger radius (distinct from `cr`, the movement
+// collider) -- deliberately larger, matching the scale of the other entries'
+// `clear`.
+export const CAVE = { kind: 'cave', x: -70, z: 130, clear: 12, cr: 1.6, interactR: 6 };
+
+// LUL-1855: fog-exempt beacon glow on the radio mast -- a small additive
+// sprite, separate from the mast's existing PointLight (which FogExp2 erases
+// by ~43 units at default density regardless of intensity -- see wiki
+// game/mechanics/landmarks-below-the-fog-line). Deliberately dim: a bearing,
+// not a light source -- the CEO-accepted cheap slice covers this one
+// landmark only, not all six.
+export const RADIO_MAST_BEACON_GLOW = {
+  color: 0xff2a2a,     // same hue as the existing PointLight beacon, forest-engine.js buildRadioMast()
+  scale: 1.4,           // sprite width/height in world units (billboard quad)
+  opacityBase: 0.4,     // dim -- must not read as a lit scene
+  opacityAmp: 0.15,      // pulse amplitude around opacityBase
+  pulseHz: 0.5,          // slow pulse (~12.6s period) so it reads as a beacon, not a rendering glitch
+};
+
 // LUL-1808: roam waypoint step, expressed as a fraction of `half` the same way
 // child spawn radius (half*(0.5+rng()*0.3), forest-engine.js:788) and predator
 // spawn radius (half*(0.42+rng()*0.45), forest-engine.js:1204) already scale
@@ -131,6 +158,12 @@ export const PSPEC = {
   bear: { body:0x3d2c22, sz:1.8, len:2.0, h:1.45, mane:false, ears:false, speed:6.8, detect:30, eye:0xff5a2a, rad:1.5, budget:9, nose:1.4 },
   lion: { body:0xc79a5b, sz:1.2, len:1.7, h:1.0,  mane:true,  ears:true,  speed:9.2, detect:48, eye:0xffcf3a, rad:1.0, budget:4, nose:0.75 },
 };
+// LUL-1902: wolf-only nose-multiplier reduction while the player's bog-mask
+// (lib/game/bog.ts bogMaskLevel()) is active. 0.7, not 1.0 -- the decision
+// doc explicitly rejects a hard safe-room, so a wolf already close/fresh on
+// the trail can still catch a masked scent, just at reduced range. Bears and
+// lions are untouched -- see checkScent() in the engine.
+export const WOLF_BOG_MASK_STRENGTH = 0.7;
 // Size each animal's speed from its warning budget: from the moment it SEES you and you
 // flee at top speed, the fastest (lion) still gives >=4s, the bear >=9s. All are faster
 // than the player, so you can't simply outrun them -- hiding is the real escape.

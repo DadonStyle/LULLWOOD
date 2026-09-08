@@ -357,6 +357,13 @@ export function buildEntriesByDay(ref, cwd = REPO_ROOT) {
     const shape = classifyShape(commit);
     if (shape.excluded) continue;
     const paths = changedPaths(commit, cwd);
+    // Structural exclusion: any first-parent commit whose diff against its
+    // first parent touches no files is a release-train sync/backmerge no-op
+    // (see systems/daily-reports, LUL-833) -- checked by diff, not by subject
+    // wording, because real sync-commit subjects vary ("Sync release/next
+    // after vX (#N)", "Merge pull request #N from DadonStyle/main", etc.) and
+    // BACKMERGE_RE alone can't keep up with every shape the workflow produces.
+    if (paths.length === 0) continue;
     const sectionKey = classifySection(commit, paths);
     if (!byDay.has(day)) byDay.set(day, []);
     byDay.get(day).push({
