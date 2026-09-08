@@ -65,6 +65,14 @@ export default function GameMenu({
     onOpenSettings();
   };
 
+  // LUL-2131: #gameMenu's hamburger sits at z-index 20, and the menuPanel it
+  // opens covers most of the same corner -- both stayed mounted and tappable
+  // over #winScreen/#deathScreen (z-index 25, GameCanvas.tsx) because nothing
+  // here ever read winVisible/deathVisible. Unmount rather than hide: an open
+  // menu with a live "New map"/"Pause" row has no business surviving into an
+  // end screen that already offers its own restart.
+  if (state.winVisible || state.deathVisible) return null;
+
   return (
     <div id="gameMenu" ref={menuRef}>
       <button

@@ -987,6 +987,18 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   ~1.2 line-height) still overlapped the hint's first line at that 30px gap;
   `#windIndicatorHint`'s `top` moved to `64px` (default) / `228px`
   (`data-admin-mode="1"`), a 14px increase in both, to clear it.
+  LUL-2131: `#windIndicator`/`#windIndicatorHint` (and `#throwPrompt`, `#actionPrompt`,
+  `#captionToast`, all `components/Hud.tsx`) now also gate on `!state.winVisible &&
+  !state.deathVisible` -- `state.entered` alone stays true through both end screens
+  (`restart()` is the only site that clears it), so these kept rendering at their
+  own z-indices (12/z-auto) over `#winScreen`/`#deathScreen` (z-index 25,
+  `components/GameCanvas.tsx`). Same root cause hit `MobileControls.tsx`, which now
+  unmounts entirely (`return null`) on `winVisible || deathVisible` -- its
+  sticks/buttons sit at z-index 30/31, genuinely above the end screens, not just
+  behind them at a lower z-index -- and `GameMenu.tsx`'s `#gameMenu` (hamburger +
+  panel, z-index 20), which does the same. `#chargePrompt` needed no HUD-layer
+  gate: the engine already resets `chargeVisible: false` in both `arriveHome()` and
+  `triggerDeath()` (`engine/forest-engine.js`).
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
