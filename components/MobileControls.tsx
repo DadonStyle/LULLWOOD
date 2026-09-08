@@ -284,15 +284,23 @@ export default function MobileControls({
     gap: 10,
   };
 
-  // LUL-529: pause is the only route into the settings panel on a phone (no
-  // Escape key), so it lives top-left, well clear of the minimap (top-right,
-  // components/GameCanvas.tsx OVERLAY_STYLE #minimap) and the bottom action
-  // clusters -- it must stay reachable and visible even while every other
-  // mobile control is mid-gesture.
+  // LUL-529: pause is reachable without opening the menu first, so it lives
+  // top-left, well clear of the minimap (top-right, components/GameCanvas.tsx
+  // OVERLAY_STYLE #minimap) and the bottom action clusters -- it must stay
+  // reachable and visible even while every other mobile control is
+  // mid-gesture.
+  // LUL-2073: GameMenu.tsx's #gameMenu hamburger (menuToggle) also anchors at
+  // top:16/left:16 (z-index 20) -- added by LUL-1085 after this button
+  // already existed here, at the same corner. This wrapper's higher z-index
+  // (31) put it directly on top of menuToggle, silently eating every tap
+  // meant for the hamburger (e2e/mobile/pause.spec.ts timed out 150s waiting
+  // for menuToggle's click to register). Offset left past menuToggle's own
+  // 48px width plus a gap so both buttons sit side by side instead of
+  // stacked.
   const pauseWrapper: React.CSSProperties = {
     position: 'fixed',
     top: 'calc(16px + env(safe-area-inset-top))',
-    left: 'calc(16px + env(safe-area-inset-left))',
+    left: 'calc(76px + env(safe-area-inset-left))',
     zIndex: 31,
     pointerEvents: 'auto',
   };
