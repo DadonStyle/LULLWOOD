@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4684 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4148, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4769 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4217, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1113,7 +1113,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3841) and `triggerDeath()` (L3872).
+  both `track()` call sites in `arriveHome()` (L3893) and `triggerDeath()` (L3924).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1124,7 +1124,7 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L2976) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3000) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L4265: `computeDepth(maxDistFromHome) +
@@ -1181,7 +1181,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L4109, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L4290, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1239,10 +1239,75 @@ design doc as turning horror into radar.
   and has no mobile-unreachable action.
 - Cannot pay out on death — the completion bonus is win-only, exactly like `CARRIED`/`HOME`.
 
+**Secondary objectives (LUL-1666, Phase 1 — `deepwater` only)**
+- **Implemented.** `MissionState.secondary: MissionSecondaryState | null` (`lib/game/mission.ts`)
+  — an optional bonus layered on top of `deepwater`'s baseline, never a replacement for it.
+  Drawn at `pickMission(rng, secondaryChoice)` time, where `secondaryChoice` is the player's
+  pre-run menu pick (`components/GameMenu.tsx`'s `menuSecondary` control), gated on
+  `SECONDARY_SUPPORTED_MISSIONS` (`deepwater` only today) and on the pool member actually drawn
+  — the choice is a request, not a guarantee.
+- Two kinds: `retrieval` (reach the existing `radioMast` landmark, see below, and press
+  interact — completion is a one-time flag, does not require still holding/standing on it at
+  arrive-home) and `speedrun` (arrive home within `MISSION_DEEPWATER_SPEEDRUN_SECONDS` = 240s of
+  entering). Evaluated once, at `arriveHome()`, via `secondaryComplete()`.
+- Pays an additive bonus on top of `MISSION_DEEPWATER_REWARD` at the moment of winning:
+  `DEEPWATER_RETRIEVAL_BONUS` = 15 or `DEEPWATER_SPEEDRUN_BONUS` = 18 Embers
+  (`lib/game/economy.ts`), passed as `computeWinPayout()`'s new fifth argument. Win-only —
+  `computeDeathPayout()` is unmodified, same rule as the baseline mission bonus.
+- **Never gates the baseline win.** Failing (or not attempting) the secondary never fails
+  `arriveHome()` — `lib/game/outcome.ts` is untouched by this feature.
+- Gated behind a cross-session unlock: the secondary picker in the pre-run menu only renders
+  once the player has completed `deepwater`'s baseline at least once
+  (`missionUnlocks.deepwater`), persisted to `localStorage` by `components/Hud.tsx`'s
+  `useMissionUnlocks()` exactly like Embers' `useEmbers()`.
+- Retrieval reuses the existing interact channel (`KeyE` / `triggerTouchInteract()`), the same
+  key/button that completes the baseline mission and lifts the child — no new keybinding, no new
+  touch target. Completion fires `completeSecondarySequence()`: a caption + the same completion
+  sting as the baseline mission, no cinematic lock.
+- HUD: a second collapsed top-left panel (`#secondaryPanel` in `components/Hud.tsx`), same
+  family as `#missionPanel` above — progress-to-target in meters (retrieval) or a countdown
+  (speedrun), hidden whenever no secondary is attached or the player is carrying the child.
+
 **Collision & physics profile**
 - N/A — not a spatial/world object. The mission *target* (the drowned car) is a `LANDMARKS`
   entry with its own existing decorative/navigational collision profile, unchanged by this
   entry; the mission struct only reads that entry's coordinates, it does not add new geometry.
+  The retrieval secondary's target is the `radioMast` landmark, below — also unchanged
+  geometry, no new mesh or light.
+
+---
+
+### Radio Mast (`radioMast` landmark)
+
+**What it is**
+- A permanent, always-rendered decorative `LANDMARKS` entry (`engine/tuning.js`, `kind:
+  'radioMast', x: 30, z: 175`) with its own pulsing red beacon glow sprite
+  (`buildRadioMast()`/`radioMastBeaconGlow`, `RADIO_MAST_BEACON_GLOW` tuning, LUL-1855). It
+  predates LUL-1666/LUL-1697 and its appearance is unchanged by them.
+
+**What it can do**
+- **LUL-1666/LUL-1697:** when the player's pre-run secondary choice is `retrieval` (see Missions
+  above), this landmark doubles as the retrieval target — walking within
+  `RETRIEVAL_ITEM.interactRadius` (`lib/game/mission.ts`, 4 units) and pressing interact flags
+  `mission.secondary` complete via `completeRetrieval()`. When retrieval is not the active
+  secondary, nothing about the landmark changes — same mesh, same pulse glow, no interaction.
+  **Retargeted from the originally-shipped `stoneMarker` to `radioMast`**
+  (`decisions/lul-1697-retrieval-landmark-radiomast-2026-09-08`) because `stoneMarker` gained its
+  own, unrelated interact mechanic (`canBuyVeilCharm`, LUL-2067/LUL-1210, see below) on the same
+  `E`-key slot after this ticket's spec was written — `radioMast` has no other interact mechanic,
+  so the two never compete.
+
+**What it CANNOT do**
+- Cannot be picked up, carried, or moved — completion is a one-time flag on the mission struct,
+  not an object-carry state (no position tracking, no drop-on-death).
+- Cannot be interacted with outside a `retrieval`-secondary run — `canCompleteRetrieval()` is
+  false whenever no secondary is attached or the attached secondary is `speedrun`.
+- Gains no new geometry, particle, or glow-intensity change from LUL-1666/LUL-1697 — the existing
+  pulsing beacon glow is the only signal that it is the active objective.
+
+**Collision & physics profile**
+- Unchanged by LUL-1666/LUL-1697 — same decorative-landmark collision profile `buildRadioMast()`
+  always had.
 
 ---
 

@@ -147,6 +147,31 @@ export default function GameMenu({
             </div>
           )}
 
+          {!state.entered && state.missionUnlocks.deepwater && (
+            <div className="menuRow menuSecondary">
+              <label>Secondary objective</label>
+              <div className="segmentedControl">
+                {([null, 'retrieval', 'speedrun'] as const).map((k) => {
+                  const label = k === null ? 'None' : k === 'retrieval' ? 'Retrieval' : 'Speedrun';
+                  return (
+                    <button
+                      key={label}
+                      data-testid={`menuSecondary${label}`}
+                      className={`segment ${state.secondaryChoice === k ? 'active' : ''}`}
+                      onClick={() => {
+                        actions?.setSecondaryChoice(k);
+                        setOpen(false);
+                      }}
+                      title={k === null ? 'No bonus' : k === 'retrieval' ? 'Find the radio mast for a bonus' : 'Reach home within the time limit for a bonus'}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <button
             id="settingsBtn"
             className="menuRow"
