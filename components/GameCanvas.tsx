@@ -293,6 +293,16 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   #missionGlyph { color: #7fa6dd; }
 
+  /* LUL-1904: cave detection-immunity countdown -- always visible while active,
+     top-center below #objective so it never overlaps the mission panel or the
+     wind indicator. */
+  #caveImmunePanel { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 12;
+    padding: 6px 14px; border-radius: 999px; pointer-events: none;
+    background: rgba(20,40,36,0.6); border: 1px solid rgba(111,214,196,0.4);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    font-size: 13px; letter-spacing: 0.04em; color: #a8f0e0;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+
   #windIndicator { position: fixed; top: 20px; right: 20px; z-index: 12;
     font-size: 28px; color: #ddd; text-shadow: 0 0 4px rgba(0,0,0,0.6);
     transform-origin: 50% 50%; pointer-events: none; }
