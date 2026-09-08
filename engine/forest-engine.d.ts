@@ -205,6 +205,14 @@ declare global {
         soundOn: boolean;
         masterGain: number | null;
       };
+      /** LUL-2071: deterministic test clock -- parks the real RAF loop so a
+       * test can advance simulation time in exact, jitter-free steps. Must be
+       * called before qaAdvance(). */
+      qaSetFixedStep?: (dtSeconds: number) => void;
+      /** LUL-2071: advances simulation time by exactly dtSeconds * steps,
+       * driving the same stepFrame() the real RAF loop calls. Throws if
+       * qaSetFixedStep() hasn't been called first. */
+      qaAdvance?: (steps?: number) => void;
     };
   }
 }
