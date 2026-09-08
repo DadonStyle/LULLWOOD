@@ -119,6 +119,8 @@ import {
   veilMaxHoldForTier,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
+  DEEPWATER_RETRIEVAL_BONUS,
+  DEEPWATER_SPEEDRUN_BONUS,
   computeDepth,
   computeSurvival,
   applySpend,
@@ -131,6 +133,10 @@ import {
   distToMissionTarget,
   canCompleteMission,
   completeMission,
+  canCompleteRetrieval,
+  completeRetrieval,
+  secondaryComplete,
+  RETRIEVAL_ITEM,
 } from '@/lib/game/mission';
 import {
   inLakeWater,
@@ -928,7 +934,7 @@ function generateMap(seed){
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
   // LUL-1258: draw this run's mission last, after every other rng() consumer
   // above, so it never shifts the stream any existing seed/replay depends on.
-  mission = pickMission(rng);
+  mission = pickMission(rng, secondaryChoice);
   missionHumTimer = 2;
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
@@ -1182,6 +1188,15 @@ let mission = null;
 let cryTimer = 2;   // LUL-1255 (Ship 1 wayfinding S3d): first cry fires quickly, not after a full interval
 let homeFireTimer = 2;   // LUL-1255 (Ship 1 wayfinding S5): same init as cryTimer
 let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- first hum fires quickly, not after a full interval
+// LUL-1666: cross-session record of which missions have had their secondary
+// unlocked (completed baseline once). Engine-owned, synced from
+// components/Hud.tsx's localStorage read via setMissionUnlocks(), same split
+// as `embers` (line ~1646). Keyed by MissionKind for forward-compatibility
+// with M1/M4/M5 once they ship, even though only 'deepwater' is reachable today.
+let missionUnlocks = { deepwater: false };
+// LUL-1666: the player's pre-run menu choice for the *next* draw -- 'none' by
+// default. Read once at pickMission() time in generateMap(), not re-read mid-run.
+let secondaryChoice = null;
 let carriedCryPulse = false;   // LUL-1857: one-tick pulse, set by the carry-leg cry timer, consumed by updatePredators() the same frame
 
 const babyGroup = new THREE.Group();
@@ -2271,6 +2286,7 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
+    secondaryCanComplete = false,   // LUL-1666: same shape, for the retrieval item
     canBuyVeilCharm = false;   // LUL-1210: recomputed every tick alongside canPickup, below
 let heldThrowable = false;
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
@@ -2359,6 +2375,7 @@ on(window, 'keydown', e => {
     else if(carrying) setDown();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
+    else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
   }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
@@ -2895,6 +2912,16 @@ let hudState = {
   // LUL-1258: M2 Deepwater's minimal HUD panel -- null/null whenever no
   // mission is active or the player is carrying (see the tick() pushState).
   missionKind: null, missionStatus: null,
+  // LUL-1666: secondary objectives (deepwater only, Phase 1). `missionUnlocks`
+  // is cross-session like embersBalance above (Hud.tsx persists it).
+  // `secondaryChoice` is the player's pre-run pick, reset only by
+  // setSecondaryChoice() itself (i.e. it persists across restarts, matching
+  // difficulty's own persistence). `secondaryKind`/`secondaryStatus`/
+  // `secondaryProgress` describe the *active run's* secondary and are always
+  // null/null/null when no secondary is attached to the current mission.
+  missionUnlocks: { deepwater: false },
+  secondaryChoice: null,
+  secondaryKind: null, secondaryStatus: null, secondaryProgress: null,
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
   // and persists it to localStorage (see components/Hud.tsx).
@@ -3922,6 +3949,15 @@ function completeMissionSequence(){
   pushState({ caption: 'the drowned car -- found it', captionId: ++captionSeq });   // unconditional, matches the landmark first-run caption's precedent
   missionCompleteSting();
 }
+// LUL-1666: retrieval's completion -- mirrors completeMissionSequence()'s
+// shape exactly (guard, pure-fn update, caption, sting), no cinematic lock,
+// same rationale ("a detour bonus, not the core objective").
+function completeSecondarySequence(){
+  if(mission.secondary?.data.kind !== 'retrieval' || mission.secondary.data.retrieved) return;
+  mission = completeRetrieval(mission);
+  pushState({ caption: 'the radio mast -- retrieved', captionId: ++captionSeq });
+  missionCompleteSting();
+}
 function arriveHome(){
   const next = outcomeArriveHome(runState());
   won = next.won; carrying = next.carrying;
@@ -3946,7 +3982,23 @@ function arriveHome(){
   // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
   // like carried/home, since computeDeathPayout's signature is untouched.
   const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
-  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus), embersSpent);
+  // LUL-1666: secondary bonus is independent of missionBonus -- a player can
+  // win the secondary without ever completing the deepwater baseline this
+  // run (already unlocked from a prior run), or complete the baseline and
+  // still miss the secondary. Never gates arriveHome() itself (see spec S1).
+  const secondaryWon = mission ? secondaryComplete(mission, survivedSeconds) : false;
+  const secondaryBonus = secondaryWon
+    ? (mission.secondary.data.kind === 'retrieval' ? DEEPWATER_RETRIEVAL_BONUS : DEEPWATER_SPEEDRUN_BONUS)
+    : 0;
+  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus), embersSpent);
+  // LUL-1666: unlock is keyed on the *baseline* completing, independent of
+  // whether a secondary was even attempted this run -- guardrail is "complete
+  // the mission once", not "complete a secondary once". Persisted by
+  // components/Hud.tsx same as embersBalance below.
+  if(mission?.status === 'complete' && !missionUnlocks[mission.target.kind]){
+    missionUnlocks = { ...missionUnlocks, [mission.target.kind]: true };
+    pushState({ missionUnlocks: { ...missionUnlocks } });
+  }
   embers = applyPayout(embers, payout);
   logChronicle('win');
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
@@ -4069,6 +4121,23 @@ function setEmbers(balance, deeperLungsTier){
 function purchaseDeeperLungs(){
   embers = economyPurchaseDeeperLungs(embers);
   pushState({ embersBalance: embers.balance, embersDeeperLungsTier: embers.tiers.deeperLungs });
+}
+// LUL-1666: sync from components/Hud.tsx's localStorage read, once on mount
+// -- identical split to setEmbers() above (engine owns the state, React
+// persists it). `unlocks` may be a partial/stale-shaped object (schema
+// could predate a future mission); only known keys are trusted.
+function setMissionUnlocks(unlocks){
+  missionUnlocks = { deepwater: !!(unlocks && unlocks.deepwater) };
+  pushState({ missionUnlocks: { ...missionUnlocks } });
+}
+// LUL-1666: player's pre-run menu pick for the *next* draw. No-ops outside
+// the pre-run menu the same way setDifficulty tolerates a bad value -- an
+// unrecognized kind is treated as 'none'. Deliberately does not re-roll the
+// current mission's secondary mid-run; per GameMenu.tsx (S4/S5), the control
+// itself is only rendered while `!state.entered`.
+function setSecondaryChoice(kind){
+  secondaryChoice = (kind === 'retrieval' || kind === 'speedrun') ? kind : null;
+  pushState({ secondaryChoice });
 }
 on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -4556,6 +4625,10 @@ function stepFrame(dt, t){
   // computed the same way canPickup is above.
   const distMission = mission ? distToMissionTarget(mission, player.x, player.z) : Infinity;
   missionCanComplete = mission ? canCompleteMission(mission, distMission) : false;
+  const distSecondaryItem = (mission?.secondary?.data.kind === 'retrieval')
+    ? Math.hypot(player.x - RETRIEVAL_ITEM.x, player.z - RETRIEVAL_ITEM.z)
+    : Infinity;
+  secondaryCanComplete = mission ? canCompleteRetrieval(mission, distSecondaryItem) : false;
   if(playing){
     let statusVisible = false, statusText = '';
     if(hidden){
@@ -4620,11 +4693,23 @@ function stepFrame(dt, t){
       // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
       missionKind: mission && !carrying ? mission.target.kind : null,
       missionStatus: mission && !carrying ? mission.status : null,
+      secondaryKind: mission && !carrying && mission.secondary ? mission.secondary.data.kind : null,
+      secondaryStatus: mission && !carrying && mission.secondary
+        ? (secondaryComplete(mission, clock.elapsedTime - enteredAt) ? 'complete' : 'active')
+        : null,
+      // LUL-1666: retrieval -> whole meters/distance for the Hud's progress
+      // indicator; speedrun -> seconds remaining for its countdown. One field,
+      // shape keyed by kind, mirrors lastPayout's discriminated-by-caller shape.
+      secondaryProgress: mission && !carrying && mission.secondary
+        ? (mission.secondary.data.kind === 'retrieval'
+            ? { kind: 'retrieval', retrieved: mission.secondary.data.retrieved, distance: Math.round(distSecondaryItem) }
+            : { kind: 'speedrun', remainingSeconds: Math.max(0, Math.round(mission.secondary.data.timeLimitSeconds - (clock.elapsedTime - enteredAt))) })
+        : null,
       caveImmuneActive: caveImmuneT > 0,
       caveImmuneTimeLeft: caveImmuneT,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null, caveImmuneActive: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false });
   }
   // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
   // baby.taken stays true forever once first picked up, so babySetDown is the only signal
@@ -4806,6 +4891,7 @@ tick();
     else if(carrying) setDown();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
+    else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
   }
   function triggerTouchThrow() {

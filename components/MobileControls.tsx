@@ -245,13 +245,23 @@ export default function MobileControls({
   entered,
   runMode,
   heldThrowable,
+  winVisible,
+  deathVisible,
 }: {
   actions: EngineActions | null;
   entered: boolean;
   runMode: 'hold' | 'toggle';
   heldThrowable: boolean;
+  winVisible: boolean;
+  deathVisible: boolean;
 }) {
   if (!actions) return null;
+  // LUL-2131: sticks/buttons sit at z-index 30/31, above #winScreen/#deathScreen's
+  // z-index 25 (GameCanvas.tsx) -- they stayed mounted and tappable over the end
+  // screens because this component previously gated only on `entered`, which stays
+  // true through win/death. Unmount outright rather than fade: nothing here should
+  // still receive input once a run has ended.
+  if (winVisible || deathVisible) return null;
 
   // LUL-529: `env(safe-area-inset-*)` only resolves once app/layout.tsx's
   // viewport export carries `viewportFit: 'cover'` -- without it every one of
