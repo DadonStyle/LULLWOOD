@@ -311,7 +311,7 @@ const OVERLAY_STYLE = `
     font-size: 28px; color: #ddd; text-shadow: 0 0 4px rgba(0,0,0,0.6);
     transform-origin: 50% 50%; pointer-events: none; }
 
-  #windIndicatorHint { position: fixed; top: 50px; right: 8px; width: 76px; z-index: 12;
+  #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
     font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
     text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none;
     animation: windHintFade 7s ease forwards; }
@@ -321,7 +321,7 @@ const OVERLAY_STYLE = `
      display:none for every real player (data-admin-mode="0"), so top:20/right:20 above
      is what players and the QA tester actually see; push down only under admin mode. */
   body[data-admin-mode="1"] #windIndicator { top: 184px; }
-  body[data-admin-mode="1"] #windIndicatorHint { top: 214px; }
+  body[data-admin-mode="1"] #windIndicatorHint { top: 228px; }
 
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;

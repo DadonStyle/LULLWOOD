@@ -983,7 +983,10 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   only under `body[data-admin-mode="1"]`; the default (real player) position
   reverts to LUL-1724's original `top:20px; right:20px` (`#windIndicatorHint`
   `top:50px; right:8px`), verified clear of `MobileControls` at every tested
-  viewport.
+  viewport. LUL-2057 found the arrow's own ~54px rendered box (28px font,
+  ~1.2 line-height) still overlapped the hint's first line at that 30px gap;
+  `#windIndicatorHint`'s `top` moved to `64px` (default) / `228px`
+  (`data-admin-mode="1"`), a 14px increase in both, to clear it.
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
