@@ -1016,6 +1016,7 @@ test('fileWakeTickets files a todo issue assigned to the backlog ticket\'s own a
       throw new Error(`unexpected fetch: ${u}`);
     };
 
+    const agentsById = new Map([['code-reviewer-agent', { id: 'code-reviewer-agent', status: 'running' }]]);
     const assignedBacklogNoGate = [
       { id: 'issue-1923', identifier: 'LUL-1923', title: 'Review PR #458', status: 'backlog', assigneeAgentId: 'code-reviewer-agent' },
     ];
@@ -1032,6 +1033,7 @@ test('fileWakeTickets files a todo issue assigned to the backlog ticket\'s own a
       [],
       Date.now(),
       assignedBacklogNoGate,
+      agentsById,
     );
 
     assert.equal(filed.length, 1);
@@ -1040,7 +1042,7 @@ test('fileWakeTickets files a todo issue assigned to the backlog ticket\'s own a
     assert.ok(postedIssue, 'expected a POST to /issues');
     assert.equal(postedIssue.assigneeAgentId, 'code-reviewer-agent');
     assert.equal(postedIssue.status, 'todo');
-    assert.equal(meCalled, false, 'must not resolve self -- the backlog issue already names a real assignee');
+    assert.equal(meCalled, false, 'must not resolve self -- the backlog issue already names a real, non-paused assignee');
 
     // Second run: the wake ticket just filed now shows up as an open issue
     // (todo/in_progress) -- dedup must recognize it and file nothing new.
@@ -1061,8 +1063,56 @@ test('fileWakeTickets files a todo issue assigned to the backlog ticket\'s own a
       [],
       Date.now(),
       assignedBacklogNoGate,
+      agentsById,
     );
     assert.equal(filedAgain.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+// LUL-2081: PR #479 (LUL-2066) wired the paused-assignee guard into the
+// tombstone and stale-confirmation loops but missed Alarm E -- the exact
+// alarm (assignedBacklogNoGate) whose flood of duplicate tickets
+// (LUL-1990-2042) motivated LUL-2066 in the first place. This mirrors the
+// tombstone paused-agent test above, but for Alarm E.
+test('fileWakeTickets never assigns an assigned-backlog-no-gate wake ticket to a paused assignee -- falls back to self-resolution instead', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) return { ok: true, json: async () => ({ id: 'cto-agent-id' }) };
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-e2' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const agentsById = new Map([['task-runner', { id: 'task-runner', status: 'paused' }]]);
+    const assignedBacklogNoGate = [
+      { id: 'issue-1659', identifier: 'LUL-1659', title: 'stale backlog ticket', status: 'backlog', assigneeAgentId: 'task-runner' },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      assignedBacklogNoGate,
+      agentsById,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].assigneeAgentId, 'cto-agent-id', 'must not inherit the paused Task Runner assignee');
+    assert.equal(postedIssue.assigneeAgentId, 'cto-agent-id');
   } finally {
     globalThis.fetch = prevFetch;
   }
