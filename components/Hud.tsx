@@ -492,13 +492,36 @@ export default function Hud({
   // death screen is still opacity:0 during the unskippable first-death
   // cutscene) would let a stray Enter restart through native button
   // activation, bypassing the cutscene entirely.
+  //
+  // LUL-1614: focusing the instant *Revealed flips true was itself the bug --
+  // Space is also the jump key, so a player who was jumping (over the last
+  // obstacle on the carry leg, most commonly) right as they cross home has that
+  // keypress still in flight the moment the button gains focus, and the
+  // browser's native "activate the focused button on Space/Enter" fires before
+  // the player has consciously registered YOU WON, silently restarting the run
+  // -- reproduced live: press Space right after winRevealed and #winScreen is
+  // gone, #objective is back, with zero click on .restartBtn. This is the
+  // "game just resumes after finding the child" report. A short delay before
+  // focusing lets any already-in-flight key from active gameplay lapse first;
+  // a player who presses Space/Enter *after* actually seeing the screen still
+  // gets the same accessible path back in.
+  // 2000ms, not a round guess: #winText's own opacity transition (GameCanvas.tsx's
+  // OVERLAY_STYLE, `transition: opacity 0.9s ease`) means winRevealed flips true a full
+  // 0.9s before the text is actually visible on screen -- a shorter delay measured from
+  // winRevealed still lands within or just after that fade, before a player has had any
+  // real chance to read "YOU WON" and decide to press something.
+  const RESTART_FOCUS_DELAY_MS = 2000;
   const winRestartRef = useRef<HTMLButtonElement>(null);
   const deathRestartRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (state.winRevealed) winRestartRef.current?.focus();
+    if (!state.winRevealed) return;
+    const id = setTimeout(() => winRestartRef.current?.focus(), RESTART_FOCUS_DELAY_MS);
+    return () => clearTimeout(id);
   }, [state.winRevealed]);
   useEffect(() => {
-    if (state.lossRevealed) deathRestartRef.current?.focus();
+    if (!state.lossRevealed) return;
+    const id = setTimeout(() => deathRestartRef.current?.focus(), RESTART_FOCUS_DELAY_MS);
+    return () => clearTimeout(id);
   }, [state.lossRevealed]);
 
   return (
