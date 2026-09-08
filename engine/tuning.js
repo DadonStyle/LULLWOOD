@@ -63,6 +63,10 @@ export const LANDMARKS = [
   { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
 
+// LUL-1210: Stone Marker veil-charm interact radius -- same shape as
+// MISSION_POOL's interactRadius (lib/game/mission.ts).
+export const VEIL_CHARM_INTERACT_RADIUS = 4;
+
 // LUL-1904: the cave -- spawns in ~50% of rounds (coin-flip drawn in
 // generateMap(), see forest-engine.js), a fixed candidate slot like every
 // LANDMARKS entry above, but NOT pushed into LANDMARKS itself -- that array

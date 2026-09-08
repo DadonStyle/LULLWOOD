@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4332 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3855, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4378 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3889, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -180,6 +180,10 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   (`carrying` branch, `tick()`), until the player crosses
   `CONFIG.home.r` (3.6u) of the home landmark, which wins the run
   (`arriveHome()`).
+- **As of `LUL-1815`**, be set back down mid-carry (`setDown()`) and picked
+  back up from where she was left (`pickupAllowed()`'s `babyTaken` guard is
+  relaxed by a `setDown` flag in `lib/game/outcome.ts`) — see "cannot do"
+  below for the exact boundary.
 - **NOT live on `main`** — idle/carry glow intensity scaled by a difficulty
   preset's `glowMul` was built on the unmerged LUL-26 branch
   (`DIFFICULTY_PRESETS`); `engine/forest-engine.js` on `main` has no
@@ -227,8 +231,14 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   of it — `Math.hypot(x-baby.x,z-baby.z)<26` in `placePredators()`).
   Once the map is generated, a predator can stand directly on the
   un-collected child with zero effect. `UNDEFINED` — see matrix.
-- Cannot be dropped, lost, or re-hidden once picked up — `baby.taken` only
-  ever goes false→true, reset by `generateMap()`/`restart()`.
+- Cannot be lost or re-hidden once picked up — `baby.taken` only ever goes
+  false→true, reset by `generateMap()`/`restart()`. **As of `LUL-1815`**, she
+  *can* be set back down while carried (`setDown()`, same `KeyE`/touch-interact
+  input as pickup — no new key) — this returns her to a fixed point on the
+  ground (glowing, idle-animated, re-spottable via the beacon wisps) and the
+  player to full speed/no carry-detect penalty until she's picked up again
+  from that spot. `carrying` itself does still round-trip true→false→true;
+  only `baby.taken` is one-way.
 - Cannot collide with anything (no collider function reads its position).
 
 **Behaviours & logic**
@@ -973,7 +983,10 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   only under `body[data-admin-mode="1"]`; the default (real player) position
   reverts to LUL-1724's original `top:20px; right:20px` (`#windIndicatorHint`
   `top:50px; right:8px`), verified clear of `MobileControls` at every tested
-  viewport.
+  viewport. LUL-2057 found the arrow's own ~54px rendered box (28px font,
+  ~1.2 line-height) still overlapped the hint's first line at that 30px gap;
+  `#windIndicatorHint`'s `top` moved to `64px` (default) / `228px`
+  (`data-admin-mode="1"`), a 14px increase in both, to clear it.
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
@@ -1088,7 +1101,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3547) and `triggerDeath()` (L3578).
+  both `track()` call sites in `arriveHome()` (L3581) and `triggerDeath()` (L3612).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1099,7 +1112,7 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L2730) and recomputed every `tick()` while the run
+  reset to 0 on `enter()` (L2737) and recomputed every `tick()` while the run
   is neither won nor dead (L3935: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
@@ -1216,6 +1229,58 @@ design doc as turning horror into radar.
 - N/A — not a spatial/world object. The mission *target* (the drowned car) is a `LANDMARKS`
   entry with its own existing decorative/navigational collision profile, unchanged by this
   entry; the mission struct only reads that entry's coordinates, it does not add new geometry.
+
+---
+
+### Stone Marker veil-charm (LUL-1210)
+
+**What it is**
+- **Implemented (LUL-2067/LUL-1210).** A one-shot in-run spend at the Stone Marker landmark
+  (mesh/collider already shipped, LUL-374): 15 unbanked Embers buys a "reserve" that snaps a
+  fully-drained mist-veil (`KeyF`) back to its unlock threshold instead of locking it out, the
+  next time a full drain would otherwise happen. Second in-run Embers spend site, after Deeper
+  Lungs (which is a between-run purchase, not in-run).
+- Purchase gate `canBuyVeilCharm`, computed every tick (`engine/forest-engine.js:4137`):
+  `!carrying && !veilReserve && distStoneMarker < VEIL_CHARM_INTERACT_RADIUS &&
+  computeDepth(maxDistFromHome) >= VEIL_CHARM_PRICE`. `VEIL_CHARM_INTERACT_RADIUS` (4 units,
+  `engine/tuning.js:68`) and `VEIL_CHARM_PRICE` (15, `lib/game/economy.ts:74`).
+- `buyVeilCharm()` (`engine/forest-engine.js:3445`): sets `veilReserve = true`, adds
+  `VEIL_CHARM_PRICE` to `embersSpent`, fires a caption + `feature_engagement`/`veil_charm`
+  telemetry event.
+- `stepVeilCharge()`'s `reserve` branch (`lib/game/veil.ts:59`): on a full drain, if `reserve` is
+  true it snaps `charge` back to the unlock threshold and clears `reserve` instead of setting
+  `locked`; identical to prior behaviour when `reserve` is false.
+
+**What it can do**
+- Reachable via both interact paths: desktop `KeyE` and mobile `triggerTouchInteract()` (the
+  existing tap-and-hold interact target — no new touch control), same shape as pickup/mission
+  completion.
+- Deduct the spend from the run's live unbanked pile display (`livePileEmbers`) immediately, and
+  from the final payout via `applySpend()` (`lib/game/economy.ts`), applied at both `arriveHome()`
+  and `triggerDeath()` so the spend is honestly reflected whether the run ends in a win or a death.
+
+**What it CANNOT do**
+- Never offered while `carrying` — same hard gate as every other landmark purchase.
+- Never a second currency/spend UI surface — a single in-world interact prompt, not a shop panel.
+- Cannot fail for lack of funds in normal play: by the Stone Marker's fixed 125-unit distance from
+  home, `computeDepth(maxDistFromHome) >= 31` by geometry at the point of purchase, a 16-point
+  margin over the 15-point price (the `computeDepth(...) >= VEIL_CHARM_PRICE` guard is kept as a
+  correctness backstop, not removed as dead code).
+- Only one reserve may be banked at a time (`!veilReserve` in the gate) — cannot stack multiple
+  charms.
+
+**Behaviours & logic**
+- Reset per-run: `veilReserve = false; embersSpent = 0;` in `enter()`.
+- HUD prompt text (`engine/forest-engine.js`, the `objectiveText`/`objectiveReady` `pushState()`
+  block): `'Press  E  for a mist-charm  ·  15 embers'` when `canBuyVeilCharm` and no higher-priority
+  prompt (pickup/carry/mission) applies; `objectiveReady` is `canPickup || canBuyVeilCharm`.
+- `RunRecap` (`components/Hud.tsx`) renders a `· −{payout.spent} charm` fragment when
+  `payout.spent > 0`, so the earnings breakdown still reads as sums to `total` after a spend.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object of its own. Uses the Stone Marker landmark's existing
+  decorative/navigational collision profile (`landmarkGroups.stoneMarker.position`, live post-nudge
+  position), unchanged by this entry.
 
 ---
 
