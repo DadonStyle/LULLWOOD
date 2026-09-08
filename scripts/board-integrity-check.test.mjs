@@ -31,6 +31,9 @@ import {
   findStaleConfirmations,
   isStaleConfirmationSuppressed,
   STALE_CONFIRMATION_DAYS,
+  isAssignedBacklogNoGate,
+  findAssignedBacklogNoGate,
+  assignedBacklogNoGateWakeMarker,
   authJsonPath,
   durableToken,
   resolveSelfAgentId,
@@ -900,6 +903,168 @@ test('isStaleConfirmationSuppressed: does not cross-match a different issue\'s m
     { title: 'Board-integrity: LUL-438 has a stale request_confirmation (LUL-810 detector)', updatedAt: '2026-08-26T00:00:00.000Z' },
   ];
   assert.equal(isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, NOW_MS), false);
+});
+
+// ---- Alarm E: assigned issue parked in backlog with no named gate ---------
+//
+// CEO ruling LUL-1125: "backlog must never contain an assigned, ungated
+// ticket." Live cases (LUL-1923, LUL-1913, wiki
+// systems/issue-creation-backlog-status-trap): a review-request child issue
+// created with a real assigneeAgentId and status "backlog" never wakes its
+// assignee, and once assigned away its own creator cannot fix the mistake
+// (403 outside this actor's authorization boundary). Both sat 10-16+ hours
+// before a human found them by hand.
+
+test('LUL-1923 shape: backlog + real assignee + no blockedBy -> alarm fires', () => {
+  const issue = {
+    identifier: 'LUL-1923',
+    status: 'backlog',
+    assigneeAgentId: 'code-reviewer-agent',
+    blockedBy: [],
+  };
+  assert.equal(isAssignedBacklogNoGate(issue), true);
+});
+
+test('LUL-1913 shape: missing blockedBy field entirely (not even an empty array) -> alarm fires', () => {
+  const issue = {
+    identifier: 'LUL-1913',
+    status: 'backlog',
+    assigneeAgentId: 'code-reviewer-agent',
+  };
+  assert.equal(isAssignedBacklogNoGate(issue), true);
+});
+
+test('backlog + unassigned -> not an alarm (this is the legitimate use of backlog)', () => {
+  const issue = { identifier: 'LUL-1', status: 'backlog', assigneeAgentId: null, blockedBy: [] };
+  assert.equal(isAssignedBacklogNoGate(issue), false);
+});
+
+test('backlog + assigned but genuinely gated (blockedBy non-empty) -> not an alarm', () => {
+  const issue = {
+    identifier: 'LUL-1082',
+    status: 'backlog',
+    assigneeAgentId: 'some-agent',
+    blockedBy: [{ identifier: 'LUL-999', status: 'todo' }],
+  };
+  assert.equal(isAssignedBacklogNoGate(issue), false);
+});
+
+test('a status outside backlog is never this alarm, regardless of assignee/blockedBy', () => {
+  const issue = { identifier: 'LUL-1', status: 'todo', assigneeAgentId: 'some-agent', blockedBy: [] };
+  assert.equal(isAssignedBacklogNoGate(issue), false);
+});
+
+test('isAssignedBacklogNoGate does not care whether a named blocker is itself still live -- unlike isTombstone, any named gate at all clears it', () => {
+  // Deliberate contrast with isTombstone: a blockedBy entry that is already
+  // `done` still counts as "no named gate" for isTombstone (isBlockerLive
+  // filters it out), but Alarm E only asks "is there a blockedBy entry at
+  // all" -- CEO ruling LUL-1125 bans an *ungated* ticket, not a
+  // *no-longer-live-gate* one. A resolved gate on a backlog ticket is a
+  // human/agent triage decision (move to todo), not this alarm's job.
+  const issue = {
+    identifier: 'LUL-1',
+    status: 'backlog',
+    assigneeAgentId: 'some-agent',
+    blockedBy: [{ identifier: 'LUL-2', status: 'done' }],
+  };
+  assert.equal(isAssignedBacklogNoGate(issue), false);
+});
+
+test('findAssignedBacklogNoGate filters a mixed list down to only the banned shape', () => {
+  const bad1 = { identifier: 'LUL-1923', status: 'backlog', assigneeAgentId: 'agent-1', blockedBy: [] };
+  const bad2 = { identifier: 'LUL-1913', status: 'backlog', assigneeAgentId: 'agent-2' };
+  const okUnassigned = { identifier: 'LUL-2', status: 'backlog', assigneeAgentId: null, blockedBy: [] };
+  const okGated = { identifier: 'LUL-1082', status: 'backlog', assigneeAgentId: 'agent-3', blockedBy: [{ status: 'todo' }] };
+  const notBacklog = { identifier: 'LUL-3', status: 'todo', assigneeAgentId: 'agent-4', blockedBy: [] };
+  const hits = findAssignedBacklogNoGate([bad1, bad2, okUnassigned, okGated, notBacklog]);
+  assert.deepEqual(hits.map((i) => i.identifier), ['LUL-1923', 'LUL-1913']);
+});
+
+test('assignedBacklogNoGateWakeMarker is stable and starts with Board-integrity:', () => {
+  const marker = assignedBacklogNoGateWakeMarker({ identifier: 'LUL-1923' });
+  assert.equal(marker, 'Board-integrity: LUL-1923 is assigned and parked in backlog with no gate');
+});
+
+test('formatReport includes Alarm E text and the real assignee id when assignedBacklogNoGate has hits', () => {
+  const hits = [{ identifier: 'LUL-1923', title: 'Review PR #458', assigneeAgentId: 'code-reviewer-agent' }];
+  const report = formatReport([], [], 'DadonStyle/LULLWOOD', null, [], hits);
+  assert.match(report, /LUL-1125/);
+  assert.match(report, /LUL-1923/);
+  assert.match(report, /code-reviewer-agent/);
+});
+
+test('formatReport still returns null when assignedBacklogNoGate is empty and no other alarms', () => {
+  assert.equal(formatReport([], [], 'DadonStyle/LULLWOOD', null, [], []), null);
+});
+
+test('fileWakeTickets files a todo issue assigned to the backlog ticket\'s own assignee, not resolveSelfId, and dedups on the marker', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    let meCalled = false;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) {
+        meCalled = true;
+        return { ok: true, json: async () => ({ id: 'should-not-be-used' }) };
+      }
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-e1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const assignedBacklogNoGate = [
+      { id: 'issue-1923', identifier: 'LUL-1923', title: 'Review PR #458', status: 'backlog', assigneeAgentId: 'code-reviewer-agent' },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      assignedBacklogNoGate,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].kind, 'assigned-backlog-no-gate');
+    assert.equal(filed[0].assigneeAgentId, 'code-reviewer-agent');
+    assert.ok(postedIssue, 'expected a POST to /issues');
+    assert.equal(postedIssue.assigneeAgentId, 'code-reviewer-agent');
+    assert.equal(postedIssue.status, 'todo');
+    assert.equal(meCalled, false, 'must not resolve self -- the backlog issue already names a real assignee');
+
+    // Second run: the wake ticket just filed now shows up as an open issue
+    // (todo/in_progress) -- dedup must recognize it and file nothing new.
+    const openIssuesAfter = [postedIssue];
+    globalThis.fetch = async (url, opts) => {
+      if (opts?.method === 'POST') throw new Error('should not file a second wake ticket');
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const filedAgain = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      openIssuesAfter,
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      assignedBacklogNoGate,
+    );
+    assert.equal(filedAgain.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
 });
 
 // ---- durableToken / authJsonPath (LUL-770 credential trap, mirrored from ---

@@ -25,6 +25,8 @@ import {
   canGrabThrowable,
   canThrowThrowable,
   canRegenMap,
+  canSetDown,
+  beginSetDown,
 } from '@/lib/game/outcome';
 import {
   shouldTriggerCharge,
@@ -104,6 +106,7 @@ import {
   tickTimers,
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
+import { CAVE_IMMUNITY_TIME, isCaveImmune } from '@/lib/game/cave';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL } from '@/lib/game/stamina';
 import { PICKUP_GLOW_PEAK, carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity, CARRY_GLOW_BASE, CARRY_HALO_BASE } from '@/lib/game/childGlow';
 import {
@@ -161,7 +164,7 @@ import {
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
   STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
-  CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
+  CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -524,6 +527,11 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
                                  // crCanopy (canopyBlockedR() skips entries that lack it) and never
                                  // added to coverData/HIDE_KINDS -- these block movement, not LOS,
                                  // and aren't meant to be hiding spots.
+// LUL-1904: cave landmark -- caveSpawned/caveData decided once per round in
+// generateMap() (rng-gated, see placeCave()); caveConsumed is the single-use
+// gate; caveImmuneT is the live countdown (0 = inactive), decremented in
+// tick() alongside the other per-frame timers.
+let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
 let coverGrid = new Map();     // same CELL keying as `grid`, built from coverData
@@ -918,6 +926,9 @@ function generateMap(seed){
   // above, so it never shifts the stream any existing seed/replay depends on.
   mission = pickMission(rng);
   missionHumTimer = 2;
+  placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
+  buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
+                  // reasoning as the LUL-374 buildGrid() call above
   // LUL-1093: moved from right after the tree-pool buildGrid() above.
   // bogTreeData/landmarkData don't exist until generateBogTrees()/
   // placeLandmarks() run, both below the old call site -- drawing from them
@@ -1067,6 +1078,17 @@ function buildChapelSteeple(){
   glow.position.set(0, 3.2, 0); g.add(glow);
   return g;
 }
+function buildCave(){
+  const g = new THREE.Group();
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x27241f, roughness: 1 });
+  const mouth = new THREE.Mesh(new THREE.SphereGeometry(2.6, 8, 6, 0, Math.PI*2, 0, Math.PI*0.55), rockMat);
+  mouth.rotation.x = Math.PI; mouth.position.y = 1.4; g.add(mouth);
+  const glow = new THREE.PointLight(0x6fd6c4, 0.6 * LEGACY_LIGHT_SCALE, 14, 2);
+  glow.position.set(0, 1.2, 1.6); g.add(glow);
+  g.visible = false;   // LUL-1904: the first landmark whose visibility is conditional
+                        // per-round, not always-on -- see placeCave().
+  return g;
+}
 const landmarkGroups = {
   fireTower: buildFireTower(),
   stoneMarker: buildStoneMarker(),
@@ -1074,6 +1096,7 @@ const landmarkGroups = {
   oak: buildSplitOak(),
   radioMast: buildRadioMast(),
   chapelSteeple: buildChapelSteeple(),
+  cave: buildCave(),
 };
 Object.values(landmarkGroups).forEach(g => scene.add(g));
 // Nudges (x,z) away from any tree/cover prop this seed actually generated
@@ -1097,6 +1120,28 @@ function placeLandmarks(){
     landmarkGroups[l.kind].position.x = x;
     landmarkGroups[l.kind].position.z = z;
     landmarkData.push({ x, z, cr: l.cr });
+  }
+}
+// LUL-1904: the cave's own spawn coin-flip is a NEW rng() consumer and must
+// run strictly after generateMap()'s last existing draw (mission =
+// pickMission(rng), forest-engine.js:917 -- see the LUL-1258 comment there:
+// "draw this run's mission last... so it never shifts the stream any
+// existing seed/replay depends on"). Placement itself (clearLandmarkSpot)
+// draws no rng, same as placeLandmarks() -- it can run conditionally with no
+// determinism concern either way.
+function placeCave(){
+  caveSpawned = rng() < 0.5;
+  caveConsumed = false;
+  caveImmuneT = 0;
+  if(caveSpawned){
+    const [x, z] = clearLandmarkSpot(CAVE.x, CAVE.z, CAVE.clear);
+    caveData = { x, z };
+    landmarkGroups.cave.position.set(x, 0, z);
+    landmarkGroups.cave.visible = true;
+    landmarkData.push({ x, z, cr: CAVE.cr });
+  } else {
+    caveData = null;
+    landmarkGroups.cave.visible = false;
   }
 }
 
@@ -1388,11 +1433,35 @@ function depositScent(hot, againstWind){
   while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0)) scentPoints.shift();
 }
 function checkScent(p){
+  if(isCaveImmune(caveImmuneT)) return false;
   for(let i = scentPoints.length - 1; i >= 0; i--){
     const s = scentPoints[i], age = clock.elapsedTime - s.t0;
     if(isScentDetected(s, age, p.x, p.z, windX, windZ, p.spec.nose, SCENT_LIFETIME, WRAP_SPAN)) return true;
   }
   return false;
+}
+// LUL-1904: walk-in trigger, no keybind -- mirrors arriveHome()'s own shape
+// (a plain per-frame distance check in tick(), not the keypress-gated
+// pickup()/grabThrowable() pattern), so touch parity is free: it reads
+// player.x/z only, already unified across desktop-key and mobile-joystick
+// input before this point in tick(). No new entry in components/MobileControls.tsx
+// or EngineActions is needed.
+function activateCavePower(){
+  caveConsumed = true;
+  caveImmuneT = CAVE_IMMUNITY_TIME;
+  // A committed charge (p.charge, resolved by stepCharge()) is caught-or-dodged
+  // purely positionally -- it does not re-check canSee()/effectiveDetect()
+  // before resolving. Without this, a player ducking into immunity mid-
+  // telegraph can still die with the immunity HUD active. There is no
+  // existing "clear every predator's charge" helper to reuse -- other call
+  // sites each clear exactly one predator's charge inline; this is a new
+  // all-predators loop.
+  for(const p of predators){
+    if(p.charge){ p.charge = null; p.chargeCooldown = CHARGE_COOLDOWN; }
+  }
+  activeCharges = 0;
+  pushState({ chargeVisible: false, caveImmuneActive: true, caveImmuneTimeLeft: CAVE_IMMUNITY_TIME });
+  caveImmuneStartCue();
 }
 // Like spotOnto, but scent isn't "being watched": no roar / screen flash / rear-up
 // freeze. Just a growl and a straight line toward you -- the tell is behavioural
@@ -1530,9 +1599,11 @@ function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN)
 // compound). LUL-1486: the tide amount is now sampled at the predator's own
 // position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
 function effectiveDetect(p){
+  if(isCaveImmune(caveImmuneT)) return 0;
   return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying });
 }
 function canSee(p, dist){
+  if(isCaveImmune(caveImmuneT)) return false;
   return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN);
 }
 
@@ -1989,7 +2060,7 @@ const player = { x:0, z:0, yaw:0, pitch:-0.02 };
 const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
-    dead = false, pickingUp = false, carrying = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
+    dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
@@ -2029,7 +2100,7 @@ let maxDistFromHome = 0, embers = freshEmbersState();
 // state of its own) -- this snapshots them into the RunState shape the
 // module's pure functions read, on demand, right before each call.
 function runState(){
-  return { entered, won, dead, pickingUp, carrying, babyTaken: baby.taken };
+  return { entered, won, dead, pickingUp, carrying, setDown: babySetDown, babyTaken: baby.taken };
 }
 // LUL-24: last normalized heading the player actually moved along -- the "escape
 // vector" the wolf pack flanks off of. Only updated while moving (see tick()'s
@@ -2072,8 +2143,13 @@ on(window, 'keydown', e => {
     toggleRunOn = !toggleRunOn;
   }
   // LUL-1258: no new key -- mission completion reuses the interact action.
+  // LUL-1815: set-down is a third arm of the same multiplex -- carrying is mutually
+  // exclusive with canPickup (pickupAllowed requires !carrying), so ordering vs.
+  // canPickup doesn't matter, but it must come before missionCanComplete/grabThrowable
+  // since carrying is already true whenever this arm should fire.
   if(e.code === 'KeyE' && playing && !paused){
     if(canPickup) pickup();
+    else if(carrying) setDown();
     else if(missionCanComplete) completeMissionSequence();
     else grabThrowable();
   }
@@ -2577,6 +2653,7 @@ let hudState = {
   // LUL-382: mist veil resource meter -- 1 is full charge, 0 is fully drained.
   veilCharge: 1, veilLocked: false,
   chargeVisible: false, chargeToken: 0,
+  caveImmuneActive: false, caveImmuneTimeLeft: 0,
   // LUL-1089: contextual action prompts
   coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null,
   veilPromptVisible: false, veilPromptUrgent: false,
@@ -3350,7 +3427,7 @@ if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
   const next = beginPickup(runState());
   if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
-  baby.taken = next.babyTaken; pickingUp = next.pickingUp;
+  baby.taken = next.babyTaken; pickingUp = next.pickingUp; babySetDown = next.setDown;
   pickStart = clock.elapsedTime; hidden = false; lastHideSpot = null; coverProbeAccum = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found; carrying starts now
   pushState({ objectiveVisible: false, statusVisible: false });
@@ -3358,6 +3435,19 @@ function pickup(){
   document.body.style.cursor = 'none';
   armsGroup.visible = true;
   playPickupCue();
+}
+function setDown(){
+  const next = beginSetDown(runState());
+  if(next.carrying === carrying) return;   // rejected -- see setDownAllowed() in lib/game/outcome.ts
+  carrying = next.carrying; babySetDown = next.setDown;
+  baby.x = player.x; baby.z = player.z;
+  babyGroup.position.set(baby.x, 0, baby.z);
+  babyGroup.visible = true; babyGroup.scale.setScalar(1);
+  placeBabyWisps();         // re-seed the ring around the NEW baby.x/z -- see correction above
+  bwisps.visible = true;    // LUL-38's beacon wisps, hidden by pickup() at :3355 -- back on so she's spottable through fog again
+  // reset glow to the idle baseline finishPickup()/restart() also use (:3399/:3508) --
+  // the per-frame idle-glow block (§3.7 below) takes over the animated curve from here.
+  bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
 }
 function grabThrowable(){
   if(heldThrowable) return;
@@ -3417,6 +3507,28 @@ function missionCompleteSting(){
   const og = ctx.createGain();
   og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(0.18, t+0.03); og.gain.exponentialRampToValueAtTime(0.0001, t+0.4);
   o.connect(og); og.connect(master); og.connect(conv); o.start(t); o.stop(t+0.42);
+}
+// LUL-1904: cave detection-immunity cues -- distinct register from
+// missionCompleteSting() above and from every other cue in the game (veil is
+// silent, dim + vignette only). Rising sweep on activation, falling sweep on
+// expiry, so the two are audibly distinguishable from each other too.
+function caveImmuneStartCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(660, t + 0.35);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.24, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.55);
+}
+function caveImmuneEndCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(660, t); o.frequency.exponentialRampToValueAtTime(220, t + 0.4);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.6);
 }
 // LUL-1258: no cinematic lock (unlike pickup's ~2.5s gather) -- this is a
 // detour bonus, not the core objective, and stopping the player's clock here
@@ -3499,7 +3611,7 @@ function restart(){
   pushState({ winVisible: false, winRevealed: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   const fresh = freshRunState();
-  won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; baby.taken = fresh.babyTaken;
+  won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; babySetDown = fresh.setDown; baby.taken = fresh.babyTaken;
   hidden = false; hideTime = 0; hideKind = null; lastHideSpot = null; coverProbeAccum = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
@@ -4050,11 +4162,26 @@ function tick(){
         missionHumTimer = 5.5 - near * 3.5;   // 5.5s far, 2s close -- matches childCry's curve
       }
     }
+    // LUL-1904: walk-in trigger -- single-use per round, sight+scent only.
+    if(caveSpawned && !caveConsumed && caveData){
+      const distCave = Math.hypot(player.x - caveData.x, player.z - caveData.z);
+      if(distCave < CAVE.interactR) activateCavePower();
+    }
+    // Countdown decrements unconditionally while playing, same shape as the
+    // existing per-predator sniffImmuneT/chargeCooldown decrements --
+    // "never lapse silently": the >0 -> 0 edge fires a distinct end cue,
+    // mirrored into the HUD in the same pushState below.
+    let caveImmuneJustEnded = false;
+    if(caveImmuneT > 0){
+      caveImmuneT = Math.max(0, caveImmuneT - dt);
+      if(caveImmuneT === 0) caveImmuneJustEnded = true;
+    }
+    if(caveImmuneJustEnded) caveImmuneEndCue();
     pushState({
       objectiveVisible: true, objectiveReady: canPickup,
       objectiveText: carrying
-        ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm'
-        : (canPickup ? 'Press  E  to lift the child'
+        ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm  ·  E  to set her down'
+        : (canPickup ? (babySetDown ? 'Press  E  to lift her again' : 'Press  E  to lift the child')
            : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
       statusVisible, statusText,
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
@@ -4064,12 +4191,16 @@ function tick(){
       // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
       missionKind: mission && !carrying ? mission.target.kind : null,
       missionStatus: mission && !carrying ? mission.status : null,
+      caveImmuneActive: caveImmuneT > 0,
+      caveImmuneTimeLeft: caveImmuneT,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null, caveImmuneActive: false });
   }
-  // the child's idle glow (outside the cinematic)
-  if(!baby.taken){
+  // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
+  // baby.taken stays true forever once first picked up, so babySetDown is the only signal
+  // that she's back on the ground.
+  if(!baby.taken || babySetDown){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
     babyGroup.rotation.y = t * 0.4;
     halo.material.opacity = idleHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(babyGroup.position.x, babyGroup.position.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
@@ -4229,6 +4360,7 @@ tick();
     const playing = isPlaying(runState());
     if(!playing || paused) return;
     if(canPickup) pickup();
+    else if(carrying) setDown();
     else if(missionCanComplete) completeMissionSequence();
     else grabThrowable();
   }

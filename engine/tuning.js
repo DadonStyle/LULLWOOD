@@ -63,6 +63,15 @@ export const LANDMARKS = [
   { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
 
+// LUL-1904: the cave -- spawns in ~50% of rounds (coin-flip drawn in
+// generateMap(), see forest-engine.js), a fixed candidate slot like every
+// LANDMARKS entry above, but NOT pushed into LANDMARKS itself -- that array
+// is placed unconditionally every round (placeLandmarks(), forest-engine.js:1061-1069).
+// `interactR` is the walk-in trigger radius (distinct from `cr`, the movement
+// collider) -- deliberately larger, matching the scale of the other entries'
+// `clear`.
+export const CAVE = { kind: 'cave', x: -70, z: 130, clear: 12, cr: 1.6, interactR: 6 };
+
 // LUL-1855: fog-exempt beacon glow on the radio mast -- a small additive
 // sprite, separate from the mast's existing PointLight (which FogExp2 erases
 // by ~43 units at default density regardless of intensity -- see wiki

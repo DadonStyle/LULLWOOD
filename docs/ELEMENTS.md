@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4223 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L3763, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4354 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L3875, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -180,6 +180,10 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   (`carrying` branch, `tick()`), until the player crosses
   `CONFIG.home.r` (3.6u) of the home landmark, which wins the run
   (`arriveHome()`).
+- **As of `LUL-1815`**, be set back down mid-carry (`setDown()`) and picked
+  back up from where she was left (`pickupAllowed()`'s `babyTaken` guard is
+  relaxed by a `setDown` flag in `lib/game/outcome.ts`) — see "cannot do"
+  below for the exact boundary.
 - **NOT live on `main`** — idle/carry glow intensity scaled by a difficulty
   preset's `glowMul` was built on the unmerged LUL-26 branch
   (`DIFFICULTY_PRESETS`); `engine/forest-engine.js` on `main` has no
@@ -227,8 +231,14 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   of it — `Math.hypot(x-baby.x,z-baby.z)<26` in `placePredators()`).
   Once the map is generated, a predator can stand directly on the
   un-collected child with zero effect. `UNDEFINED` — see matrix.
-- Cannot be dropped, lost, or re-hidden once picked up — `baby.taken` only
-  ever goes false→true, reset by `generateMap()`/`restart()`.
+- Cannot be lost or re-hidden once picked up — `baby.taken` only ever goes
+  false→true, reset by `generateMap()`/`restart()`. **As of `LUL-1815`**, she
+  *can* be set back down while carried (`setDown()`, same `KeyE`/touch-interact
+  input as pickup — no new key) — this returns her to a fixed point on the
+  ground (glowing, idle-animated, re-spottable via the beacon wisps) and the
+  player to full speed/no carry-detect penalty until she's picked up again
+  from that spot. `carrying` itself does still round-trip true→false→true;
+  only `baby.taken` is one-way.
 - Cannot collide with anything (no collider function reads its position).
 
 **Behaviours & logic**
@@ -960,7 +970,23 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   LUL-1724 adds `#windIndicator`, a fixed top-right arrow rendered from two new
   read-only `EngineHudState` fields (`windX`/`windZ`), pushed once per map
   generation (not per-frame) — the only HUD element driven by map-constant
-  rather than per-frame or per-event engine state.
+  rather than per-frame or per-event engine state. LUL-1912 repositioned it to
+  `top:184px; right:16px` to clear `#minimap`'s own box (`top:16px; right:16px;
+  160x160`, which read as a child-position pointer), and added
+  `#windIndicatorHint`, a static one-time label below the arrow that fades out
+  after 7s via CSS animation (`windHintFade`, mirrors the existing `#hint`
+  movement-controls pattern) — no new engine state. LUL-1933 found that push
+  unconditional, so it followed every real player (`#minimap` is
+  `display:none` under `data-admin-mode="0"`, see above) and collided with
+  `MobileControls.tsx`'s bottom-anchored Hide/Veil column on short landscape
+  phones. `top:184px; right:16px`/`#windIndicatorHint`'s `top:214px` now apply
+  only under `body[data-admin-mode="1"]`; the default (real player) position
+  reverts to LUL-1724's original `top:20px; right:20px` (`#windIndicatorHint`
+  `top:50px; right:8px`), verified clear of `MobileControls` at every tested
+  viewport. LUL-2057 found the arrow's own ~54px rendered box (28px font,
+  ~1.2 line-height) still overlapped the hint's first line at that 30px gap;
+  `#windIndicatorHint`'s `top` moved to `64px` (default) / `228px`
+  (`data-admin-mode="1"`), a 14px increase in both, to clear it.
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
@@ -1075,7 +1101,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L3455) and `triggerDeath()` (L3486).
+  both `track()` call sites in `arriveHome()` (L3547) and `triggerDeath()` (L3578).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1085,9 +1111,9 @@ design doc as turning horror into radar.
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L2597),
-  reset to 0 on `enter()` (L2660) and recomputed every `tick()` while the run
-  is neither won nor dead (L3873: `computeDepth(maxDistFromHome) +
+  run in progress — `hudState` field (`engine/forest-engine.js` L2637),
+  reset to 0 on `enter()` (L2737) and recomputed every `tick()` while the run
+  is neither won nor dead (L3935: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1141,7 +1167,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`tick()` at L3737): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`tick()` at L3870): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1431,20 +1457,26 @@ not a 240×360 rectangle.
 **New elements it adds**: `BogTree` (90-instance thinner-cover twin of Tree,
 own `bogTreeData` array, merged into the shared `grid` for collision),
 `Reed` (tall `coverData` kind `'reed'`, LOS-blocking like Rock/Log/Bramble
-but **not** in `HIDE_KINDS` — not a hiding spot), six fixed `Landmark`
+but **not** in `HIDE_KINDS` — not a hiding spot), seven fixed `Landmark`
 groups (fire tower, stone marker, drowned car, lightning-split oak, radio
-mast, chapel steeple — static,
+mast, chapel steeple, cave — static,
 no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`; `oak`
 and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit
 inside an actual bog patch now that the bog is no longer a fixed band),
 `radioMast` and `chapelSteeple` (LUL-1782) sit in the outer ring, radius
 ~178-179, restoring fixed orientation geography on the leg past the original
-four that LUL-1484's map growth left featureless. As of LUL-1855, `radioMast`
-additionally carries a small fog-exempt additive sprite on its beacon
-(`RADIO_MAST_BEACON_GLOW`, `engine/tuning.js`) so it stays visible as a dim,
-slowly-pulsing point past the fog line that erases the other five -- a
-bearing, not a lit scene; the other five landmarks are unchanged and still
-fog-occluded at the same distances documented above. and
+four that LUL-1484's map growth left featureless. `cave` (LUL-1904) is the
+first landmark whose spawn and visibility are conditional per-round (~50%
+via a seeded coin-flip in `generateMap()`, drawn last in the rng stream)
+rather than always-present; walking into its `interactR` grants a one-shot
+25s sight+scent detection immunity (`CAVE_IMMUNITY_TIME`, `lib/game/cave.ts`),
+hooked into `effectiveDetect()`/`canSee()`/`checkScent()`. As of LUL-1855,
+`radioMast` additionally carries a small fog-exempt additive sprite on its
+beacon (`RADIO_MAST_BEACON_GLOW`, `engine/tuning.js`) so it stays visible as a
+dim, slowly-pulsing point past the fog line that erases the other five -- a
+bearing, not a lit scene; the other five landmarks (other than `cave` and
+`radioMast`) are unchanged and still fog-occluded at the same distances
+documented above. and
 the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
 boolean, so a patch edge scales speed/noise in rather than stepping. It
 scales player/predator walk speed down and noise radius up while standing in
