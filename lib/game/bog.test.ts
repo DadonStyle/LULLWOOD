@@ -1,39 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isInBog,
+  biomeAt,
   bogSpeedMultiplier,
   bogNoiseMultiplier,
   pickHardBabyPosition,
+  bogMaskLevel,
   BOG_SPEED_MULTIPLIER,
   BOG_NOISE_MULTIPLIER,
-  type BogBounds,
+  BLACKOUT_MIN_RADIUS,
+  BOG_MASK_DECAY_TIME,
+  BOG_CENTER,
+  BOG_INNER_RADIUS,
+  BOG_OUTER_RADIUS,
   type Landmark,
 } from './bog.ts';
-
-const bounds: BogBounds = { half: 120, zMax: 240 };
-
-test('isInBog is false in the forest, true past the seam, false past the map edge', () => {
-  assert.equal(isInBog(0, bounds), false);
-  assert.equal(isInBog(119.9, bounds), false);
-  assert.equal(isInBog(120.1, bounds), true);
-  assert.equal(isInBog(240, bounds), true);
-  assert.equal(isInBog(240.1, bounds), false);
-});
-
-test('isInBog treats the exact seam as still-forest (half-open boundary)', () => {
-  assert.equal(isInBog(120, bounds), false);
-});
-
-test('bogSpeedMultiplier halves speed only in the bog', () => {
-  assert.equal(bogSpeedMultiplier(true), BOG_SPEED_MULTIPLIER);
-  assert.equal(bogSpeedMultiplier(false), 1);
-});
-
-test('bogNoiseMultiplier amplifies noise only in the bog', () => {
-  assert.equal(bogNoiseMultiplier(true), BOG_NOISE_MULTIPLIER);
-  assert.equal(bogNoiseMultiplier(false), 1);
-});
 
 function seeded(seed: number): () => number {
   let a = seed >>> 0;
@@ -45,31 +26,129 @@ function seeded(seed: number): () => number {
   };
 }
 
-test('pickHardBabyPosition lands inside the bog band, clear of the forest and the outer edge', () => {
-  const p = pickHardBabyPosition(seeded(1), bounds, 120, []);
-  assert.ok(p.z >= bounds.half + 20 && p.z <= bounds.zMax - 20, `z=${p.z} out of range`);
-  assert.ok(Math.abs(p.x) <= 100, `x=${p.x} out of range`);
+test('biomeAt is deterministic for a given point', () => {
+  assert.equal(biomeAt(30, 2), biomeAt(30, 2));
+});
+
+test('biomeAt stays within [0, 1] across the whole map square', () => {
+  for (let x = -240; x <= 240; x += 10) {
+    for (let z = -240; z <= 240; z += 10) {
+      const b = biomeAt(x, z);
+      assert.ok(b >= 0 && b <= 1, `biomeAt(${x},${z})=${b} out of range`);
+    }
+  }
+});
+
+test('biomeAt finds both boggy and dry ground within the map square', () => {
+  let sawBoggy = false, sawDry = false;
+  for (let x = -240; x <= 240; x += 10) {
+    for (let z = -240; z <= 240; z += 10) {
+      const b = biomeAt(x, z);
+      if (b > 0.5) sawBoggy = true;
+      if (b === 0) sawDry = true;
+    }
+  }
+  assert.ok(sawBoggy, 'expected at least one strongly boggy sample point');
+  assert.ok(sawDry, 'expected at least one dry sample point');
+});
+
+test('home/spawn is kept dry regardless of the noise field', () => {
+  assert.equal(biomeAt(0, 0), 0);
+  assert.equal(biomeAt(6.3, 0), 0); // inSpawn()'s own radius, engine/forest-engine.js (re-grep `inSpawn` for current line)
+});
+
+test('the relocated oak and drownedCar landmarks sit in a bog patch', () => {
+  assert.ok(biomeAt(22, 4) > 0.15, 'oak landmark should be inside the bog patch');
+  assert.ok(biomeAt(-95, 46) > 0.9, 'drownedCar landmark should be deep inside the bog patch');
+});
+
+test('the lake and the other two landmarks are not accidentally boggy', () => {
+  assert.equal(biomeAt(34, -28), 0); // CONFIG.lake
+  assert.equal(biomeAt(-95, -95), 0); // fireTower
+  assert.equal(biomeAt(100, -75), 0); // stoneMarker
+});
+
+test('bogSpeedMultiplier/bogNoiseMultiplier hit their old boolean endpoints exactly', () => {
+  assert.equal(bogSpeedMultiplier(1), BOG_SPEED_MULTIPLIER);
+  assert.equal(bogSpeedMultiplier(0), 1);
+  assert.equal(bogNoiseMultiplier(1), BOG_NOISE_MULTIPLIER);
+  assert.equal(bogNoiseMultiplier(0), 1);
+});
+
+test('bogSpeedMultiplier/bogNoiseMultiplier are linear in bogginess', () => {
+  assert.equal(bogSpeedMultiplier(0.5), 1 - 0.5 * (1 - BOG_SPEED_MULTIPLIER));
+  assert.equal(bogNoiseMultiplier(0.5), 1 + 0.5 * (BOG_NOISE_MULTIPLIER - 1));
+});
+
+test('bogMaskLevel rises instantly when bogginess increases', () => {
+  assert.equal(bogMaskLevel(0.8, 0.2, 1/60), 0.8);
+  assert.equal(bogMaskLevel(1, 0, 1/60), 1);
+});
+
+test('bogMaskLevel decays linearly to 0 over BOG_MASK_DECAY_TIME once bogginess drops', () => {
+  let mask = 1;
+  const dt = 1; // 1s steps for a readable assertion
+  for (let i = 0; i < BOG_MASK_DECAY_TIME; i++) mask = bogMaskLevel(0, mask, dt);
+  assert.ok(Math.abs(mask) < 1e-9, `expected mask ~0 after ${BOG_MASK_DECAY_TIME}s, got ${mask}`);
+});
+
+test('bogMaskLevel never rises above currentBogginess and never drops below 0', () => {
+  let mask = bogMaskLevel(0.4, 0, 0.1);
+  assert.ok(mask <= 0.4 + 1e-9);
+  for (let i = 0; i < 200; i++) mask = bogMaskLevel(0, mask, 0.1);
+  assert.ok(mask >= 0);
+});
+
+test('pickHardBabyPosition lands in a bog patch, clear of the map edge', () => {
+  const p = pickHardBabyPosition(seeded(1), 240, []);
+  assert.ok(biomeAt(p.x, p.z) > 0, `(${p.x},${p.z}) should be boggy`);
+  assert.ok(Math.abs(p.x) <= 220 && Math.abs(p.z) <= 220, `p=${JSON.stringify(p)} out of margin`);
+  assert.ok(Math.hypot(p.x, p.z) >= BLACKOUT_MIN_RADIUS, 'must clear the blackout distance floor');
 });
 
 test('pickHardBabyPosition is deterministic for a given seed', () => {
-  const a = pickHardBabyPosition(seeded(42), bounds, 120, []);
-  const b = pickHardBabyPosition(seeded(42), bounds, 120, []);
+  const a = pickHardBabyPosition(seeded(42), 240, []);
+  const b = pickHardBabyPosition(seeded(42), 240, []);
   assert.deepEqual(a, b);
 });
 
-test('pickHardBabyPosition avoids a landmark sitting in the middle of the band', () => {
-  const landmarks: Landmark[] = [{ x: 0, z: 180, clear: 200 }]; // deliberately covers the whole band
-  const p = pickHardBabyPosition(seeded(7), bounds, 120, landmarks, 6, 5);
-  // maxTries=5 exhausts without a clear candidate -- must still terminate and
-  // return a real (if imperfect) point, not hang or throw.
+test('pickHardBabyPosition never lands closer than BLACKOUT_MIN_RADIUS', () => {
+  for (const seed of [1, 2, 3, 42, 99]) {
+    const p = pickHardBabyPosition(seeded(seed), 240, []);
+    assert.ok(Math.hypot(p.x, p.z) >= BLACKOUT_MIN_RADIUS, `seed ${seed}: (${p.x},${p.z}) is inside the floor`);
+  }
+});
+
+test('the single-zone bog geometry still lets pickHardBabyPosition satisfy BLACKOUT_MIN_RADIUS', () => {
+  // Regression check for LUL-1902: a center/radius pair that never reaches
+  // BLACKOUT_MIN_RADIUS from the origin makes this function's own contract
+  // impossible to satisfy -- it would silently fall back to a random,
+  // non-boggy point on every call. See docs/specs/lul-1902-*.md.
+  const reach = Math.hypot(BOG_CENTER.x, BOG_CENTER.z) + BOG_OUTER_RADIUS;
+  assert.ok(reach >= BLACKOUT_MIN_RADIUS, `zone only reaches ${reach} from origin, need >= ${BLACKOUT_MIN_RADIUS}`);
+});
+
+test('pickHardBabyPosition avoids a landmark covering its whole reachable area, still terminates', () => {
+  const landmarks: Landmark[] = [{ x: 22, z: 4, clear: 300 }]; // deliberately covers the whole square
+  const p = pickHardBabyPosition(seeded(7), 120, landmarks, 6, 20, 5);
   assert.equal(typeof p.x, 'number');
   assert.equal(typeof p.z, 'number');
   assert.ok(Number.isFinite(p.x) && Number.isFinite(p.z));
 });
 
-test('pickHardBabyPosition degenerate bounds (bog band narrower than the 20-unit margins) still terminates', () => {
-  const tight: BogBounds = { half: 120, zMax: 135 };
-  const p = pickHardBabyPosition(seeded(3), tight, 120, [], 6, 10);
-  assert.ok(Number.isFinite(p.x) && Number.isFinite(p.z));
-  assert.equal(p.z, tight.half + 20); // zHi clamps to zLo, so every draw collapses to zLo
+// LUL-1861: predator speed in engine/forest-engine.js's updatePredators() must apply
+// bogSpeedMultiplier exactly once (at the LUL-1483 site, `speed *= bogSpeedMultiplier(biomeAt(...))`,
+// after all per-state branches). A regression that reintroduces a second bog factor into the
+// per-state `pLakeMul`/`pTerrainMul` composition (as LUL-1692/PR #386 briefly did by calling the
+// since-removed `inBog()`) would silently halve speed again on top of this application.
+test('bog speed multiplier composes with full bogginess exactly once, matching the single engine application site', () => {
+  const fullBog = bogSpeedMultiplier(1);
+  assert.equal(fullBog, BOG_SPEED_MULTIPLIER);
+  // one application: full-speed predator entering full bog slows to exactly BOG_SPEED_MULTIPLIER
+  const speedAfterOneApplication = 1 * fullBog;
+  assert.equal(speedAfterOneApplication, BOG_SPEED_MULTIPLIER);
+  // a second, erroneous application (the LUL-1861 bug shape) must NOT match the correct result
+  const speedAfterDoubleApplication = 1 * fullBog * fullBog;
+  assert.notEqual(speedAfterDoubleApplication, BOG_SPEED_MULTIPLIER);
+  assert.equal(speedAfterDoubleApplication, BOG_SPEED_MULTIPLIER * BOG_SPEED_MULTIPLIER);
 });

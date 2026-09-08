@@ -19,12 +19,16 @@ bug, stop and report it (per Spec architecture, "Context discipline").
    succeeds under the exact same conditions it does today. The secondary only
    changes what bonus gets added to the payout at the moment of arrival. Do not
    touch `lib/game/outcome.ts`.
-2. **Retrieval item reuses the existing `stoneMarker` landmark**, not a new mesh.
-   `stoneMarker` (`engine/tuning.js:41`, `x:100, z:-75`) is already a permanent,
-   always-rendered decorative landmark with its own glow light
-   (`engine/forest-engine.js:788-797`, `buildStoneMarker`) — this literally is the
-   "Stone Marker" the Feature Scout's proposal names as its retrieval example. No
-   new geometry, no new light. When retrieval is not the chosen secondary, nothing
+2. **Retrieval item reuses the existing `radioMast` landmark**, not a new mesh.
+   **Retargeted from the originally-drafted `stoneMarker` per
+   `decisions/lul-1697-retrieval-landmark-radiomast-2026-09-08`**: `stoneMarker` gained
+   its own `E`-key interact mechanic (`canBuyVeilCharm`, LUL-2067/LUL-1210) after this
+   spec's base commit, which would collide with retrieval's own completion on the same
+   key at the same landmark. `radioMast` (`engine/tuning.js`, `x:30, z:175`) is already a
+   permanent, always-rendered decorative landmark with its own pulsing beacon glow
+   (`engine/forest-engine.js`, `buildRadioMast`/`radioMastBeaconGlow`, LUL-1855) and no
+   other interact mechanic. No new geometry, no new light. When retrieval is not the chosen
+   secondary, nothing
    about the landmark changes at all — zero visual regression risk.
 3. **Retrieval completion is a one-time flag, not "must still be holding it at the
    moment you arrive home."** The Scout's proposal appendix says `checkWin()`
@@ -153,12 +157,16 @@ export type SecondaryKind = 'retrieval' | 'speedrun';
  * deferred per the CTO scope ruling) is added here, not by touching pickMission. */
 export const SECONDARY_SUPPORTED_MISSIONS: ReadonlySet<MissionKind> = new Set(['deepwater']);
 
-// LUL-1666: reuses the stoneMarker landmark (engine/tuning.js LANDMARKS,
-// kind:'stoneMarker', x:100 z:-75) -- a permanent, always-rendered decorative
-// mesh with its own glow light (engine/forest-engine.js buildStoneMarker) that
-// existed before this ticket and is unchanged by it. interactRadius mirrors
-// MISSION_POOL's deepwater entry (4).
-export const RETRIEVAL_ITEM = { x: 100, z: -75, interactRadius: 4 } as const;
+// LUL-1666, retargeted per decisions/lul-1697-retrieval-landmark-radiomast-2026-09-08:
+// reuses the radioMast landmark (engine/tuning.js LANDMARKS, kind:'radioMast',
+// x:30 z:175), not stoneMarker -- LUL-2067 wired stoneMarker's E-key interact
+// slot to canBuyVeilCharm/buyVeilCharm() after this spec's base commit, which
+// would have collided with retrieval's own E-key completion at the same spot.
+// radioMast is a permanent, always-rendered decorative mesh with its own pulse
+// glow (engine/forest-engine.js buildRadioMast/radioMastBeaconGlow) and no
+// other interact mechanic. interactRadius mirrors MISSION_POOL's deepwater
+// entry (4).
+export const RETRIEVAL_ITEM = { x: 30, z: 175, interactRadius: 4 } as const;
 
 // LUL-1666: first-cut tuning value, not playtest-derived -- see spec S7 for
 // rationale. Retune here only; nothing else references the raw number.
@@ -571,7 +579,7 @@ Call it once alongside the existing `useEmbers(actions, ...)` call (line ~354): 
   <div id="secondaryPanel" className={state.secondaryStatus === 'complete' ? 'complete' : undefined}>
     {state.secondaryKind === 'retrieval' ? (
       <>
-        Retrieve the Stone Marker
+        Retrieve the radio mast
         <span id="secondaryGlyph">
           {state.secondaryProgress.kind === 'retrieval' && state.secondaryProgress.retrieved
             ? '●'
@@ -612,7 +620,7 @@ Directly after the existing `{!state.entered && ( <div className="menuRow menuDi
               actions?.setSecondaryChoice(k);
               setOpen(false);
             }}
-            title={k === null ? 'No bonus' : k === 'retrieval' ? 'Find the Stone Marker for a bonus' : 'Reach home within the time limit for a bonus'}
+            title={k === null ? 'No bonus' : k === 'retrieval' ? 'Find the radio mast for a bonus' : 'Reach home within the time limit for a bonus'}
           >
             {label}
           </button>
@@ -627,7 +635,7 @@ Entire block only renders once `state.missionUnlocks.deepwater` is true — sati
 
 ### 7. `docs/ELEMENTS.md`
 
-Add a row/entry for the `stoneMarker` landmark's new interactive verb (retrieval pickup) and for the mission struct's `secondary` field, following whatever format the existing `deepwater`/mission entries use in that file today. Executor: read `docs/ELEMENTS.md`'s current `deepwater`/mission-related entries first and match their exact format — this spec does not prescribe the row's literal text, only that it must exist in the same PR (per the Founding Engineer "Definition of done" standing rule). If `stoneMarker` has no existing row (it may not, since it was purely decorative before this ticket), add one.
+Add a row/entry for the `radioMast` landmark's new interactive verb (retrieval pickup) and for the mission struct's `secondary` field, following whatever format the existing `deepwater`/mission entries use in that file today. Executor: read `docs/ELEMENTS.md`'s current `deepwater`/mission-related entries first and match their exact format — this spec does not prescribe the row's literal text, only that it must exist in the same PR (per the Founding Engineer "Definition of done" standing rule). If `radioMast` has no existing row (it may not, since it was purely decorative before this ticket), add one.
 
 ## Verification
 
@@ -641,13 +649,13 @@ node scripts/check-duplicate-logic.mjs
 
 All five must pass clean. `next build` passing plus `tsc --noEmit` clean covers the JS engine file transitively (the engine imports the now-changed `lib/game/mission.ts`/`lib/game/economy.ts` exports, so a signature mismatch fails the build). No new unit test file is required by this spec (Phase 1 scope is additive with defaults that reduce to today's behavior when no secondary is chosen) — the Game Engineer may add one if convenient, but its absence is not a spec-completion blocker; see `docs/specs/*` convention that a verification command with no dedicated test suite still counts as "verified" when it's `tsc`+`build`+lint clean, per this repo's existing precedent for structurally-similar mission/economy diffs (LUL-1258's own PR history).
 
-Manual/tester note (Founding Engineer cannot verify gameplay, no browser in this environment): once merged, the Game Tester (when reactivated) or the founder should confirm: (1) the secondary menu row stays hidden on a fresh profile with no `localStorage`, (2) it appears after one `deepwater` win, (3) choosing "Retrieval" and reaching the Stone Marker (visible at all times, glow already present) shows the panel flip to retrieved and the win screen shows a `+15` line, (4) choosing "Speedrun" shows a live countdown and a `+18` line on a win under 240s, (5) missing either secondary still shows a normal win with the ordinary `MISSION_DEEPWATER_REWARD` bonus only, no secondary bonus, no failure/red state.
+Manual/tester note (Founding Engineer cannot verify gameplay, no browser in this environment): once merged, the Game Tester (when reactivated) or the founder should confirm: (1) the secondary menu row stays hidden on a fresh profile with no `localStorage`, (2) it appears after one `deepwater` win, (3) choosing "Retrieval" and reaching the radio mast (visible at all times, glow already present) shows the panel flip to retrieved and the win screen shows a `+15` line, (4) choosing "Speedrun" shows a live countdown and a `+18` line on a win under 240s, (5) missing either secondary still shows a normal win with the ordinary `MISSION_DEEPWATER_REWARD` bonus only, no secondary bonus, no failure/red state.
 
 ## Constraints
 
 - **Do not touch `lib/game/outcome.ts`.** `canArriveHome`/`arriveHome`'s existing guards are untouched — the secondary never gates arrival home (see design decision 1).
 - **Do not alter predator behavior, map geometry, or difficulty multipliers.** `TIER_MULTIPLIERS` in `lib/game/economy.ts` is untouched; the secondary bonus is added to the payout total *before* the tier multiplier is applied (same position as `missionBonus` — see the `computeWinPayout` diff), so it scales with difficulty exactly like every other earn term already does, not as a flat post-multiplier add.
-- **Do not add a new mesh, light, or asset.** Retrieval reuses the existing `stoneMarker` landmark unchanged.
+- **Do not add a new mesh, light, or asset.** Retrieval reuses the existing `radioMast` landmark unchanged.
 - **Do not build placeholder M1/M4/M5 missions.** Out of scope per the CTO's scope ruling — `SECONDARY_SUPPORTED_MISSIONS` exists specifically so those can be added later as a one-line change, not a reason to build them now.
 - **`computeDeathPayout` is untouched.** Secondary bonuses are win-only.
 - **No new keybinding.** Retrieval reuses the existing `KeyE`/touch-interact channel exactly like the baseline mission objective already does.
@@ -659,4 +667,4 @@ Manual/tester note (Founding Engineer cannot verify gameplay, no browser in this
 - M1 Veil, M4 Landmark, M5 Shipwreck secondary support — deferred until those missions ship their own `MISSION_POOL` entries (CTO ruling).
 - Any change to how `deepwater`'s own baseline mission is drawn, completed, or paid — `MISSION_DEEPWATER_REWARD`, `pickMission`'s existing draw logic, and `completeMissionSequence()` are unchanged except for the one added `else if` branch (3d).
 - A dedicated automated test (`e2e/` or unit) for the new logic — Tier A/e2e work, may be added separately without blocking this Tier C diff; not required for this spec's verification to pass (see Verification section).
-- Any visual embellishment on the Stone Marker beyond what already exists (no new particle/glow-intensity change) — the existing always-on glow (`buildStoneMarker`) is sufficient signal once the HUD panel names it as the active objective.
+- Any visual embellishment on the radio mast beyond what already exists (no new particle/glow-intensity change) — the existing pulsing beacon glow (`buildRadioMast`) is sufficient signal once the HUD panel names it as the active objective.

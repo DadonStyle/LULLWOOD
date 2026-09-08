@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { EngineActions, EngineHudState } from './Hud';
+import { isMobile } from '@/lib/input-mode';
 
 // LUL-26: difficulty presets + accessibility, shipped together per the ticket.
 // Difficulty/runMode/sensitivity/invertY/reducedMotion/captionsOn are engine
@@ -65,6 +66,10 @@ export default function SettingsPanel({
   const [highContrast, setHighContrast] = useState(() => !!readSettings().highContrast);
   // LUL-650: defaults OFF (`!!undefined` on a never-persisted key is `false`).
   const [adminMode, setAdminMode] = useState(() => !!readSettings().adminMode);
+  // LUL-1088: "(instead of hold Shift)" names a keyboard key that doesn't exist
+  // on a touch device -- same isMobile() single source of truth every other
+  // mobile surface uses (see components/OrientationGate.tsx).
+  const mobile = useState(() => isMobile())[0];
 
   // Apply persisted settings once the engine is ready to receive them (mirrors
   // the rest of the codebase's `actions != null` readiness check -- see
@@ -142,7 +147,7 @@ export default function SettingsPanel({
             checked={state.runMode === 'toggle'}
             onChange={(e) => actions?.setRunMode(e.target.checked ? 'toggle' : 'hold')}
           />
-          Toggle to run (instead of hold Shift)
+          {mobile ? 'Toggle to run' : 'Toggle to run (instead of hold Shift)'}
         </label>
         <label className="sliderRow">
           Look sensitivity

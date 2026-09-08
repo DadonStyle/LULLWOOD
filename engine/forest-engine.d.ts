@@ -39,6 +39,9 @@ declare global {
       qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
       /** LUL-25: the child's world position and whether it's past the forest/bog seam. */
       qaProbeBaby?: () => { x: number; z: number; inBog: boolean };
+      /** LUL-1093: w2m(x,z)'s clamped pixel output plus the minimap canvas size (mm),
+       * so a test can assert an arbitrary world point stays on-canvas. */
+      qaProbeMinimapPoint?: (x: number, z: number) => { px: number; py: number; mm: number };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */
@@ -79,7 +82,15 @@ declare global {
       ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; playerX: number; playerZ: number } | null;
       /** LUL-196: reset predator[idx] to roam without relocating it; returns {x,z} so callers can verify position unchanged, or null if idx doesn't resolve. */
       qaSetPredatorRoam?: (idx: number) => { x: number; z: number } | null;
-      /** LUL-212: teleports the player to the nearest hiding spot (bramble/log), no predator involved. Returns the spot's kind, or null if none were generated. */
+      /** LUL-1620: read predator[idx]'s last-known-position return-sweep memory, or null if idx doesn't resolve. */
+      qaGetPredatorLkp?: (idx: number) => { lkpX: number; lkpZ: number; lkpSweeps: number } | null;
+      /** LUL-1620: whether the approach piano tell is currently gated on (mirrors the `:3479` piano gate, no raw Web Audio exposure). */
+      qaIsApproachPianoActive?: () => boolean;
+      /** LUL-1620: places the given species `dx/dz` from the player's current position (player untouched) and arms it one tick from the investigate/sniff give-up transition; returns {idx,x,z} or null if the species doesn't resolve. */
+      qaStagePredatorGiveUp?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-1620: teleports predator[idx] onto its own current roam waypoint so the next tick's arrival/repick runs immediately; returns {x,z} or null if idx doesn't resolve. */
+      qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
+      /** LUL-212: teleports the player to the first generated hiding spot (bramble/log), no predator involved. Returns the spot's kind, or null if none were generated. */
       qaTeleportToHideSpot?: () => string | null;
       /** LUL-211: the player's world position and heading -- the only way a test can
        * see where movement actually ended up (player is init()-closure-local). */

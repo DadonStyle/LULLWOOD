@@ -4,6 +4,7 @@ import {
   clampDt,
   DT_CLAMP_CEILING,
   driftedScentPosition,
+  isMovingAgainstWind,
   isScentDetected,
   isScentExpired,
   isScentPastPruneCutoff,
@@ -14,6 +15,7 @@ import {
   WIND_STRENGTH,
   type ScentPoint,
 } from './scent.ts';
+import { wrapCoord } from './wrap.ts';
 
 // ---- clampDt ---------------------------------------------------------------
 
@@ -31,6 +33,24 @@ test('clampDt is a no-op right at the ceiling', () => {
 
 test('clampDt(0) stays 0, not the ceiling', () => {
   assert.equal(clampDt(0), 0);
+});
+
+// ---- wind-against detection --------------------------------------------
+
+test('isMovingAgainstWind is true when moving directly into the wind (dot < 0)', () => {
+  assert.equal(isMovingAgainstWind(-1, 0, 1, 0), true);
+});
+
+test('isMovingAgainstWind is false when moving with the wind (dot > 0)', () => {
+  assert.equal(isMovingAgainstWind(1, 0, 1, 0), false);
+});
+
+test('isMovingAgainstWind is false when moving perpendicular to the wind (dot === 0)', () => {
+  assert.equal(isMovingAgainstWind(0, 1, 1, 0), false);
+});
+
+test('isMovingAgainstWind is false for zero movement (dot === 0)', () => {
+  assert.equal(isMovingAgainstWind(0, 0, 1, 0), false);
 });
 
 // ---- expiry / prune boundary ------------------------------------------------
@@ -152,4 +172,27 @@ test('isScentDetected: negative age is treated as unexpired (not clamped away) a
 
 test('isScentDetected: out-of-range age far past lifetime is expired', () => {
   assert.equal(isScentDetected(point(), SCENT_LIFETIME * 100, 0, 0, 0, 0, 1), false);
+});
+
+// ---- wrap span (LUL-1485) ----------------------------------------------------
+const SPAN = 240;
+function acrossSeam(v: number): number {
+  return wrapCoord(v + SPAN / 2, SPAN);
+}
+
+test('isScentDetected: span=Infinity matches the pre-wrap call exactly', () => {
+  assert.equal(isScentDetected(point(), 0, 2, 0, 0, 0, 1, SCENT_LIFETIME, Infinity), isScentDetected(point(), 0, 2, 0, 0, 0, 1));
+});
+
+test('isScentDetected: a seam pickup equals the identical interior pickup translated by SPAN/2', () => {
+  const interior = isScentDetected(point(), 0, 2, 0, 0, 0, 1, SCENT_LIFETIME, SPAN);
+  const seam = isScentDetected(point({ x: acrossSeam(0), z: acrossSeam(0) }), 0, acrossSeam(2), acrossSeam(0), 0, 0, 1, SCENT_LIFETIME, SPAN);
+  assert.equal(seam, interior);
+  assert.equal(interior, true); // 2 < 2.2 radius, sanity check the interior fixture is a real hit
+});
+
+test('isScentDetected: a query whose raw distance to the point is huge but whose wrap-short distance is inside the radius is detected', () => {
+  // Point at -119, query at 119: 238 apart raw, 2 apart the wrap-short way.
+  const p = point({ x: -119, z: 0 });
+  assert.equal(isScentDetected(p, 0, 119, 0, 0, 0, 1, SCENT_LIFETIME, SPAN), true);
 });

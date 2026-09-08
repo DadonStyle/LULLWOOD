@@ -5,6 +5,11 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  // eslint-plugin-react's version auto-detection calls the removed
+  // context.getFilename() API under ESLint 10 and crashes outright
+  // (jsx-eslint/eslint-plugin-react#4018, open upstream, no fix released).
+  // Pinning the major here skips detection and avoids the crash.
+  { settings: { react: { version: "19" } } },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

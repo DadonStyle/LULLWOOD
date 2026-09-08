@@ -1,3 +1,5 @@
+import { wrapCoord, wrapDelta, wrapCellIndex } from './wrap.ts';
+
 // LUL-450 (resumes LUL-383b/LUL-387): geometry helpers for the hiding-
 // collision bug class, lifted out of engine/forest-engine.js so they are
 // unit-testable without a Three.js scene (see wiki systems/unit-testing-
@@ -68,7 +70,7 @@ export function overlapsTreeTrunk(x: number, z: number, propRadius: number, tree
 // invisible canopy edge mid-crossing. Found by LUL-491's re-review via direct
 // blocked()-sampling across a log's full span in
 // e2e/lul211-founder-report.spec.ts. generateCover() only calls this for
-// walkable kinds (coverKindBlocksPlayerMovement() false) -- LUL-1642 put
+// walkable kinds (coverKindBlocksMovement() false) -- LUL-1642 put
 // bramble on that list alongside log, so bramble now gets this same
 // canopy-clearance check too; rock/reed, which stay solid, keep the cheaper
 // trunk-only check, unchanged.
@@ -91,8 +93,9 @@ export function overlapsTreeCanopy(x: number, z: number, propRadius: number, tre
 // blockedR()/grid is separate, so re-blocking it here would be a double
 // check, not new behaviour). LUL-384 added 'log' to that same skip list: a
 // fallen log is the one cover prop a person would naturally step/run over
-// rather than route around, and predators already ignore all cover-prop
-// collision entirely (LUL-119/LUL-211's "predators pass through" rule).
+// rather than route around, and predators exempt log/bramble from movement
+// collision too, via this same predicate (LUL-1643 unified rock/reed as
+// predator colliders; see blockedForPredator()).
 //
 // LUL-1642: bramble joins log here too. Both were already identical in
 // every *decision* sense -- HIDE_KINDS = {bramble, log} share the exact same
@@ -111,7 +114,7 @@ export function overlapsTreeCanopy(x: number, z: number, propRadius: number, tre
 // hasLOS() tests, unifying the two HIDE_KINDS the way the ticket asked
 // rather than inventing a second, bramble-only detection path. Rock/reed
 // aren't hiding spots and stay solid.
-export function coverKindBlocksPlayerMovement(kind: string): boolean {
+export function coverKindBlocksMovement(kind: string): boolean {
   return kind !== 'tree' && !HIDE_KINDS[kind];
 }
 
@@ -175,6 +178,11 @@ export interface CircleCollider {
   z: number;
   cr: number;
   crCanopy?: number;
+  // LUL-273: per-tree scale, present exactly where crCanopy is (trees, not
+  // landmarks) -- lets canopyBlockedR() below recompute the canopy radius
+  // live against the caller's current eye height instead of trusting the
+  // crCanopy baked in at map-gen time for a fixed CONFIG.eye.
+  s?: number;
 }
 
 // LOS/movement-blocking AABBs: tagged trees (kind: 'tree', no `ry`, treated
@@ -190,12 +198,15 @@ export interface CoverAABB {
   ry?: number;
 }
 
-function neighbourhood<T>(grid: SpatialGrid<T>, x: number, z: number, cell: number): T[] {
+export function neighbourhood<T>(
+  grid: SpatialGrid<T>, x: number, z: number, cell: number, span: number = Infinity,
+): T[] {
+  const cellCount = span / cell;
   const cx = Math.floor(x / cell), cz = Math.floor(z / cell);
   const out: T[] = [];
   for (let gx = cx - 1; gx <= cx + 1; gx++) {
     for (let gz = cz - 1; gz <= cz + 1; gz++) {
-      const arr = grid.get(gridKey(gx, gz));
+      const arr = grid.get(gridKey(wrapCellIndex(gx, cellCount), wrapCellIndex(gz, cellCount)));
       if (arr) out.push(...arr);
     }
   }
@@ -207,9 +218,12 @@ function neighbourhood<T>(grid: SpatialGrid<T>, x: number, z: number, cell: numb
 // for their own movement, so its shape (circle vs. circle, `pr` the moving
 // body's own radius) is load-bearing for predator steering, not just player
 // movement.
-export function blockedR(x: number, z: number, pr: number, grid: SpatialGrid<CircleCollider>, cell: number = CELL): boolean {
-  for (const t of neighbourhood(grid, x, z, cell)) {
-    const dx = x - t.x, dz = z - t.z, rr = t.cr + pr;
+export function blockedR(
+  x: number, z: number, pr: number, grid: SpatialGrid<CircleCollider>,
+  cell: number = CELL, span: number = Infinity,
+): boolean {
+  for (const t of neighbourhood(grid, x, z, cell, span)) {
+    const dx = wrapDelta(x, t.x, span), dz = wrapDelta(z, t.z, span), rr = t.cr + pr;
     if (dx * dx + dz * dz < rr * rr) return true;
   }
   return false;
@@ -240,9 +254,11 @@ export function pickAvoidDirection(
   dx: number,
   dz: number,
   grid: SpatialGrid<CircleCollider>,
+  coverGrid: SpatialGrid<CoverAABB>,
   cell: number = CELL,
   lookAhead: number = 2.4,
   nearLookAhead: number = 0.8,
+  span: number = Infinity,
 ): [number, number] {
   const near = rad + nearLookAhead;
   const far = rad + lookAhead;
@@ -250,8 +266,8 @@ export function pickAvoidDirection(
   // so both distances must be sampled -- a direction only counts as clear if
   // neither probe hits.
   const clearDistance = (rx: number, rz: number): number => {
-    if (blockedR(x + rx * near, z + rz * near, rad, grid, cell)) return 0;
-    if (blockedR(x + rx * far, z + rz * far, rad, grid, cell)) return near;
+    if (blockedForPredator(x + rx * near, z + rz * near, rad, grid, coverGrid, cell, span)) return 0;
+    if (blockedForPredator(x + rx * far, z + rz * far, rad, grid, coverGrid, cell, span)) return near;
     return far;
   };
 
@@ -299,16 +315,20 @@ export function slideVelocity(vx: number, vz: number, blockedX: boolean, blocked
 //
 // `kind === 'tree'` is always skipped (its own circle-grid collision via
 // blockedR() above already handles it); LUL-384 additionally skips 'log' via
-// coverKindBlocksPlayerMovement() -- a fallen log is the one cover prop a
-// person would naturally step/run over rather than route around, and
-// predators already ignore all cover-prop collision (LUL-119/LUL-211). LOS
+// coverKindBlocksMovement() -- a fallen log is the one cover prop a
+// person would naturally step/run over rather than route around. Predators
+// now route through this same function via blockedForPredator() (LUL-1643),
+// they just share the identical log/bramble exemption. LOS
 // (hasLOS() below, which does NOT skip either kind) and hide-spot
 // eligibility (findHideSpot()/HIDE_KINDS) both read coverGrid independently
 // of this function and are unchanged by either skip.
-export function coverBlockedR(x: number, z: number, pr: number, coverGrid: SpatialGrid<CoverAABB>, cell: number = CELL): boolean {
-  for (const c of neighbourhood(coverGrid, x, z, cell)) {
-    if (!coverKindBlocksPlayerMovement(c.kind)) continue;
-    const dx = x - c.x, dz = z - c.z;
+export function coverBlockedR(
+  x: number, z: number, pr: number, coverGrid: SpatialGrid<CoverAABB>,
+  cell: number = CELL, span: number = Infinity,
+): boolean {
+  for (const c of neighbourhood(coverGrid, x, z, cell, span)) {
+    if (!coverKindBlocksMovement(c.kind)) continue;
+    const dx = wrapDelta(x, c.x, span), dz = wrapDelta(z, c.z, span);
     const ry = c.ry ?? 0;
     const co = Math.cos(ry), si = Math.sin(ry);
     const lx = dx * co - dz * si, lz = dx * si + dz * co;
@@ -324,10 +344,33 @@ export function coverBlockedR(x: number, z: number, pr: number, coverGrid: Spati
 // blockedR) for the same predators-call-blockedR-directly reason
 // coverBlockedR documents: this only ever affects the player's own movement
 // block via blocked(), so predator pathing near trees is unchanged.
-export function canopyBlockedR(x: number, z: number, grid: SpatialGrid<CircleCollider>, cell: number = CELL): boolean {
-  for (const t of neighbourhood(grid, x, z, cell)) {
-    const rr = t.crCanopy;
-    const dx = x - t.x, dz = z - t.z;
+// `eye`/`geo` are optional and both required together (LUL-273): when given,
+// and the tree entry carries a scale (`t.s`), the radius is recomputed live
+// via canopyRadiusAtEye(t.s, eye, geo) instead of trusting the cached
+// `crCanopy`, which was baked in at map-gen time for a fixed CONFIG.eye and
+// under-protects for ~0.3s right after exiting a hide spot while moving,
+// while the damped `eyeH` is still rising back toward CONFIG.eye (see
+// game/lul267-canopy-collision-fix in the wiki). Falls back to the cached
+// `crCanopy` whenever eye/geo aren't passed, or the entry has no scale (e.g.
+// a landmark) -- same never-blocks NaN-comparison behaviour as before.
+// LUL-1485: `span` sits after `eye`/`geo` (LUL-273, landed after this ticket's
+// spec was written against 70967dc -- see PR body) rather than replacing them;
+// only the dx/dz delta wraps, the live-eyeH-vs-cached-crCanopy choice above is
+// unrelated to wrap and stays exactly as LUL-273 left it.
+export function canopyBlockedR(
+  x: number,
+  z: number,
+  grid: SpatialGrid<CircleCollider>,
+  cell: number = CELL,
+  eye?: number,
+  geo?: CanopyGeometry,
+  span: number = Infinity,
+): boolean {
+  for (const t of neighbourhood(grid, x, z, cell, span)) {
+    const rr = (eye !== undefined && geo !== undefined && t.s !== undefined)
+      ? canopyRadiusAtEye(t.s, eye, geo)
+      : t.crCanopy;
+    const dx = wrapDelta(x, t.x, span), dz = wrapDelta(z, t.z, span);
     if (dx * dx + dz * dz < (rr as number) * (rr as number)) return true;
   }
   return false;
@@ -339,18 +382,43 @@ export function canopyBlockedR(x: number, z: number, grid: SpatialGrid<CircleCol
 export const PLAYER_COLLISION_RADIUS = 0.6;
 
 // ---- composite player movement block ----------------------------------------
+// `eye`/`geo` (LUL-273): forwarded straight to canopyBlockedR() so its live
+// eyeH recompute (see that function's own comment) applies to the player's
+// real movement-block path, not just a direct canopyBlockedR() call.
 export function blocked(
   x: number,
   z: number,
   grid: SpatialGrid<CircleCollider>,
   coverGrid: SpatialGrid<CoverAABB>,
   cell: number = CELL,
+  eye?: number,
+  geo?: CanopyGeometry,
+  span: number = Infinity,
 ): boolean {
   return (
-    blockedR(x, z, PLAYER_COLLISION_RADIUS, grid, cell) ||
-    coverBlockedR(x, z, PLAYER_COLLISION_RADIUS, coverGrid, cell) ||
-    canopyBlockedR(x, z, grid, cell)
+    blockedR(x, z, PLAYER_COLLISION_RADIUS, grid, cell, span) ||
+    coverBlockedR(x, z, PLAYER_COLLISION_RADIUS, coverGrid, cell, span) ||
+    canopyBlockedR(x, z, grid, cell, eye, geo, span)
   );
+}
+
+// ---- composite predator movement block (LUL-1643) ---------------------------
+// Predator counterpart to blocked() above: grid + cover, deliberately no
+// canopyBlockedR. Canopy exists only to keep the *player's camera* out of
+// foliage at eye height (LUL-267) -- a rendering concern predators, which have
+// no camera, don't share. Reuses coverBlockedR/coverKindBlocksMovement, the
+// exact same solid/walkable predicate blocked() uses for the player, so rock/
+// reed are solid and log/bramble stay walkable for both actors identically.
+export function blockedForPredator(
+  x: number,
+  z: number,
+  pr: number,
+  grid: SpatialGrid<CircleCollider>,
+  coverGrid: SpatialGrid<CoverAABB>,
+  cell: number = CELL,
+  span: number = Infinity,
+): boolean {
+  return blockedR(x, z, pr, grid, cell, span) || coverBlockedR(x, z, pr, coverGrid, cell, span);
 }
 
 // ---- segment vs. axis-aligned box (slab test) --------------------------------
@@ -398,13 +466,17 @@ export function segRayVsAABB(
 export function hasLOS(
   x0: number, z0: number, x1: number, z1: number,
   coverGrid: SpatialGrid<CoverAABB>,
-  cell: number = CELL,
+  cell: number = CELL, span: number = Infinity,
 ): boolean {
-  const d = Math.hypot(x1 - x0, z1 - z0), steps = Math.max(1, Math.ceil(d / (cell * 0.5)));
+  const ddx = wrapDelta(x1, x0, span), ddz = wrapDelta(z1, z0, span);
+  const d = Math.hypot(ddx, ddz), steps = Math.max(1, Math.ceil(d / (cell * 0.5)));
+  const cellCount = span / cell;
   const seen = new Set<string>();
   for (let i = 0; i <= steps; i++) {
     const u = i / steps;
-    const cx = Math.floor((x0 + (x1 - x0) * u) / cell), cz = Math.floor((z0 + (z1 - z0) * u) / cell);
+    const sx = wrapCoord(x0 + ddx * u, span), sz = wrapCoord(z0 + ddz * u, span);
+    const cx = wrapCellIndex(Math.floor(sx / cell), cellCount);
+    const cz = wrapCellIndex(Math.floor(sz / cell), cellCount);
     const k = gridKey(cx, cz);
     if (seen.has(k)) continue;
     seen.add(k);
@@ -412,7 +484,8 @@ export function hasLOS(
     if (!arr) continue;
     for (const c of arr) {
       const ry = c.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
-      const dx0 = x0 - c.x, dz0 = z0 - c.z, dx1 = x1 - c.x, dz1 = z1 - c.z;
+      const dx0 = wrapDelta(x0, c.x, span), dz0 = wrapDelta(z0, c.z, span);
+      const dx1 = dx0 + ddx, dz1 = dz0 + ddz;
       if (segRayVsAABB(dx0 * co - dz0 * si, dx0 * si + dz0 * co, dx1 * co - dz1 * si, dx1 * si + dz1 * co, 0, 0, c.hx, c.hz)) {
         return false;
       }
@@ -435,23 +508,16 @@ export const HIDE_RADIUS = 2.2;
 export function findHideSpot(
   x: number, z: number,
   coverGrid: SpatialGrid<CoverAABB>,
-  cell: number = CELL,
+  cell: number = CELL, span: number = Infinity,
 ): CoverAABB | null {
-  const cx = Math.floor(x / cell), cz = Math.floor(z / cell);
   let best: CoverAABB | null = null, bestD = Infinity;
-  for (let gx = cx - 1; gx <= cx + 1; gx++) {
-    for (let gz = cz - 1; gz <= cz + 1; gz++) {
-      const arr = coverGrid.get(gridKey(gx, gz));
-      if (!arr) continue;
-      for (const c of arr) {
-        if (!HIDE_KINDS[c.kind]) continue;
-        const dx = x - c.x, dz = z - c.z;
-        const ry = c.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
-        const lx = dx * co - dz * si, lz = dx * si + dz * co;
-        const d = distanceToCoverEdge(lx, lz, c.hx, c.hz);
-        if (d < HIDE_RADIUS && d < bestD) { bestD = d; best = c; }
-      }
-    }
+  for (const c of neighbourhood(coverGrid, x, z, cell, span)) {
+    if (!HIDE_KINDS[c.kind]) continue;
+    const dx = wrapDelta(x, c.x, span), dz = wrapDelta(z, c.z, span);
+    const ry = c.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
+    const lx = dx * co - dz * si, lz = dx * si + dz * co;
+    const d = distanceToCoverEdge(lx, lz, c.hx, c.hz);
+    if (d < HIDE_RADIUS && d < bestD) { bestD = d; best = c; }
   }
   return best;
 }
@@ -502,10 +568,10 @@ export function canSee(
   state: DetectionState,
   x0: number, z0: number, x1: number, z1: number,
   coverGrid: SpatialGrid<CoverAABB>,
-  cell: number = CELL,
+  cell: number = CELL, span: number = Infinity,
 ): boolean {
   if (dist >= effectiveDetect(detect, detectMul, state)) return false;
-  return hasLOS(x0, z0, x1, z1, coverGrid, cell);
+  return hasLOS(x0, z0, x1, z1, coverGrid, cell, span);
 }
 
 // ---- tree canopy radius at eye height (LUL-267) ------------------------------

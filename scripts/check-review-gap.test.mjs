@@ -86,3 +86,47 @@ test('flags a zero-review PR at 5273 minutes -- the PR #128 shape, genuinely sta
   assert.equal(gaps.length, 1);
   assert.equal(gaps[0].number, 128);
 });
+
+// ---- LUL-1111: Tier-A-only PRs never fire -- the PR #240 shape -----------
+// AGENTS.md's development-first tiers ship Tier A (docs/**, *.md, e2e/**,
+// *.test.*, comment-only, public/, copy) on green with no review at all, so
+// a Tier-A-only PR sitting past the threshold with zero reviews is by policy
+// not a gap. PR #240 (which landed that very policy) was itself Tier A and
+// sat unreviewed for 55+ hours because this detector had no notion of tier.
+
+test('does not flag a Tier-A-only PR past the threshold with zero reviews -- the PR #240 shape', () => {
+  const pr = prOpenedMinutesAgo(240, 3300, 'docs: development-first tiers');
+  const filesByPrNumber = { 240: [{ filename: 'AGENTS.md' }, { filename: 'docs/tiers.md' }] };
+  const gaps = findReviewGaps([pr], {}, NOW, DEFAULT_THRESHOLD_MINUTES, filesByPrNumber);
+  assert.deepEqual(gaps, []);
+});
+
+test('still flags a Tier B PR past the threshold with zero reviews -- tier skip does not swallow real gaps', () => {
+  const pr = prOpenedMinutesAgo(241, 3300, 'components: add hud element');
+  const filesByPrNumber = { 241: [{ filename: 'components/Hud.tsx' }] };
+  const gaps = findReviewGaps([pr], {}, NOW, DEFAULT_THRESHOLD_MINUTES, filesByPrNumber);
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].number, 241);
+});
+
+test('a mixed Tier A + B diff still fires -- one non-A file is enough', () => {
+  const pr = prOpenedMinutesAgo(242, 3300, 'docs + a real code change');
+  const filesByPrNumber = { 242: [{ filename: 'README.md' }, { filename: 'lib/site.ts' }] };
+  const gaps = findReviewGaps([pr], {}, NOW, DEFAULT_THRESHOLD_MINUTES, filesByPrNumber);
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].number, 242);
+});
+
+test('accepts filesByPrNumber as a Map, not just a plain object', () => {
+  const pr = prOpenedMinutesAgo(243, 3300, 'docs via Map');
+  const filesByPrNumber = new Map([[243, [{ filename: 'README.md' }]]]);
+  const gaps = findReviewGaps([pr], {}, NOW, DEFAULT_THRESHOLD_MINUTES, filesByPrNumber);
+  assert.deepEqual(gaps, []);
+});
+
+test('omitting filesByPrNumber entirely still flags as before -- back-compat with existing callers', () => {
+  const pr = prOpenedMinutesAgo(244, 3300, 'no files data available');
+  const gaps = findReviewGaps([pr], {}, NOW, DEFAULT_THRESHOLD_MINUTES);
+  assert.equal(gaps.length, 1);
+  assert.equal(gaps[0].number, 244);
+});

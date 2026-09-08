@@ -23,6 +23,11 @@ test('admin mode defaults off and is reachable/toggleable on mobile', async ({ p
   await expect(page.locator('#minimap')).toBeHidden();
   await expect(page.locator('#pace')).toBeHidden();
 
+  // LUL-1085 re-scoped #panel to dev-only monitoring with no exemptions --
+  // same as desktop, see ../admin-mode.spec.ts.
+  await expect(page.locator('#lightState')).toBeHidden();
+  await expect(page.locator('#veilState')).toBeHidden();
+
   // LUL-1085: Settings button moved to GameMenu, open it via the hamburger
   const menuToggle = page.getByTestId('menuToggle');
   await expect(menuToggle, 'Menu must be reachable on mobile').toBeVisible();

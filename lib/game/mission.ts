@@ -16,10 +16,15 @@ export interface MissionTarget {
 }
 
 export const MISSION_POOL: readonly MissionTarget[] = [
-  // Coordinates match LANDMARKS' drownedCar entry (engine/tuning.ts) --
-  // do not hand-copy the numbers again if that entry ever moves; import LANDMARKS
-  // in the engine call site instead (see S3).
-  { kind: 'deepwater', x: 55, z: 205, zoneRadius: 20, interactRadius: 4 },
+  // LUL-1483: coordinates match LANDMARKS' relocated drownedCar entry
+  // (engine/tuning.ts) -- the old (55, 205) sat outside the new
+  // [-120,120] square. Still a hand-copy, not an import (see the
+  // pre-existing TODO above this line) -- fixing that structurally is out
+  // of scope for this ticket; if it drifts again, the "lake and other
+  // landmarks are not accidentally boggy" style test in bog.test.ts is not
+  // where you'd catch it. Consider a follow-up ticket to make mission.ts
+  // import LANDMARKS directly instead of re-stating its coordinates.
+  { kind: 'deepwater', x: -95, z: 46, zoneRadius: 20, interactRadius: 4 },
 ];
 
 export interface MissionState {
@@ -73,12 +78,16 @@ export type SecondaryKind = 'retrieval' | 'speedrun';
  * deferred per the CTO scope ruling) is added here, not by touching pickMission. */
 export const SECONDARY_SUPPORTED_MISSIONS: ReadonlySet<MissionKind> = new Set(['deepwater']);
 
-// LUL-1666: reuses the stoneMarker landmark (engine/tuning.js LANDMARKS,
-// kind:'stoneMarker', x:100 z:-75) -- a permanent, always-rendered decorative
-// mesh with its own glow light (engine/forest-engine.js buildStoneMarker) that
-// existed before this ticket and is unchanged by it. interactRadius mirrors
-// MISSION_POOL's deepwater entry (4).
-export const RETRIEVAL_ITEM = { x: 100, z: -75, interactRadius: 4 } as const;
+// LUL-1666, retargeted per decisions/lul-1697-retrieval-landmark-radiomast-2026-09-08:
+// reuses the radioMast landmark (engine/tuning.js LANDMARKS, kind:'radioMast',
+// x:30 z:175), not stoneMarker -- LUL-2067 wired stoneMarker's E-key interact
+// slot to canBuyVeilCharm/buyVeilCharm() after this spec's base commit, which
+// would have collided with retrieval's own E-key completion at the same spot.
+// radioMast is a permanent, always-rendered decorative mesh with its own pulse
+// glow (engine/forest-engine.js buildRadioMast/radioMastBeaconGlow) and no
+// other interact mechanic. interactRadius mirrors MISSION_POOL's deepwater
+// entry (4).
+export const RETRIEVAL_ITEM = { x: 30, z: 175, interactRadius: 4 } as const;
 
 // LUL-1666: first-cut tuning value, not playtest-derived -- see spec S7 for
 // rationale. Retune here only; nothing else references the raw number.

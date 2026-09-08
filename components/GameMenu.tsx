@@ -154,7 +154,7 @@ export default function GameMenu({
                         actions?.setSecondaryChoice(k);
                         setOpen(false);
                       }}
-                      title={k === null ? 'No bonus' : k === 'retrieval' ? 'Find the Stone Marker for a bonus' : 'Reach home within the time limit for a bonus'}
+                      title={k === null ? 'No bonus' : k === 'retrieval' ? 'Find the radio mast for a bonus' : 'Reach home within the time limit for a bonus'}
                     >
                       {label}
                     </button>

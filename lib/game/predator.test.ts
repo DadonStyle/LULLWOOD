@@ -7,17 +7,26 @@ import {
   hasReachedSniffRange,
   isCaught,
   isSniffImmune,
+  LKP_MAX_SWEEPS,
+  LKP_RING_RADIUS,
+  LKP_REPEAT_RADIUS,
+  pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
   SNIFF_APPROACH_MARGIN,
   SNIFF_IMMUNITY_TIME,
+  SNIFF_STANDOFF,
+  SNIFF_STATUS_RANGE,
+  sniffStandoffPoint,
   stepApproach,
   stepFlankHold,
   stepSniffLoop,
   tickTimers,
 } from './predator.ts';
+import { ROAM_STEP_FRAC } from '../../engine/tuning.js';
+import { wrapCoord } from './wrap.ts';
 
 // ---- rollSniffs --------------------------------------------------------------
 
@@ -250,6 +259,14 @@ test('shouldRevertInvestigateToChase is false for "back" while still hidden', ()
   assert.equal(shouldRevertInvestigateToChase('back', true), false);
 });
 
+test('shouldRevertInvestigateToChase is true for "standoff" (LUL-1090) when not hidden', () => {
+  assert.equal(shouldRevertInvestigateToChase('standoff', false), true);
+});
+
+test('shouldRevertInvestigateToChase is false for "standoff" while still hidden', () => {
+  assert.equal(shouldRevertInvestigateToChase('standoff', true), false);
+});
+
 // ---- stepApproach (LUL-658) -------------------------------------------------------
 
 test('stepApproach reports movement toward the player when still outside sniff range', () => {
@@ -316,6 +333,51 @@ test('backOffPoint with dist=0 (coincident points) leaves the point where it sta
   assert.equal(z, -3);
 });
 
+// ---- sniffStandoffPoint (LUL-1090) -----------------------------------------------
+
+test('sniffStandoffPoint returns null when already at or past SNIFF_STANDOFF', () => {
+  assert.equal(sniffStandoffPoint(0, 0, 1, 0, SNIFF_STANDOFF, 1000), null);
+  assert.equal(sniffStandoffPoint(0, 0, 1, 0, SNIFF_STANDOFF + 5, 1000), null);
+});
+
+test('sniffStandoffPoint places the predator exactly SNIFF_STANDOFF from the player, regardless of starting distance', () => {
+  // Predator at origin, player 2 units away along +x (ux=1,uz=0) -- point-blank
+  // sniff range. The player sits at (2,0); the standoff point must be
+  // SNIFF_STANDOFF back from *that*, i.e. (2 - SNIFF_STANDOFF, 0).
+  const [x, z] = sniffStandoffPoint(0, 0, 1, 0, 2, 1000)!;
+  assert.equal(x, 2 - SNIFF_STANDOFF);
+  assert.equal(z, 0);
+});
+
+test('sniffStandoffPoint at dist just under SNIFF_STANDOFF only retreats the small remaining gap', () => {
+  const dist = SNIFF_STANDOFF - 0.1;
+  const [x] = sniffStandoffPoint(0, 0, 1, 0, dist, 1000)!;
+  assert.ok(Math.abs(x - (dist - SNIFF_STANDOFF)) < 1e-9);
+});
+
+test('sniffStandoffPoint clamps to the map bound on the positive side', () => {
+  // dist=0 -> full SNIFF_STANDOFF (4.5) retreat, which overshoots a half=6
+  // map's -half+4..half-4 = -2..2 bound.
+  const [x] = sniffStandoffPoint(0, 0, -1, 0, 0, 6)!;
+  assert.equal(x, 2);
+});
+
+test('sniffStandoffPoint clamps to the map bound on the negative side', () => {
+  const [x] = sniffStandoffPoint(0, 0, 1, 0, 0, 6)!;
+  assert.equal(x, -2);
+});
+
+test('sniffStandoffPoint respects a separate zMax for asymmetric maps (LUL-25 bog band)', () => {
+  // dist=0, uz=-1 -> full SNIFF_STANDOFF retreat pushes rawZ to +4.5, which
+  // is inside -half+4..half-4 (-6..6) but past a narrower zMax-4 (10..1).
+  const [, z] = sniffStandoffPoint(0, 0, 0, -1, 0, 10, 5)!;
+  assert.equal(z, 5 - 4);
+});
+
+test('SNIFF_STATUS_RANGE stays comfortably above SNIFF_STANDOFF so the warning line never drops before the predator settles', () => {
+  assert.ok(SNIFF_STATUS_RANGE > SNIFF_STANDOFF);
+});
+
 // ---- predatorSeparationPush (LUL-394) --------------------------------------
 
 test('predatorSeparationPush: no push when circles do not overlap', () => {
@@ -361,5 +423,98 @@ test('predatorSeparationPush: sums pushes from multiple overlapping predators', 
 test('predatorSeparationPush: an empty others list is a no-op', () => {
   const [px, pz] = predatorSeparationPush(0, 0, 1, []);
   assert.equal(px, 0);
+  assert.equal(pz, 0);
+});
+
+// ---- pickRoamWaypoint (LUL-1620) ------------------------------------------------
+
+test('pickRoamWaypoint with no live memory (sweepsLeft=0) reproduces the LUL-1808 map-size-scaled uniform pick around the predator', () => {
+  const calls = [0.25, 0.5];
+  const rng = () => calls.shift()!;
+  const half = 240;
+  const pick = pickRoamWaypoint(rng, /*px*/10, /*pz*/20, /*lkpX*/0, /*lkpZ*/0, /*sweepsLeft*/0, /*dist*/999, half);
+  const a = 0.25 * Math.PI * 2, r = half * (ROAM_STEP_FRAC.min + 0.5 * ROAM_STEP_FRAC.range);
+  assert.equal(pick.x, 10 + Math.cos(a) * r);
+  assert.equal(pick.z, 20 + Math.sin(a) * r);
+  assert.equal(pick.sweepsLeft, 0);
+});
+
+test('pickRoamWaypoint with live memory centers the waypoint on the remembered point, not the predator', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, /*px*/500, /*pz*/500, /*lkpX*/10, /*lkpZ*/20, /*sweepsLeft*/2, /*dist*/0, /*half*/240);
+  // a=0 -> cos=1, sin=0; r = LKP_RING_RADIUS + 0*LKP_RING_JITTER
+  assert.equal(pick.x, 10 + LKP_RING_RADIUS);
+  assert.equal(pick.z, 20);
+});
+
+test('pickRoamWaypoint decrements sweepsLeft while the player is still within the repeat radius', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, 2, LKP_REPEAT_RADIUS - 1, /*half*/240);
+  assert.equal(pick.sweepsLeft, 1);
+});
+
+test('pickRoamWaypoint clears memory once the bounded sweep count is exhausted, even if the player is still close', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, 1, 0, /*half*/240);
+  assert.equal(pick.sweepsLeft, 0);
+});
+
+test('pickRoamWaypoint clears memory early when the player has left the repeat radius, even with sweeps remaining', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, LKP_MAX_SWEEPS, LKP_REPEAT_RADIUS + 0.01, /*half*/240);
+  assert.equal(pick.sweepsLeft, 0);
+});
+
+test('pickRoamWaypoint is inclusive at exactly the repeat radius boundary', () => {
+  const rng = () => 0;
+  const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, 2, LKP_REPEAT_RADIUS, /*half*/240);
+  assert.equal(pick.sweepsLeft, 1);
+});
+
+// ---- wrap span (LUL-1485) ----------------------------------------------------
+const SPAN = 240;
+function acrossSeam(v: number): number {
+  return wrapCoord(v + SPAN / 2, SPAN);
+}
+
+test('backOffPoint: span=Infinity matches the pre-wrap call exactly (still clamps)', () => {
+  assert.deepEqual(backOffPoint(0, 0, -1, 0, 100, 10, 10, Infinity), backOffPoint(0, 0, -1, 0, 100, 10));
+});
+
+test('backOffPoint: with a finite span, wraps instead of clamping (no map-bound margin applied)', () => {
+  // Same inputs as the "clamps to the map bound" test above (half=10, would
+  // clamp to 6), but with a finite span the hard-bound clamp branch is
+  // skipped entirely in favor of a pure wrap.
+  const [x] = backOffPoint(0, 0, -1, 0, 100, 10, 10, SPAN);
+  assert.equal(x, wrapCoord(100, SPAN));
+  assert.notEqual(x, 6);
+});
+
+test('backOffPoint: a seam result equals the identical interior result translated by SPAN/2', () => {
+  const [ix, iz] = backOffPoint(0, 0, 1, 0, 8, 1000, 1000, SPAN);
+  const [sx, sz] = backOffPoint(acrossSeam(0), acrossSeam(0), 1, 0, 8, 1000, 1000, SPAN);
+  assert.equal(sx, acrossSeam(ix));
+  assert.equal(sz, acrossSeam(iz));
+});
+
+test('predatorSeparationPush: span=Infinity matches the pre-wrap call exactly', () => {
+  assert.deepEqual(
+    predatorSeparationPush(0, 0, 1, [{ x: 1, z: 0, rad: 1 }], Infinity),
+    predatorSeparationPush(0, 0, 1, [{ x: 1, z: 0, rad: 1 }]),
+  );
+});
+
+test('predatorSeparationPush: a seam push equals the identical interior push translated by SPAN/2', () => {
+  const interior = predatorSeparationPush(0, 0, 1, [{ x: 1, z: 0, rad: 1 }], SPAN);
+  const seam = predatorSeparationPush(acrossSeam(0), acrossSeam(0), 1, [{ x: acrossSeam(1), z: acrossSeam(0), rad: 1 }], SPAN);
+  assert.deepEqual(seam, interior);
+});
+
+test('predatorSeparationPush: two predators straddling the seam, close the wrap-short way, still separate', () => {
+  // x=-119 and x=119.5: raw distance 238.5, wrap-short distance 1.5. rad 1
+  // each -> minDist 2, so this is a real overlap the wrap-short way even
+  // though the raw coordinates put them near opposite edges of the map.
+  const [px, pz] = predatorSeparationPush(-119, 0, 1, [{ x: 119.5, z: 0, rad: 1 }], SPAN);
+  assert.ok(px !== 0, 'must detect the seam-adjacent overlap, not read raw ~238.5 as "far apart"');
   assert.equal(pz, 0);
 });

@@ -18,6 +18,8 @@
 // p.flankZ/p.packTimer) -- this module only owns "given the pack's current
 // geometry, who leads and where do the flankers go."
 
+import { wrapCoord, wrapDelta } from './wrap.ts';
+
 export const FLANK_ANGLE = Math.PI / 3; // 60 degrees either side of the escape heading
 export const FLANK_DIST_MUL = 1.4;
 export const FLANK_RECOMPUTE = 0.5; // budget cap: one path recompute per wolf per 0.5s
@@ -75,14 +77,18 @@ export function flankTarget(
   wolfX: number,
   wolfZ: number,
   bounds: FlankBounds,
+  span: number = Infinity,
 ): [number, number] {
   const { half, zMax } = bounds;
-  const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
   const ang = FLANK_ANGLE * side;
   const ca = Math.cos(ang);
   const sa = Math.sin(ang);
   const ex = escX * ca - escZ * sa;
   const ez = escX * sa + escZ * ca;
-  const dist = Math.hypot(playerX - wolfX, playerZ - wolfZ) * FLANK_DIST_MUL;
-  return [clamp(playerX + ex * dist, -half + 4, half - 4), clamp(playerZ + ez * dist, -half + 4, zMax - 4)];
+  const ddx = wrapDelta(playerX, wolfX, span), ddz = wrapDelta(playerZ, wolfZ, span);
+  const dist = Math.hypot(ddx, ddz) * FLANK_DIST_MUL;
+  const rawX = playerX + ex * dist, rawZ = playerZ + ez * dist;
+  if (Number.isFinite(span)) return [wrapCoord(rawX, span), wrapCoord(rawZ, span)];
+  const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
+  return [clamp(rawX, -half + 4, half - 4), clamp(rawZ, -half + 4, zMax - 4)];
 }

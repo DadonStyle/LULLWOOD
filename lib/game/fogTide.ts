@@ -27,12 +27,25 @@ import {
   type EventCycleConfig,
   type EventCyclePhase,
 } from './eventScheduler.ts';
+import { sitesNear, type EventSite } from './eventSites.ts';
 
 export const FOG_TIDE_CONFIG: EventCycleConfig = {
   period: 90,
   activeDuration: 20,
   leadIn: 10,
 };
+
+// LUL-1486: first-pass site layout for the 480x480 world (D1). Three patches
+// spread around the map so a tide-active moment covers roughly a third of it
+// at once, not all of it -- "can you walk out of the fog" (the ticket's own
+// verification bar) needs somewhere clear to walk to. Positions/radii are a
+// first cut; expect the Game Tester's seam/tide-walk verdict to ask for a
+// tuning pass, not a structural change.
+export const FOG_TIDE_SITES: readonly EventSite[] = [
+  { x: 150, z: 60, radius: 130, kind: 'fogTide' },
+  { x: -120, z: -140, radius: 130, kind: 'fogTide' },
+  { x: 30, z: -190, radius: 110, kind: 'fogTide' },
+];
 
 // World-effect ease rates -- separate from the raw 0..1 build signal above,
 // same "reacts fast / billows in behind it" split LUL-382's VEIL_RAMP
@@ -83,4 +96,33 @@ export function fogTideDroneGainMul(buildAmount: number): number {
 
 export function fogTideWindGainMul(tideAmount: number): number {
   return 1 - tideAmount * FOG_TIDE_WIND_DUCK;
+}
+
+/**
+ * LUL-1486 / D2: the existing global ramp `tideAmount` (still one clock, one
+ * phase across the whole world -- only the spatial EXTENT becomes local
+ * here, not the timing), scaled by proximity to a fogTide site. 0 outside
+ * every site. The caller picks which position to sample -- see fogTide.ts's
+ * call sites in forest-engine.js for the sampling rule per consumer.
+ * `sites` defaults to FOG_TIDE_SITES; overridable so tests (and only tests)
+ * can prove the degenerate one-world-covering-site case reproduces the old
+ * global behavior without depending on the real default layout.
+ */
+export function fogTideAmountAt(
+  x: number, z: number, tideAmount: number,
+  spanX: number = Infinity, spanZ: number = Infinity,
+  sites: readonly EventSite[] = FOG_TIDE_SITES,
+): number {
+  return tideAmount * sitesNear(x, z, sites, 'fogTide', spanX, spanZ);
+}
+
+/** Same blend applied to the raw build/telegraph signal (fogTideBuild in
+ * forest-engine.js) -- the audio telegraph fades with distance from a site
+ * exactly like the effect it's telegraphing. */
+export function fogTideBuildAt(
+  x: number, z: number, buildAmount: number,
+  spanX: number = Infinity, spanZ: number = Infinity,
+  sites: readonly EventSite[] = FOG_TIDE_SITES,
+): number {
+  return buildAmount * sitesNear(x, z, sites, 'fogTide', spanX, spanZ);
 }

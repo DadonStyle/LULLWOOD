@@ -24,20 +24,30 @@ const baseURL = `http://127.0.0.1:${PORT}`;
 // exercises no live engine (the spec's own header said exactly that, while
 // this file claimed the opposite). One webServer, one project, one production
 // build -- the same artifact that ships.
+// LUL-1910: this host (the nightly qa-regression.mjs cron and every ad hoc live
+// probe run from here, `CI` unset) has a real RTX 2070 SUPER -- confirmed live via
+// `nvidia-smi` and an ANGLE renderer-string probe (LUL-1910 wiki page) -- it was
+// wrongly believed CPU-only when the swiftshader fallback below was written.
+// GitHub Actions runners (`CI` set) still have no GPU, so they keep swiftshader.
+// `--use-gl=angle --use-angle=gl-egl` is what actually picks up the NVIDIA driver
+// in headless mode; plain `--use-gl=egl` still resolved to SwiftShader/Vulkan in
+// the probe, so don't substitute it back in.
+const gpuArgs = ['--use-gl=angle', '--use-angle=gl-egl'];
+const swiftshaderArgs = ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'];
+
 const launchOptions = {
-  // No GPU here (real or in CI) -- go through software rendering. `--mute-audio`
-  // means the WebAudio layer is never exercised by this suite (see LUL-20: do not
-  // claim audio works from this rig). `--disable-dev-shm-usage` (LUL-1110): GitHub
-  // Actions runners default /dev/shm to 64MB, far too small for Chromium's shared
-  // memory under three.js/WebGL rendering load -- it was crashing mid-suite
-  // ("Protocol error (Runtime.callFunctionOn): Internal server error, session
-  // closed", 90s page.goto timeouts) even after version-cut.yml's 4-way sharding
-  // (PR #278) cut wall-clock time; the crash rate and per-test cost were unchanged
-  // post-shard, which is the signature of a shared-memory ceiling, not cross-test
-  // contention. This flag makes Chromium fall back to /tmp instead of /dev/shm.
+  // `--mute-audio` means the WebAudio layer is never exercised by this suite
+  // (see LUL-20: do not claim audio works from this rig). `--disable-dev-shm-usage`
+  // (LUL-1110): GitHub Actions runners default /dev/shm to 64MB, far too small for
+  // Chromium's shared memory under three.js/WebGL rendering load -- it was
+  // crashing mid-suite ("Protocol error (Runtime.callFunctionOn): Internal server
+  // error, session closed", 90s page.goto timeouts) even after version-cut.yml's
+  // 4-way sharding (PR #278) cut wall-clock time; the crash rate and per-test cost
+  // were unchanged post-shard, which is the signature of a shared-memory ceiling,
+  // not cross-test contention. This flag makes Chromium fall back to /tmp instead
+  // of /dev/shm.
   args: [
-    '--use-gl=swiftshader',
-    '--enable-unsafe-swiftshader',
+    ...(process.env.CI ? swiftshaderArgs : gpuArgs),
     '--no-sandbox',
     '--mute-audio',
     '--disable-dev-shm-usage',
@@ -50,8 +60,10 @@ const launchOptions = {
 // Actions, with `CI` unset. That job's runner is measurably more CPU-starved
 // than this suite's other environments: it does a fresh `npm ci` + `next build`
 // + `playwright install --with-deps chromium` in the same job, immediately
-// before serving the game over software-rendered WebGL (`--use-gl=swiftshader`,
-// already <20fps per wiki systems/dt-clamp-vs-walltime). Sharding (PR #278) and
+// before serving the game over WebGL (software-rendered via swiftshader, already
+// <20fps per wiki systems/dt-clamp-vs-walltime, until LUL-1910 moved this host to
+// the GPU path above -- the CPU-starved `npm ci`/`next build`/install cost in the
+// same job is unaffected by that change and still applies). Sharding (PR #278) and
 // the /dev/shm fix (PR #291, LUL-1110) each cut real failure modes but left an
 // unchanged signature behind: entire specs -- not just the dt-accumulated-timer
 // ones systems/dt-clamp-vs-walltime already named -- blowing the 10s/90s
@@ -64,7 +76,7 @@ const launchOptions = {
 // fix.
 const ciTimeouts = process.env.CI
   ? { timeout: 240_000, expect: { timeout: 30_000 } }
-  : { timeout: 90_000, expect: { timeout: 10_000 } };
+  : { timeout: 150_000, expect: { timeout: 10_000 } };
 
 export default defineConfig({
   testDir: './e2e',

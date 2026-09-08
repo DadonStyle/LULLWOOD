@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  coverKindBlocksPlayerMovement,
+  coverKindBlocksMovement,
   distanceToCoverEdge,
   overlapsTreeCanopy,
   overlapsTreeTrunk,
@@ -13,6 +13,7 @@ import {
   coverBlockedR,
   canopyBlockedR,
   blocked,
+  blockedForPredator,
   segRayVsAABB,
   hasLOS,
   findHideSpot,
@@ -26,9 +27,11 @@ import {
   STILL_DETECT_CUT,
   CARRY_DETECT_MUL,
   PLAYER_COLLISION_RADIUS,
+  neighbourhood,
 } from './cover.ts';
 import type { SpatialGrid, CircleCollider, CoverAABB, DetectionState } from './cover.ts';
 import { veilDetectMul, VEIL_DETECT_MUL } from './veil.ts';
+import { wrapCoord } from './wrap.ts';
 
 // Builds a spatial grid the same way the engine's buildGrid()/buildCoverGrid()
 // do: bucket every entry by floor(x/CELL),floor(z/CELL).
@@ -206,26 +209,26 @@ test('overlapsTreeCanopy finds a match anywhere in a multi-tree list, not just t
   assert.equal(overlapsTreeCanopy(0, 0, 0.8, trees), true);
 });
 
-// ---- coverKindBlocksPlayerMovement (LUL-384) -------------------------------
+// ---- coverKindBlocksMovement (LUL-384) -------------------------------
 
-test('coverKindBlocksPlayerMovement is false for tree (own circle-grid collision handles it)', () => {
-  assert.equal(coverKindBlocksPlayerMovement('tree'), false);
+test('coverKindBlocksMovement is false for tree (own circle-grid collision handles it)', () => {
+  assert.equal(coverKindBlocksMovement('tree'), false);
 });
 
-test('coverKindBlocksPlayerMovement is false for log -- walkable, run/jump over it naturally', () => {
-  assert.equal(coverKindBlocksPlayerMovement('log'), false);
+test('coverKindBlocksMovement is false for log -- walkable, run/jump over it naturally', () => {
+  assert.equal(coverKindBlocksMovement('log'), false);
 });
 
-test('coverKindBlocksPlayerMovement is true for rock -- unchanged, still solid', () => {
-  assert.equal(coverKindBlocksPlayerMovement('rock'), true);
+test('coverKindBlocksMovement is true for rock -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksMovement('rock'), true);
 });
 
-test('coverKindBlocksPlayerMovement is false for bramble -- LUL-1642, walkable like log so hasLOS() unifies with the log hiding case', () => {
-  assert.equal(coverKindBlocksPlayerMovement('bramble'), false);
+test('coverKindBlocksMovement is false for bramble -- LUL-1642, walkable like log so hasLOS() unifies with the log hiding case', () => {
+  assert.equal(coverKindBlocksMovement('bramble'), false);
 });
 
-test('coverKindBlocksPlayerMovement is true for reed -- unchanged, still solid', () => {
-  assert.equal(coverKindBlocksPlayerMovement('reed'), true);
+test('coverKindBlocksMovement is true for reed -- unchanged, still solid', () => {
+  assert.equal(coverKindBlocksMovement('reed'), true);
 });
 
 // ============================================================================
@@ -295,7 +298,7 @@ for (const ry of [Math.PI / 4, -Math.PI / 4]) {
     assert.ok(Math.abs(lx - 2.0) < 1e-9 && Math.abs(lz) < 1e-9, 'sanity: local coords recovered');
 
     // kind 'rock' (not 'log'): LUL-384 made 'log' walkable/non-blocking in
-    // coverBlockedR (coverKindBlocksPlayerMovement), so a blocking fixture
+    // coverBlockedR (coverKindBlocksMovement), so a blocking fixture
     // for this rotation test needs a kind that still blocks -- see the
     // dedicated log-skip test below for that behaviour.
     const correctGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx, hz, kind: 'rock', ry }]);
@@ -338,7 +341,7 @@ test('coverBlockedR: skips kind === "tree" entries entirely, regardless of rotat
 });
 
 // LUL-384 (release/next, merged in under LUL-582): 'log' is walkable, so
-// coverBlockedR routes its skip through coverKindBlocksPlayerMovement()
+// coverBlockedR routes its skip through coverKindBlocksMovement()
 // rather than a literal kind === 'tree' check -- pin that a log no longer
 // blocks the player's own movement, even dead center, even though it is
 // still real LOS-blocking cover (see the hasLOS asymmetry test below) and
@@ -425,11 +428,45 @@ test('blockedR: exactly at the combined radius is not blocked (strict <)', () =>
   assert.equal(blockedR(0.001, 0, 2, grid), true); // just inside
 });
 
+// ---- blockedForPredator (LUL-1643: predators now collide with rock/reed) ---
+
+test('blockedForPredator: rock blocks a predator the same way it blocks the player', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(blockedForPredator(0.5, 0, 0.6, grid, coverGrid), true);
+});
+
+test('blockedForPredator: reed blocks a predator', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 0.5, hz: 0.5, kind: 'reed', ry: 0 }]);
+  assert.equal(blockedForPredator(0, 0, 0.6, grid, coverGrid), true);
+});
+
+test('blockedForPredator: log does not block a predator (HIDE_KINDS stays walkable for both actors)', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 2, hz: 1, kind: 'log', ry: 0 }]);
+  assert.equal(blockedForPredator(0, 0, 0.6, grid, coverGrid), false);
+});
+
+test('blockedForPredator: bramble does not block a predator', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'bramble', ry: 0 }]);
+  assert.equal(blockedForPredator(0, 0, 0.6, grid, coverGrid), false);
+});
+
+test('blockedForPredator: tree circle grid still blocks a predator (unchanged, unrelated to cover)', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 1 }]);
+  const coverGrid = makeGrid<CoverAABB>([]);
+  assert.equal(blockedForPredator(0.5, 0, 0.6, grid, coverGrid), true);
+});
+
 // ---- pickAvoidDirection (LUL-593, predator obstacle-avoidance steering) ----
+
+const emptyCoverGrid: SpatialGrid<CoverAABB> = new Map();
 
 test('pickAvoidDirection: open path returns the original heading unchanged', () => {
   const grid = makeGrid<CircleCollider>([]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   assert.equal(rx, 1);
   assert.equal(rz, 0);
 });
@@ -437,7 +474,7 @@ test('pickAvoidDirection: open path returns the original heading unchanged', () 
 test('pickAvoidDirection: obstacle dead ahead but clear at the first fallback angle deflects to it', () => {
   // tiny blocker exactly at the look-ahead point of the raw heading (0,0)+(1,0)*3
   const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   assert.ok(Math.abs(rx - Math.cos(0.5)) < 1e-9);
   assert.ok(Math.abs(rz - Math.sin(0.5)) < 1e-9);
 });
@@ -445,7 +482,7 @@ test('pickAvoidDirection: obstacle dead ahead but clear at the first fallback an
 test('pickAvoidDirection: when both +/-0.5 are equally clear, prefers +0.5 (angle-list order, not just any clear angle)', () => {
   // blocks only the raw heading -- (3,0) -- leaving every fallback angle open
   const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   // +0.5 is tried before -0.5 in AVOID_ANGLES -- confirm it's the one picked
   const negRx = Math.cos(-0.5), negRz = Math.sin(-0.5);
   assert.ok(!(Math.abs(rx - negRx) < 1e-9 && Math.abs(rz - negRz) < 1e-9));
@@ -457,7 +494,7 @@ test('pickAvoidDirection: every angle blocked returns the least-blocked candidat
   // near or far, at any angle, is within `far` (3) of the origin, well
   // inside rr (10.6) -- a guaranteed all-blocked wedge.
   const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 10 }]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   // never the known-bad heading already confirmed blocked
   assert.ok(!(rx === 1 && rz === 0));
   // every candidate ties at clearDistance 0 here, so the tie is broken by
@@ -471,7 +508,7 @@ test('pickAvoidDirection: obstacle within the near probe is caught even though t
   // it, but a single far-only probe (rad+2.4=3.0) would have missed it
   // entirely, walking the predator straight into the trunk.
   const grid = makeGrid<CircleCollider>([{ x: 1.0, z: 0, cr: 0.3 }]);
-  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   assert.ok(!(rx === 1 && rz === 0));
 });
 
@@ -479,11 +516,27 @@ test('pickAvoidDirection: respects a custom lookAhead distance', () => {
   // blocker sits exactly at the widened look-ahead point (look=rad+5.4=6),
   // well past the default look-ahead point (look=rad+2.4=3)
   const grid = makeGrid<CircleCollider>([{ x: 6, z: 0, cr: 0.3 }]);
-  const [rxDefault, rzDefault] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid);
+  const [rxDefault, rzDefault] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
   assert.equal(rxDefault, 1); // default lookAhead doesn't reach the blocker
   assert.equal(rzDefault, 0);
-  const [rxWide] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, CELL, 5.4); // look=6, lands right on it
+  const [rxWide] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid, CELL, 5.4); // look=6, lands right on it
   assert.notEqual(rxWide, 1);
+});
+
+test('pickAvoidDirection: a rock AABB dead ahead deflects the predator (LUL-1643)', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  // rock centered at (3,0), hx=hz=0.5 -- sits on the raw heading's look-ahead point.
+  const coverGrid = makeGrid<CoverAABB>([{ x: 3, z: 0, hx: 0.5, hz: 0.5, kind: 'rock', ry: 0 }]);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, coverGrid);
+  assert.ok(!(rx === 1 && rz === 0), 'must deflect away from the raw heading');
+});
+
+test('pickAvoidDirection: a log AABB dead ahead does NOT trigger avoidance (walkable, matches player parity)', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 3, z: 0, hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]);
+  const [rx, rz] = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, coverGrid);
+  assert.equal(rx, 1);
+  assert.equal(rz, 0);
 });
 
 // ---- slideVelocity (LUL-1091d: wall slide instead of axis-damping) --------
@@ -526,6 +579,39 @@ test('canopyBlockedR: true inside a tree\'s canopy radius', () => {
 test('canopyBlockedR: an entry with no crCanopy (e.g. a landmark) never blocks -- not an explicit skip, the same NaN-comparison no-op as `main`', () => {
   const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 5 }]);   // huge cr, no crCanopy
   assert.equal(canopyBlockedR(0, 0, grid), false);
+});
+
+// LUL-273: crCanopy is baked at map-gen time for a fixed CONFIG.eye (2.2),
+// but eyeH is damped, not snapped, so it briefly sits well below 2.2 right
+// after exiting a hide spot while moving. During that window the true safe
+// radius is wider than the cached crCanopy (the cone tapers -- a lower eye
+// height sits closer to the wider base). Passing the live eye height + the
+// canopy geometry recomputes the radius on the spot instead of trusting the
+// stale cache.
+const geo = { canopyR: 1, cone1Height: 4, apexY: 2 }; // canopyRadiusAtEye(s,eye) = 0.25*(2s-eye)
+test('canopyBlockedR: with no eye/geo passed, falls back to the cached crCanopy (baked for CONFIG.eye) and under-protects during the transition', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 0.3, crCanopy: 0.45, s: 2 }]); // crCanopy = canopyRadiusAtEye(2, 2.2, geo)
+  assert.equal(canopyBlockedR(0.5, 0, grid), false); // 0.5 > cached 0.45 -- misses it
+});
+
+test('canopyBlockedR: with live eye + geo passed, recomputes the wider transitional radius and catches what the cache misses', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 0.3, crCanopy: 0.45, s: 2 }]);
+  // eyeH mid-transition back up from 1.05 toward CONFIG.eye (2.2)
+  assert.equal(canopyBlockedR(0.5, 0, grid, CELL, 1.2, geo), true); // live radius = 0.25*(4-1.2) = 0.7 > 0.5
+});
+
+test('canopyBlockedR: an entry with no scale (s) falls back to the cached crCanopy even when eye/geo are passed', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 5, crCanopy: 0.45 }]); // no s -- e.g. a landmark
+  assert.equal(canopyBlockedR(0.5, 0, grid, CELL, 1.2, geo), false);
+});
+
+test('blocked: forwards eye/geo through to canopyBlockedR, catching the same transitional under-protection', () => {
+  // cr=0.3 keeps the trunk check (cr+PLAYER_COLLISION_RADIUS 0.6 = 0.9) clear
+  // of the query point at distance 1.0, so only the canopy check is at play.
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 0.3, crCanopy: 0.95, s: 3 }]);
+  const coverGrid = makeGrid<CoverAABB>([]);
+  assert.equal(blocked(1.0, 0, grid, coverGrid), false); // no eye/geo -- cached (0.95), misses
+  assert.equal(blocked(1.0, 0, grid, coverGrid, CELL, 1.2, geo), true); // live (1.2) -- catches it
 });
 
 test('blocked: true from the tree-circle check alone', () => {
@@ -788,4 +874,195 @@ test('rollCoverPropShape: draws exactly 3 rng() calls for a log, 2 for a rock, 1
   calls = 0; rollCoverPropShape(0.1, counting); assert.equal(calls, 3);
   calls = 0; rollCoverPropShape(0.5, counting); assert.equal(calls, 2);
   calls = 0; rollCoverPropShape(0.9, counting); assert.equal(calls, 1);
+});
+
+// ---- wrap span (LUL-1485) ----------------------------------------------------
+// Every function above that compares two world positions now takes a trailing
+// `span` (default Infinity, wrap disabled). Two properties anchor this suite,
+// per docs/specs/lul-1485-wrap.md's Verification section:
+//   (1) span=Infinity is byte-identical to the pre-wrap call (flag-off no-op).
+//   (2) a torus is translation-invariant: the exact same relative geometry,
+//       shifted by SPAN/2 so it straddles the seam in canonical coordinates,
+//       must produce the identical result. Any diff here is a real bug, not a
+//       fixture quirk -- `acrossSeam` uses wrapCoord (the same primitive the
+//       functions under test use internally) so the shifted fixture is always
+//       canonical, regardless of hand arithmetic.
+const SPAN = 240; // arbitrary finite span, independent of CONFIG.mapSize
+function acrossSeam(v: number): number {
+  return wrapCoord(v + SPAN / 2, SPAN);
+}
+
+// ---- neighbourhood (LUL-1485 (b)/(c)) ---------------------------------------
+
+test('neighbourhood: span=Infinity is byte-identical to the un-spanned call', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 9, z: 0, cr: 1 }]);
+  assert.deepEqual(neighbourhood(grid, 0, 0, CELL, Infinity), neighbourhood(grid, 0, 0, CELL));
+});
+
+test('neighbourhood: a query near the high edge finds an entry registered near the low edge via cell-index wraparound', () => {
+  const entry = { x: 119, z: 0, cr: 1 };
+  const grid = makeGrid<CircleCollider>([entry]);
+  assert.deepEqual(neighbourhood(grid, -119, 0, CELL, SPAN), [entry]);
+  // Without span, the same query never finds it -- confirms wraparound did the work.
+  assert.deepEqual(neighbourhood(grid, -119, 0, CELL), []);
+});
+
+// ---- blockedR ----------------------------------------------------------------
+
+test('blockedR: span=Infinity matches the pre-wrap call exactly', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 9, z: 0, cr: 1 }]);
+  assert.equal(blockedR(9.5, 0, 0.6, grid, CELL, Infinity), blockedR(9.5, 0, 0.6, grid));
+});
+
+test('blockedR: a seam collision equals the identical interior collision translated by SPAN/2', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 9, z: 0, cr: 1 }]);
+  const interior = blockedR(9.5, 0, 0.6, grid, CELL, SPAN);
+  const seamGrid = makeGrid<CircleCollider>([{ x: acrossSeam(9), z: 0, cr: 1 }]);
+  const seam = blockedR(acrossSeam(9.5), 0, 0.6, seamGrid, CELL, SPAN);
+  assert.equal(seam, interior);
+  assert.equal(interior, true); // sanity: the interior fixture is a real hit
+});
+
+// ---- coverBlockedR -------------------------------------------------------------
+
+test('coverBlockedR: span=Infinity matches the pre-wrap call exactly', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(coverBlockedR(0.5, 0, 0.6, coverGrid, CELL, Infinity), coverBlockedR(0.5, 0, 0.6, coverGrid));
+});
+
+test('coverBlockedR: a seam collision equals the identical interior collision translated by SPAN/2 (wrap applied before rotation)', () => {
+  const ry = Math.PI / 5;
+  const interior = coverBlockedR(0.5, 0, 0.6, makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry }]), CELL, SPAN);
+  const seam = coverBlockedR(
+    acrossSeam(0.5), acrossSeam(0), 0.6,
+    makeGrid<CoverAABB>([{ x: acrossSeam(0), z: acrossSeam(0), hx: 1, hz: 1, kind: 'rock', ry }]),
+    CELL, SPAN,
+  );
+  assert.equal(seam, interior);
+  assert.equal(interior, true);
+});
+
+// ---- canopyBlockedR ------------------------------------------------------------
+
+test('canopyBlockedR: span=Infinity matches the pre-wrap call exactly (cached crCanopy path)', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 1, crCanopy: 3 }]);
+  assert.equal(canopyBlockedR(1, 0, grid, CELL, undefined, undefined, Infinity), canopyBlockedR(1, 0, grid));
+});
+
+test('canopyBlockedR: a seam hit equals the identical interior hit translated by SPAN/2', () => {
+  const interior = canopyBlockedR(1, 0, makeGrid<CircleCollider>([{ x: 0, z: 0, cr: 1, crCanopy: 3 }]), CELL, undefined, undefined, SPAN);
+  const seam = canopyBlockedR(
+    acrossSeam(1), acrossSeam(0),
+    makeGrid<CircleCollider>([{ x: acrossSeam(0), z: acrossSeam(0), cr: 1, crCanopy: 3 }]),
+    CELL, undefined, undefined, SPAN,
+  );
+  assert.equal(seam, interior);
+  assert.equal(interior, true);
+});
+
+// ---- blockedForPredator --------------------------------------------------------
+
+test('blockedForPredator: span=Infinity matches the pre-wrap call exactly', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(blockedForPredator(0.5, 0, 0.6, grid, coverGrid, CELL, Infinity), blockedForPredator(0.5, 0, 0.6, grid, coverGrid));
+});
+
+test('blockedForPredator: a seam collision equals the identical interior collision translated by SPAN/2', () => {
+  const grid = makeGrid<CircleCollider>([]);
+  const interior = blockedForPredator(0.5, 0, 0.6, grid, makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]), CELL, SPAN);
+  const seam = blockedForPredator(
+    acrossSeam(0.5), acrossSeam(0), 0.6, grid,
+    makeGrid<CoverAABB>([{ x: acrossSeam(0), z: acrossSeam(0), hx: 1, hz: 1, kind: 'rock', ry: 0 }]),
+    CELL, SPAN,
+  );
+  assert.equal(seam, interior);
+  assert.equal(interior, true);
+});
+
+// ---- pickAvoidDirection ---------------------------------------------------------
+
+test('pickAvoidDirection: span=Infinity matches the pre-wrap call exactly', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
+  const withSpan = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid, CELL, 2.4, 0.8, Infinity);
+  const noSpan = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid);
+  assert.deepEqual(withSpan, noSpan);
+});
+
+test('pickAvoidDirection: a seam deflection equals the identical interior deflection translated by SPAN/2 (direction vector is translation-invariant)', () => {
+  const grid = makeGrid<CircleCollider>([{ x: 3, z: 0, cr: 0.05 }]);
+  const interior = pickAvoidDirection(0, 0, 0.6, 1, 0, grid, emptyCoverGrid, CELL, 2.4, 0.8, SPAN);
+  const seamGrid = makeGrid<CircleCollider>([{ x: acrossSeam(3), z: acrossSeam(0), cr: 0.05 }]);
+  const seam = pickAvoidDirection(acrossSeam(0), acrossSeam(0), 0.6, 1, 0, seamGrid, emptyCoverGrid, CELL, 2.4, 0.8, SPAN);
+  assert.deepEqual(seam, interior);
+});
+
+// ---- hasLOS (LUL-1485 (f), the highest-risk conversion) ------------------------
+
+test('hasLOS: span=Infinity matches the pre-wrap call exactly', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(hasLOS(-5, 0, 5, 0, coverGrid, CELL, Infinity), hasLOS(-5, 0, 5, 0, coverGrid));
+});
+
+test('hasLOS: a sightline blocked by cover across the seam equals the identical interior case translated by SPAN/2', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  const interior = hasLOS(-5, 0, 5, 0, coverGrid, CELL, SPAN);
+  const seamCoverGrid = makeGrid<CoverAABB>([{ x: acrossSeam(0), z: acrossSeam(0), hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  const seam = hasLOS(acrossSeam(-5), acrossSeam(0), acrossSeam(5), acrossSeam(0), seamCoverGrid, CELL, SPAN);
+  assert.equal(seam, interior);
+  assert.equal(interior, false); // sanity: the interior fixture really is blocked
+});
+
+test('hasLOS: a clear sightline whose raw endpoints sit on opposite sides of the map is unobstructed once wrapped -- the segment is short the wrap way, not 238 units the raw way', () => {
+  const coverGrid = makeGrid<CoverAABB>([]);
+  // -119 and 119 are 238 apart raw, but 2 apart the wrap-short way; nothing sits
+  // on that short 2-unit path, so this must read as clear.
+  assert.equal(hasLOS(-119, 0, 119, 0, coverGrid, CELL, SPAN), true);
+});
+
+test('hasLOS: cover sitting exactly on the short wrap-path between two seam-straddling points blocks the sightline', () => {
+  // Same -119/119 endpoints as above, but this time a rock sits on the true
+  // (short) path between them, at the seam itself (canonical -120/120 boundary).
+  const coverGrid = makeGrid<CoverAABB>([{ x: -120, z: 0, hx: 1, hz: 1, kind: 'rock', ry: 0 }]);
+  assert.equal(hasLOS(-119, 0, 119, 0, coverGrid, CELL, SPAN), false);
+});
+
+// ---- findHideSpot (LUL-1485: also closes the third independent 3x3 scan copy) --
+
+test('findHideSpot: span=Infinity matches the pre-wrap call exactly', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]);
+  assert.deepEqual(findHideSpot(0, 0, coverGrid, CELL, Infinity), findHideSpot(0, 0, coverGrid));
+});
+
+test('findHideSpot: a seam find equals the identical interior find translated by SPAN/2', () => {
+  const interior = findHideSpot(0, 0, makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]), CELL, SPAN);
+  const seam = findHideSpot(
+    acrossSeam(0), acrossSeam(0),
+    makeGrid<CoverAABB>([{ x: acrossSeam(1), z: acrossSeam(0), hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]),
+    CELL, SPAN,
+  );
+  assert.ok(interior !== null);
+  assert.ok(seam !== null);
+  assert.equal(seam?.kind, interior?.kind);
+  assert.equal(seam?.hx, interior?.hx);
+});
+
+// ---- canSee (composition) -------------------------------------------------------
+
+test('canSee: span=Infinity matches the pre-wrap call exactly', () => {
+  const coverGrid = makeGrid<CoverAABB>([]);
+  const state: DetectionState = { hidden: false, hideTime: 0 };
+  assert.equal(
+    canSee(5, 20, 1, state, 0, 0, 5, 0, coverGrid, CELL, Infinity),
+    canSee(5, 20, 1, state, 0, 0, 5, 0, coverGrid, CELL),
+  );
+});
+
+test('canSee: a seam-crossing sightline equals the identical interior case translated by SPAN/2', () => {
+  const coverGrid = makeGrid<CoverAABB>([]);
+  const state: DetectionState = { hidden: false, hideTime: 0 };
+  const interior = canSee(5, 20, 1, state, 0, 0, 5, 0, coverGrid, CELL, SPAN);
+  const seam = canSee(5, 20, 1, state, acrossSeam(0), acrossSeam(0), acrossSeam(5), acrossSeam(0), coverGrid, CELL, SPAN);
+  assert.equal(seam, interior);
+  assert.equal(interior, true);
 });

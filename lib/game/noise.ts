@@ -19,6 +19,37 @@ export const NOISE_RADIUS_RUN = 24;
 /** dt-scaled roll: being in radius is a chance to notice per second, not an instant catch. */
 export const HEAR_CHANCE_PER_SEC = 0.5;
 
+/** A thrown object's landing noise is a one-shot event, not a per-frame roll like
+ * isNoiseHeard() -- reuses NOISE_RADIUS_RUN's scale per the CTO plan (decision 5). */
+export const THROWABLE_NOISE_RADIUS = NOISE_RADIUS_RUN;
+
+/** The child's cry (LUL-1255 Ship 1 wayfinding) is audible further than any footstep --
+ * a sustained beacon, not an incidental sound. */
+export const CRY_NOISE_RADIUS = 32;
+
+/** LUL-1857: a still, carrying player still emits this much noise from the child's
+ * own rustling/fussing -- a floor under the footstep channel, not a replacement for
+ * it (a *moving* carrier still uses NOISE_RADIUS_WALK/RUN normally). 0.4 *
+ * NOISE_RADIUS_WALK, per LUL-1646 (Game Economist) / decisions/childs-cry-lul1674-
+ * disposition-2026-09-07. Deliberately NOT fog-tide-scaled: game/psychology/
+ * carried-cry-fairness §A3 shows floor*1.35 (fog-tide's own multiplier) reaches
+ * 7.56u, inside the 8u sniff-backoff-distance bound (§A3) by only 0.44u -- too
+ * little headroom to be safe under any future retune. Leaving this unscaled keeps
+ * a full 2.4u of margin always. This value is checked deterministically against a
+ * pulse event (see engine/forest-engine.js's carry-leg cry timer), not rolled
+ * per-frame like isNoiseHeard() -- see carried-cry-fairness verdict mitigation 2. */
+export const CARRIED_NOISE_FLOOR = 0.4 * NOISE_RADIUS_WALK; // 5.6
+
+/**
+ * Whether a predator at `dist` from a throwable's landing point notices it. Pure
+ * distance check, deliberately not probabilistic like isNoiseHeard() -- a thrown
+ * object either lands loud enough to notice or it doesn't; there is no "roll again
+ * next frame" because the event fires once, on landing, not every tick.
+ */
+export function checkThrowableNoise(dist: number, radius: number = THROWABLE_NOISE_RADIUS): boolean {
+  return dist < radius;
+}
+
 export type RNG = () => number;
 
 /**
