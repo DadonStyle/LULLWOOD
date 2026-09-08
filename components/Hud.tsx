@@ -358,6 +358,7 @@ function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle }: { su
                 {payout.home > 0 && <> · +{payout.home} home</>}
               </>
             )}
+            {payout.spent > 0 && <> · −{payout.spent} charm</>}
             {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
           </>
         )}

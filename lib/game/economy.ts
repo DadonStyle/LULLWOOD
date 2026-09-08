@@ -27,6 +27,7 @@ export interface RunPayout {
   survival: number;
   carried: number;
   home: number;
+  spent: number;
   total: number;
 }
 
@@ -67,6 +68,11 @@ export function computeSurvival(survivedSeconds: number): number {
 // game/economy/mission-rewards §2 ("the greed comes from the depth").
 export const MISSION_DEEPWATER_REWARD = 12;
 
+// LUL-1210: Stone Marker veil-charm, priced against Deeper Lungs I (120) so it reads as
+// worse value than saving -- game/economy/veil-charm-price. 125-unit landmark distance ->
+// depth >= 31 at the point of purchase by geometry, 16-point margin.
+export const VEIL_CHARM_PRICE = 15;
+
 // LUL-1640 forward-fix (LUL-1412): every RunPayout field is scaled and rounded
 // individually, and `total` is the sum of those already-rounded fields --
 // never an independent round of the raw sum. This guarantees
@@ -87,7 +93,7 @@ export function computeWinPayout(
   const carried = Math.round(CARRIED * mult);
   const home = Math.round(HOME * mult);
   const total = depth + survival + carried + home + Math.round(missionBonus * mult);
-  return { depth, survival, carried, home, total };
+  return { depth, survival, carried, home, spent: 0, total };
 }
 
 export function computeDeathPayout(
@@ -101,11 +107,20 @@ export function computeDeathPayout(
   const depth = Math.round(cappedDepth * mult);
   const survival = Math.round(computeSurvival(survivedSeconds) * mult);
   const total = depth + survival;
-  return { depth, survival, carried: 0, home: 0, total };
+  return { depth, survival, carried: 0, home: 0, spent: 0, total };
 }
 
 export function applyPayout(state: EmbersState, payout: RunPayout): EmbersState {
   return { ...state, balance: state.balance + payout.total };
+}
+
+/** Deducts an in-run unbanked spend (e.g. the Stone Marker charm) from a computed payout,
+ * clamped so `total` never goes negative. Does not touch depth/survival/carried/home --
+ * `spent` is a separate, honestly-labeled line item, not folded into the other four (which
+ * LUL-1640/LUL-1412 made sum to `total` by construction before any spend is applied). LUL-1210. */
+export function applySpend(payout: RunPayout, spentAmount: number): RunPayout {
+  const spent = Math.max(0, Math.min(spentAmount, payout.total));
+  return { ...payout, spent, total: payout.total - spent };
 }
 
 // ---- Spend: Deeper Lungs, the cheap version's one sink ----------------

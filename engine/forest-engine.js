@@ -120,6 +120,8 @@ import {
   MISSION_DEEPWATER_REWARD,
   computeDepth,
   computeSurvival,
+  applySpend,
+  VEIL_CHARM_PRICE,
 } from '@/lib/game/economy';
 // LUL-1258: M2 Deepwater. Pure mission-state helpers, no Three.js -- mirrors
 // how lib/game/outcome.ts's transitions are imported above.
@@ -165,6 +167,7 @@ import {
   STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
+  VEIL_CHARM_INTERACT_RADIUS,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -365,7 +368,7 @@ let lightDimmed = false;
 // The engine only owns the rendering-side bits: how fast the mist visibly ramps
 // (VEIL_RAMP), how thick it gets at full ramp (MIST_VEIL_FOG), and the mutable
 // per-frame state itself.
-let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, staminaLowCuePlayed = false;
+let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, staminaLowCuePlayed = false, veilReserve = false;
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
 // last result between probes; coverProbeAccum counts elapsed seconds.
 let lastHideSpot = null, coverProbeAccum = 0;
@@ -2064,7 +2067,8 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     deathStart = 0, deathShown = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
-    missionCanComplete = false;   // LUL-1258: recomputed every tick alongside canPickup, below
+    missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
+    canBuyVeilCharm = false;   // LUL-1210: recomputed every tick alongside canPickup, below
 let heldThrowable = false;
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
 // LUL-1103: The Run Chronicle. Flat {t, code, args} buffer, reset per-run in
@@ -2094,7 +2098,7 @@ let cutsceneSkippable = false;   // set fresh on every triggerDeath(), read by t
 // components/Hud.tsx's localStorage read via setEmbers() once on mount (same
 // pattern as setDifficulty/setRunMode/etc. -- see SettingsPanel.tsx) and
 // mutated in place by arriveHome/triggerDeath/purchaseDeeperLungs.
-let maxDistFromHome = 0, embers = freshEmbersState();
+let maxDistFromHome = 0, embers = freshEmbersState(), embersSpent = 0;
 // LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
 // engine's own mutable locals (lib/game/outcome.ts is pure and holds no
 // state of its own) -- this snapshots them into the RunState shape the
@@ -2150,6 +2154,7 @@ on(window, 'keydown', e => {
   if(e.code === 'KeyE' && playing && !paused){
     if(canPickup) pickup();
     else if(carrying) setDown();
+    else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
     else grabThrowable();
   }
@@ -2733,6 +2738,7 @@ function enter(){
   enteredAt = clock.elapsedTime;
   runElapsed = 0;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
+  veilReserve = false; embersSpent = 0;   // LUL-1210: fresh run, no charm banked or spent
   chronicle = [];   // LUL-1103: fresh run, fresh chronicle
   pushState({ entered: true, livePileEmbers: 0 });
   // LUL-1425: the real "a run begins" moment on both input modes -- enter() is
@@ -3436,6 +3442,14 @@ function pickup(){
   armsGroup.visible = true;
   playPickupCue();
 }
+function buyVeilCharm(){
+  if(!canBuyVeilCharm) return;
+  veilReserve = true;
+  embersSpent += VEIL_CHARM_PRICE;
+  pushState({ caption: 'a charm against the mist', captionId: ++captionSeq });
+  // Reuse the same short cue-primitive family as the reserveFired tell above for a confirming sound.
+  track({ event: 'feature_engagement', feature: 'veil_charm', action: 'purchased' });
+}
 function setDown(){
   const next = beginSetDown(runState());
   if(next.carrying === carrying) return;   // rejected -- see setDownAllowed() in lib/game/outcome.ts
@@ -3559,7 +3573,7 @@ function arriveHome(){
   // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
   // like carried/home, since computeDeathPayout's signature is untouched.
   const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
-  const payout = computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus);
+  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus), embersSpent);
   embers = applyPayout(embers, payout);
   logChronicle('win');
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
@@ -3574,12 +3588,12 @@ function triggerDeath(kind, cause){
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
   // LUL-1043: the ground you covered is all you keep -- carried+home go out with you.
-  const payout = computeDeathPayout(
+  const payout = applySpend(computeDeathPayout(
     maxDistFromHome,
     survivedSeconds,
     Math.hypot(baby.x - CONFIG.home.x, baby.z - CONFIG.home.z),
     difficulty,
-  );
+  ), embersSpent);
   embers = applyPayout(embers, payout);
   // LUL-1638: mirror arriveHome()'s LUL-303 fix -- updatePredators() (the only
   // other place that clears the charge HUD) stops running once `playing` goes
@@ -3874,8 +3888,14 @@ function tick(){
   // the veil active.
   const veilHeld = playing && (!!keys['KeyF'] || touchVeil);
   // LUL-1043: Deeper Lungs' lever -- 5s base, +1s per tier purchased.
-  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked }, veilHeld, dt, veilMaxHoldForTier(embers.tiers.deeperLungs));
-  veilCharge = veilStep.charge; veilLocked = veilStep.locked;
+  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked, reserve: veilReserve }, veilHeld, dt, veilMaxHoldForTier(embers.tiers.deeperLungs));
+  const reserveFired = veilReserve && !veilStep.reserve;   // LUL-1210: charm consumed this frame
+  veilCharge = veilStep.charge; veilLocked = veilStep.locked; veilReserve = veilStep.reserve;
+  if(reserveFired){
+    pushState({ caption: 'the charm held', captionId: ++captionSeq });
+    // Reuse whatever the nearest existing short one-shot cue primitive is (the same family as
+    // missionCompleteSting() -- grep for its definition and mirror it) for an audible tell.
+  }
   const dimmed = veilStep.active;
   if(dimmed !== lightDimmed){
     lightDimmed = dimmed;
@@ -3982,7 +4002,7 @@ function tick(){
     const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
     if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
     if(!won && !dead){
-      pushState({ livePileEmbers: computeDepth(maxDistFromHome) + computeSurvival(clock.elapsedTime - enteredAt) });
+      pushState({ livePileEmbers: computeDepth(maxDistFromHome) + computeSurvival(clock.elapsedTime - enteredAt) - embersSpent });
     }
   }
 
@@ -4113,6 +4133,9 @@ function tick(){
   // objective + status HUD
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
   canPickup = canPickUp(runState(), distBaby, 3.6);
+  const distStoneMarker = Math.hypot(player.x - landmarkGroups.stoneMarker.position.x, player.z - landmarkGroups.stoneMarker.position.z);
+  canBuyVeilCharm = !carrying && !veilReserve && distStoneMarker < VEIL_CHARM_INTERACT_RADIUS
+    && computeDepth(maxDistFromHome) >= VEIL_CHARM_PRICE;
   // LUL-1623: nearest-throwable distance computed once per frame, reused only
   // for the HUD gate below -- grabThrowable() re-scans on its own discrete
   // keypress/tap event, not every frame.
@@ -4178,11 +4201,12 @@ function tick(){
     }
     if(caveImmuneJustEnded) caveImmuneEndCue();
     pushState({
-      objectiveVisible: true, objectiveReady: canPickup,
+      objectiveVisible: true, objectiveReady: canPickup || canBuyVeilCharm,
       objectiveText: carrying
         ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm  ·  E  to set her down'
         : (canPickup ? (babySetDown ? 'Press  E  to lift her again' : 'Press  E  to lift the child')
-           : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
+           : (canBuyVeilCharm ? 'Press  E  for a mist-charm  ·  15 embers'
+              : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'))),
       statusVisible, statusText,
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,
@@ -4361,6 +4385,7 @@ tick();
     if(!playing || paused) return;
     if(canPickup) pickup();
     else if(carrying) setDown();
+    else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
     else grabThrowable();
   }
