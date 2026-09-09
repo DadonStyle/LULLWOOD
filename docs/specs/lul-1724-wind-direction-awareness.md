@@ -279,6 +279,55 @@ ambient dust drift is untouched; the two tells are additive, not a replacement.
   is visible with `data-admin-mode="0"` (the default) — this last check is exactly what
   the rejected `#panel` placement in plan rev 1 would have failed.
 
+## e2e
+
+**Backfilled LUL-2189 (2026-09-09).** This feature merged before the `## e2e` section
+requirement existed (LUL-2124) and shipped with **zero** automated coverage — confirmed via
+`grep -rln "wind" e2e/`: every hit (`scent.spec.ts`, `positional-hiding.spec.ts`,
+`predator-*.spec.ts`, etc.) is the existing scent/detection suite exercising code paths that
+happen to mention wind in a comment or drift math, not a test of `#windIndicator`,
+`isMovingAgainstWind()`, or the deposit-radius reduction this spec added. Filling that gap.
+
+**Specs.** `e2e/wind-indicator.spec.ts` — new. Two tests:
+1. `'#windIndicator's rotation matches the engine's windX/windZ at the pinned seed'` —
+   boots with `{ qaHooks: true }`, enters, reads the new `qaProbeWind` hook, computes
+   `Math.atan2(windZ, windX)` (same formula `components/Hud.tsx:750` renders with) and
+   asserts the DOM element's `style.transform` matches — same "derive expected from the
+   real engine state, don't hardcode an angle for one seed" convention as
+   `e2e/bearing-pulse.spec.ts` (LUL-2185) uses for `bearingOf()`.
+2. `'#windIndicator and #windIndicatorHint are absent before entering and after
+   win/death'` — asserts the `state.entered && !state.winVisible && !state.deathVisible`
+   gate at `components/Hud.tsx:746` (and the matching block for the hint at `:756`): not
+   present on the gate screen, present mid-run, gone once `qaTriggerDeath` (existing hook)
+   fires a death.
+
+No coverage is proposed for `isMovingAgainstWind()` / `WIND_AGAINST_RADIUS_MULTIPLIER`
+itself here — `lib/game/scent.test.ts` already unit-tests that pure function directly (see
+`## The change` §2 above); an e2e test would only be re-proving unit-tested math through a
+slower path.
+
+**Hooks.** `window.ForestEngine.qaProbeWind(): { windX: number, windZ: number }` — new,
+returns the module-scope `windX`/`windZ` (declared `engine/forest-engine.js:1541`, set once
+per `generateMap()` by `generateWind()`). Install next to the existing `qaProbePlayer`
+hook (`engine/forest-engine.js:3132`) inside the `?qaHooks=1` block; declare in
+`engine/forest-engine.d.ts` alongside `qaProbePlayer`'s entry. No hook is needed for test 2
+— `qaTriggerDeath` (existing, `engine/forest-engine.js:3048`) already drives the
+death-side gate.
+
+**Tester scenario.** Covered today, by name: `shared/local-qa/QA_TESTER.md` §3 "Overlays
+and HUD states", rule O1 explicitly lists `#windIndicator` (+hint) in the overlap sweep
+against end-screen content and touch controls, on every landscape phone and desktop
+viewport. That check is about *overlap*, not *correctness of the arrow's direction* — the
+two proposed e2e tests above are the direction/lifecycle coverage O1 doesn't attempt.
+
+**Not covered.** The arrow's exact glyph/size/color (`'→'`, 28px, `#ddd` —
+`components/GameCanvas.tsx:322`) and whether rotating it reads as "an arrow pointing into
+the wind" to a real player — feel, stays manual/Player-Psychologist territory, not
+Playwright-checkable. Ambient dust drift (LUL-195, untouched by this spec) has its own
+coverage question and is out of scope here. Real-device rendering of the CSS `rotate()`
+transform (subpixel/aliasing differences across browsers) stays manual per the existing
+real-device carve-out used across this suite.
+
 ## Constraints — what must not change
 
 - `SCENT_RADIUS_WALK`/`SCENT_RADIUS_RUN` constants themselves are unchanged; the
