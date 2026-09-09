@@ -1592,6 +1592,7 @@ function activateCavePower(){
 // without a tutorial or a status readout.
 function scentOnto(p){
   if(p.scentLock > 0) return;   // already tracking off a scent cue: don't re-trigger the roar
+  p.alertedBy = null;   // LUL-1857: scent-driven, not the carried cry
   p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
@@ -1625,6 +1626,7 @@ function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRa
 // stored point), so "last noisy position" falls out of that existing
 // approach behavior for free.
 function hearNoise(p){
+  p.alertedBy = null;   // LUL-1857: footstep-driven, not the carried cry -- see triggerDeath(:1879)'s cause override
   p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
   leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
@@ -1655,6 +1657,7 @@ function hearThrowableNoise(p, tx, tz){
 // an expiry-revert here would silently reintroduce the live-player-target bug
 // this section exists to fix (see S3a of the wayfinding spec).
 function hearCry(p){
+  p.alertedBy = 'cry';   // LUL-1857 mitigation 4: lets triggerDeath(:1879) name "heard the child"
   p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: baby.x, z: baby.z };
@@ -1952,6 +1955,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // moves with the player and baby.x/z is not live during carry (see
         // childCry() fix above).
         hearNoise(p);   // commits to investigate/approach targeting the live player position -- exactly the carry-leg contract (the "noise source" moves with you)
+        p.alertedBy = 'cry';   // LUL-1857 mitigation 4 (LUL-2194): tag the carry-leg cry channel too, same as hearCry()'s outbound-cry tagging below, so triggerDeath() can name "heard the child" on this catch path as well
       }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
@@ -1999,7 +2003,11 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // mid-blind-chase (scentLock > 0) can catch the player straight
         // through the cover prop breaking canSee() right now, since
         // predators never physically collide with cover (LUL-119/LUL-211).
-        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, 'chase'); }   // LUL-1194: run down mid-chase, in the open
+        // LUL-1857 mitigation 4 (recommended): a chase this predator only entered because
+        // it heard the carried child's cry gets a distinguishable death cause -- see
+        // hearCry()/the carriedCryPulse branch below for where p.alertedBy is set, and
+        // hearNoise()/scentOnto()/spotOnto() for where it's cleared by every other channel.
+        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase'); }   // LUL-1194: run down mid-chase, in the open
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
@@ -2271,6 +2279,7 @@ function updateRoosts(dt){
 // force-hunt escalation) omits opts and keeps today's behavior exactly.
 function spotOnto(p, opts){
   const skipAlert = !!(opts && opts.skipAlert);
+  p.alertedBy = null;   // LUL-1857: sight-driven, not the carried cry
   p.state='chase'; p.callTimer=rnd(2.6,4.2); if(!skipAlert) p.alert = 0.55;
   if(!p.spotted){ p.spotted=true; }
   predatorCall(p.kind, false, p); spotSting(); spotFlash = 1;
@@ -4803,7 +4812,6 @@ function stepFrame(dt, t){
       cryTimer = 5.5 - near * 3.5;
     }
   }
-
   // scary music plays ONLY while an animal actually sees you (chasing or bee-lining).
   // lose sight → it starts sniffing/searching and the music falls back to the calm bed;
   // it finds you again (investigate → chase) and the music returns.
