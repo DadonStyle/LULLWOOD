@@ -182,6 +182,13 @@ export const WOLF_BOG_MASK_STRENGTH = 0.7;
 // RUN itself is NOT exported here -- see the note at the top of this file.
 export const CHASE_GAP = 28;
 
+// LUL-2246: how long a force-hunt escalation (30s-no-contact -> straight for you) keeps
+// chasing blind once it loses sight, via the existing scentLock leash (LUL-23) below --
+// 25s at the bear's full species speed (13.9 u/s, the slowest of the three) covers 348u,
+// enough to cross the 480x480 map once. Deliberately not tied to SCENT_TRACK_TIME (8s,
+// lib/game/scent.ts) -- a force-hunt is a much stronger signal than a stale scent point.
+export const FORCE_HUNT_LOCK = 25;
+
 // LUL-26: difficulty presets. `night` is the existing tuning verbatim (every
 // multiplier is a no-op) and stays default. `activePerSpecies` trims the roster
 // without touching PSPEC itself; `detectMul` scales the sight-detect radius;
