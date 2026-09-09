@@ -977,21 +977,25 @@ function generateMap(seed){
   treeData = [];
   let tries = 0;
   // LUL-2225: "sparse inside the bog, not none" -- every 4th tree that lands
-  // in the patch's dense-core threshold (biomeAt > 0.5, roughly the inner
-  // two-thirds of the disc) is kept, the rest marked `culled`. Deterministic
-  // (a counter, no extra rng() draw) so this cannot perturb the seeded tree
-  // stream below it; layoutTreeChunks() parks culled trees off-screen and
-  // addAllToGrid()/generateCover() skip them for collision/hide-cover.
-  let bogDenseSeen = 0;
+  // within BOG_INNER_RADIUS of BOG_CENTER is kept, the rest marked `culled`.
+  // Deterministic (a counter, no extra rng() draw) so this cannot perturb
+  // the seeded tree stream below it; layoutTreeChunks() parks culled trees
+  // off-screen and addAllToGrid()/generateCover() skip them for collision/
+  // hide-cover. Scoped to BOG_INNER_RADIUS specifically (not the wider
+  // biomeAt > 0.5 threshold, which reaches ~35 units at this geometry) so
+  // the counter directly controls the density qaProbeBogKeepClear() and the
+  // spec's e2e section measure, rather than a proxy region whose overlap
+  // with the measured radius varies by seed.
+  let bogCoreSeen = 0;
   while(treeData.length < CONFIG.trees && tries < CONFIG.trees*25){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
     const s = 0.7 + rng()*1.7;
     let culled = false;
-    if(biomeAt(x, z) > 0.5){
-      culled = (bogDenseSeen % 4 !== 0);
-      bogDenseSeen++;
+    if(Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z) < BOG_INNER_RADIUS){
+      culled = (bogCoreSeen % 4 !== 0);
+      bogCoreSeen++;
     }
     treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled });
   }
