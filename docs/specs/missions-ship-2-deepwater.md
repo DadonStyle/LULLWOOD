@@ -360,6 +360,74 @@ Answering the ticket's own question, "is the payout enough to make this a real c
   `computeWinPayout`/`computeDeathPayout` directly, no engine needed, and should get a
   `lib/game/economy.test.ts` case if the executor has room for one)
 
+## e2e
+
+**Backfilled LUL-2187 (2026-09-09).** This feature (spec'd here as LUL-1258, implemented under
+LUL-1259) merged before the `## e2e` section requirement existed (LUL-2124) and shipped with
+**zero** automated coverage -- confirmed via `grep -rln "mission\|[Dd]eepwater" e2e/`: no hits.
+The pure mission-state helpers (`pickMission`, `canCompleteMission`, `completeMission`) are
+unit-tested in `lib/game/mission.test.ts`, and the economy math (`MISSION_DEEPWATER_REWARD`
+folding into `computeWinPayout`, forfeiture on death) is unit-tested in `lib/game/economy.test.ts`
+-- this section proposes only the DOM/engine-integration surface those unit tests can't reach:
+the real interact-key trigger, the HUD panel lifecycle, and the prompt text.
+
+**Specs.** `e2e/mission-deepwater.spec.ts` -- new. Two tests:
+1. `'pressing E at the drowned car completes the mission via the real interact path'` -- boots
+   with `{ qaHooks: true }`, enters, calls the new `qaTeleportNearMission` hook to place the
+   player at `interactRadius` distance from the mission target (same "skip unreliable procedural
+   pathing, drive the real transition" rationale `qaTeleportNearBaby` uses,
+   `engine/forest-engine.js:3033`), asserts `#missionPanel #missionGlyph` reads `○` and the
+   objective pill reads `'Press  E  at the drowned car'` (`engine/forest-engine.js:4735`) before
+   the key, presses `KeyE` (the real handler, `engine/forest-engine.js:2373-2377` -- not a
+   synthesized bypass), then asserts the glyph flips to `●` and the one-time caption `'the
+   drowned car -- found it'` (`engine/forest-engine.js:3997`) appears once.
+2. `'#missionPanel is absent before a mission exists and while carrying the child'` -- asserts
+   the `state.missionKind && state.missionStatus` gate (`components/Hud.tsx:687`): the panel is
+   present once a mission is drawn (every run, per S1) but gone once `carrying` is true (reach
+   that state via the existing `qaTeleportNearBaby` + pickup flow, matching `smoke.spec.ts`'s
+   pickup pattern) -- covers the "nothing is offered while carrying" rule
+   (`decisions/missions-accepted-2026-09-01` §2) S5's spec calls out.
+
+No e2e coverage is proposed for the completion bonus's economy math (`MISSION_DEEPWATER_REWARD`
+folding into `computeWinPayout`, forfeited on death) -- `lib/game/economy.test.ts`'s `'completing
+M2 Deepwater and reaching home adds MISSION_DEEPWATER_REWARD...'` and `'the mission bonus is not
+payable on death...'` cases already assert that directly against the pure functions; an e2e test
+would only re-prove unit-tested math through a slower path (same reasoning
+`docs/specs/lul-1724-wind-direction-awareness.md`'s backfill uses for `isMovingAgainstWind()`).
+
+**Hooks.** Two new hooks -- neither existing hook exposes mission state or a deterministic way to
+reach the mission target:
+- `window.ForestEngine.qaTeleportNearMission(): void` -- new. Sets `player.x = mission.target.x +
+  2, player.z = mission.target.z` (mirrors `qaTeleportNearBaby`, `engine/forest-engine.js:3033`,
+  same `+2` standoff so the player lands inside `interactRadius` (4) without sitting exactly on
+  the target). Install next to `qaTeleportNearBaby` inside the `?qaHooks=1` block
+  (`engine/forest-engine.js:3032`); declare in `engine/forest-engine.d.ts` alongside
+  `qaTeleportNearBaby`'s entry (`:34`).
+- `window.ForestEngine.qaProbeMission(): { kind: string; status: string; x: number; z: number } |
+  null` -- new. Returns `mission && { kind: mission.target.kind, status: mission.status, x:
+  mission.target.x, z: mission.target.z }` (mirrors `qaProbeBaby`'s shape,
+  `engine/forest-engine.js:3054`). Install alongside `qaProbePlayer` (`:3132`); declare in
+  `engine/forest-engine.d.ts` next to `qaProbeBaby`'s entry (`:48`). Not directly exercised by the
+  two tests above (both assert DOM/caption, not raw engine state) but cheap to add now next to
+  its sibling hooks rather than as a second ticket the first time a future spec needs to assert
+  `mission.status` directly.
+
+**Tester scenario.** Not covered by an existing nightly check -- `shared/local-qa/QA_TESTER.md`'s
+HUD-overlap sweep (§3, rule O1) lists other top-left/overlay elements by name but not
+`#missionPanel`. Request file written alongside this spec:
+`shared/local-qa/requests/lul-2187-mission-panel-overlap.md`, asking the nightly run to drive the
+real completion path via `qaTeleportNearMission` and check `#missionPanel` for overlap at
+desktop and one landscape-phone viewport. It is reported `NEEDS-HOOK qaTeleportNearMission` until
+that hook lands (Game Engineer, routed with the e2e spec above) -- left in place per
+`REQUESTING-A-TEST.md`'s rule, it activates automatically once the hook ships.
+
+**Not covered.** The waypoint hum's audio itself (pitch, tempo-with-proximity, panning) -- no DOM
+signal to assert against, stays manual/tester-only, same precedent every other procedural cue in
+this game follows (`childCry`, `hollowLogSound`, etc.). The seeded mission draw's distribution
+(`pickMission`'s RNG consumption) is unit-tested (`lib/game/mission.test.ts`), not an e2e concern.
+Real-device audio panning (mono phone speaker collapsing pan to tempo-only) stays manual per the
+spec's own S4 note.
+
 ## Constraints
 
 - Determinism: `pickMission` consumes the run's existing seeded `rng`; no new unseeded

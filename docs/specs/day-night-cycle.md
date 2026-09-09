@@ -253,6 +253,63 @@ work needed):
         <span id="timeOfRunClock">Time: {state.timeOfRunClock}</span>
 ```
 
+## e2e
+
+**Backfilled 2026-09-09 (LUL-2190)** — this feature shipped (LUL-1709, merged) before the
+`## e2e` section requirement existed (LUL-2124). `grep -rln "day.night\|timeOfRun\|TIME_OF_RUN"
+e2e/` returns nothing: **zero automated coverage today.** The implementation matches this
+spec with one drift worth noting for whoever writes the test — the detect-radius multiplier
+(§5) was factored out to `timeOfRunDetectMul()` in `lib/game/dayNight.ts` (`TIME_OF_RUN_DETECT_MUL
+= 1.3`) rather than staying inline as `(1 + timeOfRun * 0.3)`; same 1.3x-at-full-night result,
+called from `engine/forest-engine.js:1771` and `:1775`.
+
+**Specs.** `e2e/day-night-cycle.spec.ts` (new — no existing file touches this). Test titles:
+- `'timeOfRun ramps 0 -> 1 over TIME_OF_RUN_DURATION_S and resets to 0 on restart'`
+- `'fog density, ambient light, and predator detect radius all ramp with timeOfRun'`
+- `'HUD clock reads 6:00 AM at dawn and 9:00 PM at full night'`
+
+Use the existing deterministic test-clock hooks (`qaSetFixedStep`/`qaAdvance`,
+`engine/forest-engine.js:3080`/`:3084`, exercised already in `e2e/qa-fixed-clock.spec.ts`) to
+fast-forward through the 120s `TIME_OF_RUN_DURATION_S` — never `page.waitForTimeout(120_000)`
+or rely on wall time (README.md's swiftshader-timing rule applies doubly at 2 real minutes).
+
+**Hooks.** One new hook needed — nothing today exposes `timeOfRun`, `scene.fog.density`, or
+`hemiLight.intensity` outside the `init()` closure (`qaProbeElapsedTime` only reads
+`clock.elapsedTime`).
+
+`window.ForestEngine.qaProbeTimeOfRun(): { timeOfRun: number; fogDensity: number; hemiIntensity: number; detectMul: number; clock: string }`
+— one-line behaviour: reads back the four live pacing values in one call so a test can assert
+the engine-visible effect directly (per `e2e/README.md`'s "assert the effect, not the DOM
+node" rule), not just the HUD's `#timeOfRunClock` text. New — declare in
+`engine/forest-engine.d.ts` next to `qaProbeElapsedTime` (existing, untyped-workaround pattern
+already used there per `map-seed.spec.ts`), install inside the `?qaHooks` block in `init()`
+(`engine/forest-engine.js:3032` on), near `qaProbeElapsedTime` (`:3067`):
+
+```js
+window.ForestEngine.qaProbeTimeOfRun = function(){
+  return { timeOfRun, fogDensity: scene.fog.density, hemiIntensity: hemiLight.intensity,
+           detectMul: timeOfRunDetectMul(timeOfRun), clock: formatTimeOfRunClock(timeOfRun) };
+};
+```
+`timeOfRun` (`:399`), `hemiLight` (`:331`), `timeOfRunDetectMul` (imported `:169`), and
+`formatTimeOfRunClock` (function declaration, hoisted — defined at `:4323` but callable from
+the earlier `qaHooks` block in the same `init()` scope, same as every other qa hook here) are
+all already in scope; this hook adds no new state, only reads it.
+
+**Tester scenario.** None of `shared/local-qa/QA_TESTER.md`'s numbered nightly checks (LOSE,
+WIN, overlays/HUD, §1-3) target this — it's a continuous numeric ramp, not a discrete
+state/overlay the vision model would judge. Covered by §4 ("e2e suite and the rest"): the
+nightly full-suite re-run picks up `day-night-cycle.spec.ts` automatically once it exists, no
+request file needed. If a human/vision check is wanted later for how the ramp *feels* or
+reads against the HUD, that's Phase-2 (LUL-1710/1711) territory per this spec's own scope
+note, not this backfill.
+
+**Not covered.** Whether the fog/light ramp feels right, whether the HUD clock stays legible
+against increasing fog, and real-device frame-time cost of the added per-frame multiply are
+all subjective/perf judgments outside what a numeric probe hook can assert — explicitly
+Player Psychologist / Phase-2 territory (LUL-1711) per this spec's existing scope note, not a
+gap in this backfill.
+
 ## Constraints
 
 - No new predator state machine — §5's multiplier on existing states only.

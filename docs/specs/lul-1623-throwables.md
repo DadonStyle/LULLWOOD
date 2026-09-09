@@ -422,6 +422,92 @@ desktop+mobile), throw (left-click desktop / Throw button mobile); collision = n
 within `THROWABLE_NOISE_RADIUS` (24u) into `investigate`/`approach` targeting the landing
 spot for 3–5s before reverting via the existing sniff/back/roam loop.
 
+## e2e
+
+**Backfilled LUL-2186 (2026-09-09).** This feature merged (LUL-1638 era) before the
+`## e2e` section requirement existed (LUL-2124) and has **zero** automated coverage
+today — confirmed via `grep -rln "throwable" e2e/` (no hits). Unlike LUL-2188's
+stamina backfill, the player-visible mechanic here has no existing hook to teleport
+next to a throwable or stage a predator against a throw's landing point, so two new
+hooks are needed. Routed to the Game Engineer per this spec's own **Routing** section
+below (this section only specs the coverage; it doesn't implement it).
+
+**Specs.**
+- `e2e/throwables.spec.ts` — new, desktop. Three tests:
+  - `'grabbing a throwable sets heldThrowable and shows the throw prompt'` — call
+    `qaTeleportNearThrowable()` to stand next to a live stone, press `KeyE`
+    (`page.keyboard.press`, same interact key `pickup()`/`grabThrowable()` share,
+    `engine/forest-engine.js:2371-2379`), assert `#throwPrompt` becomes visible
+    (`components/Hud.tsx:817-823`, gated on `state.heldThrowable` — no new hook
+    needed for this half, the HUD already surfaces it).
+  - `'throwing clears heldThrowable and the prompt disappears'` — continuing from the
+    grabbed state above, request pointer lock and left-click
+    (`el.mousedown` → `throwThrowable()` at `engine/forest-engine.js:2423`), assert
+    `#throwPrompt` unmounts.
+  - `'a thrown rock lures a nearby roaming predator into investigate'` — call the new
+    `qaStagePredatorNearThrowLanding(kind)` hook (places `kind` inside
+    `THROWABLE_NOISE_RADIUS` of where the next throw will land, `state: 'roam'`,
+    `hunt: false` — same staging pattern as `qaOpenHideNearLion`), throw as above,
+    then poll `qaProbePredatorState(kind)` (existing hook,
+    `engine/forest-engine.js:3278`) until `state === 'investigate'`, proving
+    `checkThrowableNoise()`/`hearThrowableNoise()` actually redirected it (not just
+    that the noise check is a pure function — that half is already unit-tested,
+    §3 above).
+- `e2e/mobile/throwables.spec.ts` — new, mobile. One test:
+  `'tapping E grabs a throwable, the Throw button appears and clears it on tap'` —
+  `qaTeleportNearThrowable()`, tap the interact button
+  (`actions.triggerTouchInteract()`, `components/MobileControls.tsx:331`), assert
+  `#throwPrompt` visible, tap the Throw button
+  (`actions.triggerTouchThrow()`, `components/MobileControls.tsx:336`), assert
+  `#throwPrompt` gone. **Prerequisite the Game Engineer must land first**: the "E"
+  and "Throw" `ActionBtn`s at `components/MobileControls.tsx:331` and `:336` are the
+  only two action buttons in that file with no `testId` prop (every sibling —
+  `touchPause`, `touchJump`, `touchToggleRun`, `touchVeil` — has one); add
+  `testId="touchInteract"` / `testId="touchThrow"` so this spec can target them the
+  same way every other mobile spec targets its button, instead of falling back to
+  label text.
+
+**Hooks.** Two new, both under the existing `?qaHooks=1` block
+(`engine/forest-engine.js:3032` on), declared in `engine/forest-engine.d.ts`:
+- `qaTeleportNearThrowable(): { x: number; z: number } | null` — same rationale and
+  shape as `qaTeleportNearBaby()` (`engine/forest-engine.js:3033`): finds the first
+  `!taken` entry in `throwableData` and sets `player.x/z` to stand within
+  `THROWABLE_PICKUP_RADIUS` of it (mirrors `qaTeleportNearBaby`'s `+2` offset along
+  one axis), returning the stone's world position, or `null` if every stone in the
+  current map is already taken (shouldn't happen at `THROWABLE_COUNT = 90` fresh
+  spawns, but a test must check for `null` per this codebase's convention on every
+  other placement hook rather than assume success).
+- `qaStagePredatorNearThrowLanding(kind: 'wolf' | 'bear' | 'lion'): { idx: number } | null`
+  — computes the landing point the player's *next* throw would produce
+  (`player.x/z + facing * THROWABLE_THROW_DISTANCE`, same formula as
+  `throwThrowable()`, `engine/forest-engine.js:3924-3929`), places the first
+  predator of `kind` a few units inside `THROWABLE_NOISE_RADIUS` of that point,
+  `state: 'roam'`, `hunt: false`, `alert: 0` (same reset fields
+  `qaOpenHideNearLion` zeroes), returns its `predators` index or `null` if that
+  species didn't spawn this seed.
+
+**Tester scenario.** No `shared/local-qa/requests/` file needed — once the two spec
+files above exist, `shared/local-qa/QA_TESTER.md`'s **E1** (full `e2e/` suite) picks
+them up automatically, desktop and mobile both. The *feel* half (is a 24u lure radius
+and a 3–5s investigate window fun, does it read as a legible distraction rather than
+a free pass) has no nightly check and stays a human play-test call — see **Not
+covered**.
+
+**Not covered.**
+- Feel/tuning of the lure: whether 24u and 3–5s produce a satisfying "distraction
+  window" is exactly the kind of judgment call this spec's own Verification §5
+  already flagged as gameplay-unverified pending Game Tester/founder play — the local
+  QA tester's vision-model pass answers narrow DOM/screenshot questions, not "is this
+  fun," so it stays manual regardless of QA's pause state.
+- The landing-thud audio cue and any other sound tied to the throw — real-device/ear
+  judgment only, same as every other audio cue in this codebase.
+- Throw arc visuals — explicitly out of scope for v1 in this spec's own **Out of
+  scope** section (instant/computed landing, no simulated arc to visually assert on).
+- The exact `checkThrowableNoise()` boundary condition (`dist < radius`, not `<=`) —
+  already covered as a pure-function unit case in `lib/game/noise.test.ts` (§3 above);
+  no player-visible surface makes the exact boundary distance worth probing from
+  Playwright on top of that.
+
 ## Constraints (must not change)
 
 - No new `p.state` or `p.inv` value.

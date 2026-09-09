@@ -8,7 +8,20 @@
 //    control root, and its scrollWidth <= clientWidth (no nowrap overflow).
 // 5. With prefers-reduced-motion emulated, computed animation-name on #actionKey is 'none'.
 import { test, expect } from '@playwright/test';
-import { boot, enter, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
+import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook } from './helpers';
+
+// LUL-2107: the 3 cases below that stage a chasing predator (urgent
+// cover-prompt class, the 390px nowrap/mobile-collision check, and reduced
+// motion) drive the throttled cover probe (COVER_PROBE_HZ, engine/forest-
+// engine.js ~4710) via qaSetFixedStep/qaAdvance instead of a real-wall-clock
+// page.waitForTimeout -- that wait only reliably crossed the probe's 1/6s
+// hand-accumulated `coverProbeAccum += dt` threshold (dilated at low FPS, see
+// wiki systems/dt-clamp-vs-walltime) under swiftshader's incidental frame
+// cadence, which real GPU rendering (LUL-1910) no longer guarantees. The
+// calm-cover-prompt and cover-wins-over-veil cases above are not in this
+// ticket's listed scope and stay on the real RAF loop.
+const FIXED_DT = 0.02;
+const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 
 test.describe('#actionPrompt — hide and veil contextual prompts', () => {
   test('calm cover prompt: visible at a bramble bush', async ({ page }) => {
@@ -49,8 +62,11 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
     const lionResult = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLion?.() ?? null);
     expect(lionResult, 'qaOpenHideNearLion returned null — no lion at this seed').not.toBeNull();
 
-    // Wait for probe to fire and state to propagate to React
-    await page.waitForTimeout(350);
+    // LUL-2107: park the real RAF loop and advance enough game time
+    // (well over the probe's 1/6s threshold) to force the throttled cover
+    // probe to fire and pushState to propagate, deterministically.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     const prompt = page.locator('#actionPrompt');
     await expect(prompt).toBeVisible({ timeout: 3_000 });
@@ -100,7 +116,8 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
 
     await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.());
     await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLion?.());
-    await page.waitForTimeout(350);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     const prompt = page.locator('#actionPrompt');
     await expect(prompt).toBeVisible({ timeout: 3_000 });
@@ -139,7 +156,8 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
 
     await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.());
     await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLion?.());
-    await page.waitForTimeout(350);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     const prompt = page.locator('#actionPrompt');
     await expect(prompt).toBeVisible({ timeout: 3_000 });
