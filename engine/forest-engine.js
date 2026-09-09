@@ -58,6 +58,7 @@ import {
   overlapsTreeCanopy,
   overlapsTreeTrunk,
   overlapsExistingCover,
+  thinProps,
   canopyRadiusAtEye,
   rollCoverPropShape,
   pickAvoidDirection,
@@ -182,7 +183,7 @@ import {
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
   VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
-  FORCE_HUNT_LOCK,
+  FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -765,17 +766,34 @@ function nearLandmarks(x, z, pad){
 // triple they close over. Draw order per tree is rotation then brightness,
 // matching what both inlined copies did, since this feeds the seeded rng
 // stream (see the LUL-25 ordering comment above generateBogTrees()).
-function layoutTreePool(meshParts, data, count){
+// LUL-2247 review fix: `keptSet`, when passed, must be a Set of the exact
+// object references from `data` that survived thinGeneratedProps() -- an
+// entry not in the set is hidden (parked off-map like a past-`count` slot)
+// but still draws its rotation/tint rng() below. This is load-bearing: the
+// caller now passes the FULL pre-thin bog tree array so this function's
+// total rng() consumption stays fixed at data.length regardless of how many
+// of those trees the density thin later drops, for any seed. Before this
+// fix, the caller passed the already-thinned array, which shrank draw count
+// by exactly 2*(thinned-away count) and silently reshuffled every rng()
+// consumer after this call (placeCave(), pickMission()) for any seed dense
+// enough to trigger the thin -- caught in review on PR #556.
+function layoutTreePool(meshParts, data, count, keptSet){
   for(let i=0; i<count; i++){
-    if(i < data.length){
-      const t = data[i];
-      dummy.position.set(t.x, 0, t.z);
-      dummy.rotation.set(0, rng()*Math.PI*2, 0);
-      dummy.scale.setScalar(t.s);
+    const t = i < data.length ? data[i] : null;
+    const visible = !!t && (!keptSet || keptSet.has(t));
+    if(t){
+      const ry = rng()*Math.PI*2;   // always drawn when t exists -- see comment above
+      if(visible){
+        dummy.position.set(t.x, 0, t.z);
+        dummy.rotation.set(0, ry, 0);
+        dummy.scale.setScalar(t.s);
+      } else {
+        dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
+      }
     } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
     dummy.updateMatrix();
     for(const p of meshParts) p.setMatrixAt(i, dummy.matrix);
-    const b = i < data.length ? 0.72 + rng()*0.5 : 1;
+    const b = t ? 0.72 + rng()*0.5 : 1;   // always drawn when t exists, same reason as ry above
     tintCol.setRGB(b*0.92, b, b*0.86);
     meshParts[1].setColorAt(i, tintCol); meshParts[2].setColorAt(i, tintCol);
   }
@@ -894,7 +912,10 @@ function generateBogTrees(){
     const s = 0.6 + rng()*1.3;   // thinner cover -- same scatter shape, smaller sizes than the forest
     bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
-  layoutTreePool(bogParts, bogTreeData, BOG_TREES);
+  // LUL-2247: layoutTreePool() moved out of here -- it now runs from
+  // generateMap(), after thinGeneratedProps() has filtered bogTreeData, so it
+  // can render only the surviving (post-thin) trees while still drawing
+  // rng() for the full pre-thin array (review fix -- see layoutTreePool()).
 }
 // Reeds: tall cover volumes, bog band only. Pushed into the same coverData
 // array log/rock/bramble use (see coverMeshes.reed above) so canSee()'s LOS
@@ -918,6 +939,22 @@ function generateBogTrees(){
 // anywhere in the disc, including the dense core). Own budget (BOG_REEDS),
 // no longer COVER_PROPS -- a much smaller target ring than the old 135-unit
 // disc COVER_PROPS was sized for.
+//
+// LUL-2247 review fix: this loop never checked `inLake()`/`overlapsTreeTrunk()`
+// at all, unlike every other prop generator in this file (generateCover()
+// runs both). `inLake()` is a no-op after LUL-2225's backmerge -- BOG_CENTER
+// is 131 units from CONFIG.lake, well outside BOG_OUTER_RADIUS, so no ring
+// candidate can ever be inLake() -- kept anyway per the ticket/review ask and
+// as a guard if the bog or lake geometry ever moves again. overlapsTreeTrunk()
+// is the one that matters today: ordinary (non-culled, non-bog) forest trees
+// are NOT excluded from the 25-45 ring, and overlapsExistingCover() below
+// deliberately skips `kind==='tree'` entries (lib/game/cover.ts), so without
+// this a reed can still land on top of a forest tree trunk in the ring.
+// Declared reshuffle (LUL-2212/LUL-2225 precedent): both new checks can
+// reject a candidate before its `ry` rng() draw, so the exact ry stream for
+// this loop -- and only this loop, since it's the last rng() consumer before
+// thinGeneratedProps(), which draws none -- shifts for any seed where either
+// check now fires. No other generator's stream is affected.
 function generateReeds(){
   let tries = 0, placed = 0;
   while(placed < BOG_REEDS && tries < BOG_REEDS*200){
@@ -926,11 +963,49 @@ function generateReeds(){
     const dist = Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z);
     if(dist < BOG_INNER_RADIUS || dist > BOG_OUTER_RADIUS) continue;
     if(nearLandmarks(x, z, 3)) continue;
+    if(inLake(x, z)) continue;
     const r = 0.5 + rng()*0.4, h = 1.3 + rng()*0.9;
+    if(overlapsTreeTrunk(x, z, r, treesNear(x, z))) continue;
     if(overlapsExistingCover(x, z, r, coverData)) continue;
     coverData.push({ x, z, hx: r, hz: r, y: h*0.5, kind: 'reed', ry: rng()*Math.PI*2 });
     placed++;
   }
+  buildCoverGrid();
+}
+// LUL-2247: cross-category density pass. Runs once, after generateCover(),
+// generateThrowables(), generateBogTrees() and generateReeds() have all
+// finished (so coverData/bogTreeData/throwableData are each at their final,
+// pre-thin size for this map) and before any of their layout*()/buildGrid()
+// consumers run. Builds one combined, order-preserving list -- cover (log/
+// rock/bramble) and reeds first (already in generation order inside
+// coverData), then bog trees, then stones -- tags each with the category key
+// thinProps()/PROP_CHUNK_CAP use, thins it, then filters the three real
+// arrays down to exactly the kept objects (by reference, so no new object
+// shapes are introduced downstream). 'tree' entries in coverData are excluded
+// from the combined list entirely -- forest trees are not a "non-tree
+// object" and already have their own spacing discipline; they pass through
+// unfiltered below.
+//
+// buildCoverGrid() was already run twice above (end of generateCover(), end
+// of generateReeds()) against the pre-thin coverData -- coverGrid is a
+// separate Map of object references built at call time, so it still holds
+// entries this pass is about to drop. Re-running it here (same call the two
+// mutators above already make after touching coverData) keeps coverGrid in
+// sync with the array coverBlockedR()/hasLOS()/canSee()/findHideSpot() are
+// meant to reflect; skipping it would leave invisible collision/LOS from
+// props whose meshes this ticket has already moved off-map.
+function thinGeneratedProps(){
+  const combined = [];
+  for(const c of coverData) if(c.kind !== 'tree') combined.push({ x: c.x, z: c.z, kind: c.kind === 'reed' ? 'reed' : 'cover', ref: c });
+  for(const b of bogTreeData) combined.push({ x: b.x, z: b.z, kind: 'bogTree', ref: b });
+  for(const t of throwableData) combined.push({ x: t.x, z: t.z, kind: 'stone', ref: t });
+
+  const kept = thinProps(combined, PROP_MIN_SPACING, PROP_CHUNK_CAP, treeChunkIndex);
+  const keptRefs = new Set(kept.map(k => k.ref));
+
+  coverData = coverData.filter(c => c.kind === 'tree' || keptRefs.has(c));
+  bogTreeData = bogTreeData.filter(b => keptRefs.has(b));
+  throwableData = throwableData.filter(t => keptRefs.has(t));
   buildCoverGrid();
 }
 // LUL-25: 'normal' | 'hard'. Driven by setDifficulty() below (LUL-372) --
@@ -1005,13 +1080,23 @@ function generateMap(seed){
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
   generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
-  generateThrowables(); layoutThrowableMeshes();
+  generateThrowables();
   generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
   pushState({ windX, windZ });   // LUL-1724: map-constant, pushed once, not per-frame
   // LUL-25: everything below is new and runs last -- see the comment on
   // generateBogTrees() for why the ordering is load-bearing.
   generateBogTrees();
-  generateReeds(); layoutCoverMeshes();
+  generateReeds();
+  // LUL-2247 review fix: capture the pre-thin array by reference before
+  // thinGeneratedProps() reassigns bogTreeData to a filtered copy --
+  // layoutTreePool() below needs the full array so its rng() draw count
+  // stays fixed at bogTreeData.length regardless of what the thin drops
+  // (see the comment on layoutTreePool() itself).
+  const bogTreeDataPreThin = bogTreeData;
+  thinGeneratedProps();   // LUL-2247: cross-category spacing + per-chunk caps -- draws no rng
+  layoutTreePool(bogParts, bogTreeDataPreThin, BOG_TREES, new Set(bogTreeData));   // moved out of generateBogTrees() -- needs the full array + kept set, not the thinned array alone
+  layoutThrowableMeshes();   // moved from right after generateThrowables() -- needs the thinned array too
+  layoutCoverMeshes();
   buildGrid();   // picks up bogTreeData for blockedR()/canopyBlockedR()
   placeLandmarks();
   buildGrid();   // LUL-374: re-run now landmarkData is populated, so blockedR()/predators'
@@ -3331,6 +3416,51 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       chunks: trios.length,
       totalInstances: trios.reduce((n, t) => n + t[0].count, 0),
       expected: treeData.length,
+    };
+  };
+
+  // LUL-2247: exposes the finished map's post-thin prop layout for e2e
+  // assertions -- per-chunk counts by category (same categories
+  // PROP_CHUNK_CAP keys), the minimum pairwise centre-to-centre distance
+  // across every non-tree prop (cover/reed/bogTree/stone) regardless of
+  // kind, and the total count. O(n^2) over the thinned (small) population --
+  // test-only, never called per-frame.
+  window.ForestEngine.qaProbePropDensity = function(){
+    const perChunkMap = new Map();
+    const bump = (chunk, cat) => {
+      const e = perChunkMap.get(chunk) || { chunk, cover: 0, reed: 0, bogTree: 0, stone: 0 };
+      e[cat]++; perChunkMap.set(chunk, e);
+    };
+    const all = [];
+    let reedsInLakeClear = 0;
+    for(const c of coverData){
+      if(c.kind === 'tree') continue;
+      const cat = c.kind === 'reed' ? 'reed' : 'cover';
+      bump(treeChunkIndex(c.x, c.z), cat);
+      all.push(c);
+      // LUL-2247 review fix: mandatory assertion from the ticket -- no reed
+      // may land inside CONFIG.lake.clear. inLake() is the exact check
+      // generateReeds() now runs at generation time (see its comment);
+      // reported here too so the e2e spec can assert the finished map
+      // rather than trusting the generator never regresses silently.
+      if(cat === 'reed' && inLake(c.x, c.z)) reedsInLakeClear++;
+    }
+    for(const b of bogTreeData){ bump(treeChunkIndex(b.x, b.z), 'bogTree'); all.push(b); }
+    for(const t of throwableData){ bump(treeChunkIndex(t.x, t.z), 'stone'); all.push(t); }
+
+    let minPairSpacing = Infinity;
+    for(let i = 0; i < all.length; i++){
+      for(let j = i+1; j < all.length; j++){
+        const dx = all[i].x - all[j].x, dz = all[i].z - all[j].z;
+        const d = Math.hypot(dx, dz);
+        if(d < minPairSpacing) minPairSpacing = d;
+      }
+    }
+    return {
+      perChunk: Array.from(perChunkMap.values()),
+      minPairSpacing: Number.isFinite(minPairSpacing) ? minPairSpacing : null,
+      total: all.length,
+      reedsInLakeClear,
     };
   };
 

@@ -6,6 +6,7 @@ import {
   overlapsExistingCover,
   overlapsTreeCanopy,
   overlapsTreeTrunk,
+  thinProps,
   CELL,
   gridKey,
   blockedR,
@@ -249,6 +250,76 @@ test('overlapsExistingCover skips kind === "tree" entries entirely, even when th
   // against treeData; a 'tree'-kind entry here would only reject spuriously.
   const existing = [{ x: 0.5, z: 0, hx: 5, hz: 5, kind: 'tree' }];
   assert.equal(overlapsExistingCover(0, 0, 1.5, existing), false);
+});
+
+// ---- thinProps (LUL-2247) ---------------------------------------------
+// Cross-category, cross-kind post-filter -- given every non-tree prop for a
+// finished map, keep the first one to claim a location and reject anything
+// within minSpacing of an already-kept prop (any kind) or that would push
+// its chunk+kind over the cap. A trivial single-global-chunk chunkIndexFn is
+// used throughout since these tests are about spacing/cap logic, not chunk
+// geometry.
+const oneChunk = () => 0;
+
+test('thinProps keeps both items when nothing is close and nothing is capped', () => {
+  const list = [
+    { x: 0, z: 0, kind: 'cover' },
+    { x: 100, z: 100, kind: 'cover' },
+  ];
+  assert.deepEqual(thinProps(list, 3.5, {}, oneChunk), list);
+});
+
+test('thinProps rejects a same-kind item 3.0 units away at minSpacing=3.5, keeps one 3.6 units away', () => {
+  const close = [{ x: 0, z: 0, kind: 'cover' }, { x: 3.0, z: 0, kind: 'cover' }];
+  assert.deepEqual(thinProps(close, 3.5, {}, oneChunk), [close[0]]);
+
+  const clear = [{ x: 0, z: 0, kind: 'cover' }, { x: 3.6, z: 0, kind: 'cover' }];
+  assert.deepEqual(thinProps(clear, 3.5, {}, oneChunk), clear);
+});
+
+test('thinProps spacing is cross-category -- different kinds within minSpacing still collide', () => {
+  // The exact gap the ticket describes: a reed was never checked against
+  // cover/bogTree/stone, only ever against its own kind or nothing at all.
+  const list = [{ x: 0, z: 0, kind: 'reed' }, { x: 1, z: 0, kind: 'cover' }];
+  assert.deepEqual(thinProps(list, 3.5, {}, oneChunk), [list[0]]);
+});
+
+test('thinProps enforces a per-chunk, per-kind cap once spacing alone would allow more', () => {
+  // Well clear of each other (10 units apart, spacing is a non-issue) but all
+  // in the same chunk (oneChunk) and same kind 'x', cap 1.
+  const list = [
+    { x: 0, z: 0, kind: 'x' },
+    { x: 10, z: 0, kind: 'x' },
+    { x: 20, z: 0, kind: 'x' },
+  ];
+  assert.deepEqual(thinProps(list, 3.5, { x: 1 }, oneChunk), [list[0]]);
+});
+
+test('thinProps per-kind cap does not affect a different kind at the same location/chunk', () => {
+  const list = [
+    { x: 0, z: 0, kind: 'x' },
+    { x: 50, z: 50, kind: 'y' },
+  ];
+  assert.deepEqual(thinProps(list, 3.5, { x: 1 }, oneChunk), list);
+});
+
+test('thinProps keeps the earlier of two colliding items, regardless of which one is "earlier" in the input', () => {
+  const a = { x: 0, z: 0, kind: 'cover' };
+  const b = { x: 1, z: 0, kind: 'cover' };
+  assert.deepEqual(thinProps([a, b], 3.5, {}, oneChunk), [a]);
+  assert.deepEqual(thinProps([b, a], 3.5, {}, oneChunk), [b]);
+});
+
+test('thinProps with a chunkIndexFn returning a constant (single global chunk) still enforces the cap', () => {
+  const list = [
+    { x: 0, z: 0, kind: 'stone' },
+    { x: 500, z: -500, kind: 'stone' },
+  ];
+  assert.deepEqual(thinProps(list, 3.5, { stone: 1 }, () => 42), [list[0]]);
+});
+
+test('thinProps on an empty list returns an empty list', () => {
+  assert.deepEqual(thinProps([], 3.5, { cover: 12 }, oneChunk), []);
 });
 
 // ---- coverKindBlocksMovement (LUL-384) -------------------------------

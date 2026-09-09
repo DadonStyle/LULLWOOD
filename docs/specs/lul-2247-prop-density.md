@@ -377,24 +377,28 @@ Add near the LUL-2212 `overlapsExistingCover` tests:
   QA_PINNED_SEED })`, then for seeds `QA_PINNED_SEED, QA_PINNED_SEED+1, QA_PINNED_SEED+2,
   QA_PINNED_SEED+3` (reload with `?seed=`): call `qaProbePropDensity()` and assert every
   `perChunk` entry has `cover <= 12`, `reed <= 24`, `bogTree <= 12`, `stone <= 3`;
-  `minPairSpacing >= 3.5` (allow a `1e-6` float-slop margin); no reed's position satisfies
-  `overlapsTreeTrunk`... actually simpler and hook-only: assert `total` is the same whether
-  computed once or twice in a row (idempotent read, no mutation from probing) and is `> 0`
-  (a seed that thinned everything away would silently pass an `<= cap` check vacuously —
-  guard against that).
+  `minPairSpacing >= 3.5` (allow a `1e-6` float-slop margin); `reedsInLakeClear === 0`
+  (mandatory per the ticket — restored after review, see "Review fixes" above); and `total`
+  is the same whether computed once or twice in a row (idempotent read, no mutation from
+  probing) and is `> 0` (a seed that thinned everything away would silently pass an
+  `<= cap` check vacuously — guard against that).
 - `e2e/mobile/prop-density.spec.ts` — new, mobile viewport (`727x393`, same shape as
   `e2e/mobile/bog-zone.spec.ts`). Identical assertions to the desktop spec — map generation
   has no touch/viewport dependency, so this is a parity proof (founder rule: every logic
   change ships desktop AND mobile), not a distinct behaviour.
-- `e2e/map-seed.spec.ts` — must pass **unchanged** (proves no rng-stream perturbation).
+- `e2e/map-seed.spec.ts` — must pass **unchanged** (proves the post-filter itself,
+  `thinGeneratedProps()`, drew no rng and reordered no existing draw; the review-fix
+  reshuffle inside `generateReeds()`'s own loop only changes which layout a given seed
+  produces, not whether that seed still reproduces itself byte-identically, which is all
+  this spec checks).
 - `e2e/bog-zone.spec.ts`, `e2e/tree-pathing.spec.ts`, `e2e/lul211-founder-report.spec.ts` —
   must pass unchanged (these sample `blocked()`/LOS/bog geometry that this diff can only
   ever make *sparser*, never invalid — a location that was walkable/visible before stays
   so; the reverse isn't claimed or tested here).
 
-**Hooks.** `window.ForestEngine.qaProbePropDensity(): { perChunk, minPairSpacing, total }`
-— see §7 above. New, declared in `engine/forest-engine.d.ts`, installed inside the
-`?qaHooks=1` block in `init()`.
+**Hooks.** `window.ForestEngine.qaProbePropDensity(): { perChunk, minPairSpacing, total,
+reedsInLakeClear }` — see §7 above and "Review fixes" for `reedsInLakeClear`. Declared in
+`engine/forest-engine.d.ts`, installed inside the `?qaHooks=1` block in `init()`.
 
 **Tester scenario.** No `shared/local-qa/requests/` file needed — this is pure generation
 density with no HUD/visual-overlap surface the nightly vision-model audit covers
@@ -429,18 +433,49 @@ still reads as too dense or too sparse in practice is a follow-up ticket.
   `local-qa: PASS|FAIL @<sha>` on the PR (founder rule 2026-09-09) — do not run Playwright
   yourself as PR verification.
 
+## Review fixes (2026-09-09, PR #556 `REVIEW: CHANGES REQUESTED`)
+
+The Code Reviewer found two P1s in the first version of this diff; both are fixed on the
+branch, superseding what this spec originally said above.
+
+1. **Undeclared rng-stream reshuffle.** `layoutTreePool(bogParts, bogTreeData, BOG_TREES)`
+   moving after `thinGeneratedProps()` fed it the *thinned* array — since `layoutTreePool()`
+   draws `rng()` twice per array entry, that shrank the draw count by `2 * (thinned-away
+   count)` for any seed dense enough to trigger the thin, silently reshuffling every rng()
+   consumer after it (`placeCave()`, `pickMission()`). Originally this spec's §5/§6 said "no
+   rng impact" — false once the net effect of feeding the thinned array in is accounted for.
+   **Fix:** `layoutTreePool()` now takes an optional `keptSet` and always iterates the FULL
+   pre-thin array, drawing `rng()` for every entry regardless of whether it survived the
+   thin — only visibility (position/scale) differs for a dropped entry. `generateMap()`
+   captures `bogTreeData` by reference *before* calling `thinGeneratedProps()` and passes
+   that plus `new Set(bogTreeData)` (the post-thin array) as the kept set. Net rng() draw
+   count for this call is now identical to pre-ticket `main` for every seed — zero reshuffle,
+   not a declared one.
+
+2. **Reeds could still land inside `CONFIG.lake.clear`.** This spec originally moved the
+   ticket's mandatory `inLake()`/`overlapsTreeTrunk()` checks for `generateReeds()` to "Out
+   of scope" below, reasoning the cross-category spacing rule covered the symptom. The
+   reviewer correctly pointed out `thinProps()` does nothing to stop an *isolated* reed with
+   no other prop nearby to trigger a spacing/cap rejection, and the shipped e2e never
+   asserted the ticket's own mandatory check. **Fix:** `generateReeds()` now runs both
+   checks in its own loop, same pattern as `generateCover()`. `inLake()` is a geometric
+   no-op after the LUL-2225 backmerge (`BOG_CENTER` is 131 units from `CONFIG.lake`, well
+   outside `BOG_OUTER_RADIUS`, so no point in the reed ring can ever be `inLake()`) but is
+   kept per the ticket/review ask and as a guard against a future geometry move.
+   `overlapsTreeTrunk()` is the check that matters today: ordinary forest trees are not
+   excluded from the 25-45 unit reed ring, and `overlapsExistingCover()` deliberately skips
+   `kind==='tree'` entries, so reeds could otherwise still land on a tree trunk. This is a
+   **declared reshuffle** (LUL-2212/LUL-2225 precedent): both checks can reject a candidate
+   before its `ry` draw, shifting `generateReeds()`'s own rng stream for any seed where
+   either check now fires. No other generator's stream is affected — `generateReeds()` is
+   the last rng() consumer before `thinGeneratedProps()`, which draws none.
+   `qaProbePropDensity()` gained a `reedsInLakeClear` field (count of reeds where `inLake()`
+   is true in the finished map) and both `e2e/prop-density.spec.ts` /
+   `e2e/mobile/prop-density.spec.ts` assert it's `0` at every tested seed — the mandatory
+   assertion the ticket asked for, restored.
+
 ## Out of scope
 
-- Reeds' missing `inLake()`/`overlapsTreeTrunk()` checks at *generation* time (the ticket's
-  problem statement mentions this) — `thinProps()`'s cross-category spacing rule already
-  prevents a reed from surviving within 3.5u of a tree-trunk-adjacent cover prop or from
-  landing so densely that the chunk cap catches it, which covers the *symptom* (visual/
-  spacing clutter). Adding the missing checks directly inside `generateReeds()`'s own loop
-  is a separate, smaller fix if the spec author/reviewer decides the post-filter alone
-  isn't sufficient after playtesting — not bundled here to keep this diff's rng-stream
-  footprint minimal (zero new draws, vs. a new rejection branch that would shift `ry`'s
-  draw count same as the LUL-2212/LUL-2225 precedents already accepted for a deliberate,
-  declared reshuffle).
 - The other four children of epic LUL-2223 (force-hunt lock — done, landmark beacons,
   streamed chunks, whole-map spawn) — each is its own ticket/PR.
 - Retuning `PROP_MIN_SPACING`/`PROP_CHUNK_CAP` beyond the values this ticket derives from
