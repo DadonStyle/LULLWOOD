@@ -3849,6 +3849,28 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
                             display: deathVideo.style.display } : null,
     };
   };
+  // [QA-HOOK] put a throwable in hand so #throwPrompt (desktop) / the Throw button (mobile) render.
+  // Uses grabThrowable() after teleporting next to the nearest untaken stone, so the real pickup
+  // path and layoutThrowableMeshes() run. Returns the stone's position or null if none exist.
+  window.ForestEngine.qaGrabThrowable = function(){
+    let best = -1, bestD = Infinity;
+    for(let i = 0; i < throwableData.length; i++){
+      const t = throwableData[i]; if(t.taken) continue;
+      const d = Math.hypot(t.x - player.x, t.z - player.z);
+      if(d < bestD){ best = i; bestD = d; }
+    }
+    if(best < 0) return null;
+    player.x = throwableData[best].x + 1; player.z = throwableData[best].z;
+    grabThrowable();
+    return heldThrowable ? { x: throwableData[best].x, z: throwableData[best].z } : null;
+  };
+  // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
+  // mission prompt and the objective are all on screen at once. Returns the target or null.
+  window.ForestEngine.qaTeleportNearMission = function(){
+    if(!mission) return null;
+    player.x = mission.target.x + mission.target.interactRadius + 1; player.z = mission.target.z;
+    return { kind: mission.target.kind, x: mission.target.x, z: mission.target.z, status: mission.status };
+  };
 }
 
 // ---- Audio debug readout (LUL-1112, founder-reachable on real iPhone) ------

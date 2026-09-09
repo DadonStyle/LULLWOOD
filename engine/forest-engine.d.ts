@@ -282,6 +282,16 @@ declare global {
        * driving the same stepFrame() the real RAF loop calls. Throws if
        * qaSetFixedStep() hasn't been called first. */
       qaAdvance?: (steps?: number) => void;
+      /** LUL-2123: teleports next to the nearest untaken throwable stone and
+       * calls the real grabThrowable(), so #throwPrompt (desktop) / the Throw
+       * button (mobile) render. Returns the stone's position, or null if no
+       * untaken stone exists or the grab was rejected. */
+      qaGrabThrowable?: () => { x: number; z: number } | null;
+      /** LUL-2123: teleports just outside the active mission target's
+       * interactRadius so #missionPanel, the mission prompt and the objective
+       * are all on screen together. Returns the target, or null if no mission
+       * is active. */
+      qaTeleportNearMission?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
     };
   }
 }
