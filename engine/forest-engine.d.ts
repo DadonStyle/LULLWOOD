@@ -112,6 +112,9 @@ declare global {
       /** LUL-211: the player's world position and heading -- the only way a test can
        * see where movement actually ended up (player is init()-closure-local). */
       qaProbePlayer?: () => { x: number; z: number; yaw: number };
+      /** LUL-2189/LUL-2207: the module-scope wind unit vector (windX/windZ), set once per
+       * generateMap() by generateWind() -- map-constant, not per-frame. */
+      qaProbeWind?: () => { windX: number; windZ: number };
       /** LUL-211/LUL-288: places the player off the -x face of the first reachable
        * cover prop of `kind`, facing it, so a held KeyW walks straight into it. The
        * standoff distance is rotation-aware (props render at prop.ry), so it clears
