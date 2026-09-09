@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5510 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4881, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5527 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4898, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -542,15 +542,20 @@ one geometry builder (`makePredator()`), differentiated by the
   on a prop that's supposed to be fully walkable end to end. `generateReeds()`
   (a separate placement loop, runs after `generateCover()`) had no overlap
   check at all before LUL-2212 and now gets the same `overlapsExistingCover()`
-  guard. **Known remaining gap, not fixed by LUL-2212**: `generateCover()`'s
-  canopy check runs before `generateBogTrees()` populates bog trees, so a
-  Log/Bramble candidate can still end up under a *bog* tree's canopy
-  undetected (bog trees don't exist in the tree grid yet at that point) —
-  reproduces on the QA-pinned seed in
-  `e2e/lul211-founder-report.spec.ts`'s `log`/walkable-cover case; tracked as
-  a follow-up, not resolved here (see the ticket for the reasoning: fixing it
-  means reordering generation, which shifts the RNG stream more broadly than
-  this ticket's other two fixes and wasn't verified in the time available).
+  guard. **LUL-2215: bog-tree canopy gap, fixed.** `generateCover()`'s canopy
+  check runs before `generateBogTrees()` populates bog trees, so a Log/Bramble
+  candidate could end up under a *bog* tree's canopy undetected (bog trees
+  don't exist in the tree grid yet at that point) — reproduced on the
+  QA-pinned seed in `e2e/lul211-founder-report.spec.ts`'s `log`/walkable-cover
+  case. Fixed with a post-hoc filter in `generateMap()`, right after
+  `generateBogTrees()` runs: any surviving `coverData` entry of a walkable
+  kind (`!coverKindBlocksMovement()`) that overlaps a bog tree's canopy
+  (`overlapsTreeCanopy()` against `bogTreeData`) is dropped. Filtering the
+  finished array, not reordering generation or rejecting inside
+  `generateCover()`'s loop, keeps every existing rng() draw — tree, baby,
+  predator, and `generateCover()`'s own stream — byte-identical for every
+  seed; same precedent as the LUL-2225 bog-keep-clear filter earlier in
+  `generateCover()`.
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
