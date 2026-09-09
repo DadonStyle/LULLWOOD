@@ -284,6 +284,18 @@ declare global {
         sinceDeath: number | null;
         video: { currentTime: number; ended: boolean; paused: boolean; readyState: number; display: string } | null;
       };
+      /** LUL-2205: reads the live day/night pacing values -- timeOfRun (0 dawn
+       * to 1 full night), the fog density and hemisphere-light intensity it
+       * feeds, the resulting predator detect-radius multiplier, and the HUD
+       * clock label -- in one call, so a test can assert the engine-visible
+       * effect directly instead of only the #timeOfRunClock DOM text. */
+      qaProbeTimeOfRun?: () => {
+        timeOfRun: number;
+        fogDensity: number;
+        hemiIntensity: number;
+        detectMul: number;
+        clock: string;
+      };
       /** LUL-2071: deterministic test clock -- parks the real RAF loop so a
        * test can advance simulation time in exact, jitter-free steps. Must be
        * called before qaAdvance(). */
