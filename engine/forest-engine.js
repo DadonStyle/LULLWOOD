@@ -3075,6 +3075,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
 
+  // LUL-2205: reads back the live day/night pacing values in one call so a
+  // test can assert the engine-visible effect directly (per this file's
+  // "assert the effect, not the DOM node" rule), not just the HUD's
+  // #timeOfRunClock text. Adds no new state -- timeOfRun, hemiLight, and
+  // timeOfRunDetectMul/formatTimeOfRunClock are already in scope in init().
+  window.ForestEngine.qaProbeTimeOfRun = function(){
+    return { timeOfRun, fogDensity: scene.fog.density, hemiIntensity: hemiLight.intensity,
+             detectMul: timeOfRunDetectMul(timeOfRun), clock: formatTimeOfRunClock(timeOfRun) };
+  };
+
   // LUL-2071: deterministic test clock. qaSetFixedStep() parks the real RAF
   // loop (cancels the pending frame) so wall-clock jitter/GPU contention can
   // never inject an extra or partial frame on top of what the test drives.
