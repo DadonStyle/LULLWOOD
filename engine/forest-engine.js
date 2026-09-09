@@ -3954,6 +3954,34 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     grabThrowable();
     return heldThrowable ? { x: throwableData[best].x, z: throwableData[best].z } : null;
   };
+  // [QA-HOOK] LUL-2202: stand within THROWABLE_PICKUP_RADIUS of the first untaken stone
+  // WITHOUT grabbing it (unlike qaGrabThrowable above) -- e2e/throwables.spec.ts needs the
+  // real KeyE/pickup() path under test, not a pre-grabbed hand. Mirrors qaTeleportNearBaby's
+  // +2 offset along one axis. Returns the stone's position, or null if every stone is taken.
+  window.ForestEngine.qaTeleportNearThrowable = function(){
+    const t = throwableData.find(t => !t.taken);
+    if(!t) return null;
+    player.x = t.x + 2; player.z = t.z;
+    return { x: t.x, z: t.z };
+  };
+  // [QA-HOOK] LUL-2202: places the first predator of `kind` a few units inside
+  // THROWABLE_NOISE_RADIUS of where the player's *next* throw would land (same landing
+  // formula as throwThrowable() below), reset to a plain roaming state (same fields
+  // qaOpenHideNearLion zeroes) so a test can prove a thrown stone's noise redirects an
+  // otherwise-roaming predator into 'investigate', not just that it was already hunting.
+  // Returns its predators index, or null if that species didn't spawn this seed.
+  window.ForestEngine.qaStagePredatorNearThrowLanding = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+    const landX = player.x + fx * THROWABLE_THROW_DISTANCE;
+    const landZ = player.z + fz * THROWABLE_THROW_DISTANCE;
+    p.x = landX + (THROWABLE_NOISE_RADIUS - 4); p.z = landZ;
+    p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+    p.state = 'roam'; p.hunt = false;
+    return { idx };
+  };
   // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
   // mission prompt and the objective are all on screen at once. Returns the target or null.
   window.ForestEngine.qaTeleportNearMission = function(){
