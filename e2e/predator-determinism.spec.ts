@@ -9,7 +9,7 @@
 // and state. A failure means a predator is drawing from Math.random() somewhere
 // instead of the seeded rng(), breaking replay-ability.
 import { test, expect } from '@playwright/test';
-import { boot, enter, QA_PINNED_SEED } from './helpers';
+import { boot, enter, qaHook, QA_PINNED_SEED } from './helpers';
 
 async function readPredatorState(page: import('@playwright/test').Page) {
   return page.evaluate(() => {
@@ -19,12 +19,6 @@ async function readPredatorState(page: import('@playwright/test').Page) {
       if (state) states.push(state);
     }
     return states;
-  });
-}
-
-async function readElapsedTime(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    return (window as any).ForestEngine?.qaProbeElapsedTime?.() ?? 0;
   });
 }
 
@@ -47,46 +41,20 @@ test.describe('predator determinism with seeded RNG', () => {
     const initial2 = await readPredatorState(page2);
     expect(initial1).toEqual(initial2);
 
-    // Drive both pages forward by the same game-time elapsed.
-    // We wait for game clock to advance ~5 seconds on both pages,
-    // which is enough time for predators to roam, potentially lose sight,
-    // and enter investigate/sniff cycles -- the exact behaviors this test
-    // needs to verify are deterministic.
+    // Drive both pages forward by an identical, lockstep qaAdvance sequence
+    // instead of two independent real-time polls -- two sequential
+    // expect.poll() calls let CI jitter advance a different number of engine
+    // ticks between page1 and page2, which is exactly the kind of drift this
+    // determinism test exists to catch, not induce. 5 game-seconds is enough
+    // time for predators to roam, potentially lose sight, and enter
+    // investigate/sniff cycles -- the exact behaviors this test needs to
+    // verify are deterministic.
+    const FIXED_DT = 0.02;
     const GAME_SECONDS = 5;
+    const STEPS = Math.round(GAME_SECONDS / FIXED_DT);
 
-    // Poll for game time to advance on page1
-    let elapsed1 = 0;
-    const startTime1 = await readElapsedTime(page1);
-
-    await expect
-      .poll(
-        async () => {
-          elapsed1 = (await readElapsedTime(page1)) - startTime1;
-          return elapsed1;
-        },
-        {
-          message: `page1 game clock did not advance to ${GAME_SECONDS}s`,
-          timeout: 60_000,
-        },
-      )
-      .toBeGreaterThanOrEqual(GAME_SECONDS);
-
-    // Poll for game time to advance on page2 by the same amount
-    let elapsed2 = 0;
-    const startTime2 = await readElapsedTime(page2);
-
-    await expect
-      .poll(
-        async () => {
-          elapsed2 = (await readElapsedTime(page2)) - startTime2;
-          return elapsed2;
-        },
-        {
-          message: `page2 game clock did not advance to ${GAME_SECONDS}s`,
-          timeout: 60_000,
-        },
-      )
-      .toBeGreaterThanOrEqual(GAME_SECONDS);
+    await Promise.all([page1, page2].map((p) => qaHook(p, 'qaSetFixedStep', FIXED_DT)));
+    await Promise.all([page1, page2].map((p) => qaHook(p, 'qaAdvance', STEPS)));
 
     // Final comparison: predator positions and states must be identical
     const state1 = await readPredatorState(page1);
