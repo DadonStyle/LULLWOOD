@@ -177,6 +177,7 @@ import {
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
   VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
+  FORCE_HUNT_LOCK,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -1978,7 +1979,16 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pLakeMul; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
-      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
+      if(!canSee(p, dist)){
+        // LUL-2246: a live force-hunt lock means this collapse is the 30s escalation
+        // losing sight, not an ordinary hunt -- route into the existing scentLock blind-
+        // chase path (`p.state === 'chase'`, :2037) at full species speed instead of the
+        // 0.45x `approach` sub-phase (lib/game/predator.ts stepApproach()). Ordinary
+        // (non-escalated) hunts, e.g. LUL-26 preset `startHunting`, still fall through to
+        // the pre-existing investigate/approach collapse below, unchanged.
+        if(p.scentLock > 0){ p.state='chase'; p.hunt=false; }
+        else { p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
+      }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
@@ -3541,6 +3551,25 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { idx, x: p.x, z: p.z };
   };
 
+  // LUL-2246: places predator[kind] dx/dz from the player and parks every other spawned
+  // predator far out of range, so it is guaranteed to be `nearP` (`:4811`). Sets
+  // `sinceClose = 29.9` -- one real tick past this crosses the 30s force-hunt threshold
+  // through updatePredators()'s own logic (`:4812`), not by setting hunt/scentLock directly,
+  // so the assertion exercises the real escalation, not a synthetic stand-in for it. dx/dz
+  // must put the predator beyond its detect radius (30-48u) for the escalation's collapse
+  // branch (`:1981`) to actually run; the caller is responsible for that distance.
+  window.ForestEngine.qaStageForceHuntApproach = function(kind, dx, dz){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    for(const other of predators){ if(other !== predators[idx]){ other.x = player.x + 800; other.z = player.z + 800; } }
+    const p = predators[idx];
+    p.x = player.x + dx; p.z = player.z + dz;
+    p.vx = p.vz = 0; p.charge = null; p.sightLock = null; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+    p.hunt = false; p.scentLock = 0; p.state = 'roam'; p.spotted = false;
+    sinceClose = 29.9;
+    return { idx, x: p.x, z: p.z };
+  };
+
   window.ForestEngine.qaIsApproachPianoActive = function(){
     return approachPianoActive;
   };
@@ -4799,7 +4828,7 @@ function stepFrame(dt, t){
     }
     // if nobody has been near for 30s, the closest one comes straight for you
     if(nearDist < 20) sinceClose = 0; else sinceClose += dt;
-    if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; nearP.sightLock = null; spotOnto(nearP); sinceClose = 12; }
+    if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; nearP.scentLock = FORCE_HUNT_LOCK; nearP.sightLock = null; spotOnto(nearP); sinceClose = 12; }
     // approach piano note: quicker + higher the nearer it is
     if(approaching && nearDist < 46){
       approachPianoActive = true;
