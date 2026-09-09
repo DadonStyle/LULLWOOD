@@ -1086,6 +1086,23 @@ function generateMap(seed){
   // LUL-25: everything below is new and runs last -- see the comment on
   // generateBogTrees() for why the ordering is load-bearing.
   generateBogTrees();
+  // LUL-2215: generateCover() (above) ran before bog trees existed, so its
+  // overlapsTreeCanopy() check for walkable kinds (log/bramble -- see the
+  // comment on that call) couldn't see bog tree canopies. A log/bramble could
+  // land overlapping one; canopyBlockedR() blocks the player unconditionally
+  // within a tree's canopy circle regardless of what's on the ground, so the
+  // player hits the exact same invisible-wall-mid-span bug LUL-2212 fixed for
+  // cover-vs-cover overlap, but for cover-vs-bog-tree. Filtering the finished
+  // coverData array here, rather than reordering generateBogTrees() before
+  // generateCover() or rejecting inside generateCover()'s loop, keeps every
+  // existing rng() draw -- tree, baby, predator, and generateCover()'s own
+  // stream -- byte-identical for every seed; same precedent as the LUL-2225
+  // bog-keep-clear filter in generateCover() above.
+  coverData = coverData.filter(c =>
+    c.kind === 'tree' ||
+    coverKindBlocksMovement(c.kind) ||
+    !overlapsTreeCanopy(c.x, c.z, Math.max(c.hx, c.hz), bogTreeData)
+  );
   generateReeds();
   // LUL-2247 review fix: capture the pre-thin array by reference before
   // thinGeneratedProps() reassigns bogTreeData to a filtered copy --

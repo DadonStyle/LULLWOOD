@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5549 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4918, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5566 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4935, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -542,15 +542,20 @@ one geometry builder (`makePredator()`), differentiated by the
   on a prop that's supposed to be fully walkable end to end. `generateReeds()`
   (a separate placement loop, runs after `generateCover()`) had no overlap
   check at all before LUL-2212 and now gets the same `overlapsExistingCover()`
-  guard. **Known remaining gap, not fixed by LUL-2212**: `generateCover()`'s
-  canopy check runs before `generateBogTrees()` populates bog trees, so a
-  Log/Bramble candidate can still end up under a *bog* tree's canopy
-  undetected (bog trees don't exist in the tree grid yet at that point) —
-  reproduces on the QA-pinned seed in
-  `e2e/lul211-founder-report.spec.ts`'s `log`/walkable-cover case; tracked as
-  a follow-up, not resolved here (see the ticket for the reasoning: fixing it
-  means reordering generation, which shifts the RNG stream more broadly than
-  this ticket's other two fixes and wasn't verified in the time available).
+  guard. **LUL-2215: bog-tree canopy gap, fixed.** `generateCover()`'s canopy
+  check runs before `generateBogTrees()` populates bog trees, so a Log/Bramble
+  candidate could end up under a *bog* tree's canopy undetected (bog trees
+  don't exist in the tree grid yet at that point) — reproduced on the
+  QA-pinned seed in `e2e/lul211-founder-report.spec.ts`'s `log`/walkable-cover
+  case. Fixed with a post-hoc filter in `generateMap()`, right after
+  `generateBogTrees()` runs: any surviving `coverData` entry of a walkable
+  kind (`!coverKindBlocksMovement()`) that overlaps a bog tree's canopy
+  (`overlapsTreeCanopy()` against `bogTreeData`) is dropped. Filtering the
+  finished array, not reordering generation or rejecting inside
+  `generateCover()`'s loop, keeps every existing rng() draw — tree, baby,
+  predator, and `generateCover()`'s own stream — byte-identical for every
+  seed; same precedent as the LUL-2225 bog-keep-clear filter earlier in
+  `generateCover()`.
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
@@ -1204,7 +1209,7 @@ design doc as turning horror into radar.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
   both `track()` call sites, now in `finishPickup()` (L4438, the live win path as
   of `LUL-2281` -- `arriveHome()`'s L4543 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4574). The `difficulty` module-level variable is in scope
+  and `triggerDeath()` (L4613). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1215,7 +1220,7 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3182),
-  reset to 0 on `enter()` (L3256) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3274) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L4838: `computeDepth(maxDistFromHome) +
@@ -1224,12 +1229,12 @@ design doc as turning horror into radar.
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
   screen is showing. It previews what `computeWinPayout()`'s depth+survival
   terms will bank if the run ends now — it does not include the win-only
-  `CARRIED`/`HOME` terms, since those only pay out on a live arrival.
+  `CARRIED`/`RESCUE` terms, since those only pay out on a live arrival.
 - Death forfeiture display: `RunRecap`'s death branch
   (`components/Hud.tsx` L339-340) shows a red
-  `-{CARRIED + HOME} lost (child & home, forfeited)` fragment instead of the
-  win branch's `+carried`/`+home` lines, making explicit that the win-only
-  `CARRIED`/`HOME` terms (both now exported from `lib/game/economy.ts` for
+  `-{CARRIED + RESCUE} lost (child & rescue, forfeited)` fragment instead of the
+  win branch's `+carried`/`+rescue` lines, making explicit that the win-only
+  `CARRIED`/`RESCUE` terms (both now exported from `lib/game/economy.ts` for
   this display) are forfeited on death rather than silently omitted.
 
 **What it can do**
@@ -1328,7 +1333,7 @@ design doc as turning horror into radar.
 - Cannot bind a new key or a new `EngineActions` method — the sole new player-facing action
   (mission completion) reuses the existing interact button/key, so it needs no new touch target
   and has no mobile-unreachable action.
-- Cannot pay out on death — the completion bonus is win-only, exactly like `CARRIED`/`HOME`.
+- Cannot pay out on death — the completion bonus is win-only, exactly like `CARRIED`/`RESCUE`.
 
 **Secondary objectives (LUL-1666, Phase 1 — `deepwater` only)**
 - **Implemented.** `MissionState.secondary: MissionSecondaryState | null` (`lib/game/mission.ts`)
