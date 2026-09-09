@@ -40,7 +40,7 @@ export interface EngineHudState {
   // LUL-1194: what actually killed the player (dodge miss / forced hunt / run down
   // mid-chase) -- the death screen names this, not deathKind's species; deathKind
   // stays around for the #deathKind test hook (e2e/*.spec.ts key on it directly).
-  deathCause: 'charge' | 'hunt' | 'chase';
+  deathCause: 'charge' | 'hunt' | 'chase' | 'heard';
   deathCarrying: boolean;   // LUL-1438: show carry-death clause on first carry death only
   lossRevealed: boolean;
   survivedSeconds: number;
@@ -240,6 +240,7 @@ const DEATH_CAUSE_TEXT: Record<EngineHudState['deathCause'], string> = {
   charge: "you didn't clear its charge in time",
   hunt: 'you went quiet too long, and it came looking',
   chase: 'it ran you down before you could break away',
+  heard: 'it heard the child crying and came for you',
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
