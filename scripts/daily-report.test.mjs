@@ -157,6 +157,29 @@ test('classifySection: SEO & discovery, by path', () => {
   assert.equal(classifySection(c, ['app/sitemap.ts']), 'seo');
 });
 
+test('classifySection: SEO commit touching app/layout.tsx does not fall to game-features (LUL-602, regression for aa64763)', () => {
+  const c = commit({ subject: 'LUL-48: SEO foundations -- metadata, robots, sitemap, JSON-LD, OG image' });
+  assert.equal(
+    classifySection(c, ['app/layout.tsx', 'app/robots.ts', 'app/sitemap.ts', 'e2e/seo.spec.ts']),
+    'seo',
+  );
+});
+
+test('classifySection: SEO commit touching only generic app/layout.tsx + lib/site.ts (LUL-602, regression for 952ef66)', () => {
+  const c = commit({ subject: 'LUL-370: env-var-driven google-site-verification meta tag' });
+  assert.equal(classifySection(c, ['app/layout.tsx', 'lib/site.ts']), 'seo');
+});
+
+test('classifySection: a non-SEO commit touching app/layout.tsx for a game reason still lands in game-features', () => {
+  const c = commit({ subject: 'LUL-135: close the pre-mount overlay overflow race with a blocking head script' });
+  assert.equal(classifySection(c, ['app/layout.tsx']), 'game-features');
+});
+
+test('classifySection: "canonical" outside SEO context (a data-registry commit) does not get pulled into SEO', () => {
+  const c = commit({ subject: 'LUL-386: canonical ELEMENTS registry (repo + wiki) + interaction matrix' });
+  assert.equal(classifySection(c, ['docs/ELEMENTS.md']), 'docs');
+});
+
 test('classifySection: analytics & telemetry, by path', () => {
   const c = commit({ subject: 'LUL-7: track hide events' });
   assert.equal(classifySection(c, ['lib/analytics.ts']), 'analytics');
