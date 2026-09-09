@@ -70,6 +70,10 @@ declare global {
       /** LUL-1093: w2m(x,z)'s clamped pixel output plus the minimap canvas size (mm),
        * so a test can assert an arbitrary world point stays on-canvas. */
       qaProbeMinimapPoint?: (x: number, z: number) => { px: number; py: number; mm: number };
+      /** LUL-2248: per-landmark beacon sprite presence + fog-exemption, one entry per
+       * LANDMARKS kind, so a test can assert the sprite exists and reads past the fog line
+       * without a screenshot. */
+      qaProbeLandmarkBeacons?: () => Array<{ kind: string; x: number; z: number; visible: boolean; fog: boolean | null }>;
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */

@@ -24,3 +24,21 @@ test.describe('minimap w2m stays on-canvas past the forest/bog seam', () => {
     expect(p.py).toBeLessThanOrEqual(p.mm);
   });
 });
+
+// LUL-2248: drawMinimapStatic() now draws CONFIG.home ({x:0,z:0}) as a warm
+// ring on the minimap static layer -- previously home had no minimap marker
+// at all (see docs/specs/lul-2248-landmark-beacons-minimap-home.md). Exact
+// pixel-level ring rendering isn't Playwright-probable without a screenshot
+// diff (see that spec's "Not covered"); this pins the one thing a test can
+// assert without one -- that home's world coordinate still maps on-canvas
+// through the same w2m() the ring drawing itself uses.
+test.describe('minimap home marker', () => {
+  test('home renders as a ring on the minimap static layer', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    const p = await page.evaluate(() => window.ForestEngine!.qaProbeMinimapPoint!(0, 0));
+    expect(p.px).toBeGreaterThanOrEqual(0);
+    expect(p.px).toBeLessThanOrEqual(p.mm);
+    expect(p.py).toBeGreaterThanOrEqual(0);
+    expect(p.py).toBeLessThanOrEqual(p.mm);
+  });
+});
