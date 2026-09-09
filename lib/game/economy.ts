@@ -26,7 +26,7 @@ export interface RunPayout {
   depth: number;
   survival: number;
   carried: number;
-  home: number;
+  rescue: number;
   spent: number;
   total: number;
 }
@@ -48,7 +48,7 @@ export function freshEmbersState(): EmbersState {
 // ---- Earn ------------------------------------------------------------
 
 export const CARRIED = 120; // win only -- the child's warmth
-export const HOME = 50; // win only -- the doorstep
+export const RESCUE = 50; // win only -- successful extraction at the pickup cinematic (LUL-2295)
 const DEPTH_DIVISOR = 4; // "how far out you dared"
 const SURVIVAL_UNIT_SECONDS = 20;
 const SURVIVAL_CAP = 6; // load-bearing: stalling in a bush stops paying past 120s
@@ -61,7 +61,7 @@ export function computeSurvival(survivedSeconds: number): number {
   return Math.min(SURVIVAL_CAP, Math.floor(survivedSeconds / SURVIVAL_UNIT_SECONDS));
 }
 
-// LUL-1258: M2 Deepwater's completion bonus. Win-only, like CARRIED/HOME --
+// LUL-1258: M2 Deepwater's completion bonus. Win-only, like CARRIED/RESCUE --
 // forfeited on death, same as the rest of the "reached it but didn't make it
 // home" case. The detour's real payout is `depth` (uncapped on win, capped on
 // death already); this is a flat bonus on top, priced deliberately low per
@@ -98,13 +98,13 @@ export function computeWinPayout(
   secondaryBonus = 0,
 ): RunPayout {
   const mult = TIER_MULTIPLIERS[tier].win;
-  const cappedDepth = Math.min(computeDepth(maxDistFromHome), 62); // caps blackout's 2.0x win multiplier at 476E (post-LUL-1806 CARRIED/HOME); inert for lantern/night, whose max depth is 48
+  const cappedDepth = Math.min(computeDepth(maxDistFromHome), 62); // caps blackout's 2.0x win multiplier at 476E (post-LUL-1806 CARRIED/RESCUE); inert for lantern/night, whose max depth is 48
   const depth = Math.round(cappedDepth * mult);
   const survival = Math.round(computeSurvival(survivedSeconds) * mult);
   const carried = Math.round(CARRIED * mult);
-  const home = Math.round(HOME * mult);
-  const total = depth + survival + carried + home + Math.round(missionBonus * mult) + Math.round(secondaryBonus * mult);
-  return { depth, survival, carried, home, spent: 0, total };
+  const rescue = Math.round(RESCUE * mult);
+  const total = depth + survival + carried + rescue + Math.round(missionBonus * mult) + Math.round(secondaryBonus * mult);
+  return { depth, survival, carried, rescue, spent: 0, total };
 }
 
 export function computeDeathPayout(
@@ -118,7 +118,7 @@ export function computeDeathPayout(
   const depth = Math.round(cappedDepth * mult);
   const survival = Math.round(computeSurvival(survivedSeconds) * mult);
   const total = depth + survival;
-  return { depth, survival, carried: 0, home: 0, spent: 0, total };
+  return { depth, survival, carried: 0, rescue: 0, spent: 0, total };
 }
 
 export function applyPayout(state: EmbersState, payout: RunPayout): EmbersState {
@@ -126,7 +126,7 @@ export function applyPayout(state: EmbersState, payout: RunPayout): EmbersState 
 }
 
 /** Deducts an in-run unbanked spend (e.g. the Stone Marker charm) from a computed payout,
- * clamped so `total` never goes negative. Does not touch depth/survival/carried/home --
+ * clamped so `total` never goes negative. Does not touch depth/survival/carried/rescue --
  * `spent` is a separate, honestly-labeled line item, not folded into the other four (which
  * LUL-1640/LUL-1412 made sum to `total` by construction before any spend is applied). LUL-1210. */
 export function applySpend(payout: RunPayout, spentAmount: number): RunPayout {

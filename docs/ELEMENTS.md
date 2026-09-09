@@ -1222,12 +1222,12 @@ design doc as turning horror into radar.
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
   screen is showing. It previews what `computeWinPayout()`'s depth+survival
   terms will bank if the run ends now — it does not include the win-only
-  `CARRIED`/`HOME` terms, since those only pay out on a live arrival.
+  `CARRIED`/`RESCUE` terms, since those only pay out on a live arrival.
 - Death forfeiture display: `RunRecap`'s death branch
   (`components/Hud.tsx` L339-340) shows a red
-  `-{CARRIED + HOME} lost (child & home, forfeited)` fragment instead of the
-  win branch's `+carried`/`+home` lines, making explicit that the win-only
-  `CARRIED`/`HOME` terms (both now exported from `lib/game/economy.ts` for
+  `-{CARRIED + RESCUE} lost (child & rescue, forfeited)` fragment instead of the
+  win branch's `+carried`/`+rescue` lines, making explicit that the win-only
+  `CARRIED`/`RESCUE` terms (both now exported from `lib/game/economy.ts` for
   this display) are forfeited on death rather than silently omitted.
 
 **What it can do**
@@ -1326,7 +1326,7 @@ design doc as turning horror into radar.
 - Cannot bind a new key or a new `EngineActions` method — the sole new player-facing action
   (mission completion) reuses the existing interact button/key, so it needs no new touch target
   and has no mobile-unreachable action.
-- Cannot pay out on death — the completion bonus is win-only, exactly like `CARRIED`/`HOME`.
+- Cannot pay out on death — the completion bonus is win-only, exactly like `CARRIED`/`RESCUE`.
 
 **Secondary objectives (LUL-1666, Phase 1 — `deepwater` only)**
 - **Implemented.** `MissionState.secondary: MissionSecondaryState | null` (`lib/game/mission.ts`)
