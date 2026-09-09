@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4960 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4409, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L4987 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4436, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -499,6 +499,24 @@ one geometry builder (`makePredator()`), differentiated by the
   candidate whose footprint overlaps a nearby canopy circle even when it
   clears the trunk circle. Rock/Reed don't get this extra check — solid
   either way, so a canopy-only overlap there changes nothing observable.
+- **LUL-2212: as of this ticket, also guaranteed clear of every other
+  already-placed cover prop** (`overlapsExistingCover()`, `lib/game/cover.ts`)
+  — `generateCover()`'s candidate loop previously checked new props only
+  against trees, so a solid prop (Rock/Reed) could spawn overlapping a Log's
+  footprint; the Log itself stayed walkable but the overlapping solid
+  neighbour's own AABB still blocked the player mid-span, an invisible wall
+  on a prop that's supposed to be fully walkable end to end. `generateReeds()`
+  (a separate placement loop, runs after `generateCover()`) had no overlap
+  check at all before LUL-2212 and now gets the same `overlapsExistingCover()`
+  guard. **Known remaining gap, not fixed by LUL-2212**: `generateCover()`'s
+  canopy check runs before `generateBogTrees()` populates bog trees, so a
+  Log/Bramble candidate can still end up under a *bog* tree's canopy
+  undetected (bog trees don't exist in the tree grid yet at that point) —
+  reproduces on the QA-pinned seed in
+  `e2e/lul211-founder-report.spec.ts`'s `log`/walkable-cover case; tracked as
+  a follow-up, not resolved here (see the ticket for the reasoning: fixing it
+  means reordering generation, which shifts the RNG stream more broadly than
+  this ticket's other two fixes and wasn't verified in the time available).
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
@@ -547,7 +565,10 @@ one geometry builder (`makePredator()`), differentiated by the
   tree trunks at placement (same as every cover kind), but — also as of
   LUL-1642, matching Log — now guaranteed clear of tree **canopies** too
   (`overlapsTreeCanopy()`, since it reads `coverKindBlocksMovement()`
-  directly and now includes bramble).
+  directly and now includes bramble). As of **LUL-2212**, also guaranteed
+  clear of every other already-placed cover prop (`overlapsExistingCover()`)
+  — see the Log section above for the bug this fixed and the one known
+  remaining gap (bog-tree canopies).
 
 **Behaviours & logic**
 - `r = 0.8+rng()*0.7`, `hx=hz=r` (roughly round footprint,
@@ -1142,7 +1163,7 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L3002) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3029) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L4265: `computeDepth(maxDistFromHome) +
