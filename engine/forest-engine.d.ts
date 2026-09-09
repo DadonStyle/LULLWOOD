@@ -46,6 +46,16 @@ declare global {
       qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
       /** LUL-25: the child's world position and whether it's past the forest/bog seam. */
       qaProbeBaby?: () => { x: number; z: number; inBog: boolean };
+      /** LUL-2122: babyLight's live intensity/distance plus the pickup/carry/taken
+       * state flags, so a test can assert the interact button actually reached
+       * pickup() instead of only that it rendered and was tappable. */
+      qaProbeBabyLight?: () => {
+        intensity: number;
+        distance: number;
+        carrying: boolean;
+        pickingUp: boolean;
+        taken: boolean;
+      };
       /** LUL-1093: w2m(x,z)'s clamped pixel output plus the minimap canvas size (mm),
        * so a test can assert an arbitrary world point stays on-canvas. */
       qaProbeMinimapPoint?: (x: number, z: number) => { px: number; py: number; mm: number };
