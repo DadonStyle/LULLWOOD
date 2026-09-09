@@ -219,6 +219,72 @@ Gameplay/feel (does the chase actually resolve, does stamina regen rate feel fai
 play verdict before merge per the rubric. Builds clean and unit tests passing is not the
 same claim as "the chase feels right."
 
+## e2e
+
+**Backfilled LUL-2188 (2026-09-09).** This feature merged before the `## e2e` section
+requirement existed (LUL-2124) and shipped with **zero** automated coverage — confirmed
+via `grep -rln "stamina" e2e/` (no hits). The implementation as merged also added a
+low-stamina audio cue (`staminaExertionCue()`, gated on `staminaCharge < 0.45` /
+`> 0.55` hysteresis, `engine/forest-engine.js:4449-4450`) not in this spec's original
+scope — noted here for the executor, not re-litigated; it's audio, so it stays manual
+per **Not covered** below regardless.
+
+**Specs.** No new QA hook is needed — every value this needs is already reachable through
+existing hooks and DOM:
+
+- `e2e/stamina.spec.ts` — new, desktop. Two tests:
+  - `'sprinting drains the stamina meter, releasing regenerates it'` — enable admin mode
+    (reveals `#panel`/`#staminaState`, same toggle as `e2e/admin-mode.spec.ts:46-58`),
+    hold `ShiftLeft` (`page.keyboard.down`), advance the deterministic clock
+    (`qaSetFixedStep`/`qaAdvance`, same pattern as `e2e/qa-fixed-clock.spec.ts`) by 3s of
+    game time (half of `STAMINA_DRAIN_TIME`), assert `#staminaState` reads roughly `50%`
+    (regex, not exact — HUD rounds twice: `engine/forest-engine.js:4408`'s
+    `Math.round(*100)/100` then `Hud.tsx:589`'s `Math.round(*100)`). Release Shift, advance
+    3 more seconds, assert the percentage climbed back up (regen, not just "stopped
+    draining").
+  - `'fully drained stamina clamps at 0%, sprint speed floors at walk speed'` — hold Shift
+    for well past `STAMINA_DRAIN_TIME` (e.g. 20s game time), assert `#staminaState` reads
+    exactly `0%` and stays there (no negative/wrap), covering `sprintSpeedMul`'s
+    never-below-1 floor (`lib/game/stamina.ts:95-97`) indirectly — the direct multiplier
+    value has no HUD/DOM surface, so the floor itself stays a unit-test concern
+    (`lib/game/stamina.test.ts`, already required above), not an e2e one.
+- `e2e/mobile/stamina.spec.ts` — new, mobile. One test:
+  `'toggle-run sprint drains the stamina meter on mobile the same as desktop'` — this is
+  the actual first automated proof of this spec's own "Mobile" section claim
+  ("mobile parity is automatic — stamina reads the same running flag"), which shipped
+  unverified. Stick-drag-magnitude auto-sprint (`mag > 0.75`,
+  `components/MobileControls.tsx`'s `Stick`) has no deterministic tap/drag equivalent in
+  this rig, so drive `running` via the toggle-run accessibility path instead — same
+  `running` computation (`engine/forest-engine.js:4447`), same `touchToggleRun` button
+  `e2e/mobile/toggle-run.spec.ts` already proves flips `qaPlayerState().toggleRunOn`.
+  Reveal admin mode via the mobile route (`e2e/mobile/admin-mode.spec.ts:14-46`: menu →
+  Settings → admin-mode checkbox), enable toggle-run in the same Settings panel, tap
+  `touchToggleRun`, then read `#staminaState` exactly as the desktop spec does.
+
+**Hooks.** None new. Existing, all already typed in `engine/forest-engine.d.ts`:
+- `qaSetFixedStep(dtSeconds: number): void` / `qaAdvance(steps?: number): void` —
+  deterministic clock (`engine/forest-engine.js:3080`, `:3084`).
+- `qaPlayerState().toggleRunOn` — mobile toggle-run confirmation (`:3552-3568`).
+
+**Tester scenario.** Already covered by two existing nightly checks in
+`shared/local-qa/QA_TESTER.md`, no new request file needed:
+- **E1** (Full `e2e/` suite) picks up both new spec files automatically once they exist.
+- **E3** ("DOM-visible slices of post-2026-09-02 features") already names
+  `#staminaState under admin` explicitly, and already lists "stamina curve" as a feel
+  item that stays "manual/founder" — matching **Not covered** below exactly.
+
+**Not covered.**
+- The stamina curve's *feel* (is 6s-to-empty and a 0.4x regen multiplier fun, does the
+  chase resolve fairly) — explicitly flagged as gameplay-unverified in this spec's own
+  Verification section above; QA_TESTER.md's E3 independently lists it manual. No
+  automated check can substitute for a play verdict here.
+- `staminaExertionCue()`'s audio — sound, real-device/ear judgment only, same reason
+  every other audio cue in this codebase stays manual.
+- The exact `sprintSpeedMul` decay curve as a function of charge — the *existence* of the
+  floor is covered indirectly (0% charge still moves, never slower than walk) but the
+  precise multiplier at intermediate charge values has no player-visible surface to probe
+  from Playwright; that's what `lib/game/stamina.test.ts`'s required unit cases are for.
+
 ## Constraints
 
 - `STAMINA_SPRINT_MUL` must equal the current hardcoded `1.8` at
