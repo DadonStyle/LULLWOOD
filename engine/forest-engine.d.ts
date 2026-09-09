@@ -317,6 +317,10 @@ declare global {
        * are all on screen together. Returns the target, or null if no mission
        * is active. */
       qaTeleportNearMission?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
+      /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
+       * fields qaTeleportNearMission returns as a side effect, for a test that
+       * only needs to read, not teleport. */
+      qaProbeMission?: () => { kind: 'deepwater'; status: 'active' | 'complete'; x: number; z: number } | null;
       /** LUL-2230: exactly what the last frame drew for the scent trail visual
        * -- `points.length` always equals the draw range the renderer used
        * this tick, so a test can assert the picture directly instead of
