@@ -125,6 +125,14 @@ export interface EngineHudState {
   // streamed per-frame -- see engine/forest-engine.js's logChronicle()
   // comment). lib/game/chronicle.ts's formatChronicle() renders it.
   chronicle: ChronicleEvent[];
+  // LUL-2230: the scent trail visual + its one-time explanation. `scentTrailVisible`
+  // is the persisted Settings toggle (default on); `scentCaptionVisible`/X/Y are
+  // pushed per-frame, viewport fractions, only while the one-time caption is on
+  // screen (same per-frame-push pattern veilCharge above uses).
+  scentTrailVisible: boolean;
+  scentCaptionVisible: boolean;
+  scentCaptionX: number;
+  scentCaptionY: number;
 }
 
 export interface EngineActions {
@@ -161,6 +169,8 @@ export interface EngineActions {
   // LUL-1666
   setMissionUnlocks: (unlocks: { deepwater: boolean }) => void;
   setSecondaryChoice: (kind: SecondaryKind | null) => void;
+  // LUL-2230
+  setScentTrailVisible: (v: boolean) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -224,6 +234,10 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   windX: 1,
   windZ: 0,
   chronicle: [],
+  scentTrailVisible: true,
+  scentCaptionVisible: false,
+  scentCaptionX: 0.5,
+  scentCaptionY: 0.5,
 };
 
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
@@ -761,6 +775,20 @@ export default function Hud({
 
       {state.entered && !state.winVisible && !state.deathVisible && (
         <div id="windIndicatorHint">wind — move into the arrow to lower your scent trail</div>
+      )}
+
+      {/* LUL-2230: one-time explanation for the scent trail visual, anchored to the
+          engine-projected screen position of the first mote the player can actually
+          see (scentCaptionX/Y, viewport fractions). Gated on !winVisible/!deathVisible
+          like #hint (LUL-2158 precedent) so a fast death never shows it over "YOU LOSE". */}
+      {state.scentCaptionVisible && !state.winVisible && !state.deathVisible && (
+        <div
+          id="scentTrailCaption"
+          style={{ left: `${state.scentCaptionX * 100}%`, top: `${state.scentCaptionY * 100}%` }}
+        >
+          <span className="scentTrailCaptionGlyph" aria-hidden="true">↓</span>
+          this is your scent trail — predators follow it
+        </div>
       )}
 
       {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;

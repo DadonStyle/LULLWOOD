@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L4997 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4446, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5133 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4512, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -86,6 +86,23 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   point's radius by `WIND_AGAINST_RADIUS_MULTIPLIER` (0.8, i.e. -20%) at
   deposit time only — detection math (`isScentDetected`, drift) is unchanged.
   Wind direction is shown to the player via `#windIndicator` (see HUD section).
+- **As of `LUL-2230`**, the scent trail itself is rendered, not just implied by
+  the wind arrow: a `THREE.Points` cloud (`scentTrailPts`) drawn every frame
+  from the live `scentPoints` array, one mote per point, at its
+  `driftedScentPosition()` — the same drifted position a predator's
+  `checkScent()` actually queries, so the picture never shows the trail
+  somewhere safer than it really is. Alpha fades linearly to 0 over the same
+  `SCENT_LIFETIME` (14s) the array itself decays on, scaled by the point's
+  radius (`SCENT_RADIUS_RUN` motes render brighter than `SCENT_RADIUS_WALK`
+  ones) and dimmed ×0.3 at full mist veil — **presentation only**: the veil
+  has zero effect on scent detection (see the Follow-light section's
+  `p.spec.scent is untouched` note), this only makes the motes harder to see
+  in the fog you've chosen to stand in. Toggle: "Show my scent trail" in
+  Settings (`scentTrailVisible`, engine-owned, default on, persisted). A
+  one-time caption ("this is your scent trail — predators follow it")
+  appears the first time an install's player turns to see a mote on screen,
+  gone within 8s or the first `scent_lock` chronicle event, persisted via
+  `lullwood:scentTrailCaptionSeen` so it never shows again.
 - Make audible footstep noise while moving — `NOISE_RADIUS_WALK`/`_RUN`
   (14/24 units), `checkNoise()`.
 - Dodge a telegraphed predator charge by jumping within the charge window —
@@ -1166,7 +1183,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L4122) and `triggerDeath()` (L4153).
+  both `track()` call sites in `arriveHome()` (L4188) and `triggerDeath()` (L4219).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1177,7 +1194,7 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L3029) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3073) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L4265: `computeDepth(maxDistFromHome) +

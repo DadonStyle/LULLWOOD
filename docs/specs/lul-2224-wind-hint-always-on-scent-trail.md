@@ -1,16 +1,18 @@
 # SPEC: LUL-2224 wind hint always-on + scent trail visualization
 
-**Ticket:** LUL-2224 · **Tier:** B — item 1 is a CSS/markup-only change (no engine logic, no
-new state); item 2 (below, not yet implemented) touches `engine/forest-engine.js` render/tick
-and `hudState`, and would be Tier C on its own.
+**Ticket:** LUL-2224 · **Tier:** B for item 1 (CSS/markup-only, no engine logic, no new
+state); item 2 (below) touches `engine/forest-engine.js`'s per-frame render loop reading
+`scentPoints`/`windX`/`windZ`/`veilAmount` and is **Tier C** on its own — presentation-only,
+but detection-adjacent code. Requires `REVIEW: APPROVED` before merge.
 
-**Written against:** `release/next` @ `8385924` (2026-09-09).
+**Written against:** `release/next` @ `8385924` (2026-09-09, item 1); item 2 implemented on
+`lul-2230-scent-trail-visualization` off `fbb84c5` — re-derive line numbers from that branch,
+not this doc's prose.
 
-This ticket has two independent work items from the founder's brief. **Item 1 ships in this
-PR.** Item 2 is specified below for a follow-up PR (LUL-2230) — it is a substantially larger
-change (new engine render state, a new HUD element, new QA hooks) and does not block item 1.
+This ticket has two independent work items from the founder's brief. **Item 1 shipped in
+PR #536 (`ce8ad11`).** **Item 2 ships in LUL-2230**, described below.
 
-## Item 1 — the wind hint text must never fade (this PR)
+## Item 1 — the wind hint text must never fade (shipped, PR #536)
 
 ### Files
 
@@ -44,34 +46,6 @@ via CSS animation" to describe the always-on behaviour and cite LUL-2224 for the
 - `node scripts/check-elements-citations.mjs` — 0 drifted.
 - `npx next build` — succeeds.
 
-## e2e
-
-**Specs.**
-- `e2e/wind-hint.spec.ts` — 'wind hint text stays visible for the whole run, in default and
-  admin mode' (new). Desktop (1280x720): enters the run, asserts `#windIndicatorHint` contains
-  "wind" and "scent trail", waits 9s wall-clock (past the old fade's 7s completion), asserts
-  computed `opacity === '1'` and `animationName === 'none'`, asserts no bounding-box overlap
-  with `#windIndicator`, asserts the hint is fully inside the viewport — then repeats the
-  opacity/overlap/viewport checks after toggling admin mode on via the real Settings UI.
-- `e2e/mobile/wind-hint.spec.ts` — 'wind hint stays visible and clear of the touch controls,
-  default and admin mode' (new), run at both Pixel 5 landscape (851x393) and iPhone SE
-  landscape (667x375). Same opacity/viewport checks, plus no-overlap checks against
-  `[data-testid=touchHide]`, `[data-testid=touchVeil]`, `[data-testid=rightStick]` (the
-  bottom-right touch-control column geometry the ticket flagged as the one worth measuring in
-  admin mode), in both default and admin mode.
-- `e2e/scent.spec.ts`, `e2e/admin-mode.spec.ts`, `e2e/mobile/admin-mode.spec.ts` — must pass
-  unchanged (not touched by this item).
-
-**Hooks.** None new — item 1 is presentation-only, no engine state involved.
-
-**Tester scenario.** Covered by the two new Playwright specs above (nightly QA tester runs the
-full `e2e/` suite per `shared/local-qa/QA_TESTER.md`); no separate request file needed since
-every assertion maps to an existing hook/selector (no `NEEDS-HOOK` risk).
-
-**Not covered.** Real-device rendering/legibility of the 10px hint text at native mobile DPI —
-this rig asserts layout geometry and computed CSS, not perceived readability; a human or the
-nightly tester's vision-model check is the source of truth for "is this actually easy to read."
-
 ### Constraints (item 1)
 
 - `#hint` (engine-owned movement-controls hint, `components/GameCanvas.tsx:50-64`) keeps its
@@ -80,33 +54,90 @@ nightly tester's vision-model check is the source of truth for "is this actually
   engine surface.
 - No position/size change to `#windIndicator` or `#windIndicatorHint` beyond removing the fade.
 
-## Item 2 — show the player their own scent trail, with a one-time caption (follow-up PR)
+## Item 2 — render the player's scent trail + one-time explanation caption (LUL-2230)
 
-**Not implemented in this PR.** Filed as LUL-2230 (child of LUL-2224), assigned to Game
-Engineer, scoped exactly as the founder's brief on LUL-2224 specifies:
+### What shipped
 
-- **Engine render:** a `THREE.Points`/`PointsMaterial` trail (`scentTrailPts`, additive
-  blending, `depthWrite:false`, preallocated for `SCENT_TRAIL_MAX` vertices) filled every
-  `tick()` from live `scentPoints`, positioned via the existing `driftedScentPosition()`
-  (`lib/game/scent.ts:70-78`) so the visual matches what a predator actually smells, alpha by
-  remaining life and dimmed (not zeroed) while veiled — veil must keep having zero effect on
-  the underlying `checkScent()`/`scentOnto()` detection math (`docs/ELEMENTS.md:865-866`).
-- **Setting:** `scentTrailVisible` (default on), engine-owned, same shape as `setCaptions`
-  (`engine/forest-engine.js:4118-4119`), a new `SettingsPanel.tsx` checkbox, persisted via
+- `engine/forest-engine.js`: `scentTrailPts` (`THREE.Points`, additive blending,
+  `depthWrite:false`, preallocated `SCENT_TRAIL_MAX` vertices) rendered every `tick()`
+  from the live `scentPoints` array at each point's `driftedScentPosition()` — the same
+  position `checkScent()` queries, so the picture never lies about where a predator will
+  find the trail. Alpha = remaining life (`1 - age/SCENT_LIFETIME`) × veil dim (×0.3 at
+  full veil, presentation only) × radius ratio (run motes brighter than walk motes).
+  Wrapped with the same `wrapDelta()`/`WRAP_SPAN` handling `isScentDetected` uses.
+- One-time caption: once per install, when the setting is on, the player isn't hidden,
+  and the oldest visible mote enters the camera frustum (`Vector3.project`), the HUD
+  shows "this is your scent trail — predators follow it" anchored to that mote's screen
+  position; gone after 8s or the first `scent_lock` chronicle event, whichever is first;
+  persisted via `localStorage['lullwood:scentTrailCaptionSeen']`.
+- Setting: `scentTrailVisible` (engine-owned, default on), `setScentTrailVisible()`,
+  exposed through `EngineActions`, `ENGINE_ACTION_KEYS` (`lib/engine-contract.ts`, new
+  file — the type-level half of the founder's engine/React contract rule; the runtime
+  `assertEngineContract()` call site the rule also describes does not exist anywhere in
+  this repo yet and is flagged here rather than invented inside this ticket's diff,
+  since it's cross-cutting infra any future `EngineActions` addition depends on), and a
+  "Show my scent trail" checkbox in `components/SettingsPanel.tsx`, persisted in
   `PersistedSettings`.
-- **One-time caption:** `#scentTrailCaption` in `components/Hud.tsx`, positioned from a
-  per-frame `scentCaptionX/Y` push while the first visible mote is in the camera frustum,
-  shown for ≤8s or until the first `scent_lock` event, gated on `!winVisible && !deathVisible`,
-  persisted "seen" flag (`lullwood:scentTrailCaptionSeen`, same pattern as `HAS_DIED_KEY`).
-- **New QA hooks (`engine/forest-engine.d.ts` + the `?qaHooks` block):**
-  `qaProbeScentTrail(): {...}`, `qaSetLookYaw(rad: number): void`, `qaResetScentCaption(): void`.
-- **New specs:** `e2e/scent-trail.spec.ts` (desktop) and `e2e/mobile/scent-trail.spec.ts`
-  (Pixel 5 + iPhone SE landscape) — count/alpha/drift/veil-dim/caption/settings-toggle
-  assertions per the founder brief; `e2e/scent.spec.ts` must stay green unchanged.
-- Full acceptance criteria, exact math, and file:line citations: the founder's brief on
-  LUL-2224 (quoted verbatim into LUL-2230's description) — re-derive line numbers from the
-  branch actually implemented on before starting, per this template's own instruction, since
-  `engine/forest-engine.js` moves fast.
+- `docs/ELEMENTS.md`: new bullet under the scent-trail/wind section.
+
+### What did not change
+
+`lib/game/scent.ts` (constants, `isScentDetected`, `driftedScentPosition`,
+`scentPickupRadius`), `depositScent`/`checkScent`/`scentOnto` in the engine,
+`generateWind()`/the seeded RNG stream, and the one-time `windX`/`windZ` push. Veil
+continues to have zero effect on scent detection — the dim is purely visual.
+
+## e2e
+
+**Specs.**
+- `e2e/wind-hint.spec.ts` — 'wind hint text stays visible for the whole run, in default and
+  admin mode' (item 1, shipped). Desktop (1280x720): enters the run, asserts
+  `#windIndicatorHint` contains "wind" and "scent trail", waits 9s wall-clock (past the old
+  fade's 7s completion), asserts computed `opacity === '1'` and `animationName === 'none'`,
+  asserts no bounding-box overlap with `#windIndicator`, asserts the hint is fully inside the
+  viewport — then repeats the opacity/overlap/viewport checks after toggling admin mode on via
+  the real Settings UI.
+- `e2e/mobile/wind-hint.spec.ts` — 'wind hint stays visible and clear of the touch controls,
+  default and admin mode' (item 1, shipped), Pixel 5 landscape (851x393) and iPhone SE
+  landscape (667x375). Same opacity/viewport checks, plus no-overlap checks against
+  `[data-testid=touchHide]`, `[data-testid=touchVeil]`, `[data-testid=rightStick]`, in both
+  default and admin mode.
+- `e2e/scent-trail.spec.ts` — new, desktop (item 2). Tests: trail renders at the drifted
+  position and fades with age; running motes brighter than walking, standing still
+  decays the trail to zero; the one-time caption appears once, clears within 8s, and
+  `qaResetScentCaption()` proves the gate is the persisted flag not luck; caption never
+  shows over win/death; mist veil dims the picture without weakening detection
+  (`qaSeedScentPoint`/`qaProbeScentOnOldest` cross-check); the Settings toggle hides the
+  picture/caption only, `scentPoints` untouched, and the choice persists.
+- `e2e/mobile/scent-trail.spec.ts` — new, Pixel 5 + iPhone SE landscape (item 2). Same
+  render/caption/settings assertions via `touch-cdp.ts` movement, plus caption/settings
+  checkbox clearance of the touch Hide/Veil/stick regions and `#windIndicatorHint`.
+- `e2e/scent.spec.ts`, `e2e/admin-mode.spec.ts`, `e2e/mobile/admin-mode.spec.ts` — must pass
+  unchanged.
+
+**Hooks.**
+- Item 1: none — presentation-only, no engine state involved.
+- Item 2 (new, inside the `?qaHooks=1` block, declared in `engine/forest-engine.d.ts`):
+  - `qaProbeScentTrail(): { settingOn, rendered, points: {x,z,age,alpha,inFrustum,rawX,rawZ,radius}[], livePoints, captionVisible, captionSeen, veilAmount, windX, windZ }` —
+    exactly what the last frame drew; `points.length` equals the draw range used that tick.
+  - `qaSetLookYaw(rad: number): void` — sets `player.yaw` directly so a test can turn to
+    face its own trail without pointer lock; read-only otherwise.
+  - `qaResetScentCaption(): void` — clears the persisted + in-memory "seen" flag so one
+    boot can prove the one-time gate twice.
+
+**Tester scenario.**
+- Item 1: covered by the two Playwright specs above (nightly QA tester runs the full
+  `e2e/` suite); no separate request file needed.
+- Item 2: request file `shared/local-qa/requests/lul-2230-scent-trail.md` (desktop
+  1280×720 + Pixel 5 landscape) — walk, turn around, confirm the trail is visible and
+  fades, the caption appears once, veil dims it, and Settings hides it.
+
+**Not covered.**
+- Item 1: real-device rendering/legibility of the 10px hint text at native mobile DPI —
+  this rig asserts layout geometry and computed CSS, not perceived readability.
+- Item 2: mote size/color legibility against fog and caption readability — unverified
+  until a human or the tester's vision-model pass confirms it. This PR claims code
+  correctness only.
 
 ### Out of scope (both items)
 

@@ -43,6 +43,7 @@ import {
   isScentExpired,
   isScentPastPruneCutoff,
   scentDriftDistance,
+  driftedScentPosition,
   SCENT_DEPOSIT_INTERVAL,
   SCENT_LIFETIME,
   SCENT_RADIUS_WALK,
@@ -1204,6 +1205,28 @@ const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0xa8c2e
   transparent: true, opacity: 0.5, depthWrite: false }));
 dust.frustumCulled = false; scene.add(dust);
 
+// ---- Scent trail visual (LUL-2230) ---------------------------------------
+// Renders the same scentPoints array checkScent() reads, at the same
+// driftedScentPosition() a predator actually smells -- the picture never
+// lies about where the trail really is. Presentation only: this reads
+// scentPoints/windX/windZ/veilAmount but never writes them, and veil dims
+// the alpha here without touching checkScent()/scentOnto() (see
+// docs/ELEMENTS.md's veil-vs-scent split, :865-866-equivalent).
+const SCENT_TRAIL_MAX = Math.ceil(SCENT_LIFETIME / SCENT_DEPOSIT_INTERVAL) + 2;
+const SCENT_TRAIL_COLOR = new THREE.Color(0x9fe0d0);
+const scentTrailPos = new Float32Array(SCENT_TRAIL_MAX * 3);
+const scentTrailCol = new Float32Array(SCENT_TRAIL_MAX * 3);
+const scentTrailGeo = new THREE.BufferGeometry();
+scentTrailGeo.setAttribute('position', new THREE.BufferAttribute(scentTrailPos, 3));
+scentTrailGeo.setAttribute('color', new THREE.BufferAttribute(scentTrailCol, 3));
+scentTrailGeo.setDrawRange(0, 0);
+const scentTrailPts = new THREE.Points(scentTrailGeo, new THREE.PointsMaterial({
+  size: 0.28, transparent: true, vertexColors: true, blending: THREE.AdditiveBlending,
+  depthWrite: false, sizeAttenuation: true,
+}));
+scentTrailPts.frustumCulled = false; scene.add(scentTrailPts);
+const _scentProjVec = new THREE.Vector3();   // scratch, reused every frame -- avoid per-point GC
+
 // ---- The lost child (the objective) --------------------------------------
 const baby = { x: 60, z: 60, taken: false };
 function inBaby(x,z){ const dx=x-baby.x, dz=z-baby.z; return dx*dx+dz*dz < 20; }   // ~4.5-unit clearing
@@ -1572,6 +1595,19 @@ function generateWind(){
 }
 
 let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 is always oldest)
+
+// LUL-2230: scent trail visual + its one-time explanation caption. Rendering
+// state only -- nothing here is read by checkScent()/scentOnto()/depositScent().
+let scentTrailVisible = true;   // engine-owned setting, same shape as captionsOn
+const SCENT_TRAIL_CAPTION_KEY = 'lullwood:scentTrailCaptionSeen';
+let scentCaptionSeen = false;
+try { scentCaptionSeen = localStorage.getItem(SCENT_TRAIL_CAPTION_KEY) === '1'; } catch(e){}
+let scentCaptionActive = false, scentCaptionStartT = 0, scentLockCountAtCaptionStart = 0;
+let scentLockEventCount = 0;   // bumped by scentOnto(); lets the caption bail out on "the first scent-lock"
+let scentTrailLastFrame = { settingOn: true, rendered: false, points: [], livePoints: 0,
+  captionVisible: false, captionSeen: false, veilAmount: 0, windX: 1, windZ: 0 };   // qaProbeScentTrail() snapshot, refreshed every tick
+function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrailVisible }); }
+
 function depositScent(hot, againstWind){
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
   const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
@@ -1625,6 +1661,7 @@ function scentOnto(p){
   if(!p.spotted) p.spotted = true;
   predatorCall(p.kind, false, p);
   logChronicle('scent_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home, CONFIG.lake) });
+  scentLockEventCount++;   // LUL-2230: the trail caption dismisses itself on the first one of these
 }
 
 // ---- Sound: footstep noise as a third detection channel (LUL-39) ---------
@@ -2975,6 +3012,13 @@ let hudState = {
   // canGrabThrowable is the HUD gate for the "pick up stone" prompt, mirroring
   // canPickup/objectiveReady's role for the child.
   heldThrowable: false, canGrabThrowable: false,
+  // LUL-2230: scent trail visual + its one-time caption. `scentTrailVisible`
+  // is the persisted Settings toggle (default on); `scentCaptionVisible` and
+  // its X/Y (viewport fractions) are pushed per-frame only while the
+  // one-time explanation is on screen -- same per-frame-push pattern as
+  // veilCharge above.
+  scentTrailVisible: true,
+  scentCaptionVisible: false, scentCaptionX: 0.5, scentCaptionY: 0.5,
 };
 function pushState(patch){
   let changed = false;
@@ -3916,6 +3960,28 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!mission) return null;
     player.x = mission.target.x + mission.target.interactRadius + 1; player.z = mission.target.z;
     return { kind: mission.target.kind, x: mission.target.x, z: mission.target.z, status: mission.status };
+  };
+
+  // [QA-HOOK] LUL-2230: exactly what the last frame drew for the scent trail
+  // visual, so a test can assert the picture without depending on Vector3
+  // math in the page context. `points`/`livePoints` let a test cross-check
+  // "the array decayed" against "the picture decayed" independently.
+  window.ForestEngine.qaProbeScentTrail = function(){ return scentTrailLastFrame; };
+
+  // [QA-HOOK] LUL-2230: sets the camera yaw directly (the same player.yaw
+  // every look-input path writes, see camera.rotation.set(player.pitch,
+  // player.yaw, 0) in the render loop) so a test can turn around and look at
+  // its own scent trail without pointer lock. Read-only otherwise -- no
+  // movement, no pitch change.
+  window.ForestEngine.qaSetLookYaw = function(rad){ player.yaw = rad; };
+
+  // [QA-HOOK] LUL-2230: clears the persisted "seen" flag and the in-memory
+  // one-time gate, so a single boot can prove the caption is first-time-only
+  // twice in the same test (show it, dismiss it, reset, show it again).
+  window.ForestEngine.qaResetScentCaption = function(){
+    scentCaptionSeen = false; scentCaptionActive = false;
+    try { localStorage.removeItem(SCENT_TRAIL_CAPTION_KEY); } catch(e){}
+    pushState({ scentCaptionVisible: false });
   };
 }
 
@@ -4914,6 +4980,76 @@ function stepFrame(dt, t){
   dustGeo.attributes.position.needsUpdate = true;
   dust.position.copy(camera.position);
 
+  // ---- Scent trail visual fill + one-time caption (LUL-2230) --------------
+  // Reads scentPoints/windX/windZ/veilAmount, writes none of them -- purely
+  // the picture, never the smell (checkScent()/scentOnto() are untouched).
+  {
+    let n = 0, firstFrustum = null;
+    const framePoints = [];
+    for(let i = 0; i < scentPoints.length && n < SCENT_TRAIL_MAX; i++){
+      const s = scentPoints[i], age = t - s.t0;
+      if(age < 0.6 || isScentExpired(age)) continue;   // the mote under the player's own feet
+      const d = driftedScentPosition(s, age, windX, windZ);
+      // Same wrapDelta() a wrapped-world checkScent() uses (lib/game/scent.ts's
+      // isScentDetected), so a wrapped point renders as its nearest image to
+      // the player instead of a line stretched across the whole torus.
+      const rx = player.x + wrapDelta(d.x, player.x, WRAP_SPAN);
+      const rz = player.z + wrapDelta(d.z, player.z, WRAP_SPAN);
+      const ry = 0.22 + (motionReduced() ? 0 : 0.06 * Math.sin(t*2 + i));
+      const alpha = Math.max(0, (1 - age/SCENT_LIFETIME) * (1 - 0.7*veilAmount) * (s.radius / SCENT_RADIUS_RUN));
+      scentTrailPos[n*3] = rx; scentTrailPos[n*3+1] = ry; scentTrailPos[n*3+2] = rz;
+      scentTrailCol[n*3]   = SCENT_TRAIL_COLOR.r * alpha;
+      scentTrailCol[n*3+1] = SCENT_TRAIL_COLOR.g * alpha;
+      scentTrailCol[n*3+2] = SCENT_TRAIL_COLOR.b * alpha;
+      _scentProjVec.set(rx, ry, rz).project(camera);
+      const inFrustum = _scentProjVec.x >= -1 && _scentProjVec.x <= 1 && _scentProjVec.y >= -1 && _scentProjVec.y <= 1 && _scentProjVec.z < 1;
+      if(inFrustum && !firstFrustum) firstFrustum = { x: _scentProjVec.x, y: _scentProjVec.y };   // oldest visible mote only
+      // rawX/rawZ (the undrifted deposit point) let a test recompute
+      // driftedScentPosition() itself and compare, without a separate hook
+      // to read windX/windZ.
+      framePoints.push({ x: rx, z: rz, age, alpha, inFrustum, rawX: s.x, rawZ: s.z, radius: s.radius });
+      n++;
+    }
+    scentTrailGeo.setDrawRange(0, n);
+    scentTrailGeo.attributes.position.needsUpdate = true;
+    scentTrailGeo.attributes.color.needsUpdate = true;
+    const scentTrailRendered = scentTrailVisible && entered && !hudState.winVisible && !hudState.deathVisible;
+    scentTrailPts.visible = scentTrailRendered;
+
+    // One-time caption: starts the first time the setting is on, the player
+    // isn't hidden, and the oldest still-visible mote enters the camera
+    // frustum; ends after 8s or the first scentOnto() call after it started
+    // (whichever comes first), then persists "seen" so it never shows again
+    // this install. Toggling the setting off, hiding, or a win/death mid-
+    // caption stops it without marking "seen" (it can still show later).
+    const captionEligible = scentTrailVisible && !scentCaptionSeen && entered
+      && !hidden && !hudState.winVisible && !hudState.deathVisible;
+    if(captionEligible && !scentCaptionActive && firstFrustum){
+      scentCaptionActive = true; scentCaptionStartT = t; scentLockCountAtCaptionStart = scentLockEventCount;
+    }
+    if(scentCaptionActive && !captionEligible){
+      scentCaptionActive = false;
+      pushState({ scentCaptionVisible: false });
+    } else if(scentCaptionActive){
+      const elapsed = t - scentCaptionStartT, lockFired = scentLockEventCount > scentLockCountAtCaptionStart;
+      if(elapsed >= 8 || lockFired){
+        scentCaptionActive = false; scentCaptionSeen = true;
+        try { localStorage.setItem(SCENT_TRAIL_CAPTION_KEY, '1'); } catch(e){}
+        pushState({ scentCaptionVisible: false });
+      } else if(firstFrustum){
+        const cx = Math.max(0.08, Math.min(0.92, (firstFrustum.x + 1) / 2));
+        const cy = Math.max(0.08, Math.min(0.92, (1 - firstFrustum.y) / 2));
+        pushState({ scentCaptionVisible: true, scentCaptionX: cx, scentCaptionY: cy });
+      } else {
+        pushState({ scentCaptionVisible: true });   // keep showing at its last known anchor
+      }
+    }
+
+    scentTrailLastFrame = { settingOn: scentTrailVisible, rendered: scentTrailRendered, points: framePoints,
+      livePoints: scentPoints.length, captionVisible: hudState.scentCaptionVisible,
+      captionSeen: scentCaptionSeen, veilAmount, windX, windZ };
+  }
+
   drawMinimap();
   if(!baby.taken){                       // pulsing objective marker on the minimap
     const [bx, bz] = w2m(baby.x, baby.z), r = 3 + Math.sin(t*4) * 1.2;
@@ -5054,7 +5190,8 @@ tick();
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
            setEmbers, purchaseDeeperLungs,
            // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.
-           setMissionUnlocks, setSecondaryChoice };
+           setMissionUnlocks, setSecondaryChoice,
+           setScentTrailVisible };
 }
 
 function dispose() {
