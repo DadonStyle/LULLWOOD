@@ -34,6 +34,10 @@ for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_P
 
     expect(density.minPairSpacing).not.toBeNull();
     expect(density.minPairSpacing).toBeGreaterThanOrEqual(MIN_SPACING - SLOP);
+
+    // Mandatory per the ticket: no reed may land inside CONFIG.lake.clear.
+    // generateReeds() now runs inLake() as its own rejection check.
+    expect(density.reedsInLakeClear, `seed ${seed} reeds inside CONFIG.lake.clear`).toBe(0);
   });
 }
 

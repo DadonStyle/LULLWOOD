@@ -79,11 +79,12 @@ declare global {
         trees: { x: number; z: number }[];
         predators: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number }[];
       };
-      /** LUL-2247: per-chunk prop counts by category (cover/reed/bogTree/stone), the minimum pairwise centre-to-centre distance across every non-tree prop, and the total count -- all read from the finished, post-thin map. */
+      /** LUL-2247: per-chunk prop counts by category (cover/reed/bogTree/stone), the minimum pairwise centre-to-centre distance across every non-tree prop, the total count, and how many reeds land inside CONFIG.lake.clear (must be 0) -- all read from the finished, post-thin map. */
       qaProbePropDensity?: () => {
         perChunk: Array<{ chunk: number; cover: number; reed: number; bogTree: number; stone: number }>;
         minPairSpacing: number | null;
         total: number;
+        reedsInLakeClear: number;
       };
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
