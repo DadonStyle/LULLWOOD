@@ -3223,6 +3223,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { x: player.x, z: player.z, yaw: player.yaw };
   };
 
+  // LUL-2187/LUL-2209: raw mission state, mirrors qaProbeBaby's shape. Cheap
+  // sibling of qaTeleportNearMission (LUL-2123, :3966) -- that hook already
+  // returns the same fields as a side effect of teleporting, this is for a
+  // test that wants to read mission state without also moving the player.
+  window.ForestEngine.qaProbeMission = function(){
+    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z };
+  };
+
   // Drops the player `standoff` units on the -x side of the first reachable
   // cover prop of `kind` and points them straight at it (forward is
   // (-sin yaw, -cos yaw), so yaw = -PI/2 faces +x). Returns the prop's AABB and
