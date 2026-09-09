@@ -328,12 +328,12 @@ export default function MobileControls({
         <div style={side}>
           {entered && (
             <div style={row}>
-              <ActionBtn label="E" onTap={() => actions.triggerTouchInteract()} />
+              <ActionBtn label="E" testId="touchInteract" onTap={() => actions.triggerTouchInteract()} />
               {/* LUL-1623: only visible while actually holding a throwable --
                   grab itself reuses the Interact ("E") button above via the
                   engine's own context-dispatch, no separate grab button. */}
               {heldThrowable && (
-                <ActionBtn label="Throw" onTap={() => actions.triggerTouchThrow()} />
+                <ActionBtn label="Throw" testId="touchThrow" onTap={() => actions.triggerTouchThrow()} />
               )}
               {/* LUL-213/LUL-529: jump is the only way to clear a charging
                   wolf/lion -- survival-critical, not cosmetic, so it sits in
@@ -368,7 +368,7 @@ export default function MobileControls({
         <div style={side}>
           {entered && (
             <div style={row}>
-              <ActionBtn label="Hide" onTap={() => actions.triggerTouchHide()} />
+              <ActionBtn label="Hide" testId="touchHide" onTap={() => actions.triggerTouchHide()} />
               <HoldBtn label="Veil" testId="touchVeil" onHold={(v) => actions.setTouchVeil(v)} />
             </div>
           )}
