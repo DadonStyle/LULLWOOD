@@ -5015,7 +5015,9 @@ tick();
            triggerTouchThrow,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
-           setEmbers, purchaseDeeperLungs };
+           setEmbers, purchaseDeeperLungs,
+           // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.
+           setMissionUnlocks, setSecondaryChoice };
 }
 
 function dispose() {
