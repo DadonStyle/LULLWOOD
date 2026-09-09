@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5392 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4763, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5472 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4851, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1200,7 +1200,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L4425) and `triggerDeath()` (L4456).
+  both `track()` call sites in `arriveHome()` (L4513) and `triggerDeath()` (L4544).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1210,8 +1210,8 @@ design doc as turning horror into radar.
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3097),
-  reset to 0 on `enter()` (L3171) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3182),
+  reset to 0 on `enter()` (L3256) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L4838: `computeDepth(maxDistFromHome) +
@@ -1268,7 +1268,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L4794, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L4924, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1788,7 +1788,13 @@ every seed (1000/1000, and asserted with no fallback over 200 seeds in `bog.test
 `Reed` (tall `coverData` kind `'reed'`, LOS-blocking like Rock/Log/Bramble
 but **not** in `HIDE_KINDS` — not a hiding spot; own budget `BOG_REEDS` (120) as of
 LUL-2225, placed only in the ring between `BOG_INNER_RADIUS` and `BOG_OUTER_RADIUS` so reeds
-themselves read as the patch's boundary, not scattered through its interior), seven fixed `Landmark`
+themselves read as the patch's boundary, not scattered through its interior, and rejecting
+`inLake()`/`overlapsTreeTrunk()` candidates in its own generation loop as of **LUL-2247**
+(same checks `generateCover()` runs); as of the same ticket, Cover/Reed/BogTree/stone
+(throwables) are additionally jointly capped per 60x60 chunk and to a 3.5u minimum spacing
+across every non-tree prop type (`PROP_CHUNK_CAP`/`PROP_MIN_SPACING`, `engine/tuning.js`) —
+a deterministic post-filter run once after every prop generator finishes,
+`thinGeneratedProps()` in `generateMap()`; forest trees are unaffected), seven fixed `Landmark`
 groups (fire tower, stone marker, drowned car, lightning-split oak, radio
 mast, chapel steeple, cave — static,
 no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`; `oak`

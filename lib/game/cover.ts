@@ -127,6 +127,60 @@ export function overlapsExistingCover(
   return false;
 }
 
+// ---- cross-category prop density (LUL-2247) --------------------------------
+// overlapsExistingCover() above runs DURING generateCover()'s rng loop and only
+// ever compares a candidate against props from that same loop (log/rock/bramble/
+// tree), using each prop's own half-extent as its clearance radius. It says
+// nothing about reeds (generateReeds(), a separate loop that runs later and
+// appends into the same coverData array), bog trees (generateBogTrees(), its
+// own array) or stones (generateThrowables()/throwableData) -- and nothing
+// about a per-area density ceiling at all. thinProps() is the post-hoc,
+// cross-category version of the same idea: given every non-tree prop for this
+// map in generation order, keep the first one to claim a location and reject
+// anything that lands within `minSpacing` of an already-kept prop (regardless
+// of kind) or that would push its chunk+kind over `caps[kind]`. Draws no RNG --
+// safe to run after every generator has already consumed its own stream.
+//
+// `chunkIndexFn` is injected rather than imported from the engine (which owns
+// TREE_CHUNK_SIZE/TREE_CHUNKS_PER_AXIS/half as module-scope state) so this stays
+// pure and unit-testable with a trivial fixture chunking function.
+export interface SpacedProp {
+  x: number;
+  z: number;
+  kind: string;
+}
+
+export function thinProps<T extends SpacedProp>(
+  list: readonly T[],
+  minSpacing: number,
+  caps: Readonly<Record<string, number>>,
+  chunkIndexFn: (x: number, z: number) => number,
+): T[] {
+  const grid: SpatialGrid<T> = new Map();
+  const chunkCounts = new Map<string, number>();
+  const minSq = minSpacing * minSpacing;
+  const kept: T[] = [];
+
+  for (const item of list) {
+    const cap = caps[item.kind];
+    const chunkKey = cap !== undefined ? `${chunkIndexFn(item.x, item.z)}:${item.kind}` : '';
+    if (cap !== undefined && (chunkCounts.get(chunkKey) ?? 0) >= cap) continue;
+
+    let tooClose = false;
+    for (const other of neighbourhood(grid, item.x, item.z, CELL)) {
+      const dx = item.x - other.x, dz = item.z - other.z;
+      if (dx * dx + dz * dz < minSq) { tooClose = true; break; }
+    }
+    if (tooClose) continue;
+
+    kept.push(item);
+    const k = gridKey(Math.floor(item.x / CELL), Math.floor(item.z / CELL));
+    (grid.get(k) ?? grid.set(k, []).get(k)!).push(item);
+    if (cap !== undefined) chunkCounts.set(chunkKey, (chunkCounts.get(chunkKey) ?? 0) + 1);
+  }
+  return kept;
+}
+
 // ---- which cover kinds block the player's own movement (LUL-384, LUL-1642) --
 // coverBlockedR() below already skipped 'tree' (its circle-grid collision via
 // blockedR()/grid is separate, so re-blocking it here would be a double
