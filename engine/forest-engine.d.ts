@@ -312,6 +312,16 @@ declare global {
        * button (mobile) render. Returns the stone's position, or null if no
        * untaken stone exists or the grab was rejected. */
       qaGrabThrowable?: () => { x: number; z: number } | null;
+      /** LUL-2202: teleports within THROWABLE_PICKUP_RADIUS of the first untaken
+       * stone WITHOUT grabbing it -- unlike qaGrabThrowable, this leaves the real
+       * KeyE/pickup() path for the test to drive. Returns the stone's position,
+       * or null if every stone is taken. */
+      qaTeleportNearThrowable?: () => { x: number; z: number } | null;
+      /** LUL-2202: places the first predator of `kind` a few units inside
+       * THROWABLE_NOISE_RADIUS of where the player's next throw would land, reset
+       * to a plain roaming state (state: 'roam', hunt: false, alert: 0). Returns
+       * its predators index, or null if that species didn't spawn this seed. */
+      qaStagePredatorNearThrowLanding?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number } | null;
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
