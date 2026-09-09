@@ -147,8 +147,17 @@ export const LW = 50;             // lake wisps
 export const DUST = 350;          // ambient dust particles
 export const BW = 26;             // baby beacon wisps
 export const BSP = 70;            // win-burst particles
-export const BOG_TREES = 360;
+// LUL-2225: shrunk from 360 alongside the patch itself (BOG_OUTER_RADIUS
+// 135 -> 45, lib/game/bog.ts) so tree density inside the small patch stays
+// comparable to before, not "the same forest plus more trees" on a quarter
+// as much ground.
+export const BOG_TREES = 30;
 export const COVER_PROPS = 880;
+// LUL-2225: reeds get their own budget, no longer COVER_PROPS -- they're
+// placed only in the ring between BOG_INNER_RADIUS and BOG_OUTER_RADIUS
+// (they ARE the boundary a player reads), which is a much smaller target
+// area than the old 135-unit disc COVER_PROPS was tuned against.
+export const BOG_REEDS = 120;
 
 // LUL-195: wind silently decides scent outcomes; the ambient dust drift is the
 // only player-visible tell. Speed is tuned for legibility, not to match
