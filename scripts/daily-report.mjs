@@ -92,7 +92,22 @@ export const SECTIONS = [
     key: 'seo',
     title: 'SEO & discovery',
     conventionalPrefixes: [],
-    subjectKeywords: [],
+    // Subject keywords, not just paths: real SEO commits routinely touch
+    // app/layout.tsx or lib/site.ts too (metadata plumbing), and those paths
+    // are generic enough that the game-features app/ pattern also claims
+    // them -- LUL-602. Keyword match runs before the path-pattern loop for
+    // every section, so this wins on subject text alone regardless of which
+    // other files the commit touches.
+    subjectKeywords: [
+      /\bseo\b/i,
+      /\bsitemap\b/i,
+      /\brobots\.txt\b/i,
+      /\bopengraph\b/i,
+      /\bopen graph\b/i,
+      /\bjson-ld\b/i,
+      /\bgoogle-site-verification\b/i,
+      /\bsearch console\b/i,
+    ],
     pathPatterns: [/^app\/sitemap\.ts$/, /^app\/robots\.ts$/, /opengraph/i],
   },
   {

@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5313 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4692, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5342 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4721, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -344,8 +344,12 @@ one geometry builder (`makePredator()`), differentiated by the
   next to `SNIFF_STANDOFF` so the two can't drift apart) so the warning still
   reads once the predator has settled at its standoff distance.
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
-  nearest predator switches straight to `hunt` (relentless, ignores LOS
-  break) — `tick()`.
+  nearest predator switches straight to `hunt` and comes for you at full
+  speed. LUL-2246: losing sight while `hunt` is active now sets a 25s
+  `FORCE_HUNT_LOCK` (`engine/tuning.js`) and routes into the same blind-chase
+  leash a scent pickup uses (`scentLock`, LUL-23), instead of collapsing to
+  the slower `investigate`/`approach` sub-phase — the escalation is now
+  actually relentless, not just labeled that way. `tick()`.
 - **Wolf only**: coordinate as a pack. The instant one wolf chases, the other
   two path to flanking points ±60° off the
   player's last movement heading (`updateWolfPack()`).
@@ -1193,11 +1197,11 @@ design doc as turning horror into radar.
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L3151) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3097),
+  reset to 0 on `enter()` (L3171) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L4265: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L4838: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1251,7 +1255,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L4765, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L4794, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
