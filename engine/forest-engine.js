@@ -3819,6 +3819,45 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       ? { state: audio.ctx.state, started: started, soundOn: soundOn, masterGain: audio.master.gain.value }
       : { state: null, started: started, soundOn: soundOn, masterGain: null };
   };
+
+  // LUL-2121: deterministic lose-sequence trigger for the local QA tester.
+  // Unlike qaTriggerDeath (LUL-2169, above), this validates kind/cause and
+  // reports whether THIS call actually landed a fresh death, so a caller can
+  // assert a rejection (before enter(), during pickingUp, after a win, or
+  // while already dead) as well as a success. Goes through the real
+  // triggerDeath so payout, pushState(deathVisible/deathKind/deathCause),
+  // hasDied persistence, playDeathVideo and deathAudio all run -- never
+  // fakes state.
+  //
+  // Deviation from the ticket's illustrative `triggerDeath(kind,cause);
+  // return dead;`: canTriggerDeath() (lib/game/outcome.ts) does not gate on
+  // `entered` at all (a real death is only unreachable pre-entry because
+  // nothing drives the AI/player before the gate, not because the guard
+  // checks it), and plain `return dead` reports `true` for the "already
+  // dead" rejection case since `dead` was already true going in -- neither
+  // matches this ticket's own acceptance criteria ("false ... before
+  // enter() ... or when already dead"). Added an explicit `entered` check
+  // and a before/after comparison so the return value means "this call
+  // triggered a fresh death", which is false in all four rejection cases
+  // and true only on an actual transition. triggerDeath/canTriggerDeath
+  // themselves are untouched.
+  window.ForestEngine.qaForceDeath = function(kind = 'wolf', cause = 'hunt'){
+    if(!entered) return false;
+    if(kind !== 'wolf' && kind !== 'bear' && kind !== 'lion') return null;
+    if(cause !== 'hunt' && cause !== 'chase' && cause !== 'charge') return null;
+    const wasDead = dead;
+    triggerDeath(kind, cause);
+    return dead && !wasDead;
+  };
+  window.ForestEngine.qaProbeDeath = function(){
+    return {
+      dead, deathShown, cutsceneSkippable,
+      sinceDeath: dead ? clock.elapsedTime - deathStart : null,
+      video: deathVideo ? { currentTime: deathVideo.currentTime, ended: deathVideo.ended,
+                            paused: deathVideo.paused, readyState: deathVideo.readyState,
+                            display: deathVideo.style.display } : null,
+    };
+  };
 }
 
 // ---- Audio debug readout (LUL-1112, founder-reachable on real iPhone) ------
