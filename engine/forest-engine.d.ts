@@ -44,6 +44,12 @@ declare global {
        * current map. No UI wires this yet (LUL-26) -- it's how a test exercises hard
        * mode's "child spawns beyond the bog" before that UI exists. */
       qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
+      /** LUL-2225: regenerates the map with an explicit seed, the same
+       * generateMap() every other map-gen path calls -- unlike regenMap()/
+       * restart() (both draw Math.random()), this lets a test reproduce an
+       * exact layout after qaSetDifficulty('hard'), for pinned-seed blackout
+       * spawn coverage. */
+      qaRegenerateMap?: (seed: number) => void;
       /** LUL-2225: the child's world position, its distance from home, and
        * whether the direct route home crosses the bog's full-bogginess core
        * (lib/game/bog.ts routeCrossesBog) -- replaces the old `inBog` field

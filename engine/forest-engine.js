@@ -3207,6 +3207,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // lets a test pin the 'hard' baby-spawn seam directly, without also
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
+  // LUL-2225: both regenMap() and restart() draw a fresh Math.random() seed --
+  // neither lets a test reproduce an exact layout after calling
+  // qaSetDifficulty('hard'), which is what pinned-seed blackout-spawn
+  // coverage needs (setDifficulty()'s own comment: "difficulty changes always
+  // take effect on the next restart()"). Calls the real generateMap(seed),
+  // the same function every other map-gen path calls -- not a fake state,
+  // just a parameterized seed instead of a random one.
+  window.ForestEngine.qaRegenerateMap = function(seed){ generateMap(seed >>> 0); };
   window.ForestEngine.qaProbeBaby = function(){
     return { x: baby.x, z: baby.z, distHome: Math.hypot(baby.x, baby.z), routeCrossesBog: routeCrossesBog(0, 0, baby.x, baby.z) };
   };
