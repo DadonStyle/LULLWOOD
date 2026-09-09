@@ -1023,6 +1023,17 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   panel, z-index 20), which does the same. `#chargePrompt` needed no HUD-layer
   gate: the engine already resets `chargeVisible: false` in both `arriveHome()` and
   `triggerDeath()` (`engine/forest-engine.js`).
+  LUL-2231: LUL-2131's `MobileControls.tsx` unmount left two gaps. First, its
+  sticks/buttons (z-index 30/31) were never gated on `GameMenu.tsx`'s own open
+  `.menuPanel` (z-index 21) -- nothing in that pairing unmounts for the other, so
+  the E/Jump/Hide/Veil buttons and both `Stick`s sat on top of "Sound: on"/
+  "Settings..." and ate their taps. `GameMenu.tsx` now reports its `open` state up
+  via an `onOpenChange` callback (`useEffect` on `open`); `Hud.tsx` holds that in
+  `menuOpen` state and passes it to `MobileControls`, whose early-return became
+  `if (winVisible || deathVisible || menuOpen) return null`. Second, both `Stick`s
+  rendered unconditionally -- only the button rows above them were gated on
+  `entered` -- so they also sat over the pre-entry gate screen's instructions;
+  both are now wrapped in `{entered && (...)}` to match.
   LUL-2158: `#hint` (engine-owned, see above) is *not* reset by `triggerDeath()`/
   `arriveHome()` either, and can't be gated in React like the elements above since
   it isn't React state — its opacity is a plain `enter()`-owned 5s fade timer

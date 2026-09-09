@@ -484,6 +484,9 @@ export default function Hud({
   const mobile = useState(() => isMobile())[0];
   // LUL-26: difficulty + accessibility settings panel.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // LUL-2231: whether GameMenu's panel is open -- gates MobileControls so its
+  // sticks/buttons don't render on top of the menu (see MobileControls.tsx).
+  const [menuOpen, setMenuOpen] = useState(false);
   const captionVisible = useCaptionToast(state.captionsOn, state.captionId);
 
   // LUL-1194: the keyboard is otherwise dead on end screens (isPlaying() gates
@@ -538,6 +541,7 @@ export default function Hud({
           heldThrowable={state.heldThrowable}
           winVisible={state.winVisible}
           deathVisible={state.deathVisible}
+          menuOpen={menuOpen}
         />
       ) : (
         <DesktopControls />
@@ -608,7 +612,7 @@ export default function Hud({
         </button>
       </div>
 
-      <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} />
+      <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} onOpenChange={setMenuOpen} />
       <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       {/* LUL-26: closed captions for predator calls -- the only warning
