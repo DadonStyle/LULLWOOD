@@ -25,7 +25,12 @@ export type AnalyticsEventInput =
   | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number; difficulty: Difficulty }
   | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; carrying: boolean; difficulty: Difficulty }
   | { event: 'session_length'; duration_ms: number; reached_gameplay: boolean; session_id: string }
-  | { event: 'feature_engagement'; feature: string; action: string; carrying?: boolean };
+  | { event: 'feature_engagement'; feature: string; action: string; carrying?: boolean }
+  // LUL-2239: production-only signal from lib/engine-contract.ts's assertEngineContract()
+  // -- fires when init()'s return object (engine/forest-engine.js) is missing a key
+  // ENGINE_ACTION_KEYS promises exists (the LUL-1697 failure mode). Should never fire in
+  // practice; existing only to catch it if the type-level guard is ever bypassed.
+  | { event: 'engine_contract_violation'; missing_keys: string[] };
 
 export type AnalyticsEvent = AnalyticsEventInput & {
   ts: number;

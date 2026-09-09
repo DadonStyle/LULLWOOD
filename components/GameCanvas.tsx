@@ -6,6 +6,7 @@ import { track, startSessionTracking } from '@/lib/analytics';
 import { initTelemetryTransport } from '@/lib/telemetry-transport';
 import { isMobile } from '@/lib/input-mode';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
+import { assertEngineContract } from '@/lib/engine-contract';
 
 // CSS verbatim from the original single-file prototype (M2 wiki plan:
 // game/port-plan) -- its lines 6-99. The prototype is no longer in the tree;
@@ -549,7 +550,14 @@ export default function GameCanvas() {
       // LUL-276: also takes an explicit inputMode so desktop mouse-look and
       // mobile touch input bind disjoint listeners inside the engine instead
       // of both being live and writing player.yaw/pitch at once.
-      setActions(init(setHud, mobile ? 'mobile' : 'desktop'));
+      // LUL-2239: runtime half of the founder's engine/React contract rule --
+      // ENGINE_ACTION_KEYS (lib/engine-contract.ts) only catches EngineActions
+      // gaining a key the type-level check doesn't know about; it can't see whether
+      // init()'s own return object actually included every key (LUL-1697). Assert
+      // against what init() actually returned, right after it returns.
+      const engineActions = init(setHud, mobile ? 'mobile' : 'desktop');
+      assertEngineContract(engineActions);
+      setActions(engineActions);
       disposeEngine = dispose;
     });
 
