@@ -8,6 +8,7 @@ import {
   blankLiterals,
   checkCitations,
   checkResolvedSymbols,
+  checkSymbolsCitedInDoc,
   classify,
   declarationSpans,
   diffAgainstBaseline,
@@ -229,6 +230,33 @@ test('checkResolvedSymbols reports a duplicate-declared symbol as ambiguous, not
   assert.deepEqual(broken, [{ symbol: 'dup', reason: 'ambiguous' }]);
 });
 
+// ---- checkSymbolsCitedInDoc (LUL-709) --------------------------------------
+//
+// checkResolvedSymbols only proves a whitelisted symbol still exists in the
+// engine -- it never checked the doc still cites it. This is the sibling
+// check: a whitelist entry whose citation was deleted from docs/ELEMENTS.md
+// (while the engine symbol itself is untouched) must fail, not report green.
+
+test('checkSymbolsCitedInDoc passes when every symbol has a backticked citation', () => {
+  const doc = 'See `tick()` for the loop and `PSPEC[kind].detect` for detection.';
+  const { missing } = checkSymbolsCitedInDoc(['tick', 'PSPEC'], doc);
+  assert.deepEqual(missing, []);
+});
+
+test('checkSymbolsCitedInDoc reports a symbol whose citation was deleted from the doc', () => {
+  const doc = 'Only `tick()` is mentioned here.';
+  const { missing } = checkSymbolsCitedInDoc(['tick', 'depositScent'], doc);
+  assert.deepEqual(missing, ['depositScent']);
+});
+
+test('checkSymbolsCitedInDoc does not match a bare mention outside backticks', () => {
+  // "tick" appearing in prose (not backticked) is not the doc's citation
+  // convention -- it must not count as proof the citation survived.
+  const doc = 'The engine has a tick loop, described elsewhere.';
+  const { missing } = checkSymbolsCitedInDoc(['tick'], doc);
+  assert.deepEqual(missing, ['tick']);
+});
+
 // ---- end-to-end against the real files ------------------------------------
 
 test('the gate actually asserts something on the real doc -- it is not vacuously green', () => {
@@ -242,11 +270,33 @@ test('the gate actually asserts something on the real doc -- it is not vacuously
   const r = checkCitations(doc, engine);
   const spans = declarationSpans(engine);
   const resCheck = checkResolvedSymbols(resolvedSymbols, spans);
+  const citedCheck = checkSymbolsCitedInDoc(resolvedSymbols, doc);
 
   assert.ok(r.total > 30, `expected >30 remaining L<n> citations, got ${r.total}`);
   assert.ok(resolvedSymbols.length >= RESOLVED_SYMBOLS_FLOOR,
     `only ${resolvedSymbols.length} resolved-symbol citations (floor ${RESOLVED_SYMBOLS_FLOOR})`);
   assert.equal(resCheck.broken.length, 0, 'a resolved-symbol citation is broken on the real doc/engine');
+  assert.equal(citedCheck.missing.length, 0,
+    `a whitelisted symbol has no surviving citation in ${citedCheck.missing}`);
+});
+
+test('deleting a whitelisted symbol\'s citation from the real doc is caught (LUL-709)', () => {
+  // The failure this ticket was filed for: docs/ELEMENTS.md drops the
+  // sentence citing a whitelisted symbol while the engine symbol itself is
+  // untouched. checkResolvedSymbols alone would stay green; this must not.
+  const doc = fs.readFileSync('docs/ELEMENTS.md', 'utf8');
+  const resolvedSymbols = loadResolvedSymbols(
+    fs.readFileSync('scripts/elements-resolved-symbols.json', 'utf8'));
+  const victim = resolvedSymbols[0];
+  const stripped = doc.split('\n')
+    .map((line) => line.includes('`' + victim) ? line.replaceAll('`' + victim, '') : line)
+    .join('\n');
+  assert.notEqual(stripped, doc, `expected at least one backticked \`${victim}\` line in the doc`);
+
+  const before = checkSymbolsCitedInDoc(resolvedSymbols, doc);
+  assert.deepEqual(before.missing, []);
+  const after = checkSymbolsCitedInDoc(resolvedSymbols, stripped);
+  assert.deepEqual(after.missing, [victim]);
 });
 
 test('injecting drift into a still-L<n>-cited citation is caught', () => {

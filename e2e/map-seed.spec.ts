@@ -67,9 +67,16 @@ test.describe('runtime seed determinism — predator behavior', () => {
     const STEPS = Math.round(GAME_SECONDS / FIXED_DT);
 
     async function runAndCaptureStates(page: import('@playwright/test').Page) {
+      // LUL-2283: qaSetFixedStep() before enter(), not after -- enter()'s
+      // gate click sets `entered=true` synchronously (all `playing`/
+      // updatePredators() gate on), so the real RAF loop was moving
+      // predators with real, frame-boundary-sensitive wall-clock dt for the
+      // full 1200ms fade/pointer-lock wait inside enter() before this used
+      // to freeze it. Same total wait, but nothing engine-visible happens
+      // during it once the clock is parked first.
       await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
-      await enter(page);
       await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+      await enter(page);
       await qaHook(page, 'qaAdvance', STEPS);
       // Capture all 9 predators (3 species × 3 individuals)
       const states = [];

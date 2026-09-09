@@ -44,8 +44,19 @@ declare global {
        * current map. No UI wires this yet (LUL-26) -- it's how a test exercises hard
        * mode's "child spawns beyond the bog" before that UI exists. */
       qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
-      /** LUL-25: the child's world position and whether it's past the forest/bog seam. */
-      qaProbeBaby?: () => { x: number; z: number; inBog: boolean };
+      /** LUL-2225: regenerates the map with an explicit seed, the same
+       * generateMap() every other map-gen path calls -- unlike regenMap()/
+       * restart() (both draw Math.random()), this lets a test reproduce an
+       * exact layout after qaSetDifficulty('hard'), for pinned-seed blackout
+       * spawn coverage. */
+      qaRegenerateMap?: (seed: number) => void;
+      /** LUL-2225: the child's world position, its distance from home, and
+       * whether the direct route home crosses the bog's full-bogginess core
+       * (lib/game/bog.ts routeCrossesBog) -- replaces the old `inBog` field
+       * (whether the child itself stood in the bog), which stopped meaning
+       * anything once the patch shrank small enough that no point inside it
+       * is ever >= BLACKOUT_MIN_RADIUS from home. */
+      qaProbeBaby?: () => { x: number; z: number; distHome: number; routeCrossesBog: boolean };
       /** LUL-2122: babyLight's live intensity/distance plus the pickup/carry/taken
        * state flags, so a test can assert the interact button actually reached
        * pickup() instead of only that it rendered and was tappable. */
@@ -67,6 +78,13 @@ declare global {
         baby: { x: number; z: number };
         trees: { x: number; z: number }[];
         predators: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number }[];
+      };
+      /** LUL-2247: per-chunk prop counts by category (cover/reed/bogTree/stone), the minimum pairwise centre-to-centre distance across every non-tree prop, the total count, and how many reeds land inside CONFIG.lake.clear (must be 0) -- all read from the finished, post-thin map. */
+      qaProbePropDensity?: () => {
+        perChunk: Array<{ chunk: number; cover: number; reed: number; bogTree: number; stone: number }>;
+        minPairSpacing: number | null;
+        total: number;
+        reedsInLakeClear: number;
       };
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
@@ -105,6 +123,8 @@ declare global {
       qaIsApproachPianoActive?: () => boolean;
       /** LUL-1620: places the given species `dx/dz` from the player's current position (player untouched) and arms it one tick from the investigate/sniff give-up transition; returns {idx,x,z} or null if the species doesn't resolve. */
       qaStagePredatorGiveUp?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-2246: places predator `kind` dx/dz from the player, parks every other spawned predator out of range, and fast-forwards `sinceClose` to 29.9s so the next real tick(s) cross the 30s force-hunt threshold through the engine's own logic. Returns `{idx,x,z}`, or null if the species isn't spawned. */
+      qaStageForceHuntApproach?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-1620: teleports predator[idx] onto its own current roam waypoint so the next tick's arrival/repick runs immediately; returns {x,z} or null if idx doesn't resolve. */
       qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
       /** LUL-212: teleports the player to the first generated hiding spot (bramble/log), no predator involved. Returns the spot's kind, or null if none were generated. */
@@ -112,6 +132,9 @@ declare global {
       /** LUL-211: the player's world position and heading -- the only way a test can
        * see where movement actually ended up (player is init()-closure-local). */
       qaProbePlayer?: () => { x: number; z: number; yaw: number };
+      /** LUL-2189/LUL-2207: the module-scope wind unit vector (windX/windZ), set once per
+       * generateMap() by generateWind() -- map-constant, not per-frame. */
+      qaProbeWind?: () => { windX: number; windZ: number };
       /** LUL-211/LUL-288: places the player off the -x face of the first reachable
        * cover prop of `kind`, facing it, so a held KeyW walks straight into it. The
        * standoff distance is rotation-aware (props render at prop.ry), so it clears
@@ -309,11 +332,25 @@ declare global {
        * button (mobile) render. Returns the stone's position, or null if no
        * untaken stone exists or the grab was rejected. */
       qaGrabThrowable?: () => { x: number; z: number } | null;
+      /** LUL-2202: teleports within THROWABLE_PICKUP_RADIUS of the first untaken
+       * stone WITHOUT grabbing it -- unlike qaGrabThrowable, this leaves the real
+       * KeyE/pickup() path for the test to drive. Returns the stone's position,
+       * or null if every stone is taken. */
+      qaTeleportNearThrowable?: () => { x: number; z: number } | null;
+      /** LUL-2202: places the first predator of `kind` a few units inside
+       * THROWABLE_NOISE_RADIUS of where the player's next throw would land, reset
+       * to a plain roaming state (state: 'roam', hunt: false, alert: 0). Returns
+       * its predators index, or null if that species didn't spawn this seed. */
+      qaStagePredatorNearThrowLanding?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number } | null;
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
        * is active. */
       qaTeleportNearMission?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
+      /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
+       * fields qaTeleportNearMission returns as a side effect, for a test that
+       * only needs to read, not teleport. */
+      qaProbeMission?: () => { kind: 'deepwater'; status: 'active' | 'complete'; x: number; z: number } | null;
       /** LUL-2230: exactly what the last frame drew for the scent trail visual
        * -- `points.length` always equals the draw range the renderer used
        * this tick, so a test can assert the picture directly instead of
@@ -345,6 +382,31 @@ declare global {
        * and the in-memory one-time gate, so a single boot can prove the
        * caption is first-time-only twice in the same test. */
       qaResetScentCaption?: () => void;
+      /** LUL-2225: bogginess (biomeAt) and the two multipliers derived from
+       * it (bogSpeedMultiplier/bogNoiseMultiplier) at an arbitrary world
+       * point -- lets a test sample the patch's shape/edge directly instead
+       * of re-deriving lib/game/bog.ts's math from player position. */
+      qaProbeBog?: (x: number, z: number) => { bogginess: number; speedMul: number; noiseMul: number };
+      /** LUL-2225: counts of the live map's own generated data that fall
+       * inside the bog's keep-clear radius (lib/game/bog.ts bogKeepClear) --
+       * every field should read 0 except `treesInsideCore`, which is
+       * expected to be small but nonzero (sparse forest inside the patch,
+       * not none; see the tree-culling comment in generateMap()).
+       * `treesInsideCore` counts only non-culled trees within
+       * BOG_INNER_RADIUS specifically (not the wider keep-clear radius used
+       * for everything else), matching the density check the spec's e2e
+       * section computes against. */
+      qaProbeBogKeepClear?: () => {
+        coverInside: number;
+        reedsInsideCore: number;
+        throwablesInside: number;
+        treesInsideCore: number;
+        landmarksInside: number;
+      };
+      /** LUL-2225: teleports the player to an arbitrary world point --
+       * generic version of qaTeleportNearBaby/qaTeleportHome, for staging a
+       * position (e.g. the bog center) that isn't a fixed named landmark. */
+      qaTeleportTo?: (x: number, z: number) => void;
     };
   }
 }

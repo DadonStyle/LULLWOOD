@@ -27,13 +27,29 @@ test.describe('predator determinism with seeded RNG', () => {
     page: page1,
     context,
   }) => {
-    // Boot first page and enter the game
+    const FIXED_DT = 0.02;
+    const GAME_SECONDS = 5;
+    const STEPS = Math.round(GAME_SECONDS / FIXED_DT);
+
+    // Boot first page, then LUL-2283: park the real RAF loop via
+    // qaSetFixedStep() *before* enter() rather than after. enter()'s gate
+    // click sets `entered=true` synchronously, which is all `playing` (and
+    // therefore updatePredators()) gates on -- so every real-wall-clock frame
+    // between the click and the next qaSetFixedStep() call was already
+    // moving this page's predators, off the browser's real (unthrottled,
+    // frame-boundary-sensitive) tick(), not the seeded/fixed-step one.
+    // Freezing the clock first means enter()'s click and its 1200ms fade/
+    // pointer-lock wait (both DOM-only, not engine-frame-driven) can no
+    // longer advance predator state at all before qaAdvance() does, on
+    // either page.
     await boot(page1, { qaHooks: true, seed: QA_PINNED_SEED });
+    await qaHook(page1, 'qaSetFixedStep', FIXED_DT);
     await enter(page1);
 
     // Boot second page in parallel (same seed, same entry)
     const page2 = await context.newPage();
     await boot(page2, { qaHooks: true, seed: QA_PINNED_SEED });
+    await qaHook(page2, 'qaSetFixedStep', FIXED_DT);
     await enter(page2);
 
     // Initial states should match immediately after enter
@@ -49,11 +65,6 @@ test.describe('predator determinism with seeded RNG', () => {
     // time for predators to roam, potentially lose sight, and enter
     // investigate/sniff cycles -- the exact behaviors this test needs to
     // verify are deterministic.
-    const FIXED_DT = 0.02;
-    const GAME_SECONDS = 5;
-    const STEPS = Math.round(GAME_SECONDS / FIXED_DT);
-
-    await Promise.all([page1, page2].map((p) => qaHook(p, 'qaSetFixedStep', FIXED_DT)));
     await Promise.all([page1, page2].map((p) => qaHook(p, 'qaAdvance', STEPS)));
 
     // Final comparison: predator positions and states must be identical

@@ -58,6 +58,7 @@ import {
   overlapsTreeCanopy,
   overlapsTreeTrunk,
   overlapsExistingCover,
+  thinProps,
   canopyRadiusAtEye,
   rollCoverPropShape,
   pickAvoidDirection,
@@ -87,6 +88,11 @@ import {
   bogMaskLevel,
   pickHardBabyPosition,
   clearOfLandmarks,
+  bogKeepClear,
+  routeCrossesBog,
+  BOG_CENTER,
+  BOG_INNER_RADIUS,
+  BOG_OUTER_RADIUS,
 } from '@/lib/game/bog';
 import {
   backOffPoint,
@@ -111,7 +117,7 @@ import {
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { CAVE_IMMUNITY_TIME, isCaveImmune } from '@/lib/game/cave';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL } from '@/lib/game/stamina';
-import { PICKUP_GLOW_PEAK, carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity, CARRY_GLOW_BASE, CARRY_HALO_BASE } from '@/lib/game/childGlow';
+import { carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity } from '@/lib/game/childGlow';
 import {
   freshEmbersState,
   computeWinPayout,
@@ -173,10 +179,11 @@ import { nearestLandmarkName } from '@/lib/game/chronicle';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
-  STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
+  STAR, LW, DUST, BW, BSP, BOG_TREES, BOG_REEDS, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
   VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
+  FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -559,6 +566,12 @@ function inSpawn(x,z){ return x*x+z*z < 40; }
 
 function addAllToGrid(arr){
   for(const t of arr){
+    // LUL-2225: skip forest trees culled for standing inside the bog patch's
+    // dense-core threshold (see the treeData.push() below) -- a culled tree
+    // is parked off-screen in layoutTreeChunks() and must not still block
+    // movement/LOS via this grid. bogTreeData/landmarkData entries never
+    // carry `culled`, so this is a no-op for them.
+    if(t.culled) continue;
     const k = key(Math.floor(t.x/CELL), Math.floor(t.z/CELL));
     (grid.get(k) || grid.set(k, []).get(k)).push(t);
   }
@@ -653,7 +666,7 @@ function buildCoverGrid(){
 function treesNear(x, z){ return neighbourhood(grid, x, z, CELL, WRAP_SPAN); }
 function generateCover(){
   coverData = [];
-  for(const t of treeData) if(t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
+  for(const t of treeData) if(!t.culled && t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
 
   let tries = 0, placed = 0;
   while(placed < COVER_PROPS && tries < COVER_PROPS*25){
@@ -668,6 +681,13 @@ function generateCover(){
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
     placed++;
   }
+  // LUL-2225: drop any non-tree prop (log/rock/bramble) that landed inside
+  // the bog's keep-clear radius -- nothing but reeds (generateReeds(), own
+  // ring-only placement) is allowed in the patch. Filtering the finished
+  // array, not rejecting inside the loop above, keeps the loop's rng() draw
+  // count/order byte-identical for every existing seed (see the LUL-2212
+  // comment above this function on why that stream must not move).
+  coverData = coverData.filter(c => c.kind === 'tree' || !bogKeepClear(c.x, c.z, 0));
   buildCoverGrid();
 }
 function generateThrowables(){
@@ -687,6 +707,12 @@ function generateThrowables(){
     throwableData.push({ x, z, taken: false });
     placed++;
   }
+  // LUL-2225: drop any throwable inside the bog's keep-clear radius. Filters
+  // the finished array rather than rejecting inside the loop, so the loop's
+  // rng() draw count/order stays byte-identical for every existing seed.
+  // layoutThrowableMeshes() already parks any index past throwableData's new,
+  // shorter length off-map (its `!t` branch) -- no rng consumed there either.
+  throwableData = throwableData.filter(t => !bogKeepClear(t.x, t.z, 0));
 }
 function layoutCoverMeshes(){
   const counts = { log: 0, rock: 0, bramble: 0, reed: 0 };
@@ -740,17 +766,34 @@ function nearLandmarks(x, z, pad){
 // triple they close over. Draw order per tree is rotation then brightness,
 // matching what both inlined copies did, since this feeds the seeded rng
 // stream (see the LUL-25 ordering comment above generateBogTrees()).
-function layoutTreePool(meshParts, data, count){
+// LUL-2247 review fix: `keptSet`, when passed, must be a Set of the exact
+// object references from `data` that survived thinGeneratedProps() -- an
+// entry not in the set is hidden (parked off-map like a past-`count` slot)
+// but still draws its rotation/tint rng() below. This is load-bearing: the
+// caller now passes the FULL pre-thin bog tree array so this function's
+// total rng() consumption stays fixed at data.length regardless of how many
+// of those trees the density thin later drops, for any seed. Before this
+// fix, the caller passed the already-thinned array, which shrank draw count
+// by exactly 2*(thinned-away count) and silently reshuffled every rng()
+// consumer after this call (placeCave(), pickMission()) for any seed dense
+// enough to trigger the thin -- caught in review on PR #556.
+function layoutTreePool(meshParts, data, count, keptSet){
   for(let i=0; i<count; i++){
-    if(i < data.length){
-      const t = data[i];
-      dummy.position.set(t.x, 0, t.z);
-      dummy.rotation.set(0, rng()*Math.PI*2, 0);
-      dummy.scale.setScalar(t.s);
+    const t = i < data.length ? data[i] : null;
+    const visible = !!t && (!keptSet || keptSet.has(t));
+    if(t){
+      const ry = rng()*Math.PI*2;   // always drawn when t exists -- see comment above
+      if(visible){
+        dummy.position.set(t.x, 0, t.z);
+        dummy.rotation.set(0, ry, 0);
+        dummy.scale.setScalar(t.s);
+      } else {
+        dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
+      }
     } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
     dummy.updateMatrix();
     for(const p of meshParts) p.setMatrixAt(i, dummy.matrix);
-    const b = i < data.length ? 0.72 + rng()*0.5 : 1;
+    const b = t ? 0.72 + rng()*0.5 : 1;   // always drawn when t exists, same reason as ry above
     tintCol.setRGB(b*0.92, b, b*0.86);
     meshParts[1].setColorAt(i, tintCol); meshParts[2].setColorAt(i, tintCol);
   }
@@ -819,14 +862,23 @@ function layoutTreeChunks(data){
   // the RNG stream this produces is byte-identical to before this ticket.
   for(let i=0; i<data.length; i++){
     const t = data[i];
-    dummy.position.set(t.x, 0, t.z);
-    dummy.rotation.set(0, rng()*Math.PI*2, 0);
-    dummy.scale.setScalar(t.s);
+    // LUL-2225: yaw/brightness rng() draws happen unconditionally, in the
+    // same order as before this ticket, regardless of `culled` -- only the
+    // matrix written below differs. This is what keeps QA_PINNED_SEED byte-
+    // identical: culling changes what's rendered, never the rng stream.
+    const yaw = rng()*Math.PI*2;
+    const b = 0.72 + rng()*0.5;
+    if(t.culled){
+      dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
+    } else {
+      dummy.position.set(t.x, 0, t.z);
+      dummy.rotation.set(0, yaw, 0);
+      dummy.scale.setScalar(t.s);
+    }
     dummy.updateMatrix();
     const trio = treeChunkTrios[treeChunkIndex(t.x, t.z)];
     const slot = localIndex[i];
     for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
-    const b = 0.72 + rng()*0.5;
     tintCol.setRGB(b*0.92, b, b*0.86);
     trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
   }
@@ -860,7 +912,10 @@ function generateBogTrees(){
     const s = 0.6 + rng()*1.3;   // thinner cover -- same scatter shape, smaller sizes than the forest
     bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
-  layoutTreePool(bogParts, bogTreeData, BOG_TREES);
+  // LUL-2247: layoutTreePool() moved out of here -- it now runs from
+  // generateMap(), after thinGeneratedProps() has filtered bogTreeData, so it
+  // can render only the surviving (post-thin) trees while still drawing
+  // rng() for the full pre-thin array (review fix -- see layoutTreePool()).
 }
 // Reeds: tall cover volumes, bog band only. Pushed into the same coverData
 // array log/rock/bramble use (see coverMeshes.reed above) so canSee()'s LOS
@@ -877,18 +932,80 @@ function generateBogTrees(){
 // prop that's supposed to be fully walkable. This was the actual failure
 // e2e/lul211-founder-report.spec.ts caught on the QA-pinned seed -- a reed
 // 0.5 units from a bramble's centre.
+//
+// LUL-2225: reeds are now the patch's visible boundary, not scattered
+// through its interior -- restricted to the ring between BOG_INNER_RADIUS
+// and BOG_OUTER_RADIUS (the old `biomeAt(x,z) <= 0` reject let them land
+// anywhere in the disc, including the dense core). Own budget (BOG_REEDS),
+// no longer COVER_PROPS -- a much smaller target ring than the old 135-unit
+// disc COVER_PROPS was sized for.
+//
+// LUL-2247 review fix: this loop never checked `inLake()`/`overlapsTreeTrunk()`
+// at all, unlike every other prop generator in this file (generateCover()
+// runs both). `inLake()` is a no-op after LUL-2225's backmerge -- BOG_CENTER
+// is 131 units from CONFIG.lake, well outside BOG_OUTER_RADIUS, so no ring
+// candidate can ever be inLake() -- kept anyway per the ticket/review ask and
+// as a guard if the bog or lake geometry ever moves again. overlapsTreeTrunk()
+// is the one that matters today: ordinary (non-culled, non-bog) forest trees
+// are NOT excluded from the 25-45 ring, and overlapsExistingCover() below
+// deliberately skips `kind==='tree'` entries (lib/game/cover.ts), so without
+// this a reed can still land on top of a forest tree trunk in the ring.
+// Declared reshuffle (LUL-2212/LUL-2225 precedent): both new checks can
+// reject a candidate before its `ry` rng() draw, so the exact ry stream for
+// this loop -- and only this loop, since it's the last rng() consumer before
+// thinGeneratedProps(), which draws none -- shifts for any seed where either
+// check now fires. No other generator's stream is affected.
 function generateReeds(){
   let tries = 0, placed = 0;
-  while(placed < COVER_PROPS && tries < COVER_PROPS*200){   // LUL-1483: same acceptance-rate drop as generateBogTrees()
+  while(placed < BOG_REEDS && tries < BOG_REEDS*200){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
-    if(biomeAt(x, z) <= 0) continue;
+    const dist = Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z);
+    if(dist < BOG_INNER_RADIUS || dist > BOG_OUTER_RADIUS) continue;
     if(nearLandmarks(x, z, 3)) continue;
+    if(inLake(x, z)) continue;
     const r = 0.5 + rng()*0.4, h = 1.3 + rng()*0.9;
+    if(overlapsTreeTrunk(x, z, r, treesNear(x, z))) continue;
     if(overlapsExistingCover(x, z, r, coverData)) continue;
     coverData.push({ x, z, hx: r, hz: r, y: h*0.5, kind: 'reed', ry: rng()*Math.PI*2 });
     placed++;
   }
+  buildCoverGrid();
+}
+// LUL-2247: cross-category density pass. Runs once, after generateCover(),
+// generateThrowables(), generateBogTrees() and generateReeds() have all
+// finished (so coverData/bogTreeData/throwableData are each at their final,
+// pre-thin size for this map) and before any of their layout*()/buildGrid()
+// consumers run. Builds one combined, order-preserving list -- cover (log/
+// rock/bramble) and reeds first (already in generation order inside
+// coverData), then bog trees, then stones -- tags each with the category key
+// thinProps()/PROP_CHUNK_CAP use, thins it, then filters the three real
+// arrays down to exactly the kept objects (by reference, so no new object
+// shapes are introduced downstream). 'tree' entries in coverData are excluded
+// from the combined list entirely -- forest trees are not a "non-tree
+// object" and already have their own spacing discipline; they pass through
+// unfiltered below.
+//
+// buildCoverGrid() was already run twice above (end of generateCover(), end
+// of generateReeds()) against the pre-thin coverData -- coverGrid is a
+// separate Map of object references built at call time, so it still holds
+// entries this pass is about to drop. Re-running it here (same call the two
+// mutators above already make after touching coverData) keeps coverGrid in
+// sync with the array coverBlockedR()/hasLOS()/canSee()/findHideSpot() are
+// meant to reflect; skipping it would leave invisible collision/LOS from
+// props whose meshes this ticket has already moved off-map.
+function thinGeneratedProps(){
+  const combined = [];
+  for(const c of coverData) if(c.kind !== 'tree') combined.push({ x: c.x, z: c.z, kind: c.kind === 'reed' ? 'reed' : 'cover', ref: c });
+  for(const b of bogTreeData) combined.push({ x: b.x, z: b.z, kind: 'bogTree', ref: b });
+  for(const t of throwableData) combined.push({ x: t.x, z: t.z, kind: 'stone', ref: t });
+
+  const kept = thinProps(combined, PROP_MIN_SPACING, PROP_CHUNK_CAP, treeChunkIndex);
+  const keptRefs = new Set(kept.map(k => k.ref));
+
+  coverData = coverData.filter(c => c.kind === 'tree' || keptRefs.has(c));
+  bogTreeData = bogTreeData.filter(b => keptRefs.has(b));
+  throwableData = throwableData.filter(t => keptRefs.has(t));
   buildCoverGrid();
 }
 // LUL-25: 'normal' | 'hard'. Driven by setDifficulty() below (LUL-372) --
@@ -935,25 +1052,68 @@ function generateMap(seed){
 
   treeData = [];
   let tries = 0;
+  // LUL-2225: "sparse inside the bog, not none" -- every 4th tree that lands
+  // within BOG_INNER_RADIUS of BOG_CENTER is kept, the rest marked `culled`.
+  // Deterministic (a counter, no extra rng() draw) so this cannot perturb
+  // the seeded tree stream below it; layoutTreeChunks() parks culled trees
+  // off-screen and addAllToGrid()/generateCover() skip them for collision/
+  // hide-cover. Scoped to BOG_INNER_RADIUS specifically (not the wider
+  // biomeAt > 0.5 threshold, which reaches ~35 units at this geometry) so
+  // the counter directly controls the density qaProbeBogKeepClear() and the
+  // spec's e2e section measure, rather than a proxy region whose overlap
+  // with the measured radius varies by seed.
+  let bogCoreSeen = 0;
   while(treeData.length < CONFIG.trees && tries < CONFIG.trees*25){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
     const s = 0.7 + rng()*1.7;
-    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
+    let culled = false;
+    if(Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z) < BOG_INNER_RADIUS){
+      culled = (bogCoreSeen % 4 !== 0);
+      bogCoreSeen++;
+    }
+    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled });
   }
   layoutTreeChunks(treeData);
   buildGrid();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
   generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
-  generateThrowables(); layoutThrowableMeshes();
+  generateThrowables();
   generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
   pushState({ windX, windZ });   // LUL-1724: map-constant, pushed once, not per-frame
   // LUL-25: everything below is new and runs last -- see the comment on
   // generateBogTrees() for why the ordering is load-bearing.
   generateBogTrees();
-  generateReeds(); layoutCoverMeshes();
+  // LUL-2215: generateCover() (above) ran before bog trees existed, so its
+  // overlapsTreeCanopy() check for walkable kinds (log/bramble -- see the
+  // comment on that call) couldn't see bog tree canopies. A log/bramble could
+  // land overlapping one; canopyBlockedR() blocks the player unconditionally
+  // within a tree's canopy circle regardless of what's on the ground, so the
+  // player hits the exact same invisible-wall-mid-span bug LUL-2212 fixed for
+  // cover-vs-cover overlap, but for cover-vs-bog-tree. Filtering the finished
+  // coverData array here, rather than reordering generateBogTrees() before
+  // generateCover() or rejecting inside generateCover()'s loop, keeps every
+  // existing rng() draw -- tree, baby, predator, and generateCover()'s own
+  // stream -- byte-identical for every seed; same precedent as the LUL-2225
+  // bog-keep-clear filter in generateCover() above.
+  coverData = coverData.filter(c =>
+    c.kind === 'tree' ||
+    coverKindBlocksMovement(c.kind) ||
+    !overlapsTreeCanopy(c.x, c.z, Math.max(c.hx, c.hz), bogTreeData)
+  );
+  generateReeds();
+  // LUL-2247 review fix: capture the pre-thin array by reference before
+  // thinGeneratedProps() reassigns bogTreeData to a filtered copy --
+  // layoutTreePool() below needs the full array so its rng() draw count
+  // stays fixed at bogTreeData.length regardless of what the thin drops
+  // (see the comment on layoutTreePool() itself).
+  const bogTreeDataPreThin = bogTreeData;
+  thinGeneratedProps();   // LUL-2247: cross-category spacing + per-chunk caps -- draws no rng
+  layoutTreePool(bogParts, bogTreeDataPreThin, BOG_TREES, new Set(bogTreeData));   // moved out of generateBogTrees() -- needs the full array + kept set, not the thinned array alone
+  layoutThrowableMeshes();   // moved from right after generateThrowables() -- needs the thinned array too
+  layoutCoverMeshes();
   buildGrid();   // picks up bogTreeData for blockedR()/canopyBlockedR()
   placeLandmarks();
   buildGrid();   // LUL-374: re-run now landmarkData is populated, so blockedR()/predators'
@@ -988,6 +1148,27 @@ ring.rotation.x = -Math.PI/2; ring.position.set(CONFIG.lake.x, 0.06, CONFIG.lake
 
 const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3 * LEGACY_LIGHT_SCALE, 75, 2);
 lakeLight.position.set(CONFIG.lake.x, 7, CONFIG.lake.z); scene.add(lakeLight);
+
+// ---- Bog patch ground (LUL-2225) ------------------------------------------
+// The single flat `ground` plane above gave the bog no visible boundary at
+// all -- a player could only learn where the slow ground was by getting
+// slow. Two concentric discs, same "flat mesh just above `ground`" approach
+// as `water`/`ring` above: a wide dark/wet disc out to BOG_OUTER_RADIUS (the
+// full falloff, where bogginess reaches 0) and a darker one at
+// BOG_INNER_RADIUS (the full-bogginess core) sitting fractionally higher so
+// it doesn't z-fight. Static geometry, no rng draw, no shader -- a
+// ripple/water-shader pass is a legitimate follow-up, not a blocker here.
+const bogOuterGround = new THREE.Mesh(new THREE.CircleGeometry(BOG_OUTER_RADIUS, 64),
+  new THREE.MeshStandardMaterial({ color: 0x0c1a14, roughness: 0.6, metalness: 0.05 }));
+bogOuterGround.rotation.x = -Math.PI/2;
+bogOuterGround.position.set(BOG_CENTER.x, 0.015, BOG_CENTER.z);
+scene.add(bogOuterGround);
+
+const bogInnerGround = new THREE.Mesh(new THREE.CircleGeometry(BOG_INNER_RADIUS, 48),
+  new THREE.MeshStandardMaterial({ color: 0x08120f, roughness: 0.55, metalness: 0.1 }));
+bogInnerGround.rotation.x = -Math.PI/2;
+bogInnerGround.position.set(BOG_CENTER.x, 0.02, BOG_CENTER.z);
+scene.add(bogInnerGround);
 
 // ---- Home landmark: where the child must be carried (LUL-38) -------------
 // Deliberately minimal -- "reuse the spawn point" per the ticket's own scope,
@@ -1978,7 +2159,16 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pLakeMul; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
-      if(!canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
+      if(!canSee(p, dist)){
+        // LUL-2246: a live force-hunt lock means this collapse is the 30s escalation
+        // losing sight, not an ordinary hunt -- route into the existing scentLock blind-
+        // chase path (`p.state === 'chase'`, :2037) at full species speed instead of the
+        // 0.45x `approach` sub-phase (lib/game/predator.ts stepApproach()). Ordinary
+        // (non-escalated) hunts, e.g. LUL-26 preset `startHunting`, still fall through to
+        // the pre-existing investigate/approach collapse below, unchanged.
+        if(p.scentLock > 0){ p.state='chase'; p.hunt=false; }
+        else { p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
+      }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
@@ -2355,7 +2545,7 @@ const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
-    deathStart = 0, deathShown = false, scentEmitT = 0, enteredAt = 0,
+    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
@@ -2730,8 +2920,15 @@ function twinkle(vol, bright){
   o.connect(g); o2.connect(g2); g2.connect(g); g.connect(master); g.connect(conv);
   o.start(t); o2.start(t); o.stop(t+1.7); o2.stop(t+1.7);
 }
-// LUL-1307: swelling warm cue for arriving home -- the win fanfare (moved
-// here from pickup(), which used to spend it at the run's midpoint).
+// LUL-2281: swelling warm cue for the pickup/ascend cinematic -- fires at
+// pickStart (pickup()) so the ~7-10.5s swell builds through the ascend and
+// resolves right as fireBoom() fires at e>=9.3 (git show 0e55c85^, the
+// commit LUL-1307 reverted, called this playPickupMusic() at the same
+// call site). LUL-1307 had moved this to arriveHome() for the carry-home
+// leg; that leg is gone (LUL-2281), so this is back where the cinematic
+// it was authored for actually happens -- calling it from finishPickup()
+// (e>=11.3, after the boom and after winVisible is already pushed) left
+// the fanfare resolving several seconds into a static win screen.
 function playWinMusic(){
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t0 = ctx.currentTime;
@@ -2765,29 +2962,11 @@ function playWinMusic(){
   });
   later(() => { if(audio){ audio.wg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); audio.dg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); } }, 11000);
 }
-// LUL-1307: the pickup itself is no longer the win -- ramp wind/drone UP
-// (opposite of playWinMusic's duck) and sound one low note. Lifting the
-// child should read as the forest noticing, not a resolution.
-function playPickupCue(){
-  if(!audio || !soundOn) return;
-  const { ctx, master, conv } = audio, t0 = ctx.currentTime;
-  audio.wg.gain.setTargetAtTime(0.11, t0, 0.4);
-  audio.dg.gain.setTargetAtTime(0.09, t0, 0.4);
-  const o = ctx.createOscillator(); o.type='sine'; o.frequency.value = 87.31;   // low F2
-  const o2 = ctx.createOscillator(); o2.type='triangle'; o2.frequency.value = 87.31; o2.detune.value = 4;
-  const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(0.18, t0+0.6); g.gain.setValueAtTime(0.18, t0+1.6);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0+2.4);
-  o.connect(g); o2.connect(g); g.connect(master); g.connect(conv);
-  o.start(t0); o2.start(t0); o.stop(t0+2.5); o2.stop(t0+2.5);
-}
-// LUL-1635: mark the pickup->carry transition -- pickup() already sounded
-// playPickupCue() at the gather's start, 2.5s earlier; nothing marked the
-// moment carrying actually begins (speed and detection change here).
-// leafRustle() is hiding-spot foley (wrong theme), playPickupCue()'s drone
-// already fired, playWinMusic() is reserved for arriveHome() -- this is a
-// short weight-settling thump plus a soft rising two-note interval, reading
-// as "the load is now in your arms," not a fanfare.
+// LUL-1635: mark the pickup->carry transition -- short weight-settling
+// thump plus a soft rising two-note interval, reading as "the load is now
+// in your arms," not a fanfare. Dead since LUL-2281 (the carry-home leg
+// this scored is unreachable -- pickup() now wins outright) but left in
+// place per Decision 2, same as the carrying state machine it announces.
 function playCarryStartCue(){
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t = ctx.currentTime;
@@ -3133,13 +3312,50 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // lets a test pin the 'hard' baby-spawn seam directly, without also
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
-  window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: biomeAt(baby.x, baby.z) > 0 }; };
+  // LUL-2225: both regenMap() and restart() draw a fresh Math.random() seed --
+  // neither lets a test reproduce an exact layout after calling
+  // qaSetDifficulty('hard'), which is what pinned-seed blackout-spawn
+  // coverage needs (setDifficulty()'s own comment: "difficulty changes always
+  // take effect on the next restart()"). Calls the real generateMap(seed),
+  // the same function every other map-gen path calls -- not a fake state,
+  // just a parameterized seed instead of a random one.
+  window.ForestEngine.qaRegenerateMap = function(seed){ generateMap(seed >>> 0); };
+  window.ForestEngine.qaProbeBaby = function(){
+    return { x: baby.x, z: baby.z, distHome: Math.hypot(baby.x, baby.z), routeCrossesBog: routeCrossesBog(0, 0, baby.x, baby.z) };
+  };
   // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
   // "this world point stays on-canvas" for both the player arrow (which calls
   // w2m(player.x, player.z) in drawMinimap()) and the objective marker (which
   // calls w2m(baby.x, baby.z)) without needing to actually move either --
   // both draw calls go through this same function.
   window.ForestEngine.qaProbeMinimapPoint = function(x, z){ const [px, py] = w2m(x, z); return { px, py, mm: MM }; };
+  // LUL-2225: bogginess and its two derived multipliers at an arbitrary
+  // point, so a test can sample the patch's shape/edge directly (centre,
+  // the inner/outer radii, home, the lake, every LANDMARKS/CAVE position)
+  // without re-deriving lib/game/bog.ts's math from player position.
+  window.ForestEngine.qaProbeBog = function(x, z){
+    const bogginess = biomeAt(x, z);
+    return { bogginess, speedMul: bogSpeedMultiplier(bogginess), noiseMul: bogNoiseMultiplier(bogginess) };
+  };
+  // LUL-2225: counts of the live map's own generated data that fall inside
+  // the bog's keep-clear radius -- the "nothing else spawns inside it" half
+  // of this ticket's acceptance criteria, read back from the real arrays
+  // generateMap() populated (coverData/throwableData/treeData/landmarkData),
+  // not re-derived. treesInsideCore intentionally counts only non-culled
+  // trees strictly within BOG_INNER_RADIUS (sparse forest inside the patch
+  // is the target, not zero) -- every other field is expected to be 0.
+  window.ForestEngine.qaProbeBogKeepClear = function(){
+    const coverInside = coverData.filter(c => c.kind !== 'tree' && c.kind !== 'reed' && bogKeepClear(c.x, c.z, 0)).length;
+    const reedsInsideCore = coverData.filter(c => c.kind === 'reed' && Math.hypot(c.x - BOG_CENTER.x, c.z - BOG_CENTER.z) < BOG_INNER_RADIUS).length;
+    const throwablesInside = throwableData.filter(t => bogKeepClear(t.x, t.z, 0)).length;
+    const treesInsideCore = treeData.filter(t => !t.culled && Math.hypot(t.x - BOG_CENTER.x, t.z - BOG_CENTER.z) < BOG_INNER_RADIUS).length;
+    const landmarksInside = landmarkData.filter(l => bogKeepClear(l.x, l.z, 0)).length;
+    return { coverInside, reedsInsideCore, throwablesInside, treesInsideCore, landmarksInside };
+  };
+  // LUL-2225: generic teleport, for staging a position (e.g. the bog center)
+  // that isn't already a fixed named landmark like qaTeleportHome/
+  // qaTeleportNearBaby.
+  window.ForestEngine.qaTeleportTo = function(x, z){ player.x = x; player.z = z; };
   window.ForestEngine.qaProbeBabyLight = function(){
     return { intensity: babyLight.intensity, distance: babyLight.distance,
              carrying, pickingUp, taken: baby.taken };
@@ -3181,10 +3397,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   // LUL-1484: before/after perf baseline for the map-size growth (E3), and
   // the baseline E6's chunking work later has to justify itself against.
+  // LUL-2257: when post-processing is active, renderer.info.render has already
+  // been overwritten by the bloom/blur/composite blits by the time this reads
+  // it -- use the snapshot renderPost() captured right after the real scene
+  // render instead. Without post-processing there's only ever one render()
+  // call per frame (the fallback branch below renderPost's warm-up call, see
+  // the bottom of the file), so renderer.info.render is already the real
+  // scene stats and reading it live is correct.
   window.ForestEngine.qaProbePerf = function(){
+    const render = usePost ? lastScenePerf : renderer.info.render;
     return {
-      calls: renderer.info.render.calls,
-      triangles: renderer.info.render.triangles,
+      calls: render.calls,
+      triangles: render.triangles,
       elapsedTime: clock.elapsedTime,
     };
   };
@@ -3198,6 +3422,51 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       chunks: trios.length,
       totalInstances: trios.reduce((n, t) => n + t[0].count, 0),
       expected: treeData.length,
+    };
+  };
+
+  // LUL-2247: exposes the finished map's post-thin prop layout for e2e
+  // assertions -- per-chunk counts by category (same categories
+  // PROP_CHUNK_CAP keys), the minimum pairwise centre-to-centre distance
+  // across every non-tree prop (cover/reed/bogTree/stone) regardless of
+  // kind, and the total count. O(n^2) over the thinned (small) population --
+  // test-only, never called per-frame.
+  window.ForestEngine.qaProbePropDensity = function(){
+    const perChunkMap = new Map();
+    const bump = (chunk, cat) => {
+      const e = perChunkMap.get(chunk) || { chunk, cover: 0, reed: 0, bogTree: 0, stone: 0 };
+      e[cat]++; perChunkMap.set(chunk, e);
+    };
+    const all = [];
+    let reedsInLakeClear = 0;
+    for(const c of coverData){
+      if(c.kind === 'tree') continue;
+      const cat = c.kind === 'reed' ? 'reed' : 'cover';
+      bump(treeChunkIndex(c.x, c.z), cat);
+      all.push(c);
+      // LUL-2247 review fix: mandatory assertion from the ticket -- no reed
+      // may land inside CONFIG.lake.clear. inLake() is the exact check
+      // generateReeds() now runs at generation time (see its comment);
+      // reported here too so the e2e spec can assert the finished map
+      // rather than trusting the generator never regresses silently.
+      if(cat === 'reed' && inLake(c.x, c.z)) reedsInLakeClear++;
+    }
+    for(const b of bogTreeData){ bump(treeChunkIndex(b.x, b.z), 'bogTree'); all.push(b); }
+    for(const t of throwableData){ bump(treeChunkIndex(t.x, t.z), 'stone'); all.push(t); }
+
+    let minPairSpacing = Infinity;
+    for(let i = 0; i < all.length; i++){
+      for(let j = i+1; j < all.length; j++){
+        const dx = all[i].x - all[j].x, dz = all[i].z - all[j].z;
+        const d = Math.hypot(dx, dz);
+        if(d < minPairSpacing) minPairSpacing = d;
+      }
+    }
+    return {
+      perChunk: Array.from(perChunkMap.values()),
+      minPairSpacing: Number.isFinite(minPairSpacing) ? minPairSpacing : null,
+      total: all.length,
+      reedsInLakeClear,
     };
   };
 
@@ -3221,6 +3490,21 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // prop of a given kind, hold W, then read the position back.
   window.ForestEngine.qaProbePlayer = function(){
     return { x: player.x, z: player.z, yaw: player.yaw };
+  };
+
+  // LUL-2187/LUL-2209: raw mission state, mirrors qaProbeBaby's shape. Cheap
+  // sibling of qaTeleportNearMission (LUL-2123, :3966) -- that hook already
+  // returns the same fields as a side effect of teleporting, this is for a
+  // test that wants to read mission state without also moving the player.
+  window.ForestEngine.qaProbeMission = function(){
+    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z };
+  };
+
+  // LUL-2189/LUL-2207: exposes the module-scope wind unit vector (set once per
+  // generateMap() by generateWind(), engine/forest-engine.js:1591/1594) so a test
+  // can derive #windIndicator's expected rotation instead of hardcoding an angle.
+  window.ForestEngine.qaProbeWind = function(){
+    return { windX: windX, windZ: windZ };
   };
 
   // Drops the player `standoff` units on the -x side of the first reachable
@@ -3515,6 +3799,25 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.x = player.x + dx; p.z = player.z + dz;
     p.vx = p.vz = 0; p.charge = null; p.sightLock = null; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.hunt = false;
     p.state = 'investigate'; p.inv = 'sniff'; p.sniffsLeft = 1; p.sniffTimer = 0.001;
+    return { idx, x: p.x, z: p.z };
+  };
+
+  // LUL-2246: places predator[kind] dx/dz from the player and parks every other spawned
+  // predator far out of range, so it is guaranteed to be `nearP` (`:4811`). Sets
+  // `sinceClose = 29.9` -- one real tick past this crosses the 30s force-hunt threshold
+  // through updatePredators()'s own logic (`:4812`), not by setting hunt/scentLock directly,
+  // so the assertion exercises the real escalation, not a synthetic stand-in for it. dx/dz
+  // must put the predator beyond its detect radius (30-48u) for the escalation's collapse
+  // branch (`:1981`) to actually run; the caller is responsible for that distance.
+  window.ForestEngine.qaStageForceHuntApproach = function(kind, dx, dz){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    for(const other of predators){ if(other !== predators[idx]){ other.x = player.x + 800; other.z = player.z + 800; } }
+    const p = predators[idx];
+    p.x = player.x + dx; p.z = player.z + dz;
+    p.vx = p.vz = 0; p.charge = null; p.sightLock = null; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+    p.hunt = false; p.scentLock = 0; p.state = 'roam'; p.spotted = false;
+    sinceClose = 29.9;
     return { idx, x: p.x, z: p.z };
   };
 
@@ -3954,6 +4257,34 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     grabThrowable();
     return heldThrowable ? { x: throwableData[best].x, z: throwableData[best].z } : null;
   };
+  // [QA-HOOK] LUL-2202: stand within THROWABLE_PICKUP_RADIUS of the first untaken stone
+  // WITHOUT grabbing it (unlike qaGrabThrowable above) -- e2e/throwables.spec.ts needs the
+  // real KeyE/pickup() path under test, not a pre-grabbed hand. Mirrors qaTeleportNearBaby's
+  // +2 offset along one axis. Returns the stone's position, or null if every stone is taken.
+  window.ForestEngine.qaTeleportNearThrowable = function(){
+    const t = throwableData.find(t => !t.taken);
+    if(!t) return null;
+    player.x = t.x + 2; player.z = t.z;
+    return { x: t.x, z: t.z };
+  };
+  // [QA-HOOK] LUL-2202: places the first predator of `kind` a few units inside
+  // THROWABLE_NOISE_RADIUS of where the player's *next* throw would land (same landing
+  // formula as throwThrowable() below), reset to a plain roaming state (same fields
+  // qaOpenHideNearLion zeroes) so a test can prove a thrown stone's noise redirects an
+  // otherwise-roaming predator into 'investigate', not just that it was already hunting.
+  // Returns its predators index, or null if that species didn't spawn this seed.
+  window.ForestEngine.qaStagePredatorNearThrowLanding = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+    const landX = player.x + fx * THROWABLE_THROW_DISTANCE;
+    const landZ = player.z + fz * THROWABLE_THROW_DISTANCE;
+    p.x = landX + (THROWABLE_NOISE_RADIUS - 4); p.z = landZ;
+    p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+    p.state = 'roam'; p.hunt = false;
+    return { idx };
+  };
   // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
   // mission prompt and the objective are all on screen at once. Returns the target or null.
   window.ForestEngine.qaTeleportNearMission = function(){
@@ -4012,13 +4343,13 @@ function pickup(){
   const next = beginPickup(runState());
   if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
   baby.taken = next.babyTaken; pickingUp = next.pickingUp; babySetDown = next.setDown;
-  pickStart = clock.elapsedTime; hidden = false; lastHideSpot = null; coverProbeAccum = 0;
+  pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; lastHideSpot = null; coverProbeAccum = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found; carrying starts now
   pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   armsGroup.visible = true;
-  playPickupCue();
+  playWinMusic();
 }
 function buyVeilCharm(){
   if(!canBuyVeilCharm) return;
@@ -4069,18 +4400,59 @@ function throwThrowable(){
   }
 }
 function finishPickup(){
-  // LUL-1307: pickup is just the gather now -- the fanfare (playWinMusic,
-  // fireBoom) moved to arriveHome(), the actual win. Reset the glow
-  // properties the ~2.5s gather cinematic left mid-transition.
+  // LUL-2281: the cinematic's completion IS the win now (reverts LUL-1307,
+  // which used to hand off into the carry-home leg here -- see wiki
+  // decisions/lul-2281-pickup-is-the-win-2026-09-09 Decisions 1/3/4).
+  // playWinMusic() already fired at pickStart (pickup()) and fireBoom()
+  // already fired mid-cinematic at the e>=9.3 keyframe above (this is just
+  // the win bookkeeping, moved here verbatim from arriveHome(), which is
+  // now unreachable in real play but left in place per Decision 2).
   const next = completePickup(runState());
-  pickingUp = next.pickingUp; carrying = next.carrying;
-  playCarryStartCue();
+  pickingUp = next.pickingUp; won = next.won;
   armsGroup.visible = false;
+  babyGroup.visible = false;
+  if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
-  babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
-  bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.55;
-  halo.material.opacity = CARRY_HALO_BASE; babyLight.intensity = CARRY_GLOW_BASE;
   logChronicle('pickup');
+  // LUL-1611: winRevealed used to fire off a wall-clock later(...,1900) timer,
+  // which can outrun the dt-clamped boom burst (dt clamped to 0.05/frame,
+  // wiki systems/dt-clamp-vs-walltime) on a sustained sub-20fps device -- the
+  // reveal is polled against boomStart in tick() instead, so it fires exactly
+  // when the burst itself retires (undilated mirror of revealLoss()'s
+  // CUT_END poll on the death path).
+  const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
+  // LUL-303: updatePredators() (the only other place that clears the charge
+  // HUD) stops running once `playing` goes false here, so a charge/telegraph
+  // in flight at the exact moment of arrival would otherwise render on top
+  // of the win screen forever -- clear it the same way placePredators() does
+  // on restart.
+  activeCharges = 0;
+  // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
+  // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
+  // like carried/home, since computeDeathPayout's signature is untouched.
+  const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
+  // LUL-1666: secondary bonus is independent of missionBonus -- a player can
+  // win the secondary without ever completing the deepwater baseline this
+  // run (already unlocked from a prior run), or complete the baseline and
+  // still miss the secondary. Never gates the win itself (see spec S1).
+  const secondaryWon = mission ? secondaryComplete(mission, survivedSeconds) : false;
+  const secondaryBonus = secondaryWon
+    ? (mission.secondary.data.kind === 'retrieval' ? DEEPWATER_RETRIEVAL_BONUS : DEEPWATER_SPEEDRUN_BONUS)
+    : 0;
+  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus), embersSpent);
+  // LUL-1666: unlock is keyed on the *baseline* completing, independent of
+  // whether a secondary was even attempted this run -- guardrail is "complete
+  // the mission once", not "complete a secondary once". Persisted by
+  // components/Hud.tsx same as embersBalance below.
+  if(mission?.status === 'complete' && !missionUnlocks[mission.target.kind]){
+    missionUnlocks = { ...missionUnlocks, [mission.target.kind]: true };
+    pushState({ missionUnlocks: { ...missionUnlocks } });
+  }
+  embers = applyPayout(embers, payout);
+  logChronicle('win');
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
+    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 // LUL-1258: M2 Deepwater's completion sting -- reuses hollowLogSound's
 // noise-burst + oscillator chain (same procedural building blocks, no new
@@ -4239,7 +4611,7 @@ function restart(){
   heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
-  boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
+  pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   roostCooldown.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
@@ -4356,6 +4728,13 @@ function drawMinimapStatic(){
   for(const l of landmarkData){ const [px,py] = w2m(l.x, l.z); sx.fillRect(px-1.5, py-1.5, 3, 3); }
   const [lx,ly] = w2m(CONFIG.lake.x, CONFIG.lake.z);
   sx.beginPath(); sx.arc(lx, ly, CONFIG.lake.r*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(134,184,255,0.55)'; sx.fill();
+  // LUL-2225: the bog patch was never drawn here (LUL-1902 explicitly scoped
+  // the minimap out) -- with a small, keep-clear patch there's finally a
+  // single clean disc to draw, same pattern as the lake immediately above.
+  // Blackout still hides the whole minimap (see the LUL-1505-era caller),
+  // so this doesn't help blackout read the patch -- that's the point of it.
+  const [bx,by] = w2m(BOG_CENTER.x, BOG_CENTER.z);
+  sx.beginPath(); sx.arc(bx, by, BOG_OUTER_RADIUS*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(70,110,80,0.5)'; sx.fill();
 }
 function drawMinimap(){
   mmx.clearRect(0,0,MM,MM); mmx.drawImage(mmStatic, 0, 0);
@@ -4390,6 +4769,12 @@ void main(){
   gl_FragColor = vec4(col, 1.0);
 }`;
 let usePost = false, sceneRT, brightRT, blurA, blurB, fsScene, fsCam, fsQuad, matBright, matBlur, matComposite;
+// LUL-2257: renderer.info.render resets on every renderer.render() call (autoReset
+// defaults true), so by the time a frame finishes, it only reflects the last call --
+// the final post-process blit (a 2-triangle full-screen quad), not the forest.
+// Captured right after the real scene render in renderPost(), before the bloom/blur/
+// composite blits overwrite it, so qaProbePerf() can read the real scene stats.
+let lastScenePerf = { calls: 0, triangles: 0 };
 const resLevels = [Math.min(devicePixelRatio,1.5), Math.min(devicePixelRatio,1.1), 0.8].filter((v,i,a)=>a.indexOf(v)===i);
 let resIdx = 0, RES = resLevels[0];
 function makeTargets(){
@@ -4418,6 +4803,7 @@ function initPost(){
 function blit(mat, target){ fsQuad.material = mat; renderer.setRenderTarget(target || null); renderer.render(fsScene, fsCam); }
 function renderPost(t){
   renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
+  lastScenePerf = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
   matBright.uniforms.tDiffuse.value = sceneRT.texture; blit(matBright, brightRT);
   let src = brightRT;
   for(let i=0;i<3;i++){
@@ -4632,34 +5018,40 @@ function stepFrame(dt, t){
 
   if(pickingUp){
     const e = clock.elapsedTime - pickStart;
-    // LUL-1307: gather only -- the child stays in the player's hands, no
-    // ascent, no release. ~2.5s, retimed from the old cinematic's own
-    // e in [0,3.5] "gather" phase (the ascent that used to follow it is gone).
-    const lift   = key3(e, [[0,-0.95],[1.2,-0.5],[2.5,-0.35]]);
-    const fwd    = key3(e, [[0,-0.5],[1.2,-0.68],[2.5,-0.72]]);
-    const spread = key3(e, [[0,0.3],[1.2,0.15],[2.5,0.1]]);
-    const pitchA = key3(e, [[0,0.2],[1.2,-0.2],[2.5,-0.35]]);
+    // LUL-2281: restores the pre-LUL-1307 ascend/boom cinematic (git show
+    // 0e55c85, the commit LUL-1307 reverted) -- arms rise into frame, gather
+    // the child, lift, then release to the sky. LUL-1307 had shortened this
+    // to a 2.5s gather-only curve because completing it used to just start
+    // the carry-home leg; now completing it IS the win (see completePickup()
+    // in lib/game/outcome.ts), so the full "child goes to the sky and
+    // explodes" curve the founder asked for (LUL-2281) is what belongs here.
+    const lift   = key3(e, [[0,-0.95],[1.5,-0.9],[3.5,-0.35],[6,-0.05],[8,0.1],[9.5,-0.5],[10,-0.95]]);
+    const fwd    = key3(e, [[0,-0.5],[3.5,-0.72],[6,-0.78],[8,-0.72],[10,-0.5]]);
+    const spread = key3(e, [[0,0.3],[3.5,0.1],[6,0.13],[8,0.32],[10,0.3]]);
+    const pitchA = key3(e, [[0,0.2],[3.5,-0.35],[6,-0.8],[8,-1.05],[10,0.2]]);
     armL.position.set(-spread, lift, fwd); armL.rotation.set(pitchA, 0,  0.2);
     armR.position.set( spread, lift, fwd); armR.rotation.set(pitchA, 0, -0.2);
-    // the child settles into the player's hands, brightening slightly
-    const ay = key3(e, [[0,0],[1.2,0.15],[2.5,0.22]]);
-    babyGroup.visible = true; babyGroup.position.set(baby.x, ay, baby.z); babyGroup.rotation.y = e*0.6;
+    // the child ascends, brightening as it goes
+    const ay = key3(e, [[0,0],[3.5,0.25],[5,1.6],[7,12],[9,34],[10,55]]);
+    const boomed = e >= 9.3;
+    babyGroup.visible = !boomed; babyGroup.position.set(baby.x, ay, baby.z); babyGroup.rotation.y = e*0.6;
     halo.material.opacity = Math.min(0.5, 0.12 + e*0.05);
     bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5 + e*0.15;
-    babyLight.intensity = key3(e, [[0,1],[1.5,1.6],[2.5,PICKUP_GLOW_PEAK]]);
-    // camera holds position, glances toward the child being gathered --
-    // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly
-    // the camera motion the setting exists to remove) and just hold the
-    // player's own look direction instead.
+    babyLight.intensity = boomed ? 0 : key3(e, [[0,1],[4,3.2],[7,2],[9,3.5]]);
+    if(boomed && !pickBoomed){ pickBoomed = true; fireBoom(baby.x, ay, baby.z); }   // the child bursts into the sky -- the win moment's visual, finishPickup() below does the bookkeeping
+    // camera holds position and tilts up to follow the child, then the burst --
+    // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly the
+    // camera motion the setting exists to remove) and just hold the player's
+    // own look direction instead.
     camera.position.set(player.x, CONFIG.eye, player.z);
     if(motionReduced()){
       camera.rotation.set(player.pitch, player.yaw, 0);
     } else {
-      lookM.lookAt(camera.position, babyGroup.position, camera.up);
+      lookM.lookAt(camera.position, boomGroup.visible ? boomGroup.position : babyGroup.position, camera.up);
       lookQ.setFromRotationMatrix(lookM);
       camera.quaternion.slerp(lookQ, 0.06);
     }
-    if(e >= 2.5) finishPickup();
+    if(e >= 11.3) finishPickup();
   } else if(carrying){
     // LUL-38: carrying phase — child rides at the player's feet, glowing
     babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
@@ -4741,7 +5133,7 @@ function stepFrame(dt, t){
     }
     // if nobody has been near for 30s, the closest one comes straight for you
     if(nearDist < 20) sinceClose = 0; else sinceClose += dt;
-    if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; nearP.sightLock = null; spotOnto(nearP); sinceClose = 12; }
+    if(sinceClose > 30 && nearP && !hidden){ nearP.hunt = true; nearP.scentLock = FORCE_HUNT_LOCK; nearP.sightLock = null; spotOnto(nearP); sinceClose = 12; }
     // approach piano note: quicker + higher the nearer it is
     if(approaching && nearDist < 46){
       approachPianoActive = true;
@@ -4802,7 +5194,6 @@ function stepFrame(dt, t){
     const d = Math.hypot(t.x - player.x, t.z - player.z);
     if(d < nearestThrowableD) nearestThrowableD = d;
   }
-  const distHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);   // LUL-38
   // LUL-1258: M2 Deepwater -- distance/completion gate for the mission target,
   // computed the same way canPickup is above.
   const distMission = mission ? distToMissionTarget(mission, player.x, player.z) : Infinity;
@@ -4862,11 +5253,14 @@ function stepFrame(dt, t){
     if(caveImmuneJustEnded) caveImmuneEndCue();
     pushState({
       objectiveVisible: true, objectiveReady: canPickup || canBuyVeilCharm,
-      objectiveText: carrying
-        ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm  ·  E  to set her down'
-        : (canPickup ? (babySetDown ? 'Press  E  to lift her again' : 'Press  E  to lift the child')
-           : (canBuyVeilCharm ? 'Press  E  for a mist-charm  ·  15 embers'
-              : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'))),
+      // LUL-2281: collapsed to the single pre-carry prompt -- completePickup()
+      // now wins outright (lib/game/outcome.ts), so `carrying`/`babySetDown`
+      // never go true in real play and there is no carry/set-down state left
+      // to prompt for (wiki decisions/lul-2281-pickup-is-the-win-2026-09-09
+      // Decision 5).
+      objectiveText: canPickup ? 'Press  E  to lift the child'
+        : (canBuyVeilCharm ? 'Press  E  for a mist-charm  ·  15 embers'
+           : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
       statusVisible, statusText,
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,

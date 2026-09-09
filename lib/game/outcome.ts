@@ -58,13 +58,17 @@ export function beginPickup(s: RunState): RunState {
   return { ...s, babyTaken: true, pickingUp: true, setDown: false };
 }
 
-/** Cinematic finished -- hands off from pickingUp to carrying. The ~11.3s
+/** Cinematic finished -- this IS the win (LUL-2281: reverts LUL-1307's
+ * carry-home leg -- reaching the child and completing the ascend/explode
+ * cinematic wins outright, no walk-to-CONFIG.home leg after). The ~11.3s
  * timer that decides *when* this fires is the engine's concern (it reads
  * `clock.elapsedTime - pickStart`, a wall-clock read this module must not
- * touch); this is only the state transition once that decision is made. */
+ * touch); this is only the state transition once that decision is made.
+ * `carrying` is deliberately left false -- see arriveHome()'s comment below,
+ * that machinery is now unreachable in real play but stays in place. */
 export function completePickup(s: RunState): RunState {
   if (!s.pickingUp) return s;
-  return { ...s, pickingUp: false, carrying: true };
+  return { ...s, pickingUp: false, won: true };
 }
 
 /** Gate for the set-down input: only while actually carrying, and not mid-win/-death
@@ -98,6 +102,11 @@ export function beginSetDown(s: RunState): RunState {
 // second call site, or a reordered chain, would have let a dead player win.
 // Requiring `!dead` (and `!won`) here is the fix this wave exists to make
 // permanent -- do not simplify it away.
+// LUL-2281: completePickup() above now sets won directly, so carrying is
+// permanently false in real play and this whole path is unreachable --
+// left in place on purpose (CTO ruling, wiki decisions/lul-2281-pickup-is-
+// the-win-2026-09-09 Decision 2), not deleted, to keep this critical/ASAP
+// fix a one-line behaviour change. A follow-up cleanup ticket removes it.
 function arriveHomeAllowed(s: RunState): boolean {
   return s.carrying && !s.dead && !s.won;
 }

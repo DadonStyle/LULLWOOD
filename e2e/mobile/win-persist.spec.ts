@@ -41,13 +41,10 @@ test('win screen is mandatory and persists until the player restarts (mobile)', 
   const objective = await page.locator('#objective').textContent();
   expect(objective ?? '', 'qaTeleportNearBaby did not land within pickup range').toContain('Press');
 
+  // LUL-2281 (reverts LUL-1307): no carry-home leg -- pressing E and letting
+  // the ascend/explode cinematic finish wins outright.
   await page.keyboard.press('KeyE');
-  await expect
-    .poll(async () => (await page.locator('#objective').textContent()) ?? '', { timeout: 30_000 })
-    .toContain('Carry the child home');
-
-  await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
-  await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
 
   let elapsedMs = 0;
   for (const stepMs of [1000, 2000, 2000]) {

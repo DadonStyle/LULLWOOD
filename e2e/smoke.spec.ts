@@ -175,7 +175,7 @@ test.describe('HUD lifted to React (LUL-34)', () => {
   });
 });
 
-test.describe('lift the child / carry home / win', () => {
+test.describe('lift the child / win', () => {
   // Walking a computed straight line to the child (BABY_X/BABY_Z from the seeded
   // map RNG, see wiki:systems/headless-qa-rig) is not reliable here: this seed's
   // spawn sits in a pocket where -- confirmed by hand with a throwaway script --
@@ -184,13 +184,13 @@ test.describe('lift the child / carry home / win', () => {
   // property of "walk a straight vector across procedural terrain", not evidence
   // the lift/win state machine is broken, and scripting real obstacle-avoidance
   // navigation is out of scope for what this test is trying to prove. So it uses
-  // the `qaTeleportNearBaby` / `qaTeleportHome` hooks (engine/forest-engine.js,
-  // opt-in via `?qaHooks=1`, same convention as GameLoader's `__qaRemount`) to
-  // place the player at pickup range and then at the home landmark directly, and
-  // assert the actual mechanic: E -> cinematic -> carrying -> arrive home -> win
-  // screen. Reliable child-seeking navigation across arbitrary procedural terrain
-  // is filed separately (see LUL-21 handoff comment).
-  test('pressing E lifts the child; only reaching home (not the pickup) shows the win screen', async ({ page }) => {
+  // the `qaTeleportNearBaby` hook (engine/forest-engine.js, opt-in via
+  // `?qaHooks=1`, same convention as GameLoader's `__qaRemount`) to place the
+  // player at pickup range directly, and assert the actual mechanic: E ->
+  // ascend/explode cinematic -> win screen, no carry-home leg. Reliable
+  // child-seeking navigation across arbitrary procedural terrain is filed
+  // separately (see LUL-21 handoff comment).
+  test('pressing E lifts the child; only the ascend/explode cinematic finishing (not just pressing E) shows the win screen', async ({ page }) => {
     // LUL-1611: raised from 45s -- the win-reveal poll below is now dt-driven
     // (see engine/forest-engine.js's tick(), mirroring the death path) instead
     // of a wall-clock timer, so on this rig's slow software rendering the
@@ -209,23 +209,18 @@ test.describe('lift the child / carry home / win', () => {
 
     await page.keyboard.press('KeyE');
 
-    // LUL-38: pickup() no longer wins by itself -- the arms cinematic runs
-    // ~11.3s (engine/forest-engine.js key3 timeline) and finishPickup() then
-    // hands off to a "carry the child home" phase; only arriving at
-    // CONFIG.home flips the win screen. Poll the HUD text for that handoff
-    // instead of a fixed wall-clock sleep: game time and wall time diverge
-    // under this rig's software rendering (wiki systems/dt-clamp-vs-walltime),
-    // so a hardcoded ~11.3s wait would flake on a slower run.
-    await expect
-      .poll(() => readObjective(page), {
-        message: 'pickup did not hand off to the carry-home objective (LUL-38)',
-        timeout: 30_000,
-      })
-      .toContain('Carry the child home');
-    await expect(page.locator('#winScreen'), 'reaching pickup range alone must not win (LUL-38)').toBeHidden();
+    // LUL-2281 (reverts LUL-1307): completePickup() now wins outright once the
+    // ~11.3s ascend/explode cinematic (engine/forest-engine.js key3 timeline,
+    // boom at e>=9.3, finishPickup() at e>=11.3) finishes -- there is no more
+    // carry-home leg to hand off to. Assert pressing E does not win instantly
+    // (the cinematic must actually run), then poll for the win screen instead
+    // of a fixed wall-clock sleep: game time and wall time diverge under this
+    // rig's software rendering (wiki systems/dt-clamp-vs-walltime), so a
+    // hardcoded ~11.3s wait would flake on a slower run.
+    await page.waitForTimeout(2_000);
+    await expect(page.locator('#winScreen'), 'pressing E alone must not win instantly (LUL-2281)').toBeHidden();
 
-    await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
-    await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
     await assertInViewport(page.locator('#winScreen'), page, '#winScreen');
 
     // LUL-1609/LUL-1611: #winText fades in on winRevealed, mirroring #deathText's

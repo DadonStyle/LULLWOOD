@@ -147,8 +147,31 @@ export const LW = 50;             // lake wisps
 export const DUST = 350;          // ambient dust particles
 export const BW = 26;             // baby beacon wisps
 export const BSP = 70;            // win-burst particles
-export const BOG_TREES = 360;
+// LUL-2225: shrunk from 360 alongside the patch itself (BOG_OUTER_RADIUS
+// 135 -> 45, lib/game/bog.ts) so tree density inside the small patch stays
+// comparable to before, not "the same forest plus more trees" on a quarter
+// as much ground.
+export const BOG_TREES = 30;
 export const COVER_PROPS = 880;
+// LUL-2225: reeds get their own budget, no longer COVER_PROPS -- they're
+// placed only in the ring between BOG_INNER_RADIUS and BOG_OUTER_RADIUS
+// (they ARE the boundary a player reads), which is a much smaller target
+// area than the old 135-unit disc COVER_PROPS was tuned against.
+export const BOG_REEDS = 120;
+
+// LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two
+// non-tree generated props (cover/reed/bogTree/stone), regardless of kind,
+// as a post-filter over the finished map -- independent of and in addition
+// to the tighter, kind-specific overlap checks each generator already runs
+// at rng-draw time (overlapsTreeTrunk/overlapsTreeCanopy/overlapsExistingCover).
+export const PROP_MIN_SPACING = 3.5;
+
+// LUL-2247: per-60x60-chunk ceiling per prop category (same chunk grid as
+// TREE_CHUNK_SIZE, forest-engine.js's treeChunkIndex()). 'cover' covers
+// log/rock/bramble together (generateCover()'s non-reed, non-tree output);
+// reed/bogTree/stone (== throwableData) are their own categories since each
+// has its own generator and its own visual density expectation.
+export const PROP_CHUNK_CAP = { cover: 12, reed: 24, bogTree: 12, stone: 3 };
 
 // LUL-195: wind silently decides scent outcomes; the ambient dust drift is the
 // only player-visible tell. Speed is tuned for legibility, not to match
@@ -181,6 +204,13 @@ export const WOLF_BOG_MASK_STRENGTH = 0.7;
 // than the player, so you can't simply outrun them -- hiding is the real escape.
 // RUN itself is NOT exported here -- see the note at the top of this file.
 export const CHASE_GAP = 28;
+
+// LUL-2246: how long a force-hunt escalation (30s-no-contact -> straight for you) keeps
+// chasing blind once it loses sight, via the existing scentLock leash (LUL-23) below --
+// 25s at the bear's full species speed (13.9 u/s, the slowest of the three) covers 348u,
+// enough to cross the 480x480 map once. Deliberately not tied to SCENT_TRACK_TIME (8s,
+// lib/game/scent.ts) -- a force-hunt is a much stronger signal than a stale scent point.
+export const FORCE_HUNT_LOCK = 25;
 
 // LUL-26: difficulty presets. `night` is the existing tuning verbatim (every
 // multiplier is a no-op) and stays default. `activePerSpecies` trims the roster

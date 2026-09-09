@@ -31,13 +31,11 @@ test('win screen is mandatory and persists until the player restarts', async ({ 
   const objective = await readObjective(page);
   expect(objective, 'qaTeleportNearBaby did not land within pickup range').toContain('Press');
 
+  // LUL-2281 (reverts LUL-1307): completePickup() now wins outright once the
+  // ~11.3s ascend/explode cinematic finishes -- no carry-home leg, no
+  // qaTeleportHome() step, poll the win screen directly.
   await page.keyboard.press('KeyE');
-  await expect
-    .poll(() => readObjective(page), { timeout: 30_000 })
-    .toContain('Carry the child home');
-
-  await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
-  await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
 
   // Hold well past a single frame/tick, at several checkpoints -- if some
   // other path (a stray restart(), a re-init, a timer) were tearing the
@@ -87,13 +85,10 @@ test('a Space press right after the win reveal must not restart the run, but one
 
   await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());
   await page.waitForTimeout(300);
+  // LUL-2281 (reverts LUL-1307): no carry-home leg -- pressing E and letting
+  // the ascend/explode cinematic finish wins outright.
   await page.keyboard.press('KeyE');
-  await expect
-    .poll(() => readObjective(page), { timeout: 30_000 })
-    .toContain('Carry the child home');
-
-  await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
-  await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('#winText')).toHaveCSS('opacity', '1', { timeout: 8_000 });
 
   // Worst case: a key already in flight the instant the screen reveals.

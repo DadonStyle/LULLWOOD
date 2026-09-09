@@ -51,21 +51,21 @@ test('computeSurvival never exceeds the cap no matter how long you stall', () =>
 
 // ---- computeWinPayout / computeDeathPayout -----------------------------
 
-test('a win pays carried + home + depth + survival', () => {
+test('a win pays carried + rescue + depth + survival', () => {
   const p = computeWinPayout(78, 110);
   assert.equal(p.depth, 19);
   assert.equal(p.survival, 5);
   assert.equal(p.carried, 120);
-  assert.equal(p.home, 50);
+  assert.equal(p.rescue, 50);
   assert.equal(p.total, 120 + 50 + 19 + 5);
 });
 
-test('a death pays only depth + survival -- carried and home are zero', () => {
+test('a death pays only depth + survival -- carried and rescue are zero', () => {
   const p = computeDeathPayout(78, 110, 78);
   assert.equal(p.depth, 19);
   assert.equal(p.survival, 5);
   assert.equal(p.carried, 0);
-  assert.equal(p.home, 0);
+  assert.equal(p.rescue, 0);
   assert.equal(p.total, 19 + 5);
 });
 
@@ -80,13 +80,13 @@ test('a death that got deep pays more than a death that never left the treeline'
   assert.ok(deep.total > timid.total, 'cowardice must not be the best-paying strategy');
 });
 
-test('dying on the doorstep (carrying, at the win-median depth/survival) costs exactly carried+home vs. the equivalent win', () => {
+test('dying on the doorstep (carrying, at the win-median depth/survival) costs exactly carried+rescue vs. the equivalent win', () => {
   const win = computeWinPayout(78, 110);
   const death = computeDeathPayout(78, 110, 78);
   assert.equal(win.total - death.total, 120 + 50);
 });
 
-test('a win at zero distance and zero seconds still pays the flat carried+home', () => {
+test('a win at zero distance and zero seconds still pays the flat carried+rescue', () => {
   const p = computeWinPayout(0, 0);
   assert.equal(p.total, 120 + 50);
 });
@@ -118,7 +118,7 @@ test('win depth is unaffected by objective distance below the depth-62 ceiling: 
   const p = computeWinPayout(212, 50);
   assert.equal(p.depth, 53, 'win depth is never capped by objective distance');
   assert.equal(p.carried, 120);
-  assert.equal(p.home, 50);
+  assert.equal(p.rescue, 50);
 });
 
 test('win depth caps at 62 past that distance -- this is the blackout farm fix (LUL-1792)', () => {
@@ -127,12 +127,12 @@ test('win depth caps at 62 past that distance -- this is the blackout farm fix (
   assert.equal(computeDepth(1000), 250, 'uncapped depth would have been 250');
 });
 
-test('blackout win at the depth cap pays exactly 476E (depth 62 + survival 6 + carried 120 + home 50, x2.00 blackout, fields pre-scaled per LUL-1640)', () => {
+test('blackout win at the depth cap pays exactly 476E (depth 62 + survival 6 + carried 120 + rescue 50, x2.00 blackout, fields pre-scaled per LUL-1640)', () => {
   const p = computeWinPayout(1000, 120, 'blackout');
   assert.equal(p.depth, 124, 'depth field is already scaled by the tier multiplier (LUL-1640)');
   assert.equal(p.survival, 12, 'survival field is already scaled by the tier multiplier (LUL-1640)');
   assert.equal(p.total, 476);
-  assert.equal(p.depth + p.survival + p.carried + p.home, p.total, 'fields must sum to total by construction');
+  assert.equal(p.depth + p.survival + p.carried + p.rescue, p.total, 'fields must sum to total by construction');
 });
 
 // ---- LUL-1258: M2 Deepwater's mission bonus ------------------------------
@@ -154,7 +154,7 @@ test('the mission bonus is not payable on death -- computeDeathPayout has no mis
   // it through, by design (S2's forfeiture rule).
   const p = computeDeathPayout(212, 50, 78);
   assert.equal(p.carried, 0);
-  assert.equal(p.home, 0);
+  assert.equal(p.rescue, 0);
 });
 
 // ---- LUL-1666: secondary-objective bonus (retrieval/speedrun) -----------
@@ -197,7 +197,7 @@ test('the secondary bonus is not payable on death -- computeDeathPayout has no s
   // extended to secondaries by LUL-1666).
   const p = computeDeathPayout(212, 50, 78);
   assert.equal(p.carried, 0);
-  assert.equal(p.home, 0);
+  assert.equal(p.rescue, 0);
 });
 
 // ---- Tier multipliers (LUL-1412) ----------------------------------------
@@ -206,12 +206,12 @@ test('the secondary bonus is not payable on death -- computeDeathPayout has no s
 //   night:   ×1.75 win / ×1.35 loss
 //   blackout: ×2.00 win / ×1.25 loss
 
-// Win at d=96 (lantern band top, t=100s): base = depth(24)+survival(5)+carried(120)+home(50)=199
+// Win at d=96 (lantern band top, t=100s): base = depth(24)+survival(5)+carried(120)+rescue(50)=199
 // LUL-1640: total is the sum of each field scaled+rounded individually, not a
 // single round(sum*mult) -- night's 349 (not round(199*1.75)=348) is the
-// visible effect: home(50*1.75=87.5) rounds up to 88 on its own, one more
+// visible effect: rescue(50*1.75=87.5) rounds up to 88 on its own, one more
 // than round(199*1.75) would credit. This is intentional: it is what makes
-// depth+survival+carried+home reconcile with total (see the reconciliation
+// depth+survival+carried+rescue reconcile with total (see the reconciliation
 // tests below), which round(sum*mult) cannot guarantee in general.
 test('computeWinPayout tier multipliers pin the three win amounts', () => {
   const lw = computeWinPayout(96, 100, 'lantern');
@@ -253,20 +253,20 @@ test('computeWinPayout and computeDeathPayout default to lantern when tier is om
 });
 
 // LUL-1640: RunRecap (components/Hud.tsx) renders
-// `+depth · +survival · +carried · +home = total` and implies that sum --
+// `+depth · +survival · +carried · +rescue = total` and implies that sum --
 // true before LUL-1412 by coincidence (no multiplier existed), broken after
 // it because only `total` was scaled. Every tier must reconcile, not just lantern.
 test('win payout breakdown reconciles with total on all three tiers (LUL-1640)', () => {
   for (const tier of ['lantern', 'night', 'blackout'] as const) {
     const p = computeWinPayout(96, 100, tier);
-    assert.equal(p.depth + p.survival + p.carried + p.home, p.total, `${tier} win breakdown must sum to total`);
+    assert.equal(p.depth + p.survival + p.carried + p.rescue, p.total, `${tier} win breakdown must sum to total`);
   }
 });
 
 test('death payout breakdown reconciles with total on all three tiers (LUL-1640)', () => {
   for (const tier of ['lantern', 'night', 'blackout'] as const) {
     const p = computeDeathPayout(44, 0, 44, tier);
-    assert.equal(p.depth + p.survival + p.carried + p.home, p.total, `${tier} death breakdown must sum to total`);
+    assert.equal(p.depth + p.survival + p.carried + p.rescue, p.total, `${tier} death breakdown must sum to total`);
   }
 });
 

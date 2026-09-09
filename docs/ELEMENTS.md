@@ -69,16 +69,25 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5133 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4512, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5527 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4898, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
 - Pick up the child (`KeyE` / touch Interact) within 3.6 units, once
-  (`canPickup`, `pickup()`).
-- Carry the child home; walking speed is multiplied by `CONFIG.carryPaceMul`
-  (0.72) while carrying (`tick()`).
+  (`canPickup`, `pickup()`). **As of `LUL-2281`** (2026-09-09, reverts
+  `LUL-1307`'s carry-home leg), completing the ~11.3s ascend/explode
+  cinematic (`tick()`'s `pickingUp` branch, `finishPickup()`) IS the win --
+  `completePickup()` (`lib/game/outcome.ts`) sets `won` directly, not
+  `carrying`. There is no carry-home leg to walk anymore.
+- **Dead code, kept on purpose (`LUL-2281` Decision 2, wiki
+  `decisions/lul-2281-pickup-is-the-win-2026-09-09`):** the old carry-the-
+  child-home leg -- `carrying`/`setDown`/`arriveHome()`/`canArriveHome()`, and
+  the walking-speed multiplier `CONFIG.carryPaceMul` (0.72) applied while
+  carrying (`tick()`) -- is unreachable in real play now that `completePickup()`
+  never sets `carrying` true, but was left in place rather than ripped out for
+  a critical/ASAP fix. A follow-up cleanup ticket removes it.
 - Leave a scent trail while moving (not while hidden or standing still) —
   `depositScent()`, deposited every `SCENT_DEPOSIT_INTERVAL` (0.3s). LUL-1724:
   moving against the wind (`isMovingAgainstWind()` in `lib/game/scent.ts`, dot
@@ -134,11 +143,15 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   or the home landmark — none of `blocked()`/`blockedR()`/`coverBlockedR()`
   is ever called with those as the obstacle; every player/actor "contact" in
   this game is a **distance threshold**, not a solid-body collision
-  (pickup: `distBaby<3.6`; death: `dist<p.rad+1.3`; win: `dh<CONFIG.home.r`).
+  (pickup: `distBaby<3.6`; death: `dist<p.rad+1.3`). **As of `LUL-2281`**, win
+  is no longer a distance threshold at all -- it fires off the pickup
+  cinematic's own clock (`e>=11.3` in `tick()`'s `pickingUp` branch,
+  `finishPickup()`), not arrival at `CONFIG.home` (`dh<CONFIG.home.r`,
+  `canArriveHome()`, now dead code -- see above).
 - Cannot outrun any predator in a straight line — every species' tuned speed
   exceeds the player's (see Predator section); hiding/cover is the actual
   counterplay, not speed.
-- Cannot move while `pickingUp` (the 10s cinematic) or while `dead`/`won`.
+- Cannot move while `pickingUp` (the ~11.3s cinematic) or while `dead`/`won`.
 
 **Behaviours & logic**
 - Movement collision: `blocked(x,z) = blockedR(x,z,0.6) || coverBlockedR(x,z,0.6) || canopyBlockedR(x,z)`
@@ -344,8 +357,12 @@ one geometry builder (`makePredator()`), differentiated by the
   next to `SNIFF_STANDOFF` so the two can't drift apart) so the warning still
   reads once the predator has settled at its standoff distance.
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
-  nearest predator switches straight to `hunt` (relentless, ignores LOS
-  break) — `tick()`.
+  nearest predator switches straight to `hunt` and comes for you at full
+  speed. LUL-2246: losing sight while `hunt` is active now sets a 25s
+  `FORCE_HUNT_LOCK` (`engine/tuning.js`) and routes into the same blind-chase
+  leash a scent pickup uses (`scentLock`, LUL-23), instead of collapsing to
+  the slower `investigate`/`approach` sub-phase — the escalation is now
+  actually relentless, not just labeled that way. `tick()`.
 - **Wolf only**: coordinate as a pack. The instant one wolf chases, the other
   two path to flanking points ±60° off the
   player's last movement heading (`updateWolfPack()`).
@@ -525,15 +542,20 @@ one geometry builder (`makePredator()`), differentiated by the
   on a prop that's supposed to be fully walkable end to end. `generateReeds()`
   (a separate placement loop, runs after `generateCover()`) had no overlap
   check at all before LUL-2212 and now gets the same `overlapsExistingCover()`
-  guard. **Known remaining gap, not fixed by LUL-2212**: `generateCover()`'s
-  canopy check runs before `generateBogTrees()` populates bog trees, so a
-  Log/Bramble candidate can still end up under a *bog* tree's canopy
-  undetected (bog trees don't exist in the tree grid yet at that point) —
-  reproduces on the QA-pinned seed in
-  `e2e/lul211-founder-report.spec.ts`'s `log`/walkable-cover case; tracked as
-  a follow-up, not resolved here (see the ticket for the reasoning: fixing it
-  means reordering generation, which shifts the RNG stream more broadly than
-  this ticket's other two fixes and wasn't verified in the time available).
+  guard. **LUL-2215: bog-tree canopy gap, fixed.** `generateCover()`'s canopy
+  check runs before `generateBogTrees()` populates bog trees, so a Log/Bramble
+  candidate could end up under a *bog* tree's canopy undetected (bog trees
+  don't exist in the tree grid yet at that point) — reproduced on the
+  QA-pinned seed in `e2e/lul211-founder-report.spec.ts`'s `log`/walkable-cover
+  case. Fixed with a post-hoc filter in `generateMap()`, right after
+  `generateBogTrees()` runs: any surviving `coverData` entry of a walkable
+  kind (`!coverKindBlocksMovement()`) that overlaps a bog tree's canopy
+  (`overlapsTreeCanopy()` against `bogTreeData`) is dropped. Filtering the
+  finished array, not reordering generation or rejecting inside
+  `generateCover()`'s loop, keeps every existing rng() draw — tree, baby,
+  predator, and `generateCover()`'s own stream — byte-identical for every
+  seed; same precedent as the LUL-2225 bog-keep-clear filter earlier in
+  `generateCover()`.
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
@@ -1183,8 +1205,10 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L4188) and `triggerDeath()` (L4219).
-  The `difficulty` module-level variable is in scope at both sites. The economy
+  both `track()` call sites, now in `finishPickup()` (L4438, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L4543 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L4574). The `difficulty` module-level variable is in scope
+  at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
@@ -1193,22 +1217,22 @@ design doc as turning horror into radar.
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L2637),
-  reset to 0 on `enter()` (L3073) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3182),
+  reset to 0 on `enter()` (L3256) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L4265: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L4838: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
   screen is showing. It previews what `computeWinPayout()`'s depth+survival
   terms will bank if the run ends now — it does not include the win-only
-  `CARRIED`/`HOME` terms, since those only pay out on a live arrival.
+  `CARRIED`/`RESCUE` terms, since those only pay out on a live arrival.
 - Death forfeiture display: `RunRecap`'s death branch
   (`components/Hud.tsx` L339-340) shows a red
-  `-{CARRIED + HOME} lost (child & home, forfeited)` fragment instead of the
-  win branch's `+carried`/`+home` lines, making explicit that the win-only
-  `CARRIED`/`HOME` terms (both now exported from `lib/game/economy.ts` for
+  `-{CARRIED + RESCUE} lost (child & rescue, forfeited)` fragment instead of the
+  win branch's `+carried`/`+rescue` lines, making explicit that the win-only
+  `CARRIED`/`RESCUE` terms (both now exported from `lib/game/economy.ts` for
   this display) are forfeited on death rather than silently omitted.
 
 **What it can do**
@@ -1251,7 +1275,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L4482, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L4924, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1307,7 +1331,7 @@ design doc as turning horror into radar.
 - Cannot bind a new key or a new `EngineActions` method — the sole new player-facing action
   (mission completion) reuses the existing interact button/key, so it needs no new touch target
   and has no mobile-unreachable action.
-- Cannot pay out on death — the completion bonus is win-only, exactly like `CARRIED`/`HOME`.
+- Cannot pay out on death — the completion bonus is win-only, exactly like `CARRIED`/`RESCUE`.
 
 **Secondary objectives (LUL-1666, Phase 1 — `deepwater` only)**
 - **Implemented.** `MissionState.secondary: MissionSecondaryState | null` (`lib/game/mission.ts`)
@@ -1728,28 +1752,62 @@ registry's own merge.
 
 ---
 
-## The Bog (LUL-25 / LUL-1483 / LUL-1902)
+## The Bog (LUL-25 / LUL-1483 / LUL-1902 / LUL-2225)
 
 LUL-1902 replaced the 2D-noise-scattered biome (many patches, ~30-37% of the map) with a
-single fixed zone: `biomeAt(x, z)` now derives bogginess from distance to `BOG_CENTER`
+single fixed zone: `biomeAt(x, z)` derives bogginess from distance to `BOG_CENTER`
 (`lib/game/bog.ts`), radial falloff smoothstepped between `BOG_INNER_RADIUS` (full
-bogginess) and `BOG_OUTER_RADIUS` (dry), same edge-softness approach as before — the bog is
-now one discoverable place (~25% of the map), not ambient terrain variation. Cost model
-(`bogSpeedMultiplier`/`bogNoiseMultiplier`, reeds, bog trees, splash foley) is byte-for-byte
-unchanged from LUL-1483 — only *where* bogginess is nonzero changed. `oak`/`drownedCar`
-(below) still sit inside the zone without repositioning; `CONFIG.lake` and
-`CONFIG.home`/spawn are both explicitly carved out to stay dry, mirroring each other's
-pattern (`HOME_CLEAR_RADIUS`/`HOME_FADE_RADIUS`, `LAKE_CLEAR_RADIUS`/`LAKE_FADE_RADIUS`).
+bogginess) and `BOG_OUTER_RADIUS` (dry), same edge-softness approach as before. Cost model
+(`bogSpeedMultiplier`/`bogNoiseMultiplier`, splash foley) is byte-for-byte unchanged from
+LUL-1483 — only *where* bogginess is nonzero has changed, twice.
 
-**New elements it adds**: `BogTree` (90-instance thinner-cover twin of Tree,
-own `bogTreeData` array, merged into the shared `grid` for collision),
+**LUL-2225 (current shape)**: the founder rejected what LUL-2084 shipped for LUL-1902 --
+~24.9% of the map, with `oak`/`drownedCar` deliberately blended inside it. `BOG_CENTER`
+moved to `{x:-40,z:80}`, `BOG_OUTER_RADIUS` shrank 135→45 and `BOG_INNER_RADIUS` 35→25, so
+the patch is now **2.75% of the map, one small area with nothing else in it** — every
+`LANDMARKS` entry, `CAVE`, and every `ROOSTS` site sit strictly outside
+`BOG_OUTER_RADIUS` (`bogKeepClear()`, unit-tested as a static-data guard over all three
+lists), and `generateCover()`/`generateThrowables()` post-filter any log/rock/bramble/stone
+that lands inside it. Forest trees inside the patch's dense-core threshold
+(`biomeAt > 0.5`) are culled to 1-in-4 (deterministic index counter, no rng change) so the
+interior reads as sparse, not "the same forest plus more trees" — `qaProbeBogKeepClear()`
+reads all of this back from the live map. `CONFIG.lake` is now 131 units from `BOG_CENTER`
+(outside `BOG_OUTER_RADIUS` on its own), so the old lake carve-out in `lib/game/bog.ts` was
+dead code and was removed; `CONFIG.home`/spawn is still explicitly carved out to stay dry
+(`HOME_CLEAR_RADIUS`/`HOME_FADE_RADIUS`). The patch now has a visible boundary: two
+concentric ground discs (`bogOuterGround`/`bogInnerGround`, darker/wetter material than the
+base `ground` plane) and a matching disc on the minimap (`drawMinimapStatic()`) — the
+minimap was explicitly out of scope for LUL-1902 but a small patch finally gives it one
+clean shape to draw.
+
+Blackout's hard baby-spawn predicate changed with it: `pickHardBabyPosition()`
+(`lib/game/bog.ts`) used to require the child stand *in* the bog
+(`biomeAt(x,z) > 0 && hypot(x,z) >= BLACKOUT_MIN_RADIUS`) — impossible for any patch this
+small (0/1000 seeded runs succeeded; every call silently fell back to a random point, the
+exact failure LUL-1902's own spec had warned about). It now requires the *direct route
+home* to cross the bog's full-bogginess core (`routeCrossesBog()`), which is satisfiable on
+every seed (1000/1000, and asserted with no fallback over 200 seeds in `bog.test.ts`).
+`qaProbeBaby()` reports `{x, z, distHome, routeCrossesBog}`, replacing the old `inBog` field.
+
+**New elements it adds**: `BogTree` (30-instance thinner-cover twin of Tree, `BOG_TREES` in
+`engine/tuning.js` — shrunk from 360 alongside the patch itself, LUL-2225; own
+`bogTreeData` array, merged into the shared `grid` for collision),
 `Reed` (tall `coverData` kind `'reed'`, LOS-blocking like Rock/Log/Bramble
-but **not** in `HIDE_KINDS` — not a hiding spot), seven fixed `Landmark`
+but **not** in `HIDE_KINDS` — not a hiding spot; own budget `BOG_REEDS` (120) as of
+LUL-2225, placed only in the ring between `BOG_INNER_RADIUS` and `BOG_OUTER_RADIUS` so reeds
+themselves read as the patch's boundary, not scattered through its interior, and rejecting
+`inLake()`/`overlapsTreeTrunk()` candidates in its own generation loop as of **LUL-2247**
+(same checks `generateCover()` runs); as of the same ticket, Cover/Reed/BogTree/stone
+(throwables) are additionally jointly capped per 60x60 chunk and to a 3.5u minimum spacing
+across every non-tree prop type (`PROP_CHUNK_CAP`/`PROP_MIN_SPACING`, `engine/tuning.js`) —
+a deterministic post-filter run once after every prop generator finishes,
+`thinGeneratedProps()` in `generateMap()`; forest trees are unaffected), seven fixed `Landmark`
 groups (fire tower, stone marker, drowned car, lightning-split oak, radio
 mast, chapel steeple, cave — static,
 no RNG draw, nudged clear of nearby trees via `clearLandmarkSpot()`; `oak`
-and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit
-inside an actual bog patch now that the bog is no longer a fixed band),
+and `drownedCar` were relocated by LUL-1483, `engine/tuning.js`, to sit inside the bog
+patch as it existed at the time -- LUL-2225 moved the patch itself away from both instead
+of repositioning either landmark, so as of LUL-2225 neither sits in bog),
 `radioMast` and `chapelSteeple` (LUL-1782) sit in the outer ring, radius
 ~178-179, restoring fixed orientation geography on the leg past the original
 four that LUL-1484's map growth left featureless. `cave` (LUL-1904) is the
@@ -1789,9 +1847,9 @@ lion instead (`docs/decisions` — wiki `game/mechanics/bog-consolidation`, CEO 
 **What's already known and citable**: reeds reuse the exact same
 `coverMeshes`/`coverGrid`/`hasLOS()` machinery as Rock/Log/Bramble, with zero
 changes to either function; bog trees reuse `canopyRadiusAtEye()` unchanged;
-the minimap is deliberately **not** extended to cover the bog specially (wiki
-`game/lul25-status`; LUL-1093's clamp already scales correctly for a square
-world, untouched by LUL-1483). This predicts the same interaction shapes
+the minimap now draws the bog patch as of LUL-2225 (see above) — LUL-1902 had left this
+explicitly out of scope (wiki `game/lul25-status`) while the patch was still a quarter of
+the map; a small, single patch finally gave it one clean disc to draw. This predicts the same interaction shapes
 already in the matrix above (Tree-shaped collision for both actors,
 Rock-shaped `C+LOS` for both actors as of LUL-1643 (²³), Log/Bramble-shaped
 LOS-only walkable cover) — Reed shares Rock's `coverKindBlocksMovement()`
