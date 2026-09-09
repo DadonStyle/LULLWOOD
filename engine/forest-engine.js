@@ -2818,8 +2818,15 @@ function twinkle(vol, bright){
   o.connect(g); o2.connect(g2); g2.connect(g); g.connect(master); g.connect(conv);
   o.start(t); o2.start(t); o.stop(t+1.7); o2.stop(t+1.7);
 }
-// LUL-1307: swelling warm cue for arriving home -- the win fanfare (moved
-// here from pickup(), which used to spend it at the run's midpoint).
+// LUL-2281: swelling warm cue for the pickup/ascend cinematic -- fires at
+// pickStart (pickup()) so the ~7-10.5s swell builds through the ascend and
+// resolves right as fireBoom() fires at e>=9.3 (git show 0e55c85^, the
+// commit LUL-1307 reverted, called this playPickupMusic() at the same
+// call site). LUL-1307 had moved this to arriveHome() for the carry-home
+// leg; that leg is gone (LUL-2281), so this is back where the cinematic
+// it was authored for actually happens -- calling it from finishPickup()
+// (e>=11.3, after the boom and after winVisible is already pushed) left
+// the fanfare resolving several seconds into a static win screen.
 function playWinMusic(){
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t0 = ctx.currentTime;
@@ -2853,29 +2860,11 @@ function playWinMusic(){
   });
   later(() => { if(audio){ audio.wg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); audio.dg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); } }, 11000);
 }
-// LUL-1307: the pickup itself is no longer the win -- ramp wind/drone UP
-// (opposite of playWinMusic's duck) and sound one low note. Lifting the
-// child should read as the forest noticing, not a resolution.
-function playPickupCue(){
-  if(!audio || !soundOn) return;
-  const { ctx, master, conv } = audio, t0 = ctx.currentTime;
-  audio.wg.gain.setTargetAtTime(0.11, t0, 0.4);
-  audio.dg.gain.setTargetAtTime(0.09, t0, 0.4);
-  const o = ctx.createOscillator(); o.type='sine'; o.frequency.value = 87.31;   // low F2
-  const o2 = ctx.createOscillator(); o2.type='triangle'; o2.frequency.value = 87.31; o2.detune.value = 4;
-  const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(0.18, t0+0.6); g.gain.setValueAtTime(0.18, t0+1.6);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0+2.4);
-  o.connect(g); o2.connect(g); g.connect(master); g.connect(conv);
-  o.start(t0); o2.start(t0); o.stop(t0+2.5); o2.stop(t0+2.5);
-}
-// LUL-1635: mark the pickup->carry transition -- pickup() already sounded
-// playPickupCue() at the gather's start, 2.5s earlier; nothing marked the
-// moment carrying actually begins (speed and detection change here).
-// leafRustle() is hiding-spot foley (wrong theme), playPickupCue()'s drone
-// already fired, playWinMusic() is reserved for arriveHome() -- this is a
-// short weight-settling thump plus a soft rising two-note interval, reading
-// as "the load is now in your arms," not a fanfare.
+// LUL-1635: mark the pickup->carry transition -- short weight-settling
+// thump plus a soft rising two-note interval, reading as "the load is now
+// in your arms," not a fanfare. Dead since LUL-2281 (the carry-home leg
+// this scored is unreachable -- pickup() now wins outright) but left in
+// place per Decision 2, same as the carrying state machine it announces.
 function playCarryStartCue(){
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t = ctx.currentTime;
@@ -4213,7 +4202,7 @@ function pickup(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   armsGroup.visible = true;
-  playPickupCue();
+  playWinMusic();
 }
 function buyVeilCharm(){
   if(!canBuyVeilCharm) return;
@@ -4265,19 +4254,18 @@ function throwThrowable(){
 }
 function finishPickup(){
   // LUL-2281: the cinematic's completion IS the win now (reverts LUL-1307,
-  // which used to hand off into the carry-home leg here and reserve this
-  // moment's fanfare for arriveHome() -- see wiki decisions/lul-2281-
-  // pickup-is-the-win-2026-09-09 Decisions 1/3/4). fireBoom() already fired
-  // mid-cinematic at the e>=9.3 keyframe above (this is just the win
-  // bookkeeping, moved here verbatim from arriveHome(), which is now
-  // unreachable in real play but left in place per Decision 2).
+  // which used to hand off into the carry-home leg here -- see wiki
+  // decisions/lul-2281-pickup-is-the-win-2026-09-09 Decisions 1/3/4).
+  // playWinMusic() already fired at pickStart (pickup()) and fireBoom()
+  // already fired mid-cinematic at the e>=9.3 keyframe above (this is just
+  // the win bookkeeping, moved here verbatim from arriveHome(), which is
+  // now unreachable in real play but left in place per Decision 2).
   const next = completePickup(runState());
   pickingUp = next.pickingUp; won = next.won;
   armsGroup.visible = false;
   babyGroup.visible = false;
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
-  playWinMusic();
   logChronicle('pickup');
   // LUL-1611: winRevealed used to fire off a wall-clock later(...,1900) timer,
   // which can outrun the dt-clamped boom burst (dt clamped to 0.05/frame,
