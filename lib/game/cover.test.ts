@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   coverKindBlocksMovement,
   distanceToCoverEdge,
+  overlapsExistingCover,
   overlapsTreeCanopy,
   overlapsTreeTrunk,
   CELL,
@@ -207,6 +208,47 @@ test('overlapsTreeCanopy finds a match anywhere in a multi-tree list, not just t
     { x: 0.5, z: 0, crCanopy: 0.3 },
   ];
   assert.equal(overlapsTreeCanopy(0, 0, 0.8, trees), true);
+});
+
+// ---- overlapsExistingCover (LUL-2212) --------------------------------------
+
+test('overlapsExistingCover is false with no existing props nearby', () => {
+  assert.equal(overlapsExistingCover(0, 0, 1.5, []), false);
+});
+
+test('overlapsExistingCover is false when every existing prop is well clear', () => {
+  const existing = [
+    { x: 20, z: 20, hx: 0.5, hz: 0.4, kind: 'rock' },
+    { x: -30, z: 5, hx: 0.8, hz: 0.6, kind: 'reed' },
+  ];
+  assert.equal(overlapsExistingCover(0, 0, 1.5, existing), false);
+});
+
+test('overlapsExistingCover is true when a candidate\'s own footprint circle overlaps an existing prop\'s max(hx,hz) circle', () => {
+  const existing = [{ x: 1.9, z: 0, hx: 0.5, hz: 0.2, kind: 'bramble' }];
+  // propRadius 1.5 + max(hx,hz) 0.5 = 2.0 combined radius; centers are 1.9 apart -> inside.
+  assert.equal(overlapsExistingCover(0, 0, 1.5, existing), true);
+});
+
+test('overlapsExistingCover is false exactly at the combined-radius boundary (strict less-than)', () => {
+  const exact = [{ x: 2.0, z: 0, hx: 0.5, hz: 0.2, kind: 'log' }];
+  assert.equal(overlapsExistingCover(0, 0, 1.5, exact), false);
+});
+
+test('overlapsExistingCover finds a match anywhere in a multi-entry list, not just the first entry', () => {
+  const existing = [
+    { x: 50, z: 50, hx: 0.4, hz: 0.4, kind: 'rock' },
+    { x: -50, z: -50, hx: 0.4, hz: 0.4, kind: 'reed' },
+    { x: 0.5, z: 0, hx: 0.3, hz: 0.2, kind: 'log' },
+  ];
+  assert.equal(overlapsExistingCover(0, 0, 0.8, existing), true);
+});
+
+test('overlapsExistingCover skips kind === "tree" entries entirely, even when their footprint would otherwise overlap', () => {
+  // Real trees are already checked separately via overlapsTreeTrunk/overlapsTreeCanopy
+  // against treeData; a 'tree'-kind entry here would only reject spuriously.
+  const existing = [{ x: 0.5, z: 0, hx: 5, hz: 5, kind: 'tree' }];
+  assert.equal(overlapsExistingCover(0, 0, 1.5, existing), false);
 });
 
 // ---- coverKindBlocksMovement (LUL-384) -------------------------------

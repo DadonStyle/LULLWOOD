@@ -349,7 +349,8 @@ function useMissionUnlocks(actions: EngineActions | null, unlocks: { deepwater: 
     if (!actions) return;
     appliedRef.current = true;
     const stored = readMissionUnlocks();
-    if (stored) actions.setMissionUnlocks(stored);
+    // LUL-2221: a contract mismatch between EngineActions and the engine must never blank the page.
+    if (stored) actions.setMissionUnlocks?.(stored);
   }, [actions]);
 
   useEffect(() => {
