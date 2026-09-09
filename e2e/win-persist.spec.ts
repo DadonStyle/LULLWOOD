@@ -69,3 +69,43 @@ test('win screen is mandatory and persists until the player restarts', async ({ 
   await page.locator('.restartBtn').evaluate((el) => (el as HTMLElement).click());
   await expect(page.locator('#winScreen')).toBeHidden();
 });
+
+// LUL-1614: root cause of "after finding the child there is no winning screen,
+// the game just resumes". LUL-1194 focuses .restartBtn as soon as winRevealed
+// flips true, so keyboard-only players have an Enter/Space path back in. But
+// Space is also the jump key -- a player still holding/pressing it from the
+// carry leg has that keypress in flight the instant the button gains focus,
+// and the browser's native "activate the focused button on Space" fires
+// before the player has consciously seen "YOU WON", silently restarting the
+// run with zero click on the actual button. Hud.tsx now delays the focus
+// (RESTART_FOCUS_DELAY_MS) so an already-in-flight key can't reach it, while
+// a deliberate press after the delay still works -- both halves asserted here.
+test('a Space press right after the win reveal must not restart the run, but one after the grace window still does', async ({ page }) => {
+  test.setTimeout(45_000);
+  await boot(page, { qaHooks: true });
+  await enter(page);
+
+  await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());
+  await page.waitForTimeout(300);
+  await page.keyboard.press('KeyE');
+  await expect
+    .poll(() => readObjective(page), { timeout: 30_000 })
+    .toContain('Carry the child home');
+
+  await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
+  await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('#winText')).toHaveCSS('opacity', '1', { timeout: 8_000 });
+
+  // Worst case: a key already in flight the instant the screen reveals.
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(500);
+  await expect(page.locator('#winScreen'), 'an in-flight Space right at reveal must not restart the run').toBeVisible();
+  await expect(page.locator('#objective')).toHaveCount(0);
+
+  // A deliberate press once the grace window has actually elapsed still works --
+  // this is LUL-1194's accessibility path, not something this fix should remove.
+  await page.waitForTimeout(2_000);
+  await page.keyboard.press('Space');
+  await expect(page.locator('#winScreen')).toBeHidden({ timeout: 5_000 });
+  await expect(page.locator('#objective')).toBeVisible();
+});

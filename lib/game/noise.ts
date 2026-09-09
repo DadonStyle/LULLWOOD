@@ -27,16 +27,18 @@ export const THROWABLE_NOISE_RADIUS = NOISE_RADIUS_RUN;
  * a sustained beacon, not an incidental sound. */
 export const CRY_NOISE_RADIUS = 32;
 
-/** LUL-1857 (Ship 1 wayfinding S4): a carrying player can never be perfectly silent --
- * the child cries even while you hide and hold still. 0.4 * NOISE_RADIUS_WALK, per the
- * Game Economist's LUL-1646 answer (game/economy/wayfinding-cry-numbers). Deliberately
- * fixed, NOT scaled by fog-tide -- LUL-1686 decision (decisions/lul-1686-carried-noise-
- * floor-no-fog-tide): scaling would put it at 5.6*1.35=7.56u, inside the 8u sniff-backoff
- * distance (predator.ts's backOffPoint() retreats 8-16u), which would let the terminal
- * give-up's retreat land back inside earshot and re-hook the very loop LUL-1647's
- * mitigation 3 exists to terminate. If CARRIED_NOISE_FLOOR or the backoff range ever
- * change, re-check this constraint before shipping either. */
-export const CARRIED_NOISE_FLOOR = 0.4 * NOISE_RADIUS_WALK;
+/** LUL-1857: a still, carrying player still emits this much noise from the child's
+ * own rustling/fussing -- a floor under the footstep channel, not a replacement for
+ * it (a *moving* carrier still uses NOISE_RADIUS_WALK/RUN normally). 0.4 *
+ * NOISE_RADIUS_WALK, per LUL-1646 (Game Economist) / decisions/childs-cry-lul1674-
+ * disposition-2026-09-07. Deliberately NOT fog-tide-scaled: game/psychology/
+ * carried-cry-fairness §A3 shows floor*1.35 (fog-tide's own multiplier) reaches
+ * 7.56u, inside the 8u sniff-backoff-distance bound (§A3) by only 0.44u -- too
+ * little headroom to be safe under any future retune. Leaving this unscaled keeps
+ * a full 2.4u of margin always. This value is checked deterministically against a
+ * pulse event (see engine/forest-engine.js's carry-leg cry timer), not rolled
+ * per-frame like isNoiseHeard() -- see carried-cry-fairness verdict mitigation 2. */
+export const CARRIED_NOISE_FLOOR = 0.4 * NOISE_RADIUS_WALK; // 5.6
 
 /**
  * Whether a predator at `dist` from a throwable's landing point notices it. Pure

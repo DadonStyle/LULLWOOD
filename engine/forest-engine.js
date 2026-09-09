@@ -119,6 +119,8 @@ import {
   veilMaxHoldForTier,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
+  DEEPWATER_RETRIEVAL_BONUS,
+  DEEPWATER_SPEEDRUN_BONUS,
   computeDepth,
   computeSurvival,
   applySpend,
@@ -131,6 +133,10 @@ import {
   distToMissionTarget,
   canCompleteMission,
   completeMission,
+  canCompleteRetrieval,
+  completeRetrieval,
+  secondaryComplete,
+  RETRIEVAL_ITEM,
 } from '@/lib/game/mission';
 import {
   inLakeWater,
@@ -168,7 +174,7 @@ import {
   STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
-  VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH,
+  VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -928,7 +934,7 @@ function generateMap(seed){
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
   // LUL-1258: draw this run's mission last, after every other rng() consumer
   // above, so it never shifts the stream any existing seed/replay depends on.
-  mission = pickMission(rng);
+  mission = pickMission(rng, secondaryChoice);
   missionHumTimer = 2;
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
@@ -959,7 +965,7 @@ lakeLight.position.set(CONFIG.lake.x, 7, CONFIG.lake.z); scene.add(lakeLight);
 // Deliberately minimal -- "reuse the spawn point" per the ticket's own scope,
 // a lit waypoint rather than a new art pass. Static (no rng draw), so map
 // generation stays byte-identical for existing seeds.
-const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0 * LEGACY_LIGHT_SCALE, 24, 2);
+const homeLight = new THREE.PointLight(CONFIG.home.glow, 1.0 * LEGACY_LIGHT_SCALE, 240, 2);
 homeLight.position.set(CONFIG.home.x, 3, CONFIG.home.z); scene.add(homeLight);
 const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG.home.r*1.1, 40),
   new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
@@ -1180,9 +1186,18 @@ function inBaby(x,z){ const dx=x-baby.x, dz=z-baby.z; return dx*dx+dz*dz < 20; }
 // map/predator generation already consumes -- never player-selected.
 let mission = null;
 let cryTimer = 2;   // LUL-1255 (Ship 1 wayfinding S3d): first cry fires quickly, not after a full interval
-let cryPulseFired = false;   // LUL-1857 (S4): true for exactly the tick a cry pulse sounds -- see updatePredators()'s carriedCryPulse param
 let homeFireTimer = 2;   // LUL-1255 (Ship 1 wayfinding S5): same init as cryTimer
 let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- first hum fires quickly, not after a full interval
+// LUL-1666: cross-session record of which missions have had their secondary
+// unlocked (completed baseline once). Engine-owned, synced from
+// components/Hud.tsx's localStorage read via setMissionUnlocks(), same split
+// as `embers` (line ~1646). Keyed by MissionKind for forward-compatibility
+// with M1/M4/M5 once they ship, even though only 'deepwater' is reachable today.
+let missionUnlocks = { deepwater: false };
+// LUL-1666: the player's pre-run menu choice for the *next* draw -- 'none' by
+// default. Read once at pickMission() time in generateMap(), not re-read mid-run.
+let secondaryChoice = null;
+let carriedCryPulse = false;   // LUL-1857: one-tick pulse, set by the carry-leg cry timer, consumed by updatePredators() the same frame
 
 const babyGroup = new THREE.Group();
 const bundle = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12),
@@ -1236,6 +1251,29 @@ const bspPts = new THREE.Points(new THREE.BufferGeometry(),
 bspPts.geometry.setAttribute('position', new THREE.BufferAttribute(bspArr, 3));
 boomGroup.add(boomFlash, boomRing, bspPts);
 let boomStart = -1;
+// LUL-1914: startled roosts, slice (a) -- one small persistent THREE.Points burst
+// per fixed roost site (not fireBoom/boomGroup: that's a single shared instance
+// built for one radial burst at a time; two roosts can flush within the same
+// few seconds from different predators, so each site needs its own timer).
+const ROOST_BURST_PTS = 10;   // bird-lift silhouette, not an explosion -- keep small
+const roostCooldown = new Float32Array(ROOSTS.length);      // seconds remaining, 0 = ready
+const roostBurstStart = new Float32Array(ROOSTS.length).fill(-1);  // seconds since flush, -1 = idle
+const roostBurstVel = ROOSTS.map(() => []);
+const roostGroups = ROOSTS.map(r => {
+  const g = new THREE.Group();
+  g.position.set(r.x, 14, r.z);   // canopy height, above ground cover/fog line
+  g.visible = false;
+  const arr = new Float32Array(ROOST_BURST_PTS * 3);
+  const pts = new THREE.Points(new THREE.BufferGeometry(),
+    new THREE.PointsMaterial({ color: 0x2a2620, size: 0.35, transparent: true, opacity: 1,
+      depthWrite: false, fog: false }));   // fog:false: must read above the fog line at range (proposal §3)
+  pts.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+  pts.userData.arr = arr;
+  g.add(pts);
+  g.userData.pts = pts;
+  scene.add(g);
+  return g;
+});
 function fireBoom(x, y, z){
   boomGroup.position.set(x, y, z); boomGroup.visible = true; boomStart = 0;
   for(let i=0;i<BSP;i++){ const a=Math.random()*Math.PI*2, e=Math.acos(2*Math.random()-1), sp=8+Math.random()*24;
@@ -1256,6 +1294,80 @@ function updateBoom(dt){
   bspPts.material.opacity = Math.max(0, 1 - e/1.6);
   if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*3.5));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
+}
+// LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
+// spread, ~0.9s rise-and-fade. Keyed by roost index, independent of boomGroup.
+function triggerRoostBurst(i){
+  const g = roostGroups[i], pts = g.userData.pts, arr = pts.userData.arr;
+  const vel = roostBurstVel[i];
+  vel.length = 0;
+  for(let k=0;k<ROOST_BURST_PTS;k++){
+    const a = Math.random()*Math.PI*2;
+    vel.push([Math.cos(a)*1.2, 3 + Math.random()*2.5, Math.sin(a)*1.2]);
+    arr[k*3] = arr[k*3+1] = arr[k*3+2] = 0;
+  }
+  pts.geometry.attributes.position.needsUpdate = true;
+  pts.material.opacity = 1;
+  g.visible = true;
+  roostBurstStart[i] = 0;
+}
+function updateRoostBursts(dt){
+  for(let i=0;i<roostGroups.length;i++){
+    if(roostBurstStart[i] < 0) continue;
+    roostBurstStart[i] += dt;
+    const e = roostBurstStart[i];
+    const pts = roostGroups[i].userData.pts, arr = pts.userData.arr, vel = roostBurstVel[i];
+    for(let k=0;k<ROOST_BURST_PTS;k++){
+      arr[k*3]   += vel[k][0]*dt;
+      arr[k*3+1] += vel[k][1]*dt;
+      arr[k*3+2] += vel[k][2]*dt;
+    }
+    pts.geometry.attributes.position.needsUpdate = true;
+    pts.material.opacity = Math.max(0, 1 - e/0.9);
+    if(e > 0.9){ roostGroups[i].visible = false; roostBurstStart[i] = -1; }
+  }
+}
+// LUL-1914: positional wing-clatter -- modeled on scheduleBirdChirp's bandpass-noise
+// graph, made positional via missionWaypointHum's own panner/falloff math (both
+// referenced by file:line in the wiki proposal and CTO plan). 3-4 chirps in quick
+// succession so it reads as a flock lifting, not one bird. Math.random(), not the
+// seeded rng -- same scope-exemption the existing ambient bird chirp already has.
+function roostFlushSound(x, z){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio;
+  const dx = x - player.x, dz = z - player.z;
+  const dist = Math.hypot(dx, dz);
+  const near = Math.max(0, Math.min(1, 1 - dist / 140));
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  const right = dx*rx + dz*rz, fwd = dx*fx + dz*fz;
+  const panVal = Math.max(-1, Math.min(1, right / Math.max(1, Math.hypot(right, fwd))));
+  const bursts = 3 + Math.floor(Math.random()*2);   // 3-4
+  let delay = 0;
+  for(let n=0;n<bursts;n++){
+    delay += 0.04 + Math.random()*0.05;   // 40-90ms apart
+    const t = ctx.currentTime + delay;
+    const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.08, false);
+    const f = ctx.createBiquadFilter(); f.type = 'bandpass';
+    f.frequency.value = 2200 + Math.random() * 1800; f.Q.value = 4;
+    const pan = ctx.createStereoPanner(); pan.pan.value = panVal;
+    const g = ctx.createGain();
+    const peak = (0.05 + near * 0.12);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(peak, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    src.connect(f); f.connect(pan); pan.connect(g); g.connect(master); g.connect(conv);
+    src.start(t);
+  }
+  if(captionsOn){
+    const cnear = dist < 60 ? 'near' : 'far';
+    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
+    pushState({ caption: `birds scatter · ${cnear} · ${side}`, captionId: ++captionSeq });
+  }
+}
+function flushRoost(i){
+  triggerRoostBurst(i);
+  roostFlushSound(ROOSTS[i].x, ROOSTS[i].z);
 }
 const lookM = new THREE.Matrix4(), lookQ = new THREE.Quaternion();
 function key3(time, keys){   // smoothstep-interpolated keyframes
@@ -1563,14 +1675,7 @@ function hearCry(p){
 // missionWaypointHum() below (LUL-1258 built that one by mirroring this
 // unbuilt spec), just target = baby.x/z instead of a mission target, and a
 // higher/brighter base frequency so the two cues stay distinguishable by ear.
-// LUL-1857 (S4): srcX/srcZ default to the ground position (baby.x/z) for the outbound
-// cry, same as before this ticket. The carry-leg pulse passes player.x/z explicitly
-// instead -- baby.x/z is deliberately NOT kept synced to the player while carrying (it
-// stays at the pickup point, which computeDeathPayout's objectiveDistFromHome depth-farm
-// cap at :3685 depends on staying put -- syncing it to the live player would silently
-// collapse that cap to maxDistFromHome on every carry-leg death). So the carry-leg cry
-// needs its own source position passed in, not a baby.x/z read.
-function childCry(distToPlayer, srcX = baby.x, srcZ = baby.z){
+function childCry(distToPlayer, srcX, srcZ){
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
   const near = Math.max(0, Math.min(1, 1 - distToPlayer / 140));   // 0 far .. 1 close
@@ -1717,7 +1822,7 @@ function updateWolfPack(dt){
 // exactly where they were. Long enough to read as "that's over," short
 // enough that a second charge later in the same chase is still in play.
 
-function updatePredators(dt, noiseRadius, cryNoiseRadius, carriedCryPulse){
+function updatePredators(dt, noiseRadius, cryNoiseRadius){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
   for(const p of predators){
@@ -1832,21 +1937,6 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, carriedCryPulse){
       }
       else if(!sniffImmune && checkScent(p)){ scentOnto(p); }
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
-      // LUL-1857 (Ship 1 wayfinding S4): the carried child's cry, return leg only.
-      // Deliberately NOT folded into `noiseRadius`/checkNoise's continuous 0.5/s-per-
-      // frame roll above -- the LUL-1647 fairness verdict's mitigation 2 requires the
-      // hearing roll to fire on the audible cry pulse itself, not silently underneath
-      // it (that continuous-draw shape is exactly what verdict §2 traced as the
-      // non-terminating "harassment" case). `carriedCryPulse` is true for exactly the
-      // one frame each cry pulse sounds (tick(), where cryPulseFired is set), so this
-      // is a deterministic in-range-at-the-pulse check, not a probabilistic draw --
-      // mitigation 1's "one source, two consumers" requires the detection-relevant
-      // radius and the audible radius to be the literal same event, which a second
-      // independent roll against a same-sized radius would not guarantee.
-      // CARRIED_NOISE_FLOOR (5.6u) targets the live player via hearNoise(), not
-      // hearCry()'s fixed noiseTarget -- the source is carried, so it moves with you,
-      // unlike the outbound cry's stationary ground position.
-      else if(!sniffImmune && carriedCryPulse && dist < CARRIED_NOISE_FLOOR){ hearNoise(p); p.alertedBy = 'cry'; }
       // LUL-1255 (Ship 1 wayfinding S3): the cry is a second, independent
       // hearing check against the child's actual position, not the player's --
       // see S3 of the wayfinding spec for why this can't reuse
@@ -1855,6 +1945,17 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, carriedCryPulse){
       // then cry).
       else if(!sniffImmune && !baby.taken && checkNoise(p, Math.hypot(baby.x - p.x, baby.z - p.z), cryNoiseRadius, dt)){
         hearCry(p);
+      }
+      else if(!sniffImmune && carrying && carriedCryPulse && dist < CARRIED_NOISE_FLOOR){
+        // LUL-1857: pulse-fired, not a continuous isNoiseHeard() roll (mitigation 2)
+        // -- deterministic proximity check at the moment the cry sounds, same shape
+        // as checkThrowableNoise()'s one-shot design (lib/game/noise.ts). `dist` here
+        // is already the live predator-to-*player* distance computed at the top of
+        // this loop -- correct source position for the carry leg since the child
+        // moves with the player and baby.x/z is not live during carry (see
+        // childCry() fix above).
+        hearNoise(p);   // commits to investigate/approach targeting the live player position -- exactly the carry-leg contract (the "noise source" moves with you)
+        p.alertedBy = 'cry';   // LUL-1857 mitigation 4 (LUL-2194): tag the carry-leg cry channel too, same as hearCry()'s outbound-cry tagging below, so triggerDeath() can name "heard the child" on this catch path as well
       }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
@@ -1982,22 +2083,23 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, carriedCryPulse){
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN); }
-          // LUL-1857 (S4, LUL-1647 verdict amendment §A5): the terminal give-up used to
-          // flip p.state='roam' right here, in place at sniff range (2.5-3.2u -- inside
-          // the 5.6u CARRIED_NOISE_FLOOR), so a carrying player's very next cry pulse
-          // could re-hook this predator before it had moved at all. Route it through the
-          // same backOffPoint() retreat the 'back' sub-phase above already uses instead
-          // of finalizing the give-up immediately -- 'leaving' (below) walks it out 8-16u
-          // first, so giving up is an observable "the animal leaves," not a state flip
-          // with the animal still standing there. p.lkpX/Z/sweeps/spotted/roam are set on
-          // arrival in the 'leaving' branch, not here.
-          else { p.inv='leaving'; const bd = 8 + rng()*8;
-            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN); }
+          else if(hidden && carrying){
+            // LUL-1857 (carried-cry-fairness §A5): route the give-up through the
+            // same backoff helper the mid-loop 'back' path uses, but land in 'roam'
+            // on arrival (not 'approach' -- there's nothing left to sniff). Scoped to
+            // hidden+carrying only, per the verdict's own scope (§A5) -- the ordinary
+            // (non-carrying) give-up keeps its existing in-place behavior unchanged,
+            // an intentional, not-yet-asked-for-elsewhere deviation from a uniform fix.
+            const bd = 8 + rng()*8;
+            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN);
+            p.inv = 'leave';
+          }
+          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
-      } else if(p.inv === 'leaving'){
+      } else if(p.inv === 'leave'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); }
         else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
@@ -2149,6 +2251,25 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, carriedCryPulse){
     p.g.position.x = p.x; p.g.position.z = p.z;
   }
 }
+// LUL-1914: slice (a), one-way feedback only. Reads p.x/p.z/p.state/p.inert on each
+// active predator; writes nothing on any predator. Does not call effectiveDetect(),
+// canSee(), or hearThrowableNoise() -- this is a spectator of predator state, not a
+// participant. Cooldown array is reset in restart().
+function updateRoosts(dt){
+  updateRoostBursts(dt);
+  for(let i=0;i<ROOSTS.length;i++){
+    if(roostCooldown[i] > 0){ roostCooldown[i] -= dt; continue; }
+    const r = ROOSTS[i];
+    for(const p of predators){
+      if(p.inert || p.state !== 'chase') continue;
+      if(Math.hypot(p.x-r.x, p.z-r.z) < r.radius){
+        flushRoost(i);
+        roostCooldown[i] = ROOST_COOLDOWN;
+        break;
+      }
+    }
+  }
+}
 // lock onto the player: stinger, roar, screen flash, and a rear-up alert beat.
 // `opts.skipAlert` (LUL-1482): true when this call is resolving a completed
 // carry-only pre-lock tell (see the new p.sightLock branch in
@@ -2174,6 +2295,7 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
+    secondaryCanComplete = false,   // LUL-1666: same shape, for the retrieval item
     canBuyVeilCharm = false;   // LUL-1210: recomputed every tick alongside canPickup, below
 let heldThrowable = false;
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
@@ -2262,6 +2384,7 @@ on(window, 'keydown', e => {
     else if(carrying) setDown();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
+    else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
   }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
@@ -2798,6 +2921,16 @@ let hudState = {
   // LUL-1258: M2 Deepwater's minimal HUD panel -- null/null whenever no
   // mission is active or the player is carrying (see the tick() pushState).
   missionKind: null, missionStatus: null,
+  // LUL-1666: secondary objectives (deepwater only, Phase 1). `missionUnlocks`
+  // is cross-session like embersBalance above (Hud.tsx persists it).
+  // `secondaryChoice` is the player's pre-run pick, reset only by
+  // setSecondaryChoice() itself (i.e. it persists across restarts, matching
+  // difficulty's own persistence). `secondaryKind`/`secondaryStatus`/
+  // `secondaryProgress` describe the *active run's* secondary and are always
+  // null/null/null when no secondary is attached to the current mission.
+  missionUnlocks: { deepwater: false },
+  secondaryChoice: null,
+  secondaryKind: null, secondaryStatus: null, secondaryProgress: null,
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
   // and persists it to localStorage (see components/Hud.tsx).
@@ -2914,6 +3047,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // depending on procedural-terrain pathing.
   window.ForestEngine.qaTeleportHome = function(){ player.x = CONFIG.home.x; player.z = CONFIG.home.z; };
 
+  // LUL-2169: same rationale as qaTeleportNearBaby/qaTeleportHome above, but for
+  // the death path -- the only way to reach a deterministic death otherwise is to
+  // wait out a predator's real hunt/chase/charge timer, which is exactly the kind
+  // of timing-dependent setup an e2e spec shouldn't depend on. Calls the real
+  // triggerDeath() (never fake state), so canTriggerDeath()'s guards (!dead &&
+  // !won && !pickingUp, lib/game/outcome.ts) still apply -- this is a
+  // deterministic *trigger* of the real transition, not a state bypass.
+  window.ForestEngine.qaTriggerDeath = function(kind = 'wolf', cause = 'chase'){ triggerDeath(kind, cause); };
+
   // LUL-25: sets difficulty for the *next* generateMap() call (restart/regen
   // -- the current map doesn't retroactively move the child). The real path
   // is setDifficulty('blackout') via the settings panel (LUL-372); this hook
@@ -2932,6 +3074,29 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
              carrying, pickingUp, taken: baby.taken };
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
+
+  // LUL-2071: deterministic test clock. qaSetFixedStep() parks the real RAF
+  // loop (cancels the pending frame) so wall-clock jitter/GPU contention can
+  // never inject an extra or partial frame on top of what the test drives.
+  // qaAdvance() is then the *only* thing that moves simulation time, by
+  // exactly dtSeconds per call, through the same stepFrame() the real RAF
+  // loop calls -- fixed-step and real-time frames run identical game logic,
+  // only the dt source differs. Advancing clock.elapsedTime directly (rather
+  // than intercepting every read site) keeps both the dilated `+= dt`
+  // category and the undilated `clock.elapsedTime`-diff category (see wiki
+  // systems/dt-clamp-vs-walltime) correct with one change, since both derive
+  // from this same shared THREE.Clock instance.
+  window.ForestEngine.qaSetFixedStep = function(dtSeconds){
+    qaFixedDt = dtSeconds;
+    if(rafId !== null){ cancelAnimationFrame(rafId); rafId = null; }
+  };
+  window.ForestEngine.qaAdvance = function(steps = 1){
+    if(qaFixedDt === null) throw new Error('qaAdvance: call qaSetFixedStep(dt) first');
+    for(let i = 0; i < steps; i++){
+      clock.elapsedTime += qaFixedDt;
+      stepFrame(qaFixedDt, clock.elapsedTime);
+    }
+  };
 
   // LUL-1484: before/after perf baseline for the map-size growth (E3), and
   // the baseline E6's chunking work later has to justify itself against.
@@ -3531,6 +3696,119 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     });
   };
 
+  // LUL-1461: regression coverage for LUL-1091 (PR #251, "predators path
+  // around trees instead of grinding into them") at the engine-integration
+  // level. lib/game/cover.test.ts already unit-tests pickAvoidDirection()/
+  // slideVelocity() in isolation, but nothing before this proved
+  // updatePredators() actually calls them, every tick, against a real tree
+  // from the live spatial grid, for a predator that has to go all the way
+  // around one to reach the player.
+  //
+  // Deliberately not qaLurePredator(Kind): its `hunt` flag requires canSee()
+  // to keep chasing at all (`if(!canSee(p,dist)){ ...; p.hunt=false; }`
+  // above) -- placed behind a tree, hunt would drop to investigate on the
+  // very first tick, never touching the pathing code this ticket needs to
+  // exercise. `chase` + a live scentLock instead keeps closing blind while
+  // scentLock holds (LUL-23's contract), the same mechanism
+  // qaStageAndTraceBlindChase above already relies on.
+  //
+  // Both staged points sit on the tree's own z, straddling its trunk
+  // symmetrically along +/-x: since the trunk's collision circle is centred
+  // on that exact line, it always intersects the straight segment between
+  // predator and player regardless of `margin`, with no segment-vs-circle
+  // math needed. The actual standoff is derived per-tree (t.cr + p.rad +
+  // margin) rather than taking a caller-supplied distance directly -- a
+  // fixed standoff large enough to satisfy every tree's radius (e.g. 6)
+  // measured in practice (LUL-1461) as often putting 12 units of open field,
+  // and any other trees that happen to sit in it, between predator and
+  // player: the trace then measures open-field multi-obstacle navigation,
+  // not the single-trunk case this hook exists to isolate, and timed out for
+  // bear even on already-fixed code. Hugging the trunk as tightly as
+  // collision allows keeps the scenario to exactly the one obstacle, and the
+  // isolation check below rejects any tree with a neighbour close enough to
+  // still crowd it.
+  function stageBehindTree(kind, margin){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    outer: for(const t of treeData){
+      const standoff = t.cr + p.rad + margin;
+      const px = t.x - standoff, pz = t.z;
+      const qx = t.x + standoff, qz = t.z;
+      if(predatorBlocked(px, pz, p.rad) || blocked(qx, qz)) continue;
+      // Reject any tree with a neighbour close enough to crowd the direct
+      // line or a reasonable sidestep around it -- otherwise a far-apart
+      // pair (large margin) can silently route through a second, third tree
+      // and the trace measures multi-obstacle open-field navigation instead
+      // of the single-trunk case this hook exists to isolate. Lane is a
+      // generous box around the straight segment (standoff+3 half-width in
+      // x, neighbour's own clearance + 2.5 in z).
+      const laneHalfWidth = standoff + 3;
+      for(const o of treeData){
+        if(o === t) continue;
+        const withinX = o.x > t.x - laneHalfWidth && o.x < t.x + laneHalfWidth;
+        const withinZ = Math.abs(o.z - t.z) < (o.cr + p.rad + 2.5);
+        if(withinX && withinZ) continue outer;
+      }
+      p.x = px; p.z = pz;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
+      p.charge = null; p.chargeCooldown = 999;
+      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+      player.x = qx; player.z = qz;
+      // Isolate, same rationale as stageBlindChaseThroughCover above: nine
+      // predators roam independently, and relocating the player next to a
+      // tree can easily land it inside a different, untouched predator's
+      // own detect range.
+      for(let i = 0; i < predators.length; i++) if(i !== idx) predators[i].inert = true;
+      return { idx, kind, treeX: t.x, treeZ: t.z, treeCr: t.cr, dist: Math.hypot(px-qx, pz-qz) };
+    }
+    return null;
+  }
+  window.ForestEngine.qaStageBehindTree = function(kind, margin){
+    return stageBehindTree(kind, margin);
+  };
+
+  // LUL-1461: records {t, dist, state, reached} once per rendered frame via
+  // its own rAF loop, staged and started in one synchronous call for the
+  // same reason qaStageAndTraceBlindChase's comment gives (an IPC round trip
+  // between staging and the first observed frame lets the predator move in
+  // between).
+  //
+  // Originally resolved on an independently-computed isCaught(d, p.rad)
+  // instead of the game's own `dead` flag. Measured live (2026-09-08): the
+  // wolf case's in-page trace resolved fine (reached:true at t=2100ms) and
+  // page.evaluate() returned the trace to Node, but the Playwright test then
+  // hung to its own timeout anyway, and the next test (bear) failed
+  // immediately at boot -- cross-test contamination. traceBlindChase()
+  // (above) resolves on `dead` instead and blind-chase-cover.spec.ts passes
+  // in CI today, including through a real death/video sequence, so the
+  // independently-computed condition -- not the death/video sequence itself
+  // -- is the difference. Matching that proven pattern here: resolve once
+  // the real triggerDeath() (engine/forest-engine.js:1447) has actually
+  // flipped `dead`, not one frame earlier on our own geometric guess.
+  function traceApproach(idx, maxMs){
+    return new Promise(function(resolve){
+      const trace = [];
+      const t0 = performance.now();
+      function frame(){
+        const p = predators[idx];
+        if(!p){ resolve(trace); return; }
+        const d = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
+        trace.push({ t: performance.now()-t0, dist: d, state: p.state, reached: dead });
+        if(dead || performance.now()-t0 > maxMs){ resolve(trace); return; }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+  window.ForestEngine.qaStageAndTraceBehindTree = function(kind, margin, maxMs){
+    const staged = stageBehindTree(kind, margin);
+    if(staged === null) return Promise.resolve(null);
+    return traceApproach(staged.idx, maxMs).then(function(trace){
+      return { idx: staged.idx, kind: staged.kind, dist: staged.dist, trace: trace };
+    });
+  };
+
   // LUL-69: camera.fov is closure-local (created fresh per init(), see
   // CAMERA_FOV above) -- nothing outside init() could otherwise confirm the
   // mobile/desktop FOV split actually took effect.
@@ -3689,6 +3967,15 @@ function completeMissionSequence(){
   pushState({ caption: 'the drowned car -- found it', captionId: ++captionSeq });   // unconditional, matches the landmark first-run caption's precedent
   missionCompleteSting();
 }
+// LUL-1666: retrieval's completion -- mirrors completeMissionSequence()'s
+// shape exactly (guard, pure-fn update, caption, sting), no cinematic lock,
+// same rationale ("a detour bonus, not the core objective").
+function completeSecondarySequence(){
+  if(mission.secondary?.data.kind !== 'retrieval' || mission.secondary.data.retrieved) return;
+  mission = completeRetrieval(mission);
+  pushState({ caption: 'the radio mast -- retrieved', captionId: ++captionSeq });
+  missionCompleteSting();
+}
 function arriveHome(){
   const next = outcomeArriveHome(runState());
   won = next.won; carrying = next.carrying;
@@ -3696,8 +3983,12 @@ function arriveHome(){
   if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
   playWinMusic(); fireBoom(CONFIG.home.x, 2.2, CONFIG.home.z);   // LUL-1307: the win, not the midpoint
-  // LUL-1609: reveal the win text 100ms after the burst finishes (updateBoom retires at e>1.8s)
-  later(() => pushState({ winRevealed: true }), 1900);
+  // LUL-1611: winRevealed used to fire off a wall-clock later(...,1900) timer,
+  // which can outrun the dt-clamped boom burst (dt clamped to 0.05/frame,
+  // wiki systems/dt-clamp-vs-walltime) on a sustained sub-20fps device -- the
+  // reveal is now polled against boomStart in tick() instead, so it fires
+  // exactly when the burst itself retires (undilated mirror of revealLoss()'s
+  // CUT_END poll on the death path).
   const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
   // LUL-303: updatePredators() (the only other place that clears the charge
   // HUD) stops running once `playing` goes false here, so a charge/telegraph
@@ -3709,11 +4000,27 @@ function arriveHome(){
   // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
   // like carried/home, since computeDeathPayout's signature is untouched.
   const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
-  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus), embersSpent);
+  // LUL-1666: secondary bonus is independent of missionBonus -- a player can
+  // win the secondary without ever completing the deepwater baseline this
+  // run (already unlocked from a prior run), or complete the baseline and
+  // still miss the secondary. Never gates arriveHome() itself (see spec S1).
+  const secondaryWon = mission ? secondaryComplete(mission, survivedSeconds) : false;
+  const secondaryBonus = secondaryWon
+    ? (mission.secondary.data.kind === 'retrieval' ? DEEPWATER_RETRIEVAL_BONUS : DEEPWATER_SPEEDRUN_BONUS)
+    : 0;
+  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus), embersSpent);
+  // LUL-1666: unlock is keyed on the *baseline* completing, independent of
+  // whether a secondary was even attempted this run -- guardrail is "complete
+  // the mission once", not "complete a secondary once". Persisted by
+  // components/Hud.tsx same as embersBalance below.
+  if(mission?.status === 'complete' && !missionUnlocks[mission.target.kind]){
+    missionUnlocks = { ...missionUnlocks, [mission.target.kind]: true };
+    pushState({ missionUnlocks: { ...missionUnlocks } });
+  }
   embers = applyPayout(embers, payout);
   logChronicle('win');
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice() });
+    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 function triggerDeath(kind, cause){
@@ -3769,6 +4076,7 @@ function restart(){
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
+  roostCooldown.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
@@ -3831,6 +4139,23 @@ function setEmbers(balance, deeperLungsTier){
 function purchaseDeeperLungs(){
   embers = economyPurchaseDeeperLungs(embers);
   pushState({ embersBalance: embers.balance, embersDeeperLungsTier: embers.tiers.deeperLungs });
+}
+// LUL-1666: sync from components/Hud.tsx's localStorage read, once on mount
+// -- identical split to setEmbers() above (engine owns the state, React
+// persists it). `unlocks` may be a partial/stale-shaped object (schema
+// could predate a future mission); only known keys are trusted.
+function setMissionUnlocks(unlocks){
+  missionUnlocks = { deepwater: !!(unlocks && unlocks.deepwater) };
+  pushState({ missionUnlocks: { ...missionUnlocks } });
+}
+// LUL-1666: player's pre-run menu pick for the *next* draw. No-ops outside
+// the pre-run menu the same way setDifficulty tolerates a bad value -- an
+// unrecognized kind is treated as 'none'. Deliberately does not re-roll the
+// current mission's secondary mid-run; per GameMenu.tsx (S4/S5), the control
+// itself is only rendered while `!state.entered`.
+function setSecondaryChoice(kind){
+  secondaryChoice = (kind === 'retrieval' || kind === 'speedrun') ? kind : null;
+  pushState({ secondaryChoice });
 }
 on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -3977,13 +4302,11 @@ function formatTimeOfRunClock(t){
 // ---- Build the first map, then run ---------------------------------------
 generateMap(resolveInitialSeed());
 const clock = new THREE.Clock();
+let qaFixedDt = null;   // LUL-2071: non-null while a test has parked the RAF loop via qaSetFixedStep()
 let bobPhase = 0;
 let rafId = null;
 
-function tick(){
-  rafId = requestAnimationFrame(tick);
-  const dt = clampDt(clock.getDelta()), t = clock.elapsedTime;
-
+function stepFrame(dt, t){
   // LUL-68: right stick look rate applied each frame before movement.
   // LUL-276: mobile-only -- in desktop mode this whole block is dead, not
   // merely fed zeroes, because setTouchLook is a no-op there (see below) and
@@ -4191,6 +4514,17 @@ function tick(){
       const nearH = Math.max(0, Math.min(1, 1 - dh / 140));
       homeFireTimer = 5.5 - nearH * 3.5;
     }
+    // LUL-1857: carry-leg cry pulse -- reuses cryTimer (LUL-1674 S3d) rather than a
+    // second timer, so outbound and carry-leg cry cadence stay one clock (mitigation
+    // 1: "one source, two consumers"). The outbound pulse block below (`if(!baby.taken
+    // || babySetDown)`) is the exact logical negation of `carrying`, so the two never
+    // both fire in the same frame -- safe to share the module-level cryTimer.
+    cryTimer -= dt;
+    if(cryTimer <= 0){
+      childCry(0, player.x, player.z);   // in your arms: always "near" (near=1), centered (no pan)
+      cryTimer = 2;                      // closest-tempo floor -- matches the outbound block's own near=1 case (5.5 - 1*3.5)
+      carriedCryPulse = true;            // consumed by updatePredators() this same tick, cleared after
+    }
     // LUL-596: canArriveHome() also requires !dead && !won -- this call site
     // used to be the only thing keeping a dead player from winning (positional
     // safety, not a precondition). Do not drop this guard.
@@ -4203,38 +4537,22 @@ function tick(){
     const bob = spd > 0 && !motionReduced() ? Math.sin(bobPhase) * 0.06 : 0;
     camera.position.set(player.x, eyeH + bob + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
+    // LUL-1611: reveal the win text once the boom burst itself retires
+    // (boomStart resets to -1 in updateBoom() at e>1.8s) instead of a
+    // wall-clock timer -- see arriveHome() for why. fireBoom() only ever
+    // fires from arriveHome(), so boomStart<0 here unambiguously means the
+    // win burst that just played has finished, not "no burst yet".
+    if(hudState.winVisible && !hudState.winRevealed && boomStart < 0) pushState({ winRevealed: true });
   }
 
-  // LUL-1255 (Ship 1 wayfinding S3d) / LUL-1857 (S4): same tempo-carries-distance cry
-  // pulse, now also kept alive on the carry leg. Computed here, right before
-  // updatePredators() below reads cryPulseFired, rather than down in the ground-visual
-  // idle-glow block (which must stay off while carrying -- the "carrying" render branch
-  // earlier in this function already positions babyGroup at the player) -- the LUL-1647
-  // fairness verdict's mitigation 1 forbids the cry going silent on the return leg while
-  // it still feeds detection (see game/psychology/carry-detection-fairness §3's
-  // babyLight mixdown mistake -- this is the same trap one channel over, on hearing).
-  // Carry-leg distance is pinned to 0 (always "closest") and the source position passed
-  // to childCry() is the live player, not baby.x/z (see childCry()'s own comment for why
-  // baby.x/z can't track the player during carry). cryPulseFired must be set before
-  // updatePredators() runs this same tick, not after -- mitigation 2 requires the
-  // detection roll to fire on this exact pulse, not one frame behind it.
-  cryPulseFired = false;
-  if(!baby.taken || babySetDown || carrying){
-    const cryDist = carrying ? 0 : Math.hypot(baby.x - player.x, baby.z - player.z);
-    cryTimer -= dt;
-    if(cryTimer <= 0){
-      childCry(cryDist, carrying ? player.x : baby.x, carrying ? player.z : baby.z);
-      cryPulseFired = true;
-      const near = Math.max(0, Math.min(1, 1 - cryDist / 140));
-      cryTimer = 5.5 - near * 3.5;
-    }
-  }
   // LUL-1255 (Ship 1 wayfinding S3c): cry radius is fog-tide-scaled at the
   // child's own position, same fogTideAmountAt() pattern as babyLight's other
   // two call sites (idle glow uses babyGroup position, carry uses player
   // position) -- the cry originates at the child, so it uses baby.x/z.
   const cryNoiseRadius = CRY_NOISE_RADIUS * fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
-  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius, carrying && cryPulseFired);   // predators only hunt while you're actually playing
+  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
+  if(playing) updateRoosts(dt);   // LUL-1914: roost feedback, same gate as predator AI
+  carriedCryPulse = false;   // LUL-1857: one-tick pulse, consumed above -- clear so it isn't sticky
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
@@ -4325,6 +4643,10 @@ function tick(){
   // computed the same way canPickup is above.
   const distMission = mission ? distToMissionTarget(mission, player.x, player.z) : Infinity;
   missionCanComplete = mission ? canCompleteMission(mission, distMission) : false;
+  const distSecondaryItem = (mission?.secondary?.data.kind === 'retrieval')
+    ? Math.hypot(player.x - RETRIEVAL_ITEM.x, player.z - RETRIEVAL_ITEM.z)
+    : Infinity;
+  secondaryCanComplete = mission ? canCompleteRetrieval(mission, distSecondaryItem) : false;
   if(playing){
     let statusVisible = false, statusText = '';
     if(hidden){
@@ -4389,11 +4711,23 @@ function tick(){
       // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
       missionKind: mission && !carrying ? mission.target.kind : null,
       missionStatus: mission && !carrying ? mission.status : null,
+      secondaryKind: mission && !carrying && mission.secondary ? mission.secondary.data.kind : null,
+      secondaryStatus: mission && !carrying && mission.secondary
+        ? (secondaryComplete(mission, clock.elapsedTime - enteredAt) ? 'complete' : 'active')
+        : null,
+      // LUL-1666: retrieval -> whole meters/distance for the Hud's progress
+      // indicator; speedrun -> seconds remaining for its countdown. One field,
+      // shape keyed by kind, mirrors lastPayout's discriminated-by-caller shape.
+      secondaryProgress: mission && !carrying && mission.secondary
+        ? (mission.secondary.data.kind === 'retrieval'
+            ? { kind: 'retrieval', retrieved: mission.secondary.data.retrieved, distance: Math.round(distSecondaryItem) }
+            : { kind: 'speedrun', remainingSeconds: Math.max(0, Math.round(mission.secondary.data.timeLimitSeconds - (clock.elapsedTime - enteredAt))) })
+        : null,
       caveImmuneActive: caveImmuneT > 0,
       caveImmuneTimeLeft: caveImmuneT,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null, caveImmuneActive: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false });
   }
   // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
   // baby.taken stays true forever once first picked up, so babySetDown is the only signal
@@ -4407,6 +4741,15 @@ function tick(){
     const bp = bwisps.geometry.attributes.position.array;
     for(let i=0;i<BW;i++){ bp[i*3+1] += dt*0.4; if(bp[i*3+1] > 3.4) bp[i*3+1] = 0.2; }
     bwisps.geometry.attributes.position.needsUpdate = true;
+    // LUL-1255 (Ship 1 wayfinding S3d): same tempo-carries-distance shape
+    // missionHumTimer mirrors -- 5.5s far, 2s close.
+    const cryDist = Math.hypot(baby.x - player.x, baby.z - player.z);
+    cryTimer -= dt;
+    if(cryTimer <= 0){
+      childCry(cryDist, baby.x, baby.z);
+      const near = Math.max(0, Math.min(1, 1 - cryDist / 140));
+      cryTimer = 5.5 - near * 3.5;
+    }
   }
   // scary music plays ONLY while an animal actually sees you (chasing or bee-lining).
   // lose sight → it starts sniffing/searching and the music falls back to the calm bed;
@@ -4490,6 +4833,11 @@ function tick(){
   if(!dead){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
   adaptResolution(dt, t);
 }
+function tick(){
+  rafId = requestAnimationFrame(tick);
+  const dt = clampDt(clock.getDelta()), t = clock.elapsedTime;
+  stepFrame(dt, t);
+}
 tick();
 
   // ---- Teardown: undo everything the run above did ------------------------
@@ -4560,6 +4908,7 @@ tick();
     else if(carrying) setDown();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
+    else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
   }
   function triggerTouchThrow() {

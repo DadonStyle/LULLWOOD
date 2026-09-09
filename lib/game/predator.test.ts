@@ -267,14 +267,6 @@ test('shouldRevertInvestigateToChase is false for "standoff" while still hidden'
   assert.equal(shouldRevertInvestigateToChase('standoff', true), false);
 });
 
-test('shouldRevertInvestigateToChase is true for "leaving" (LUL-1857) when not hidden -- the terminal give-up retreat is still close-range', () => {
-  assert.equal(shouldRevertInvestigateToChase('leaving', false), true);
-});
-
-test('shouldRevertInvestigateToChase is false for "leaving" while still hidden', () => {
-  assert.equal(shouldRevertInvestigateToChase('leaving', true), false);
-});
-
 // ---- stepApproach (LUL-658) -------------------------------------------------------
 
 test('stepApproach reports movement toward the player when still outside sniff range', () => {

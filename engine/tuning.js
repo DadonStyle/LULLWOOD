@@ -63,6 +63,18 @@ export const LANDMARKS = [
   { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
 
+// LUL-1914: startled roosts, slice (a) -- fixed canopy sites that flush when a
+// predator passes through at speed. Same "static list, no rng() draw" contract
+// as LANDMARKS immediately above -- generateMap() stays byte-identical per seed.
+export const ROOSTS = [
+  { kind: 'canopyNE', x: 110,  z: 90,   radius: 20 },
+  { kind: 'canopyN',  x: 55,   z: 135,  radius: 20 },
+  { kind: 'canopyW',  x: -140, z: 15,   radius: 20 },
+  { kind: 'canopyS',  x: -30,  z: -140, radius: 20 },
+  { kind: 'canopyE',  x: 150,  z: -25,  radius: 20 },
+];
+export const ROOST_COOLDOWN = 32;   // seconds a roost stays quiet after firing
+
 // LUL-1210: Stone Marker veil-charm interact radius -- same shape as
 // MISSION_POOL's interactRadius (lib/game/mission.ts).
 export const VEIL_CHARM_INTERACT_RADIUS = 4;
@@ -174,10 +186,27 @@ export const CHASE_GAP = 28;
 // multiplier is a no-op) and stays default. `activePerSpecies` trims the roster
 // without touching PSPEC itself; `detectMul` scales the sight-detect radius;
 // `glowMul` scales the child's existing idle/carry glow values.
+//
+// LUL-1440: blackout's `detectMul` dropped 1 -> 0.7 (lantern's own value).
+// Game Economist's hazard model (wiki game/economy/tier-reward-multipliers
+// §3/§5, `decisions/economy-horizon-2026-09-03`) is `encounter rate proportional
+// to active predators x detectMul^2` -- blackout shared night's exact
+// activePerSpecies/detectMul (9-predator, full-radius hazard = night's 6.1x
+// lantern) on top of a ~3.2x longer route and `startHunting`, and no reward
+// multiplier can reach parity against that without breaking one-sitting pacing
+// or opening a farm. 0.7^2 = 0.49, roughly halving the per-second lethality
+// term of that product while route length (entangled with the LUL-1790
+// farm-guard depth math, out of scope here) and activePerSpecies (the
+// predator-count "swarm" identity) are left untouched. Thematically
+// consistent too: blackout is the low-visibility tier, so predators seeing
+// less far individually reads in-fiction, not just as a balance knob.
+// activePerSpecies stays 3 and startHunting/minimap stay unchanged so
+// blackout remains recognizably the hardest tier (still ~1.6x night's
+// hazard-seconds by the same model, from the unchanged longer route alone).
 export const DIFFICULTY_PRESETS = {
   lantern:  { activePerSpecies: 1, detectMul: 0.7, glowMul: 1.6, startHunting: false, minimap: true },
   night:    { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: false, minimap: true },
-  blackout: { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: true,  minimap: false },
+  blackout: { activePerSpecies: 3, detectMul: 0.7, glowMul: 1,   startHunting: true,  minimap: false },
 };
 
 // LUL-213: once a charge resolves (either way) the same predator can't
