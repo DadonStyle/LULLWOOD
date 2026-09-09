@@ -71,7 +71,7 @@ instrumentation-only ticket changed or is in scope to fix. It matters here
 because it means these two fields, as currently defined, **cannot** be used
 by LUL-2223 step 6 to prove or disprove a streaming win -- they will read
 `1`/`2` before and after regardless of what the epic changes. Filed
-LUL-2246 to fix `qaProbePerf()` (read `sceneRT`'s render stats before the
+LUL-2257 to fix `qaProbePerf()` (read `sceneRT`'s render stats before the
 post-process passes overwrite them) before step 6 depends on this metric;
 `clock.elapsedTime` and boot-to-networkidle are unaffected by this and are
 usable as-is.
