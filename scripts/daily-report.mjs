@@ -184,7 +184,11 @@ export function dayKeyInTz(isoDate, timeZone = TZ) {
 const BACKMERGE_RE = /^Merge branch\b/i;
 const MERGE_PR_RE = /^Merge pull request #(\d+) from/i;
 const TRAILING_PR_RE = /\(#(\d+)\)\s*$/;
-const LEADING_TICKET_PREFIX_RE = /^LUL-\d+(?:\s*[/,]\s*LUL-\d+)*:\s*/;
+// LUL-604: "LUL-N/M:" shorthand (second+ ticket in the group re-using the
+// leading "LUL-" instead of repeating it, e.g. "LUL-20/21:") is common enough
+// in this repo's commit subjects that both regexes below must accept a bare
+// number after `/` or `,` once a `LUL-` prefix has opened the group.
+const LEADING_TICKET_PREFIX_RE = /^LUL-\d+(?:\s*[/,]\s*(?:LUL-)?\d+)*:\s*/;
 
 // Commit bodies in this repo are hand-wrapped prose (~72 cols/line), not one
 // logical line per paragraph -- e.g. a body like "The founder's repo was\ncreated
@@ -209,10 +213,19 @@ function stripRedundantRefs(text, prNumber) {
   return out.trim();
 }
 
-const TICKET_RE = /LUL-\d+/g;
+// Matches a whole "LUL-N", "LUL-N/LUL-M", or shorthand "LUL-N/M" group in one
+// pass so the shorthand's bare trailing numbers aren't lost -- a standalone
+// `\d+` after the slash would never match /LUL-\d+/g on its own.
+const TICKET_GROUP_RE = /LUL-\d+(?:\s*[/,]\s*(?:LUL-)?\d+)*/g;
 
 export function extractTicketIds(text) {
-  return [...new Set(text.match(TICKET_RE) ?? [])];
+  const ids = new Set();
+  for (const group of text.match(TICKET_GROUP_RE) ?? []) {
+    for (const part of group.split(/[/,]/)) {
+      ids.add(`LUL-${part.trim().replace(/^LUL-/, '')}`);
+    }
+  }
+  return [...ids];
 }
 
 export function classifyShape(commit) {

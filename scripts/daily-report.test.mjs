@@ -95,6 +95,15 @@ test('extractTicketIds dedupes and preserves first-seen order', () => {
   assert.deepEqual(extractTicketIds('no tickets here'), []);
 });
 
+// LUL-604: "LUL-N/M:" shorthand (bare number reusing the earlier "LUL-"
+// prefix) must not silently drop the second ticket -- real commit 0341e45.
+test('extractTicketIds and the leading-prefix strip both handle "LUL-N/M:" shorthand', () => {
+  const c = commit({ subject: 'LUL-20/21: Playwright smoke + lifecycle suites, wired into CI' });
+  const shape = classifyShape(c);
+  assert.deepEqual(shape.ticketIds, ['LUL-20', 'LUL-21']);
+  assert.equal(shape.text, 'Playwright smoke + lifecycle suites, wired into CI');
+});
+
 // ---- dayKeyInTz -------------------------------------------------------------
 
 test('dayKeyInTz buckets by Asia/Jerusalem, not UTC', () => {
