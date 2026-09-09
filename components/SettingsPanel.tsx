@@ -20,6 +20,10 @@ interface PersistedSettings {
   invertY: boolean;
   reducedMotion: boolean;
   captionsOn: boolean;
+  // LUL-2230: default on -- see readSettings()'s `?? true` below, since an
+  // absent/never-persisted key must not read as "off" the way the other
+  // boolean settings above correctly default to falsy.
+  scentTrailVisible: boolean;
   highContrast: boolean;
   // LUL-650: dev/tuning HUD (the #panel pace/mist/sound/regen/fullscreen
   // controls, plus #minimap). Same presentation-only shape as highContrast --
@@ -84,6 +88,10 @@ export default function SettingsPanel({
     if (typeof s.invertY === 'boolean') actions.setInvertY(s.invertY);
     if (typeof s.reducedMotion === 'boolean') actions.setReducedMotion(s.reducedMotion);
     if (typeof s.captionsOn === 'boolean') actions.setCaptions(s.captionsOn);
+    // LUL-2230: default on, so a never-persisted key (new player, or an
+    // existing player's first load after this ships) doesn't turn the trail
+    // off -- only an explicit `false` in storage does.
+    actions.setScentTrailVisible(s.scentTrailVisible !== false);
   }, [actions]);
 
   // Presentation-only: no engine action for this, so it's applied directly to
@@ -108,10 +116,21 @@ export default function SettingsPanel({
       invertY: state.invertY,
       reducedMotion: state.reducedMotion,
       captionsOn: state.captionsOn,
+      scentTrailVisible: state.scentTrailVisible,
       highContrast,
       adminMode,
     });
-  }, [state.difficulty, state.runMode, state.sensitivity, state.invertY, state.reducedMotion, state.captionsOn, highContrast, adminMode]);
+  }, [
+    state.difficulty,
+    state.runMode,
+    state.sensitivity,
+    state.invertY,
+    state.reducedMotion,
+    state.captionsOn,
+    state.scentTrailVisible,
+    highContrast,
+    adminMode,
+  ]);
 
   if (!open) return null;
 
@@ -180,6 +199,14 @@ export default function SettingsPanel({
             onChange={(e) => actions?.setCaptions(e.target.checked)}
           />
           Captions for predator calls
+        </label>
+        <label className="radioRow">
+          <input
+            type="checkbox"
+            checked={state.scentTrailVisible}
+            onChange={(e) => actions?.setScentTrailVisible(e.target.checked)}
+          />
+          Show my scent trail
         </label>
         <label className="radioRow">
           <input type="checkbox" checked={highContrast} onChange={(e) => setHighContrast(e.target.checked)} />

@@ -302,6 +302,37 @@ declare global {
        * are all on screen together. Returns the target, or null if no mission
        * is active. */
       qaTeleportNearMission?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
+      /** LUL-2230: exactly what the last frame drew for the scent trail visual
+       * -- `points.length` always equals the draw range the renderer used
+       * this tick, so a test can assert the picture directly instead of
+       * re-deriving THREE.Points state. `livePoints` is `scentPoints.length`
+       * (the real detection array) for cross-checking the visual against the
+       * mechanic it renders. */
+      qaProbeScentTrail?: () => {
+        settingOn: boolean;
+        rendered: boolean;
+        // `rawX`/`rawZ` are the point's undrifted deposit position, so a test can
+        // recompute driftedScentPosition() itself against `windX`/`windZ` below
+        // without a separate hook to read the wind vector.
+        points: {
+          x: number; z: number; age: number; alpha: number; inFrustum: boolean;
+          rawX: number; rawZ: number; radius: number;
+        }[];
+        livePoints: number;
+        captionVisible: boolean;
+        captionSeen: boolean;
+        veilAmount: number;
+        windX: number;
+        windZ: number;
+      };
+      /** LUL-2230: sets the camera yaw directly (the same `player.yaw` every
+       * look-input path writes) so a test can turn to face its own scent
+       * trail without pointer lock. Read-only otherwise -- no movement. */
+      qaSetLookYaw?: (rad: number) => void;
+      /** LUL-2230: clears the persisted `lullwood:scentTrailCaptionSeen` flag
+       * and the in-memory one-time gate, so a single boot can prove the
+       * caption is first-time-only twice in the same test. */
+      qaResetScentCaption?: () => void;
     };
   }
 }
