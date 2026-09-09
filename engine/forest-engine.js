@@ -88,6 +88,11 @@ import {
   bogMaskLevel,
   pickHardBabyPosition,
   clearOfLandmarks,
+  bogKeepClear,
+  routeCrossesBog,
+  BOG_CENTER,
+  BOG_INNER_RADIUS,
+  BOG_OUTER_RADIUS,
 } from '@/lib/game/bog';
 import {
   backOffPoint,
@@ -174,7 +179,7 @@ import { nearestLandmarkName } from '@/lib/game/chronicle';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
-  STAR, LW, DUST, BW, BSP, BOG_TREES, COVER_PROPS, DUST_WIND_SPEED, WARM,
+  STAR, LW, DUST, BW, BSP, BOG_TREES, BOG_REEDS, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
   VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
@@ -561,6 +566,12 @@ function inSpawn(x,z){ return x*x+z*z < 40; }
 
 function addAllToGrid(arr){
   for(const t of arr){
+    // LUL-2225: skip forest trees culled for standing inside the bog patch's
+    // dense-core threshold (see the treeData.push() below) -- a culled tree
+    // is parked off-screen in layoutTreeChunks() and must not still block
+    // movement/LOS via this grid. bogTreeData/landmarkData entries never
+    // carry `culled`, so this is a no-op for them.
+    if(t.culled) continue;
     const k = key(Math.floor(t.x/CELL), Math.floor(t.z/CELL));
     (grid.get(k) || grid.set(k, []).get(k)).push(t);
   }
@@ -655,7 +666,7 @@ function buildCoverGrid(){
 function treesNear(x, z){ return neighbourhood(grid, x, z, CELL, WRAP_SPAN); }
 function generateCover(){
   coverData = [];
-  for(const t of treeData) if(t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
+  for(const t of treeData) if(!t.culled && t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
 
   let tries = 0, placed = 0;
   while(placed < COVER_PROPS && tries < COVER_PROPS*25){
@@ -670,6 +681,13 @@ function generateCover(){
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
     placed++;
   }
+  // LUL-2225: drop any non-tree prop (log/rock/bramble) that landed inside
+  // the bog's keep-clear radius -- nothing but reeds (generateReeds(), own
+  // ring-only placement) is allowed in the patch. Filtering the finished
+  // array, not rejecting inside the loop above, keeps the loop's rng() draw
+  // count/order byte-identical for every existing seed (see the LUL-2212
+  // comment above this function on why that stream must not move).
+  coverData = coverData.filter(c => c.kind === 'tree' || !bogKeepClear(c.x, c.z, 0));
   buildCoverGrid();
 }
 function generateThrowables(){
@@ -689,6 +707,12 @@ function generateThrowables(){
     throwableData.push({ x, z, taken: false });
     placed++;
   }
+  // LUL-2225: drop any throwable inside the bog's keep-clear radius. Filters
+  // the finished array rather than rejecting inside the loop, so the loop's
+  // rng() draw count/order stays byte-identical for every existing seed.
+  // layoutThrowableMeshes() already parks any index past throwableData's new,
+  // shorter length off-map (its `!t` branch) -- no rng consumed there either.
+  throwableData = throwableData.filter(t => !bogKeepClear(t.x, t.z, 0));
 }
 function layoutCoverMeshes(){
   const counts = { log: 0, rock: 0, bramble: 0, reed: 0 };
@@ -821,14 +845,23 @@ function layoutTreeChunks(data){
   // the RNG stream this produces is byte-identical to before this ticket.
   for(let i=0; i<data.length; i++){
     const t = data[i];
-    dummy.position.set(t.x, 0, t.z);
-    dummy.rotation.set(0, rng()*Math.PI*2, 0);
-    dummy.scale.setScalar(t.s);
+    // LUL-2225: yaw/brightness rng() draws happen unconditionally, in the
+    // same order as before this ticket, regardless of `culled` -- only the
+    // matrix written below differs. This is what keeps QA_PINNED_SEED byte-
+    // identical: culling changes what's rendered, never the rng stream.
+    const yaw = rng()*Math.PI*2;
+    const b = 0.72 + rng()*0.5;
+    if(t.culled){
+      dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
+    } else {
+      dummy.position.set(t.x, 0, t.z);
+      dummy.rotation.set(0, yaw, 0);
+      dummy.scale.setScalar(t.s);
+    }
     dummy.updateMatrix();
     const trio = treeChunkTrios[treeChunkIndex(t.x, t.z)];
     const slot = localIndex[i];
     for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
-    const b = 0.72 + rng()*0.5;
     tintCol.setRGB(b*0.92, b, b*0.86);
     trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
   }
@@ -881,12 +914,20 @@ function generateBogTrees(){
 // prop that's supposed to be fully walkable. This was the actual failure
 // e2e/lul211-founder-report.spec.ts caught on the QA-pinned seed -- a reed
 // 0.5 units from a bramble's centre.
+//
+// LUL-2225: reeds are now the patch's visible boundary, not scattered
+// through its interior -- restricted to the ring between BOG_INNER_RADIUS
+// and BOG_OUTER_RADIUS (the old `biomeAt(x,z) <= 0` reject let them land
+// anywhere in the disc, including the dense core). Own budget (BOG_REEDS),
+// no longer COVER_PROPS -- a much smaller target ring than the old 135-unit
+// disc COVER_PROPS was sized for.
 function generateReeds(){
   let tries = 0, placed = 0;
-  while(placed < COVER_PROPS && tries < COVER_PROPS*200){   // LUL-1483: same acceptance-rate drop as generateBogTrees()
+  while(placed < BOG_REEDS && tries < BOG_REEDS*200){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
-    if(biomeAt(x, z) <= 0) continue;
+    const dist = Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z);
+    if(dist < BOG_INNER_RADIUS || dist > BOG_OUTER_RADIUS) continue;
     if(nearLandmarks(x, z, 3)) continue;
     const r = 0.5 + rng()*0.4, h = 1.3 + rng()*0.9;
     if(overlapsExistingCover(x, z, r, coverData)) continue;
@@ -975,12 +1016,28 @@ function generateMap(seed){
 
   treeData = [];
   let tries = 0;
+  // LUL-2225: "sparse inside the bog, not none" -- every 4th tree that lands
+  // within BOG_INNER_RADIUS of BOG_CENTER is kept, the rest marked `culled`.
+  // Deterministic (a counter, no extra rng() draw) so this cannot perturb
+  // the seeded tree stream below it; layoutTreeChunks() parks culled trees
+  // off-screen and addAllToGrid()/generateCover() skip them for collision/
+  // hide-cover. Scoped to BOG_INNER_RADIUS specifically (not the wider
+  // biomeAt > 0.5 threshold, which reaches ~35 units at this geometry) so
+  // the counter directly controls the density qaProbeBogKeepClear() and the
+  // spec's e2e section measure, rather than a proxy region whose overlap
+  // with the measured radius varies by seed.
+  let bogCoreSeen = 0;
   while(treeData.length < CONFIG.trees && tries < CONFIG.trees*25){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
     const s = 0.7 + rng()*1.7;
-    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
+    let culled = false;
+    if(Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z) < BOG_INNER_RADIUS){
+      culled = (bogCoreSeen % 4 !== 0);
+      bogCoreSeen++;
+    }
+    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled });
   }
   layoutTreeChunks(treeData);
   buildGrid();
@@ -1032,6 +1089,27 @@ ring.rotation.x = -Math.PI/2; ring.position.set(CONFIG.lake.x, 0.06, CONFIG.lake
 
 const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3 * LEGACY_LIGHT_SCALE, 75, 2);
 lakeLight.position.set(CONFIG.lake.x, 7, CONFIG.lake.z); scene.add(lakeLight);
+
+// ---- Bog patch ground (LUL-2225) ------------------------------------------
+// The single flat `ground` plane above gave the bog no visible boundary at
+// all -- a player could only learn where the slow ground was by getting
+// slow. Two concentric discs, same "flat mesh just above `ground`" approach
+// as `water`/`ring` above: a wide dark/wet disc out to BOG_OUTER_RADIUS (the
+// full falloff, where bogginess reaches 0) and a darker one at
+// BOG_INNER_RADIUS (the full-bogginess core) sitting fractionally higher so
+// it doesn't z-fight. Static geometry, no rng draw, no shader -- a
+// ripple/water-shader pass is a legitimate follow-up, not a blocker here.
+const bogOuterGround = new THREE.Mesh(new THREE.CircleGeometry(BOG_OUTER_RADIUS, 64),
+  new THREE.MeshStandardMaterial({ color: 0x0c1a14, roughness: 0.6, metalness: 0.05 }));
+bogOuterGround.rotation.x = -Math.PI/2;
+bogOuterGround.position.set(BOG_CENTER.x, 0.015, BOG_CENTER.z);
+scene.add(bogOuterGround);
+
+const bogInnerGround = new THREE.Mesh(new THREE.CircleGeometry(BOG_INNER_RADIUS, 48),
+  new THREE.MeshStandardMaterial({ color: 0x08120f, roughness: 0.55, metalness: 0.1 }));
+bogInnerGround.rotation.x = -Math.PI/2;
+bogInnerGround.position.set(BOG_CENTER.x, 0.02, BOG_CENTER.z);
+scene.add(bogInnerGround);
 
 // ---- Home landmark: where the child must be carried (LUL-38) -------------
 // Deliberately minimal -- "reuse the spawn point" per the ticket's own scope,
@@ -3186,13 +3264,50 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // lets a test pin the 'hard' baby-spawn seam directly, without also
   // pulling in the rest of the blackout preset (predator roster/detection).
   window.ForestEngine.qaSetDifficulty = function(mode){ babySpawnDifficulty = mode === 'hard' ? 'hard' : 'normal'; };
-  window.ForestEngine.qaProbeBaby = function(){ return { x: baby.x, z: baby.z, inBog: biomeAt(baby.x, baby.z) > 0 }; };
+  // LUL-2225: both regenMap() and restart() draw a fresh Math.random() seed --
+  // neither lets a test reproduce an exact layout after calling
+  // qaSetDifficulty('hard'), which is what pinned-seed blackout-spawn
+  // coverage needs (setDifficulty()'s own comment: "difficulty changes always
+  // take effect on the next restart()"). Calls the real generateMap(seed),
+  // the same function every other map-gen path calls -- not a fake state,
+  // just a parameterized seed instead of a random one.
+  window.ForestEngine.qaRegenerateMap = function(seed){ generateMap(seed >>> 0); };
+  window.ForestEngine.qaProbeBaby = function(){
+    return { x: baby.x, z: baby.z, distHome: Math.hypot(baby.x, baby.z), routeCrossesBog: routeCrossesBog(0, 0, baby.x, baby.z) };
+  };
   // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
   // "this world point stays on-canvas" for both the player arrow (which calls
   // w2m(player.x, player.z) in drawMinimap()) and the objective marker (which
   // calls w2m(baby.x, baby.z)) without needing to actually move either --
   // both draw calls go through this same function.
   window.ForestEngine.qaProbeMinimapPoint = function(x, z){ const [px, py] = w2m(x, z); return { px, py, mm: MM }; };
+  // LUL-2225: bogginess and its two derived multipliers at an arbitrary
+  // point, so a test can sample the patch's shape/edge directly (centre,
+  // the inner/outer radii, home, the lake, every LANDMARKS/CAVE position)
+  // without re-deriving lib/game/bog.ts's math from player position.
+  window.ForestEngine.qaProbeBog = function(x, z){
+    const bogginess = biomeAt(x, z);
+    return { bogginess, speedMul: bogSpeedMultiplier(bogginess), noiseMul: bogNoiseMultiplier(bogginess) };
+  };
+  // LUL-2225: counts of the live map's own generated data that fall inside
+  // the bog's keep-clear radius -- the "nothing else spawns inside it" half
+  // of this ticket's acceptance criteria, read back from the real arrays
+  // generateMap() populated (coverData/throwableData/treeData/landmarkData),
+  // not re-derived. treesInsideCore intentionally counts only non-culled
+  // trees strictly within BOG_INNER_RADIUS (sparse forest inside the patch
+  // is the target, not zero) -- every other field is expected to be 0.
+  window.ForestEngine.qaProbeBogKeepClear = function(){
+    const coverInside = coverData.filter(c => c.kind !== 'tree' && c.kind !== 'reed' && bogKeepClear(c.x, c.z, 0)).length;
+    const reedsInsideCore = coverData.filter(c => c.kind === 'reed' && Math.hypot(c.x - BOG_CENTER.x, c.z - BOG_CENTER.z) < BOG_INNER_RADIUS).length;
+    const throwablesInside = throwableData.filter(t => bogKeepClear(t.x, t.z, 0)).length;
+    const treesInsideCore = treeData.filter(t => !t.culled && Math.hypot(t.x - BOG_CENTER.x, t.z - BOG_CENTER.z) < BOG_INNER_RADIUS).length;
+    const landmarksInside = landmarkData.filter(l => bogKeepClear(l.x, l.z, 0)).length;
+    return { coverInside, reedsInsideCore, throwablesInside, treesInsideCore, landmarksInside };
+  };
+  // LUL-2225: generic teleport, for staging a position (e.g. the bog center)
+  // that isn't already a fixed named landmark like qaTeleportHome/
+  // qaTeleportNearBaby.
+  window.ForestEngine.qaTeleportTo = function(x, z){ player.x = x; player.z = z; };
   window.ForestEngine.qaProbeBabyLight = function(){
     return { intensity: babyLight.intensity, distance: babyLight.distance,
              carrying, pickingUp, taken: baby.taken };
@@ -4516,6 +4631,13 @@ function drawMinimapStatic(){
   for(const l of landmarkData){ const [px,py] = w2m(l.x, l.z); sx.fillRect(px-1.5, py-1.5, 3, 3); }
   const [lx,ly] = w2m(CONFIG.lake.x, CONFIG.lake.z);
   sx.beginPath(); sx.arc(lx, ly, CONFIG.lake.r*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(134,184,255,0.55)'; sx.fill();
+  // LUL-2225: the bog patch was never drawn here (LUL-1902 explicitly scoped
+  // the minimap out) -- with a small, keep-clear patch there's finally a
+  // single clean disc to draw, same pattern as the lake immediately above.
+  // Blackout still hides the whole minimap (see the LUL-1505-era caller),
+  // so this doesn't help blackout read the patch -- that's the point of it.
+  const [bx,by] = w2m(BOG_CENTER.x, BOG_CENTER.z);
+  sx.beginPath(); sx.arc(bx, by, BOG_OUTER_RADIUS*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(70,110,80,0.5)'; sx.fill();
 }
 function drawMinimap(){
   mmx.clearRect(0,0,MM,MM); mmx.drawImage(mmStatic, 0, 0);

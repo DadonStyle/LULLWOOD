@@ -434,6 +434,27 @@ export function checkResolvedSymbols(symbols, spans) {
   return { broken, checked: symbols.length };
 }
 
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// checkResolvedSymbols only proves the symbol still exists in the engine --
+// it never confirmed the doc still says so. A later edit can delete the
+// sentence/paragraph that cited a whitelisted symbol while leaving the
+// symbol itself untouched in the engine; the whitelist entry would then
+// silently outlive the citation it was meant to guard (LUL-709). Match the
+// doc's own citation convention: the symbol name inside backticks, followed
+// by `(`, `.`, `[`, or the closing backtick (covers `foo()`, `foo.bar`,
+// `foo[x]`, and bare `` `foo` ``).
+export function checkSymbolsCitedInDoc(symbols, docText) {
+  const missing = [];
+  for (const name of symbols) {
+    const re = new RegExp('`' + escapeRegExp(name) + '(?:\\(|\\.|\\[|`)');
+    if (!re.test(docText)) missing.push(name);
+  }
+  return { missing };
+}
+
 // ---- cli ------------------------------------------------------------------
 
 function fmt(r) {
@@ -505,6 +526,7 @@ function main(argv) {
 
   const spans = declarationSpans(engineText);
   const resCheck = checkResolvedSymbols(resolvedSymbols, spans);
+  const citedCheck = checkSymbolsCitedInDoc(resolvedSymbols, docText);
 
   console.log(
     `check-elements-citations: ${r.total} citations in ${DOC}; ` +
@@ -512,7 +534,7 @@ function main(argv) {
     `${r.ok.length} ok, ${r.drift.length} drifted, ${r.unknown.length} unknown symbol, ` +
     `${r.ambiguous.length} ambiguous, ${r.unverifiable.length} unverifiable; ` +
     `${resolvedSymbols.length} symbol-only citation(s) in ${RESOLVED_SYMBOLS} ` +
-    `(${resCheck.broken.length} broken).`);
+    `(${resCheck.broken.length} broken, ${citedCheck.missing.length} no longer cited).`);
 
   if (report) {
     for (const status of ['drift', 'unknown', 'ambiguous', 'unverifiable']) {
@@ -524,6 +546,12 @@ function main(argv) {
       console.log(`\nRESOLVED-SYMBOLS BROKEN (${resCheck.broken.length}):`);
       for (const b of resCheck.broken) {
         console.log(`  ${RESOLVED_SYMBOLS}: \`${b.symbol}\` is ${b.reason} in ${ENGINE}`);
+      }
+    }
+    if (citedCheck.missing.length) {
+      console.log(`\nRESOLVED-SYMBOLS NO LONGER CITED (${citedCheck.missing.length}):`);
+      for (const name of citedCheck.missing) {
+        console.log(`  ${RESOLVED_SYMBOLS}: \`${name}\` has no backticked citation left in ${DOC}`);
       }
     }
     return 0;
@@ -550,6 +578,20 @@ function main(argv) {
       `\nUnlike drifted L<n> citations, this is never baselined -- every entry in\n` +
       `${RESOLVED_SYMBOLS} was proven resolvable the day it was added, so a break here is\n` +
       `always a fresh defect.`);
+    return 1;
+  }
+
+  if (citedCheck.missing.length) {
+    console.error(`\ncheck-elements-citations: FAIL -- ${citedCheck.missing.length} resolved-symbol citation(s) no longer cited in ${DOC}:`);
+    for (const name of citedCheck.missing) {
+      console.error(
+        `  \`${name}\` is in ${RESOLVED_SYMBOLS} but ${DOC} no longer names it inside\n` +
+        `  backticks. Either restore the citation, or remove the entry from\n` +
+        `  ${RESOLVED_SYMBOLS} if the doc genuinely stopped claiming this exists.`);
+    }
+    console.error(
+      `\nLike the resolved-symbol check above, this is never baselined: every entry was\n` +
+      `proven cited the day it was added, so a break here is always a fresh defect.`);
     return 1;
   }
 

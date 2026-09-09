@@ -44,8 +44,19 @@ declare global {
        * current map. No UI wires this yet (LUL-26) -- it's how a test exercises hard
        * mode's "child spawns beyond the bog" before that UI exists. */
       qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
-      /** LUL-25: the child's world position and whether it's past the forest/bog seam. */
-      qaProbeBaby?: () => { x: number; z: number; inBog: boolean };
+      /** LUL-2225: regenerates the map with an explicit seed, the same
+       * generateMap() every other map-gen path calls -- unlike regenMap()/
+       * restart() (both draw Math.random()), this lets a test reproduce an
+       * exact layout after qaSetDifficulty('hard'), for pinned-seed blackout
+       * spawn coverage. */
+      qaRegenerateMap?: (seed: number) => void;
+      /** LUL-2225: the child's world position, its distance from home, and
+       * whether the direct route home crosses the bog's full-bogginess core
+       * (lib/game/bog.ts routeCrossesBog) -- replaces the old `inBog` field
+       * (whether the child itself stood in the bog), which stopped meaning
+       * anything once the patch shrank small enough that no point inside it
+       * is ever >= BLACKOUT_MIN_RADIUS from home. */
+      qaProbeBaby?: () => { x: number; z: number; distHome: number; routeCrossesBog: boolean };
       /** LUL-2122: babyLight's live intensity/distance plus the pickup/carry/taken
        * state flags, so a test can assert the interact button actually reached
        * pickup() instead of only that it rendered and was tappable. */
@@ -370,6 +381,31 @@ declare global {
        * and the in-memory one-time gate, so a single boot can prove the
        * caption is first-time-only twice in the same test. */
       qaResetScentCaption?: () => void;
+      /** LUL-2225: bogginess (biomeAt) and the two multipliers derived from
+       * it (bogSpeedMultiplier/bogNoiseMultiplier) at an arbitrary world
+       * point -- lets a test sample the patch's shape/edge directly instead
+       * of re-deriving lib/game/bog.ts's math from player position. */
+      qaProbeBog?: (x: number, z: number) => { bogginess: number; speedMul: number; noiseMul: number };
+      /** LUL-2225: counts of the live map's own generated data that fall
+       * inside the bog's keep-clear radius (lib/game/bog.ts bogKeepClear) --
+       * every field should read 0 except `treesInsideCore`, which is
+       * expected to be small but nonzero (sparse forest inside the patch,
+       * not none; see the tree-culling comment in generateMap()).
+       * `treesInsideCore` counts only non-culled trees within
+       * BOG_INNER_RADIUS specifically (not the wider keep-clear radius used
+       * for everything else), matching the density check the spec's e2e
+       * section computes against. */
+      qaProbeBogKeepClear?: () => {
+        coverInside: number;
+        reedsInsideCore: number;
+        throwablesInside: number;
+        treesInsideCore: number;
+        landmarksInside: number;
+      };
+      /** LUL-2225: teleports the player to an arbitrary world point --
+       * generic version of qaTeleportNearBaby/qaTeleportHome, for staging a
+       * position (e.g. the bog center) that isn't a fixed named landmark. */
+      qaTeleportTo?: (x: number, z: number) => void;
     };
   }
 }
