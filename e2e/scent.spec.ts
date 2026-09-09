@@ -16,8 +16,37 @@
 // `qaProbePredatorState` to place the bear on it and sample. The mechanics
 // under test -- checkScent(), scentOnto(), the chase leash, movement,
 // predatorCall() -- all run for real; only the setup is synthetic.
+//
+// LUL-2107: driven via qaSetFixedStep/qaAdvance (docs/specs/
+// lul-2071-deterministic-qa-clock.md) instead of expect.poll against the real
+// RAF loop -- that poll only worked because swiftshader's dt clamp saturated
+// to a de facto fixed step (wiki systems/e2e-post-gpu-nondeterminism), which
+// real GPU rendering (LUL-1910) no longer guarantees.
 import { test, expect } from '@playwright/test';
-import { boot, enter } from './helpers';
+import { boot, enter, qaHook } from './helpers';
+
+// Fixed step, matching charge-dodge.spec.ts / positional-hiding.spec.ts.
+const FIXED_DT = 0.02;
+const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
+
+// Advances game time in fixed chunks, checking `predicate` after each one,
+// until it's true or `maxSeconds` of game time is exhausted. Same shape as
+// positional-hiding.spec.ts's helper -- replaces expect.poll's wall-clock
+// timeout with a game-time budget for a state-machine transition that isn't
+// a fixed duration.
+async function advanceUntil(
+  page: import('@playwright/test').Page,
+  predicate: () => Promise<boolean>,
+  { chunkSeconds = 0.5, maxSeconds = 10 }: { chunkSeconds?: number; maxSeconds?: number } = {},
+): Promise<boolean> {
+  const chunkSteps = stepsFor(chunkSeconds);
+  const chunks = Math.ceil(maxSeconds / chunkSeconds);
+  for (let i = 0; i < chunks; i++) {
+    await qaHook(page, 'qaAdvance', chunkSteps);
+    if (await predicate()) return true;
+  }
+  return false;
+}
 
 test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
   test('a predator placed on a stale, distant trail point tracks the player and does not re-roar', async ({
@@ -25,6 +54,9 @@ test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
   }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-2107: park the real RAF loop -- from here on only qaAdvance() (via
+    // advanceUntil below) moves simulation time.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const seeded = await page.evaluate(() => {
       window.ForestEngine?.qaSeedScentPoint?.(-60, 0, 4);
@@ -33,44 +65,39 @@ test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
     expect(seeded, 'qaSeedScentPoint + qaProbeScentOnOldest should find the seeded point').not.toBeNull();
     expect(seeded!.dist, 'seeded point must sit beyond the bear leash (30 * 1.5 = 45) to reproduce the bug').toBeGreaterThan(45);
 
-    // One tick is enough for `roam` to run checkScent() -> scentOnto() and flip to `chase`.
-    await expect
-      .poll(async () => (await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null))?.state, {
-        message: 'bear did not enter chase off the seeded scent point',
-        timeout: 5_000,
-      })
-      .toBe('chase');
+    // One tick is enough for `roam` to run checkScent() -> scentOnto() and flip
+    // to `chase`; advanceUntil's chunking is the safety margin the old real-time
+    // 5s poll timeout used to provide.
+    const reachedChase = await advanceUntil(page, async () => {
+      const s = await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null);
+      return s?.state === 'chase';
+    });
+    expect(reachedChase, 'bear did not enter chase off the seeded scent point').toBe(true);
 
     const first = await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null);
     expect(first).not.toBeNull();
     expect(first!.scentCalls, 'scentOnto() should fire exactly once on pickup').toBe(1);
 
-    // LUL-99: wait for the *game* clock to advance, not the wall clock. Game time
-    // runs slower than wall time under this rig's software rendering -- dt is
-    // clamped at engine/forest-engine.js:~1220, so below 20fps it never catches up
-    // to real time (wiki: systems/dt-clamp-vs-walltime). A wall-clock wait here
-    // measures the runner's frame rate, not the hunt logic. `t` on the probe is the
-    // same clock the engine's own timers accumulate against, so diffing it gives the
-    // actual in-sim window the movement below ran for. 3 game-seconds stays
-    // comfortably inside the 8s scentLock leash exemption (SCENT_TRACK_TIME) so the
-    // chase can't lapse mid-sample, and is generous either side of the ~6.8u/s top
-    // speed vs. the pre-fix 0.7u/s stutter this assertion exists to catch.
+    // LUL-99/LUL-2107: advance the *game* clock by a known amount instead of
+    // waiting on wall time. `t` on the probe is `clock.elapsedTime`, the same
+    // clock qaAdvance() moves by exactly FIXED_DT per step (docs/specs/
+    // lul-2071-deterministic-qa-clock.md), so stepsFor(GAME_SECONDS) lands
+    // exactly GAME_SECONDS of sim time forward with no polling needed -- unlike
+    // the old wall-clock wait, which measured the runner's frame rate under
+    // this rig's software-rendering dt clamp (wiki: systems/dt-clamp-vs-walltime),
+    // not the hunt logic. 3 game-seconds stays comfortably inside the 8s
+    // scentLock leash exemption (SCENT_TRACK_TIME) so the chase can't lapse
+    // mid-sample, and is generous either side of the ~6.8u/s top speed vs. the
+    // pre-fix 0.7u/s stutter this assertion exists to catch.
     const GAME_SECONDS = 3;
-    await expect
-      .poll(
-        async () => {
-          const s = await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null);
-          return s ? s.t - first!.t : 0;
-        },
-        {
-          message: 'game clock did not advance far enough to sample distance closed',
-          timeout: 45_000,
-        },
-      )
-      .toBeGreaterThanOrEqual(GAME_SECONDS);
+    await qaHook(page, 'qaAdvance', stepsFor(GAME_SECONDS));
 
     const second = await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null);
     expect(second).not.toBeNull();
+    expect(
+      second!.t - first!.t,
+      'game clock did not advance far enough to sample distance closed',
+    ).toBeGreaterThanOrEqual(GAME_SECONDS);
 
     // The headline assertion: it actually tracks. Pre-fix this closed ~0.7 units/s
     // (the leash-vs-scent-range fight); post-fix it should close close to its real
