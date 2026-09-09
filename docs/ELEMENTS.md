@@ -316,18 +316,7 @@ one geometry builder (`makePredator()`), differentiated by the
   state change (LUL-1482). Scent and noise acquisition are unaffected in
   every state, carrying or not.
 - Chase, losing/regaining track via `investigate`→`sniff`→`back` (LUL-22,
-  explicitly "not to be retuned"). LUL-1857: when the sniff loop terminally
-  gives up (`sniffsLeft` exhausted) it no longer flips straight to `roam` in
-  place at sniff range (2.5-3.2 units) -- it now enters a `leaving` sub-phase
-  that walks the same 8-16 unit `backOffPoint()` retreat the mid-loop `back`
-  sub-phase already uses, and only finalizes the give-up (`roam`, fresh
-  `lkpX/Z`) on arrival. Makes the give-up an observable "the animal leaves"
-  rather than a state flip with the animal still standing there -- see the
-  Wayfinding entry below for why this matters once the carried child's cry
-  can re-hook a predator that never moved. `leaving` joins `sniff`/`back`/
-  `standoff` in `shouldRevertInvestigateToChase()` (`lib/game/predator.ts`) --
-  a player who breaks cover mid-retreat is still spottable. LUL-1090: when
-  the `approach` sub-phase
+  explicitly "not to be retuned"). LUL-1090: when the `approach` sub-phase
   reaches sniff range (`hasReachedSniffRange()`, `rad+SNIFF_APPROACH_MARGIN`
   ≈2.5-3.2 units) **while the player is `hidden`**, the predator first walks
   itself back to `SNIFF_STANDOFF` (4.5 units, `lib/game/predator.ts`
