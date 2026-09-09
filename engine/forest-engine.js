@@ -3181,10 +3181,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   // LUL-1484: before/after perf baseline for the map-size growth (E3), and
   // the baseline E6's chunking work later has to justify itself against.
+  // LUL-2257: when post-processing is active, renderer.info.render has already
+  // been overwritten by the bloom/blur/composite blits by the time this reads
+  // it -- use the snapshot renderPost() captured right after the real scene
+  // render instead. Without post-processing there's only ever one render()
+  // call per frame (the fallback branch below renderPost's warm-up call, see
+  // the bottom of the file), so renderer.info.render is already the real
+  // scene stats and reading it live is correct.
   window.ForestEngine.qaProbePerf = function(){
+    const render = usePost ? lastScenePerf : renderer.info.render;
     return {
-      calls: renderer.info.render.calls,
-      triangles: renderer.info.render.triangles,
+      calls: render.calls,
+      triangles: render.triangles,
       elapsedTime: clock.elapsedTime,
     };
   };
@@ -4397,6 +4405,12 @@ void main(){
   gl_FragColor = vec4(col, 1.0);
 }`;
 let usePost = false, sceneRT, brightRT, blurA, blurB, fsScene, fsCam, fsQuad, matBright, matBlur, matComposite;
+// LUL-2257: renderer.info.render resets on every renderer.render() call (autoReset
+// defaults true), so by the time a frame finishes, it only reflects the last call --
+// the final post-process blit (a 2-triangle full-screen quad), not the forest.
+// Captured right after the real scene render in renderPost(), before the bloom/blur/
+// composite blits overwrite it, so qaProbePerf() can read the real scene stats.
+let lastScenePerf = { calls: 0, triangles: 0 };
 const resLevels = [Math.min(devicePixelRatio,1.5), Math.min(devicePixelRatio,1.1), 0.8].filter((v,i,a)=>a.indexOf(v)===i);
 let resIdx = 0, RES = resLevels[0];
 function makeTargets(){
@@ -4425,6 +4439,7 @@ function initPost(){
 function blit(mat, target){ fsQuad.material = mat; renderer.setRenderTarget(target || null); renderer.render(fsScene, fsCam); }
 function renderPost(t){
   renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
+  lastScenePerf = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
   matBright.uniforms.tDiffuse.value = sceneRT.texture; blit(matBright, brightRT);
   let src = brightRT;
   for(let i=0;i<3;i++){
