@@ -560,6 +560,90 @@ design doc as turning horror into radar.
    rule; this is a Tier B feedback-layer change, not gated on a play verdict, but the PR
    body must not imply it's been seen working.
 
+## e2e
+
+**Backfilled LUL-2185 (2026-09-09).** This feature merged (`8b99b9f`, per the header above)
+before the `## e2e` section requirement existed (LUL-2124) and shipped with **zero**
+automated coverage — confirmed via `grep -rln "bearing" e2e/` (three false-positive hits,
+all the unrelated English word "load-bearing" in comments). Filling that gap.
+
+**Specs.** `e2e/bearing-pulse.spec.ts` — new. One test: `'luring a predator drives
+#bearingPulse's class + opacity from the real bearing'`. Full content below — small enough
+to hand an executor verbatim rather than just naming it.
+
+```ts
+// LUL-2185: e2e coverage for LUL-1308's bearing pulse (#bearingPulse) -- zero coverage
+// since the feature merged before the '## e2e' section was required. No new QA hooks:
+// qaLurePredatorKind + qaPlayerState + qaSetFixedStep/qaAdvance (all existing) are enough
+// to trigger the approach-cue branch deterministically and read the resulting DOM state,
+// same convention as e2e/action-prompt.spec.ts's direct #actionPrompt/#actionKey reads.
+import { test, expect } from '@playwright/test';
+import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook } from './helpers';
+import { bearingOf } from '../lib/game/bearing';
+
+test.describe("#bearingPulse -- off-screen predator bearing cue (LUL-1308)", () => {
+  test("luring a predator drives #bearingPulse's class + opacity from the real bearing", async ({ page }) => {
+    const errs = trackConsoleErrors(page);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    const before = await qaHook(page, 'qaPlayerState');
+    expect(before).not.toBeNull();
+
+    const kind = await qaHook(page, 'qaLurePredatorKind', 'wolf');
+    expect(kind, 'qaLurePredatorKind returned null -- no wolf at this seed').toBe('wolf');
+
+    // qaLurePredatorKind places the predator at (player.x+6, player.z) in world frame --
+    // dx=6, dz=0 regardless of yaw. Compute the expected side from the same bearingOf()
+    // the engine uses (lib/game/bearing.ts), instead of hardcoding one.
+    const expected = bearingOf(before.x + 6, before.z, before.x, before.z, before.yaw);
+
+    // pianoTimer starts at 0, so the very next tick after luring fires the approach-cue
+    // branch (engine/forest-engine.js:4596-4609) deterministically -- no timing race.
+    await qaHook(page, 'qaSetFixedStep', 1 / 60);
+    await qaHook(page, 'qaAdvance', 1);
+
+    const pulse = await page.evaluate(() => {
+      const el = document.getElementById('bearingPulse');
+      return el ? { className: el.className, opacity: el.style.opacity } : null;
+    });
+    expect(pulse, '#bearingPulse missing from DOM').not.toBeNull();
+
+    if (expected.side === 'ahead') {
+      expect(Number(pulse!.opacity || 0)).toBe(0);
+    } else {
+      expect(pulse!.className).toBe(expected.side);
+      expect(Number(pulse!.opacity)).toBeGreaterThan(0);
+    }
+
+    expectNoConsoleErrors(errs);
+  });
+});
+```
+
+**Hooks.** No new hooks needed — all three already exist and are already declared in
+`engine/forest-engine.d.ts`:
+- `qaLurePredatorKind(kind): string|null` — existing (`engine/forest-engine.js:3226`).
+- `qaPlayerState(): {x,z,yaw,...}` — existing (`engine/forest-engine.js:3552`).
+- `qaSetFixedStep(dt)` / `qaAdvance(steps)` — existing (`engine/forest-engine.js:3080` /
+  `:3084`).
+
+**Tester scenario.** None dedicated. `#bearingPulse` is engine-owned overlay DOM
+(`docs/ELEMENTS.md`'s "Engine-owned DOM" bullet, updated by this PR) and is already swept
+by the nightly's general hard rule 2 ("no HUD element may overlap another visible
+element") in `shared/local-qa/QA_TESTER.md` — it isn't in the named LOSE/WIN checklist
+because it never gates end-screen state, so no dedicated request file
+(`shared/local-qa/REQUESTING-A-TEST.md`) is warranted for this backfill.
+
+**Not covered.** Stereo pan (`pianoNote`'s new `pan` argument, real Web Audio panning) and
+the distance-based call-volume falloff (`callVolumeMul`) stay manual/unverified: the
+nightly rig runs `--mute-audio` (QA_TESTER.md rule 14) and this environment has no browser
+at all. The underlying math for both is already covered by `lib/game/bearing.test.ts`'s
+`bearingPan`/`callVolumeMul` unit tests (§2 above) — whether the panned/falloff audio
+*feels* right is a judgment call, not a Playwright assertion. `#bearingPulse`'s gradient
+legibility against the fog is likewise feel, not asserted beyond class-name + opacity
+wiring.
+
 ## Constraints
 
 - No change to `effectiveDetect()`, `canSee()`, `hearNoise()`'s state transitions, any

@@ -325,15 +325,29 @@ const OVERLAY_STYLE = `
 
   #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
     font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
-    text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none;
-    animation: windHintFade 7s ease forwards; }
-  @keyframes windHintFade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+    text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none; opacity: 1; }
 
   /* LUL-1912's minimap-clearance push only matters in admin/dev view -- #minimap is
      display:none for every real player (data-admin-mode="0"), so top:20/right:20 above
      is what players and the QA tester actually see; push down only under admin mode. */
   body[data-admin-mode="1"] #windIndicator { top: 184px; }
   body[data-admin-mode="1"] #windIndicatorHint { top: 228px; }
+
+  /* LUL-2230: one-time scent-trail explanation, anchored to the engine-projected
+     screen position of the mote it's explaining (left/top set inline, viewport
+     fractions -- see components/Hud.tsx). Same pill style as #caveImmunePanel
+     above; translate lifts it clear above the mote instead of covering it. */
+  #scentTrailCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
+    max-width: 60vw; padding: 6px 14px; border-radius: 999px; pointer-events: none;
+    background: rgba(18,34,34,0.6); border: 1px solid rgba(159,224,208,0.4);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    font-size: 12px; letter-spacing: 0.03em; color: #cdf3e8; text-align: center;
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
+  .scentTrailCaptionGlyph { color: #9fe0d0; margin-right: 4px; }
+  /* LUL-2158 precedent (see #hint above): a fast death/win must never leave this
+     stranded over the end screen. */
+  body:has(#winScreen) #scentTrailCaption,
+  body:has(#deathScreen) #scentTrailCaption { opacity: 0 !important; }
 
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;

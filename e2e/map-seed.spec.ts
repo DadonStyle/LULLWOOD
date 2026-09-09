@@ -13,10 +13,6 @@ async function dumpMapSeed(page: import('@playwright/test').Page) {
   return dump;
 }
 
-async function readElapsedTime(page: import('@playwright/test').Page) {
-  return page.evaluate(() => (window as any).ForestEngine?.qaProbeElapsedTime?.() ?? 0);
-}
-
 test.describe('session-varied map seed', () => {
   test('?seed= reproduces the exact same layout across two loads', async ({ page }) => {
     await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
@@ -60,23 +56,21 @@ test.describe('runtime seed determinism — predator behavior', () => {
     // (sniffs, positions, state machine transitions) must also be deterministic.
     // This drives the game forward and verifies predator states match exactly.
 
+    // Let the predators update through several frames of behavior (roam,
+    // sniff, investigate, etc). 1.5 game-seconds is enough for state changes.
+    // Drive both runs via qaSetFixedStep/qaAdvance rather than polling the
+    // real game clock -- the poll let CI jitter advance a different number
+    // of engine ticks between the two sequential runs below, producing tiny
+    // (~0.1-0.3 unit) x/z/dist drift that wasn't a real determinism bug.
+    const FIXED_DT = 0.02;
+    const GAME_SECONDS = 1.5;
+    const STEPS = Math.round(GAME_SECONDS / FIXED_DT);
+
     async function runAndCaptureStates(page: import('@playwright/test').Page) {
       await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
       await enter(page);
-      // Let the predators update through several frames of behavior (roam,
-      // sniff, investigate, etc). 1.5 game-seconds is enough for state changes.
-      // Poll the engine's game clock (qaProbeElapsedTime), not wall-clock --
-      // a fixed waitForTimeout() can let CI jitter advance a different number
-      // of engine ticks between the two sequential runs below, producing tiny
-      // (~0.1-0.3 unit) x/z/dist drift that isn't a real determinism bug.
-      const GAME_SECONDS = 1.5;
-      const startTime = await readElapsedTime(page);
-      await expect
-        .poll(async () => (await readElapsedTime(page)) - startTime, {
-          message: `game clock did not advance to ${GAME_SECONDS}s`,
-          timeout: 60_000,
-        })
-        .toBeGreaterThanOrEqual(GAME_SECONDS);
+      await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+      await qaHook(page, 'qaAdvance', STEPS);
       // Capture all 9 predators (3 species × 3 individuals)
       const states = [];
       for (let i = 0; i < 9; i++) {

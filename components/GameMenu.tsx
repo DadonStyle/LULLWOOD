@@ -37,14 +37,25 @@ export default function GameMenu({
   state,
   actions,
   onOpenSettings,
+  onOpenChange,
 }: {
   state: EngineHudState;
   actions: EngineActions | null;
   onOpenSettings: () => void;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
+
+  // LUL-2231: report open state up so Hud.tsx can gate MobileControls -- the
+  // menuPanel (z-index 21) sits under mobile's sticks/buttons (z-index 30/31)
+  // and, unlike LUL-2131's end-screen case, nothing here ever unmounts to get
+  // out of the way. `open` itself stays local; this is a one-way notification,
+  // not a controlled-component conversion.
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [open, onOpenChange]);
 
   // Close menu when clicking outside
   useEffect(() => {

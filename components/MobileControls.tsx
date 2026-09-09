@@ -247,6 +247,7 @@ export default function MobileControls({
   heldThrowable,
   winVisible,
   deathVisible,
+  menuOpen,
 }: {
   actions: EngineActions | null;
   entered: boolean;
@@ -254,6 +255,7 @@ export default function MobileControls({
   heldThrowable: boolean;
   winVisible: boolean;
   deathVisible: boolean;
+  menuOpen: boolean;
 }) {
   if (!actions) return null;
   // LUL-2131: sticks/buttons sit at z-index 30/31, above #winScreen/#deathScreen's
@@ -261,7 +263,10 @@ export default function MobileControls({
   // screens because this component previously gated only on `entered`, which stays
   // true through win/death. Unmount outright rather than fade: nothing here should
   // still receive input once a run has ended.
-  if (winVisible || deathVisible) return null;
+  // LUL-2231: same reasoning for GameMenu's open panel (z-index 21 vs this
+  // component's 30/31) -- nothing here should be interactable while the menu
+  // covers it.
+  if (winVisible || deathVisible || menuOpen) return null;
 
   // LUL-529: `env(safe-area-inset-*)` only resolves once app/layout.tsx's
   // viewport export carries `viewportFit: 'cover'` -- without it every one of
@@ -328,12 +333,12 @@ export default function MobileControls({
         <div style={side}>
           {entered && (
             <div style={row}>
-              <ActionBtn label="E" onTap={() => actions.triggerTouchInteract()} />
+              <ActionBtn label="E" testId="touchInteract" onTap={() => actions.triggerTouchInteract()} />
               {/* LUL-1623: only visible while actually holding a throwable --
                   grab itself reuses the Interact ("E") button above via the
                   engine's own context-dispatch, no separate grab button. */}
               {heldThrowable && (
-                <ActionBtn label="Throw" onTap={() => actions.triggerTouchThrow()} />
+                <ActionBtn label="Throw" testId="touchThrow" onTap={() => actions.triggerTouchThrow()} />
               )}
               {/* LUL-213/LUL-529: jump is the only way to clear a charging
                   wolf/lion -- survival-critical, not cosmetic, so it sits in
@@ -353,29 +358,36 @@ export default function MobileControls({
               )}
             </div>
           )}
-          <Stick
-            // LUL-274 FACT 3: the stick reports screen-down-positive ny, but
-            // the engine's iz axis is forward-positive (KeyW -> iz += 1). Flip
-            // the sign here, at the source, so nothing downstream has to know
-            // the stick and the engine disagree on which way is "up".
-            onMove={(nx, ny) => actions.setTouchMove(nx, -ny)}
-            onSprint={(v) => actions.setTouchSprint(v)}
-            testId="leftStick"
-          />
+          {/* LUL-2231: sticks are otherwise unconditional and rendered on the
+              pre-entry gate screen, overlapping its instructions text -- gate
+              on `entered` to match the button rows above. */}
+          {entered && (
+            <Stick
+              // LUL-274 FACT 3: the stick reports screen-down-positive ny, but
+              // the engine's iz axis is forward-positive (KeyW -> iz += 1). Flip
+              // the sign here, at the source, so nothing downstream has to know
+              // the stick and the engine disagree on which way is "up".
+              onMove={(nx, ny) => actions.setTouchMove(nx, -ny)}
+              onSprint={(v) => actions.setTouchSprint(v)}
+              testId="leftStick"
+            />
+          )}
         </div>
 
         {/* Right side: hide + veil above the look stick */}
         <div style={side}>
           {entered && (
             <div style={row}>
-              <ActionBtn label="Hide" onTap={() => actions.triggerTouchHide()} />
+              <ActionBtn label="Hide" testId="touchHide" onTap={() => actions.triggerTouchHide()} />
               <HoldBtn label="Veil" testId="touchVeil" onHold={(v) => actions.setTouchVeil(v)} />
             </div>
           )}
-          <Stick
-            onMove={(nx, ny) => actions.setTouchLook(nx, ny)}
-            testId="rightStick"
-          />
+          {entered && (
+            <Stick
+              onMove={(nx, ny) => actions.setTouchLook(nx, ny)}
+              testId="rightStick"
+            />
+          )}
         </div>
       </div>
     </>

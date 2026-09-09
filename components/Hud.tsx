@@ -40,7 +40,7 @@ export interface EngineHudState {
   // LUL-1194: what actually killed the player (dodge miss / forced hunt / run down
   // mid-chase) -- the death screen names this, not deathKind's species; deathKind
   // stays around for the #deathKind test hook (e2e/*.spec.ts key on it directly).
-  deathCause: 'charge' | 'hunt' | 'chase';
+  deathCause: 'charge' | 'hunt' | 'chase' | 'heard';
   deathCarrying: boolean;   // LUL-1438: show carry-death clause on first carry death only
   lossRevealed: boolean;
   survivedSeconds: number;
@@ -125,6 +125,14 @@ export interface EngineHudState {
   // streamed per-frame -- see engine/forest-engine.js's logChronicle()
   // comment). lib/game/chronicle.ts's formatChronicle() renders it.
   chronicle: ChronicleEvent[];
+  // LUL-2230: the scent trail visual + its one-time explanation. `scentTrailVisible`
+  // is the persisted Settings toggle (default on); `scentCaptionVisible`/X/Y are
+  // pushed per-frame, viewport fractions, only while the one-time caption is on
+  // screen (same per-frame-push pattern veilCharge above uses).
+  scentTrailVisible: boolean;
+  scentCaptionVisible: boolean;
+  scentCaptionX: number;
+  scentCaptionY: number;
 }
 
 export interface EngineActions {
@@ -161,6 +169,8 @@ export interface EngineActions {
   // LUL-1666
   setMissionUnlocks: (unlocks: { deepwater: boolean }) => void;
   setSecondaryChoice: (kind: SecondaryKind | null) => void;
+  // LUL-2230
+  setScentTrailVisible: (v: boolean) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -224,6 +234,10 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   windX: 1,
   windZ: 0,
   chronicle: [],
+  scentTrailVisible: true,
+  scentCaptionVisible: false,
+  scentCaptionX: 0.5,
+  scentCaptionY: 0.5,
 };
 
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
@@ -240,6 +254,7 @@ const DEATH_CAUSE_TEXT: Record<EngineHudState['deathCause'], string> = {
   charge: "you didn't clear its charge in time",
   hunt: 'you went quiet too long, and it came looking',
   chase: 'it ran you down before you could break away',
+  heard: 'it heard the child crying and came for you',
 };
 
 // The engine emits mist as the raw FogExp2 density it feeds Three; the panel's
@@ -348,7 +363,8 @@ function useMissionUnlocks(actions: EngineActions | null, unlocks: { deepwater: 
     if (!actions) return;
     appliedRef.current = true;
     const stored = readMissionUnlocks();
-    if (stored) actions.setMissionUnlocks(stored);
+    // LUL-2221: a contract mismatch between EngineActions and the engine must never blank the page.
+    if (stored) actions.setMissionUnlocks?.(stored);
   }, [actions]);
 
   useEffect(() => {
@@ -482,6 +498,9 @@ export default function Hud({
   const mobile = useState(() => isMobile())[0];
   // LUL-26: difficulty + accessibility settings panel.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // LUL-2231: whether GameMenu's panel is open -- gates MobileControls so its
+  // sticks/buttons don't render on top of the menu (see MobileControls.tsx).
+  const [menuOpen, setMenuOpen] = useState(false);
   const captionVisible = useCaptionToast(state.captionsOn, state.captionId);
 
   // LUL-1194: the keyboard is otherwise dead on end screens (isPlaying() gates
@@ -536,6 +555,7 @@ export default function Hud({
           heldThrowable={state.heldThrowable}
           winVisible={state.winVisible}
           deathVisible={state.deathVisible}
+          menuOpen={menuOpen}
         />
       ) : (
         <DesktopControls />
@@ -606,7 +626,7 @@ export default function Hud({
         </button>
       </div>
 
-      <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} />
+      <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} onOpenChange={setMenuOpen} />
       <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       {/* LUL-26: closed captions for predator calls -- the only warning
@@ -755,6 +775,20 @@ export default function Hud({
 
       {state.entered && !state.winVisible && !state.deathVisible && (
         <div id="windIndicatorHint">wind — move into the arrow to lower your scent trail</div>
+      )}
+
+      {/* LUL-2230: one-time explanation for the scent trail visual, anchored to the
+          engine-projected screen position of the first mote the player can actually
+          see (scentCaptionX/Y, viewport fractions). Gated on !winVisible/!deathVisible
+          like #hint (LUL-2158 precedent) so a fast death never shows it over "YOU LOSE". */}
+      {state.scentCaptionVisible && !state.winVisible && !state.deathVisible && (
+        <div
+          id="scentTrailCaption"
+          style={{ left: `${state.scentCaptionX * 100}%`, top: `${state.scentCaptionY * 100}%` }}
+        >
+          <span className="scentTrailCaptionGlyph" aria-hidden="true">↓</span>
+          this is your scent trail — predators follow it
+        </div>
       )}
 
       {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;

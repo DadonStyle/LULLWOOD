@@ -46,6 +46,16 @@ declare global {
       qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
       /** LUL-25: the child's world position and whether it's past the forest/bog seam. */
       qaProbeBaby?: () => { x: number; z: number; inBog: boolean };
+      /** LUL-2122: babyLight's live intensity/distance plus the pickup/carry/taken
+       * state flags, so a test can assert the interact button actually reached
+       * pickup() instead of only that it rendered and was tappable. */
+      qaProbeBabyLight?: () => {
+        intensity: number;
+        distance: number;
+        carrying: boolean;
+        pickingUp: boolean;
+        taken: boolean;
+      };
       /** LUL-1093: w2m(x,z)'s clamped pixel output plus the minimap canvas size (mm),
        * so a test can assert an arbitrary world point stays on-canvas. */
       qaProbeMinimapPoint?: (x: number, z: number) => { px: number; py: number; mm: number };
@@ -256,6 +266,36 @@ declare global {
         soundOn: boolean;
         masterGain: number | null;
       };
+      /** LUL-2121: deterministic lose-sequence trigger. Returns `true` only
+       * when this call itself landed a fresh death; `false` when rejected
+       * (not yet entered, mid-pickup, already won, or already dead --
+       * canTriggerDeath() in lib/game/outcome.ts plus an explicit `entered`
+       * check the pure guard doesn't cover); `null` for an invalid kind or
+       * cause. Goes through the real triggerDeath(), never fakes state. */
+      qaForceDeath?: (kind?: 'wolf' | 'bear' | 'lion', cause?: 'hunt' | 'chase' | 'charge') => boolean | null;
+      /** LUL-2121: reads the live death/lose-sequence state -- dead,
+       * deathShown (flips true once #deathText reaches opacity 1),
+       * cutsceneSkippable, seconds elapsed since death in game time, and the
+       * death video's playback state. */
+      qaProbeDeath?: () => {
+        dead: boolean;
+        deathShown: boolean;
+        cutsceneSkippable: boolean;
+        sinceDeath: number | null;
+        video: { currentTime: number; ended: boolean; paused: boolean; readyState: number; display: string } | null;
+      };
+      /** LUL-2205: reads the live day/night pacing values -- timeOfRun (0 dawn
+       * to 1 full night), the fog density and hemisphere-light intensity it
+       * feeds, the resulting predator detect-radius multiplier, and the HUD
+       * clock label -- in one call, so a test can assert the engine-visible
+       * effect directly instead of only the #timeOfRunClock DOM text. */
+      qaProbeTimeOfRun?: () => {
+        timeOfRun: number;
+        fogDensity: number;
+        hemiIntensity: number;
+        detectMul: number;
+        clock: string;
+      };
       /** LUL-2071: deterministic test clock -- parks the real RAF loop so a
        * test can advance simulation time in exact, jitter-free steps. Must be
        * called before qaAdvance(). */
@@ -264,6 +304,47 @@ declare global {
        * driving the same stepFrame() the real RAF loop calls. Throws if
        * qaSetFixedStep() hasn't been called first. */
       qaAdvance?: (steps?: number) => void;
+      /** LUL-2123: teleports next to the nearest untaken throwable stone and
+       * calls the real grabThrowable(), so #throwPrompt (desktop) / the Throw
+       * button (mobile) render. Returns the stone's position, or null if no
+       * untaken stone exists or the grab was rejected. */
+      qaGrabThrowable?: () => { x: number; z: number } | null;
+      /** LUL-2123: teleports just outside the active mission target's
+       * interactRadius so #missionPanel, the mission prompt and the objective
+       * are all on screen together. Returns the target, or null if no mission
+       * is active. */
+      qaTeleportNearMission?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
+      /** LUL-2230: exactly what the last frame drew for the scent trail visual
+       * -- `points.length` always equals the draw range the renderer used
+       * this tick, so a test can assert the picture directly instead of
+       * re-deriving THREE.Points state. `livePoints` is `scentPoints.length`
+       * (the real detection array) for cross-checking the visual against the
+       * mechanic it renders. */
+      qaProbeScentTrail?: () => {
+        settingOn: boolean;
+        rendered: boolean;
+        // `rawX`/`rawZ` are the point's undrifted deposit position, so a test can
+        // recompute driftedScentPosition() itself against `windX`/`windZ` below
+        // without a separate hook to read the wind vector.
+        points: {
+          x: number; z: number; age: number; alpha: number; inFrustum: boolean;
+          rawX: number; rawZ: number; radius: number;
+        }[];
+        livePoints: number;
+        captionVisible: boolean;
+        captionSeen: boolean;
+        veilAmount: number;
+        windX: number;
+        windZ: number;
+      };
+      /** LUL-2230: sets the camera yaw directly (the same `player.yaw` every
+       * look-input path writes) so a test can turn to face its own scent
+       * trail without pointer lock. Read-only otherwise -- no movement. */
+      qaSetLookYaw?: (rad: number) => void;
+      /** LUL-2230: clears the persisted `lullwood:scentTrailCaptionSeen` flag
+       * and the in-memory one-time gate, so a single boot can prove the
+       * caption is first-time-only twice in the same test. */
+      qaResetScentCaption?: () => void;
     };
   }
 }
