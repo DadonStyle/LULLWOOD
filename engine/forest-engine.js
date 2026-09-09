@@ -3296,10 +3296,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   // LUL-1484: before/after perf baseline for the map-size growth (E3), and
   // the baseline E6's chunking work later has to justify itself against.
+  // LUL-2257: when post-processing is active, renderer.info.render has already
+  // been overwritten by the bloom/blur/composite blits by the time this reads
+  // it -- use the snapshot renderPost() captured right after the real scene
+  // render instead. Without post-processing there's only ever one render()
+  // call per frame (the fallback branch below renderPost's warm-up call, see
+  // the bottom of the file), so renderer.info.render is already the real
+  // scene stats and reading it live is correct.
   window.ForestEngine.qaProbePerf = function(){
+    const render = usePost ? lastScenePerf : renderer.info.render;
     return {
-      calls: renderer.info.render.calls,
-      triangles: renderer.info.render.triangles,
+      calls: render.calls,
+      triangles: render.triangles,
       elapsedTime: clock.elapsedTime,
     };
   };
@@ -3336,6 +3344,21 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // prop of a given kind, hold W, then read the position back.
   window.ForestEngine.qaProbePlayer = function(){
     return { x: player.x, z: player.z, yaw: player.yaw };
+  };
+
+  // LUL-2187/LUL-2209: raw mission state, mirrors qaProbeBaby's shape. Cheap
+  // sibling of qaTeleportNearMission (LUL-2123, :3966) -- that hook already
+  // returns the same fields as a side effect of teleporting, this is for a
+  // test that wants to read mission state without also moving the player.
+  window.ForestEngine.qaProbeMission = function(){
+    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z };
+  };
+
+  // LUL-2189/LUL-2207: exposes the module-scope wind unit vector (set once per
+  // generateMap() by generateWind(), engine/forest-engine.js:1591/1594) so a test
+  // can derive #windIndicator's expected rotation instead of hardcoding an angle.
+  window.ForestEngine.qaProbeWind = function(){
+    return { windX: windX, windZ: windZ };
   };
 
   // Drops the player `standoff` units on the -x side of the first reachable
@@ -4069,6 +4092,34 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     grabThrowable();
     return heldThrowable ? { x: throwableData[best].x, z: throwableData[best].z } : null;
   };
+  // [QA-HOOK] LUL-2202: stand within THROWABLE_PICKUP_RADIUS of the first untaken stone
+  // WITHOUT grabbing it (unlike qaGrabThrowable above) -- e2e/throwables.spec.ts needs the
+  // real KeyE/pickup() path under test, not a pre-grabbed hand. Mirrors qaTeleportNearBaby's
+  // +2 offset along one axis. Returns the stone's position, or null if every stone is taken.
+  window.ForestEngine.qaTeleportNearThrowable = function(){
+    const t = throwableData.find(t => !t.taken);
+    if(!t) return null;
+    player.x = t.x + 2; player.z = t.z;
+    return { x: t.x, z: t.z };
+  };
+  // [QA-HOOK] LUL-2202: places the first predator of `kind` a few units inside
+  // THROWABLE_NOISE_RADIUS of where the player's *next* throw would land (same landing
+  // formula as throwThrowable() below), reset to a plain roaming state (same fields
+  // qaOpenHideNearLion zeroes) so a test can prove a thrown stone's noise redirects an
+  // otherwise-roaming predator into 'investigate', not just that it was already hunting.
+  // Returns its predators index, or null if that species didn't spawn this seed.
+  window.ForestEngine.qaStagePredatorNearThrowLanding = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+    const landX = player.x + fx * THROWABLE_THROW_DISTANCE;
+    const landZ = player.z + fz * THROWABLE_THROW_DISTANCE;
+    p.x = landX + (THROWABLE_NOISE_RADIUS - 4); p.z = landZ;
+    p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+    p.state = 'roam'; p.hunt = false;
+    return { idx };
+  };
   // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
   // mission prompt and the objective are all on screen at once. Returns the target or null.
   window.ForestEngine.qaTeleportNearMission = function(){
@@ -4512,6 +4563,12 @@ void main(){
   gl_FragColor = vec4(col, 1.0);
 }`;
 let usePost = false, sceneRT, brightRT, blurA, blurB, fsScene, fsCam, fsQuad, matBright, matBlur, matComposite;
+// LUL-2257: renderer.info.render resets on every renderer.render() call (autoReset
+// defaults true), so by the time a frame finishes, it only reflects the last call --
+// the final post-process blit (a 2-triangle full-screen quad), not the forest.
+// Captured right after the real scene render in renderPost(), before the bloom/blur/
+// composite blits overwrite it, so qaProbePerf() can read the real scene stats.
+let lastScenePerf = { calls: 0, triangles: 0 };
 const resLevels = [Math.min(devicePixelRatio,1.5), Math.min(devicePixelRatio,1.1), 0.8].filter((v,i,a)=>a.indexOf(v)===i);
 let resIdx = 0, RES = resLevels[0];
 function makeTargets(){
@@ -4540,6 +4597,7 @@ function initPost(){
 function blit(mat, target){ fsQuad.material = mat; renderer.setRenderTarget(target || null); renderer.render(fsScene, fsCam); }
 function renderPost(t){
   renderer.setRenderTarget(sceneRT); renderer.render(scene, camera);
+  lastScenePerf = { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles };
   matBright.uniforms.tDiffuse.value = sceneRT.texture; blit(matBright, brightRT);
   let src = brightRT;
   for(let i=0;i<3;i++){

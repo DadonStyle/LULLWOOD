@@ -123,6 +123,9 @@ declare global {
       /** LUL-211: the player's world position and heading -- the only way a test can
        * see where movement actually ended up (player is init()-closure-local). */
       qaProbePlayer?: () => { x: number; z: number; yaw: number };
+      /** LUL-2189/LUL-2207: the module-scope wind unit vector (windX/windZ), set once per
+       * generateMap() by generateWind() -- map-constant, not per-frame. */
+      qaProbeWind?: () => { windX: number; windZ: number };
       /** LUL-211/LUL-288: places the player off the -x face of the first reachable
        * cover prop of `kind`, facing it, so a held KeyW walks straight into it. The
        * standoff distance is rotation-aware (props render at prop.ry), so it clears
@@ -320,11 +323,25 @@ declare global {
        * button (mobile) render. Returns the stone's position, or null if no
        * untaken stone exists or the grab was rejected. */
       qaGrabThrowable?: () => { x: number; z: number } | null;
+      /** LUL-2202: teleports within THROWABLE_PICKUP_RADIUS of the first untaken
+       * stone WITHOUT grabbing it -- unlike qaGrabThrowable, this leaves the real
+       * KeyE/pickup() path for the test to drive. Returns the stone's position,
+       * or null if every stone is taken. */
+      qaTeleportNearThrowable?: () => { x: number; z: number } | null;
+      /** LUL-2202: places the first predator of `kind` a few units inside
+       * THROWABLE_NOISE_RADIUS of where the player's next throw would land, reset
+       * to a plain roaming state (state: 'roam', hunt: false, alert: 0). Returns
+       * its predators index, or null if that species didn't spawn this seed. */
+      qaStagePredatorNearThrowLanding?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number } | null;
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
        * is active. */
       qaTeleportNearMission?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
+      /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
+       * fields qaTeleportNearMission returns as a side effect, for a test that
+       * only needs to read, not teleport. */
+      qaProbeMission?: () => { kind: 'deepwater'; status: 'active' | 'complete'; x: number; z: number } | null;
       /** LUL-2230: exactly what the last frame drew for the scent trail visual
        * -- `points.length` always equals the draw range the renderer used
        * this tick, so a test can assert the picture directly instead of
