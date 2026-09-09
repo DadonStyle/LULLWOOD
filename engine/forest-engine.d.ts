@@ -256,6 +256,24 @@ declare global {
         soundOn: boolean;
         masterGain: number | null;
       };
+      /** LUL-2121: deterministic lose-sequence trigger. Returns `true` only
+       * when this call itself landed a fresh death; `false` when rejected
+       * (not yet entered, mid-pickup, already won, or already dead --
+       * canTriggerDeath() in lib/game/outcome.ts plus an explicit `entered`
+       * check the pure guard doesn't cover); `null` for an invalid kind or
+       * cause. Goes through the real triggerDeath(), never fakes state. */
+      qaForceDeath?: (kind?: 'wolf' | 'bear' | 'lion', cause?: 'hunt' | 'chase' | 'charge') => boolean | null;
+      /** LUL-2121: reads the live death/lose-sequence state -- dead,
+       * deathShown (flips true once #deathText reaches opacity 1),
+       * cutsceneSkippable, seconds elapsed since death in game time, and the
+       * death video's playback state. */
+      qaProbeDeath?: () => {
+        dead: boolean;
+        deathShown: boolean;
+        cutsceneSkippable: boolean;
+        sinceDeath: number | null;
+        video: { currentTime: number; ended: boolean; paused: boolean; readyState: number; display: string } | null;
+      };
       /** LUL-2071: deterministic test clock -- parks the real RAF loop so a
        * test can advance simulation time in exact, jitter-free steps. Must be
        * called before qaAdvance(). */
