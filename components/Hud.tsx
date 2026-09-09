@@ -8,7 +8,7 @@ import SettingsPanel from './SettingsPanel';
 import GameMenu from './GameMenu';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
-import { nextDeeperLungsCost, veilMaxHoldForTier, CARRIED, HOME, type RunPayout } from '@/lib/game/economy';
+import { nextDeeperLungsCost, veilMaxHoldForTier, CARRIED, RESCUE, type RunPayout } from '@/lib/game/economy';
 import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 
@@ -426,11 +426,11 @@ function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, diffic
             <br />
             +{payout.depth} depth · +{payout.survival} survival
             {isDeath ? (
-              <> · <span className="emberLoss">-{CARRIED + HOME} lost</span> (child &amp; home, forfeited)</>
+              <> · <span className="emberLoss">-{CARRIED + RESCUE} lost</span> (child &amp; rescue, forfeited)</>
             ) : (
               <>
                 {payout.carried > 0 && <> · +{payout.carried} child</>}
-                {payout.home > 0 && <> · +{payout.home} home</>}
+                {payout.rescue > 0 && <> · +{payout.rescue} rescue</>}
               </>
             )}
             {payout.spent > 0 && <> · −{payout.spent} charm</>}
@@ -892,7 +892,7 @@ export default function Hud({
         <div id="winScreen" style={{ display: 'flex' }}>
           <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
             <h1>YOU WON</h1>
-            <p>the child is safe — you carried them home through the Lullwood</p>
+            <p>the child is safe — you lifted her into the light</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} />
             <button
               ref={winRestartRef}
