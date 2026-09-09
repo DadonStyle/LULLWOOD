@@ -119,6 +119,8 @@ import {
   veilMaxHoldForTier,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
+  DEEPWATER_RETRIEVAL_BONUS,
+  DEEPWATER_SPEEDRUN_BONUS,
   computeDepth,
   computeSurvival,
   applySpend,
@@ -131,6 +133,10 @@ import {
   distToMissionTarget,
   canCompleteMission,
   completeMission,
+  canCompleteRetrieval,
+  completeRetrieval,
+  secondaryComplete,
+  RETRIEVAL_ITEM,
 } from '@/lib/game/mission';
 import {
   inLakeWater,
@@ -928,7 +934,7 @@ function generateMap(seed){
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
   // LUL-1258: draw this run's mission last, after every other rng() consumer
   // above, so it never shifts the stream any existing seed/replay depends on.
-  mission = pickMission(rng);
+  mission = pickMission(rng, secondaryChoice);
   missionHumTimer = 2;
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
@@ -1182,6 +1188,15 @@ let mission = null;
 let cryTimer = 2;   // LUL-1255 (Ship 1 wayfinding S3d): first cry fires quickly, not after a full interval
 let homeFireTimer = 2;   // LUL-1255 (Ship 1 wayfinding S5): same init as cryTimer
 let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- first hum fires quickly, not after a full interval
+// LUL-1666: cross-session record of which missions have had their secondary
+// unlocked (completed baseline once). Engine-owned, synced from
+// components/Hud.tsx's localStorage read via setMissionUnlocks(), same split
+// as `embers` (line ~1646). Keyed by MissionKind for forward-compatibility
+// with M1/M4/M5 once they ship, even though only 'deepwater' is reachable today.
+let missionUnlocks = { deepwater: false };
+// LUL-1666: the player's pre-run menu choice for the *next* draw -- 'none' by
+// default. Read once at pickMission() time in generateMap(), not re-read mid-run.
+let secondaryChoice = null;
 let carriedCryPulse = false;   // LUL-1857: one-tick pulse, set by the carry-leg cry timer, consumed by updatePredators() the same frame
 
 const babyGroup = new THREE.Group();
@@ -2271,6 +2286,7 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
+    secondaryCanComplete = false,   // LUL-1666: same shape, for the retrieval item
     canBuyVeilCharm = false;   // LUL-1210: recomputed every tick alongside canPickup, below
 let heldThrowable = false;
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
@@ -2359,6 +2375,7 @@ on(window, 'keydown', e => {
     else if(carrying) setDown();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
+    else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
   }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
@@ -2895,6 +2912,16 @@ let hudState = {
   // LUL-1258: M2 Deepwater's minimal HUD panel -- null/null whenever no
   // mission is active or the player is carrying (see the tick() pushState).
   missionKind: null, missionStatus: null,
+  // LUL-1666: secondary objectives (deepwater only, Phase 1). `missionUnlocks`
+  // is cross-session like embersBalance above (Hud.tsx persists it).
+  // `secondaryChoice` is the player's pre-run pick, reset only by
+  // setSecondaryChoice() itself (i.e. it persists across restarts, matching
+  // difficulty's own persistence). `secondaryKind`/`secondaryStatus`/
+  // `secondaryProgress` describe the *active run's* secondary and are always
+  // null/null/null when no secondary is attached to the current mission.
+  missionUnlocks: { deepwater: false },
+  secondaryChoice: null,
+  secondaryKind: null, secondaryStatus: null, secondaryProgress: null,
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
   // and persists it to localStorage (see components/Hud.tsx).
@@ -3010,6 +3037,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // test; this lets e2e assert the carry -> arrive -> win transition without
   // depending on procedural-terrain pathing.
   window.ForestEngine.qaTeleportHome = function(){ player.x = CONFIG.home.x; player.z = CONFIG.home.z; };
+
+  // LUL-2169: same rationale as qaTeleportNearBaby/qaTeleportHome above, but for
+  // the death path -- the only way to reach a deterministic death otherwise is to
+  // wait out a predator's real hunt/chase/charge timer, which is exactly the kind
+  // of timing-dependent setup an e2e spec shouldn't depend on. Calls the real
+  // triggerDeath() (never fake state), so canTriggerDeath()'s guards (!dead &&
+  // !won && !pickingUp, lib/game/outcome.ts) still apply -- this is a
+  // deterministic *trigger* of the real transition, not a state bypass.
+  window.ForestEngine.qaTriggerDeath = function(kind = 'wolf', cause = 'chase'){ triggerDeath(kind, cause); };
 
   // LUL-25: sets difficulty for the *next* generateMap() call (restart/regen
   // -- the current map doesn't retroactively move the child). The real path
@@ -3651,6 +3687,119 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     });
   };
 
+  // LUL-1461: regression coverage for LUL-1091 (PR #251, "predators path
+  // around trees instead of grinding into them") at the engine-integration
+  // level. lib/game/cover.test.ts already unit-tests pickAvoidDirection()/
+  // slideVelocity() in isolation, but nothing before this proved
+  // updatePredators() actually calls them, every tick, against a real tree
+  // from the live spatial grid, for a predator that has to go all the way
+  // around one to reach the player.
+  //
+  // Deliberately not qaLurePredator(Kind): its `hunt` flag requires canSee()
+  // to keep chasing at all (`if(!canSee(p,dist)){ ...; p.hunt=false; }`
+  // above) -- placed behind a tree, hunt would drop to investigate on the
+  // very first tick, never touching the pathing code this ticket needs to
+  // exercise. `chase` + a live scentLock instead keeps closing blind while
+  // scentLock holds (LUL-23's contract), the same mechanism
+  // qaStageAndTraceBlindChase above already relies on.
+  //
+  // Both staged points sit on the tree's own z, straddling its trunk
+  // symmetrically along +/-x: since the trunk's collision circle is centred
+  // on that exact line, it always intersects the straight segment between
+  // predator and player regardless of `margin`, with no segment-vs-circle
+  // math needed. The actual standoff is derived per-tree (t.cr + p.rad +
+  // margin) rather than taking a caller-supplied distance directly -- a
+  // fixed standoff large enough to satisfy every tree's radius (e.g. 6)
+  // measured in practice (LUL-1461) as often putting 12 units of open field,
+  // and any other trees that happen to sit in it, between predator and
+  // player: the trace then measures open-field multi-obstacle navigation,
+  // not the single-trunk case this hook exists to isolate, and timed out for
+  // bear even on already-fixed code. Hugging the trunk as tightly as
+  // collision allows keeps the scenario to exactly the one obstacle, and the
+  // isolation check below rejects any tree with a neighbour close enough to
+  // still crowd it.
+  function stageBehindTree(kind, margin){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    outer: for(const t of treeData){
+      const standoff = t.cr + p.rad + margin;
+      const px = t.x - standoff, pz = t.z;
+      const qx = t.x + standoff, qz = t.z;
+      if(predatorBlocked(px, pz, p.rad) || blocked(qx, qz)) continue;
+      // Reject any tree with a neighbour close enough to crowd the direct
+      // line or a reasonable sidestep around it -- otherwise a far-apart
+      // pair (large margin) can silently route through a second, third tree
+      // and the trace measures multi-obstacle open-field navigation instead
+      // of the single-trunk case this hook exists to isolate. Lane is a
+      // generous box around the straight segment (standoff+3 half-width in
+      // x, neighbour's own clearance + 2.5 in z).
+      const laneHalfWidth = standoff + 3;
+      for(const o of treeData){
+        if(o === t) continue;
+        const withinX = o.x > t.x - laneHalfWidth && o.x < t.x + laneHalfWidth;
+        const withinZ = Math.abs(o.z - t.z) < (o.cr + p.rad + 2.5);
+        if(withinX && withinZ) continue outer;
+      }
+      p.x = px; p.z = pz;
+      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
+      p.charge = null; p.chargeCooldown = 999;
+      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+      player.x = qx; player.z = qz;
+      // Isolate, same rationale as stageBlindChaseThroughCover above: nine
+      // predators roam independently, and relocating the player next to a
+      // tree can easily land it inside a different, untouched predator's
+      // own detect range.
+      for(let i = 0; i < predators.length; i++) if(i !== idx) predators[i].inert = true;
+      return { idx, kind, treeX: t.x, treeZ: t.z, treeCr: t.cr, dist: Math.hypot(px-qx, pz-qz) };
+    }
+    return null;
+  }
+  window.ForestEngine.qaStageBehindTree = function(kind, margin){
+    return stageBehindTree(kind, margin);
+  };
+
+  // LUL-1461: records {t, dist, state, reached} once per rendered frame via
+  // its own rAF loop, staged and started in one synchronous call for the
+  // same reason qaStageAndTraceBlindChase's comment gives (an IPC round trip
+  // between staging and the first observed frame lets the predator move in
+  // between).
+  //
+  // Originally resolved on an independently-computed isCaught(d, p.rad)
+  // instead of the game's own `dead` flag. Measured live (2026-09-08): the
+  // wolf case's in-page trace resolved fine (reached:true at t=2100ms) and
+  // page.evaluate() returned the trace to Node, but the Playwright test then
+  // hung to its own timeout anyway, and the next test (bear) failed
+  // immediately at boot -- cross-test contamination. traceBlindChase()
+  // (above) resolves on `dead` instead and blind-chase-cover.spec.ts passes
+  // in CI today, including through a real death/video sequence, so the
+  // independently-computed condition -- not the death/video sequence itself
+  // -- is the difference. Matching that proven pattern here: resolve once
+  // the real triggerDeath() (engine/forest-engine.js:1447) has actually
+  // flipped `dead`, not one frame earlier on our own geometric guess.
+  function traceApproach(idx, maxMs){
+    return new Promise(function(resolve){
+      const trace = [];
+      const t0 = performance.now();
+      function frame(){
+        const p = predators[idx];
+        if(!p){ resolve(trace); return; }
+        const d = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
+        trace.push({ t: performance.now()-t0, dist: d, state: p.state, reached: dead });
+        if(dead || performance.now()-t0 > maxMs){ resolve(trace); return; }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+  window.ForestEngine.qaStageAndTraceBehindTree = function(kind, margin, maxMs){
+    const staged = stageBehindTree(kind, margin);
+    if(staged === null) return Promise.resolve(null);
+    return traceApproach(staged.idx, maxMs).then(function(trace){
+      return { idx: staged.idx, kind: staged.kind, dist: staged.dist, trace: trace };
+    });
+  };
+
   // LUL-69: camera.fov is closure-local (created fresh per init(), see
   // CAMERA_FOV above) -- nothing outside init() could otherwise confirm the
   // mobile/desktop FOV split actually took effect.
@@ -3809,6 +3958,15 @@ function completeMissionSequence(){
   pushState({ caption: 'the drowned car -- found it', captionId: ++captionSeq });   // unconditional, matches the landmark first-run caption's precedent
   missionCompleteSting();
 }
+// LUL-1666: retrieval's completion -- mirrors completeMissionSequence()'s
+// shape exactly (guard, pure-fn update, caption, sting), no cinematic lock,
+// same rationale ("a detour bonus, not the core objective").
+function completeSecondarySequence(){
+  if(mission.secondary?.data.kind !== 'retrieval' || mission.secondary.data.retrieved) return;
+  mission = completeRetrieval(mission);
+  pushState({ caption: 'the radio mast -- retrieved', captionId: ++captionSeq });
+  missionCompleteSting();
+}
 function arriveHome(){
   const next = outcomeArriveHome(runState());
   won = next.won; carrying = next.carrying;
@@ -3833,7 +3991,23 @@ function arriveHome(){
   // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
   // like carried/home, since computeDeathPayout's signature is untouched.
   const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
-  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus), embersSpent);
+  // LUL-1666: secondary bonus is independent of missionBonus -- a player can
+  // win the secondary without ever completing the deepwater baseline this
+  // run (already unlocked from a prior run), or complete the baseline and
+  // still miss the secondary. Never gates arriveHome() itself (see spec S1).
+  const secondaryWon = mission ? secondaryComplete(mission, survivedSeconds) : false;
+  const secondaryBonus = secondaryWon
+    ? (mission.secondary.data.kind === 'retrieval' ? DEEPWATER_RETRIEVAL_BONUS : DEEPWATER_SPEEDRUN_BONUS)
+    : 0;
+  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus), embersSpent);
+  // LUL-1666: unlock is keyed on the *baseline* completing, independent of
+  // whether a secondary was even attempted this run -- guardrail is "complete
+  // the mission once", not "complete a secondary once". Persisted by
+  // components/Hud.tsx same as embersBalance below.
+  if(mission?.status === 'complete' && !missionUnlocks[mission.target.kind]){
+    missionUnlocks = { ...missionUnlocks, [mission.target.kind]: true };
+    pushState({ missionUnlocks: { ...missionUnlocks } });
+  }
   embers = applyPayout(embers, payout);
   logChronicle('win');
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
@@ -3956,6 +4130,23 @@ function setEmbers(balance, deeperLungsTier){
 function purchaseDeeperLungs(){
   embers = economyPurchaseDeeperLungs(embers);
   pushState({ embersBalance: embers.balance, embersDeeperLungsTier: embers.tiers.deeperLungs });
+}
+// LUL-1666: sync from components/Hud.tsx's localStorage read, once on mount
+// -- identical split to setEmbers() above (engine owns the state, React
+// persists it). `unlocks` may be a partial/stale-shaped object (schema
+// could predate a future mission); only known keys are trusted.
+function setMissionUnlocks(unlocks){
+  missionUnlocks = { deepwater: !!(unlocks && unlocks.deepwater) };
+  pushState({ missionUnlocks: { ...missionUnlocks } });
+}
+// LUL-1666: player's pre-run menu pick for the *next* draw. No-ops outside
+// the pre-run menu the same way setDifficulty tolerates a bad value -- an
+// unrecognized kind is treated as 'none'. Deliberately does not re-roll the
+// current mission's secondary mid-run; per GameMenu.tsx (S4/S5), the control
+// itself is only rendered while `!state.entered`.
+function setSecondaryChoice(kind){
+  secondaryChoice = (kind === 'retrieval' || kind === 'speedrun') ? kind : null;
+  pushState({ secondaryChoice });
 }
 on(window, 'resize', () => {
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -4443,6 +4634,10 @@ function stepFrame(dt, t){
   // computed the same way canPickup is above.
   const distMission = mission ? distToMissionTarget(mission, player.x, player.z) : Infinity;
   missionCanComplete = mission ? canCompleteMission(mission, distMission) : false;
+  const distSecondaryItem = (mission?.secondary?.data.kind === 'retrieval')
+    ? Math.hypot(player.x - RETRIEVAL_ITEM.x, player.z - RETRIEVAL_ITEM.z)
+    : Infinity;
+  secondaryCanComplete = mission ? canCompleteRetrieval(mission, distSecondaryItem) : false;
   if(playing){
     let statusVisible = false, statusText = '';
     if(hidden){
@@ -4507,11 +4702,23 @@ function stepFrame(dt, t){
       // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
       missionKind: mission && !carrying ? mission.target.kind : null,
       missionStatus: mission && !carrying ? mission.status : null,
+      secondaryKind: mission && !carrying && mission.secondary ? mission.secondary.data.kind : null,
+      secondaryStatus: mission && !carrying && mission.secondary
+        ? (secondaryComplete(mission, clock.elapsedTime - enteredAt) ? 'complete' : 'active')
+        : null,
+      // LUL-1666: retrieval -> whole meters/distance for the Hud's progress
+      // indicator; speedrun -> seconds remaining for its countdown. One field,
+      // shape keyed by kind, mirrors lastPayout's discriminated-by-caller shape.
+      secondaryProgress: mission && !carrying && mission.secondary
+        ? (mission.secondary.data.kind === 'retrieval'
+            ? { kind: 'retrieval', retrieved: mission.secondary.data.retrieved, distance: Math.round(distSecondaryItem) }
+            : { kind: 'speedrun', remainingSeconds: Math.max(0, Math.round(mission.secondary.data.timeLimitSeconds - (clock.elapsedTime - enteredAt))) })
+        : null,
       caveImmuneActive: caveImmuneT > 0,
       caveImmuneTimeLeft: caveImmuneT,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null, caveImmuneActive: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, missionKind: null, missionStatus: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false });
   }
   // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
   // baby.taken stays true forever once first picked up, so babySetDown is the only signal
@@ -4693,6 +4900,7 @@ tick();
     else if(carrying) setDown();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
+    else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
   }
   function triggerTouchThrow() {

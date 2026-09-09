@@ -33,6 +33,13 @@ declare global {
       // casting `window` to `any` and losing every other guarantee with it.
       qaTeleportNearBaby?: () => void;
       qaTeleportHome?: () => void;
+      /** LUL-2169: forces a deterministic death via the real triggerDeath() (not fake
+       * state) so an e2e spec doesn't have to wait out a real predator's hunt/chase/
+       * charge timer. `kind` defaults to 'wolf', `cause` to 'chase' -- both match the
+       * defaults forest-engine.js's own triggerDeath() calls use for the everyday
+       * chase-catch death. No-ops (mirrors triggerDeath/canTriggerDeath) if the run is
+       * already dead, won, or mid-pickup. */
+      qaTriggerDeath?: (kind?: 'wolf' | 'bear' | 'lion', cause?: 'charge' | 'hunt' | 'chase') => void;
       /** LUL-25: sets difficulty for the *next* generateMap() (restart/regen), not the
        * current map. No UI wires this yet (LUL-26) -- it's how a test exercises hard
        * mode's "child spawns beyond the bog" before that UI exists. */
@@ -194,6 +201,50 @@ declare global {
         dist: number;
         trace: { t: number; dist: number; canSee: boolean; dead: boolean }[];
       } | null>;
+      /** LUL-1461: places `kind` in a blind scent-chase (state='chase',
+       * scentLock=SCENT_TRACK_TIME) straddling a real tree trunk -- predator and
+       * player sit on opposite sides of the trunk's own z, `margin` units
+       * beyond the trunk radius plus each actor's own collision radius (so
+       * the actual standoff is derived per-tree, not a fixed distance), and
+       * its collision circle sits squarely on the segment between them. Also
+       * rejects any tree with a neighbour close enough to crowd the direct
+       * line or a reasonable sidestep around it, so the scenario stays a
+       * single-obstacle case (see the comment above the implementation for
+       * why: a fixed large standoff measured as timing out even on
+       * already-fixed code, for bear, by putting other trees in the gap).
+       * Regression coverage for LUL-1091 (predators pathing around trees):
+       * before that fix a predator staged this way grinds into the trunk and
+       * never arrives. Every other predator is marked `inert` for the rest of
+       * the page's life (same isolation qaStageBlindChaseThroughCover uses).
+       * Returns the predator's index/kind/staged distance and the tree's
+       * position/radius, or null if no tree in this seed left both staged
+       * points clear of every other obstacle and neighbour-isolated. Prefer
+       * qaStageAndTraceBehindTree for an actual assertion -- this alone races
+       * the exact scenario it stages. */
+      qaStageBehindTree?: (
+        kind: 'wolf' | 'bear' | 'lion',
+        margin: number,
+      ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; treeX: number; treeZ: number; treeCr: number; dist: number } | null;
+      /** LUL-1461: stages (as qaStageBehindTree) then, in the same synchronous
+       * call, starts an in-page rAF loop recording `{t, dist, state, reached}`
+       * once per frame until the game's own `dead` flag flips (matching
+       * traceBlindChase's proven pattern -- an independently-computed
+       * isCaught() check here resolved one frame early and left the test
+       * hanging after page.evaluate() returned; see the implementation
+       * comment) or `maxMs` elapses. Staging and the first observed frame
+       * must happen in one page.evaluate() round trip, not two -- see
+       * qaStageAndTraceBlindChase's comment for the measured reason. Returns
+       * null if staging failed (see qaStageBehindTree). */
+      qaStageAndTraceBehindTree?: (
+        kind: 'wolf' | 'bear' | 'lion',
+        margin: number,
+        maxMs: number,
+      ) => Promise<{
+        idx: number;
+        kind: 'wolf' | 'bear' | 'lion';
+        dist: number;
+        trace: { t: number; dist: number; state: string; reached: boolean }[];
+      } | null>;
       /** LUL-69: the live camera vertical FOV (degrees) -- confirms the
        * mobile/desktop CAMERA_FOV split in init() actually took effect. */
       qaCameraFov?: () => number;
@@ -205,12 +256,13 @@ declare global {
         soundOn: boolean;
         masterGain: number | null;
       };
-      /** LUL-2071: parks the real RAF loop and switches simulation time to a
-       * fixed step of `dtSeconds`, only advanced by qaAdvance(). See the
-       * qaSetFixedStep block in init() for the full rationale. */
+      /** LUL-2071: deterministic test clock -- parks the real RAF loop so a
+       * test can advance simulation time in exact, jitter-free steps. Must be
+       * called before qaAdvance(). */
       qaSetFixedStep?: (dtSeconds: number) => void;
-      /** LUL-2071: advances simulation time by `steps` fixed-size ticks (see
-       * qaSetFixedStep). Throws if qaSetFixedStep() was never called. */
+      /** LUL-2071: advances simulation time by exactly dtSeconds * steps,
+       * driving the same stepFrame() the real RAF loop calls. Throws if
+       * qaSetFixedStep() hasn't been called first. */
       qaAdvance?: (steps?: number) => void;
     };
   }

@@ -65,6 +65,14 @@ export default function GameMenu({
     onOpenSettings();
   };
 
+  // LUL-2131: #gameMenu's hamburger sits at z-index 20, and the menuPanel it
+  // opens covers most of the same corner -- both stayed mounted and tappable
+  // over #winScreen/#deathScreen (z-index 25, GameCanvas.tsx) because nothing
+  // here ever read winVisible/deathVisible. Unmount rather than hide: an open
+  // menu with a live "New map"/"Pause" row has no business surviving into an
+  // end screen that already offers its own restart.
+  if (state.winVisible || state.deathVisible) return null;
+
   return (
     <div id="gameMenu" ref={menuRef}>
       <button
@@ -132,6 +140,31 @@ export default function GameMenu({
                       title={d === 'lantern' ? 'Forgiving' : d === 'night' ? 'Default' : 'No mercy'}
                     >
                       {tierLabel}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {!state.entered && state.missionUnlocks.deepwater && (
+            <div className="menuRow menuSecondary">
+              <label>Secondary objective</label>
+              <div className="segmentedControl">
+                {([null, 'retrieval', 'speedrun'] as const).map((k) => {
+                  const label = k === null ? 'None' : k === 'retrieval' ? 'Retrieval' : 'Speedrun';
+                  return (
+                    <button
+                      key={label}
+                      data-testid={`menuSecondary${label}`}
+                      className={`segment ${state.secondaryChoice === k ? 'active' : ''}`}
+                      onClick={() => {
+                        actions?.setSecondaryChoice(k);
+                        setOpen(false);
+                      }}
+                      title={k === null ? 'No bonus' : k === 'retrieval' ? 'Find the radio mast for a bonus' : 'Reach home within the time limit for a bonus'}
+                    >
+                      {label}
                     </button>
                   );
                 })}

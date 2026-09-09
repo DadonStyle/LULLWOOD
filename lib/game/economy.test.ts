@@ -14,6 +14,8 @@ import {
   DEEPER_LUNGS_COSTS,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
+  DEEPWATER_RETRIEVAL_BONUS,
+  DEEPWATER_SPEEDRUN_BONUS,
   type EmbersState,
 } from './economy.ts';
 
@@ -150,6 +152,49 @@ test('the mission bonus is not payable on death -- computeDeathPayout has no mis
   // completing the mission then dying before reaching home forfeits the +12
   // entirely: computeDeathPayout's signature has no fourth argument to pass
   // it through, by design (S2's forfeiture rule).
+  const p = computeDeathPayout(212, 50, 78);
+  assert.equal(p.carried, 0);
+  assert.equal(p.home, 0);
+});
+
+// ---- LUL-1666: secondary-objective bonus (retrieval/speedrun) -----------
+
+test('computeWinPayout defaults secondaryBonus to zero -- a win with no secondary pays nothing extra', () => {
+  const withBonus = computeWinPayout(212, 50);
+  assert.equal(withBonus.total, computeWinPayout(212, 50, 'lantern', 0, 0).total);
+});
+
+test('completing the retrieval secondary adds DEEPWATER_RETRIEVAL_BONUS on top of the win total', () => {
+  const base = computeWinPayout(212, 50);
+  const withSecondary = computeWinPayout(212, 50, 'lantern', 0, DEEPWATER_RETRIEVAL_BONUS);
+  assert.equal(withSecondary.total, base.total + DEEPWATER_RETRIEVAL_BONUS);
+});
+
+test('completing the speedrun secondary adds DEEPWATER_SPEEDRUN_BONUS on top of the win total', () => {
+  const base = computeWinPayout(212, 50);
+  const withSecondary = computeWinPayout(212, 50, 'lantern', 0, DEEPWATER_SPEEDRUN_BONUS);
+  assert.equal(withSecondary.total, base.total + DEEPWATER_SPEEDRUN_BONUS);
+});
+
+test('missionBonus and secondaryBonus stack additively -- deepwater + retrieval both complete', () => {
+  const base = computeWinPayout(212, 50);
+  const both = computeWinPayout(212, 50, 'lantern', MISSION_DEEPWATER_REWARD, DEEPWATER_RETRIEVAL_BONUS);
+  assert.equal(both.total, base.total + MISSION_DEEPWATER_REWARD + DEEPWATER_RETRIEVAL_BONUS);
+});
+
+test('secondaryBonus is scaled by the tier multiplier, same as missionBonus (LUL-1412)', () => {
+  const lantern = computeWinPayout(212, 50, 'lantern', 0, DEEPWATER_RETRIEVAL_BONUS);
+  const night = computeWinPayout(212, 50, 'night', 0, DEEPWATER_RETRIEVAL_BONUS);
+  const base = computeWinPayout(212, 50, 'lantern');
+  const baseNight = computeWinPayout(212, 50, 'night');
+  assert.equal(lantern.total - base.total, Math.round(DEEPWATER_RETRIEVAL_BONUS * 1.0));
+  assert.equal(night.total - baseNight.total, Math.round(DEEPWATER_RETRIEVAL_BONUS * 1.75));
+});
+
+test('the secondary bonus is not payable on death -- computeDeathPayout has no secondaryBonus argument', () => {
+  // dying before reaching home forfeits the secondary bonus entirely, same
+  // rule and same mechanism as the mission bonus above (S2's forfeiture rule
+  // extended to secondaries by LUL-1666).
   const p = computeDeathPayout(212, 50, 78);
   assert.equal(p.carried, 0);
   assert.equal(p.home, 0);

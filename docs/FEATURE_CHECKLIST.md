@@ -36,6 +36,8 @@ per-role, per-PR habit instead of something only the reviewer remembers.
       (`node --test`) for pure logic, Playwright spec for anything
       rendered/behavioural. A logic diff with no test diff is treated as P1
       by the reviewer (`systems/unit-testing-standard`, LUL-280).
+- [ ] `## e2e` section of the spec satisfied: named spec updated, named hooks
+      landed, in this PR.
 - [ ] Branch kept current via backmerge, never rebase/force-push
       (`decisions/0010-no-force-push`).
 - [ ] Ran the affected spec(s) locally/headlessly before pushing — not just
@@ -53,22 +55,17 @@ per-role, per-PR habit instead of something only the reviewer remembers.
       plausibly touches — spot-check, not all 15 rows.
 - [ ] Regression test present for logic changes — P1 per
       `systems/unit-testing-standard`; everything else stays a P2/P3 nit.
+- [ ] Spec has an `## e2e` section naming real files — missing = block on
+      Tier B/C.
 - [ ] Big-impact bar (`decisions/0012-feature-impact-bar`) — if the diff
       reads as tuning or HUD-only, raise it as a scope objection early, not
       as a late merge block. Not a new P0/P1 class on its own.
 - [ ] DRY pass: duplication is P2/P3 by default; only block (P1) if you can
       name the concrete divergence that breaks the game.
 
-## 4. QA (Game Tester)
+## 4. QA (local QA tester, nightly)
 
-- [ ] The feature **visibly** changes something on screen — capture a
-      screenshot or recording proving it. "Visible" is QA's call to settle,
-      not the coding agent's (`decisions/0012-feature-impact-bar`).
-- [ ] New/changed interaction-matrix cells driven headlessly with evidence,
-      at minimum the cells this feature touches
-      (`systems/headless-qa-rig`).
-- [ ] Confirmed neighboring behaviour sharing the same collision/LOS/scent
-      code path still passes — no silent regression next door.
-- [ ] Any `UNDEFINED` matrix cell this feature resolves gets
-      `docs/ELEMENTS.md` corrected, or filed as a follow-up ticket if fixing
-      it is out of scope.
+- [ ] A request file dropped at `shared/local-qa/requests/<lul-id>-<slug>.md`
+      if the nightly checks do not already cover the change — see
+      `shared/local-qa/REQUESTING-A-TEST.md`.
+- [ ] Results read from `reports/<date>.md` the morning after merge.

@@ -68,6 +68,15 @@ export function computeSurvival(survivedSeconds: number): number {
 // game/economy/mission-rewards §2 ("the greed comes from the depth").
 export const MISSION_DEEPWATER_REWARD = 12;
 
+// LUL-1666: secondary-objective bonuses for deepwater, additive on top of
+// MISSION_DEEPWATER_REWARD (never a replacement) -- CEO-accepted reward
+// schedule, decisions/secondary-objectives-accepted-2026-09-06. M1/M4/M5 rows
+// from the same table are deferred until those missions ship (CTO scope
+// ruling, decisions/lul-1666-scope-deepwater-only-2026-09-06) -- do not add
+// them here without a MISSION_POOL entry to key them off.
+export const DEEPWATER_RETRIEVAL_BONUS = 15;
+export const DEEPWATER_SPEEDRUN_BONUS = 18;
+
 // LUL-1210: Stone Marker veil-charm, priced against Deeper Lungs I (120) so it reads as
 // worse value than saving -- game/economy/veil-charm-price. 125-unit landmark distance ->
 // depth >= 31 at the point of purchase by geometry, 16-point margin.
@@ -78,13 +87,15 @@ export const VEIL_CHARM_PRICE = 15;
 // never an independent round of the raw sum. This guarantees
 // depth+survival+carried+home===total by construction (the invariant
 // components/Hud.tsx's RunRecap renders), instead of only holding at ×1.00.
-// missionBonus has no RunPayout field of its own (LUL-1258, unchanged here)
-// and is folded straight into total, scaled the same as everything else.
+// missionBonus and secondaryBonus have no RunPayout field of their own
+// (LUL-1258/LUL-1666, unchanged here) and are folded straight into total,
+// scaled the same as everything else.
 export function computeWinPayout(
   maxDistFromHome: number,
   survivedSeconds: number,
   tier: DifficultyTier = 'lantern',
   missionBonus = 0,
+  secondaryBonus = 0,
 ): RunPayout {
   const mult = TIER_MULTIPLIERS[tier].win;
   const cappedDepth = Math.min(computeDepth(maxDistFromHome), 62); // caps blackout's 2.0x win multiplier at 476E (post-LUL-1806 CARRIED/HOME); inert for lantern/night, whose max depth is 48
@@ -92,7 +103,7 @@ export function computeWinPayout(
   const survival = Math.round(computeSurvival(survivedSeconds) * mult);
   const carried = Math.round(CARRIED * mult);
   const home = Math.round(HOME * mult);
-  const total = depth + survival + carried + home + Math.round(missionBonus * mult);
+  const total = depth + survival + carried + home + Math.round(missionBonus * mult) + Math.round(secondaryBonus * mult);
   return { depth, survival, carried, home, spent: 0, total };
 }
 
