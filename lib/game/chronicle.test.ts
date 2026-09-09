@@ -46,7 +46,7 @@ test('formatChronicle renders a line per known code, oldest first, with mm:ss ti
     '0:05 — a wolf caught your scent.',
     '1:05 — you went still in the brambles.',
     '1:30 — you lifted the child.',
-    '2:00 — you carried the child home.',
+    '2:00 — you lifted her into the light.',
   ]);
 });
 
@@ -102,5 +102,5 @@ test('formatChronicle defaults maxLines to 10', () => {
 
 test('formatChronicle rounds negative/fractional seconds down to a sane clamp', () => {
   const events: ChronicleEvent[] = [{ t: -3, code: 'win' }];
-  assert.deepEqual(formatChronicle(events), ['0:00 — you carried the child home.']);
+  assert.deepEqual(formatChronicle(events), ['0:00 — you lifted her into the light.']);
 });

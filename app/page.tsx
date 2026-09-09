@@ -29,10 +29,9 @@ export default function Home() {
           <h2>The premise</h2>
           <p>
             Lullwood is a browser-based first-person horror game. Cross a
-            foggy night forest, find the lost child, and carry them home
-            while wolves, bears, and lions hunt you by sight and scent. The
-            core loop is hiding and holding still while they sniff the air
-            around you.
+            foggy night forest and reach the lost child before wolves, bears,
+            and lions hunt you down by sight and scent. The core loop is
+            hiding and holding still while they sniff the air around you.
           </p>
           <p>
             It runs in the browser with no download, no install and no
@@ -52,8 +51,8 @@ export default function Home() {
             answer: sprinting lays a stronger scent trail and a moving
             silhouette is easy to track. Duck into a bush or a hollow log,
             press <strong>H</strong>, and hold still until it loses you.
-            Reaching the child is only half of it — you still have to carry
-            them all the way home.
+            Reach the child and press <strong>E</strong> to lift her —
+            that&apos;s the win.
           </p>
         </section>
         <section>
@@ -80,7 +79,7 @@ export default function Home() {
               light and cuts how far predators can see you
             </li>
             <li>
-              <strong>E</strong> — lift and carry the child
+              <strong>E</strong> — lift the child (this is the win)
             </li>
             <li>
               <strong>Esc</strong> — menu
@@ -98,8 +97,8 @@ export default function Home() {
             Predators track you by line of sight and by a decaying scent
             trail you leave behind as you move — the only tool you have is
             stillness: duck into a bush or a hollow log, hold still, and let
-            them lose the trail. You win by carrying the child all the way
-            home, not just finding them.
+            them lose the trail. You win the instant you reach the child and
+            lift her — there&apos;s no trip home to survive afterward.
           </p>
         </section>
         <section>

@@ -91,15 +91,12 @@ test.describe('LUL-211: winning shows YOU WON and stays there', () => {
     await page.waitForTimeout(300);
     expect(await readObjective(page), 'qaTeleportNearBaby did not land within pickup range').toContain('Press');
 
+    // LUL-2281 (reverts LUL-1307): no carry-home leg -- pressing E and letting
+    // the ascend/explode cinematic finish wins outright.
     await page.keyboard.press('KeyE');
-    await expect
-      .poll(() => readObjective(page), { message: 'pickup never handed off to carry-home', timeout: 30_000 })
-      .toContain('Carry the child home');
-
-    await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
 
     const win = page.locator('#winScreen');
-    await expect(win).toBeVisible({ timeout: 5_000 });
+    await expect(win).toBeVisible({ timeout: 30_000 });
     await expect(win.locator('h1')).toHaveText('YOU WON');
 
     // LUL-177's blind spot: `toBeVisible` is satisfied by an element parked

@@ -9,8 +9,9 @@ this file.
 ## 1. The game
 
 You start at a treeline in a foggy night forest. A child is somewhere ahead, glowing
-faintly — that light is the only thing you can navigate by. Reach them, lift them, and
-carry them home.
+faintly — that light is the only thing you can navigate by. Reach them and press E to
+lift them into the sky — that's the win, no carry-home leg after (LUL-2281, 2026-09-09;
+reverts LUL-1307's carry-home leg).
 
 Wolves, bears and lions hunt you. **You have no weapon.** They track you two ways:
 
@@ -21,7 +22,7 @@ Wolves, bears and lions hunt you. **You have no weapon.** They track you two way
 The only tool is **stillness**: duck into a bramble or hollow log, hold still, and let
 them lose you. Running is usually the wrong answer.
 
-Reaching the child is half the game — you still have to carry them back.
+Reaching the child and lifting her is the whole game — there's no carry-home leg after.
 
 ### Verbs
 

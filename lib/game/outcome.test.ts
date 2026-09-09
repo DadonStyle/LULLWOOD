@@ -148,17 +148,26 @@ test('a second beginSetDown in the same frame is rejected (carrying already fals
   assert.deepEqual(second, first);
 });
 
-test('completePickup hands off pickingUp -> carrying', () => {
+test('completePickup hands off pickingUp -> won (LUL-2281: reverts LUL-1307 -- no carry-home leg)', () => {
   const picked = beginPickup(state());
   const next = completePickup(picked);
   assert.equal(next.pickingUp, false);
-  assert.equal(next.carrying, true);
+  assert.equal(next.won, true);
+  assert.equal(next.carrying, false);
   assert.equal(next.babyTaken, true);
 });
 
 test('completePickup is a no-op when not currently pickingUp', () => {
   const s = state();
   assert.deepEqual(completePickup(s), s);
+});
+
+test('LUL-2281 golden path: beginPickup -> completePickup wins in one pass, never sets carrying', () => {
+  const next = completePickup(beginPickup(state()));
+  assert.equal(next.won, true);
+  assert.equal(next.carrying, false);
+  assert.equal(next.pickingUp, false);
+  assert.equal(next.babyTaken, true);
 });
 
 // ---- arrive home --------------------------------------------------------------

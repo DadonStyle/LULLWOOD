@@ -69,16 +69,25 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5472 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4851, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5510 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4881, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
 - Pick up the child (`KeyE` / touch Interact) within 3.6 units, once
-  (`canPickup`, `pickup()`).
-- Carry the child home; walking speed is multiplied by `CONFIG.carryPaceMul`
-  (0.72) while carrying (`tick()`).
+  (`canPickup`, `pickup()`). **As of `LUL-2281`** (2026-09-09, reverts
+  `LUL-1307`'s carry-home leg), completing the ~11.3s ascend/explode
+  cinematic (`tick()`'s `pickingUp` branch, `finishPickup()`) IS the win --
+  `completePickup()` (`lib/game/outcome.ts`) sets `won` directly, not
+  `carrying`. There is no carry-home leg to walk anymore.
+- **Dead code, kept on purpose (`LUL-2281` Decision 2, wiki
+  `decisions/lul-2281-pickup-is-the-win-2026-09-09`):** the old carry-the-
+  child-home leg -- `carrying`/`setDown`/`arriveHome()`/`canArriveHome()`, and
+  the walking-speed multiplier `CONFIG.carryPaceMul` (0.72) applied while
+  carrying (`tick()`) -- is unreachable in real play now that `completePickup()`
+  never sets `carrying` true, but was left in place rather than ripped out for
+  a critical/ASAP fix. A follow-up cleanup ticket removes it.
 - Leave a scent trail while moving (not while hidden or standing still) —
   `depositScent()`, deposited every `SCENT_DEPOSIT_INTERVAL` (0.3s). LUL-1724:
   moving against the wind (`isMovingAgainstWind()` in `lib/game/scent.ts`, dot
@@ -134,11 +143,15 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   or the home landmark — none of `blocked()`/`blockedR()`/`coverBlockedR()`
   is ever called with those as the obstacle; every player/actor "contact" in
   this game is a **distance threshold**, not a solid-body collision
-  (pickup: `distBaby<3.6`; death: `dist<p.rad+1.3`; win: `dh<CONFIG.home.r`).
+  (pickup: `distBaby<3.6`; death: `dist<p.rad+1.3`). **As of `LUL-2281`**, win
+  is no longer a distance threshold at all -- it fires off the pickup
+  cinematic's own clock (`e>=11.3` in `tick()`'s `pickingUp` branch,
+  `finishPickup()`), not arrival at `CONFIG.home` (`dh<CONFIG.home.r`,
+  `canArriveHome()`, now dead code -- see above).
 - Cannot outrun any predator in a straight line — every species' tuned speed
   exceeds the player's (see Predator section); hiding/cover is the actual
   counterplay, not speed.
-- Cannot move while `pickingUp` (the 10s cinematic) or while `dead`/`won`.
+- Cannot move while `pickingUp` (the ~11.3s cinematic) or while `dead`/`won`.
 
 **Behaviours & logic**
 - Movement collision: `blocked(x,z) = blockedR(x,z,0.6) || coverBlockedR(x,z,0.6) || canopyBlockedR(x,z)`
@@ -1187,8 +1200,10 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L4513) and `triggerDeath()` (L4544).
-  The `difficulty` module-level variable is in scope at both sites. The economy
+  both `track()` call sites, now in `finishPickup()` (L4438, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L4543 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L4574). The `difficulty` module-level variable is in scope
+  at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.

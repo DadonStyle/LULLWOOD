@@ -117,7 +117,7 @@ import {
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { CAVE_IMMUNITY_TIME, isCaveImmune } from '@/lib/game/cave';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL } from '@/lib/game/stamina';
-import { PICKUP_GLOW_PEAK, carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity, CARRY_GLOW_BASE, CARRY_HALO_BASE } from '@/lib/game/childGlow';
+import { carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity } from '@/lib/game/childGlow';
 import {
   freshEmbersState,
   computeWinPayout,
@@ -2528,7 +2528,7 @@ const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
-    deathStart = 0, deathShown = false, scentEmitT = 0, enteredAt = 0,
+    deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
@@ -2903,8 +2903,15 @@ function twinkle(vol, bright){
   o.connect(g); o2.connect(g2); g2.connect(g); g.connect(master); g.connect(conv);
   o.start(t); o2.start(t); o.stop(t+1.7); o2.stop(t+1.7);
 }
-// LUL-1307: swelling warm cue for arriving home -- the win fanfare (moved
-// here from pickup(), which used to spend it at the run's midpoint).
+// LUL-2281: swelling warm cue for the pickup/ascend cinematic -- fires at
+// pickStart (pickup()) so the ~7-10.5s swell builds through the ascend and
+// resolves right as fireBoom() fires at e>=9.3 (git show 0e55c85^, the
+// commit LUL-1307 reverted, called this playPickupMusic() at the same
+// call site). LUL-1307 had moved this to arriveHome() for the carry-home
+// leg; that leg is gone (LUL-2281), so this is back where the cinematic
+// it was authored for actually happens -- calling it from finishPickup()
+// (e>=11.3, after the boom and after winVisible is already pushed) left
+// the fanfare resolving several seconds into a static win screen.
 function playWinMusic(){
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t0 = ctx.currentTime;
@@ -2938,29 +2945,11 @@ function playWinMusic(){
   });
   later(() => { if(audio){ audio.wg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); audio.dg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); } }, 11000);
 }
-// LUL-1307: the pickup itself is no longer the win -- ramp wind/drone UP
-// (opposite of playWinMusic's duck) and sound one low note. Lifting the
-// child should read as the forest noticing, not a resolution.
-function playPickupCue(){
-  if(!audio || !soundOn) return;
-  const { ctx, master, conv } = audio, t0 = ctx.currentTime;
-  audio.wg.gain.setTargetAtTime(0.11, t0, 0.4);
-  audio.dg.gain.setTargetAtTime(0.09, t0, 0.4);
-  const o = ctx.createOscillator(); o.type='sine'; o.frequency.value = 87.31;   // low F2
-  const o2 = ctx.createOscillator(); o2.type='triangle'; o2.frequency.value = 87.31; o2.detune.value = 4;
-  const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(0.18, t0+0.6); g.gain.setValueAtTime(0.18, t0+1.6);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0+2.4);
-  o.connect(g); o2.connect(g); g.connect(master); g.connect(conv);
-  o.start(t0); o2.start(t0); o.stop(t0+2.5); o2.stop(t0+2.5);
-}
-// LUL-1635: mark the pickup->carry transition -- pickup() already sounded
-// playPickupCue() at the gather's start, 2.5s earlier; nothing marked the
-// moment carrying actually begins (speed and detection change here).
-// leafRustle() is hiding-spot foley (wrong theme), playPickupCue()'s drone
-// already fired, playWinMusic() is reserved for arriveHome() -- this is a
-// short weight-settling thump plus a soft rising two-note interval, reading
-// as "the load is now in your arms," not a fanfare.
+// LUL-1635: mark the pickup->carry transition -- short weight-settling
+// thump plus a soft rising two-note interval, reading as "the load is now
+// in your arms," not a fanfare. Dead since LUL-2281 (the carry-home leg
+// this scored is unreachable -- pickup() now wins outright) but left in
+// place per Decision 2, same as the carrying state machine it announces.
 function playCarryStartCue(){
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t = ctx.currentTime;
@@ -4337,13 +4326,13 @@ function pickup(){
   const next = beginPickup(runState());
   if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
   baby.taken = next.babyTaken; pickingUp = next.pickingUp; babySetDown = next.setDown;
-  pickStart = clock.elapsedTime; hidden = false; lastHideSpot = null; coverProbeAccum = 0;
+  pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; lastHideSpot = null; coverProbeAccum = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found; carrying starts now
   pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   armsGroup.visible = true;
-  playPickupCue();
+  playWinMusic();
 }
 function buyVeilCharm(){
   if(!canBuyVeilCharm) return;
@@ -4394,18 +4383,59 @@ function throwThrowable(){
   }
 }
 function finishPickup(){
-  // LUL-1307: pickup is just the gather now -- the fanfare (playWinMusic,
-  // fireBoom) moved to arriveHome(), the actual win. Reset the glow
-  // properties the ~2.5s gather cinematic left mid-transition.
+  // LUL-2281: the cinematic's completion IS the win now (reverts LUL-1307,
+  // which used to hand off into the carry-home leg here -- see wiki
+  // decisions/lul-2281-pickup-is-the-win-2026-09-09 Decisions 1/3/4).
+  // playWinMusic() already fired at pickStart (pickup()) and fireBoom()
+  // already fired mid-cinematic at the e>=9.3 keyframe above (this is just
+  // the win bookkeeping, moved here verbatim from arriveHome(), which is
+  // now unreachable in real play but left in place per Decision 2).
   const next = completePickup(runState());
-  pickingUp = next.pickingUp; carrying = next.carrying;
-  playCarryStartCue();
+  pickingUp = next.pickingUp; won = next.won;
   armsGroup.visible = false;
+  babyGroup.visible = false;
+  if(locked) document.exitPointerLock();
   document.body.style.cursor = '';
-  babyGroup.visible = true; babyGroup.scale.setScalar(0.6);
-  bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.55;
-  halo.material.opacity = CARRY_HALO_BASE; babyLight.intensity = CARRY_GLOW_BASE;
   logChronicle('pickup');
+  // LUL-1611: winRevealed used to fire off a wall-clock later(...,1900) timer,
+  // which can outrun the dt-clamped boom burst (dt clamped to 0.05/frame,
+  // wiki systems/dt-clamp-vs-walltime) on a sustained sub-20fps device -- the
+  // reveal is polled against boomStart in tick() instead, so it fires exactly
+  // when the burst itself retires (undilated mirror of revealLoss()'s
+  // CUT_END poll on the death path).
+  const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
+  // LUL-303: updatePredators() (the only other place that clears the charge
+  // HUD) stops running once `playing` goes false here, so a charge/telegraph
+  // in flight at the exact moment of arrival would otherwise render on top
+  // of the win screen forever -- clear it the same way placePredators() does
+  // on restart.
+  activeCharges = 0;
+  // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
+  // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
+  // like carried/home, since computeDeathPayout's signature is untouched.
+  const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
+  // LUL-1666: secondary bonus is independent of missionBonus -- a player can
+  // win the secondary without ever completing the deepwater baseline this
+  // run (already unlocked from a prior run), or complete the baseline and
+  // still miss the secondary. Never gates the win itself (see spec S1).
+  const secondaryWon = mission ? secondaryComplete(mission, survivedSeconds) : false;
+  const secondaryBonus = secondaryWon
+    ? (mission.secondary.data.kind === 'retrieval' ? DEEPWATER_RETRIEVAL_BONUS : DEEPWATER_SPEEDRUN_BONUS)
+    : 0;
+  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus), embersSpent);
+  // LUL-1666: unlock is keyed on the *baseline* completing, independent of
+  // whether a secondary was even attempted this run -- guardrail is "complete
+  // the mission once", not "complete a secondary once". Persisted by
+  // components/Hud.tsx same as embersBalance below.
+  if(mission?.status === 'complete' && !missionUnlocks[mission.target.kind]){
+    missionUnlocks = { ...missionUnlocks, [mission.target.kind]: true };
+    pushState({ missionUnlocks: { ...missionUnlocks } });
+  }
+  embers = applyPayout(embers, payout);
+  logChronicle('win');
+  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
+    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 // LUL-1258: M2 Deepwater's completion sting -- reuses hollowLogSound's
 // noise-burst + oscillator chain (same procedural building blocks, no new
@@ -4564,7 +4594,7 @@ function restart(){
   heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
-  boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
+  pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   roostCooldown.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
@@ -4971,34 +5001,40 @@ function stepFrame(dt, t){
 
   if(pickingUp){
     const e = clock.elapsedTime - pickStart;
-    // LUL-1307: gather only -- the child stays in the player's hands, no
-    // ascent, no release. ~2.5s, retimed from the old cinematic's own
-    // e in [0,3.5] "gather" phase (the ascent that used to follow it is gone).
-    const lift   = key3(e, [[0,-0.95],[1.2,-0.5],[2.5,-0.35]]);
-    const fwd    = key3(e, [[0,-0.5],[1.2,-0.68],[2.5,-0.72]]);
-    const spread = key3(e, [[0,0.3],[1.2,0.15],[2.5,0.1]]);
-    const pitchA = key3(e, [[0,0.2],[1.2,-0.2],[2.5,-0.35]]);
+    // LUL-2281: restores the pre-LUL-1307 ascend/boom cinematic (git show
+    // 0e55c85, the commit LUL-1307 reverted) -- arms rise into frame, gather
+    // the child, lift, then release to the sky. LUL-1307 had shortened this
+    // to a 2.5s gather-only curve because completing it used to just start
+    // the carry-home leg; now completing it IS the win (see completePickup()
+    // in lib/game/outcome.ts), so the full "child goes to the sky and
+    // explodes" curve the founder asked for (LUL-2281) is what belongs here.
+    const lift   = key3(e, [[0,-0.95],[1.5,-0.9],[3.5,-0.35],[6,-0.05],[8,0.1],[9.5,-0.5],[10,-0.95]]);
+    const fwd    = key3(e, [[0,-0.5],[3.5,-0.72],[6,-0.78],[8,-0.72],[10,-0.5]]);
+    const spread = key3(e, [[0,0.3],[3.5,0.1],[6,0.13],[8,0.32],[10,0.3]]);
+    const pitchA = key3(e, [[0,0.2],[3.5,-0.35],[6,-0.8],[8,-1.05],[10,0.2]]);
     armL.position.set(-spread, lift, fwd); armL.rotation.set(pitchA, 0,  0.2);
     armR.position.set( spread, lift, fwd); armR.rotation.set(pitchA, 0, -0.2);
-    // the child settles into the player's hands, brightening slightly
-    const ay = key3(e, [[0,0],[1.2,0.15],[2.5,0.22]]);
-    babyGroup.visible = true; babyGroup.position.set(baby.x, ay, baby.z); babyGroup.rotation.y = e*0.6;
+    // the child ascends, brightening as it goes
+    const ay = key3(e, [[0,0],[3.5,0.25],[5,1.6],[7,12],[9,34],[10,55]]);
+    const boomed = e >= 9.3;
+    babyGroup.visible = !boomed; babyGroup.position.set(baby.x, ay, baby.z); babyGroup.rotation.y = e*0.6;
     halo.material.opacity = Math.min(0.5, 0.12 + e*0.05);
     bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5 + e*0.15;
-    babyLight.intensity = key3(e, [[0,1],[1.5,1.6],[2.5,PICKUP_GLOW_PEAK]]);
-    // camera holds position, glances toward the child being gathered --
-    // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly
-    // the camera motion the setting exists to remove) and just hold the
-    // player's own look direction instead.
+    babyLight.intensity = boomed ? 0 : key3(e, [[0,1],[4,3.2],[7,2],[9,3.5]]);
+    if(boomed && !pickBoomed){ pickBoomed = true; fireBoom(baby.x, ay, baby.z); }   // the child bursts into the sky -- the win moment's visual, finishPickup() below does the bookkeeping
+    // camera holds position and tilts up to follow the child, then the burst --
+    // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly the
+    // camera motion the setting exists to remove) and just hold the player's
+    // own look direction instead.
     camera.position.set(player.x, CONFIG.eye, player.z);
     if(motionReduced()){
       camera.rotation.set(player.pitch, player.yaw, 0);
     } else {
-      lookM.lookAt(camera.position, babyGroup.position, camera.up);
+      lookM.lookAt(camera.position, boomGroup.visible ? boomGroup.position : babyGroup.position, camera.up);
       lookQ.setFromRotationMatrix(lookM);
       camera.quaternion.slerp(lookQ, 0.06);
     }
-    if(e >= 2.5) finishPickup();
+    if(e >= 11.3) finishPickup();
   } else if(carrying){
     // LUL-38: carrying phase — child rides at the player's feet, glowing
     babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
@@ -5141,7 +5177,6 @@ function stepFrame(dt, t){
     const d = Math.hypot(t.x - player.x, t.z - player.z);
     if(d < nearestThrowableD) nearestThrowableD = d;
   }
-  const distHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);   // LUL-38
   // LUL-1258: M2 Deepwater -- distance/completion gate for the mission target,
   // computed the same way canPickup is above.
   const distMission = mission ? distToMissionTarget(mission, player.x, player.z) : Infinity;
@@ -5201,11 +5236,14 @@ function stepFrame(dt, t){
     if(caveImmuneJustEnded) caveImmuneEndCue();
     pushState({
       objectiveVisible: true, objectiveReady: canPickup || canBuyVeilCharm,
-      objectiveText: carrying
-        ? 'Carry the child home  ·  ' + Math.round(distHome) + 'm  ·  E  to set her down'
-        : (canPickup ? (babySetDown ? 'Press  E  to lift her again' : 'Press  E  to lift the child')
-           : (canBuyVeilCharm ? 'Press  E  for a mist-charm  ·  15 embers'
-              : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm'))),
+      // LUL-2281: collapsed to the single pre-carry prompt -- completePickup()
+      // now wins outright (lib/game/outcome.ts), so `carrying`/`babySetDown`
+      // never go true in real play and there is no carry/set-down state left
+      // to prompt for (wiki decisions/lul-2281-pickup-is-the-win-2026-09-09
+      // Decision 5).
+      objectiveText: canPickup ? 'Press  E  to lift the child'
+        : (canBuyVeilCharm ? 'Press  E  for a mist-charm  ·  15 embers'
+           : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
       statusVisible, statusText,
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,
