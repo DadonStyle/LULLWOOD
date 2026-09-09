@@ -104,12 +104,36 @@ jobs:
   unit:
     name: unit tests
     runs-on: ubuntu-latest
+    # LUL-2167: `unit tests` is the ONLY required status check on release/next's
+    # ruleset (`build, typecheck, lint` is required only on `main` -- see the
+    # bottom comment). PR #503 proved that gap is real, not theoretical: its
+    # head had `unit tests: success` / `build, typecheck, lint: failure` and
+    # still self-merged via automerge.yml, because GitHub's ruleset never even
+    # looked at the second check name. `needs: build` + the guard step below
+    # make the one context release/next actually gates on fail whenever the
+    # build does, without touching required_status_checks -- which no agent
+    # PAT can do anyway (systems/github-access: no Administration scope,
+    # confirmed repeatedly across LUL-610/758/784/887/896, every ruleset PATCH
+    # 404s). `if: always()` is required: a plain `needs:` on a failed
+    # dependency SKIPS this job, and a skipped job posts a `skipped` check-run
+    # under this same required name -- which branch protection's
+    # latest-instance-wins semantics treats as PASSING
+    # (systems/skipped-satisfies-required-check). Skipping is exactly the
+    # outcome that must not happen here.
+    needs: build
+    if: always()
     # LUL-485: no explicit timeout meant a hang inherited GitHub's 360-minute
     # default and pinned a runner for hours instead of failing fast. Observed
     # duration across 12 green runs on 2026-08-19: 15-24s, so 10 min is ~25x
     # headroom, not a tight guess.
     timeout-minutes: 10
     steps:
+      - name: fail if build, typecheck, lint did not succeed
+        if: needs.build.result != 'success'
+        run: |
+          echo "::error::build job result was '${{ needs.build.result }}', not 'success' -- failing unit tests too so release/next's one required check (LUL-2167) reflects it."
+          exit 1
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -194,3 +218,7 @@ jobs:
 # lint` stays required only on `main`, satisfied by release/next's own push-
 # triggered run of that job before a version-cut PR is opened. See
 # systems/release-train and systems/qa-regression-cadence in the shared wiki.
+#
+# LUL-2167: `unit` now `needs: build` (see that job) so a red `build,
+# typecheck, lint` fails `unit tests` too, closing the gap where release/next
+# would merge a broken build because only `unit tests` was ever checked.

@@ -1,0 +1,43 @@
+# SPEC: <TICKET-ID> <short title>
+
+**Ticket:** <LUL-nnnn> · **Tier:** <A|B|C> — <one line naming what the diff touches and why
+that tier>. Tier C needs `REVIEW: APPROVED` before merge; state that here if it applies.
+
+**Written against:** `release/next` @ `<sha>` (<date>). Re-derive every `file:line` below
+from the branch you actually implement on if it has moved.
+
+## Files
+
+- `<path>` — <created | edited, one line on what changes>
+
+## The change
+
+<Per file: exact content/diff. Full function signatures with types. Cite `file:line` for
+every existing symbol referenced — an executor that can't find what you named will invent
+something.>
+
+## Verification
+
+- <exact command> — <what passing looks like>
+
+## e2e
+
+**Specs.** `e2e/<file>.spec.ts` — '<test title>' (new | extended | must pass unchanged). One
+line per spec.
+**Hooks.** `window.ForestEngine.qaXxx(args): ReturnType` — one-line behaviour — new (declare
+in `engine/forest-engine.d.ts`, install inside the `?qaHooks` block in `init()`) | existing
+(`engine/forest-engine.js:<line>`).
+**Tester scenario.** Which nightly check in `shared/local-qa/QA_TESTER.md` covers this, or
+the request file `shared/local-qa/requests/<lul-id>-<slug>.md` written with this spec.
+"None: not player-visible" needs a reason.
+**Not covered.** Feel, audio, real-device items that stay manual, and why.
+
+## Constraints
+
+<What must not change. Pure/no-side-effects requirements. Repeat the tier here if it gates
+merge.>
+
+## Out of scope
+
+<Named explicitly — what this spec deliberately does not touch, and why, so a reviewer
+doesn't wonder if it was missed.>
