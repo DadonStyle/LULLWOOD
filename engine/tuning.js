@@ -88,18 +88,23 @@ export const VEIL_CHARM_INTERACT_RADIUS = 4;
 // `clear`.
 export const CAVE = { kind: 'cave', x: -70, z: 130, clear: 12, cr: 1.6, interactR: 6 };
 
-// LUL-1855: fog-exempt beacon glow on the radio mast -- a small additive
-// sprite, separate from the mast's existing PointLight (which FogExp2 erases
-// by ~43 units at default density regardless of intensity -- see wiki
+// LUL-1855: fog-exempt beacon glow, originally the radio mast only -- a small
+// additive sprite, separate from the mast's existing PointLight (which FogExp2
+// erases by ~43 units at default density regardless of intensity -- see wiki
 // game/mechanics/landmarks-below-the-fog-line). Deliberately dim: a bearing,
-// not a light source -- the CEO-accepted cheap slice covers this one
-// landmark only, not all six.
-export const RADIO_MAST_BEACON_GLOW = {
-  color: 0xff2a2a,     // same hue as the existing PointLight beacon, forest-engine.js buildRadioMast()
-  scale: 1.4,           // sprite width/height in world units (billboard quad)
-  opacityBase: 0.4,     // dim -- must not read as a lit scene
-  opacityAmp: 0.15,      // pulse amplitude around opacityBase
-  pulseHz: 0.5,          // slow pulse (~12.6s period) so it reads as a beacon, not a rendering glitch
+// not a light source. LUL-2248: generalised to all six LANDMARKS[].kind so
+// every landmark reads as a bearing beacon, not just the radio mast -- same
+// scale/opacityBase/opacityAmp/pulseHz for every entry, only `color` varies
+// (a distinct hue per kind so a beacon maps unambiguously to a landmark kind).
+// `radioMast` keeps its exact original hue (0xff2a2a) -- that beacon already
+// shipped and isn't being restyled.
+export const LANDMARK_BEACONS = {
+  fireTower:     { color: 0xff9a3a, scale: 1.4, opacityBase: 0.4, opacityAmp: 0.15, pulseHz: 0.5 },
+  stoneMarker:   { color: 0x8fd1ff, scale: 1.4, opacityBase: 0.4, opacityAmp: 0.15, pulseHz: 0.5 },
+  oak:           { color: 0x7ee08a, scale: 1.4, opacityBase: 0.4, opacityAmp: 0.15, pulseHz: 0.5 },
+  drownedCar:    { color: 0xc9a6ff, scale: 1.4, opacityBase: 0.4, opacityAmp: 0.15, pulseHz: 0.5 },
+  radioMast:     { color: 0xff2a2a, scale: 1.4, opacityBase: 0.4, opacityAmp: 0.15, pulseHz: 0.5 },
+  chapelSteeple: { color: 0xffe066, scale: 1.4, opacityBase: 0.4, opacityAmp: 0.15, pulseHz: 0.5 },
 };
 
 // LUL-1808: roam waypoint step, expressed as a fraction of `half` the same way

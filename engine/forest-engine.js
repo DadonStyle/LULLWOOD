@@ -181,7 +181,7 @@ import {
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
   STAR, LW, DUST, BW, BSP, BOG_TREES, BOG_REEDS, COVER_PROPS, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
-  CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, RADIO_MAST_BEACON_GLOW,
+  CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP,
 } from '@/engine/tuning';
@@ -1189,6 +1189,20 @@ homeRing.rotation.x = -Math.PI/2; homeRing.position.set(CONFIG.home.x, 0.04, CON
 // their position a few units to keep this seed's actual trees from
 // overlapping a fixed spot -- it never touches rng, so it can't affect
 // determinism for anything else generateMap() draws.
+// LUL-2248: kind -> beacon sprite, populated once by each buildX() below so
+// tick()'s pulse loop can iterate all six without hardcoding six variable names.
+const landmarkBeaconGlows = {};
+function addBeaconGlow(g, kind, topY){
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: buildBeaconGlowTexture(LANDMARK_BEACONS[kind].color),
+    transparent: true, opacity: LANDMARK_BEACONS[kind].opacityBase,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+  }));
+  glow.position.set(0, topY, 0);
+  glow.scale.set(LANDMARK_BEACONS[kind].scale, LANDMARK_BEACONS[kind].scale, 1);
+  g.add(glow);
+  landmarkBeaconGlows[kind] = glow;
+}
 function buildFireTower(){
   const g = new THREE.Group();
   const legMat = new THREE.MeshStandardMaterial({ color: 0x2a1d12, roughness: 1 });
@@ -1203,6 +1217,7 @@ function buildFireTower(){
   deck.position.y = 9; g.add(deck);
   const light = new THREE.PointLight(0xff9a4a, 0.9 * LEGACY_LIGHT_SCALE, 26, 2); light.position.set(0, 9.6, 0); g.add(light);
   g.rotation.z = 0.13; g.rotation.x = 0.05;   // leaning
+  addBeaconGlow(g, 'fireTower', 9.6);   // LUL-2248: matches the tower's own beacon PointLight height
   return g;
 }
 function buildStoneMarker(){
@@ -1213,6 +1228,7 @@ function buildStoneMarker(){
   const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.5, 0.6, 4), stoneMat);
   cap.position.y = 5.6; cap.rotation.y = 0.4; g.add(cap);
   const glow = new THREE.PointLight(0x9fd0ff, 0.55 * LEGACY_LIGHT_SCALE, 16, 2); glow.position.set(0, 3.2, 0); g.add(glow);
+  addBeaconGlow(g, 'stoneMarker', 5.9);   // LUL-2248: top of the cap (5.6 + half its 0.6 height)
   return g;
 }
 function buildDrownedCar(){
@@ -1225,6 +1241,7 @@ function buildDrownedCar(){
   g.rotation.set(0.05, 0.6, 0.16);   // tilted, half-sunken
   g.position.y = -0.3;
   const headlight = new THREE.PointLight(0xffcf7a, 0.35 * LEGACY_LIGHT_SCALE, 9, 2); headlight.position.set(2.0, 0.5, 0.6); g.add(headlight);
+  addBeaconGlow(g, 'drownedCar', 1.6);   // LUL-2248: top of the cab (1.15 + half its 0.9 height)
   return g;
 }
 function buildSplitOak(){
@@ -1240,6 +1257,7 @@ function buildSplitOak(){
     g.add(half_);
   }
   const glow = new THREE.PointLight(0xcfe6ff, 0.4 * LEGACY_LIGHT_SCALE, 14, 2); glow.position.set(0, 6, 0); g.add(glow);
+  addBeaconGlow(g, 'oak', 11.0);   // LUL-2248: top of the split bone spikes (7.75 + half their 6.5 height)
   return g;
 }
 // LUL-1855: soft radial-gradient canvas texture for the radio mast's
@@ -1257,7 +1275,6 @@ function buildBeaconGlowTexture(hex){
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
-let radioMastBeaconGlow = null;   // LUL-1855: sprite ref for tick()'s pulse, set once below
 function buildRadioMast(){
   const g = new THREE.Group();
   const mastMat = new THREE.MeshStandardMaterial({ color: 0x4a4f55, roughness: 0.8, metalness: 0.4 });
@@ -1274,15 +1291,9 @@ function buildRadioMast(){
   // anyway (wiki game/mechanics/landmarks-below-the-fog-line). This sprite is
   // a separate, unlit, fog:false marker so the beacon stays visible past the
   // fog line as a bearing, not a lit scene -- same idiom as stars/moon
-  // (:318, :323-325) and the win burst (:1061-1067).
-  radioMastBeaconGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: buildBeaconGlowTexture(RADIO_MAST_BEACON_GLOW.color),
-    transparent: true, opacity: RADIO_MAST_BEACON_GLOW.opacityBase,
-    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
-  }));
-  radioMastBeaconGlow.position.set(0, 11.2, 0);
-  radioMastBeaconGlow.scale.set(RADIO_MAST_BEACON_GLOW.scale, RADIO_MAST_BEACON_GLOW.scale, 1);
-  g.add(radioMastBeaconGlow);
+  // (:318, :323-325) and the win burst (:1061-1067). LUL-2248: generalised
+  // to all six landmarks; radioMast keeps its original hue/height unchanged.
+  addBeaconGlow(g, 'radioMast', 11.2);
   g.rotation.z = 0.05;   // slight lean
   return g;
 }
@@ -1295,6 +1306,7 @@ function buildChapelSteeple(){
   roof.position.y = 5.0; roof.rotation.y = Math.PI/4; g.add(roof);
   const glow = new THREE.PointLight(0xd8c9a0, 0.45 * LEGACY_LIGHT_SCALE, 15, 2);
   glow.position.set(0, 3.2, 0); g.add(glow);
+  addBeaconGlow(g, 'chapelSteeple', 6.6);   // LUL-2248: top of the roof cone (5.0 + half its 3.2 height)
   return g;
 }
 function buildCave(){
@@ -1338,7 +1350,7 @@ function placeLandmarks(){
     const [x, z] = clearLandmarkSpot(l.x, l.z, l.clear);
     landmarkGroups[l.kind].position.x = x;
     landmarkGroups[l.kind].position.z = z;
-    landmarkData.push({ x, z, cr: l.cr });
+    landmarkData.push({ x, z, cr: l.cr, kind: l.kind });
   }
 }
 // LUL-1904: the cave's own spawn coin-flip is a NEW rng() consumer and must
@@ -3329,6 +3341,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // calls w2m(baby.x, baby.z)) without needing to actually move either --
   // both draw calls go through this same function.
   window.ForestEngine.qaProbeMinimapPoint = function(x, z){ const [px, py] = w2m(x, z); return { px, py, mm: MM }; };
+  // LUL-2248: per-landmark beacon sprite presence + fog-exemption, one entry
+  // per LANDMARKS kind, so a test can assert the sprite exists and reads past
+  // the fog line without a screenshot.
+  window.ForestEngine.qaProbeLandmarkBeacons = function(){
+    return landmarkData.filter(l => l.kind).map(l => ({
+      kind: l.kind, x: l.x, z: l.z,
+      visible: landmarkGroups[l.kind].children.some(c => c.isSprite),
+      fog: landmarkGroups[l.kind].children.find(c => c.isSprite)?.material.fog ?? null,
+    }));
+  };
   // LUL-2225: bogginess and its two derived multipliers at an arbitrary
   // point, so a test can sample the patch's shape/edge directly (centre,
   // the inner/outer radii, home, the lake, every LANDMARKS/CAVE position)
@@ -4716,7 +4738,7 @@ function drawMinimapStatic(){
   sx.fillStyle = 'rgba(10,14,21,0.5)'; sx.fillRect(0,0,MM,MM);
   sx.strokeStyle = 'rgba(150,175,215,0.25)'; sx.lineWidth = 1; sx.strokeRect(1,1,MM-2,MM-2);
   sx.fillStyle = 'rgba(120,150,120,0.5)';
-  for(let i=0;i<treeData.length;i+=4){ const [px,py] = w2m(treeData[i].x, treeData[i].z); sx.fillRect(px, py, 1.2, 1.2); }
+  for(let i=0;i<treeData.length;i+=12){ const [px,py] = w2m(treeData[i].x, treeData[i].z); sx.fillRect(px, py, 1.2, 1.2); }
   // LUL-1093: bogTreeData/landmarkData were never drawn here -- both are
   // populated by generateBogTrees()/placeLandmarks(), which used to run AFTER
   // this function was called from generateMap() (see the generateMap() edit
@@ -4725,7 +4747,16 @@ function drawMinimapStatic(){
   // bigger square (3x3 vs 1.2x1.2) so they read as distinct points -- this is
   // a minimal legibility choice for a bugfix, not a final art pass.
   for(let i=0;i<bogTreeData.length;i+=4){ const [px,py] = w2m(bogTreeData[i].x, bogTreeData[i].z); sx.fillRect(px, py, 1.2, 1.2); }
-  for(const l of landmarkData){ const [px,py] = w2m(l.x, l.z); sx.fillRect(px-1.5, py-1.5, 3, 3); }
+  // LUL-2248: colour each landmark by its beacon hue so the minimap square
+  // maps unambiguously to a landmark kind. `cave` has no LANDMARK_BEACONS
+  // entry (it never got a beacon sprite -- out of scope, see the spec), so it
+  // falls back to the plain tree-dot fill instead of throwing.
+  for(const l of landmarkData){
+    const [px,py] = w2m(l.x, l.z);
+    const beacon = LANDMARK_BEACONS[l.kind];
+    sx.fillStyle = beacon ? ('#' + beacon.color.toString(16).padStart(6, '0')) : 'rgba(120,150,120,0.5)';
+    sx.fillRect(px-1.5, py-1.5, 3, 3);
+  }
   const [lx,ly] = w2m(CONFIG.lake.x, CONFIG.lake.z);
   sx.beginPath(); sx.arc(lx, ly, CONFIG.lake.r*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(134,184,255,0.55)'; sx.fill();
   // LUL-2225: the bog patch was never drawn here (LUL-1902 explicitly scoped
@@ -4735,6 +4766,12 @@ function drawMinimapStatic(){
   // so this doesn't help blackout read the patch -- that's the point of it.
   const [bx,by] = w2m(BOG_CENTER.x, BOG_CENTER.z);
   sx.beginPath(); sx.arc(bx, by, BOG_OUTER_RADIUS*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(70,110,80,0.5)'; sx.fill();
+  // LUL-2248: home as a warm stroked ring (not a filled disc, so it reads
+  // distinctly from the lake/bog fills) -- a small fixed minimap radius since
+  // CONFIG.home.r is a gameplay proximity radius, not a visual size.
+  const [hx,hy] = w2m(CONFIG.home.x, CONFIG.home.z);
+  sx.beginPath(); sx.arc(hx, hy, 4, 0, Math.PI*2);
+  sx.strokeStyle = '#' + CONFIG.home.glow.toString(16).padStart(6, '0'); sx.lineWidth = 4; sx.stroke();
 }
 function drawMinimap(){
   mmx.clearRect(0,0,MM,MM); mmx.drawImage(mmStatic, 0, 0);
@@ -5351,9 +5388,11 @@ function stepFrame(dt, t){
   // home landmark breathes, gently (LUL-38)
   homeRing.material.opacity = 0.16 + Math.sin(t*0.9)*0.06;
 
-  // LUL-1855: radio mast beacon glow pulses slowly, reads as a beacon not a glitch
-  radioMastBeaconGlow.material.opacity = RADIO_MAST_BEACON_GLOW.opacityBase
-    + Math.sin(t * RADIO_MAST_BEACON_GLOW.pulseHz) * RADIO_MAST_BEACON_GLOW.opacityAmp;
+  // LUL-1855/LUL-2248: every landmark's beacon glow pulses slowly, reads as a beacon not a glitch
+  for(const kind in landmarkBeaconGlows){
+    const cfg = LANDMARK_BEACONS[kind];
+    landmarkBeaconGlows[kind].material.opacity = cfg.opacityBase + Math.sin(t * cfg.pulseHz) * cfg.opacityAmp;
+  }
 
   // pool breathes; its wisps rise
   ring.material.opacity = 0.14 + Math.sin(t*0.8)*0.05;

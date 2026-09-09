@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5527 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4898, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5566 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4935, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -781,8 +781,10 @@ one geometry builder (`makePredator()`), differentiated by the
   both already avoid (LUL-38 comment, L85: "reuses the spawn point, no new
   rng draw"). If `CONFIG.home` ever moved off the spawn point, this
   protection would silently stop applying.
-- Is not drawn on the minimap (`drawMinimapStatic()` renders trees and the
-  lake only — home has no minimap marker).
+- Drawn on the minimap as a warm stroked ring only, not a filled disc, so it
+  reads distinctly from the lake/bog fills (`drawMinimapStatic()`, LUL-2248) —
+  a fixed 4px minimap radius, since `CONFIG.home.r` is a gameplay proximity
+  radius, not a visual size.
 
 **Behaviours & logic**
 - Static, no RNG draw — same every seed, every restart.
@@ -1207,7 +1209,7 @@ design doc as turning horror into radar.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
   both `track()` call sites, now in `finishPickup()` (L4438, the live win path as
   of `LUL-2281` -- `arriveHome()`'s L4543 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4574). The `difficulty` module-level variable is in scope
+  and `triggerDeath()` (L4613). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1218,7 +1220,7 @@ design doc as turning horror into radar.
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3182),
-  reset to 0 on `enter()` (L3256) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3274) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L4838: `computeDepth(maxDistFromHome) +
@@ -1376,8 +1378,9 @@ design doc as turning horror into radar.
 **What it is**
 - A permanent, always-rendered decorative `LANDMARKS` entry (`engine/tuning.js`, `kind:
   'radioMast', x: 30, z: 175`) with its own pulsing red beacon glow sprite
-  (`buildRadioMast()`/`radioMastBeaconGlow`, `RADIO_MAST_BEACON_GLOW` tuning, LUL-1855). It
-  predates LUL-1666/LUL-1697 and its appearance is unchanged by them.
+  (`buildRadioMast()`, `LANDMARK_BEACONS.radioMast` tuning, LUL-1855; generalised to all six
+  landmarks by LUL-2248 — see Landmark Beacons below — `radioMast`'s hue/scale/pulse are
+  unchanged). It predates LUL-1666/LUL-1697 and its appearance is unchanged by them.
 
 **What it can do**
 - **LUL-1666/LUL-1697:** when the player's pre-run secondary choice is `retrieval` (see Missions
@@ -1815,13 +1818,17 @@ first landmark whose spawn and visibility are conditional per-round (~50%
 via a seeded coin-flip in `generateMap()`, drawn last in the rng stream)
 rather than always-present; walking into its `interactR` grants a one-shot
 25s sight+scent detection immunity (`CAVE_IMMUNITY_TIME`, `lib/game/cave.ts`),
-hooked into `effectiveDetect()`/`canSee()`/`checkScent()`. As of LUL-1855,
-`radioMast` additionally carries a small fog-exempt additive sprite on its
-beacon (`RADIO_MAST_BEACON_GLOW`, `engine/tuning.js`) so it stays visible as a
-dim, slowly-pulsing point past the fog line that erases the other five -- a
-bearing, not a lit scene; the other five landmarks (other than `cave` and
-`radioMast`) are unchanged and still fog-occluded at the same distances
-documented above. and
+hooked into `effectiveDetect()`/`canSee()`/`checkScent()`. As of LUL-1855
+(`radioMast` only) and generalised to the other five by **LUL-2248**, every
+non-`cave` landmark carries a small fog-exempt additive sprite on its beacon
+(`LANDMARK_BEACONS`, `engine/tuning.js` -- one entry per `LANDMARKS[].kind`,
+same scale/opacity/pulse, distinct hue per kind so a beacon reads
+unambiguously as a bearing to a specific landmark) so it stays visible as a
+dim, slowly-pulsing point past the fog line that erases the rest of the
+landmark's geometry -- a bearing, not a lit scene. `cave` has no beacon (its
+spawn/visibility are conditional per-round, out of scope for LUL-2248). LUL-2248
+also colours each landmark's minimap square by its beacon hue and draws
+`CONFIG.home` as a warm ring on the minimap (`drawMinimapStatic()`). and
 the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
 boolean, so a patch edge scales speed/noise in rather than stepping. It
 scales player/predator walk speed down and noise radius up while standing in
