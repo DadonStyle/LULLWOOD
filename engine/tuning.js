@@ -150,6 +150,20 @@ export const BSP = 70;            // win-burst particles
 export const BOG_TREES = 360;
 export const COVER_PROPS = 880;
 
+// LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two
+// non-tree generated props (cover/reed/bogTree/stone), regardless of kind,
+// as a post-filter over the finished map -- independent of and in addition
+// to the tighter, kind-specific overlap checks each generator already runs
+// at rng-draw time (overlapsTreeTrunk/overlapsTreeCanopy/overlapsExistingCover).
+export const PROP_MIN_SPACING = 3.5;
+
+// LUL-2247: per-60x60-chunk ceiling per prop category (same chunk grid as
+// TREE_CHUNK_SIZE, forest-engine.js's treeChunkIndex()). 'cover' covers
+// log/rock/bramble together (generateCover()'s non-reed, non-tree output);
+// reed/bogTree/stone (== throwableData) are their own categories since each
+// has its own generator and its own visual density expectation.
+export const PROP_CHUNK_CAP = { cover: 12, reed: 24, bogTree: 12, stone: 3 };
+
 // LUL-195: wind silently decides scent outcomes; the ambient dust drift is the
 // only player-visible tell. Speed is tuned for legibility, not to match
 // lib/game/scent.ts's own wind-driven scent math.
