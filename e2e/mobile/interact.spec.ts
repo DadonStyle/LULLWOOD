@@ -25,7 +25,7 @@ async function enterMobile(page: import('@playwright/test').Page) {
 }
 
 test.describe('mobile Interact (E) button -- touchInteract', () => {
-  test('tapping touchInteract picks up and carries the child, same as KeyE on desktop', async ({ page }) => {
+  test('tapping touchInteract lifts and wins, same as KeyE on desktop (LUL-2281)', async ({ page }) => {
     test.setTimeout(45_000);
     await boot(page, { qaHooks: true });
     await enterMobile(page);
@@ -56,15 +56,10 @@ test.describe('mobile Interact (E) button -- touchInteract', () => {
       )
       .toBe(true);
 
-    await expect
-      .poll(
-        async () => (await page.evaluate(() => window.ForestEngine?.qaProbeBabyLight?.()))?.carrying,
-        { timeout: 30_000 },
-      )
-      .toBe(true);
-
-    await page.evaluate(() => window.ForestEngine?.qaTeleportHome?.());
-    await expect(page.locator('#winScreen')).toBeVisible({ timeout: 5_000 });
+    // LUL-2281 (reverts LUL-1307): completePickup() now wins outright once
+    // the ascend/explode cinematic finishes -- no carry-home leg, no
+    // qaTeleportHome step, `carrying` never goes true in real play.
+    await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
   });
 
   test('tapping touchInteract out of pickup range does nothing', async ({ page }) => {

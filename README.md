@@ -3,8 +3,8 @@
 **[Play Lullwood in your browser → www.lullwoodgame.com](https://www.lullwoodgame.com)**
 
 Lullwood is a browser-based first-person horror game. You cross a foggy night forest to
-find a lost, glowing child and carry them home, while wolves, bears and lions hunt you by
-sight and scent. The core loop is hiding and holding still while they sniff.
+reach a lost, glowing child before wolves, bears and lions hunt you down by sight and
+scent. The core loop is hiding and holding still while they sniff.
 
 It is also an experiment: **the game is built by an all-AI studio.** A fleet of Claude
 Code agents — engineers, a code reviewer, a tester, a backlog keeper, a feature scout and

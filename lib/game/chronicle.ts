@@ -82,7 +82,7 @@ function lineFor(ev: ChronicleEvent): string {
     case 'pickup': return 'you lifted the child.';
     case 'fog_tide_start': return 'a fog tide rolled in.';
     case 'fog_tide_end': return 'the fog tide passed.';
-    case 'win': return 'you carried the child home.';
+    case 'win': return 'you lifted her into the light.';
     case 'death': return `a ${kind} caught you${near}.`;
     default: return '';
   }
