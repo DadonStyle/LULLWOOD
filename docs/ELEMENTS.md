@@ -69,8 +69,8 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5123 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4502, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5133 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L4512, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1040,6 +1040,17 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   panel, z-index 20), which does the same. `#chargePrompt` needed no HUD-layer
   gate: the engine already resets `chargeVisible: false` in both `arriveHome()` and
   `triggerDeath()` (`engine/forest-engine.js`).
+  LUL-2231: LUL-2131's `MobileControls.tsx` unmount left two gaps. First, its
+  sticks/buttons (z-index 30/31) were never gated on `GameMenu.tsx`'s own open
+  `.menuPanel` (z-index 21) -- nothing in that pairing unmounts for the other, so
+  the E/Jump/Hide/Veil buttons and both `Stick`s sat on top of "Sound: on"/
+  "Settings..." and ate their taps. `GameMenu.tsx` now reports its `open` state up
+  via an `onOpenChange` callback (`useEffect` on `open`); `Hud.tsx` holds that in
+  `menuOpen` state and passes it to `MobileControls`, whose early-return became
+  `if (winVisible || deathVisible || menuOpen) return null`. Second, both `Stick`s
+  rendered unconditionally -- only the button rows above them were gated on
+  `entered` -- so they also sat over the pre-entry gate screen's instructions;
+  both are now wrapped in `{entered && (...)}` to match.
   LUL-2158: `#hint` (engine-owned, see above) is *not* reset by `triggerDeath()`/
   `arriveHome()` either, and can't be gated in React like the elements above since
   it isn't React state — its opacity is a plain `enter()`-owned 5s fade timer
@@ -1172,7 +1183,7 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites in `arriveHome()` (L4133) and `triggerDeath()` (L4180).
+  both `track()` call sites in `arriveHome()` (L4188) and `triggerDeath()` (L4219).
   The `difficulty` module-level variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
