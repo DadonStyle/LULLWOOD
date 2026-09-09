@@ -1011,9 +1011,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   rather than per-frame or per-event engine state. LUL-1912 repositioned it to
   `top:184px; right:16px` to clear `#minimap`'s own box (`top:16px; right:16px;
   160x160`, which read as a child-position pointer), and added
-  `#windIndicatorHint`, a static one-time label below the arrow that fades out
-  after 7s via CSS animation (`windHintFade`, mirrors the existing `#hint`
-  movement-controls pattern) — no new engine state. LUL-1933 found that push
+  `#windIndicatorHint`, a static label below the arrow — no new engine state.
+  LUL-2224 removed the original 7s CSS fade-out (`windHintFade`, which mirrored
+  the existing `#hint` movement-controls pattern): the founder found players
+  lost the explanation a few seconds into a run and never got it back, so the
+  hint is now always visible for the whole run (same mount gating as before).
+  LUL-1933 found that push
   unconditional, so it followed every real player (`#minimap` is
   `display:none` under `data-admin-mode="0"`, see above) and collided with
   `MobileControls.tsx`'s bottom-anchored Hide/Veil column on short landscape
