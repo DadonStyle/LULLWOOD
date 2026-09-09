@@ -499,6 +499,24 @@ one geometry builder (`makePredator()`), differentiated by the
   candidate whose footprint overlaps a nearby canopy circle even when it
   clears the trunk circle. Rock/Reed don't get this extra check — solid
   either way, so a canopy-only overlap there changes nothing observable.
+- **LUL-2212: as of this ticket, also guaranteed clear of every other
+  already-placed cover prop** (`overlapsExistingCover()`, `lib/game/cover.ts`)
+  — `generateCover()`'s candidate loop previously checked new props only
+  against trees, so a solid prop (Rock/Reed) could spawn overlapping a Log's
+  footprint; the Log itself stayed walkable but the overlapping solid
+  neighbour's own AABB still blocked the player mid-span, an invisible wall
+  on a prop that's supposed to be fully walkable end to end. `generateReeds()`
+  (a separate placement loop, runs after `generateCover()`) had no overlap
+  check at all before LUL-2212 and now gets the same `overlapsExistingCover()`
+  guard. **Known remaining gap, not fixed by LUL-2212**: `generateCover()`'s
+  canopy check runs before `generateBogTrees()` populates bog trees, so a
+  Log/Bramble candidate can still end up under a *bog* tree's canopy
+  undetected (bog trees don't exist in the tree grid yet at that point) —
+  reproduces on the QA-pinned seed in
+  `e2e/lul211-founder-report.spec.ts`'s `log`/walkable-cover case; tracked as
+  a follow-up, not resolved here (see the ticket for the reasoning: fixing it
+  means reordering generation, which shifts the RNG stream more broadly than
+  this ticket's other two fixes and wasn't verified in the time available).
 
 **Behaviours & logic**
 - `long = 1.3+rng()*1.1, thin = 0.35+rng()*0.25`, orientation randomized
@@ -547,7 +565,10 @@ one geometry builder (`makePredator()`), differentiated by the
   tree trunks at placement (same as every cover kind), but — also as of
   LUL-1642, matching Log — now guaranteed clear of tree **canopies** too
   (`overlapsTreeCanopy()`, since it reads `coverKindBlocksMovement()`
-  directly and now includes bramble).
+  directly and now includes bramble). As of **LUL-2212**, also guaranteed
+  clear of every other already-placed cover prop (`overlapsExistingCover()`)
+  — see the Log section above for the bug this fixed and the one known
+  remaining gap (bog-tree canopies).
 
 **Behaviours & logic**
 - `r = 0.8+rng()*0.7`, `hx=hz=r` (roughly round footprint,

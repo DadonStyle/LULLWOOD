@@ -88,6 +88,45 @@ export function overlapsTreeCanopy(x: number, z: number, propRadius: number, tre
   return false;
 }
 
+// ---- cover-prop-vs-cover-prop spawn clearance (LUL-2212) --------------------
+// generateCover() rejected a candidate overlapping a *tree* trunk/canopy but
+// never checked it against cover props already placed in the same pass --
+// nothing stopped a solid prop (rock/reed) from landing on top of or beside a
+// walkable one (log/bramble). blocked() correctly skips the walkable prop's
+// own AABB (coverKindBlocksMovement()), but the overlapping solid neighbour's
+// AABB still blocks, so the player hits an invisible wall mid-span on a prop
+// that's supposed to be fully walkable. Found via
+// e2e/lul211-founder-report.spec.ts's blocked()-sampling (LUL-384/LUL-1642
+// describe block) failing for both 'log' and 'bramble' on the QA-pinned seed
+// -- a reed sitting 0.5 units from a bramble's centre. Same conservative
+// circle-vs-circle approximation as overlapsTreeTrunk/overlapsTreeCanopy
+// above (candidate radius = its own max(hx,hz), existing prop radius = its
+// own max(hx,hz)); 'tree' entries are skipped since real trees are already
+// checked separately via overlapsTreeTrunk/overlapsTreeCanopy against
+// treeData; checking them again here via their synthetic LOS-square hx would
+// only reject spuriously.
+export interface ExistingCoverProp {
+  x: number;
+  z: number;
+  hx: number;
+  hz: number;
+  kind: string;
+}
+
+export function overlapsExistingCover(
+  x: number,
+  z: number,
+  propRadius: number,
+  existing: readonly ExistingCoverProp[],
+): boolean {
+  for (const c of existing) {
+    if (c.kind === 'tree') continue;
+    const dx = x - c.x, dz = z - c.z, rr = propRadius + Math.max(c.hx, c.hz);
+    if (dx * dx + dz * dz < rr * rr) return true;
+  }
+  return false;
+}
+
 // ---- which cover kinds block the player's own movement (LUL-384, LUL-1642) --
 // coverBlockedR() below already skipped 'tree' (its circle-grid collision via
 // blockedR()/grid is separate, so re-blocking it here would be a double

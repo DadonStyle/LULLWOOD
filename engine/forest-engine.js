@@ -56,6 +56,7 @@ import {
   distanceToCoverEdge,
   overlapsTreeCanopy,
   overlapsTreeTrunk,
+  overlapsExistingCover,
   canopyRadiusAtEye,
   rollCoverPropShape,
   pickAvoidDirection,
@@ -627,6 +628,19 @@ function buildCoverGrid(){
 // a log could spawn clear of every trunk yet still clip a canopy circle
 // somewhere along its length and wedge the player mid-crossing.
 //
+// LUL-2212: none of the checks above ever compared a new candidate against
+// cover props already placed in this same pass -- only against trees. A
+// solid prop (rock/reed) could land overlapping a walkable one (log/bramble)
+// undetected: blocked() correctly skips the walkable prop's own AABB
+// (coverKindBlocksMovement()), but the overlapping solid neighbour's AABB
+// still blocks, so the player hits an invisible wall mid-span on a prop
+// that's supposed to be fully walkable end to end. Found via
+// e2e/lul211-founder-report.spec.ts's blocked()-sampling failing for both
+// 'log' and 'bramble' on the QA-pinned seed -- a reed spawned 0.5 units from
+// a bramble's centre. overlapsExistingCover() (lib/game/cover.ts) rejects
+// against coverData itself, same conservative circle-vs-circle approximation
+// as the tree checks above.
+//
 // Deliberate consequence, not a bug: the new rejection branch below skips a
 // candidate's `ry` rng() draw when it fires (same short-circuit shape the
 // existing inLake()/inSpawn()/inBaby() check above already has). Tree/baby/
@@ -649,6 +663,7 @@ function generateCover(){
     const { kind, hx, hz, y } = rollCoverPropShape(roll, rng);   // LUL-425: lib/game/cover.ts
     if(overlapsTreeTrunk(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
     if(!coverKindBlocksMovement(kind) && overlapsTreeCanopy(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
+    if(overlapsExistingCover(x, z, Math.max(hx,hz), coverData)) continue;
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
     placed++;
   }
@@ -850,6 +865,17 @@ function generateBogTrees(){
 // array log/rock/bramble use (see coverMeshes.reed above) so canSee()'s LOS
 // raycast and the player's coverBlockedR() movement check treat them exactly
 // like any other prop, with zero changes to either function.
+//
+// LUL-2212: this loop had no overlap check against `coverData` at all --
+// generateCover() (called earlier in generateMap(), so its rock/log/bramble/
+// tree entries are already in `coverData` by the time this runs) checks new
+// candidates against trees and, as of this same ticket, against each other,
+// but reeds bypassed all of it. A reed (solid, coverKindBlocksMovement()
+// true) spawning on top of a log/bramble (walkable) reintroduces exactly the
+// bug the other check fixes: the player hits an invisible wall mid-span on a
+// prop that's supposed to be fully walkable. This was the actual failure
+// e2e/lul211-founder-report.spec.ts caught on the QA-pinned seed -- a reed
+// 0.5 units from a bramble's centre.
 function generateReeds(){
   let tries = 0, placed = 0;
   while(placed < COVER_PROPS && tries < COVER_PROPS*200){   // LUL-1483: same acceptance-rate drop as generateBogTrees()
@@ -858,6 +884,7 @@ function generateReeds(){
     if(biomeAt(x, z) <= 0) continue;
     if(nearLandmarks(x, z, 3)) continue;
     const r = 0.5 + rng()*0.4, h = 1.3 + rng()*0.9;
+    if(overlapsExistingCover(x, z, r, coverData)) continue;
     coverData.push({ x, z, hx: r, hz: r, y: h*0.5, kind: 'reed', ry: rng()*Math.PI*2 });
     placed++;
   }
