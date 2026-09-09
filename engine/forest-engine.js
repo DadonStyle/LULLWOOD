@@ -3223,6 +3223,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { x: player.x, z: player.z, yaw: player.yaw };
   };
 
+  // LUL-2189/LUL-2207: exposes the module-scope wind unit vector (set once per
+  // generateMap() by generateWind(), engine/forest-engine.js:1591/1594) so a test
+  // can derive #windIndicator's expected rotation instead of hardcoding an angle.
+  window.ForestEngine.qaProbeWind = function(){
+    return { windX: windX, windZ: windZ };
+  };
+
   // Drops the player `standoff` units on the -x side of the first reachable
   // cover prop of `kind` and points them straight at it (forward is
   // (-sin yaw, -cos yaw), so yaw = -PI/2 faces +x). Returns the prop's AABB and
