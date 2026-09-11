@@ -268,4 +268,144 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     await assertInViewport(page.locator('#deathScreen'), page, '#deathScreen');
     await expect(page.locator('#deathKind')).toHaveText('wolf');
   });
+
+  // ---- LUL-2320: predators cannot catch a player standing on a log/bramble --
+
+  test('wolf: standing on a log without hiding is not a safe zone (LUL-2320)', async ({ page }) => {
+    test.setTimeout(30_000);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    const spotKind = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.('log') ?? null);
+    if (spotKind === null) {
+      throw new Error("qaTeleportToHideSpot('log') returned null -- no log was generated on this seed");
+    }
+
+    // Same rig as the open-ground "hold-still alone does not save you" case
+    // above: qaLurePredatorKind places the wolf 6 units away with hunt=true.
+    // Deliberately never press KeyH -- this is the un-hidden case rule (C)
+    // adds: contact should kill regardless of any residual LOS quirk from
+    // standing inside the log's own footprint.
+    const kind = await page.evaluate(() => window.ForestEngine?.qaLurePredatorKind?.('wolf') ?? null);
+    if (kind === null) {
+      throw new Error('qaLurePredatorKind("wolf") returned null -- no wolf in predators');
+    }
+
+    await expect(page.locator('#deathScreen'), 'wolf should catch the player standing on a log, un-hidden').toBeVisible({
+      timeout: 20_000,
+    });
+    await assertInViewport(page.locator('#deathScreen'), page, '#deathScreen');
+    await expect(page.locator('#deathKind')).toHaveText('wolf');
+  });
+
+  test('wolf: a blind-chasing predator resolves promptly on reaching a hidden player on a log, instead of gluing (LUL-2320)', async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+
+    const spotKind = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.('log') ?? null);
+    if (spotKind === null) {
+      throw new Error("qaTeleportToHideSpot('log') returned null -- no log was generated on this seed");
+    }
+
+    await page.keyboard.press('KeyH');
+    const afterHide = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
+    expect(afterHide?.hidden, 'KeyH should have entered `hidden` while standing on the log').toBe(true);
+
+    // qaStageChaseAtContact places the wolf 4 units out (outside contact range,
+    // rad+CATCH_MARGIN=2.1) with a live scentLock (SCENT_TRACK_TIME) -- the
+    // blind-pursuit state the glue bug's root cause describes -- and does not
+    // touch the player. `chase`'s blind branch closes this distance in a
+    // straight line at full species speed with no LOS requirement, so this
+    // reproduces the reported shape ("tracks in, reaches the player") rather
+    // than starting already in contact.
+    const staged = await page.evaluate(() => window.ForestEngine?.qaStageChaseAtContact?.('wolf', 4.0, 0) ?? null);
+    if (staged === null) {
+      throw new Error("qaStageChaseAtContact('wolf', 4.0, 0) returned null -- no wolf in predators");
+    }
+    const idx: number = staged.idx;
+
+    const sample = () =>
+      page.evaluate((i) => {
+        const ps = window.ForestEngine?.qaPredatorState?.(i) ?? null;
+        const dead = !!document.querySelector('#deathScreen');
+        return ps ? { ...ps, dead } : null;
+      }, idx);
+
+    const first = await sample();
+    expect(first, 'initial qaPredatorState sample was null').not.toBeNull();
+    expect(
+      first!.dist,
+      'staged 4 units out should start outside contact range -- this must be a real closing chase, not an instant-contact case',
+    ).toBeGreaterThan(first!.rad + 1.3 /* CATCH_MARGIN, lib/game/predator.ts */);
+
+    const chunkSteps = stepsFor(0.1); // 0.1 game-seconds per sample
+    const maxChunks = Math.ceil(10 / 0.1);
+    let contactStreakSeconds = 0;
+    let resolved = false;
+    for (let i = 0; i < maxChunks; i++) {
+      await qaHook(page, 'qaAdvance', chunkSteps);
+      const s = await sample();
+      expect(s, 'qaPredatorState/deathScreen sample went stale mid-loop').not.toBeNull();
+
+      if (s!.dead) { resolved = true; break; } // killed -- a legitimate contact-range resolution, not glue
+      if (s!.state !== 'chase') { resolved = true; break; } // dropped out of chase (e.g. rule D's investigate hand-off) -- also not glue
+
+      if (s!.dist < s!.rad + 1.3) {
+        contactStreakSeconds += 0.1;
+        expect(
+          contactStreakSeconds,
+          `wolf sat inside contact range for over 1s while still in 'chase' and alive at t~=${(i * 0.1).toFixed(1)}s -- the glue bug is back`,
+        ).toBeLessThanOrEqual(1.05);
+      } else {
+        contactStreakSeconds = 0;
+      }
+    }
+
+    expect(resolved, 'wolf neither killed the player nor left `chase` within 10 game-seconds of closing to a hidden player on a log').toBe(true);
+  });
+
+  test('lion: hiding inside a bramble footprint in the open survives at range, dies within 5s of moving (LUL-2320)', async ({
+    page,
+  }) => {
+    test.setTimeout(30_000);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    const spotKind = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.('bramble') ?? null);
+    if (spotKind === null) {
+      throw new Error("qaTeleportToHideSpot('bramble') returned null -- no bramble was generated on this seed");
+    }
+
+    await page.keyboard.press('KeyH');
+    const afterHide = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
+    expect(afterHide?.hidden, 'KeyH should have entered `hidden` while standing on the bramble').toBe(true);
+
+    // qaLurePredatorKind places the lion 6 units away with hunt=true --
+    // outside every species' contact range (rad+CATCH_MARGIN <= 2.8), so this
+    // is the "protected at range" case, not the contact case the wolf test
+    // above already covers.
+    const kind = await page.evaluate(() => window.ForestEngine?.qaLurePredatorKind?.('lion') ?? null);
+    if (kind === null) {
+      throw new Error('qaLurePredatorKind("lion") returned null -- no lion in predators');
+    }
+
+    await page.waitForTimeout(5_000);
+    await expect(
+      page.locator('#deathScreen'),
+      'a hidden player inside a bramble footprint must survive a lion at range',
+    ).toHaveCount(0);
+
+    await page.keyboard.down('KeyW');
+    const afterMove = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
+    expect(afterMove?.hidden, 'KeyW should have exited `hidden`').toBe(false);
+
+    await expect(page.locator('#deathScreen'), 'un-hiding while still on the bramble must not stay a safe zone').toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(page.locator('#deathKind')).toHaveText('lion');
+  });
 });
