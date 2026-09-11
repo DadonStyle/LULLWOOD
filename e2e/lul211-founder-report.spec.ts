@@ -25,13 +25,16 @@
 //
 //     LUL-384 deliberately narrows this for `log` specifically: a fallen log
 //     is no longer solid to the *player's* movement (coverKindBlocksMovement(),
-//     lib/game/cover.ts) so walking/running over one feels natural, while LOS,
-//     hide-spot eligibility and predator catch are all untouched -- a log is
-//     still not a safe zone. That is an intentional, scoped exception, not a
-//     regression of this bug: rock is still fully solid to the player. LUL-1642
-//     (2026-09-06) extended the same walkable exemption from `log` alone to
-//     every HIDE_KINDS entry, so bramble now matches log exactly -- see the
-//     second describe block below, which covers both.
+//     lib/game/cover.ts) so walking/running over one feels natural, while LOS
+//     and predator catch are unaffected -- a log is still not a safe zone.
+//     That is an intentional, scoped exception, not a regression of this bug:
+//     rock is still fully solid to the player. LUL-1642 (2026-09-06) extended
+//     the same walkable exemption from `log` alone to every WALKABLE_KINDS
+//     entry, so bramble now matches log exactly for movement -- see the
+//     second describe block below, which covers both. LUL-2311 later removed
+//     `log` from hide-spot eligibility specifically (HIDE_KINDS narrowed to
+//     bramble only) -- walkability and hide-eligibility are independent axes
+//     as of that ticket; this file's walkability coverage below is unaffected.
 import { test, expect } from '@playwright/test';
 import { boot, enter, readObjective, expectRowHidden } from './helpers';
 

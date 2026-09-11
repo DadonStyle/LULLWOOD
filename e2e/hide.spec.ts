@@ -8,8 +8,9 @@
 // this stays its own fast file instead of living inside smoke.spec.ts.
 //
 // LUL-212: `hidden` can no longer be entered anywhere -- it requires standing at
-// a dedicated hiding-spot prop (bush/hollow log; see findHideSpot() in the
-// engine). The seeded map is now load-bearing for this spec, so `qaTeleportToHideSpot`
+// a dedicated hiding-spot prop (bramble bush; see findHideSpot() in the
+// engine -- LUL-2311 later removed the hollow-log alternative). The seeded map
+// is now load-bearing for this spec, so `qaTeleportToHideSpot`
 // (added for this ticket) places the player at the nearest one before the first
 // KeyH press, the same "place deterministically instead of hunting the procedural
 // map" pattern e2e/positional-hiding.spec.ts already uses.
@@ -23,7 +24,7 @@ test.describe('H hide toggle', () => {
 
     const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
     if (spot === null) {
-      throw new Error('qaTeleportToHideSpot returned null -- no bush/hollow-log hiding spot was found for this seed');
+      throw new Error('qaTeleportToHideSpot returned null -- no bramble hiding spot was found for this seed');
     }
 
     // Not hiding yet: the #status row is mounted (LUL-2312: #actionSlot's

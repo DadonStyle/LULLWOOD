@@ -29,11 +29,12 @@
 // happened to be a wolf anyway).
 //
 // LUL-212: entering `hidden` itself now requires standing at a dedicated
-// hiding-spot prop (bush/hollow log), not just any LOS-blocking cover --
-// qaHideBehindCover(Kind) only ever place the player at one of those two
-// kinds now, so the KeyH presses below still succeed. The LOS math these
-// tests actually assert on (canSee/hasLOS against the coverGrid) is
-// unchanged; rock and tagged trees still block sight exactly as before.
+// hiding-spot prop (bramble bush; LUL-2311 dropped the hollow-log
+// alternative), not just any LOS-blocking cover -- qaHideBehindCover(Kind)
+// only ever place the player at a HIDE_KINDS prop, so the KeyH presses below
+// still succeed. The LOS math these tests actually assert on (canSee/hasLOS
+// against the coverGrid) is unchanged; rock and tagged trees still block
+// sight exactly as before.
 //
 // LUL-224: the open-lion case below is the exception -- qaOpenHideNearLion
 // places the player at (0,0), deep inside `inSpawn` (r<~6.32), which

@@ -39,7 +39,7 @@ const LKP_MAX_SWEEPS_PLUS_MARGIN = 6;
 // HUD, so callers don't silently proceed with a not-actually-hidden player.
 async function hidePlayer(page: import('@playwright/test').Page) {
   const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
-  expect(spot, 'qaTeleportToHideSpot must find a bush/hollow-log spot for this seed').not.toBeNull();
+  expect(spot, 'qaTeleportToHideSpot must find a bramble spot for this seed').not.toBeNull();
   await page.keyboard.press('KeyH');
   await expectRowVisible(page, 'status');
 }

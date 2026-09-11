@@ -336,7 +336,7 @@ test('coverKindBlocksMovement is true for rock -- unchanged, still solid', () =>
   assert.equal(coverKindBlocksMovement('rock'), true);
 });
 
-test('coverKindBlocksMovement is false for bramble -- LUL-1642, walkable like log so hasLOS() unifies with the log hiding case', () => {
+test('coverKindBlocksMovement is false for bramble -- LUL-1642, walkable like log (WALKABLE_KINDS), independent of hide-spot eligibility since LUL-2311', () => {
   assert.equal(coverKindBlocksMovement('bramble'), false);
 });
 
@@ -457,8 +457,9 @@ test('coverBlockedR: skips kind === "tree" entries entirely, regardless of rotat
 // coverBlockedR routes its skip through coverKindBlocksMovement()
 // rather than a literal kind === 'tree' check -- pin that a log no longer
 // blocks the player's own movement, even dead center, even though it is
-// still real LOS-blocking cover (see the hasLOS asymmetry test below) and
-// still a valid hiding spot (HIDE_KINDS).
+// still real LOS-blocking cover (see the hasLOS asymmetry test below).
+// LUL-2311: log is no longer a hiding spot (HIDE_KINDS) -- that removal is
+// independent of this walkable-movement exemption, which stays.
 test('coverBlockedR: skips kind === "log" entirely (LUL-384, walkable) even dead center', () => {
   const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 2, hz: 1, kind: 'log', ry: 0 }]);
   assert.equal(coverBlockedR(0, 0, 0, coverGrid), false);
@@ -555,7 +556,7 @@ test('blockedForPredator: reed blocks a predator', () => {
   assert.equal(blockedForPredator(0, 0, 0.6, grid, coverGrid), true);
 });
 
-test('blockedForPredator: log does not block a predator (HIDE_KINDS stays walkable for both actors)', () => {
+test('blockedForPredator: log does not block a predator (WALKABLE_KINDS stays walkable for both actors)', () => {
   const grid = makeGrid<CircleCollider>([]);
   const coverGrid = makeGrid<CoverAABB>([{ x: 0, z: 0, hx: 2, hz: 1, kind: 'log', ry: 0 }]);
   assert.equal(blockedForPredator(0, 0, 0.6, grid, coverGrid), false);
@@ -772,11 +773,11 @@ test('blocked uses PLAYER_COLLISION_RADIUS for the tree/cover checks (matches th
 
 // ---- findHideSpot (LUL-212, LUL-405/LUL-430) -------------------------------
 
-test('findHideSpot: finds a qualifying prop (log) within HIDE_RADIUS', () => {
-  const coverGrid = makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.3, hz: 0.3, kind: 'log', ry: 0 }]);
+test('findHideSpot: finds a qualifying prop (bramble) within HIDE_RADIUS', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.3, hz: 0.3, kind: 'bramble', ry: 0 }]);
   const spot = findHideSpot(0, 0, coverGrid);
   assert.ok(spot);
-  assert.equal(spot!.kind, 'log');
+  assert.equal(spot!.kind, 'bramble');
 });
 
 test('findHideSpot: ignores a non-HIDE_KINDS prop (rock) even well within range', () => {
@@ -784,20 +785,25 @@ test('findHideSpot: ignores a non-HIDE_KINDS prop (rock) even well within range'
   assert.equal(findHideSpot(0, 0, coverGrid), null);
 });
 
-test('findHideSpot: HIDE_KINDS is exactly {bramble, log}', () => {
-  assert.deepEqual(HIDE_KINDS, { bramble: true, log: true });
+test('findHideSpot: ignores log -- LUL-2311 removed it from HIDE_KINDS', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 0.5, z: 0, hx: 0.3, hz: 0.3, kind: 'log', ry: 0 }]);
+  assert.equal(findHideSpot(0, 0, coverGrid), null);
+});
+
+test('findHideSpot: HIDE_KINDS is exactly {bramble}', () => {
+  assert.deepEqual(HIDE_KINDS, { bramble: true });
   assert.equal(HIDE_RADIUS, 2.2);
 });
 
 test('findHideSpot: exactly at HIDE_RADIUS is excluded (strict <)', () => {
   const hx = 0.3;
-  const coverGrid = makeGrid<CoverAABB>([{ x: hx + HIDE_RADIUS, z: 0, hx, hz: 0.3, kind: 'log', ry: 0 }]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: hx + HIDE_RADIUS, z: 0, hx, hz: 0.3, kind: 'bramble', ry: 0 }]);
   assert.equal(findHideSpot(0, 0, coverGrid), null);
 });
 
 test('findHideSpot: just inside HIDE_RADIUS is found', () => {
   const hx = 0.3;
-  const coverGrid = makeGrid<CoverAABB>([{ x: hx + HIDE_RADIUS - 0.001, z: 0, hx, hz: 0.3, kind: 'log', ry: 0 }]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: hx + HIDE_RADIUS - 0.001, z: 0, hx, hz: 0.3, kind: 'bramble', ry: 0 }]);
   assert.ok(findHideSpot(0, 0, coverGrid));
 });
 
@@ -805,8 +811,10 @@ test('findHideSpot: on an exact-distance tie, the first-encountered candidate in
   // Both candidates land in the same CELL bucket as the query point (cell
   // "0,0") and both have distanceToCoverEdge === 2.0 from (0,0) -- array
   // order is push order into that bucket, matching buildCoverGrid()'s own
-  // coverData-iteration order in the engine.
-  const a: CoverAABB = { x: 2.5, z: 0, hx: 0.5, hz: 0.5, kind: 'log', ry: 0 };
+  // coverData-iteration order in the engine. Both are bramble (the only
+  // HIDE_KINDS member since LUL-2311) so the tie genuinely exercises two
+  // hide-eligible candidates rather than one being excluded outright.
+  const a: CoverAABB = { x: 2.5, z: 0, hx: 0.5, hz: 0.5, kind: 'bramble', ry: 0 };
   const b: CoverAABB = { x: 0, z: 2.5, hx: 0.5, hz: 0.5, kind: 'bramble', ry: 0 };
   const coverGrid: SpatialGrid<CoverAABB> = new Map([[gridKey(0, 0), [a, b]]]);
   const spot = findHideSpot(0, 0, coverGrid);
@@ -1143,15 +1151,15 @@ test('hasLOS: cover sitting exactly on the short wrap-path between two seam-stra
 // ---- findHideSpot (LUL-1485: also closes the third independent 3x3 scan copy) --
 
 test('findHideSpot: span=Infinity matches the pre-wrap call exactly', () => {
-  const coverGrid = makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]);
+  const coverGrid = makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.5, hz: 0.5, kind: 'bramble', ry: 0 }]);
   assert.deepEqual(findHideSpot(0, 0, coverGrid, CELL, Infinity), findHideSpot(0, 0, coverGrid));
 });
 
 test('findHideSpot: a seam find equals the identical interior find translated by SPAN/2', () => {
-  const interior = findHideSpot(0, 0, makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]), CELL, SPAN);
+  const interior = findHideSpot(0, 0, makeGrid<CoverAABB>([{ x: 1, z: 0, hx: 0.5, hz: 0.5, kind: 'bramble', ry: 0 }]), CELL, SPAN);
   const seam = findHideSpot(
     acrossSeam(0), acrossSeam(0),
-    makeGrid<CoverAABB>([{ x: acrossSeam(1), z: acrossSeam(0), hx: 0.5, hz: 0.5, kind: 'log', ry: 0 }]),
+    makeGrid<CoverAABB>([{ x: acrossSeam(1), z: acrossSeam(0), hx: 0.5, hz: 0.5, kind: 'bramble', ry: 0 }]),
     CELL, SPAN,
   );
   assert.ok(interior !== null);

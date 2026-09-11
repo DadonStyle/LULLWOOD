@@ -191,10 +191,10 @@ export function thinProps<T extends SpacedProp>(
 // predator colliders; see blockedForPredator()).
 //
 // LUL-1642: bramble joins log here too. Both were already identical in
-// every *decision* sense -- HIDE_KINDS = {bramble, log} share the exact same
-// `hidden`/hideTime/findHideSpot() state machine -- but leaving bramble
-// solid meant the player was collision-stopped at its AABB edge while
-// hiding, often standing just *outside* the small bramble footprint
+// every *decision* sense -- they shared the exact same `hidden`/hideTime/
+// findHideSpot() state machine at the time -- but leaving bramble solid
+// meant the player was collision-stopped at its AABB edge while hiding,
+// often standing just *outside* the small bramble footprint
 // (findHideSpot()'s HIDE_RADIUS=2.2 triggers well beyond the box itself).
 // A log hider, by contrast, could stand inside/on top of the log's long
 // footprint since nothing blocked them from walking onto it. hasLOS()
@@ -204,11 +204,16 @@ export function thinProps<T extends SpacedProp>(
 // sightline the log case never exposed, reading in play as "sniffing broke,
 // it found me while I was still hidden." Matching bramble's movement
 // exemption to log's puts the player inside/against the same footprint
-// hasLOS() tests, unifying the two HIDE_KINDS the way the ticket asked
-// rather than inventing a second, bramble-only detection path. Rock/reed
-// aren't hiding spots and stay solid.
+// hasLOS() tests, rather than inventing a second, bramble-only detection
+// path. Rock/reed stay solid.
+//
+// LUL-2311: log was later removed from HIDE_KINDS (it no longer makes sense
+// as a place to formally "hide"), but the walkable-movement exemption this
+// function grants stays -- a fallen log is still something a person walks
+// over. WALKABLE_KINDS (below HIDE_KINDS) now carries that exemption on its
+// own; the two sets diverge in content, not just name, for the first time.
 export function coverKindBlocksMovement(kind: string): boolean {
-  return kind !== 'tree' && !HIDE_KINDS[kind];
+  return kind !== 'tree' && !WALKABLE_KINDS[kind];
 }
 
 // ============================================================================
@@ -411,10 +416,12 @@ export function slideVelocity(vx: number, vz: number, blockedX: boolean, blocked
 // coverKindBlocksMovement() -- a fallen log is the one cover prop a
 // person would naturally step/run over rather than route around. Predators
 // now route through this same function via blockedForPredator() (LUL-1643),
-// they just share the identical log/bramble exemption. LOS
-// (hasLOS() below, which does NOT skip either kind) and hide-spot
-// eligibility (findHideSpot()/HIDE_KINDS) both read coverGrid independently
-// of this function and are unchanged by either skip.
+// they just share the identical log/bramble WALKABLE_KINDS exemption. LOS
+// (hasLOS() below, which does NOT skip either kind) reads coverGrid
+// independently of this function and is unaffected by the skip. Hide-spot
+// eligibility (findHideSpot()/HIDE_KINDS) also reads coverGrid
+// independently, but is NOT unaffected for log -- LUL-2311 removed log from
+// HIDE_KINDS entirely, while this function's walkable skip for log stays.
 export function coverBlockedR(
   x: number, z: number, pr: number, coverGrid: SpatialGrid<CoverAABB>,
   cell: number = CELL, span: number = Infinity,
@@ -587,16 +594,32 @@ export function hasLOS(
   return true;
 }
 
-// ---- hiding spots (LUL-212, LUL-405/LUL-430) ---------------------------------
-// A dedicated hide stance (KeyH) only works standing at one of these two
-// prop kinds -- not any LOS-blocking cover. Reuses the same coverGrid spatial
+// ---- hiding spots (LUL-212, LUL-405/LUL-430, LUL-2311) -----------------------
+// A dedicated hide stance (KeyH) only works standing at one of these prop
+// kinds -- not any LOS-blocking cover. Reuses the same coverGrid spatial
 // hash blockedR()/hasLOS() walk, no second data structure. Returns the
 // nearest qualifying prop within `hideRadius` of its own rotation-aware
 // rectangular edge (distanceToCoverEdge, above), or null. Tie-break: on an
 // exact distance tie the first-encountered candidate wins (`d < bestD` is
 // strict) -- whatever `main` already does, pinned by a test below.
-export const HIDE_KINDS: Readonly<Record<string, boolean>> = { bramble: true, log: true };
+//
+// LUL-2311: log removed -- a fallen log is walkable, thin, LOS-blocking
+// cover, but nothing a player can visually be "inside" of, so it no longer
+// qualifies as a formal hiding spot (founder brief: "remove the ability to
+// hide in low logs, it doesn't make sense"). Bramble is now the only member.
+export const HIDE_KINDS: Readonly<Record<string, boolean>> = { bramble: true };
 export const HIDE_RADIUS = 2.2;
+
+// ---- which cover kinds a player/predator walks straight through (LUL-384,
+// LUL-1642, LUL-2311) ----------------------------------------------------
+// Was identical to HIDE_KINDS by construction until LUL-2311 removed `log`
+// from hide-eligibility while deliberately keeping it walkable -- the two
+// sets now diverge in content, not just name. A kind added to one in the
+// future is NOT automatically in the other; update both call sites
+// deliberately. Read by coverKindBlocksMovement() above, which both
+// coverBlockedR() (player movement) and blockedForPredator() (predator
+// movement) route through.
+export const WALKABLE_KINDS: Readonly<Record<string, boolean>> = { bramble: true, log: true };
 
 export function findHideSpot(
   x: number, z: number,
