@@ -30,7 +30,16 @@ export type AnalyticsEventInput =
   // -- fires when init()'s return object (engine/forest-engine.js) is missing a key
   // ENGINE_ACTION_KEYS promises exists (the LUL-1697 failure mode). Should never fire in
   // practice; existing only to catch it if the type-level guard is ever bypassed.
-  | { event: 'engine_contract_violation'; missing_keys: string[] };
+  | { event: 'engine_contract_violation'; missing_keys: string[] }
+  // LUL-2392: feeds LUL-1449 (Economist, Deeper Lungs veil-tree re-pricing). Fired from
+  // scentOnto() (engine/forest-engine.js) when a predator re-acquires the player by scent
+  // after a chase->roam give-up -- `duration_ms` is the wall of the gap between the give-up
+  // and this re-acquisition, in game time. A give-up followed by anything other than a
+  // scentOnto() re-acquisition (the player escaping to a win/restart, or being caught by
+  // sight/noise instead) never emits this event for that gap -- undercounting toward the
+  // *longer* gaps is the correct direction for a "how much quiet does a hidden player get"
+  // measurement, not a bug to fix here.
+  | { event: 'chase_gap'; duration_ms: number; difficulty: Difficulty };
 
 export type AnalyticsEvent = AnalyticsEventInput & {
   ts: number;

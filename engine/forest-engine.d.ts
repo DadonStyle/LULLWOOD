@@ -97,6 +97,8 @@ declare global {
       qaLurePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => 'wolf' | 'bear' | 'lion' | null;
       /** LUL-65: seeds one synthetic scent point `age` game-seconds old at (player.x+dx, player.z+dz). */
       qaSeedScentPoint?: (dx: number, dz: number, age: number) => void;
+      /** LUL-2392: last {kind, durationMs, difficulty} the chase_gap analytics event fired with, or null if none yet this page load. */
+      qaProbeChaseGap?: () => { kind: 'wolf' | 'bear' | 'lion'; durationMs: number; difficulty: 'lantern' | 'night' | 'blackout' } | null;
       /** LUL-65: places `kind` on the drifted oldest live scent point, in `roam`. Null if none live or species not found. */
       qaProbeScentOnOldest?: (kind: 'wolf' | 'bear' | 'lion') => { age: number; dist: number } | null;
       /** LUL-65: state + distance-to-player + scentOnto() re-trigger count for `kind`. Null if not found.
