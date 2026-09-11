@@ -47,6 +47,33 @@ test.describe('qaNoRender=1', () => {
   });
 });
 
+test.describe('detectScaleMul', () => {
+  // LUL-2407: applyQaWorldMicroPreset() shrinks the map 480 -> 96 but left predator detect
+  // radii (PSPEC.wolf.detect=42 etc, engine/tuning.js) at full-map absolute values, so a
+  // predator placed at a full-map-safe spawn distance could already see the player on the
+  // micro map. The fix scales detect radii by the same 0.2 ratio the map itself shrinks by
+  // (engine/tuning.js applyQaWorldMicroPreset(), engine/forest-engine.js effectiveDetect/
+  // canSee) -- exercise it via the exact function it changed, canSee(p, dist), through the
+  // existing qaPredatorState(idx).canSee live value.
+  test('scales predator detect radius with the micro map', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+
+    // Unscaled wolf detect is 42 -- well within line of sight at 20 units on an empty scene.
+    // Scaled (x0.2 = 8.4) it must not see the player at that range.
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: 20, z: 0, state: 'roam' }] });
+    const far = await qaHook(page, 'qaPredatorState', 0);
+    expect(far).toMatchObject({ kind: 'wolf', dist: 20 });
+    expect(far.canSee).toBe(false);
+
+    // Sanity check the scaling doesn't disable detection outright -- well inside the scaled
+    // 8.4 radius, on the same clear line of sight, it must still see the player.
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: 5, z: 0, state: 'roam' }] });
+    const near = await qaHook(page, 'qaPredatorState', 0);
+    expect(near).toMatchObject({ kind: 'wolf', dist: 5 });
+    expect(near.canSee).toBe(true);
+  });
+});
+
 test.describe('qaBuildScene', () => {
   test('places exactly one bramble, one predator, and the player', async ({ page }) => {
     await boot(page, { qaHooks: true });

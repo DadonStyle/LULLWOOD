@@ -16,6 +16,9 @@
 export const CONFIG = {
   seed:    20260718,   // QA-pinned reference layout only -- see resolveInitialSeed(); not the default in-play seed since LUL-83.
   mapSize: 480,          // the forest is a fixed square this many units across
+  detectScaleMul: 1,     // LUL-2407: predator detect-radius multiplier; applyQaWorldMicroPreset()
+                          // scales this down to match the shrunk map so spawn distance keeps the
+                          // same safety margin against detect radius. 1 = full-map, no-op default.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
@@ -205,6 +208,8 @@ export function applyQaWorldMicroPreset(){
   CONFIG.coverProps = 40;
   CONFIG.bogTrees = 0;
   CONFIG.bogReeds = 0;
+  CONFIG.detectScaleMul = 0.2;   // LUL-2407: same 96/480 ratio the map itself shrinks by --
+                                  // restores the full map's spawn-distance-to-detect-radius margin.
 }
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two
