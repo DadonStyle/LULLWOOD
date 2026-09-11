@@ -1142,17 +1142,23 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   lost the explanation a few seconds into a run and never got it back, so the
   hint is now always visible for the whole run (same mount gating as before).
   LUL-1933 found that push
-  unconditional, so it followed every real player (`#minimap` is
-  `display:none` under `data-admin-mode="0"`, see above) and collided with
-  `MobileControls.tsx`'s bottom-anchored Hide/Veil column on short landscape
-  phones. `top:184px; right:16px`/`#windIndicatorHint`'s `top:214px` now apply
-  only under `body[data-admin-mode="1"]`; the default (real player) position
-  reverts to LUL-1724's original `top:20px; right:20px` (`#windIndicatorHint`
-  `top:50px; right:8px`), verified clear of `MobileControls` at every tested
-  viewport. LUL-2057 found the arrow's own ~54px rendered box (28px font,
-  ~1.2 line-height) still overlapped the hint's first line at that 30px gap;
-  `#windIndicatorHint`'s `top` moved to `64px` (default) / `228px`
-  (`data-admin-mode="1"`), a 14px increase in both, to clear it.
+  unconditional, so it followed every real player (`#minimap` was
+  `display:none` under `data-admin-mode="0"`, the default, at the time) and
+  collided with `MobileControls.tsx`'s bottom-anchored Hide/Veil column on
+  short landscape phones. `top:184px; right:16px`/`#windIndicatorHint`'s
+  `top:214px` now apply only while the minimap is actually visible; the
+  default (minimap off) position reverts to LUL-1724's original
+  `top:20px; right:20px` (`#windIndicatorHint` `top:50px; right:8px`),
+  verified clear of `MobileControls` at every tested viewport. LUL-2057 found
+  the arrow's own ~54px rendered box (28px font, ~1.2 line-height) still
+  overlapped the hint's first line at that 30px gap; `#windIndicatorHint`'s
+  `top` moved to `64px` (default) / `228px` (minimap visible), a 14px
+  increase in both, to clear it. LUL-2309 gave the minimap its own
+  `showMinimap` setting, decoupled from admin mode (`#minimap` is now
+  `display:none` under `body:not([data-show-minimap="1"])`, default OFF) --
+  the clearance push moved from keying off `data-admin-mode="1"` to keying
+  off `data-show-minimap="1"`, since it tracks the minimap's own visibility,
+  not admin mode's.
   LUL-2131: `#windIndicator`/`#windIndicatorHint` (and `#throwPrompt`, `#actionPrompt`,
   `#captionToast`, all `components/Hud.tsx`) now also gate on `!state.winVisible &&
   !state.deathVisible` -- `state.entered` alone stays true through both end screens

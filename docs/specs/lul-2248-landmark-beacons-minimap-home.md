@@ -10,6 +10,12 @@ were against `main` @ `4d7f1c9` and had drifted — re-derived every `file:line`
 directly from this SHA. Re-derive again if it has moved further by the time this is
 implemented.
 
+**LUL-2309 note (2026-09-11):** this ticket turned the minimap into a player-facing
+navigation aid (home ring + beacon colours), which is why LUL-2309 gave it its own
+`showMinimap` setting instead of leaving visibility riding along with the dev-only admin
+mode toggle. Minimap visibility is decoupled from admin mode as of that ticket; nothing
+below this note describes visibility gating.
+
 ## Files
 
 - `engine/tuning.js` — edit `RADIO_MAST_BEACON_GLOW`, add `LANDMARK_BEACONS`

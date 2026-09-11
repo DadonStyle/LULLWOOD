@@ -283,7 +283,7 @@ const OVERLAY_STYLE = `
   /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
      Default OFF hides the tuning/dev HUD (#panel's pace/mist/sound/regen/fullscreen
-     controls, plus #minimap); ON is today's behaviour, unchanged.
+     controls); ON is today's behaviour, unchanged.
      LUL-650/LUL-656 originally carved #settingsBtn and #lightState/#veilState out
      of this rule so a player who turned admin mode off wouldn't lose Settings or
      the hold-to-veil readout. LUL-1085 (hamburger-menu migration) superseded that:
@@ -292,12 +292,21 @@ const OVERLAY_STYLE = `
      embersBalance) with no exemption selector. There is no carve-out left --
      every #panel child, #lightState/#veilState included, is hidden by default
      (LUL-1824/game/lul1724-panel-dev-only-finding). The real player-facing tell
-     for veil/light is the in-world vignette dim + fog billow, not this HUD.
-     #minimap needs !important: the engine writes its own inline
-     mm.style.display (blackout difficulty preset, forest-engine.js), which
-     beats a plain rule. */
+     for veil/light is the in-world vignette dim + fog billow, not this HUD. */
   body[data-admin-mode="0"] #panel { display: none !important; }
-  body[data-admin-mode="0"] #minimap { display: none !important; }
+
+  /* LUL-2309: the minimap got its own player-facing setting, decoupled from
+     admin mode (LUL-2248 turned it into a navigation aid -- home ring + beacon
+     colours -- not a dev tool). Default OFF, same as adminMode/highContrast.
+     Selects on the attribute being ABSENT or "0", not just "0": before
+     SettingsPanel's effect runs on first paint there is no data-show-minimap
+     attribute at all, and an absent attribute must still hide, not show by
+     falling through to no matching rule.
+     !important still needed: the engine writes its own inline mm.style.display
+     (blackout difficulty preset, forest-engine.js) -- when this rule doesn't
+     apply (setting is on), that inline style is what correctly still hides the
+     minimap under blackout. */
+  body:not([data-show-minimap="1"]) #minimap { display: none !important; }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
   #pausePrompt { position: fixed; inset: 0; z-index: 15; display: none;
@@ -344,11 +353,14 @@ const OVERLAY_STYLE = `
     font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
     text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none; opacity: 1; }
 
-  /* LUL-1912's minimap-clearance push only matters in admin/dev view -- #minimap is
-     display:none for every real player (data-admin-mode="0"), so top:20/right:20 above
-     is what players and the QA tester actually see; push down only under admin mode. */
-  body[data-admin-mode="1"] #windIndicator { top: 184px; }
-  body[data-admin-mode="1"] #windIndicatorHint { top: 228px; }
+  /* LUL-1912's minimap-clearance push only matters while the minimap is actually
+     visible -- top:20/right:20 above is what a player with the minimap off (still
+     the default, LUL-2309) and the QA tester actually see. Keyed off
+     data-show-minimap now that visibility is decoupled from admin mode; used to
+     key off data-admin-mode="1" back when the minimap only ever showed under
+     admin mode. */
+  body[data-show-minimap="1"] #windIndicator { top: 184px; }
+  body[data-show-minimap="1"] #windIndicatorHint { top: 228px; }
 
   /* LUL-2307: generic first-encounter hint caption, generalizing LUL-2230's
      scent-only #scentTrailCaption -- scent is now just one entry in the engine's
