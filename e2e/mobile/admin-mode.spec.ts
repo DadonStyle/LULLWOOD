@@ -7,6 +7,10 @@
 // tap Settings button -> toggle admin mode in the panel.
 // Not device-verified; this is a headless-Chromium touch emulation repro,
 // see the Game Tester's confirmation pass.
+//
+// LUL-2309: minimap visibility moved to its own `showMinimap` setting,
+// decoupled from admin mode -- see ../minimap-setting.spec.ts and
+// ./minimap-setting.spec.ts for its mobile coverage.
 import { test, expect } from '@playwright/test';
 import { boot } from '../helpers';
 
@@ -20,7 +24,6 @@ test('admin mode defaults off and is reachable/toggleable on mobile', async ({ p
   await page.mouse.click(viewport.width / 2, viewport.height / 2);
   await page.waitForTimeout(1200); // gate fade settle
 
-  await expect(page.locator('#minimap')).toBeHidden();
   await expect(page.locator('#pace')).toBeHidden();
 
   // LUL-1085 re-scoped #panel to dev-only monitoring with no exemptions --
@@ -45,6 +48,5 @@ test('admin mode defaults off and is reachable/toggleable on mobile', async ({ p
   await expect(toggle).not.toBeChecked();
   await toggle.evaluate((el) => (el as HTMLInputElement).click());
 
-  await expect(page.locator('#minimap')).toBeVisible();
   await expect(page.locator('#pace')).toBeVisible();
 });
