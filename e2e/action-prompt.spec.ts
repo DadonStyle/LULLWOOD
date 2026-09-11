@@ -1,14 +1,25 @@
-// LUL-1089: contextual #actionPrompt — hide and veil prompts.
+// LUL-2312 (absorbs LUL-1089's coverage + the stranded LUL-1778/1779/1780
+// nightly failures): #actionPrompt is now one row (data-tone-driven, not
+// class-driven) inside the single always-mounted #actionSlot grid --
+// components/ActionPrompt.tsx / components/Hud.tsx / components/GameCanvas.tsx.
+// Every row toggles `data-visible="0"|"1"` on the (never-unmounted) element
+// instead of mounting/unmounting; `.urgent` became `data-tone="urgent"`;
+// `#actionKey`/`#chargeKey`/`#throwKey` collapsed onto the shared
+// `.actionPromptKey` class scoped per-row.
 //
-// Four assertions:
-// 1. Walk to a known bush → #actionPrompt is visible with the desktop-bramble calm string.
-// 2. Stage a chase within COVER_URGENT_RANGE → #actionPrompt carries .urgent.
+// Assertions:
+// 1. Walk to a known bush → #actionPrompt is shown with the desktop-bramble calm string.
+// 2. Stage a chase within COVER_URGENT_RANGE → #actionPrompt carries data-tone="urgent".
 // 3. Cover and veil conditions both true → only cover string renders (precedence).
 // 4. At 390px viewport, #actionPrompt's bounding box does not intersect the mobile
 //    control root, and its scrollWidth <= clientWidth (no nowrap overflow).
-// 5. With prefers-reduced-motion emulated, computed animation-name on #actionKey is 'none'.
+// 5. With prefers-reduced-motion emulated, computed animation-name on the row's
+//    .actionPromptKey is 'none'.
+// 6. #actionSlot's five rows are always mounted, in the founder's stated
+//    priority order (charge > objective > hide/veil > throwable > status),
+//    regardless of which currently have content.
 import { test, expect } from '@playwright/test';
-import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook } from './helpers';
+import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, expectRowVisible } from './helpers';
 
 // LUL-2107: the 3 cases below that stage a chasing predator (urgent
 // cover-prompt class, the 390px nowrap/mobile-collision check, and reduced
@@ -23,8 +34,8 @@ import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook } from '
 const FIXED_DT = 0.02;
 const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 
-test.describe('#actionPrompt — hide and veil contextual prompts', () => {
-  test('calm cover prompt: visible at a bramble bush', async ({ page }) => {
+test.describe('#actionSlot — hide and veil contextual prompt row', () => {
+  test('calm cover prompt: shown at a bramble bush', async ({ page }) => {
     const errs = trackConsoleErrors(page);
     await boot(page, { qaHooks: true });
     await enter(page);
@@ -36,8 +47,8 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
     // Wait for the throttled 6Hz probe to fire (≤ 170ms)
     await page.waitForTimeout(250);
 
+    await expectRowVisible(page, 'actionPrompt');
     const prompt = page.locator('#actionPrompt');
-    await expect(prompt).toBeVisible({ timeout: 3_000 });
 
     const text = await prompt.textContent();
     // Should contain the desktop calm bramble string (or log, depending on the spot)
@@ -45,13 +56,13 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
     // Desktop calm: "Press  H  to hide in the bush" (or hollow log)
     expect(text, 'Calm prompt must name the noun and contain key H').toMatch(new RegExp(`H.*to hide in the ${noun}|to hide in the ${noun}`));
 
-    // #actionPrompt must NOT carry .urgent at this point (no chasing predator)
-    await expect(prompt).not.toHaveClass(/urgent/);
+    // #actionPrompt must NOT carry tone="urgent" at this point (no chasing predator)
+    await expect(prompt).not.toHaveAttribute('data-tone', 'urgent');
 
     expectNoConsoleErrors(errs);
   });
 
-  test('urgent cover prompt: .urgent class when predator chases within range', async ({ page }) => {
+  test('urgent cover prompt: data-tone="urgent" when predator chases within range', async ({ page }) => {
     const errs = trackConsoleErrors(page);
     await boot(page, { qaHooks: true });
     await enter(page);
@@ -68,9 +79,8 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
-    const prompt = page.locator('#actionPrompt');
-    await expect(prompt).toBeVisible({ timeout: 3_000 });
-    await expect(prompt).toHaveClass(/urgent/);
+    await expectRowVisible(page, 'actionPrompt');
+    await expect(page.locator('#actionPrompt')).toHaveAttribute('data-tone', 'urgent');
 
     expectNoConsoleErrors(errs);
   });
@@ -97,10 +107,8 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
 
     await page.waitForTimeout(350);
 
-    const prompt = page.locator('#actionPrompt');
-    await expect(prompt).toBeVisible({ timeout: 3_000 });
-
-    const text = await prompt.textContent() ?? '';
+    await expectRowVisible(page, 'actionPrompt');
+    const text = await page.locator('#actionPrompt').textContent() ?? '';
     // Must contain 'H' (cover key), not 'F' or 'veil' (veil prompt)
     expect(text.toLowerCase(), 'Cover string must render, not veil string').not.toMatch(/for the.*veil|hold.*f|hunting you/i);
     expect(text, 'Cover key H must be present').toMatch(/H/);
@@ -119,8 +127,7 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
-    const prompt = page.locator('#actionPrompt');
-    await expect(prompt).toBeVisible({ timeout: 3_000 });
+    await expectRowVisible(page, 'actionPrompt');
 
     // 1. No nowrap overflow
     const overflow = await page.evaluate(() => {
@@ -148,7 +155,7 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
     expect(collision, '#actionPrompt must not overlap mobile control row').toBe(false);
   });
 
-  test('reduced motion: animation-name is none on #actionKey when media query emulated', async ({ page }) => {
+  test('reduced motion: animation-name is none on the urgent row\'s keycap when media query emulated', async ({ page }) => {
     const errs = trackConsoleErrors(page);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await boot(page, { qaHooks: true });
@@ -159,17 +166,35 @@ test.describe('#actionPrompt — hide and veil contextual prompts', () => {
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
-    const prompt = page.locator('#actionPrompt');
-    await expect(prompt).toBeVisible({ timeout: 3_000 });
-    await expect(prompt).toHaveClass(/urgent/);
+    await expectRowVisible(page, 'actionPrompt');
+    await expect(page.locator('#actionPrompt')).toHaveAttribute('data-tone', 'urgent');
 
     const animName = await page.evaluate(() => {
-      const el = document.getElementById('actionKey');
+      const el = document.querySelector('#actionPrompt .actionPromptKey');
       if (!el) return null;
       return window.getComputedStyle(el).animationName;
     });
     expect(animName, 'urgentFlash animation must be suppressed under reduced motion').toBe('none');
 
     expectNoConsoleErrors(errs);
+  });
+});
+
+// LUL-2312: the founder's explicit requirement -- "stacked in a fixed
+// priority order" -- pinned as a DOM-order check independent of any gameplay
+// staging, so it can never silently drift if a future edit reorders the JSX
+// inside #actionSlot (components/Hud.tsx).
+test.describe('#actionSlot row order', () => {
+  test('five rows are always mounted, top to bottom in priority order', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    const ids = await page.evaluate(() => Array.from(document.querySelectorAll('#actionSlot > *')).map((el) => el.id));
+    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'throwPrompt', 'status']);
+
+    // Every row exists (not conditionally mounted) even with nothing to show.
+    for (const id of ids) {
+      await expect(page.locator(`#${id}`)).toHaveCount(1);
+    }
   });
 });

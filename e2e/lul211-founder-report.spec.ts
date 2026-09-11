@@ -33,7 +33,7 @@
 //     every HIDE_KINDS entry, so bramble now matches log exactly -- see the
 //     second describe block below, which covers both.
 import { test, expect } from '@playwright/test';
-import { boot, enter, readObjective } from './helpers';
+import { boot, enter, readObjective, expectRowHidden } from './helpers';
 
 test.describe('LUL-211: the canvas is actually the thing you are looking at', () => {
   test('no viewport point resolves to the SSR content shell, and the canvas is not painted below it', async ({
@@ -119,7 +119,9 @@ test.describe('LUL-211: winning shows YOU WON and stays there', () => {
       await page.waitForTimeout(500);
       await expect(win, `win screen disappeared ${(i + 1) * 500}ms after winning`).toBeVisible();
     }
-    await expect(page.locator('#objective'), 'a new run started behind the win screen').toBeHidden();
+    // LUL-2312: #objective is one of #actionSlot's always-mounted rows now --
+    // "a new run started" would flip it back to data-visible="1".
+    await expectRowHidden(page, 'objective');
     await expect(page.locator('#gate'), 'the entry gate came back after winning').toBeHidden();
   });
 });

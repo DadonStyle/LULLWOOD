@@ -1016,11 +1016,60 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
   `hudState`/`pushState()`/`emitState()`: objective text,
   hiding status, win/death screens, charge-dodge prompt, the contextual
-  `#actionPrompt` (LUL-1089: hide/veil prompts), the post-run recap
+  hide/veil prompt (LUL-1089), the post-run recap
   (`#runRecap`). **Not** difficulty/accessibility controls or captions —
   those were built on the unmerged LUL-26 branch; see the Player section's
   note. There is no separate modal settings surface on `main` today
   (engine's own comment, L1692-1693: "LUL-70, still backlog").
+  LUL-2312 pulled every one of those bottom-centre prompts (`#objective`,
+  `#actionPrompt`, `#throwPrompt`, `#chargePrompt`, `#status`) plus
+  `#captionToast` into one component, `ActionPrompt` (`components/
+  ActionPrompt.tsx`), rendered as five always-mounted rows inside a single
+  fixed CSS-grid column, `#actionSlot` (`components/GameCanvas.tsx`). Each
+  `EngineHudState` field named below still means exactly what it did before
+  -- this was a render-layer consolidation only, no engine change. The old
+  element ids survive as `id`/`data-testid` on each row (e2e continuity); the
+  per-element CSS rules and their five independent bottom-offset magic
+  numbers (74/92/110/130px, plus `#objective`'s separate `top:20px`) did not.
+
+  | slot row (priority, top to bottom) | `EngineHudState` fields | `id` |
+  |---|---|---|
+  | charge dodge | `chargeVisible`, `chargeToken` | `#chargePrompt` |
+  | objective (E) | `objectiveVisible`, `objectiveText`, `objectiveReady` | `#objective` |
+  | hide or veil | `coverPromptVisible/Urgent/Kind`, `veilPromptVisible/Urgent` | `#actionPrompt` |
+  | throwable | `heldThrowable` | `#throwPrompt` |
+  | status (hidden/hunted) | `statusVisible`, `statusText` | `#status` |
+
+  `#captionToast` (predator-call captions) reuses the same component,
+  positioned as its own row just above `#actionSlot` rather than as a sixth
+  slot row, since it isn't part of the E/H/F/SPACE priority stack. It moved
+  off its old dedicated amber colour onto the shared `tone="status"` look
+  (same as the hidden/hunted row) -- a declared visual change, not a silent
+  one. `#caveImmunePanel`/`#hint` stayed top-side and out of scope (the
+  ticket's own "may", not "must").
+
+  **## e2e (LUL-2312).** `e2e/action-prompt.spec.ts` rewritten: every
+  `.toHaveClass(/urgent/)` became `toHaveAttribute('data-tone', 'urgent')`,
+  `#actionKey` became `.actionPromptKey` scoped under the row, and a new
+  `#actionSlot row order` describe block pins the five ids' DOM order
+  (`chargePrompt, objective, actionPrompt, throwPrompt, status`) independent
+  of any gameplay staging. `e2e/helpers.ts` gained `expectRowVisible`/
+  `expectRowHidden` (assert `data-visible` rather than mount/unmount) --
+  every other spec that asserted `toHaveCount(0)` or `toBeVisible()`/
+  `toBeHidden()` on `#objective`/`#status`/`#actionPrompt`/`#throwPrompt`/
+  `#chargePrompt` now uses one of those two instead, since none of the five
+  ever unmounts any more: `hide.spec.ts`, `death-persist.spec.ts`,
+  `smoke.spec.ts`, `throwable-mission-hud.spec.ts` (+ its `mobile/` half),
+  `throwables.spec.ts` (+ `mobile/`), `win-persist.spec.ts`,
+  `lul211-founder-report.spec.ts`, `predator-memory.spec.ts`,
+  `charge-dodge.spec.ts`, `mobile/charge-prompt-tap.spec.ts`. `scent-trail.
+  spec.ts`'s `assertNoOverlap` helper also treats a zero-area box as nothing
+  to overlap, since an empty row's content collapses to zero width rather
+  than disappearing from the DOM. Not done in this PR (no existing QA hook
+  supports it): a single scenario with all five rows populated at once to
+  assert pairwise non-overlap directly -- today's coverage exercises at most
+  one populated row per test. Flagged as a `[QA-HOOK]` follow-up, not silently
+  skipped.
   LUL-1089 adds five new `EngineHudState` fields: `coverPromptVisible`,
   `coverPromptUrgent`, `coverPromptKind` (`'bramble'|'log'|null`),
   `veilPromptVisible`, `veilPromptUrgent`. Cover prompt fires only while
@@ -1062,8 +1111,13 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   sticks/buttons sit at z-index 30/31, genuinely above the end screens, not just
   behind them at a lower z-index -- and `GameMenu.tsx`'s `#gameMenu` (hamburger +
   panel, z-index 20), which does the same. `#chargePrompt` needed no HUD-layer
-  gate: the engine already resets `chargeVisible: false` in both `arriveHome()` and
-  `triggerDeath()` (`engine/forest-engine.js`).
+  gate at the time: the engine already resets `chargeVisible: false` in both
+  `arriveHome()` and `triggerDeath()` (`engine/forest-engine.js`). LUL-2312
+  added the same `!winVisible && !deathVisible` gate to `#chargePrompt` and
+  `#objective`/`#status` anyway, once all five moved into one component --
+  redundant with the engine-side reset for the one-frame gap between
+  `triggerDeath()`/`arriveHome()` running and the *next* `tick()` actually
+  clearing the flag, but consistent across all five rows rather than three.
   LUL-2231: LUL-2131's `MobileControls.tsx` unmount left two gaps. First, its
   sticks/buttons (z-index 30/31) were never gated on `GameMenu.tsx`'s own open
   `.menuPanel` (z-index 21) -- nothing in that pairing unmounts for the other, so
