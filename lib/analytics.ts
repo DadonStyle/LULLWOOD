@@ -23,7 +23,10 @@ export type AnalyticsEventInput =
   // this run's Embers total (RunPayout.total from lib/game/economy.ts),
   // `balance` is the running total after it's applied.
   | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number; difficulty: Difficulty }
-  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; carrying: boolean; difficulty: Difficulty }
+  // LUL-2461: `distance_from_home_m` is the player's distance from CONFIG.home at the
+  // moment triggerDeath() fired (engine/forest-engine.js) -- for the Economist's
+  // blackout-pricing model (LUL-1413), which needs where a run actually ended.
+  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; carrying: boolean; difficulty: Difficulty; distance_from_home_m: number }
   | { event: 'session_length'; duration_ms: number; reached_gameplay: boolean; session_id: string }
   | { event: 'feature_engagement'; feature: string; action: string; carrying?: boolean }
   // LUL-2239: production-only signal from lib/engine-contract.ts's assertEngineContract()
