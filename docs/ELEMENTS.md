@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5967 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5230, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6006 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5269, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1315,7 +1315,7 @@ design doc as turning horror into radar.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
   both `track()` call sites, now in `finishPickup()` (L4772, the live win path as
   of `LUL-2281` -- `arriveHome()`'s L4877 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4908). The `difficulty` module-level variable is in scope
+  and `triggerDeath()` (L4947). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in

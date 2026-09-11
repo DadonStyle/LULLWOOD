@@ -4045,23 +4045,34 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // wait window.
   const LION_STANDOFF = 14;
   window.ForestEngine.qaOpenHideNearLionAtHideSpot = function(){
-    const spot = coverData.find(c => HIDE_KINDS[c.kind]);
-    if(!spot) return null;
-    const ry = spot.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
-    // Place the player 0.5 units outside the prop's local +x edge (world frame).
-    // Inverse rotation: (lx,lz) -> world offset (dx,dz) = (lx*co + lz*si, -lx*si + lz*co).
-    const offset = spot.hx + 0.5;
-    player.x = spot.x + offset * co;
-    player.z = spot.z - offset * si;
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
-    // Lion is LION_STANDOFF more units in the same local-x direction -- clear sightline guaranteed.
-    lion.x = spot.x + (offset + LION_STANDOFF) * co;
-    lion.z = spot.z - (offset + LION_STANDOFF) * si;
-    lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
-    lion.state = 'chase'; lion.hunt = true;
-    return { idx, kind: spot.kind };
+    // LUL-2373: the first HIDE_KINDS spot found used to be taken unconditionally --
+    // "clear sightline guaranteed" only followed from both endpoints sitting outside
+    // the hide-spot's own footprint (true by construction below), but at
+    // LION_STANDOFF=14 (LUL-2358) the ray can run 14+ units through open terrain and
+    // clip an entirely unrelated tree/rock along the way, at whichever hide spot
+    // happens to be coverData's first match for this seed. Try every HIDE_KINDS spot
+    // in order and keep the first whose actual hasLOS() (not just "outside this one
+    // box") comes back clear, instead of trusting the first candidate blind.
+    for(const spot of coverData){
+      if(!HIDE_KINDS[spot.kind]) continue;
+      const ry = spot.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
+      // Place the player 0.5 units outside the prop's local +x edge (world frame).
+      // Inverse rotation: (lx,lz) -> world offset (dx,dz) = (lx*co + lz*si, -lx*si + lz*co).
+      const offset = spot.hx + 0.5;
+      const px = spot.x + offset * co, pz = spot.z - offset * si;
+      // Lion is LION_STANDOFF more units in the same local-x direction.
+      const lx = spot.x + (offset + LION_STANDOFF) * co, lz = spot.z - (offset + LION_STANDOFF) * si;
+      if(!geoHasLOS(lx, lz, px, pz, coverGrid, CELL, WRAP_SPAN)) continue;
+      player.x = px; player.z = pz;
+      lion.x = lx; lion.z = lz;
+      lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
+      lion.state = 'chase'; lion.hunt = true;
+      return { idx, kind: spot.kind };
+    }
+    return null;
   };
 
   // LUL-388: `dist`/`canSee` added. A caller racing this predator's blind-chase
@@ -4235,16 +4246,44 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   // LUL-388: records {t, dist, canSee, dead} once per rendered frame via its
   // own rAF loop, entirely inside the page, until `dead` or `maxMs` elapses.
+  //
+  // LUL-2373: the very first sample used to come from inside the first rAF
+  // callback, i.e. after at least one real render-loop `stepFrame()` had
+  // already run against wall-clock dt (up to DT_CLAMP_CEILING=0.05s). For a
+  // predator staged only `thin+0.1` units past a thin walkable box's edge
+  // (this function's own caller straddles it that tightly on purpose, to
+  // land inside catch range), a fast species' single first-frame move can
+  // cross the remaining buffer and step into the box's own footprint before
+  // that first sample is ever taken -- hasLOS()'s walkable-box self-
+  // occlusion skip (LUL-2320 rule A) then reads that box as non-occluding
+  // for the predator's new position, even though most of the box still sits
+  // between it and the player. The staged position itself is genuinely
+  // blind (verified directly: canSee() reads false synchronously right
+  // after staging, before any frame runs) -- this was always a trace-timing
+  // gap, not a staging or hasLOS bug. Sampling once synchronously, before
+  // the first requestAnimationFrame is even requested, closes it: trace[0]
+  // is now truly the staged instant, matching this function's own stated
+  // intent above ("the trace starts from the position this function itself
+  // just set").
   function traceBlindChase(idx, maxMs){
     return new Promise(function(resolve){
       const trace = [];
       const t0 = performance.now();
-      function frame(){
+      function sample(){
         const p = predators[idx];
-        if(!p){ resolve(trace); return; }
+        if(!p) return null;
         const d = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
-        trace.push({ t: performance.now()-t0, dist: d, canSee: canSee(p, d), dead: dead });
-        if(dead || performance.now()-t0 > maxMs){ resolve(trace); return; }
+        return { t: performance.now()-t0, dist: d, canSee: canSee(p, d), dead: dead };
+      }
+      const first = sample();
+      if(first === null){ resolve(trace); return; }
+      trace.push(first);
+      if(first.dead || performance.now()-t0 > maxMs){ resolve(trace); return; }
+      function frame(){
+        const s = sample();
+        if(s === null){ resolve(trace); return; }
+        trace.push(s);
+        if(s.dead || performance.now()-t0 > maxMs){ resolve(trace); return; }
         requestAnimationFrame(frame);
       }
       requestAnimationFrame(frame);
