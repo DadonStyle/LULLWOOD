@@ -21,6 +21,8 @@ export const ENGINE_ACTION_KEYS = [
   'setMissionUnlocks', 'setSecondaryChoice',
   // LUL-2230
   'setScentTrailVisible',
+  // LUL-2307
+  'setHintsEnabled', 'resetHints',
 ] as const satisfies readonly (keyof EngineActions)[];
 
 // The other direction: if EngineActions ever gains a key missing from the list above,

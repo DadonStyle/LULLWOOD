@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5736 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5105, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5967 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5230, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -765,6 +765,10 @@ one geometry builder (`makePredator()`), differentiated by the
   player does. The `charge` dash is explicitly exempt (LUL-1309).
 - Bias the ambient "twinkle" chime to play brighter/more often when the
   player is near it (`distLake < CONFIG.lake.r*3`, `tick()`).
+- Explain itself once: the first step into `inLakeWater()` fires the `lake`
+  first-encounter hint ("chest-deep water — half pace. predators wade too"),
+  persisted so it only ever shows once per install. See "Hints" below and
+  `docs/specs/lul-2307-first-encounter-hints.md`.
 - Deflect a predator's roam/stuck-recovery waypoint: `updatePredators()`'s
   two waypoint-pick sites (fresh roam target, and the stuck-recovery
   fallback) both route the candidate through `keepWaypointOffLake()`, which
@@ -1309,9 +1313,9 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L4633, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L4738 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4769). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L4772, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L4877 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L4908). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1321,8 +1325,8 @@ design doc as turning horror into radar.
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3211),
-  reset to 0 on `enter()` (L3281) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3182),
+  reset to 0 on `enter()` (L3384) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5208: `computeDepth(maxDistFromHome) +
@@ -1379,7 +1383,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L5177, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L5242, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1874,6 +1878,13 @@ bogginess) and `BOG_OUTER_RADIUS` (dry), same edge-softness approach as before. 
 (`bogSpeedMultiplier`/`bogNoiseMultiplier`, splash foley) is byte-for-byte unchanged from
 LUL-1483 — only *where* bogginess is nonzero has changed, twice.
 
+**LUL-2307**: the first step past `biomeAt(x,z) > 0.05` fires the `bog` first-encounter
+hint ("bog — half pace, but it masks your scent from wolves"), persisted so it only ever
+shows once per install — see "Hints" below and
+`docs/specs/lul-2307-first-encounter-hints.md`. The mask itself (LUL-1902's
+`BOG_MASK_DECAY_TIME`, wolf-only nose reduction) is unchanged; this only adds the copy
+explaining it.
+
 **LUL-2225 (current shape)**: the founder rejected what LUL-2084 shipped for LUL-1902 --
 ~24.9% of the map, with `oak`/`drownedCar` deliberately blended inside it. `BOG_CENTER`
 moved to `{x:-40,z:80}`, `BOG_OUTER_RADIUS` shrank 135→45 and `BOG_INNER_RADIUS` 35→25, so
@@ -1992,3 +2003,44 @@ is a feedback/presentation layer, same class as `#bearingPulse` (LUL-1308) and
 LUL-1855's beacon glow. Slice (b) (two-way, player-triggered, Tier C) and slice
 (c) (`lib/game/eventSites.ts`-registered) are deferred — see wiki
 `decisions/startled-roosts-2026-09-07`.
+
+## Hints — first-encounter explanations (LUL-2307, generalizes LUL-2230)
+
+One small engine-side registry (`HINT_PRIORITY`/`HINT_TEXT`, `engine/forest-engine.js`)
+replaces LUL-2230's bespoke scent-only caption with a `{key -> text/trigger}` table covering
+thirteen keys: `scent`, `landmark`, `lake`, `bog`, `deepwater`, `wolf`/`bear`/`lion`,
+`stamina`, `cover` (hollow log/bramble), `caveImmune`, `throwable`, `veil`. Each key fires
+once per install, the first time its trigger condition is true while `entered && !hidden &&
+!win && !death` and the `Show hints` setting is on. Only one hint shows at a time;
+`HINT_PRIORITY` order both breaks same-frame ties and lets a higher-priority key preempt a
+lower-priority one already showing (not marked "seen" when preempted, so it can still fire
+later) — needed because `landmark` is eligible unconditionally from frame one and would
+otherwise occupy the slot for its full 8s before e.g. `scent` ever got a turn. A pill caption (`#hintCaption`,
+`components/Hud.tsx`/`GameCanvas.tsx`) shows for 8s or until a key-specific dismiss-on-
+interaction event (e.g. `scent`: the first `scentOnto()` call; `wolf`/`bear`/`lion`/`cover`:
+the player hides; `throwable`: the player grabs it), then persists "seen" under
+`lullwood:hints:<key>` so it never shows again on that install — `lullwood:hints:scent`
+falls back to reading LUL-2230's old `lullwood:scentTrailCaptionSeen` key so an install that
+already saw the scent caption doesn't see it a second time under the new key.
+
+**Anchoring**: `scent`/`wolf`/`bear`/`lion`/`cover`/`throwable` are world-anchored — a real 3D
+point (the mote/animal/prop/stone), projected to a viewport fraction via the same
+camera-frustum math LUL-2230 introduced (`projectToScreen()`, generalized out of the
+scent-only inline version). `lake`/`bog`/`deepwater`/`stamina`/`caveImmune`/`veil`/`landmark`
+have no natural 3D point (or, for stamina/veil, no player-facing meter to anchor to at all —
+see `SettingsPanel.tsx`'s own note that `#panel`'s stamina/veil readouts are dev-only;
+`landmark` fires unconditionally on entry with nothing specific to point at, same as the old
+toast it replaces) and are positioned by a fixed `[data-hint-key]` CSS rule instead:
+`deepwater`/`caveImmune` sit below their own `#missionPanel`/`#caveImmunePanel`;
+`lake`/`bog`/`stamina`/`veil`/`landmark` share the bottom-center spot `#captionToast`
+(predator-call captions) already uses, above `#actionSlot`.
+
+**Settings**: `Show hints` checkbox (default on, next to `Show my scent trail`) and a `Reset
+hints` button (clears every `lullwood:hints:*` key) in `SettingsPanel.tsx`.
+
+**QA hooks**: `qaProbeHints()` (active key + full seen-map), `qaResetHints()` (clears every
+key). `qaResetScentCaption()` (LUL-2230) is kept as a thin `scent`-only alias.
+
+See `docs/specs/lul-2307-first-encounter-hints.md` for the full per-key trigger table and the
+declared simplifications (no per-cover-kind copy branching, constant CSS position instead of
+a DOM-measured one for the six fixed-anchor keys).

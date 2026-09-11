@@ -127,15 +127,31 @@ export interface EngineHudState {
   // streamed per-frame -- see engine/forest-engine.js's logChronicle()
   // comment). lib/game/chronicle.ts's formatChronicle() renders it.
   chronicle: ChronicleEvent[];
-  // LUL-2230: the scent trail visual + its one-time explanation. `scentTrailVisible`
-  // is the persisted Settings toggle (default on); `scentCaptionVisible`/X/Y are
-  // pushed per-frame, viewport fractions, only while the one-time caption is on
-  // screen (same per-frame-push pattern veilCharge above uses).
+  // LUL-2230: the scent trail visual. `scentTrailVisible` is the persisted
+  // Settings toggle (default on).
   scentTrailVisible: boolean;
-  scentCaptionVisible: boolean;
-  scentCaptionX: number;
-  scentCaptionY: number;
+  // LUL-2307: generic first-encounter hint captions (replaces LUL-2230's
+  // scentCaptionVisible/X/Y -- scent is now just one entry in the engine's
+  // HINT_PRIORITY list). `hintsEnabled` is the persisted Settings toggle
+  // (default on); `hintVisible`/`hintKey`/`hintText`/X/Y are pushed
+  // per-frame, only while a hint is on screen (same per-frame-push pattern
+  // veilCharge above uses). `hintX`/`hintY` (viewport fractions) only matter
+  // for WORLD_HINT_KEYS below -- fixed-anchor hints are positioned by CSS
+  // keyed on `hintKey` (components/GameCanvas.tsx), not these fields.
+  hintsEnabled: boolean;
+  hintVisible: boolean;
+  hintKey: string | null;
+  hintText: string;
+  hintX: number;
+  hintY: number;
 }
+
+// LUL-2307: world-anchored hint keys render the down-arrow glyph and use the
+// engine-projected hintX/hintY; the rest (lake/bog/deepwater/stamina/
+// caveImmune/veil/landmark -- no real 3D point, or no player-facing panel to
+// anchor to) are positioned by a fixed `[data-hint-key]` CSS rule instead. See
+// docs/specs/lul-2307-first-encounter-hints.md.
+const WORLD_HINT_KEYS = new Set(['scent', 'wolf', 'bear', 'lion', 'cover', 'throwable']);
 
 export interface EngineActions {
   enter: () => void;
@@ -173,6 +189,9 @@ export interface EngineActions {
   setSecondaryChoice: (kind: SecondaryKind | null) => void;
   // LUL-2230
   setScentTrailVisible: (v: boolean) => void;
+  // LUL-2307
+  setHintsEnabled: (v: boolean) => void;
+  resetHints: () => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -237,9 +256,12 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   windZ: 0,
   chronicle: [],
   scentTrailVisible: true,
-  scentCaptionVisible: false,
-  scentCaptionX: 0.5,
-  scentCaptionY: 0.5,
+  hintsEnabled: true,
+  hintVisible: false,
+  hintKey: null,
+  hintText: '',
+  hintX: 0.5,
+  hintY: 0.5,
 };
 
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
@@ -802,17 +824,30 @@ export default function Hud({
         <div id="windIndicatorHint">wind — move into the arrow to lower your scent trail</div>
       )}
 
-      {/* LUL-2230: one-time explanation for the scent trail visual, anchored to the
-          engine-projected screen position of the first mote the player can actually
-          see (scentCaptionX/Y, viewport fractions). Gated on !winVisible/!deathVisible
-          like #hint (LUL-2158 precedent) so a fast death never shows it over "YOU LOSE". */}
-      {state.scentCaptionVisible && !state.winVisible && !state.deathVisible && (
+      {/* LUL-2307: generic first-encounter hint caption, generalizing LUL-2230's
+          scent-only version -- scent is now just one HINT_PRIORITY entry
+          (engine/forest-engine.js). World-anchored keys (WORLD_HINT_KEYS above)
+          get the engine-projected screen position (hintX/Y, viewport fractions)
+          and the down-arrow glyph; the rest are positioned by a fixed
+          `[data-hint-key]` CSS rule (components/GameCanvas.tsx) instead. The
+          'scent' key keeps its original #scentTrailCaption id/glyph class
+          instead of the new generic #hintCaption/.hintCaptionGlyph --
+          e2e/scent-trail.spec.ts and e2e/mobile/scent-trail.spec.ts assert on
+          `#scentTrailCaption` directly and must pass unchanged. Gated on
+          !winVisible/!deathVisible like #hint (LUL-2158 precedent) so a fast
+          death never shows it over "YOU LOSE". */}
+      {state.hintVisible && !state.winVisible && !state.deathVisible && (
         <div
-          id="scentTrailCaption"
-          style={{ left: `${state.scentCaptionX * 100}%`, top: `${state.scentCaptionY * 100}%` }}
+          id={state.hintKey === 'scent' ? 'scentTrailCaption' : 'hintCaption'}
+          data-hint-key={state.hintKey ?? undefined}
+          style={state.hintKey && WORLD_HINT_KEYS.has(state.hintKey)
+            ? { left: `${state.hintX * 100}%`, top: `${state.hintY * 100}%` }
+            : undefined}
         >
-          <span className="scentTrailCaptionGlyph" aria-hidden="true">↓</span>
-          this is your scent trail — predators follow it
+          {state.hintKey && WORLD_HINT_KEYS.has(state.hintKey) && (
+            <span className={state.hintKey === 'scent' ? 'scentTrailCaptionGlyph' : 'hintCaptionGlyph'} aria-hidden="true">↓</span>
+          )}
+          {state.hintText}
         </div>
       )}
 

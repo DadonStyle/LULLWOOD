@@ -350,21 +350,45 @@ const OVERLAY_STYLE = `
   body[data-admin-mode="1"] #windIndicator { top: 184px; }
   body[data-admin-mode="1"] #windIndicatorHint { top: 228px; }
 
-  /* LUL-2230: one-time scent-trail explanation, anchored to the engine-projected
-     screen position of the mote it's explaining (left/top set inline, viewport
-     fractions -- see components/Hud.tsx). Same pill style as #caveImmunePanel
-     above; translate lifts it clear above the mote instead of covering it. */
-  #scentTrailCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
+  /* LUL-2307: generic first-encounter hint caption, generalizing LUL-2230's
+     scent-only #scentTrailCaption -- scent is now just one entry in the engine's
+     HINT_PRIORITY list (engine/forest-engine.js), and keeps its original id/glyph
+     class (Hud.tsx) since e2e/scent-trail.spec.ts and e2e/mobile/scent-trail.spec.ts
+     assert on #scentTrailCaption directly and must pass unchanged -- every other
+     key renders through the new #hintCaption/.hintCaptionGlyph instead. World-anchored
+     keys (WORLD_HINT_KEYS, Hud.tsx) set left/top inline from the engine-projected
+     viewport fraction; translate lifts the pill clear above the world point instead
+     of covering it, same as the old scent-only rule. */
+  #scentTrailCaption, #hintCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
     max-width: 60vw; padding: 6px 14px; border-radius: 999px; pointer-events: none;
     background: rgba(18,34,34,0.6); border: 1px solid rgba(159,224,208,0.4);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     font-size: 12px; letter-spacing: 0.03em; color: #cdf3e8; text-align: center;
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  .scentTrailCaptionGlyph { color: #9fe0d0; margin-right: 4px; }
+  .scentTrailCaptionGlyph, .hintCaptionGlyph { color: #9fe0d0; margin-right: 4px; }
+  /* Self/panel-anchored keys (lake/bog/stamina/veil -- no real 3D point, and no
+     player-facing meter to anchor to today; landmark -- fires unconditionally on
+     entry, no single object to point at, same as the old toast it replaces -- see
+     docs/specs/lul-2307-first-encounter-hints.md) share one bottom-center position:
+     the same spot #captionToast already uses above #actionSlot, so "about your own
+     state" reads consistently with predator-call captions. No inline left/top is set
+     for these (Hud.tsx), so the position rule lives entirely here. */
+  #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
+  #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
+  #hintCaption[data-hint-key="landmark"] {
+    left: 50%; top: auto; transform: translateX(-50%);
+    bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px);
+  }
+  /* deepwater: below #missionPanel's top:76px/left:16px corner (:320 above). */
+  #hintCaption[data-hint-key="deepwater"] { left: 16px; top: 110px; transform: none; }
+  /* caveImmune: below #caveImmunePanel's top:56px/left:50% corner (:332 above); reuses
+     its own copy so the two never show at once in practice (the hint dismisses itself
+     the moment caveImmuneT reaches 0, before the panel disappears). */
+  #hintCaption[data-hint-key="caveImmune"] { left: 50%; top: 92px; transform: translateX(-50%); }
   /* LUL-2158 precedent (see #hint above): a fast death/win must never leave this
      stranded over the end screen. */
-  body:has(#winScreen) #scentTrailCaption,
-  body:has(#deathScreen) #scentTrailCaption { opacity: 0 !important; }
+  body:has(#winScreen) #scentTrailCaption, body:has(#winScreen) #hintCaption,
+  body:has(#deathScreen) #scentTrailCaption, body:has(#deathScreen) #hintCaption { opacity: 0 !important; }
 
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;

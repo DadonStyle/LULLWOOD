@@ -1808,17 +1808,115 @@ function generateWind(){
 
 let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 is always oldest)
 
-// LUL-2230: scent trail visual + its one-time explanation caption. Rendering
-// state only -- nothing here is read by checkScent()/scentOnto()/depositScent().
+// LUL-2230: scent trail visual. Rendering state only -- nothing here is read
+// by checkScent()/scentOnto()/depositScent(). The one-time caption that used
+// to live right here is now the generic LUL-2307 hint registry below --
+// 'scent' is just HINT_PRIORITY's first entry.
 let scentTrailVisible = true;   // engine-owned setting, same shape as captionsOn
-const SCENT_TRAIL_CAPTION_KEY = 'lullwood:scentTrailCaptionSeen';
-let scentCaptionSeen = false;
-try { scentCaptionSeen = localStorage.getItem(SCENT_TRAIL_CAPTION_KEY) === '1'; } catch(e){}
-let scentCaptionActive = false, scentCaptionStartT = 0, scentLockCountAtCaptionStart = 0;
-let scentLockEventCount = 0;   // bumped by scentOnto(); lets the caption bail out on "the first scent-lock"
+let scentLockEventCount = 0;   // bumped by scentOnto(); the 'scent' hint's dismiss-on-interaction signal
 let scentTrailLastFrame = { settingOn: true, rendered: false, points: [], livePoints: 0,
   captionVisible: false, captionSeen: false, veilAmount: 0, windX: 1, windZ: 0 };   // qaProbeScentTrail() snapshot, refreshed every tick
 function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrailVisible }); }
+
+// LUL-2307: generic first-encounter hint captions -- one small registry
+// replaces LUL-2230's bespoke scent-only version (scentCaptionSeen/Active/
+// StartT/scentLockCountAtCaptionStart). Same rules for every key: eligible
+// only while entered && !hidden && !win && !death; starts the frame its
+// anchor becomes available; ends after 8s or its own dismiss-on-interaction
+// event, then persists "seen" under lullwood:hints:<key> so it never shows
+// again this install. Losing eligibility mid-caption (hidden, win, death, the
+// Show hints setting) stops it without marking seen -- it can still show
+// later. Exactly one hint active at a time; HINT_PRIORITY order breaks ties
+// when more than one becomes eligible+anchored the same frame (scent wins on
+// a fresh install), and a higher-priority key preempts a lower-priority one
+// already showing (stepFrame() below) -- not marked seen, so it can still
+// show later. See docs/specs/lul-2307-first-encounter-hints.md.
+const HINT_PRIORITY = ['scent','landmark','lake','bog','deepwater',
+  'wolf','bear','lion','stamina','cover','caveImmune','throwable','veil'];
+// 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
+// projected to a viewport fraction via projectToScreen() below, same math the
+// scent-mote loop already used). The rest -- including 'landmark', whose trigger
+// fires unconditionally on entry with no single object to point at (mirroring the
+// old unconditional toast it replaces) -- are self/panel-anchored: no frustum
+// requirement, positioned by a fixed CSS rule per key in GameCanvas.tsx instead of a
+// per-frame x/y (the engine has no access to React-rendered DOM positions).
+const WORLD_HINT_KEYS = { scent:1, wolf:1, bear:1, lion:1, cover:1, throwable:1 };
+const HINT_TEXT = {
+  scent:      'this is your scent trail — predators follow it',
+  landmark:   'landmarks in the fog are safe to navigate by',
+  lake:       'chest-deep water — half pace. predators wade too',
+  bog:        'bog — half pace, but it masks your scent from wolves',
+  deepwater:  'deepwater — reach the drowned car for a bonus payout on a run you survive',
+  wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
+  bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
+  lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
+  stamina:    'out of breath — walk to recover, running lays a wider scent trail',
+  cover:      'hollow log — H to hide inside. predators lose sight of you',
+  caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
+  throwable:  'a stone — E to pick up, throw to break a chase',
+  veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
+};
+const HINT_KEY_PREFIX = 'lullwood:hints:';
+// LUL-2230's key, read (never written) as a migration fallback for the 'scent' entry
+// only -- an install that already saw the old caption must not see it again just
+// because it moved registries.
+const LEGACY_SCENT_HINT_KEY = 'lullwood:scentTrailCaptionSeen';
+// key -> true/false, lazily filled from localStorage. Caches the *negative* result too
+// (not just "seen") -- the priority scan below calls hintSeen() on every not-yet-seen key
+// every frame while that key hasn't claimed the active slot, so an uncached miss means one
+// localStorage.getItem() per unseen key per frame for the entire run; on the QA rig's
+// synchronous qaAdvance(hundreds-of-steps) loops that's thousands of synchronous
+// localStorage round-trips in a tight loop -- slow enough to trip Chromium's hung-renderer
+// detector (observed as "Target crashed" / page-closed failures across e2e/hints.spec.ts,
+// LUL-2346). resetHints() below clears the whole cache (both true and false entries),
+// forcing a fresh read next time.
+const hintSeenCache = {};
+function hintSeen(key){
+  if(key in hintSeenCache) return hintSeenCache[key];
+  let seen = false;
+  try {
+    if(localStorage.getItem(HINT_KEY_PREFIX + key) === '1'
+      || (key === 'scent' && localStorage.getItem(LEGACY_SCENT_HINT_KEY) === '1')){
+      seen = true;
+    }
+  } catch(e){}
+  hintSeenCache[key] = seen;
+  return seen;
+}
+function markHintSeen(key){
+  hintSeenCache[key] = true;
+  try { localStorage.setItem(HINT_KEY_PREFIX + key, '1'); } catch(e){}
+}
+let hintsEnabled = true;
+try { const v = localStorage.getItem('lullwood:hintsEnabled'); if(v !== null) hintsEnabled = v === '1'; } catch(e){}
+function setHintsEnabled(v){ hintsEnabled = !!v; pushState({ hintsEnabled }); }
+function resetHints(){
+  for(const k in hintSeenCache) delete hintSeenCache[k];
+  hintActiveKey = null; hintActiveStartT = 0; hintDismissBaseline = 0;
+  try {
+    for(let i = localStorage.length - 1; i >= 0; i--){
+      const k = localStorage.key(i);
+      if(k && k.indexOf(HINT_KEY_PREFIX) === 0) localStorage.removeItem(k);
+    }
+    localStorage.removeItem(LEGACY_SCENT_HINT_KEY);
+  } catch(e){}
+  pushState({ hintVisible: false });
+}
+let hintActiveKey = null, hintActiveStartT = 0, hintDismissBaseline = 0;
+const _hintProjVec = new THREE.Vector3();   // scratch, reused every frame -- avoid per-point GC
+// Projects a world point to a clamped viewport fraction, or null if it's outside the
+// camera frustum this frame. Generalizes the scent-mote projection math LUL-2230
+// introduced (was inline in the scent-only caption block) for reuse across every
+// world-anchored hint key.
+function projectToScreen(x, y, z){
+  _hintProjVec.set(x, y, z).project(camera);
+  const inFrustum = _hintProjVec.x >= -1 && _hintProjVec.x <= 1 && _hintProjVec.y >= -1 && _hintProjVec.y <= 1 && _hintProjVec.z < 1;
+  if(!inFrustum) return null;
+  return {
+    x: Math.max(0.08, Math.min(0.92, (_hintProjVec.x + 1) / 2)),
+    y: Math.max(0.08, Math.min(0.92, (1 - _hintProjVec.y) / 2)),
+  };
+}
 
 function depositScent(hot, againstWind){
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
@@ -2598,6 +2696,8 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     secondaryCanComplete = false,   // LUL-1666: same shape, for the retrieval item
     canBuyVeilCharm = false;   // LUL-1210: recomputed every tick alongside canPickup, below
 let heldThrowable = false;
+let hideEventCount = 0;       // LUL-2307: bumped by enterHide() -- dismiss-on-interaction for the wolf/bear/lion/cover hints
+let throwableGrabCount = 0;   // LUL-2307: bumped by grabThrowable() -- dismiss-on-interaction for the throwable hint
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
 // LUL-1103: The Run Chronicle. Flat {t, code, args} buffer, reset per-run in
 // enter() (covers restart() too, which calls enter()). Handed to React once,
@@ -2925,7 +3025,7 @@ function homeFireCrackle(dist){
 // leafRustle() is the only hide sound -- the former per-kind dispatch
 // (playHideSfx()) and its hollow-log knock (hollowLogSound()) are deleted,
 // not kept, since nothing could call the log branch anymore.
-function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; leafRustle(true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); logChronicle('hide', { kind: spot.kind }); }
+function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); logChronicle('hide', { kind: spot.kind }); }
 function exitHide(){ if(!hidden) return; leafRustle(false); hidden = false; hideKind = null; }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
@@ -3214,13 +3314,16 @@ let hudState = {
   // canGrabThrowable is the HUD gate for the "pick up stone" prompt, mirroring
   // canPickup/objectiveReady's role for the child.
   heldThrowable: false, canGrabThrowable: false,
-  // LUL-2230: scent trail visual + its one-time caption. `scentTrailVisible`
-  // is the persisted Settings toggle (default on); `scentCaptionVisible` and
-  // its X/Y (viewport fractions) are pushed per-frame only while the
-  // one-time explanation is on screen -- same per-frame-push pattern as
-  // veilCharge above.
+  // LUL-2230: scent trail visual. `scentTrailVisible` is the persisted
+  // Settings toggle (default on).
   scentTrailVisible: true,
-  scentCaptionVisible: false, scentCaptionX: 0.5, scentCaptionY: 0.5,
+  // LUL-2307: generic first-encounter hint captions (replaces LUL-2230's
+  // scentCaptionVisible/X/Y -- 'scent' is now just one HINT_PRIORITY entry).
+  // `hintsEnabled` is the persisted Settings toggle (default on);
+  // `hintVisible`/`hintKey`/`hintText`/X/Y are pushed per-frame only while a
+  // hint is on screen -- same per-frame-push pattern as veilCharge above.
+  hintsEnabled: true,
+  hintVisible: false, hintKey: null, hintText: '', hintX: 0.5, hintY: 0.5,
 };
 function pushState(patch){
   let changed = false;
@@ -3274,9 +3377,10 @@ function setPaused(p){
 }
 function enter(){
   entered = true;
-  // LUL-1255 (Ship 1 wayfinding S2): one-time nav tip, not a repeating audio-cue
-  // caption -- fires unconditionally, not gated on captionsOn.
-  pushState({ caption: 'landmarks in the fog are safe to navigate by', captionId: ++captionSeq });
+  // LUL-1255 (Ship 1 wayfinding S2) / LUL-2307: one-time nav tip -- used to fire
+  // unconditionally as a toast on every enter() (including restarts); now the
+  // 'landmark' hint (HINT_PRIORITY above), so it only actually shows once ever,
+  // via the generic per-frame hint evaluation in stepFrame(), not from here.
   enteredAt = clock.elapsedTime;
   runElapsed = 0;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
@@ -4393,14 +4497,34 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // movement, no pitch change.
   window.ForestEngine.qaSetLookYaw = function(rad){ player.yaw = rad; };
 
-  // [QA-HOOK] LUL-2230: clears the persisted "seen" flag and the in-memory
-  // one-time gate, so a single boot can prove the caption is first-time-only
-  // twice in the same test (show it, dismiss it, reset, show it again).
+  // [QA-HOOK] LUL-2230/LUL-2307: clears the persisted "seen" flag and the
+  // in-memory one-time gate for the 'scent' hint only, so a single boot can
+  // prove the caption is first-time-only twice in the same test (show it,
+  // dismiss it, reset, show it again). Kept as a thin alias over the generic
+  // registry -- no current spec calls it (e2e/scent.spec.ts and
+  // e2e/mobile/scent-trail.spec.ts don't), but removing a QA hook silently is
+  // worse than an unused one. Prefer qaResetHints() for new tests.
   window.ForestEngine.qaResetScentCaption = function(){
-    scentCaptionSeen = false; scentCaptionActive = false;
-    try { localStorage.removeItem(SCENT_TRAIL_CAPTION_KEY); } catch(e){}
-    pushState({ scentCaptionVisible: false });
+    hintSeenCache.scent = false;
+    if(hintActiveKey === 'scent') hintActiveKey = null;
+    try { localStorage.removeItem(HINT_KEY_PREFIX + 'scent'); localStorage.removeItem(LEGACY_SCENT_HINT_KEY); } catch(e){}
+    pushState({ hintVisible: false });
   };
+
+  // [QA-HOOK] LUL-2307: the active hint's key (null if none) and the full
+  // seen-map by key, so a test can assert both "this hint showed" and "no
+  // other hint has been marked seen yet" without racing the 8s/dismiss timer.
+  window.ForestEngine.qaProbeHints = function(){
+    const seen = {};
+    for(const key of HINT_PRIORITY) seen[key] = hintSeen(key);
+    return { activeKey: hintActiveKey, seen };
+  };
+
+  // [QA-HOOK] LUL-2307: clears every hint's persisted "seen" flag and the
+  // in-memory gate (all keys, not just 'scent') -- the generic counterpart to
+  // qaResetScentCaption, and what SettingsPanel.tsx's "Reset hints" button
+  // calls in real play too (resetHints(), not a QA-only path).
+  window.ForestEngine.qaResetHints = function(){ resetHints(); };
 
   // [QA-HOOK] LUL-2328: fixed, non-rng shape per cover kind -- rollCoverPropShape()
   // (lib/game/cover.ts) rolls a random size in these same ranges every real
@@ -4576,6 +4700,7 @@ function grabThrowable(){
   if(nearest < 0) return;
   throwableData[nearest].taken = true;
   heldThrowable = true;
+  throwableGrabCount++;
   layoutThrowableMeshes();
 }
 function throwThrowable(){
@@ -5619,38 +5744,144 @@ function stepFrame(dt, t){
     const scentTrailRendered = scentTrailVisible && entered && !hudState.winVisible && !hudState.deathVisible;
     scentTrailPts.visible = scentTrailRendered;
 
-    // One-time caption: starts the first time the setting is on, the player
-    // isn't hidden, and the oldest still-visible mote enters the camera
-    // frustum; ends after 8s or the first scentOnto() call after it started
-    // (whichever comes first), then persists "seen" so it never shows again
-    // this install. Toggling the setting off, hiding, or a win/death mid-
-    // caption stops it without marking "seen" (it can still show later).
-    const captionEligible = scentTrailVisible && !scentCaptionSeen && entered
-      && !hidden && !hudState.winVisible && !hudState.deathVisible;
-    if(captionEligible && !scentCaptionActive && firstFrustum){
-      scentCaptionActive = true; scentCaptionStartT = t; scentLockCountAtCaptionStart = scentLockEventCount;
+    // LUL-2307: generic first-encounter hint captions. Same rule shape as the
+    // old scent-only version above it: eligible only while the setting is on,
+    // entered, not hidden, not win/death; a world-anchored key additionally
+    // needs its object in the camera frustum to *start* (scent's own
+    // firstFrustum, computed by the mote loop just above, or a fresh
+    // projectToScreen() for everything else); ends after 8s or its own
+    // dismiss-on-interaction event, then persists "seen" so it never shows
+    // again this install. Losing eligibility mid-caption stops it without
+    // marking seen. See docs/specs/lul-2307-first-encounter-hints.md.
+    const baseHintEligible = hintsEnabled && entered && !hidden && !hudState.winVisible && !hudState.deathVisible;
+
+    // Nearest untaken throwable that could actually be grabbed right now, plus
+    // its own position for the anchor (distinct from the HUD's nearestThrowableD
+    // above, which only needs the distance, not which stone or where it is).
+    let throwableHintAnchor = null, throwableHintEligible = false;
+    for(let ti = 0; ti < throwableData.length; ti++){
+      const th = throwableData[ti];
+      if(th.taken) continue;
+      const d = Math.hypot(th.x - player.x, th.z - player.z);
+      if(canGrabThrowable(heldThrowable, d, THROWABLE_PICKUP_RADIUS)){
+        throwableHintEligible = true; throwableHintAnchor = { x: th.x, y: 1, z: th.z };
+        break;
+      }
     }
-    if(scentCaptionActive && !captionEligible){
-      scentCaptionActive = false;
-      pushState({ scentCaptionVisible: false });
-    } else if(scentCaptionActive){
-      const elapsed = t - scentCaptionStartT, lockFired = scentLockEventCount > scentLockCountAtCaptionStart;
-      if(elapsed >= 8 || lockFired){
-        scentCaptionActive = false; scentCaptionSeen = true;
-        try { localStorage.setItem(SCENT_TRAIL_CAPTION_KEY, '1'); } catch(e){}
-        pushState({ scentCaptionVisible: false });
-      } else if(firstFrustum){
-        const cx = Math.max(0.08, Math.min(0.92, (firstFrustum.x + 1) / 2));
-        const cy = Math.max(0.08, Math.min(0.92, (1 - firstFrustum.y) / 2));
-        pushState({ scentCaptionVisible: true, scentCaptionX: cx, scentCaptionY: cy });
+    const coverHintVisible = !hidden && lastHideSpot !== null;
+
+    // key -> [eligible this frame, world anchor {x,y,z} | null]. Self/panel-anchored
+    // keys (lake/bog/deepwater/stamina/caveImmune/veil) never need an anchor -- they're
+    // positioned by fixed CSS in GameCanvas.tsx, not a per-frame world point.
+    function hintCandidate(key){
+      switch(key){
+        case 'scent': return [scentTrailVisible, null];   // anchor handled separately below (firstFrustum)
+        case 'landmark': return [true, null];
+        case 'lake': return [playerInLake, null];
+        case 'bog': return [playerBogginess > 0.05, null];
+        case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active' && !carrying, null];
+        case 'wolf': case 'bear': case 'lion': {
+          for(const p of predators){
+            if(p.inert || p.kind !== key) continue;
+            const dx = wrapDelta(player.x, p.x, WRAP_SPAN), dz = wrapDelta(player.z, p.z, WRAP_SPAN);
+            if(Math.hypot(dx, dz) < effectiveDetect(p)) return [true, { x: p.x, y: 1, z: p.z }];
+          }
+          return [false, null];
+        }
+        case 'stamina': return [staminaCharge <= 0, null];
+        case 'cover': return [coverHintVisible, lastHideSpot ? { x: lastHideSpot.x, y: 1, z: lastHideSpot.z } : null];
+        case 'caveImmune': return [caveImmuneT > 0, null];
+        case 'throwable': return [throwableHintEligible, throwableHintAnchor];
+        case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
+        default: return [false, null];
+      }
+    }
+    function hintDismissedByEvent(key, baseline){
+      switch(key){
+        case 'scent': return scentLockEventCount > baseline;
+        case 'wolf': case 'bear': case 'lion': case 'cover': return hideEventCount > baseline;
+        case 'throwable': return throwableGrabCount > baseline;
+        case 'caveImmune': return caveImmuneT <= 0;
+        case 'deepwater': return missionCanComplete;
+        case 'stamina': return staminaCharge > 0.6;
+        case 'veil': return veilCharge > 0.3;
+        default: return false;   // landmark, lake, bog: time-only
+      }
+    }
+    function hintDismissBaselineFor(key){
+      switch(key){
+        case 'scent': return scentLockEventCount;
+        case 'wolf': case 'bear': case 'lion': case 'cover': return hideEventCount;
+        case 'throwable': return throwableGrabCount;
+        default: return 0;
+      }
+    }
+    // Resolves a world-anchored key's screen position this frame, or null if its
+    // object exists but isn't in the camera frustum right now. 'scent' reuses the
+    // mote loop's own firstFrustum (already a raw NDC coordinate) instead of
+    // re-deriving it from scentPoints a second time.
+    function hintWorldAnchor(key, anchor){
+      if(key === 'scent'){
+        return firstFrustum
+          ? { x: Math.max(0.08, Math.min(0.92, (firstFrustum.x + 1) / 2)), y: Math.max(0.08, Math.min(0.92, (1 - firstFrustum.y) / 2)) }
+          : null;
+      }
+      return anchor ? projectToScreen(anchor.x, anchor.y, anchor.z) : null;
+    }
+
+    // Scans HINT_PRIORITY up to (but not including) whatever's already active, so a
+    // higher-priority key can preempt a lower-priority one already showing -- not just
+    // win same-frame ties when the slot is empty. Needed because 'landmark' (index 1)
+    // is unconditionally eligible from frame 1 and otherwise wins the slot for a full
+    // 8s before 'scent' (index 0) ever gets a look, even though scent only becomes
+    // eligible+anchored a couple seconds into a real run (walk, then face the trail) --
+    // e2e/scent-trail.spec.ts's caption assertions land well inside that window and
+    // must pass unchanged (LUL-2346). Preempting doesn't mark the interrupted key
+    // seen -- same as any other loss of eligibility mid-caption, it can still show
+    // later. activeIdx = HINT_PRIORITY.length when nothing's active, so this scans the
+    // full list exactly like the old "slot is empty" case.
+    {
+      const activeIdx = hintActiveKey ? HINT_PRIORITY.indexOf(hintActiveKey) : HINT_PRIORITY.length;
+      for(let i = 0; i < activeIdx; i++){
+        const key = HINT_PRIORITY[i];
+        if(hintSeen(key)) continue;
+        const [eligible, anchor] = hintCandidate(key);
+        if(!baseHintEligible || !eligible) continue;
+        if(WORLD_HINT_KEYS[key] && !hintWorldAnchor(key, anchor)) continue;   // needs to be visible to *start*
+        hintActiveKey = key; hintActiveStartT = t; hintDismissBaseline = hintDismissBaselineFor(key);
+        break;
+      }
+    }
+    if(hintActiveKey){
+      const key = hintActiveKey;
+      const elapsed = t - hintActiveStartT;
+      // Check event/timeout dismissal before eligibility: for wolf/bear/lion/cover/
+      // throwable/stamina the dismissing interaction itself (hide, grab, stamina
+      // regen) also flips eligibility false in this same frame, so eligibility-loss
+      // must not preempt marking the hint seen (LUL-2307 review fix).
+      if(elapsed >= 8 || hintDismissedByEvent(key, hintDismissBaseline)){
+        markHintSeen(key); hintActiveKey = null;
+        pushState({ hintVisible: false });
       } else {
-        pushState({ scentCaptionVisible: true });   // keep showing at its last known anchor
+        const [eligible] = hintCandidate(key);
+        if(!baseHintEligible || !eligible){
+          hintActiveKey = null;
+          pushState({ hintVisible: false });
+        } else if(WORLD_HINT_KEYS[key]){
+          const [, anchor] = hintCandidate(key);
+          const pos = hintWorldAnchor(key, anchor);
+          pushState(pos
+            ? { hintVisible: true, hintKey: key, hintText: HINT_TEXT[key], hintX: pos.x, hintY: pos.y }
+            : { hintVisible: true });   // out of frustum this frame -- keep last known anchor, LUL-2230 precedent
+        } else {
+          pushState({ hintVisible: true, hintKey: key, hintText: HINT_TEXT[key] });
+        }
       }
     }
 
     scentTrailLastFrame = { settingOn: scentTrailVisible, rendered: scentTrailRendered, points: framePoints,
-      livePoints: scentPoints.length, captionVisible: hudState.scentCaptionVisible,
-      captionSeen: scentCaptionSeen, veilAmount, windX, windZ };
+      livePoints: scentPoints.length, captionVisible: hintActiveKey === 'scent' && hudState.hintVisible,
+      captionSeen: hintSeen('scent'), veilAmount, windX, windZ };
   }
 
   drawMinimap();
@@ -5794,7 +6025,9 @@ tick();
            setEmbers, purchaseDeeperLungs,
            // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.
            setMissionUnlocks, setSecondaryChoice,
-           setScentTrailVisible };
+           setScentTrailVisible,
+           // LUL-2307
+           setHintsEnabled, resetHints };
 }
 
 function dispose() {
