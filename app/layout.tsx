@@ -6,6 +6,7 @@ import {
   SITE_TITLE,
   SITE_DESCRIPTION,
   SITE_TAGLINE,
+  SITE_THEME_COLOR,
   GOOGLE_SITE_VERIFICATION,
 } from "../lib/site";
 
@@ -25,6 +26,8 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
+  // LUL-2375: browser chrome / PWA splash colour, matches the manifest.
+  themeColor: SITE_THEME_COLOR,
 };
 
 export const metadata: Metadata = {
@@ -52,8 +55,24 @@ export const metadata: Metadata = {
   creator: SITE_NAME,
   publisher: SITE_NAME,
   category: "games",
-  alternates: {
-    canonical: "/",
+  // LUL-2375: no `alternates.canonical` here on purpose -- a layout-level
+  // canonical is inherited by every child route, so /suggest was declaring
+  // itself a duplicate of "/". Each page sets its own (app/page.tsx,
+  // app/suggest/page.tsx, app/devlog/**).
+  //
+  // Icons live in public/ and are referenced by fixed URLs. The app/ file
+  // convention appends a per-build hash query (`/favicon.ico?favicon.<hash>`),
+  // so Google saw a brand-new favicon URL on every deploy and never settled
+  // on one -- Google's favicon guidance asks for a stable URL. /favicon.ico is
+  // also the path Google requests by convention. The .ico carries 16/32/48 px
+  // (48 = the multiple-of-48 Google requires).
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "48x48", type: "image/x-icon" },
+      { url: "/icon.svg", sizes: "any", type: "image/svg+xml" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+    shortcut: ["/favicon.ico"],
   },
   verification: {
     google: GOOGLE_SITE_VERIFICATION,
@@ -102,9 +121,13 @@ const videoGameJsonLd = {
   screenshot: `${SITE_URL}/opengraph-image.png`,
   genre: ["Horror", "Survival", "Adventure"],
   gamePlatform: "Web Browser",
-  applicationCategory: "Game",
+  // LUL-2375: "Game" is not a schema.org SoftwareApplication category value;
+  // "GameApplication" is the enumerated one Google's software-app rich result
+  // recognises.
+  applicationCategory: "GameApplication",
   applicationSubCategory: "Horror Game",
-  operatingSystem: "Any",
+  operatingSystem: "Any browser with WebGL",
+  datePublished: "2026-08-14",
   browserRequirements: "Requires a WebGL-capable browser",
   playMode: "SinglePlayer",
   inLanguage: "en",
@@ -117,6 +140,39 @@ const videoGameJsonLd = {
     priceCurrency: "USD",
     availability: "https://schema.org/InStock",
   },
+};
+
+// LUL-2375: WebSite + Organization nodes. WebSite (name + url) is what Google
+// reads for the "site name" shown above the URL in results; Organization
+// (name + url + logo) is what it reads for the brand icon/knowledge card. The
+// VideoGame node above stays first in the document -- e2e/seo.spec.ts reads
+// the first ld+json block and asserts on it.
+const siteJsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": `${SITE_URL}#website`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      inLanguage: "en",
+      publisher: { "@id": `${SITE_URL}#org` },
+    },
+    {
+      "@type": "Organization",
+      "@id": `${SITE_URL}#org`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      logo: {
+        "@type": "ImageObject",
+        url: `${SITE_URL}/apple-icon.png`,
+        width: 180,
+        height: 180,
+      },
+      description:
+        "An all-AI game studio: design, engineering, and testing handled by a fleet of AI agents.",
+    },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -151,6 +207,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           // accidentally break out of the script tag.
           dangerouslySetInnerHTML={{
             __html: JSON.stringify(videoGameJsonLd).replace(/</g, "\\u003c"),
+          }}
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(siteJsonLd).replace(/</g, "\\u003c"),
           }}
         />
         {children}
