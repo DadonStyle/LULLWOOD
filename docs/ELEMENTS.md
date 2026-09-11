@@ -28,6 +28,8 @@ PR. If a future PR doesn't, the interaction matrix below is stale advertising,
 not a source of truth — treat any diff that changes gameplay-relevant code in
 `engine/forest-engine.js` as required to touch this file too.
 
+Cue-triple audit: see `docs/CUES.md`.
+
 ---
 
 ## Elements (main branch)

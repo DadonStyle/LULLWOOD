@@ -32,6 +32,15 @@ the request file `shared/local-qa/requests/<lul-id>-<slug>.md` written with this
 "None: not player-visible" needs a reason.
 **Not covered.** Feel, audio, real-device items that stay manual, and why.
 
+## Cues
+
+**Visual.** <what the player sees change in the world or HUD, and where -- file:line for the render/HUD call site>.
+**Audio.** <the one-shot sound function name and file:line -- new or existing -- gated by `soundOn`>.
+**Explanation.** <the exact one-line text the player sees the first time (or every time, if a persistent gate), and file:line for the caption call site -- gated by `captionsOn`>.
+**Reduced motion.** <what the visual cue degrades to when `reducedMotion` is true, or "static, no animation to reduce" if it was never animated>.
+
+See `decisions/0015-cue-triple` on the wiki.
+
 ## Constraints
 
 <What must not change. Pure/no-side-effects requirements. Repeat the tier here if it gates
