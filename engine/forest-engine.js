@@ -3929,6 +3929,20 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // outside the cover AABB's local-x edge (not at its center) so hasLOS()
   // does not find the player inside the prop and self-block the sightline --
   // both player and lion are on the same side of the OBB, sightline clear.
+  //
+  // LUL-2358: the lion standoff used to be 4 units -- inside a chasing lion's
+  // own CATCH_MARGIN+rad contact range (2.3) after as little as (4-2.3)/9.2s
+  // =~ 0.18s of real chase movement at the lion's tuning.js speed (9.2), so
+  // every caller that advances game time past that (action-prompt.spec.ts's
+  // qaSetFixedStep/qaAdvance(0.5s) cases, and even a plain real-time
+  // page.waitForTimeout once LUL-1910's real GPU rendering stopped
+  // dt-clamp-dilating wall time -- wiki systems/dt-clamp-vs-walltime) hits
+  // triggerDeath() before the UI assertion ever runs, not a cover/veil bug.
+  // LION_STANDOFF keeps the lion within COVER_URGENT_RANGE (22, lib/game/
+  // cover.ts) so the urgent-tone premise still holds, while (LION_STANDOFF -
+  // CATCH_MARGIN-rad)/9.2 =~ 1.3s stays comfortably ahead of every caller's
+  // wait window.
+  const LION_STANDOFF = 14;
   window.ForestEngine.qaOpenHideNearLionAtHideSpot = function(){
     const spot = coverData.find(c => HIDE_KINDS[c.kind]);
     if(!spot) return null;
@@ -3941,9 +3955,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
-    // Lion is 4 more units in the same local-x direction -- clear sightline guaranteed.
-    lion.x = spot.x + (offset + 4) * co;
-    lion.z = spot.z - (offset + 4) * si;
+    // Lion is LION_STANDOFF more units in the same local-x direction -- clear sightline guaranteed.
+    lion.x = spot.x + (offset + LION_STANDOFF) * co;
+    lion.z = spot.z - (offset + LION_STANDOFF) * si;
     lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
     lion.state = 'chase'; lion.hunt = true;
     return { idx, kind: spot.kind };

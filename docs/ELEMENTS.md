@@ -71,8 +71,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5722 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5091, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5736 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5105, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1094,6 +1094,20 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   assert pairwise non-overlap directly -- today's coverage exercises at most
   one populated row per test. Flagged as a `[QA-HOOK]` follow-up, not silently
   skipped.
+
+  **LUL-2358 fix.** Three cases (`urgent cover prompt`, `no nowrap overflow
+  and no mobile-control collision`, `reduced motion`) staged their chasing
+  lion via `qaTeleportToHideSpot()` + `qaOpenHideNearLion()`; the latter
+  resets the player to the spawn clearing (its own designed cover-free
+  scenario), clobbering the former's teleport, and placed the lion only 4
+  units out -- inside its `CATCH_MARGIN`+`rad` contact range within ~0.18s
+  at the lion's `tuning.js` speed (9.2), so `triggerDeath()` fired before
+  `data-tone` could ever read `"urgent"`. All three now use
+  `qaOpenHideNearLionAtHideSpot()` (`engine/forest-engine.js`), same as
+  `cover wins over veil`; that hook's lion standoff moved from a hardcoded
+  `4` to `LION_STANDOFF = 14` so a chasing lion can no longer close to catch
+  range before any of these tests' assertions run, while staying inside
+  `COVER_URGENT_RANGE` (22) for the urgent-tone premise.
   LUL-1089 adds five new `EngineHudState` fields: `coverPromptVisible`,
   `coverPromptUrgent`, `coverPromptKind` (`'bramble'|'log'|null`),
   `veilPromptVisible`, `veilPromptUrgent`. Cover prompt fires only while
