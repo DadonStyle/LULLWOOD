@@ -674,7 +674,7 @@ export default function Hud({
               <>
                 <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run
                 <br />
-                <b>H</b> — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
+                <b>H</b> — hide (bushes only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
                 <br />
                 <b>Space</b> — jump (also how you clear a charging wolf or lion)
                 <br />

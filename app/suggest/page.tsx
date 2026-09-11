@@ -9,6 +9,15 @@ import SuggestionBox from '@/components/SuggestionBox';
 export const metadata: Metadata = {
   title: 'Suggest something',
   description: 'Send the Lullwood team an idea. The founder reads every suggestion by hand.',
+  // LUL-2375: was inheriting the layout's canonical ("/") and telling Google
+  // this page is a duplicate of the homepage.
+  alternates: { canonical: '/suggest' },
+  openGraph: {
+    title: 'Suggest something — Lullwood',
+    description: 'Send the Lullwood team an idea. The founder reads every suggestion by hand.',
+    url: '/suggest',
+    type: 'website',
+  },
 };
 
 export default function SuggestPage() {

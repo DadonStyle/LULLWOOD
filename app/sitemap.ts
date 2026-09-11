@@ -27,6 +27,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "monthly",
       priority: 1,
     },
+    // LUL-2375: indexable, linked from the homepage, was missing here.
+    {
+      url: `${SITE_URL}/suggest`,
+      lastModified: new Date("2026-09-09T00:00:00.000Z"),
+      changeFrequency: "yearly",
+      priority: 0.4,
+    },
     ...devlogEntries,
   ];
 }
