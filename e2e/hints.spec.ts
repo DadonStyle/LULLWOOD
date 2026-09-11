@@ -167,6 +167,67 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     expect(after.seen.wolf).toBe(true);
   });
 
+  // LUL-2307 review fix: the eligibility-loss check used to run before the
+  // event dismiss check, so for wolf/bear/lion/cover/throwable/stamina the
+  // dismissing interaction itself (hide, grab, stamina regen) flipped
+  // eligibility false in the same frame, and markHintSeen() was never reached
+  // -- the hint reshowed on every subsequent encounter instead of once.
+  test('hiding from a first-sighted wolf marks its hint seen instead of leaving it to reshow', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await clearPreemptiveHints(page);
+
+    const staged = await qaHook(page, 'qaHideBehindCoverKind', 'wolf');
+    expect(staged, 'qaHideBehindCoverKind returned null -- no wolf-clearable cover at this seed').not.toBeNull();
+
+    // qaHideBehindCoverKind places the player on the +side of a cover prop and
+    // the wolf further out on the -side, both along the same axis -- face -x
+    // (yaw=PI/2, forward = (-sin(yaw),-cos(yaw))) so the wolf's anchor is in
+    // the camera frustum this frame and the 'wolf' hint can become active.
+    await qaHook(page, 'qaSetLookYaw', Math.PI / 2);
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+
+    let probe = await qaHook(page, 'qaProbeHints');
+    expect(probe.activeKey, "'wolf' should win the priority race over 'cover', also eligible here").toBe('wolf');
+
+    await page.keyboard.press('KeyH');
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+
+    probe = await qaHook(page, 'qaProbeHints');
+    expect(probe.activeKey, 'hiding should dismiss the active wolf hint').not.toBe('wolf');
+    expect(probe.seen.wolf, 'hiding is the documented dismiss event -- it must mark the hint seen, not just clear it').toBe(true);
+
+    // Re-sighting the same species after hiding must not show the caption again.
+    await qaHook(page, 'qaAdvance', stepsFor(0.5));
+    expect((await qaHook(page, 'qaProbeHints')).activeKey).not.toBe('wolf');
+  });
+
+  test('grabbing a throwable marks its hint seen instead of leaving it to reshow', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await clearPreemptiveHints(page);
+
+    const stone = await qaHook(page, 'qaTeleportNearThrowable');
+    expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+
+    // qaTeleportNearThrowable places the player +2 along x from the stone --
+    // face -x (yaw=PI/2) so the stone's anchor is in the camera frustum.
+    await qaHook(page, 'qaSetLookYaw', Math.PI / 2);
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+
+    let probe = await qaHook(page, 'qaProbeHints');
+    expect(probe.activeKey).toBe('throwable');
+
+    await qaHook(page, 'qaGrabThrowable');
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+
+    probe = await qaHook(page, 'qaProbeHints');
+    expect(probe.activeKey, 'grabbing should dismiss the active throwable hint').not.toBe('throwable');
+    expect(probe.seen.throwable, 'grabbing is the documented dismiss event -- it must mark the hint seen, not just clear it').toBe(true);
+  });
+
   test('turning Show hints off suppresses every hint', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
