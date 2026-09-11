@@ -2217,7 +2217,10 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // player already gets at :3173/:3179, applied to this predator's own (x,z).
     // LUL-1861: bog component dropped here -- LUL-1483's speed *= bogSpeedMultiplier(biomeAt(...))
     // below already applies bog once, terminally; keeping it here too double-applies it.
-    const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
+    // LUL-2422: CONFIG.speedScaleMul (default 1, set by applyQaWorldMicroPreset) folded in
+    // here so every `*pLakeMul` speed site below is scaled together -- mirrors detectScaleMul's
+    // fold-in at effectiveDetect() (LUL-2407).
+    const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake)) * (CONFIG.speedScaleMul || 1);
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
     // ticks in every state, so a lock set during `chase` has actually
@@ -2259,6 +2262,12 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       } else {
         p.charge = cs;
         facePlayer = cs.phase === 'telegraph';
+        // LUL-2469: chargeSpeed(cs.distance) intentionally not folded into pLakeMul/speedScaleMul --
+        // a charge only starts from 'chase' once canSee()+playerCanSee() both already hold (see the
+        // startCharge() call below), and canSee() is already scaled by CONFIG.detectScaleMul (LUL-2407),
+        // so on the QA micro map a charge can't begin until the predator is within the shrunk detect
+        // radius in the first place. speedScaleMul's problem case (roam wander crossing the map at full
+        // speed pre-detection) doesn't apply here.
         if(cs.phase !== 'telegraph'){ desx = p.chargeDirX; desz = p.chargeDirZ; speed = chargeSpeed(cs.distance); }
       }
     }
@@ -2361,7 +2370,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
           p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.x, WRAP_SPAN) : clamp(kept.x,-half+4,half-4);
           p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.z, WRAP_SPAN) : clamp(kept.z,-half+4,zMax-4); }
-        else { desx=wx/wd; desz=wz/wd; speed=2.3; }
+        else { desx=wx/wd; desz=wz/wd; speed=2.3*pLakeMul; }
       }
     } else if(p.state === 'chase'){
       // While scentLock (LUL-23) holds, this chase was triggered by a stale
