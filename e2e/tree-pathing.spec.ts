@@ -42,6 +42,7 @@
 // under 4 units.
 import { test, expect } from '@playwright/test';
 import { boot, enter } from './helpers';
+// fullmap-reason: predator go-around measured against the pinned seed's real trunk clusters (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 // Extra clearance beyond (tree trunk radius + predator collision radius) on
 // each side -- just enough that qaStageBehindTree's own qualifying check
@@ -72,7 +73,7 @@ test.describe('predator behind a tree reaches the player (LUL-1091 regression) @
       // "Test timeout exceeded" failure here -- the in-page trace and the
       // real death sequence were both completing fine; only the explicit
       // override was too tight. Rely on the config defaults instead.
-      await boot(page, { qaHooks: true });
+      await boot(page, { qaWorld: 'full',  qaHooks: true });
       await enter(page);
 
       const result = await page.evaluate(

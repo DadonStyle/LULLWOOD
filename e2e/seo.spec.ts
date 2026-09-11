@@ -14,7 +14,7 @@ const SOCIAL_DESCRIPTION = `${SITE_TAGLINE} A free first-person horror game you 
 
 test.describe('SEO metadata', () => {
   test('OG, Twitter, canonical and JSON-LD VideoGame tags are present', async ({ page }) => {
-    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await page.goto('/?qaWorld=micro', { waitUntil: 'domcontentloaded' });
 
     await expect(page).toHaveTitle(SITE_TITLE);
     expect(await page.locator('meta[name="google-site-verification"]').count()).toBe(0);

@@ -10,6 +10,7 @@
 // instead of the seeded rng(), breaking replay-ability.
 import { test, expect } from '@playwright/test';
 import { boot, enter, qaHook, QA_PINNED_SEED } from './helpers';
+// fullmap-reason: byte-identical predator traces across two full-map boots of the same seed (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 async function readPredatorState(page: import('@playwright/test').Page) {
   return page.evaluate(() => {
@@ -42,13 +43,13 @@ test.describe('predator determinism with seeded RNG @fullmap', () => {
     // pointer-lock wait (both DOM-only, not engine-frame-driven) can no
     // longer advance predator state at all before qaAdvance() does, on
     // either page.
-    await boot(page1, { qaHooks: true, seed: QA_PINNED_SEED });
+    await boot(page1, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED });
     await qaHook(page1, 'qaSetFixedStep', FIXED_DT);
     await enter(page1);
 
     // Boot second page in parallel (same seed, same entry)
     const page2 = await context.newPage();
-    await boot(page2, { qaHooks: true, seed: QA_PINNED_SEED });
+    await boot(page2, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED });
     await qaHook(page2, 'qaSetFixedStep', FIXED_DT);
     await enter(page2);
 

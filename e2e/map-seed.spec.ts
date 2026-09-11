@@ -6,6 +6,7 @@
 // default does not reproduce anything.
 import { test, expect } from '@playwright/test';
 import { boot, QA_PINNED_SEED, qaHook, enter } from './helpers';
+// fullmap-reason: asserts the seeded generator reproduces the real 480u layout (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 async function dumpMapSeed(page: import('@playwright/test').Page) {
   const dump = await page.evaluate(() => window.ForestEngine?.qaProbeMapSeed?.() ?? null);
@@ -15,10 +16,10 @@ async function dumpMapSeed(page: import('@playwright/test').Page) {
 
 test.describe('session-varied map seed @fullmap', () => {
   test('?seed= reproduces the exact same layout across two loads', async ({ page }) => {
-    await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED });
     const first = await dumpMapSeed(page);
 
-    await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED });
     const second = await dumpMapSeed(page);
 
     expect(first.seed).toBe(QA_PINNED_SEED);
@@ -26,10 +27,10 @@ test.describe('session-varied map seed @fullmap', () => {
   });
 
   test('a pinned seed produces a different layout than another pinned seed', async ({ page }) => {
-    await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED });
     const pinned = await dumpMapSeed(page);
 
-    await boot(page, { qaHooks: true, seed: QA_PINNED_SEED + 1 });
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED + 1 });
     const other = await dumpMapSeed(page);
 
     expect(other.seed).toBe(QA_PINNED_SEED + 1);
@@ -37,10 +38,10 @@ test.describe('session-varied map seed @fullmap', () => {
   });
 
   test('no ?seed= draws a fresh seed each load, not CONFIG.seed', async ({ page }) => {
-    await boot(page, { qaHooks: true, seed: null });
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed: null });
     const a = await dumpMapSeed(page);
 
-    await boot(page, { qaHooks: true, seed: null });
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed: null });
     const b = await dumpMapSeed(page);
 
     expect(a.seed).not.toBe(QA_PINNED_SEED);
@@ -74,7 +75,7 @@ test.describe('runtime seed determinism — predator behavior @fullmap', () => {
       // full 1200ms fade/pointer-lock wait inside enter() before this used
       // to freeze it. Same total wait, but nothing engine-visible happens
       // during it once the clock is parked first.
-      await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
+      await boot(page, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED });
       await qaHook(page, 'qaSetFixedStep', FIXED_DT);
       await enter(page);
       await qaHook(page, 'qaAdvance', STEPS);

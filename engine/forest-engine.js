@@ -124,9 +124,12 @@ import {
   computeWinPayout,
   computeDeathPayout,
   applyPayout,
-  purchaseDeeperLungs as economyPurchaseDeeperLungs,
+  purchase as economyPurchase,
   veilMaxHoldForTier,
-  DEEPER_LUNGS_MAX_TIER,
+  effectiveScentLifetime,
+  SHOP_CATALOG,
+  tierOf,
+  POCKET_STONES_RESERVE,
   MISSION_DEEPWATER_REWARD,
   DEEPWATER_RETRIEVAL_BONUS,
   DEEPWATER_SPEEDRUN_BONUS,
@@ -2089,7 +2092,7 @@ function depositScent(hot, againstWind){
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
   const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
   scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
-  while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0)) scentPoints.shift();
+  while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0, effectiveScentLifetime(tierOf(embers, 'quietStep')))) scentPoints.shift();
 }
 function checkScent(p){
   if(isCaveImmune(caveImmuneT)) return false;
@@ -2098,7 +2101,7 @@ function checkScent(p){
   const nose = p.kind === 'wolf' ? p.spec.nose * (1 - WOLF_BOG_MASK_STRENGTH * playerBogMask) : p.spec.nose;
   for(let i = scentPoints.length - 1; i >= 0; i--){
     const s = scentPoints[i], age = clock.elapsedTime - s.t0;
-    if(isScentDetected(s, age, p.x, p.z, windX, windZ, nose, SCENT_LIFETIME, WRAP_SPAN)) return true;
+    if(isScentDetected(s, age, p.x, p.z, windX, windZ, nose, effectiveScentLifetime(tierOf(embers, 'quietStep')), WRAP_SPAN)) return true;
   }
   return false;
 }
@@ -2863,6 +2866,7 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     secondaryCanComplete = false,   // LUL-1666: same shape, for the retrieval item
     canBuyVeilCharm = false;   // LUL-1210: recomputed every tick alongside canPickup, below
 let heldThrowable = false;
+let throwablesReserve = 0;   // LUL-2351: Pocket Stones -- free re-arms of heldThrowable for this run
 let hideEventCount = 0;       // LUL-2307: bumped by enterHide() -- dismiss-on-interaction for the wolf/bear/lion/cover hints
 let throwableGrabCount = 0;   // LUL-2307: bumped by grabThrowable() -- dismiss-on-interaction for the throwable hint
 let carryDeathExplained = false;   // LUL-1438: first carry death per page load
@@ -2892,7 +2896,7 @@ let cutsceneSkippable = false;   // set fresh on every triggerDeath(), read by t
 // engine's own copy of the cross-run balance/tiers, synced from
 // components/Hud.tsx's localStorage read via setEmbers() once on mount (same
 // pattern as setDifficulty/setRunMode/etc. -- see SettingsPanel.tsx) and
-// mutated in place by arriveHome/triggerDeath/purchaseDeeperLungs.
+// mutated in place by arriveHome/triggerDeath/purchase.
 let maxDistFromHome = 0, embers = freshEmbersState(), embersSpent = 0;
 // LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
 // engine's own mutable locals (lib/game/outcome.ts is pure and holds no
@@ -3469,12 +3473,12 @@ let hudState = {
   // and persists it to localStorage (see components/Hud.tsx).
   difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
-  // LUL-1043: Embers. `embersBalance`/`embersDeeperLungsTier` are the
+  // LUL-1043/LUL-2351: Embers. `embersBalance`/`embersTiers` are the
   // cross-run economy state -- engine-owned like difficulty above, synced
   // from localStorage by components/Hud.tsx via setEmbers() once on mount.
   // `lastPayout` is the most recent win/death breakdown (null before the
   // first run ends this session), reset to null on restart().
-  embersBalance: 0, embersDeeperLungsTier: 0, lastPayout: null,
+  embersBalance: 0, embersTiers: {}, lastPayout: null,
   livePileEmbers: 0,   // LUL-1315: live unbanked depth+survival total, run-only
   // LUL-1623: throwable distractions -- heldThrowable gates the desktop/mobile
   // throw prompt (components/GameCanvas.tsx, components/MobileControls.tsx);
@@ -3552,6 +3556,12 @@ function enter(){
   runElapsed = 0;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   veilReserve = false; embersSpent = 0;   // LUL-1210: fresh run, no charm banked or spent
+  // LUL-2351: Pocket Stones -- refill the reserve every run (not just restart(), which
+  // already tails into enter() -- see the spec's Decisions note on why this can't live
+  // in restart() alone) and auto-arm heldThrowable from it, reusing the existing
+  // single-held-stone state machine and HUD prompt verbatim.
+  throwablesReserve = tierOf(embers, 'pocketStones') > 0 ? POCKET_STONES_RESERVE : 0;
+  if(!heldThrowable && throwablesReserve > 0){ heldThrowable = true; throwablesReserve--; }
   chronicle = [];   // LUL-1103: fresh run, fresh chronicle
   pushState({ entered: true, livePileEmbers: 0 });
   // LUL-1425: the real "a run begins" moment on both input modes -- enter() is
@@ -3956,7 +3966,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeScentOnOldest = function(kind){
     if(!scentPoints.length) return null;
     const s = scentPoints[0], age = clock.elapsedTime - s.t0;
-    if(isScentExpired(age)) return null;
+    if(isScentExpired(age, effectiveScentLifetime(tierOf(embers, 'quietStep')))) return null;
     const p = predators.find(pp => pp.kind === kind);
     if(!p) return null;
     const drift = scentDriftDistance(age);
@@ -4705,6 +4715,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.state = 'roam'; p.hunt = false;
     return { idx };
   };
+  // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
+  // an e2e spec can't wait out 14s+ of real decay, so it asserts the tier's effect on this
+  // number instead of on live scent-point aging.
+  window.ForestEngine.qaProbeScentLifetime = function(){ return effectiveScentLifetime(tierOf(embers, 'quietStep')); };
+
+  // [QA-HOOK] LUL-2351: throwablesReserve + heldThrowable + the purchase-cue fire count,
+  // so a spec can assert Pocket Stones granted +2 throws and that buying anything played
+  // the cue-triple's audio leg, without decoding actual WebAudio output.
+  window.ForestEngine.qaProbeEmbersPurchase = function(){
+    return { throwablesReserve, heldThrowable, purchaseCueCount: qaEmbersPurchaseCueCount };
+  };
   // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
   // mission prompt and the objective are all on screen at once. Returns the target or null.
   window.ForestEngine.qaTeleportNearMission = function(){
@@ -4952,6 +4973,9 @@ function grabThrowable(){
 function throwThrowable(){
   if(!canThrowThrowable(heldThrowable)) return;
   heldThrowable = false;
+  // LUL-2351: Pocket Stones -- re-arm from the reserve immediately, same as enter()'s
+  // initial arm, so a thrown reserve stone is replaced without a map pickup.
+  if(!heldThrowable && throwablesReserve > 0){ heldThrowable = true; throwablesReserve--; }
   const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
   const landX = player.x + fx * THROWABLE_THROW_DISTANCE;
   const landZ = player.z + fz * THROWABLE_THROW_DISTANCE;
@@ -5034,6 +5058,22 @@ function missionCompleteSting(){
   const og = ctx.createGain();
   og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(0.18, t+0.03); og.gain.exponentialRampToValueAtTime(0.0001, t+0.4);
   o.connect(og); og.connect(master); og.connect(conv); o.start(t); o.stop(t+0.42);
+}
+// LUL-2351: decisions/0015-cue-triple's audio leg for every SHOP_CATALOG purchase
+// (Deeper Lungs included -- it had no purchase sound before this ticket; making
+// purchase() one shared function for all three items closes that gap as a side effect,
+// not a separate retrofit). qaEmbersPurchaseCueCount lets e2e assert it fired without
+// decoding actual audio output.
+let qaEmbersPurchaseCueCount = 0;
+function embersPurchaseCue(){
+  qaEmbersPurchaseCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(440, t); o.frequency.exponentialRampToValueAtTime(880, t + 0.12);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.35);
 }
 // LUL-1904: cave detection-immunity cues -- distinct register from
 // missionCompleteSting() above and from every other cue in the game (veil is
@@ -5225,19 +5265,31 @@ function setSensitivity(v){ sensMul = clamp(v, 0.25, 3); pushState({ sensitivity
 function setInvertY(v){ invertY = !!v; pushState({ invertY }); }
 function setReducedMotion(v){ reducedMotionSetting = !!v; pushState({ reducedMotion: reducedMotionSetting }); }
 function setCaptions(v){ captionsOn = !!v; pushState({ captionsOn }); }
-// LUL-1043: sync from components/Hud.tsx's localStorage read, once on mount --
-// same "engine owns the state, React persists it" split as setDifficulty/
-// setRunMode/etc. above (see SettingsPanel.tsx's identical apply-on-ready
-// effect). Bypasses earn/spend logic entirely -- this only ever restores a
-// prior balance, it never grants or charges Embers.
-function setEmbers(balance, deeperLungsTier){
-  const tier = Math.max(0, Math.min(DEEPER_LUNGS_MAX_TIER, Math.floor(deeperLungsTier) || 0));
-  embers = { balance: Math.max(0, Math.floor(balance) || 0), tiers: { deeperLungs: tier } };
-  pushState({ embersBalance: embers.balance, embersDeeperLungsTier: tier });
+// LUL-1043/LUL-2351: sync from components/Hud.tsx's localStorage read, once on mount --
+// same "engine owns the state, React persists it" split as setDifficulty/setRunMode/etc.
+// above. Bypasses earn/spend logic entirely -- this only ever restores a prior balance,
+// it never grants or charges Embers. Clamps every known catalog id to its own max tier and
+// silently drops unknown keys, so a future catalog change or a hand-edited localStorage
+// value can't hand out an out-of-range tier.
+function setEmbers(balance, tiers){
+  const clamped = {};
+  for(const item of SHOP_CATALOG){
+    const raw = tiers && tiers[item.id];
+    const t = Math.max(0, Math.min(item.costs.length, Math.floor(raw) || 0));
+    if(t > 0) clamped[item.id] = t;
+  }
+  embers = { balance: Math.max(0, Math.floor(balance) || 0), tiers: clamped };
+  pushState({ embersBalance: embers.balance, embersTiers: { ...embers.tiers } });
 }
-function purchaseDeeperLungs(){
-  embers = economyPurchaseDeeperLungs(embers);
-  pushState({ embersBalance: embers.balance, embersDeeperLungsTier: embers.tiers.deeperLungs });
+// LUL-2351: generic replacement for purchaseDeeperLungs -- one action for every
+// SHOP_CATALOG item. economyPurchase() returns the same `embers` reference, unchanged,
+// on a no-op (unaffordable/maxed/unknown id), so the reference check below only fires
+// the cue-triple's audio cue on a real purchase.
+function purchase(id){
+  const before = embers;
+  embers = economyPurchase(embers, id);
+  pushState({ embersBalance: embers.balance, embersTiers: { ...embers.tiers } });
+  if(embers !== before) embersPurchaseCue();
 }
 // LUL-1666: sync from components/Hud.tsx's localStorage read, once on mount
 // -- identical split to setEmbers() above (engine owns the state, React
@@ -5475,7 +5527,7 @@ function stepFrame(dt, t){
   // the veil active.
   const veilHeld = playing && (!!keys['KeyF'] || touchVeil);
   // LUL-1043: Deeper Lungs' lever -- 5s base, +1s per tier purchased.
-  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked, reserve: veilReserve }, veilHeld, dt, veilMaxHoldForTier(embers.tiers.deeperLungs));
+  const veilStep = stepVeilCharge({ charge: veilCharge, locked: veilLocked, reserve: veilReserve }, veilHeld, dt, veilMaxHoldForTier(tierOf(embers, 'deeperLungs')));
   const reserveFired = veilReserve && !veilStep.reserve;   // LUL-1210: charm consumed this frame
   veilCharge = veilStep.charge; veilLocked = veilStep.locked; veilReserve = veilStep.reserve;
   if(reserveFired){
@@ -5972,7 +6024,7 @@ function stepFrame(dt, t){
     const framePoints = [];
     for(let i = 0; i < scentPoints.length && n < SCENT_TRAIL_MAX; i++){
       const s = scentPoints[i], age = t - s.t0;
-      if(age < 0.6 || isScentExpired(age)) continue;   // the mote under the player's own feet
+      if(age < 0.6 || isScentExpired(age, effectiveScentLifetime(tierOf(embers, 'quietStep')))) continue;   // the mote under the player's own feet
       const d = driftedScentPosition(s, age, windX, windZ);
       // Same wrapDelta() a wrapped-world checkScent() uses (lib/game/scent.ts's
       // isScentDetected), so a wrapped point renders as its nearest image to
@@ -5980,7 +6032,7 @@ function stepFrame(dt, t){
       const rx = player.x + wrapDelta(d.x, player.x, WRAP_SPAN);
       const rz = player.z + wrapDelta(d.z, player.z, WRAP_SPAN);
       const ry = 0.22 + (motionReduced() ? 0 : 0.06 * Math.sin(t*2 + i));
-      const alpha = Math.max(0, (1 - age/SCENT_LIFETIME) * (1 - 0.7*veilAmount) * (s.radius / SCENT_RADIUS_RUN));
+      const alpha = Math.max(0, (1 - age/effectiveScentLifetime(tierOf(embers, 'quietStep'))) * (1 - 0.7*veilAmount) * (s.radius / SCENT_RADIUS_RUN));
       scentTrailPos[n*3] = rx; scentTrailPos[n*3+1] = ry; scentTrailPos[n*3+2] = rz;
       scentTrailCol[n*3]   = SCENT_TRAIL_COLOR.r * alpha;
       scentTrailCol[n*3+1] = SCENT_TRAIL_COLOR.g * alpha;
@@ -6278,7 +6330,7 @@ tick();
            triggerTouchThrow,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
-           setEmbers, purchaseDeeperLungs,
+           setEmbers, purchase,
            // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.
            setMissionUnlocks, setSecondaryChoice,
            setScentTrailVisible,

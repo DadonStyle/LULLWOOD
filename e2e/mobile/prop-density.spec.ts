@@ -4,6 +4,7 @@
 // Landscape viewport, same shape as e2e/mobile/jump.spec.ts.
 import { test, expect } from '@playwright/test';
 import { boot, QA_PINNED_SEED, qaHook } from '../helpers';
+// fullmap-reason: measures per-chunk prop caps over the full chunk grid on a phone viewport (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 test.use({ viewport: { width: 727, height: 393 } });
 
@@ -12,8 +13,8 @@ const MIN_SPACING = 3.5;
 const SLOP = 1e-6;
 
 for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_PINNED_SEED + 3]) {
-  test(`prop density respects per-chunk caps and minimum spacing at seed ${seed}`, async ({ page }) => {
-    await boot(page, { qaHooks: true, seed });
+  test(`prop density respects per-chunk caps and minimum spacing at seed ${seed} @fullmap`, async ({ page }) => {
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed });
 
     const density = await qaHook(page, 'qaProbePropDensity');
 
