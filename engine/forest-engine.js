@@ -13,6 +13,7 @@
 import * as THREE from 'three';
 import { track } from '@/lib/analytics';
 import { jumpOffset, JUMP_DURATION } from '@/lib/game/jump';
+import { toggleFullscreen } from '@/lib/game/fullscreen';
 import {
   freshRunState,
   isPlaying,
@@ -2771,6 +2772,22 @@ on(window, 'keydown', e => {
   keys[e.code] = true;
   skipCutsceneIfAllowed();
   const playing = isPlaying(runState());
+  // LUL-2310: F11 (Chromium/Firefox's own fullscreen key -- see the browser
+  // collision matrix in the ticket) and Alt+Enter (the cross-browser game
+  // convention, since F11 alone does nothing on macOS without Fn held) both
+  // drive the same toggleFullscreen() the GameMenu button calls. `e.repeat`
+  // is dropped so holding either down doesn't spam requestFullscreen/exit
+  // calls every OS auto-repeat tick. preventDefault() on F11 is what stops
+  // Chromium/Firefox's *own* fullscreen handling from firing alongside this
+  // one -- without it the browser goes fullscreen but `document.
+  // fullscreenElement` stays null, so the menu label and this toggle both
+  // desync from what's on screen. Gated on `!won && !dead` (not `playing`,
+  // which also requires `entered`) so it works on the gate screen too, just
+  // not once an end screen is up.
+  if((e.code === 'F11' || (e.code === 'Enter' && e.altKey)) && !e.repeat && !won && !dead){
+    e.preventDefault();
+    toggleFullscreen();
+  }
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
   // LUL-26: toggle-run edge-triggers off keydown (not keyup) so the very
   // press that would have started a hold-run also starts a toggle-run --

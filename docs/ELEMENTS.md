@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6058 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5321, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6075 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5338, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1159,6 +1159,30 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   the clearance push moved from keying off `data-admin-mode="1"` to keying
   off `data-show-minimap="1"`, since it tracks the minimap's own visibility,
   not admin mode's.
+  LUL-2310: fullscreen has a second entry point besides `GameMenu.tsx`'s
+  `menuFullscreen` button -- **F11** and **Alt+Enter** (`engine/
+  forest-engine.js`'s `keydown` handler), both routed through one shared
+  module, `lib/game/fullscreen.ts` (`toggleFullscreen`/`fullscreenSupported`/
+  `isFullscreenActive`), so the button and the keys can never implement two
+  different fullscreen behaviours the way EngineActions and init()'s return
+  object once drifted (LUL-1697). The module also adds the `webkit`-prefixed
+  fallback (`webkitRequestFullscreen`/`webkitExitFullscreen`/
+  `webkitFullscreenElement`/`webkitfullscreenchange`) Safari < 16.4 needs --
+  `fullscreenSupported()` is true if either the unprefixed or webkit API is
+  present, so `menuFullscreen` now renders there too. Browser collision
+  matrix (ticket has the full writeup): F11 is Chromium/Firefox's own
+  fullscreen key, so the keydown handler calls `e.preventDefault()` on it
+  before toggling, or the browser's own handling fires alongside this one and
+  `document.fullscreenElement` desyncs from what's on screen; Alt+Enter is
+  the fallback since F11 alone does nothing on macOS Chromium without Fn
+  held, and Firefox is inconsistent about whether the page ever sees F11 at
+  all. iOS/iPadOS Safari exposes neither API for a non-`<video>` element, so
+  the key does nothing and the button stays absent there, unchanged from
+  before. The keydown branch gates on `!won && !dead` rather than the usual
+  `isPlaying(runState())`, since it's meant to work on the pre-entry gate
+  screen too and only end screens should suppress it; `e.repeat` is dropped
+  so holding either combo down doesn't spam request/exit calls every OS
+  auto-repeat tick.
   LUL-2131: `#windIndicator`/`#windIndicatorHint` (and `#throwPrompt`, `#actionPrompt`,
   `#captionToast`, all `components/Hud.tsx`) now also gate on `!state.winVisible &&
   !state.deathVisible` -- `state.entered` alone stays true through both end screens
@@ -1346,7 +1370,7 @@ design doc as turning horror into radar.
     and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3182),
-  reset to 0 on `enter()` (L3384) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3401) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5208: `computeDepth(maxDistFromHome) +
