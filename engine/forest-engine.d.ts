@@ -90,6 +90,29 @@ declare global {
         total: number;
         reedsInLakeClear: number;
       };
+      /** LUL-1487 (E6), extended by LUL-2249: `chunks`/`instantiated` are the
+       * count of currently-live (ring-streamed) tree chunks, `populated` is
+       * every chunk that has tree data regardless of live state, `totalInstances`
+       * is the summed instance count across live chunks, and `expected` is
+       * every tree whose chunk is currently live -- `totalInstances` must
+       * equal `expected`. Was pre-existing/untyped (LUL-2257's own note);
+       * declared now that this ticket extends the contract. */
+      qaProbeTreeChunks?: () => {
+        chunks: number;
+        instantiated: number;
+        populated: number;
+        totalInstances: number;
+        expected: number;
+      };
+      /** LUL-2249: the ring-streamed chunk lifecycle's own live state --
+       * which chunk ids are currently live, how many cover/bog chunks of
+       * those are live, and the player's own current chunk id. */
+      qaProbeChunkStreaming?: () => {
+        liveChunks: number[];
+        coverLive: number;
+        bogLive: number;
+        playerChunk: number;
+      };
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
       /** Same as qaLurePredator, filtered to the given species. Returns the
