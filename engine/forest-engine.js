@@ -5806,14 +5806,18 @@ function stepFrame(dt, t){
     }
     if(hintActiveKey){
       const key = hintActiveKey;
-      const [eligible] = hintCandidate(key);
-      if(!baseHintEligible || !eligible){
-        hintActiveKey = null;
+      const elapsed = t - hintActiveStartT;
+      // Check event/timeout dismissal before eligibility: for wolf/bear/lion/cover/
+      // throwable/stamina the dismissing interaction itself (hide, grab, stamina
+      // regen) also flips eligibility false in this same frame, so eligibility-loss
+      // must not preempt marking the hint seen (LUL-2307 review fix).
+      if(elapsed >= 8 || hintDismissedByEvent(key, hintDismissBaseline)){
+        markHintSeen(key); hintActiveKey = null;
         pushState({ hintVisible: false });
       } else {
-        const elapsed = t - hintActiveStartT;
-        if(elapsed >= 8 || hintDismissedByEvent(key, hintDismissBaseline)){
-          markHintSeen(key); hintActiveKey = null;
+        const [eligible] = hintCandidate(key);
+        if(!baseHintEligible || !eligible){
+          hintActiveKey = null;
           pushState({ hintVisible: false });
         } else if(WORLD_HINT_KEYS[key]){
           const [, anchor] = hintCandidate(key);
