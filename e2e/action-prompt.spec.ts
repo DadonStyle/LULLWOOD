@@ -37,10 +37,15 @@ const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 test.describe('#actionSlot — hide and veil contextual prompt row', () => {
   test('calm cover prompt: shown at a bramble bush', async ({ page }) => {
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
-    // Teleport to the nearest hide spot (known bramble at seed=20260718)
+    // LUL-2329: build the exact bramble this test needs instead of relying on
+    // the micro preset's own random cover generation -- no predator is used
+    // anywhere in this test, so qaBuildScene's inert-every-unlisted-predator
+    // side effect (see docs/specs/lul-2329-e2e-migrate-qaworld-micro.md) is a
+    // no-op here.
+    await qaHook(page, 'qaBuildScene', { props: [{ kind: 'bramble', x: 10, z: 0 }] });
     const kind = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
     expect(kind, 'qaTeleportToHideSpot returned null — no hide spot at this seed').not.toBeNull();
 
@@ -64,7 +69,7 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
 
   test('urgent cover prompt: data-tone="urgent" when predator chases within range', async ({ page }) => {
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     // Teleport to hide spot first, then stage a lion chase nearby
@@ -87,7 +92,7 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
 
   test('cover wins over veil — only cover string renders when both conditions hold', async ({ page }) => {
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     // Place player 0.5 units outside the hide spot's AABB edge (not at center)
@@ -119,7 +124,7 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
   test('no nowrap overflow and no mobile-control collision at 390px', async ({ page }) => {
     // Use mobile viewport (390px wide, 844px tall — iPhone 12)
     await page.setViewportSize({ width: 390, height: 844 });
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.());
@@ -158,7 +163,7 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
   test('reduced motion: animation-name is none on the urgent row\'s keycap when media query emulated', async ({ page }) => {
     const errs = trackConsoleErrors(page);
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.());
@@ -186,7 +191,7 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
 // inside #actionSlot (components/Hud.tsx).
 test.describe('#actionSlot row order', () => {
   test('five rows are always mounted, top to bottom in priority order', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     const ids = await page.evaluate(() => Array.from(document.querySelectorAll('#actionSlot > *')).map((el) => el.id));

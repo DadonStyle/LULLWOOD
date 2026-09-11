@@ -37,9 +37,14 @@ test.describe('telemetry transport — fire-and-forget guarantee', () => {
       await route.fulfill({ status: 204, body: '' });
     });
 
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
+    // LUL-2329: isolate every other predator first (qaBuildScene parks any
+    // predator not listed as `inert`) so the shrunk qaWorld=micro map can't
+    // let an unrelated species reach the player first -- see
+    // docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: 6, z: 0 }] });
     // Lure the nearest predator into catch range. qaLurePredatorKind puts the
     // nearest predator of the given species into hunt mode, it closes the
     // distance, and the catch + triggerDeath paths run normally.
@@ -60,7 +65,7 @@ test.describe('telemetry transport — fire-and-forget guarantee', () => {
       await route.fulfill({ status: 204, body: '' });
     });
 
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     // Teleport near the baby then home — the same path smoke.spec.ts and
