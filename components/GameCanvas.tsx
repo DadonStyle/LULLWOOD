@@ -398,9 +398,15 @@ const OVERLAY_STYLE = `
      the moment caveImmuneT reaches 0, before the panel disappears). */
   #hintCaption[data-hint-key="caveImmune"] { left: 50%; top: 92px; transform: translateX(-50%); }
   /* LUL-2158 precedent (see #hint above): a fast death/win must never leave this
-     stranded over the end screen. */
+     stranded over the end screen. LUL-2411: opacity: 0 alone left the fixed-position
+     box's rect in place -- on mobile-pixel5-landscape the "deepwater" variant's
+     top:110px/left:16px rect still overlapped .actionPromptLine's "nowhere to hide --
+     HOLD" text while it (and #hintCaption) both remained painted through the
+     try-again/win-input-battery transition, tripping the deterministic bounding-box
+     audit exactly like #hint used to. display: none collapses the box itself. */
   body:has(#winScreen) #scentTrailCaption, body:has(#winScreen) #hintCaption,
-  body:has(#deathScreen) #scentTrailCaption, body:has(#deathScreen) #hintCaption { opacity: 0 !important; }
+  body:has(#deathScreen) #scentTrailCaption, body:has(#deathScreen) #hintCaption {
+    display: none !important; }
 
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;
@@ -502,6 +508,30 @@ const OVERLAY_STYLE = `
        !important beats the engine's own inline hint.style.opacity writes
        (same precedent as the win/death :has() rules above). */
     #hint { display: none !important; }
+    /* LUL-2414: the bottom self-anchored #hintCaption family (lake/bog/stamina/
+       veil/landmark, see the "Self/panel-anchored keys" rule above) positions
+       itself at bottom: action-slot-bottom + action-slot-height + 10px --
+       190px + 176px + 10px = 376px at this breakpoint's own row/gap sizes,
+       taller than a 375px-tall viewport (iPhone SE landscape), so the pill
+       renders fully above the top edge ("offscreen" per the audit) regardless
+       of which of the five keys fires -- unlike #hint, e2e/mobile/hints.spec.ts
+       requires the landmark variant to stay legible at this exact breakpoint, so
+       hiding it outright isn't an option here. There is no room left *above*
+       #actionSlot (it now starts near the very top, see the comment above), but
+       MobileControls.tsx's touch-control wrapper (bottom: 24px + safe-area,
+       each stick/button column ~128px wide, anchored at the left/right edges via
+       justify-content: space-between) leaves a horizontally-centred gap clear of
+       both columns, in the band between #actionSlot's own bottom edge and the
+       touch-control wrapper's bottom edge. Re-anchor top (from #actionSlot's
+       bottom edge, 100vh - action-slot-bottom, plus a small gap) instead of
+       bottom, and narrow max-width so it can't reach either stick column on the
+       narrowest supported width (iPhone SE landscape, 667px). */
+    #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
+    #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
+    #hintCaption[data-hint-key="landmark"] {
+      top: calc(100vh - var(--action-slot-bottom) + 12px); bottom: auto;
+      max-width: min(60vw, 300px);
+    }
   }
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
