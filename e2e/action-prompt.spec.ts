@@ -72,11 +72,21 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
-    // Teleport to hide spot first, then stage a lion chase nearby
-    await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.());
-    // qaOpenHideNearLion places the lion 4 units away in chase state — well within COVER_URGENT_RANGE (22)
-    const lionResult = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLion?.() ?? null);
-    expect(lionResult, 'qaOpenHideNearLion returned null — no lion at this seed').not.toBeNull();
+    // LUL-2358: qaOpenHideNearLion() (used here previously) resets player.x/z
+    // to the spawn clearing to guarantee its own cover-free scenario, which
+    // clobbers a prior qaTeleportToHideSpot() call -- the throttled cover
+    // probe's next fire then finds no hide spot at the clearing and
+    // coverPromptVisible never goes true (engine/forest-engine.js's
+    // qaOpenHideNearLionAtHideSpot doc comment already flags this exact
+    // composition). Worse, that combo also placed the lion only 4 units out
+    // in 'chase'+hunt state -- inside its own catch range (rad+CATCH_MARGIN)
+    // after ~0.18s at the lion's tuning.js speed (9.2), faster than even the
+    // probe's own 1/6s period, so the player was caught and triggerDeath()
+    // fired before data-tone could ever read "urgent". Use the hook built for
+    // "cover + chasing, sighted lion at once, standoff far enough to not
+    // catch" instead -- the same one "cover wins over veil" below relies on.
+    const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
+    expect(staged, 'qaOpenHideNearLionAtHideSpot returned null — no hide spot or lion at this seed').not.toBeNull();
 
     // LUL-2107: park the real RAF loop and advance enough game time
     // (well over the probe's 1/6s threshold) to force the throttled cover
@@ -96,8 +106,10 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     await enter(page);
 
     // Place player 0.5 units outside the hide spot's AABB edge (not at center)
-    // and a chasing lion 4 units further in the same direction -- both cover and
-    // veil conditions true at once, and hasLOS() is unblocked by the prop itself.
+    // and a chasing lion LION_STANDOFF (14) units further in the same direction
+    // -- both cover and veil conditions true at once, hasLOS() is unblocked by
+    // the prop itself, and the lion is far enough out it can't close to catch
+    // range before this test's own assertions run (LUL-2358).
     const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
     expect(staged, 'qaOpenHideNearLionAtHideSpot returned null — no hide spot or lion at this seed').not.toBeNull();
 
@@ -127,8 +139,11 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
-    await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.());
-    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLion?.());
+    // LUL-2358: qaOpenHideNearLionAtHideSpot() stages cover + a chasing,
+    // sighted lion together -- see the comment on the "urgent cover prompt"
+    // test above for why qaTeleportToHideSpot()+qaOpenHideNearLion() (used
+    // here previously) never reaches data-tone="urgent".
+    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
@@ -166,8 +181,10 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
-    await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.());
-    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLion?.());
+    // LUL-2358: see the comment on the "urgent cover prompt" test above for
+    // why qaTeleportToHideSpot()+qaOpenHideNearLion() (used here previously)
+    // never reaches data-tone="urgent".
+    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
