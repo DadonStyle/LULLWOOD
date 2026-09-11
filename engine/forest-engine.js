@@ -2211,7 +2211,10 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // player already gets at :3173/:3179, applied to this predator's own (x,z).
     // LUL-1861: bog component dropped here -- LUL-1483's speed *= bogSpeedMultiplier(biomeAt(...))
     // below already applies bog once, terminally; keeping it here too double-applies it.
-    const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
+    // LUL-2422: CONFIG.speedScaleMul (default 1, set by applyQaWorldMicroPreset) folded in
+    // here so every `*pLakeMul` speed site below is scaled together -- mirrors detectScaleMul's
+    // fold-in at effectiveDetect() (LUL-2407).
+    const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake)) * (CONFIG.speedScaleMul || 1);
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
     // ticks in every state, so a lock set during `chase` has actually

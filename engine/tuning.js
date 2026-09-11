@@ -19,6 +19,11 @@ export const CONFIG = {
   detectScaleMul: 1,     // LUL-2407: predator detect-radius multiplier; applyQaWorldMicroPreset()
                           // scales this down to match the shrunk map so spawn distance keeps the
                           // same safety margin against detect radius. 1 = full-map, no-op default.
+  speedScaleMul: 1,       // LUL-2422: predator movement-speed multiplier (folded into pLakeMul in
+                          // the main predator loop, forest-engine.js). detectScaleMul alone wasn't
+                          // enough -- a full-speed predator can still wander/chase into a scripted
+                          // QA teleport target well within a scenario's ~8s window on the shrunk
+                          // map. applyQaWorldMicroPreset() scales this down too. 1 = full-map default.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
@@ -210,6 +215,9 @@ export function applyQaWorldMicroPreset(){
   CONFIG.bogReeds = 0;
   CONFIG.detectScaleMul = 0.2;   // LUL-2407: same 96/480 ratio the map itself shrinks by --
                                   // restores the full map's spawn-distance-to-detect-radius margin.
+  CONFIG.speedScaleMul = 0.2;    // LUL-2422: same 96/480 ratio -- keeps a predator's crossing time
+                                  // across the shrunk map proportional to the full map, so scripted
+                                  // qaTeleportNear*/staged scenarios keep the same safety window.
 }
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two

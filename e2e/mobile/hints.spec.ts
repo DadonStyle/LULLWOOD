@@ -63,6 +63,9 @@ for (const viewport of VIEWPORTS) {
       await boot(page, { qaHooks: true });
       await enterMobile(page);
       await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+      // LUL-2422: see ../hints.spec.ts's landmark test comment -- park predators before
+      // idling at spawn through the two back-to-back 8s+ windows below.
+      await qaHook(page, 'qaBuildScene', { predators: [] });
 
       await qaHook(page, 'qaAdvance', stepsFor(0.1));
       expect((await qaHook(page, 'qaProbeHints')).activeKey).toBe('landmark');
@@ -91,6 +94,9 @@ for (const viewport of VIEWPORTS) {
       await boot(page, { qaHooks: true });
       await enterMobile(page);
       await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+      // LUL-2422: see ../hints.spec.ts's lake test comment -- park predators before the
+      // multi-round preemptive-hint drain below.
+      await qaHook(page, 'qaBuildScene', { predators: [] });
       await clearPreemptiveHints(page);
 
       await qaHook(page, 'qaTeleportTo', CONFIG.lake.x, CONFIG.lake.z);
