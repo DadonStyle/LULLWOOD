@@ -13,7 +13,7 @@ const MIN_SPACING = 3.5;
 const SLOP = 1e-6;
 
 for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_PINNED_SEED + 3]) {
-  test(`prop density respects per-chunk caps and minimum spacing at seed ${seed}`, async ({ page }) => {
+  test(`prop density respects per-chunk caps and minimum spacing at seed ${seed} @fullmap`, async ({ page }) => {
     await boot(page, { qaWorld: 'full',  qaHooks: true, seed });
 
     const density = await qaHook(page, 'qaProbePropDensity');

@@ -59,6 +59,15 @@ const bootsFull = (src: string) =>
   // a bare goto to the game page without asking for the micro world
   /page\.goto\(\s*['"`]\/(?:\?(?![^'"`]*qaWorld=micro)[^'"`]*)?['"`]/.test(src);
 
+// The tag only counts inside a `test(` / `test.describe(` TITLE string -- that is what
+// Playwright's grep/grepInvert match. A `// fullmap-reason:` comment that quotes the
+// word is not a tag (Code Reviewer on PR #583 caught exactly that false pass).
+const TITLE_RE = /\btest(?:\.describe)?(?:\.(?:only|skip|fixme|serial|parallel))*\(\s*(['"`])([\s\S]*?)\1/g;
+const hasFullmapTitle = (src: string): boolean => {
+  for (const m of src.matchAll(TITLE_RE)) if (m[2].includes('@fullmap')) return true;
+  return false;
+};
+
 test('e2e specs exist and are readable', () => {
   assert.ok(files.length > 50, `expected the e2e suite, found ${files.length} spec files`);
 });
@@ -68,7 +77,7 @@ test('every spec that boots the full map is tagged @fullmap, gives a reason, and
   for (const { rel, src } of files) {
     if (!bootsFull(src)) continue;
     const problems: string[] = [];
-    if (!/@fullmap/.test(src)) problems.push('missing @fullmap in a test title');
+    if (!hasFullmapTitle(src)) problems.push('missing @fullmap inside a test()/test.describe() title (a comment does not count)');
     if (!/\/\/\s*fullmap-reason:/.test(src)) problems.push('missing a `// fullmap-reason:` line');
     if (!(rel in FULLMAP_ALLOWLIST)) problems.push('not on FULLMAP_ALLOWLIST in lib/e2e-policy/world-policy.test.ts');
     if (problems.length) offenders.push(`${rel}: ${problems.join('; ')}`);
@@ -79,7 +88,7 @@ test('every spec that boots the full map is tagged @fullmap, gives a reason, and
 test('@fullmap files carry a reason and boot full explicitly (no accidental micro tag)', () => {
   const offenders: string[] = [];
   for (const { rel, src } of files) {
-    if (!/@fullmap/.test(src)) continue;
+    if (!hasFullmapTitle(src)) continue;
     if (!/\/\/\s*fullmap-reason:/.test(src)) offenders.push(`${rel}: @fullmap without fullmap-reason`);
     if (!bootsFull(src)) offenders.push(`${rel}: tagged @fullmap but never boots the full map -- drop the tag`);
   }
