@@ -485,6 +485,23 @@ const OVERLAY_STYLE = `
   @media (max-height: 420px) and (pointer: coarse) and (hover: none),
          (max-height: 420px) and (max-width: 768px) {
     body { --action-slot-bottom: 190px; }
+    /* LUL-2410: --action-slot-bottom: 190px above pushes #actionSlot's rows
+       (grid-template-rows starting with the charge row) up near the very top
+       of a short landscape phone viewport (e.g. 667x375) -- there's no gap
+       left below #gate's header controls to also fit #hint's fixed top: 64px
+       band, so the objective row's .actionPromptLine sat on the same line as
+       #hint's text (73% box overlap, iPhone SE landscape). #hint is a
+       transient onboarding caption (engine fades it out 5s after enter(),
+       see the LUL-2158 comment above) and the objective/hide/throwable pills
+       in #actionSlot already carry the info a player needs at this size, so
+       drop it here rather than fight for vertical space. display: none (not
+       opacity: 0) so the box itself collapses to nothing -- the founder rule
+       is "boxes must never intersect", and an opacity-hidden #hint would
+       still occupy its top: 64px rect and keep tripping the deterministic
+       DOM-bounding-box audit even though nothing is visibly drawn there.
+       !important beats the engine's own inline hint.style.opacity writes
+       (same precedent as the win/death :has() rules above). */
+    #hint { display: none !important; }
   }
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
