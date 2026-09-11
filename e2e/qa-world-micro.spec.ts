@@ -3,7 +3,7 @@
 // OOM-killed the nightly QA host). Specs here are what child 2/2 (the e2e
 // suite migration) builds on -- see docs/specs/lul-2328-qa-world-micro-hooks.md.
 import { test, expect } from '@playwright/test';
-import { boot, qaHook } from './helpers';
+import { boot, enter, qaHook } from './helpers';
 
 test.describe('qaWorld=micro boot preset', () => {
   test('boots a small, cheap world', async ({ page }) => {
@@ -71,6 +71,51 @@ test.describe('detectScaleMul', () => {
     const near = await qaHook(page, 'qaPredatorState', 0);
     expect(near).toMatchObject({ kind: 'wolf', dist: 5 });
     expect(near.canSee).toBe(true);
+  });
+});
+
+test.describe('speedScaleMul', () => {
+  // LUL-2469: CONFIG.speedScaleMul (LUL-2422) was folded into pLakeMul and applied to every
+  // `*pLakeMul` speed site in updatePredators() except one -- the roam state's waypoint-travel
+  // leg, which was left as a bare `speed=2.3` literal. That's exactly the case the fix's own
+  // motivating comment names ("a full-speed predator can still wander/chase into a scripted QA
+  // teleport target"), so a roaming (never-alerted) predator kept crossing the shrunk micro map
+  // at the full-map speed. Exercise the actual crossing speed via qaPredatorState(idx).x/z deltas
+  // across fixed-step ticks, not just that the hint specs pass with predators emptied out.
+  test('scales roam-state wander speed with the micro map', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    // updatePredators() only runs `if(playing)` (forest-engine.js) -- without entering the
+    // game (past the click-to-start gate) qaAdvance() ticks the clock but predators never move.
+    await enter(page);
+
+    const FIXED_DT = 0.05;
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    // Spawned well clear of CONFIG.lake (x:34,z:-28,r:15) so pLakeMul's lake component stays 1 --
+    // isolates speedScaleMul as the only multiplier in play. Child relocated to CRY_NOISE_RADIUS
+    // (32, lib/game/noise.ts) clear of the predator too -- otherwise the unconditional per-tick
+    // cry-noise roll (Math.random(), not the seeded rng) can flip roam->investigate mid-measurement
+    // and this would flakily measure the investigate/approach leg's `p.spec.speed*pLakeMul` instead.
+    await qaHook(page, 'qaBuildScene', {
+      predators: [{ kind: 'wolf', x: -30, z: 0, state: 'roam' }],
+      child: { x: 40, z: 40 },
+    });
+    // qaBuildScene() seeds wpx/wpz == spawn (x,z), so wd==0 < 2.5 on the very first tick and the
+    // roam branch immediately calls pickRoamWaypoint() for a real (far) target -- one step to get
+    // past that pick, then a warm-up run so the velocity-smoothing accel (`dt*3.6` per tick) has
+    // converged on the target speed before measuring, so the ramp-up transient doesn't bias it low.
+    await qaHook(page, 'qaAdvance', 1);
+    await qaHook(page, 'qaAdvance', 40); // 2s game time, ~99.98% converged (0.82^40)
+
+    const before = await qaHook(page, 'qaPredatorState', 0);
+    const MEASURE_STEPS = 20; // 1s game time
+    await qaHook(page, 'qaAdvance', MEASURE_STEPS);
+    const after = await qaHook(page, 'qaPredatorState', 0);
+
+    const dist = Math.hypot(after.x - before.x, after.z - before.z);
+    const actualSpeed = dist / (MEASURE_STEPS * FIXED_DT);
+    // applyQaWorldMicroPreset() sets speedScaleMul=0.2 -- the roam literal's un-scaled speed is
+    // 2.3, so the fixed crossing speed here must be ~0.46 units/s, not the bug's full 2.3.
+    expect(actualSpeed).toBeCloseTo(2.3 * 0.2, 1);
   });
 });
 

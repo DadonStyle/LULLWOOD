@@ -2256,6 +2256,12 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       } else {
         p.charge = cs;
         facePlayer = cs.phase === 'telegraph';
+        // LUL-2469: chargeSpeed(cs.distance) intentionally not folded into pLakeMul/speedScaleMul --
+        // a charge only starts from 'chase' once canSee()+playerCanSee() both already hold (see the
+        // startCharge() call below), and canSee() is already scaled by CONFIG.detectScaleMul (LUL-2407),
+        // so on the QA micro map a charge can't begin until the predator is within the shrunk detect
+        // radius in the first place. speedScaleMul's problem case (roam wander crossing the map at full
+        // speed pre-detection) doesn't apply here.
         if(cs.phase !== 'telegraph'){ desx = p.chargeDirX; desz = p.chargeDirZ; speed = chargeSpeed(cs.distance); }
       }
     }
@@ -2358,7 +2364,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
           p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.x, WRAP_SPAN) : clamp(kept.x,-half+4,half-4);
           p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.z, WRAP_SPAN) : clamp(kept.z,-half+4,zMax-4); }
-        else { desx=wx/wd; desz=wz/wd; speed=2.3; }
+        else { desx=wx/wd; desz=wz/wd; speed=2.3*pLakeMul; }
       }
     } else if(p.state === 'chase'){
       // While scentLock (LUL-23) holds, this chase was triggered by a stale
