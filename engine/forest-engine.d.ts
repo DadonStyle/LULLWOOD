@@ -382,10 +382,19 @@ declare global {
        * look-input path writes) so a test can turn to face its own scent
        * trail without pointer lock. Read-only otherwise -- no movement. */
       qaSetLookYaw?: (rad: number) => void;
-      /** LUL-2230: clears the persisted `lullwood:scentTrailCaptionSeen` flag
-       * and the in-memory one-time gate, so a single boot can prove the
-       * caption is first-time-only twice in the same test. */
+      /** LUL-2230/LUL-2307: clears the persisted "seen" flag and in-memory gate for
+       * the 'scent' hint only, so a single boot can prove the caption is
+       * first-time-only twice in the same test. Thin alias over the generic hint
+       * registry -- prefer qaResetHints() for new tests. */
       qaResetScentCaption?: () => void;
+      /** LUL-2307: the active first-encounter hint's key (null if none) plus the
+       * full seen-map by key, so a test can assert both "this hint showed" and "no
+       * other hint has been marked seen yet" without racing the 8s/dismiss timer. */
+      qaProbeHints?: () => { activeKey: string | null; seen: Record<string, boolean> };
+      /** LUL-2307: clears every hint's persisted "seen" flag and the in-memory
+       * gate (all keys, not just 'scent') -- the same resetHints() SettingsPanel's
+       * "Reset hints" button calls in real play. */
+      qaResetHints?: () => void;
       /** LUL-2328: builds a minimal, exact scene -- no rng, no full
        * generateMap() -- for tests that don't need the real procedural
        * forest. Clears and replaces treeData/coverData/bogTreeData and every

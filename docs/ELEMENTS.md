@@ -731,6 +731,10 @@ one geometry builder (`makePredator()`), differentiated by the
   player does. The `charge` dash is explicitly exempt (LUL-1309).
 - Bias the ambient "twinkle" chime to play brighter/more often when the
   player is near it (`distLake < CONFIG.lake.r*3`, `tick()`).
+- Explain itself once: the first step into `inLakeWater()` fires the `lake`
+  first-encounter hint ("chest-deep water — half pace. predators wade too"),
+  persisted so it only ever shows once per install. See "Hints" below and
+  `docs/specs/lul-2307-first-encounter-hints.md`.
 - Deflect a predator's roam/stuck-recovery waypoint: `updatePredators()`'s
   two waypoint-pick sites (fresh roam target, and the stuck-recovery
   fallback) both route the candidate through `keepWaypointOffLake()`, which
@@ -1818,6 +1822,13 @@ bogginess) and `BOG_OUTER_RADIUS` (dry), same edge-softness approach as before. 
 (`bogSpeedMultiplier`/`bogNoiseMultiplier`, splash foley) is byte-for-byte unchanged from
 LUL-1483 — only *where* bogginess is nonzero has changed, twice.
 
+**LUL-2307**: the first step past `biomeAt(x,z) > 0.05` fires the `bog` first-encounter
+hint ("bog — half pace, but it masks your scent from wolves"), persisted so it only ever
+shows once per install — see "Hints" below and
+`docs/specs/lul-2307-first-encounter-hints.md`. The mask itself (LUL-1902's
+`BOG_MASK_DECAY_TIME`, wolf-only nose reduction) is unchanged; this only adds the copy
+explaining it.
+
 **LUL-2225 (current shape)**: the founder rejected what LUL-2084 shipped for LUL-1902 --
 ~24.9% of the map, with `oak`/`drownedCar` deliberately blended inside it. `BOG_CENTER`
 moved to `{x:-40,z:80}`, `BOG_OUTER_RADIUS` shrank 135→45 and `BOG_INNER_RADIUS` 35→25, so
@@ -1935,3 +1946,40 @@ is a feedback/presentation layer, same class as `#bearingPulse` (LUL-1308) and
 LUL-1855's beacon glow. Slice (b) (two-way, player-triggered, Tier C) and slice
 (c) (`lib/game/eventSites.ts`-registered) are deferred — see wiki
 `decisions/startled-roosts-2026-09-07`.
+
+## Hints — first-encounter explanations (LUL-2307, generalizes LUL-2230)
+
+One small engine-side registry (`HINT_PRIORITY`/`HINT_TEXT`, `engine/forest-engine.js`)
+replaces LUL-2230's bespoke scent-only caption with a `{key -> text/trigger}` table covering
+thirteen keys: `scent`, `landmark`, `lake`, `bog`, `deepwater`, `wolf`/`bear`/`lion`,
+`stamina`, `cover` (hollow log/bramble), `caveImmune`, `throwable`, `veil`. Each key fires
+once per install, the first time its trigger condition is true while `entered && !hidden &&
+!win && !death` and the `Show hints` setting is on; a pill caption (`#hintCaption`,
+`components/Hud.tsx`/`GameCanvas.tsx`) shows for 8s or until a key-specific dismiss-on-
+interaction event (e.g. `scent`: the first `scentOnto()` call; `wolf`/`bear`/`lion`/`cover`:
+the player hides; `throwable`: the player grabs it), then persists "seen" under
+`lullwood:hints:<key>` so it never shows again on that install — `lullwood:hints:scent`
+falls back to reading LUL-2230's old `lullwood:scentTrailCaptionSeen` key so an install that
+already saw the scent caption doesn't see it a second time under the new key.
+
+**Anchoring**: `scent`/`wolf`/`bear`/`lion`/`cover`/`throwable` are world-anchored — a real 3D
+point (the mote/animal/prop/stone), projected to a viewport fraction via the same
+camera-frustum math LUL-2230 introduced (`projectToScreen()`, generalized out of the
+scent-only inline version). `lake`/`bog`/`deepwater`/`stamina`/`caveImmune`/`veil`/`landmark`
+have no natural 3D point (or, for stamina/veil, no player-facing meter to anchor to at all —
+see `SettingsPanel.tsx`'s own note that `#panel`'s stamina/veil readouts are dev-only;
+`landmark` fires unconditionally on entry with nothing specific to point at, same as the old
+toast it replaces) and are positioned by a fixed `[data-hint-key]` CSS rule instead:
+`deepwater`/`caveImmune` sit below their own `#missionPanel`/`#caveImmunePanel`;
+`lake`/`bog`/`stamina`/`veil`/`landmark` share the bottom-center spot `#captionToast`
+(predator-call captions) already uses, above `#actionSlot`.
+
+**Settings**: `Show hints` checkbox (default on, next to `Show my scent trail`) and a `Reset
+hints` button (clears every `lullwood:hints:*` key) in `SettingsPanel.tsx`.
+
+**QA hooks**: `qaProbeHints()` (active key + full seen-map), `qaResetHints()` (clears every
+key). `qaResetScentCaption()` (LUL-2230) is kept as a thin `scent`-only alias.
+
+See `docs/specs/lul-2307-first-encounter-hints.md` for the full per-key trigger table and the
+declared simplifications (no per-cover-kind copy branching, constant CSS position instead of
+a DOM-measured one for the six fixed-anchor keys).

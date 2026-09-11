@@ -24,6 +24,8 @@ interface PersistedSettings {
   // absent/never-persisted key must not read as "off" the way the other
   // boolean settings above correctly default to falsy.
   scentTrailVisible: boolean;
+  // LUL-2307: default on, same `!== false` idiom as scentTrailVisible above.
+  hintsEnabled: boolean;
   highContrast: boolean;
   // LUL-650: dev/tuning HUD (the #panel pace/mist/sound/regen/fullscreen
   // controls, plus #minimap). Same presentation-only shape as highContrast --
@@ -92,6 +94,8 @@ export default function SettingsPanel({
     // existing player's first load after this ships) doesn't turn the trail
     // off -- only an explicit `false` in storage does.
     actions.setScentTrailVisible(s.scentTrailVisible !== false);
+    // LUL-2307: same default-on idiom as scentTrailVisible above.
+    actions.setHintsEnabled(s.hintsEnabled !== false);
   }, [actions]);
 
   // Presentation-only: no engine action for this, so it's applied directly to
@@ -117,6 +121,7 @@ export default function SettingsPanel({
       reducedMotion: state.reducedMotion,
       captionsOn: state.captionsOn,
       scentTrailVisible: state.scentTrailVisible,
+      hintsEnabled: state.hintsEnabled,
       highContrast,
       adminMode,
     });
@@ -128,6 +133,7 @@ export default function SettingsPanel({
     state.reducedMotion,
     state.captionsOn,
     state.scentTrailVisible,
+    state.hintsEnabled,
     highContrast,
     adminMode,
   ]);
@@ -208,6 +214,23 @@ export default function SettingsPanel({
           />
           Show my scent trail
         </label>
+        {/* LUL-2307: one-time first-encounter explanations (lake, bog, predators,
+            stamina, ...) -- see docs/specs/lul-2307-first-encounter-hints.md. */}
+        <label className="radioRow">
+          <input
+            type="checkbox"
+            checked={state.hintsEnabled}
+            onChange={(e) => actions?.setHintsEnabled(e.target.checked)}
+          />
+          Show hints
+        </label>
+        {/* Not a <label>: this row has no associated checkbox/radio, just the
+            button itself -- reuses .radioRow purely for the row spacing/min-height. */}
+        <div className="radioRow">
+          <button type="button" onClick={() => actions?.resetHints()}>
+            Reset hints
+          </button>
+        </div>
         <label className="radioRow">
           <input type="checkbox" checked={highContrast} onChange={(e) => setHighContrast(e.target.checked)} />
           High-contrast HUD
