@@ -34,6 +34,13 @@ import { boot, enter, expectRowVisible } from './helpers';
 // count, plus headroom for the one repick each arrival triggers.
 const LKP_MAX_SWEEPS_PLUS_MARGIN = 6;
 
+// LUL-2329: left on the full map -- qaTeleportToHideSpot needs a real,
+// naturally-generated hide-spot prop, and the tests below that follow it with
+// qaStagePredatorGiveUp have no isolation against the other 8 predators over
+// their multi-second poll windows (qaBuildScene would guarantee isolation but
+// also wipes the natural cover this hook depends on). See
+// docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
+//
 // Hides the player at a deterministic spot (qaTeleportToHideSpot, same hook
 // e2e/hide.spec.ts uses) and confirms `hidden` actually took via the #status
 // HUD, so callers don't silently proceed with a not-actually-hidden player.

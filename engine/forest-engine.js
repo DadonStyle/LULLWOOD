@@ -2051,7 +2051,7 @@ function effectiveDetect(p){
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -2293,6 +2293,21 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // hearCry()/the carriedCryPulse branch below for where p.alertedBy is set, and
         // hearNoise()/scentOnto()/spotOnto() for where it's cleared by every other channel.
         if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase'); }   // LUL-1194: run down mid-chase, in the open
+        // LUL-2320 (D): contact was reached (isCaught) but the kill was refused because the
+        // player is hidden and canSee() still reads false at that exact range -- e.g. (B)'s
+        // contact-range exception only fires while the target point is inside a HIDE_KINDS
+        // footprint (insideHideFootprint()); a hidden player who is otherwise concealed (a
+        // blind scentLock chase closing through real, solid cover, LUL-387's original case)
+        // can still reach literal contact range before canSee() ever reads true. Without
+        // this, the `else` below keeps steering
+        // `desx=ux;desz=uz` at full species speed directly at the player's exact position --
+        // already in contact, so every subsequent tick re-aims at (near-)zero distance,
+        // reading as the reported "stands on the player, pushes, jitters" glue. Drop straight
+        // into the sniff loop's approach->standoff hand-off (LUL-1090) instead of waiting for
+        // shouldGiveUpChase()'s distance/timer give-up below to eventually fire.
+        else if(hidden && isCaught(dist, p.rad)){
+          p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+        }
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
@@ -3840,6 +3855,25 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { idx, x: p.x, z: p.z };
   };
 
+  // LUL-2320: places predator[kind] dx/dz from the player (player untouched, so KeyH staging
+  // done before this call survives it) directly into `chase` with a scentLock held open, the
+  // exact state the glue bug's root cause (#4 in the ticket) describes -- blind pursuit at
+  // full species speed with no LOS requirement while scentLock > 0. dx/dz is the caller's
+  // choice deliberately, not auto-placed at contact range, so a test can also exercise the
+  // normal "closing distance" leg before the predator arrives. Clears every higher-priority
+  // branch (charge/sightLock/alert/reroute/hunt) that would otherwise pre-empt `chase` this
+  // tick, same set qaStageForceHuntApproach already clears. Returns `{idx,x,z}`, or null if
+  // the species isn't spawned.
+  window.ForestEngine.qaStageChaseAtContact = function(kind, dx, dz){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    p.x = player.x + dx; p.z = player.z + dz;
+    p.vx = p.vz = 0; p.charge = null; p.sightLock = null; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+    p.hunt = false; p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.alertedBy = null;
+    return { idx, x: p.x, z: p.z };
+  };
+
   window.ForestEngine.qaIsApproachPianoActive = function(){
     return approachPianoActive;
   };
@@ -3858,10 +3892,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   };
 
   // LUL-212: teleport the player to the first generated hiding spot
-  // (bramble; LUL-2311 dropped log), no predator involved -- e2e/hide.spec.ts
-  // only needs a deterministic spot to press KeyH at, not a chase scenario.
-  window.ForestEngine.qaTeleportToHideSpot = function(){
-    const spot = coverData.find(c => HIDE_KINDS[c.kind]);
+  // (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of
+  // `kind` if given (LUL-2320, so a test can land on a specific non-hide
+  // cover prop like 'log'), no predator involved -- e2e/hide.spec.ts only
+  // needs a deterministic spot to press KeyH at, not a chase scenario.
+  window.ForestEngine.qaTeleportToHideSpot = function(kind){
+    const spot = kind ? coverData.find(c => c.kind === kind) : coverData.find(c => HIDE_KINDS[c.kind]);
     if(!spot) return null;
     player.x = spot.x; player.z = spot.z;
     return spot.kind;
@@ -3922,7 +3958,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const dist = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
     // LUL-659: x/z added so a caller can trace lateral movement around a cover
     // prop (e.g. avoidDir() steering), not just closing distance.
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), x: p.x, z: p.z, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically

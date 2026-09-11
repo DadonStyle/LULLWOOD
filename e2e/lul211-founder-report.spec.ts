@@ -42,7 +42,7 @@ test.describe('LUL-211: the canvas is actually the thing you are looking at', ()
   test('no viewport point resolves to the SSR content shell, and the canvas is not painted below it', async ({
     page,
   }) => {
-    await boot(page);
+    await boot(page, { qaWorld: 'micro' });
 
     // The WebGL canvas is the one the engine appends to <body>; the minimap
     // canvas ships inside the overlay markup and is deliberately z-index 10.
@@ -87,7 +87,7 @@ test.describe('LUL-211: the canvas is actually the thing you are looking at', ()
 test.describe('LUL-211: winning shows YOU WON and stays there', () => {
   test('the win screen appears, sits inside the viewport, and is not replaced by a fresh run', async ({ page }) => {
     test.setTimeout(60_000);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());
@@ -129,7 +129,7 @@ test.describe('LUL-211: winning shows YOU WON and stays there', () => {
   });
 });
 
-test.describe('LUL-211: cover props are solid', () => {
+test.describe('LUL-211: cover props are solid @fullmap', () => {
   // LUL-388: 'tree' added -- qaStageWalkIntoCover('tree') was reachable but had
   // never actually been driven by a spec (only rock/log/bramble were), and it
   // turned out to be broken (NaN positions, fixed in the same change that added
@@ -188,7 +188,7 @@ test.describe('LUL-211: cover props are solid', () => {
   }
 });
 
-test.describe('LUL-384/LUL-1642: log and bramble are walkable', () => {
+test.describe('LUL-384/LUL-1642: log and bramble are walkable @fullmap', () => {
   // LUL-1642 (2026-09-06) extended LUL-384's log-only walkable exemption to
   // every HIDE_KINDS entry (coverKindBlocksMovement(), lib/game/cover.ts), so
   // bramble now gets the exact same treatment as log. Parametrized rather

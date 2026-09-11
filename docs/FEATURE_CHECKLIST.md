@@ -25,6 +25,8 @@ per-role, per-PR habit instead of something only the reviewer remembers.
 - [ ] Grepped for an existing helper/mechanic that already does this before
       calling it new.
 - [ ] Scoped to this ticket — no unrelated changes riding along.
+- [ ] Names the visual cue, the audio cue and the one-line explanation the
+      player sees the first time (`decisions/0015-cue-triple`).
 
 ## 2. Developer implementing it
 
@@ -42,6 +44,9 @@ per-role, per-PR habit instead of something only the reviewer remembers.
       (`decisions/0010-no-force-push`).
 - [ ] Ran the affected spec(s) locally/headlessly before pushing — not just
       `tsc`/`next build`.
+- [ ] Visual cue + audio cue + first-encounter explanation shipped in this
+      PR, each e2e-asserted (probe or DOM), each honouring reducedMotion /
+      soundOn / captionsOn.
 
 ## 3. Reviewer (PR gate)
 
@@ -62,6 +67,9 @@ per-role, per-PR habit instead of something only the reviewer remembers.
       as a late merge block. Not a new P0/P1 class on its own.
 - [ ] DRY pass: duplication is P2/P3 by default; only block (P1) if you can
       name the concrete divergence that breaks the game.
+- [ ] Cue triple present (`decisions/0015-cue-triple`) — missing one is P1
+      on a feature PR, same severity class as a missing `docs/ELEMENTS.md`
+      update.
 
 ## 4. QA (local QA tester, nightly)
 

@@ -61,6 +61,19 @@ export function isCaught(dist: number, rad: number): boolean {
 // `isCaught()`; this gives `chase` the identical guarantee explicitly,
 // instead of leaving the kill check gateless whenever the LOS-losing branch
 // above doesn't fire (which `scentLock > 0` guarantees it won't).
+// LUL-2320: a `hidden`-keyed bypass here (`isCaught && (canSee || !hidden)`) was tried and
+// reverted during this ticket's review -- for `hidden === false` (the default player state)
+// that collapses to bare `isCaught`, which reintroduces the exact LUL-387 regression this
+// function exists to prevent, for *any* cover, not just the log/bramble footprint the ticket
+// was about (see e2e/blind-chase-cover.spec.ts, which deliberately never presses `H` and
+// still requires canSee before a kill). The log/bramble bug is fixed upstream instead: (A)
+// `hasLOS()` (cover.ts) no longer treats the walkable box a target is standing in as
+// self-occluding, so an un-hidden player on a log/bramble already reads `canSee() === true`
+// via the ordinary path below with no bypass needed here; (B) `canSee()`'s
+// `insideHideFootprint()` exception keeps a *hidden* player shielded at range and drops that
+// shield at exactly the same `rad + CATCH_MARGIN` contact threshold `isCaught()` itself uses,
+// so the two agree the instant contact is reached. This function stays exactly the LUL-387
+// shape: a kill requires both proximity and an actual sightline.
 export function canCatchInChase(canSee: boolean, dist: number, rad: number): boolean {
   return canSee && isCaught(dist, rad);
 }

@@ -586,7 +586,27 @@ export function hasLOS(
       const ry = c.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
       const dx0 = wrapDelta(x0, c.x, span), dz0 = wrapDelta(z0, c.z, span);
       const dx1 = dx0 + ddx, dz1 = dz0 + ddz;
-      if (segRayVsAABB(dx0 * co - dz0 * si, dx0 * si + dz0 * co, dx1 * co - dz1 * si, dx1 * si + dz1 * co, 0, 0, c.hx, c.hz)) {
+      const lx0 = dx0 * co - dz0 * si, lz0 = dx0 * si + dz0 * co;
+      const lx1 = dx1 * co - dz1 * si, lz1 = dx1 * si + dz1 * co;
+      // LUL-2320 (A): a walkable box (log/bramble, `!coverKindBlocksMovement`) does not
+      // occlude a segment endpoint standing inside its own footprint -- segRayVsAABB
+      // clamps tmax to 1, so an endpoint inside the box is otherwise an unconditional
+      // "blocked" no matter which direction the sightline approaches from (LUL-91's
+      // rotated-AABB slab test doesn't distinguish "grazes the box" from "starts/ends
+      // inside it"). Symmetric on both ends: the predator's own origin must not be
+      // blinded by a bramble it happens to be standing in either. Solid kinds
+      // (rock/reed/tree) are NOT skipped -- coverBlockedR()/blockedForPredator() already
+      // make a solid box's interior physically unreachable by either actor's exact
+      // (x,z), so this case is geometrically impossible for them today; skipping it too
+      // would be a behaviour change with no reachable effect, so the existing
+      // "zero-length segment inside cover reports blocked" test (kind: 'rock') is
+      // deliberately left asserting the old contract.
+      if (!coverKindBlocksMovement(c.kind)) {
+        const insideAtTarget = Math.abs(lx1) <= c.hx && Math.abs(lz1) <= c.hz;
+        const insideAtOrigin = Math.abs(lx0) <= c.hx && Math.abs(lz0) <= c.hz;
+        if (insideAtTarget || insideAtOrigin) continue;
+      }
+      if (segRayVsAABB(lx0, lz0, lx1, lz1, 0, 0, c.hx, c.hz)) {
         return false;
       }
     }
@@ -638,6 +658,27 @@ export function findHideSpot(
   return best;
 }
 
+// ---- is a point standing inside a HIDE_KINDS footprint? (LUL-2320) ----------------
+// Narrower than findHideSpot(): that function answers "is (x,z) within HIDE_RADIUS of a
+// hide-prop's edge" (the KeyH trigger zone, which extends *outside* the box). This
+// answers "is (x,z) inside the box itself" -- the geometric condition canSee() (below)
+// needs to decide whether a hidden player's own footprint should still shield them after
+// hasLOS() (above) stops treating that footprint as a blanket occluder.
+export function insideHideFootprint(
+  x: number, z: number,
+  coverGrid: SpatialGrid<CoverAABB>,
+  cell: number = CELL, span: number = Infinity,
+): boolean {
+  for (const c of neighbourhood(coverGrid, x, z, cell, span)) {
+    if (!HIDE_KINDS[c.kind]) continue;
+    const dx = wrapDelta(x, c.x, span), dz = wrapDelta(z, c.z, span);
+    const ry = c.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
+    const lx = dx * co - dz * si, lz = dx * si + dz * co;
+    if (Math.abs(lx) <= c.hx && Math.abs(lz) <= c.hz) return true;
+  }
+  return false;
+}
+
 // ---- sight detection range (LUL-43, LUL-291, LUL-382, LUL-641) ---------------
 // Detection range shrinks the longer the player has held still (never to
 // zero -- standing still in the open next to a predator still gets you
@@ -685,7 +726,26 @@ export function canSee(
   x0: number, z0: number, x1: number, z1: number,
   coverGrid: SpatialGrid<CoverAABB>,
   cell: number = CELL, span: number = Infinity,
+  // LUL-2320 (B): the contact-range threshold (rad + CATCH_MARGIN) at which a *hidden*
+  // player standing inside a HIDE_KINDS footprint stops being shielded by that footprint.
+  // Passed in rather than importing CATCH_MARGIN from predator.ts -- cover.ts has no
+  // dependency on predator.ts today, and check-duplicate-logic.mjs would flag a second
+  // copy of the constant if inlined here instead. Defaults to 0 (no exception) so every
+  // existing caller that doesn't pass it keeps exact prior behaviour.
+  catchDist: number = 0,
 ): boolean {
+  // LUL-2320 (B): (A) above stops the box a hidden player is standing in from blanket-
+  // blocking every sightline to them -- which would undo the LUL-1642 bramble mechanic
+  // (cover.ts:193-209's whole point was putting the hider inside the footprint hasLOS()
+  // tests). Re-add the protection explicitly, keyed on `hidden` rather than geometry: a
+  // hidden player inside a hide-spot's footprint is invisible regardless of stillness/
+  // detect-range math UNLESS a predator has closed to contact range. This mirrors the
+  // existing open-ground invariant (positional-hiding.spec.ts's "hold-still alone does
+  // not save you when a predator is on top of you") for the one case that invariant
+  // couldn't previously reach, because hasLOS() made it geometrically unreachable.
+  if (state.hidden && insideHideFootprint(x1, z1, coverGrid, cell, span)) {
+    return dist < catchDist;
+  }
   if (dist >= effectiveDetect(detect, detectMul, state)) return false;
   return hasLOS(x0, z0, x1, z1, coverGrid, cell, span);
 }
