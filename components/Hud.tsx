@@ -771,6 +771,8 @@ export default function Hud({
                 <b>F</b> — hold for the mist veil (dims your light, floods the world in mist, and cuts
                 how far predators can see you) — limited, watch the Veil meter
                 <br />
+                <b>F11</b> / <b>Alt+Enter</b> — fullscreen
+                <br />
                 <b>Deepwater</b> tag, top-left — reach the marked zone for a bonus Embers payout on a
                 successful run
               </>

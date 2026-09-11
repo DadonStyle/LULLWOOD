@@ -1,36 +1,30 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { EngineActions, EngineHudState } from './Hud';
+import { fullscreenSupported, isFullscreenActive, toggleFullscreen, FULLSCREEN_CHANGE_EVENTS } from '@/lib/game/fullscreen';
 
-// LUL-124: fullscreen toggle. `document.fullscreenEnabled` is false on
-// browsers that never expose the API (older iOS Safari) so the button is
-// simply omitted there instead of rendering a control that would reject on
-// every click. The `fullscreenchange` listener is what keeps `isFullscreen`
-// correct after the browser's own exit paths (Esc key, system UI) which
-// don't otherwise call back into this component.
+// LUL-124: fullscreen toggle, via lib/game/fullscreen.ts (LUL-2310) so this
+// button and engine/forest-engine.js's F11/Alt+Enter keydown handler share
+// one implementation instead of two that can drift. `fullscreenSupported()`
+// is false on browsers that never expose either the unprefixed or
+// webkit-prefixed API (older iOS Safari) so the button is simply omitted
+// there instead of rendering a control that would reject on every click.
+// The `fullscreenchange`/`webkitfullscreenchange` listeners are what keep
+// `isFullscreen` correct after the browser's own exit paths (Esc key, F11,
+// system UI) which don't otherwise call back into this component.
 function useFullscreen() {
-  const supported = useState(() => typeof document !== 'undefined' && document.fullscreenEnabled)[0];
-  const [isFullscreen, setIsFullscreen] = useState(
-    () => typeof document !== 'undefined' && document.fullscreenElement != null,
-  );
+  const supported = useState(fullscreenSupported)[0];
+  const [isFullscreen, setIsFullscreen] = useState(isFullscreenActive);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const onChange = () => setIsFullscreen(document.fullscreenElement != null);
-    document.addEventListener('fullscreenchange', onChange);
-    return () => document.removeEventListener('fullscreenchange', onChange);
+    const onChange = () => setIsFullscreen(isFullscreenActive());
+    FULLSCREEN_CHANGE_EVENTS.forEach((evt) => document.addEventListener(evt, onChange));
+    return () => FULLSCREEN_CHANGE_EVENTS.forEach((evt) => document.removeEventListener(evt, onChange));
   }, []);
 
-  const toggle = useCallback(() => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    } else {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }
-  }, []);
-
-  return { supported, isFullscreen, toggle };
+  return { supported, isFullscreen, toggle: toggleFullscreen };
 }
 
 export default function GameMenu({
@@ -107,7 +101,7 @@ export default function GameMenu({
                 setOpen(false);
               }}
             >
-              Fullscreen: {isFullscreen ? 'on' : 'off'}
+              Fullscreen: {isFullscreen ? 'on' : 'off'} (F11)
             </button>
           )}
 
