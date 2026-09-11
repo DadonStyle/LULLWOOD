@@ -1908,6 +1908,12 @@ function resetHints(){
 }
 let hintActiveKey = null, hintActiveStartT = 0, hintDismissBaseline = 0;
 const _hintProjVec = new THREE.Vector3();   // scratch, reused every frame -- avoid per-point GC
+// LUL-2445: the fixed-height bottom touch-control row (MobileControls.tsx) eats the
+// bottom of short landscape viewports (e.g. pixel5-landscape 727x393), so a
+// world-anchored hint caption clamped all the way to 0.92 lands on top of it
+// (touchJump, 100% overlap). 0.78 leaves headroom above that row on every viewport
+// this game supports without needing a viewport-height branch.
+const HINT_Y_MAX = 0.78;
 // Projects a world point to a clamped viewport fraction, or null if it's outside the
 // camera frustum this frame. Generalizes the scent-mote projection math LUL-2230
 // introduced (was inline in the scent-only caption block) for reuse across every
@@ -1918,7 +1924,7 @@ function projectToScreen(x, y, z){
   if(!inFrustum) return null;
   return {
     x: Math.max(0.08, Math.min(0.92, (_hintProjVec.x + 1) / 2)),
-    y: Math.max(0.08, Math.min(0.92, (1 - _hintProjVec.y) / 2)),
+    y: Math.max(0.08, Math.min(HINT_Y_MAX, (1 - _hintProjVec.y) / 2)),
   };
 }
 
@@ -5931,7 +5937,7 @@ function stepFrame(dt, t){
     function hintWorldAnchor(key, anchor){
       if(key === 'scent'){
         return firstFrustum
-          ? { x: Math.max(0.08, Math.min(0.92, (firstFrustum.x + 1) / 2)), y: Math.max(0.08, Math.min(0.92, (1 - firstFrustum.y) / 2)) }
+          ? { x: Math.max(0.08, Math.min(0.92, (firstFrustum.x + 1) / 2)), y: Math.max(0.08, Math.min(HINT_Y_MAX, (1 - firstFrustum.y) / 2)) }
           : null;
       }
       return anchor ? projectToScreen(anchor.x, anchor.y, anchor.z) : null;

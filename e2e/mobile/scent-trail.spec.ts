@@ -96,6 +96,7 @@ for (const viewport of VIEWPORTS) {
       await expect(caption).toContainText('this is your scent trail — predators follow it');
       await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=touchHide]');
       await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=touchVeil]');
+      await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=touchJump]');
       await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=leftStick]');
       await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=rightStick]');
       await assertNoOverlap(page, '#scentTrailCaption', '#windIndicatorHint');
