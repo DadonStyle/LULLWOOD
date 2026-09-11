@@ -126,13 +126,6 @@ export function qaHook<K extends QaHookName>(page: Page, name: K, ...args: any[]
 }
 
 /**
- * `toBeVisible()` only checks that an element isn't `display:none` and has a
- * non-zero bounding box -- it does not check the box is inside the viewport
- * (LUL-160: the canvas passed `toBeVisible()` while rendered a full viewport
- * off-screen). This asserts the element's box actually intersects what a
- * player would see.
- */
-/**
  * LUL-2312: #objective/#actionPrompt/#throwPrompt/#chargePrompt/#status are
  * five always-mounted rows inside #actionSlot now (components/Hud.tsx),
  * each an <ActionPrompt> (components/ActionPrompt.tsx) that toggles
@@ -150,6 +143,13 @@ export async function expectRowHidden(page: Page, id: string, timeout = 3_000) {
   await expect(page.locator(`#${id}`)).toHaveAttribute('data-visible', '0', { timeout });
 }
 
+/**
+ * `toBeVisible()` only checks that an element isn't `display:none` and has a
+ * non-zero bounding box -- it does not check the box is inside the viewport
+ * (LUL-160: the canvas passed `toBeVisible()` while rendered a full viewport
+ * off-screen). This asserts the element's box actually intersects what a
+ * player would see.
+ */
 export async function assertInViewport(locator: Locator, page: Page, label = '') {
   const box = await locator.boundingBox();
   const viewport = page.viewportSize();
