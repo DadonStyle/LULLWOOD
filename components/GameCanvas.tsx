@@ -350,7 +350,7 @@ const OVERLAY_STYLE = `
     transform-origin: 50% 50%; pointer-events: none; }
 
   #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
-    font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
+    font-size: 12px; line-height: 1.3; text-align: center; color: #9fb2cd;
     text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none; opacity: 1; }
 
   /* LUL-1912's minimap-clearance push only matters while the minimap is actually
