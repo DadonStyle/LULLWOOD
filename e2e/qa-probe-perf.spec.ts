@@ -22,7 +22,7 @@ async function readTreeChunks(page: import('@playwright/test').Page) {
   return page.evaluate(() => (window as any).ForestEngine.qaProbeTreeChunks());
 }
 
-test.describe('qaProbePerf scene stats', () => {
+test.describe('qaProbePerf scene stats @fullmap', () => {
   test('triangles/calls reflect the real scene, not the constant post-process blit', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await page.waitForTimeout(300); // let a couple of real frames render, same settle as the baseline-perf method

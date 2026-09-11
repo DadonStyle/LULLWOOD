@@ -7,7 +7,7 @@ import { test, expect } from '@playwright/test';
 import { boot } from './helpers';
 
 test('all six landmark kinds have a fog:false beacon sprite visible after enter()', async ({ page }) => {
-  await boot(page, { qaHooks: true });
+  await boot(page, { qaHooks: true, qaWorld: 'micro' });
 
   const beacons = await page.evaluate(() => window.ForestEngine!.qaProbeLandmarkBeacons!());
 

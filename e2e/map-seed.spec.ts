@@ -13,7 +13,7 @@ async function dumpMapSeed(page: import('@playwright/test').Page) {
   return dump;
 }
 
-test.describe('session-varied map seed', () => {
+test.describe('session-varied map seed @fullmap', () => {
   test('?seed= reproduces the exact same layout across two loads', async ({ page }) => {
     await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
     const first = await dumpMapSeed(page);
@@ -50,7 +50,7 @@ test.describe('session-varied map seed', () => {
   });
 });
 
-test.describe('runtime seed determinism — predator behavior', () => {
+test.describe('runtime seed determinism — predator behavior @fullmap', () => {
   test('?seed= reproduces identical predator behavior across two runs (LUL-1104)', async ({ page }) => {
     // LUL-1104: the map seed is reproducible, but predator runtime behavior
     // (sniffs, positions, state machine transitions) must also be deterministic.

@@ -27,7 +27,7 @@ const FIXED_DT = 0.02;
 test.describe('cover-state feedback (LUL-144)', () => {
   test('a predator with clear line of sight in the open reads as exposed, not covered', async ({ page }) => {
     test.setTimeout(30_000);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
@@ -48,6 +48,10 @@ test.describe('cover-state feedback (LUL-144)', () => {
 
   test('a chasing predator blocked by real cover reads as covered, with no H press needed', async ({ page }) => {
     test.setTimeout(30_000);
+    // LUL-2329: left on the full map -- qaHideBehindCover needs a real,
+    // naturally-generated non-tree cover prop and has no isolation against
+    // unrelated predators over its 250-fixed-step window; see
+    // docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);

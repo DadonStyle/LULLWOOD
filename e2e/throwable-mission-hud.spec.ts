@@ -13,7 +13,7 @@ import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors, expectR
 test.describe('#throwPrompt via qaGrabThrowable()', () => {
   test('grabbing the nearest stone shows #throwPrompt; restart clears it', async ({ page }) => {
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     // Made to fail once on purpose: with no throwable held yet, the prompt must not be shown.
@@ -36,7 +36,7 @@ test.describe('#throwPrompt via qaGrabThrowable()', () => {
 
   test('restart() clears heldThrowable and hides #throwPrompt', async ({ page }) => {
     test.setTimeout(45_000);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     const grabbed = await qaHook(page, 'qaGrabThrowable');

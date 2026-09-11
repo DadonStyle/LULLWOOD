@@ -22,7 +22,7 @@ import { boot, enter, readObjective, expectRowVisible, expectRowHidden } from '.
 
 test('win screen is mandatory and persists until the player restarts', async ({ page }) => {
   test.setTimeout(75_000);
-  await boot(page, { qaHooks: true });
+  await boot(page, { qaHooks: true, qaWorld: 'micro' });
   await enter(page);
 
   await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());
@@ -80,7 +80,7 @@ test('win screen is mandatory and persists until the player restarts', async ({ 
 // a deliberate press after the delay still works -- both halves asserted here.
 test('a Space press right after the win reveal must not restart the run, but one after the grace window still does', async ({ page }) => {
   test.setTimeout(45_000);
-  await boot(page, { qaHooks: true });
+  await boot(page, { qaHooks: true, qaWorld: 'micro' });
   await enter(page);
 
   await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());

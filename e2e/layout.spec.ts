@@ -25,7 +25,7 @@ async function canvasRect(page: Page) {
   });
 }
 
-test.describe('game canvas covers the full screen', () => {
+test.describe('game canvas covers the full screen @fullmap', () => {
   for (const [name, viewport] of [
     ['desktop', { width: 1280, height: 720 }],
     ['mobile', { width: 390, height: 844 }],

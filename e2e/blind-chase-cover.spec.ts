@@ -50,7 +50,7 @@ test.describe('blind scent-chase cannot kill through cover (LUL-387 regression)'
   for (const kind of ['wolf', 'bear', 'lion'] as const) {
     test(`${kind}: mid blind chase, blocked by cover at catch range, does not kill while blind`, async ({ page }) => {
       test.setTimeout(30_000);
-      await boot(page, { qaHooks: true });
+      await boot(page, { qaHooks: true, qaWorld: 'micro' });
       await enter(page);
 
       // Deliberately never press H over the course of this test. The chase

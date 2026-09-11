@@ -16,7 +16,7 @@ const MIN_SPACING = 3.5;
 const SLOP = 1e-6;
 
 for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_PINNED_SEED + 3]) {
-  test(`prop density respects per-chunk caps and minimum spacing at seed ${seed}`, async ({ page }) => {
+  test(`prop density respects per-chunk caps and minimum spacing at seed ${seed} @fullmap`, async ({ page }) => {
     await boot(page, { qaHooks: true, seed });
 
     const density = await qaHook(page, 'qaProbePropDensity');
@@ -41,7 +41,7 @@ for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_P
   });
 }
 
-test('qaProbePropDensity is a pure read -- calling it twice in a row does not mutate the map', async ({ page }) => {
+test('qaProbePropDensity is a pure read -- calling it twice in a row does not mutate the map @fullmap', async ({ page }) => {
   await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
 
   const first = await qaHook(page, 'qaProbePropDensity');

@@ -87,8 +87,15 @@ async function advanceUntil(
 test.describe('positional hiding (LUL-22 / LUL-43)', () => {
   test('hiding in the open near a lion still gets you caught', async ({ page }) => {
     test.setTimeout(60_000);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
+
+    // LUL-2329: isolate every other predator first -- qaWorld=micro's smaller
+    // map otherwise lets an unrelated species reach the player before the
+    // lion does (confirmed empirically on smoke.spec.ts's equivalent case;
+    // see docs/specs/lul-2329-e2e-migrate-qaworld-micro.md). qaBuildScene
+    // parks every predator not listed here as `inert`.
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'lion', x: 4, z: 0 }] });
 
     // qaOpenHideNearLion drops the player at the spawn clearing (provably
     // tree- and cover-free -- see the hook's own comment in
@@ -143,6 +150,12 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     kind: 'wolf' | 'bear' | 'lion',
     { fixedClock = false }: { fixedClock?: boolean } = {},
   ) {
+    // LUL-2329: left on the full map -- qaHideBehindCoverKind needs a real,
+    // naturally-generated HIDE_KINDS cover prop, and this helper also has no
+    // isolation against unrelated predators over its up-to-20s poll window
+    // (qaBuildScene would guarantee isolation but also wipes the natural
+    // cover this hook depends on). See
+    // docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
     await boot(page, { qaHooks: true });
     await enter(page);
 
@@ -248,9 +261,12 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     // its radius the `hidden` check gates the kill, not canSee(). Cover is
     // irrelevant at that range. Use qaLurePredatorKind so we can pin the
     // species and assert deathKind.
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
+    // LUL-2329: isolate every other predator first -- see the equivalent fix
+    // and rationale in smoke.spec.ts's predator catch/death describe.
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: 6, z: 0 }] });
     const kind = await page.evaluate(() => window.ForestEngine?.qaLurePredatorKind?.('wolf') ?? null);
     if (kind === null) {
       throw new Error('qaLurePredatorKind("wolf") returned null -- no wolf in predators');
