@@ -157,11 +157,23 @@ does at `:5338-5363`):
 
 Same activate/tick/dismiss shape LUL-2230 used (`scentCaptionActive`/`scentCaptionStartT`
 become `hintActiveKey`/`hintActiveStartT`, generalized to loop `HINT_PRIORITY` for the
-"become active" edge instead of a single `if`):
+"become active" edge instead of a single `if`) -- **with one addition found during
+verification, not in the original draft below**: the scan also runs while a *lower*-priority
+key is already active, bounded to indices strictly before it, so a higher-priority key can
+**preempt** one already showing instead of only breaking same-frame ties on an empty slot.
+Without this, `landmark` (index 1, unconditionally eligible from frame 1) wins the slot for a
+full 8s on every fresh run before `scent` (index 0) ever gets a look -- but `scent` only
+becomes eligible+anchored a couple seconds in (walk, then face the trail), squarely inside the
+window `e2e/scent-trail.spec.ts`'s caption assertions already exercise, so scent's caption
+never appeared and that "must pass unchanged" spec (below) broke (LUL-2346). Preemption
+doesn't mark the interrupted key seen, same treatment as any other loss of eligibility
+mid-caption:
 
 ```js
-if(!hintActiveKey){
-  for(const key of HINT_PRIORITY){
+{
+  const activeIdx = hintActiveKey ? HINT_PRIORITY.indexOf(hintActiveKey) : HINT_PRIORITY.length;
+  for(let i = 0; i < activeIdx; i++){
+    const key = HINT_PRIORITY[i];
     if(hintSeen(key) || !hintsEnabled) continue;
     const cand = evaluateHintCandidate(key);   // returns {text, x, y} or null; null if a
                                                 // world-anchored key's object isn't in frustum yet
@@ -273,9 +285,14 @@ a measured one.
   'Deepwater caption appears once the mission is active', 'a first-sighted wolf shows its
   caption', 'Show hints off suppresses every hint', 'Reset hints re-arms a seen key'. Staged
   via `qaTeleportTo`/`qaBuildScene`/`qaSetFixedStep`+`qaAdvance` (existing hooks) — no real-time
-  waits.
+  waits. Its 'the landmark hint fires once' test asserts `#hintCaption` no longer contains
+  landmark's text after landmark's window closes, not that the element is gone entirely --
+  `deepwater` legitimately takes the slot the same frame (see preemption note above), so the
+  element stays mounted with different content (LUL-2346 fix, verified against the actual
+  registry behaviour rather than the draft assumption that nothing else would be eligible yet).
 - `e2e/mobile/hints.spec.ts` (new) — same coverage, mobile viewport/input mode, plus "no
-  overlap with the mobile sticks or safe-area" per the out-of-scope note below.
+  overlap with the mobile sticks or safe-area" per the out-of-scope note below. Same
+  not-toContainText fix as the desktop 'landmark hint fires once' test, same reason.
 - `e2e/scent.spec.ts` (chase mechanics, doesn't touch the caption), `e2e/scent-trail.spec.ts`
   and `e2e/mobile/scent-trail.spec.ts` (the actual caption coverage — the ticket named
   `e2e/scent.spec.ts` for these two, but the caption assertions on `#scentTrailCaption`/

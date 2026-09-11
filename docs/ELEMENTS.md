@@ -1954,7 +1954,11 @@ replaces LUL-2230's bespoke scent-only caption with a `{key -> text/trigger}` ta
 thirteen keys: `scent`, `landmark`, `lake`, `bog`, `deepwater`, `wolf`/`bear`/`lion`,
 `stamina`, `cover` (hollow log/bramble), `caveImmune`, `throwable`, `veil`. Each key fires
 once per install, the first time its trigger condition is true while `entered && !hidden &&
-!win && !death` and the `Show hints` setting is on; a pill caption (`#hintCaption`,
+!win && !death` and the `Show hints` setting is on. Only one hint shows at a time;
+`HINT_PRIORITY` order both breaks same-frame ties and lets a higher-priority key preempt a
+lower-priority one already showing (not marked "seen" when preempted, so it can still fire
+later) — needed because `landmark` is eligible unconditionally from frame one and would
+otherwise occupy the slot for its full 8s before e.g. `scent` ever got a turn. A pill caption (`#hintCaption`,
 `components/Hud.tsx`/`GameCanvas.tsx`) shows for 8s or until a key-specific dismiss-on-
 interaction event (e.g. `scent`: the first `scentOnto()` call; `wolf`/`bear`/`lion`/`cover`:
 the player hides; `throwable`: the player grabs it), then persists "seen" under

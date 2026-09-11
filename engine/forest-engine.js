@@ -1826,7 +1826,9 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // Show hints setting) stops it without marking seen -- it can still show
 // later. Exactly one hint active at a time; HINT_PRIORITY order breaks ties
 // when more than one becomes eligible+anchored the same frame (scent wins on
-// a fresh install). See docs/specs/lul-2307-first-encounter-hints.md.
+// a fresh install), and a higher-priority key preempts a lower-priority one
+// already showing (stepFrame() below) -- not marked seen, so it can still
+// show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','lake','bog','deepwater',
   'wolf','bear','lion','stamina','cover','caveImmune','throwable','veil'];
 // 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
@@ -1857,16 +1859,27 @@ const HINT_KEY_PREFIX = 'lullwood:hints:';
 // only -- an install that already saw the old caption must not see it again just
 // because it moved registries.
 const LEGACY_SCENT_HINT_KEY = 'lullwood:scentTrailCaptionSeen';
-const hintSeenCache = {};   // key -> true, lazily filled from localStorage
+// key -> true/false, lazily filled from localStorage. Caches the *negative* result too
+// (not just "seen") -- the priority scan below calls hintSeen() on every not-yet-seen key
+// every frame while that key hasn't claimed the active slot, so an uncached miss means one
+// localStorage.getItem() per unseen key per frame for the entire run; on the QA rig's
+// synchronous qaAdvance(hundreds-of-steps) loops that's thousands of synchronous
+// localStorage round-trips in a tight loop -- slow enough to trip Chromium's hung-renderer
+// detector (observed as "Target crashed" / page-closed failures across e2e/hints.spec.ts,
+// LUL-2346). resetHints() below clears the whole cache (both true and false entries),
+// forcing a fresh read next time.
+const hintSeenCache = {};
 function hintSeen(key){
-  if(hintSeenCache[key]) return true;
+  if(key in hintSeenCache) return hintSeenCache[key];
+  let seen = false;
   try {
     if(localStorage.getItem(HINT_KEY_PREFIX + key) === '1'
       || (key === 'scent' && localStorage.getItem(LEGACY_SCENT_HINT_KEY) === '1')){
-      hintSeenCache[key] = true; return true;
+      seen = true;
     }
   } catch(e){}
-  return false;
+  hintSeenCache[key] = seen;
+  return seen;
 }
 function markHintSeen(key){
   hintSeenCache[key] = true;
@@ -5768,8 +5781,21 @@ function stepFrame(dt, t){
       return anchor ? projectToScreen(anchor.x, anchor.y, anchor.z) : null;
     }
 
-    if(!hintActiveKey){
-      for(const key of HINT_PRIORITY){
+    // Scans HINT_PRIORITY up to (but not including) whatever's already active, so a
+    // higher-priority key can preempt a lower-priority one already showing -- not just
+    // win same-frame ties when the slot is empty. Needed because 'landmark' (index 1)
+    // is unconditionally eligible from frame 1 and otherwise wins the slot for a full
+    // 8s before 'scent' (index 0) ever gets a look, even though scent only becomes
+    // eligible+anchored a couple seconds into a real run (walk, then face the trail) --
+    // e2e/scent-trail.spec.ts's caption assertions land well inside that window and
+    // must pass unchanged (LUL-2346). Preempting doesn't mark the interrupted key
+    // seen -- same as any other loss of eligibility mid-caption, it can still show
+    // later. activeIdx = HINT_PRIORITY.length when nothing's active, so this scans the
+    // full list exactly like the old "slot is empty" case.
+    {
+      const activeIdx = hintActiveKey ? HINT_PRIORITY.indexOf(hintActiveKey) : HINT_PRIORITY.length;
+      for(let i = 0; i < activeIdx; i++){
+        const key = HINT_PRIORITY[i];
         if(hintSeen(key)) continue;
         const [eligible, anchor] = hintCandidate(key);
         if(!baseHintEligible || !eligible) continue;

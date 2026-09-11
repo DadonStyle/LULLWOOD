@@ -69,7 +69,13 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     probe = await qaHook(page, 'qaProbeHints');
     expect(probe.activeKey).not.toBe('landmark');
     expect(probe.seen.landmark).toBe(true);
-    await expect(caption).toHaveCount(0);
+    // Not toHaveCount(0): 'deepwater' (HINT_PRIORITY's next always-eligible-at-spawn
+    // key, see the 'the deepwater hint appears once the mission is active' test below)
+    // legitimately takes the slot the instant landmark's own 8s window ends -- #hintCaption
+    // stays mounted, just with different content. The behaviour this test actually cares
+    // about -- landmark specifically is gone for good -- is already covered by activeKey/
+    // seen.landmark above.
+    await expect(caption).not.toContainText('landmarks in the fog are safe to navigate by');
 
     // The old bespoke behaviour fired this as a toast on every enter(), including
     // restarts -- the registry version must not: only the persisted "seen" flag decides.

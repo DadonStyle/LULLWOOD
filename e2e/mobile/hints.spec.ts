@@ -80,7 +80,11 @@ for (const viewport of VIEWPORTS) {
       const probe = await qaHook(page, 'qaProbeHints');
       expect(probe.activeKey).not.toBe('landmark');
       expect(probe.seen.landmark).toBe(true);
-      await expect(caption).toHaveCount(0);
+      // Not toHaveCount(0): 'deepwater' legitimately takes the slot the instant landmark's
+      // own 8s window ends (../hints.spec.ts's desktop version documents why) -- #hintCaption
+      // stays mounted with different content. landmark specifically being gone for good is
+      // already covered by activeKey/seen.landmark above.
+      await expect(caption).not.toContainText('landmarks in the fog are safe to navigate by');
     });
 
     test('the lake hint appears on first entry into the water, not on a second visit', async ({ page }) => {
