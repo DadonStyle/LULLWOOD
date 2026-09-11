@@ -1499,7 +1499,8 @@ design doc as turning horror into radar.
 - Fire a one-time unconditional caption + audio sting on completion, and show a two-line
   collapsed HUD panel (name + progress glyph) top-left whenever a mission exists and the player
   isn't carrying — mirrors the Embers/Stamina HUD-reflection pattern above, not a new panel
-  system.
+  system. **LUL-2442:** also hidden while `components/GameMenu.tsx`'s dropdown is open — its
+  open panel shares the same top-left corner and would otherwise overlap the mission pill.
 
 **What it CANNOT do**
 - Cannot be selected or seen by the player before the draw — the pool member is chosen silently
