@@ -372,6 +372,7 @@ const OVERLAY_STYLE = `
      viewport fraction; translate lifts the pill clear above the world point instead
      of covering it, same as the old scent-only rule. */
   #scentTrailCaption, #hintCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
+    left: var(--hint-left, 50%); top: var(--hint-top, 50%);
     max-width: 60vw; padding: 6px 14px; border-radius: 999px; pointer-events: none;
     background: rgba(18,34,34,0.6); border: 1px solid rgba(159,224,208,0.4);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
@@ -531,6 +532,31 @@ const OVERLAY_STYLE = `
     #hintCaption[data-hint-key="landmark"] {
       top: calc(100vh - var(--action-slot-bottom) + 12px); bottom: auto;
       max-width: min(60vw, 300px);
+    }
+    /* LUL-2459: the world-anchored keys (scent + WORLD_HINT_KEYS' still-unshipped
+       wolf/bear/lion/cover/throwable, Hud.tsx) track a real 3D point via the
+       engine's projectToScreen (forest-engine.js) and can land anywhere across
+       [8%,92%] of the viewport width -- unlike the self-anchored family above,
+       there's no fixed safe spot to re-home them to, so HINT_Y_MAX (LUL-2445)
+       alone doesn't help here: MobileControls.tsx's side control column (a
+       48px-radius stick + the row above it, 128px wide, plus the wrapper's 20px
+       edge padding = 148px) sits at a height that tracks viewport *height*, not
+       just the very bottom, so it can fall inside this caption's y-range on a
+       short viewport regardless of its own x-position. Confirmed on iPhone SE
+       landscape (667x375): the up-to-60vw/400px pill reached touchHide 7px past
+       its left edge even though its anchor (58.7% of 667px) wasn't near either
+       screen edge. Capping the pill at 240px (half 120px) and clamping its
+       centre to stay >=156px (148px control-column margin + 8px buffer) from
+       each edge -- minus that half-width -- keeps the rendered box clear of
+       both side columns on every viewport this breakpoint covers, without a
+       per-viewport branch (same one-global-constant approach LUL-2445 used for
+       HINT_Y_MAX). --hint-left is the raw engine fraction (Hud.tsx); the base
+       rule above uses it directly outside this breakpoint. */
+    #scentTrailCaption, #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
+    #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
+    #hintCaption[data-hint-key="throwable"] {
+      max-width: 240px;
+      left: clamp(276px, var(--hint-left, 50%), calc(100vw - 276px));
     }
   }
 

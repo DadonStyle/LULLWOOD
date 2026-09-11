@@ -873,8 +873,14 @@ export default function Hud({
         <div
           id={state.hintKey === 'scent' ? 'scentTrailCaption' : 'hintCaption'}
           data-hint-key={state.hintKey ?? undefined}
+          // LUL-2459: exposed as custom properties (not left/top directly) so the
+          // short-landscape mobile breakpoint (GameCanvas.tsx) can clamp the
+          // rendered position clear of MobileControls.tsx's side columns via CSS
+          // clamp() -- the touch-control danger zone is a fixed pixel margin the
+          // engine's viewport-fraction projection can't see, and JS has no access
+          // to that CSS breakpoint's own state without duplicating it.
           style={state.hintKey && WORLD_HINT_KEYS.has(state.hintKey)
-            ? { left: `${state.hintX * 100}%`, top: `${state.hintY * 100}%` }
+            ? ({ '--hint-left': `${state.hintX * 100}%`, '--hint-top': `${state.hintY * 100}%` } as React.CSSProperties)
             : undefined}
         >
           {state.hintKey && WORLD_HINT_KEYS.has(state.hintKey) && (
