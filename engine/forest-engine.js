@@ -2149,11 +2149,11 @@ function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN)
 // position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
 function effectiveDetect(p){
   if(isCaveImmune(caveImmuneT)) return 0;
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime, carrying });
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
