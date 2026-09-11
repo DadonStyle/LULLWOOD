@@ -19,7 +19,7 @@
 //    priority order (charge > objective > hide/veil > throwable > status),
 //    regardless of which currently have content.
 import { test, expect } from '@playwright/test';
-import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, expectRowVisible } from './helpers';
+import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
 // LUL-2107: the 3 cases below that stage a chasing predator (urgent
 // cover-prompt class, the 390px nowrap/mobile-collision check, and reduced
@@ -56,13 +56,39 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     const prompt = page.locator('#actionPrompt');
 
     const text = await prompt.textContent();
-    // Should contain the desktop calm bramble string (or log, depending on the spot)
-    const noun = kind === 'log' ? 'hollow log' : 'bush';
-    // Desktop calm: "Press  H  to hide in the bush" (or hollow log)
+    // Should contain the desktop calm bramble string -- bramble is the only
+    // hide-eligible cover kind since LUL-2311, so `kind` can only be 'bramble'.
+    const noun = 'bush';
+    // Desktop calm: "Press  H  to hide in the bush"
     expect(text, 'Calm prompt must name the noun and contain key H').toMatch(new RegExp(`H.*to hide in the ${noun}|to hide in the ${noun}`));
 
     // #actionPrompt must NOT carry tone="urgent" at this point (no chasing predator)
     await expect(prompt).not.toHaveAttribute('data-tone', 'urgent');
+
+    expectNoConsoleErrors(errs);
+  });
+
+  // LUL-2311: log is walkable, LOS-blocking cover, but no longer hide-eligible
+  // -- pressing H beside one must be a no-op, and #actionPrompt must never
+  // show a "to hide in the ..." string for it.
+  test('KeyH beside a log is a no-op -- log is no longer hide-eligible', async ({ page }) => {
+    const errs = trackConsoleErrors(page);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    const kind = await page.evaluate(() => window.ForestEngine?.qaTeleportNearCoverKind?.('log') ?? null);
+    expect(kind, 'qaTeleportNearCoverKind(\'log\') returned null — no log at this seed').toBe('log');
+
+    await page.waitForTimeout(250); // let the throttled cover probe run, same as the calm-prompt case above
+
+    await expectRowHidden(page, 'actionPrompt');
+
+    await page.keyboard.press('KeyH');
+    await page.waitForTimeout(100);
+
+    const state = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
+    expect(state?.hidden, 'KeyH beside a log must not enter the hidden stance').toBe(false);
+    await expectRowHidden(page, 'actionPrompt');
 
     expectNoConsoleErrors(errs);
   });
