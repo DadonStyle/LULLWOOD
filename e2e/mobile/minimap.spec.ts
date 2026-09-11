@@ -8,12 +8,13 @@
 // that).
 import { test, expect } from '@playwright/test';
 import { boot } from '../helpers';
+// fullmap-reason: minimap w2m clamping past the forest/bog seam exists only at full map size (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 test.use({ viewport: { width: 727, height: 393 } });
 
-test.describe('mobile minimap w2m stays on-canvas past the forest/bog seam', () => {
+test.describe('mobile minimap w2m stays on-canvas past the forest/bog seam @fullmap', () => {
   test('an objective-marker point at z=150 (past the z=120 seam) is clamped on-canvas', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
     const p = await page.evaluate(() => window.ForestEngine!.qaProbeMinimapPoint!(40, 150));
     expect(p.px).toBeGreaterThanOrEqual(0);
     expect(p.px).toBeLessThanOrEqual(p.mm);
@@ -24,7 +25,7 @@ test.describe('mobile minimap w2m stays on-canvas past the forest/bog seam', () 
 
 test.describe('mobile minimap home marker', () => {
   test('home renders as a ring on the minimap static layer', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
     const p = await page.evaluate(() => window.ForestEngine!.qaProbeMinimapPoint!(0, 0));
     expect(p.px).toBeGreaterThanOrEqual(0);
     expect(p.px).toBeLessThanOrEqual(p.mm);

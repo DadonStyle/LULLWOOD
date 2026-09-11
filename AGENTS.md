@@ -76,6 +76,26 @@ Unit tests are `node --test`, colocated as `*.test.ts`. Pure logic only — no
 Three.js, no DOM, no `window`, no timers, no wall-clock reads, no unseeded
 `Math.random()`. Rendering and input stay Playwright's job.
 
+**e2e never boots the full map (founder rule 2026-09-11, LUL-2377).** `boot()` in
+`e2e/helpers.ts` loads the micro world (`?qaWorld=micro`, 96u, 40 trees) by
+default. A spec stages exactly what it needs with
+`window.ForestEngine.qaBuildScene({ trees, props, predators, child, home })` and
+the other `qa*` hooks — one bush and one wolf, not a forest. The 480u map is
+allowed only for map generation itself (seed determinism, bog, prop density,
+minimap seam, the full-map memory budget): pass `qaWorld: 'full'`, put `@fullmap`
+in the test title, add a `// fullmap-reason:` line, and add the file to the
+allowlist in `lib/e2e-policy/world-policy.test.ts` — that unit test fails the PR
+otherwise, and the allowlist may only shrink. The QA rig never runs `@fullmap`;
+run those locally with `E2E_FULLMAP=1 npx playwright test`.
+
+**Every behaviour change ships its QA hook and its micro scenario.** A PR that
+changes `engine/**`, `components/**` or `lib/game/**` behaviour adds or extends a
+`qa*` hook (declared in `engine/forest-engine.d.ts`, installed inside the
+`?qaHooks` block in `init()`) and a Playwright spec that drives the new path in
+the micro world. "No hook, no spec" is a P1 in review, same as "logic change,
+no unit test". Playwright is how the founder's local QA tester and PR watcher
+see your change; without a hook they cannot reach it.
+
 ## Review tiers (development-first, founder directive 2026-08-29)
 
 Measured the day this landed: the two building agents ran 803 sessions in a week; the two

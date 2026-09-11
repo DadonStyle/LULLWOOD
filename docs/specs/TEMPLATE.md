@@ -24,9 +24,13 @@ something.>
 
 **Specs.** `e2e/<file>.spec.ts` — '<test title>' (new | extended | must pass unchanged). One
 line per spec.
+**World.** micro (default — stage the case with `qaBuildScene({...})`: list the exact trees,
+props, predators, child/home the spec places) | `@fullmap` + the one reason the micro world
+cannot express it (founder rule LUL-2377: the QA rig never runs `@fullmap`; the allowlist in
+`lib/e2e-policy/world-policy.test.ts` may only shrink).
 **Hooks.** `window.ForestEngine.qaXxx(args): ReturnType` — one-line behaviour — new (declare
 in `engine/forest-engine.d.ts`, install inside the `?qaHooks` block in `init()`) | existing
-(`engine/forest-engine.js:<line>`).
+(`engine/forest-engine.js:<line>`). Every behaviour change needs a hook that reaches it.
 **Tester scenario.** Which nightly check in `shared/local-qa/QA_TESTER.md` covers this, or
 the request file `shared/local-qa/requests/<lul-id>-<slug>.md` written with this spec.
 "None: not player-visible" needs a reason.

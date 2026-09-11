@@ -22,7 +22,7 @@ function report(defects: Defect[]) {
 test.use({ viewport: LANDSCAPE });
 
 async function boot(page: Page) {
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.goto('/?qaWorld=micro', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
     () => (window as any).ForestEngine && document.querySelectorAll('canvas').length === 2,
     { timeout: 30_000 },

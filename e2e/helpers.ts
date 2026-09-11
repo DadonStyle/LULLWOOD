@@ -66,14 +66,20 @@ export async function boot(
   {
     qaHooks = false,
     seed = QA_PINNED_SEED,
-    qaWorld,
+    // LUL-2377 (founder rule 2026-09-11): the micro world is the DEFAULT. A spec
+    // gets the 480u forest only by passing `qaWorld: 'full'` explicitly, and
+    // only inside a file tagged `@fullmap` with a `// fullmap-reason:` line --
+    // lib/e2e-policy/world-policy.test.ts fails the unit-test run otherwise.
+    // The QA rig never runs @fullmap; the `fullmap` Playwright project exists
+    // only under E2E_FULLMAP=1 (playwright.config.ts).
+    qaWorld = 'micro',
     qaNoRender = false,
-  }: { qaHooks?: boolean; seed?: number | null; qaWorld?: 'micro'; qaNoRender?: boolean } = {},
+  }: { qaHooks?: boolean; seed?: number | null; qaWorld?: 'micro' | 'full'; qaNoRender?: boolean } = {},
 ) {
   const params = new URLSearchParams();
   if (qaHooks) params.set('qaHooks', '1');
   if (seed !== null) params.set('seed', String(seed));
-  if (qaWorld) params.set('qaWorld', qaWorld);
+  if (qaWorld === 'micro') params.set('qaWorld', 'micro');
   if (qaNoRender) params.set('qaNoRender', '1');
   const query = params.toString();
   await page.goto(query ? `/?${query}` : '/', { waitUntil: 'networkidle', timeout: 120_000 });

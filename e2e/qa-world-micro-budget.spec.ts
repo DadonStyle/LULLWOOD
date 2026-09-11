@@ -9,6 +9,7 @@
 // chunks fix respectively; this spec only guards the numbers, not the fix.
 import { test, expect } from '@playwright/test';
 import { boot, qaHook, QA_PINNED_SEED } from './helpers';
+// fullmap-reason: the full-map memory budget (LUL-1768/LUL-2249 regression guard) has to load the full map to measure it (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 const MICRO_BUDGET_BYTES = 400 * 1024 * 1024;
 const FULL_MAP_BUDGET_BYTES = 1.5 * 1024 * 1024 * 1024;
@@ -30,7 +31,7 @@ test.describe('qaProbeMemory budgets (LUL-2324)', () => {
   });
 
   test('full QA-pinned-seed map stays under the 1.5 GB budget @fullmap', async ({ page }) => {
-    await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED });
     await page.waitForTimeout(300);
 
     const mem = await qaHook(page, 'qaProbeMemory');
