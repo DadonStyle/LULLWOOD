@@ -785,8 +785,15 @@ export default function Hud({
       {/* LUL-1258: M2 Deepwater's minimal HUD panel -- decisions/missions-accepted-2026-09-01
           §2's "two collapsed lines, top-left, never occupying the play area". No
           expand-on-hold in this ship (declared simplification, spec S5) -- read-only
-          text, no touch target, so it needs no new EngineActions entry. */}
-      {state.missionKind && state.missionStatus && (
+          text, no touch target, so it needs no new EngineActions entry.
+          LUL-2442: GameMenu's open dropdown (top:56px inside #gameMenu, i.e. ~72px
+          absolute -- components/GameMenu.tsx) starts just 4px above #missionPanel's
+          own top:76px and shares its left:16px corner, so the panel's first row(s)
+          always land on top of the mission pill regardless of viewport -- LUL-1942's
+          76px push only cleared the *closed* 48px toggle button, not the open panel.
+          Same fix family as LUL-2410/2411/2414 (hide the losing element rather than
+          fight z-index) via the `menuOpen` state already plumbed to MobileControls above. */}
+      {state.missionKind && state.missionStatus && !menuOpen && (
         <div id="missionPanel">
           {MISSION_NAMES[state.missionKind]}
           <span id="missionGlyph">{state.missionStatus === 'complete' ? '●' : '○'}</span>
