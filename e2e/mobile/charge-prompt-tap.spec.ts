@@ -12,7 +12,7 @@
 // engine-visible-effect discipline as the rest of e2e/mobile: assert
 // qaPlayerState().jumping, not DOM presence of the pill.
 import { test, expect } from '@playwright/test';
-import { boot } from '../helpers';
+import { boot, expectRowVisible } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });
 
@@ -30,8 +30,11 @@ test('tapping the #chargePrompt pill itself starts a jump, same as the Jump butt
   }
 
   const chargePrompt = page.locator('#chargePrompt');
-  await expect(chargePrompt, 'telegraph HUD never appeared after qaTriggerCharge').toBeVisible({ timeout: 5_000 });
-  await expect(page.locator('#chargeKey')).toHaveText('JUMP');
+  await expectRowVisible(page, 'chargePrompt', 5_000);
+  // LUL-2312: #chargeKey's own id is gone -- the keycap chip is now the
+  // shared .actionPromptKey class (components/ActionPrompt.tsx), scoped to
+  // this row since every row's keycap uses the same class.
+  await expect(chargePrompt.locator('.actionPromptKey')).toHaveText('JUMP');
 
   const before = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
   expect(before?.jumping).toBe(false);

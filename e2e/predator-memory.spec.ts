@@ -28,7 +28,7 @@
 //   current roam waypoint so the next tick's arrival/repick runs
 //   immediately, instead of waiting out the real ~10-20s travel per sweep leg.
 import { test, expect } from '@playwright/test';
-import { boot, enter } from './helpers';
+import { boot, enter, expectRowVisible } from './helpers';
 
 // Bounded loop margin: LKP_MAX_SWEEPS (3) repicks are needed to exhaust the
 // count, plus headroom for the one repick each arrival triggers.
@@ -41,7 +41,7 @@ async function hidePlayer(page: import('@playwright/test').Page) {
   const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
   expect(spot, 'qaTeleportToHideSpot must find a bush/hollow-log spot for this seed').not.toBeNull();
   await page.keyboard.press('KeyH');
-  await expect(page.locator('#status')).toBeVisible();
+  await expectRowVisible(page, 'status');
 }
 
 test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {

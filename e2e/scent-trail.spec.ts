@@ -20,16 +20,20 @@ const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
  * Bounding-box intersection check, matching the LUL-2224 wind-hint spec's
  * helper. `.boundingBox()` on a locator that currently matches zero elements
  * waits out the full actionability timeout instead of returning null (only a
- * matched-but-invisible element resolves to null quickly) -- `#status` and
- * `#actionPrompt` are contextual and usually absent, so `.count()` must be
- * checked first or this hangs for 150s on every call against them.
+ * matched-but-invisible element resolves to null quickly), so `.count()` must
+ * be checked first or this hangs for 150s on every call.
+ * LUL-2312: `#status`/`#objective`/`#actionPrompt` are three of #actionSlot's
+ * always-mounted rows now (never absent, so `.count()` alone no longer skips
+ * them) -- an empty row's `.actionPromptRow` has no content, so its content
+ * box collapses to zero width (`justify-items: center` sizes it to content,
+ * not the grid track); a zero-area box is also treated as nothing to overlap.
  */
 async function assertNoOverlap(page: Page, selA: string, selB: string) {
   const locA = page.locator(selA), locB = page.locator(selB);
   if ((await locA.count()) === 0 || (await locB.count()) === 0) return;
   const a = await locA.boundingBox();
   const b = await locB.boundingBox();
-  if (!a || !b) return; // matched but not currently visible -- nothing to overlap
+  if (!a || !b || a.width === 0 || a.height === 0 || b.width === 0 || b.height === 0) return; // nothing to overlap
   const overlaps =
     a.x < b.x + b.width && a.x + a.width > b.x &&
     a.y < b.y + b.height && a.y + a.height > b.y;

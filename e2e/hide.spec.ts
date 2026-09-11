@@ -14,7 +14,7 @@
 // KeyH press, the same "place deterministically instead of hunting the procedural
 // map" pattern e2e/positional-hiding.spec.ts already uses.
 import { test, expect } from '@playwright/test';
-import { boot, enter } from './helpers';
+import { boot, enter, expectRowVisible, expectRowHidden } from './helpers';
 
 test.describe('H hide toggle', () => {
   test('H toggles the Hidden status HUD, and moving breaks cover automatically', async ({ page }) => {
@@ -26,15 +26,15 @@ test.describe('H hide toggle', () => {
       throw new Error('qaTeleportToHideSpot returned null -- no bush/hollow-log hiding spot was found for this seed');
     }
 
-    // Not hiding yet: #status is unmounted (Hud.tsx only mounts it when
-    // statusVisible, which is driven 1:1 by `hidden` outside a sniff event).
-    await expect(page.locator('#status')).toHaveCount(0);
+    // Not hiding yet: the #status row is mounted (LUL-2312: #actionSlot's
+    // five rows are always in the DOM) but data-visible="0" -- statusVisible
+    // is driven 1:1 by `hidden` outside a sniff event.
+    await expectRowHidden(page, 'status');
 
     // H toggles `hidden` on. hideTime resets to 0 on the same keydown
     // (engine/forest-engine.js:553), then climbs every tick while held.
     await page.keyboard.press('KeyH');
-    await expect(page.locator('#status')).toBeVisible();
-    await expect(page.locator('#status')).toHaveClass(/hiding/);
+    await expectRowVisible(page, 'status');
     await expect(page.locator('#status')).toContainText('Hidden');
     await expect(page.locator('#status')).toHaveText(/Hidden · \d+\.\ds\s+\(moving breaks cover\)/);
 
@@ -44,17 +44,17 @@ test.describe('H hide toggle', () => {
     const second = await page.locator('#status').textContent();
     expect(second, 'hideTime should keep climbing while held still').not.toBe(first);
 
-    // H again toggles it back off: #status unmounts.
+    // H again toggles it back off: #status goes back to data-visible="0".
     await page.keyboard.press('KeyH');
-    await expect(page.locator('#status')).toHaveCount(0);
+    await expectRowHidden(page, 'status');
 
     // Re-hide, then break cover by moving -- the tick loop drops `hidden`
     // itself (no second H press needed) the instant a movement key is held.
     await page.keyboard.press('KeyH');
-    await expect(page.locator('#status')).toBeVisible();
+    await expectRowVisible(page, 'status');
 
     await page.keyboard.down('KeyW');
-    await expect(page.locator('#status')).toHaveCount(0, { timeout: 2_000 });
+    await expectRowHidden(page, 'status', 2_000);
     await page.keyboard.up('KeyW');
   });
 });

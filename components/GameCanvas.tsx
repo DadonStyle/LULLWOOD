@@ -5,7 +5,6 @@ import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from 
 import { track, startSessionTracking } from '@/lib/analytics';
 import { initTelemetryTransport } from '@/lib/telemetry-transport';
 import { isMobile } from '@/lib/input-mode';
-import { CHARGE_WINDOW } from '@/lib/game/charge';
 import { assertEngineContract } from '@/lib/engine-contract';
 
 // CSS verbatim from the original single-file prototype (M2 wiki plan:
@@ -18,14 +17,40 @@ import { assertEngineContract } from '@/lib/engine-contract';
 // LUL-34 (M2b): the gate/objective/status/win/death/panel *markup* moved out of
 // this string and into <Hud> (components/Hud.tsx) as real JSX driven by engine
 // state -- see that file. The rules below stay here because the elements Hud
-// renders still use these ids/classes (#gate, #objective, .ready, #status,
-// .hiding, #winScreen, #deathScreen, #deathText, #panel, .restartBtn, ...), and
-// splitting one stylesheet across two files for no reason would just make it
-// harder to diff against the original CSS.
+// renders still use these ids/classes (#gate, #winScreen, #deathScreen,
+// #deathText, #panel, .restartBtn, ...), and splitting one stylesheet across
+// two files for no reason would just make it harder to diff against the
+// original CSS. LUL-2312: #objective/#actionPrompt/#throwPrompt/#chargePrompt/
+// #status are gone from this list -- see #actionSlot/.actionPromptRow below.
 const OVERLAY_STYLE = `
   html, body { height: 100%; margin: 0; background: #0a0e15; overflow: hidden;
     overscroll-behavior: none; touch-action: manipulation;
-    font-family: ui-sans-serif, system-ui, sans-serif; color: #b9c8dd; }
+    font-family: ui-sans-serif, system-ui, sans-serif; color: #b9c8dd;
+    /* LUL-2312: shared tokens for every ActionPrompt row (components/
+       ActionPrompt.tsx) -- see the #actionSlot comment further down for what
+       each one means. Declared here, unconditionally and first in source
+       order, so the mobile/short-viewport overrides below (which only set
+       these on a matching media query) always win when they match -- a
+       custom property's cascade follows normal specificity/source-order
+       rules same as any other declaration, so the override must come later
+       in the stylesheet than this default. */
+    --action-pill-bg: rgba(12,17,26,0.6);
+    --action-pill-border-calm: rgba(150,175,215,0.16);
+    --action-pill-border-ready: rgba(255,200,140,0.45);
+    --action-pill-border-status: rgba(120,200,150,0.4);
+    --action-pill-color-calm: #d7c3b0;
+    --action-pill-color-ready: #ffdca8;
+    --action-pill-color-status: #9fd7b0;
+    --action-pill-key-bg: #f0c79a;
+    --action-pill-key-color: #1a1006;
+    --action-pill-key-shadow: 0 2px 20px rgba(240,199,154,0.6);
+    --action-pill-urgent-bg: #e8554a;
+    --action-pill-urgent-shadow: 0 2px 26px rgba(232,85,74,0.85);
+    --action-slot-row: 36px;
+    --action-slot-row-charge: 48px;
+    --action-slot-gap: 6px;
+    --action-slot-bottom: 24px;
+    --action-slot-height: calc(var(--action-slot-row-charge) + (4 * var(--action-slot-row)) + (4 * var(--action-slot-gap))); }
   canvas { display: block; }
 
   #vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none;
@@ -95,11 +120,14 @@ const OVERLAY_STYLE = `
      same media features JS's matchMedia does), or LUL-198's overlap returns
      for viewports isMobile() calls mobile that this query doesn't catch. */
   @media (max-width: 768px), (pointer: coarse) and (hover: none) {
-    #panel { bottom: 240px; }
-    /* LUL-1089: raise #actionPrompt clear of the mobile control row (z-index 30,
-       bottom: 24px+safe-area). 240px matches #panel's own mobile override above;
-       the prompt rides above the controls rather than behind them. */
-    #actionPrompt { bottom: 240px; }
+    /* LUL-2312: one shared clearance value for every bottom-centre HUD piece
+       that has to clear the mobile control row (z-index 30, bottom:
+       24px+safe-area) -- #panel and #actionSlot used to restate 240px
+       independently (LUL-1089), which is exactly the kind of duplicated magic
+       number LUL-1779 kept tripping over. #actionSlot's own rule picks this up
+       via bottom: var(--action-slot-bottom). */
+    body { --action-slot-bottom: 240px; }
+    #panel { bottom: var(--action-slot-bottom); }
     /* LUL-69: ~44px is the standard (WCAG 2.5.5 / Apple HIG / Material)
        minimum touch-target side -- desktop's 6px/12px padding at 12px font
        sits well under that, and the founder's own complaint was "HUD sized
@@ -224,36 +252,33 @@ const OVERLAY_STYLE = `
     #settingsPanel fieldset { margin: 0; }
   }
 
-  /* LUL-26: closed captions for predator calls -- every sound in this game is
-     synthesized WebAudio with no other track, so this is the sole warning
-     channel for a player who can't hear it. Sits above #status (bottom: 74px)
-     and below #chargePrompt (bottom: 130px) so a caption and a charge-dodge
-     prompt can never overlap. */
-  #captionToast { position: fixed; bottom: 180px; left: 50%; transform: translateX(-50%); z-index: 14;
-    padding: 7px 16px; border-radius: 999px; white-space: nowrap; pointer-events: none;
-    background: rgba(12,17,26,0.72); border: 1px solid rgba(150,175,215,0.22);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8; text-shadow: 0 1px 6px rgba(0,0,0,0.8);
-    animation: captionFade 0.25s ease; }
-  @keyframes captionFade { from { opacity: 0; transform: translate(-50%, 4px); } to { opacity: 1; transform: translateX(-50%); } }
+  /* LUL-26/LUL-2312: closed captions for predator calls -- every sound in this
+     game is synthesized WebAudio with no other track, so this is the sole
+     warning channel for a player who can't hear it. Rendered as an
+     <ActionPrompt tone="status"> (Hud.tsx) -- .actionPromptLine supplies the
+     pill chrome and its own mount fade, so this rule is positioning only: a
+     row above #actionSlot, offset by the slot's own (variable) height so the
+     two can never collide regardless of how many action-slot rows are
+     currently populated. */
+  #captionToast { position: fixed; left: 50%; transform: translateX(-50%); z-index: 14;
+    bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px);
+    pointer-events: none; }
 
   /* LUL-26: high-contrast HUD. Presentation only -- SettingsPanel.tsx toggles
      this via document.body.dataset.highContrast, the same direct-DOM pattern
      LUL-144's cover desaturation already uses (data-los-covered). Brightens
      HUD chrome only; the WebGL scene itself is untouched. */
+  /* LUL-2312: every #objective/#status/#actionPrompt/#throwPrompt/#captionToast
+     high-contrast override collapses onto the shared .actionPromptRow/
+     .actionPromptLine classes -- data-tone carries the same distinction the old
+     per-id overrides did (ready==objective.ready/actionPrompt's calm state,
+     urgent==actionPrompt.urgent, status==status.hiding, now also captionToast). */
   body[data-high-contrast="1"] #panel,
-  body[data-high-contrast="1"] #objective,
-  body[data-high-contrast="1"] #status,
-  body[data-high-contrast="1"] #actionPrompt,
-  body[data-high-contrast="1"] #throwPrompt,
-  body[data-high-contrast="1"] #captionToast,
+  body[data-high-contrast="1"] .actionPromptLine,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
-  body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
-  body[data-high-contrast="1"] #status.hiding { color: #baffcf; border-color: #6fe89a; }
-  body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
-  body[data-high-contrast="1"] #actionPrompt { color: #ffe6b0; border-color: #ffcf7a; }
-  body[data-high-contrast="1"] #actionPrompt.urgent { color: #ff9f9f; border-color: #ff6b6b; }
-  body[data-high-contrast="1"] #throwPrompt { color: #ffe6b0; border-color: #ffcf7a; }
+  body[data-high-contrast="1"] .actionPromptRow[data-tone="ready"] .actionPromptLine { color: #ffe6b0; border-color: #ffcf7a; }
+  body[data-high-contrast="1"] .actionPromptRow[data-tone="urgent"] .actionPromptLine { color: #ff9f9f; border-color: #ff6b6b; }
+  body[data-high-contrast="1"] .actionPromptRow[data-tone="status"] .actionPromptLine { color: #baffcf; border-color: #6fe89a; }
 
   /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
@@ -280,15 +305,6 @@ const OVERLAY_STYLE = `
     background: radial-gradient(120% 90% at 50% 50%, rgba(6,9,15,0.35), rgba(6,9,15,0.72));
     font-size: 15px; letter-spacing: 0.08em; color: #cdd9ea;
     text-shadow: 0 2px 20px rgba(0,0,0,0.8); }
-
-  /* objective banner */
-  #objective { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 12;
-    display: none; padding: 8px 18px; border-radius: 999px; white-space: nowrap;
-    background: rgba(12,17,26,0.6); border: 1px solid rgba(150,175,215,0.16);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.04em; color: #d7c3b0;
-    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  #objective.ready { color: #ffdca8; border-color: rgba(255,200,140,0.45); }
 
   /* LUL-1258: M2 Deepwater's minimal mission panel -- two collapsed lines,
      top-left, per decisions/missions-accepted-2026-09-01 §2. Small and
@@ -400,65 +416,87 @@ const OVERLAY_STYLE = `
   .buyBtn:disabled { opacity: 0.45; cursor: default; }
   .buyBtn:focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
 
-  /* LUL-1623: holding-a-throwable affordance. Sits above #status (74px) so it
-     never overlaps the hidden/hunted line or #actionPrompt (92px) -- all three
-     can in principle be visible together (holding a stone while hidden). */
-  #throwPrompt { position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 12;
-    display: flex; align-items: center; gap: 0; pointer-events: none;
-    padding: 7px 16px; border-radius: 999px; white-space: nowrap;
-    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
-    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  #throwKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
-    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
+  /* LUL-2312: one fixed bottom action slot, replacing #objective (was
+     top-centre)/#actionPrompt/#throwPrompt/#chargePrompt/#status -- five
+     independently hand-positioned pills (74/92/110/130px bottom offsets plus
+     #objective's separate top:20px) that LUL-1779/1780 kept catching drifting
+     out of sync on mobile. #actionSlot is a CSS grid column, one fixed-height
+     track per row, always laid out in this priority order regardless of which
+     rows currently have content -- so a row appearing/disappearing never
+     shifts any other row (no pop-in layout shift). Rows, top (highest
+     priority, nearest screen centre) to bottom (nearest the screen edge):
+       1. charge dodge   (SPACE/JUMP -- survival-critical, own drain bar)
+       2. objective (E)  (lift the child / mist-charm / drowned car / distance)
+       3. hide or veil   (H/Hide or F/Veil -- cover always wins over veil)
+       4. throwable      (holding a stone -- click / tap Throw)
+       5. status         (hidden / hunted)
+     --action-pill-* custom properties are the "same tokens" requirement --
+     the exact values #objective's pill used to hardcode, now named once and
+     shared by every row via components/ActionPrompt.tsx's .actionPromptLine.
+     --action-slot-row / --action-slot-row-charge / --action-slot-gap define
+     the grid's fixed row heights in one place (defaults declared on the top
+     html, body rule above); --action-slot-height derives the slot's total
+     footprint from them so #captionToast (below) can sit just above it
+     without restating the arithmetic. */
+  /* LUL-1088 precedent: a landscape phone is short, not narrow -- five stacked
+     rows plus the mobile control-row clearance below them does not fit a
+     ~390px-tall viewport (e.g. Pixel 5 landscape, 851x393) at the desktop row
+     sizes above. Tighten rows/gap and (combined with the mobile query below)
+     the slot's own clearance specifically, without touching #panel's. */
+  @media (max-height: 420px) {
+    html, body { --action-slot-row: 30px; --action-slot-row-charge: 40px; --action-slot-gap: 4px; }
+  }
+  @media (max-height: 420px) and (pointer: coarse) and (hover: none),
+         (max-height: 420px) and (max-width: 768px) {
+    body { --action-slot-bottom: 190px; }
+  }
 
-  /* status line (hiding / hunted) */
-  #status { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 12;
-    display: none; padding: 7px 16px; border-radius: 999px; white-space: nowrap;
-    background: rgba(12,17,26,0.6); border: 1px solid rgba(150,175,215,0.16);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.03em; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  #status.hiding { color: #9fd7b0; border-color: rgba(120,200,150,0.4); }
+  #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
+    z-index: 12; display: grid;
+    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
+    row-gap: var(--action-slot-gap); justify-items: center; pointer-events: none; }
 
-  /* LUL-1089: contextual hide/veil prompt. Sits between #status (74px) and
-     #chargePrompt (130px). Calm state: amber (#ffdca8) matching #objective.ready —
-     the game's existing "available now" grammar. Urgent: red (#e8554a) matching
-     #chargeBar — the only red in the HUD, already meaning "act now".
-     urgentFlash animates background + box-shadow only — never transform, never
-     layout — so the translateX(-50%) centring is never overridden mid-panic. */
-  #actionPrompt { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 12;
-    display: flex; align-items: center; gap: 0; pointer-events: none;
+  .actionPromptRow { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; }
+  .actionPromptLine { display: flex; align-items: center; gap: 0; pointer-events: none;
     padding: 7px 16px; border-radius: 999px; white-space: nowrap;
-    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
+    background: var(--action-pill-bg); border: 1px solid var(--action-pill-border-calm);
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
-    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  #actionPrompt #actionKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
-    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
-  #actionPrompt.urgent #actionKey { animation: urgentFlash 0.42s ease-in-out infinite alternate; }
+    font-size: 13px; letter-spacing: 0.03em; color: var(--action-pill-color-calm);
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7);
+    animation: actionPromptFadeIn 150ms ease; }
+  .actionPromptRow[data-tone="ready"] .actionPromptLine,
+  .actionPromptRow[data-tone="urgent"] .actionPromptLine { color: var(--action-pill-color-ready); border-color: var(--action-pill-border-ready); }
+  .actionPromptRow[data-tone="status"] .actionPromptLine { color: var(--action-pill-color-status); border-color: var(--action-pill-border-status); }
+  .actionPromptKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+    color: var(--action-pill-key-color); background: var(--action-pill-key-bg); box-shadow: var(--action-pill-key-shadow); }
+  /* LUL-1780: tone="urgent" is the one flashing state -- background/box-shadow
+     only, never transform, so the row's own translateX(-50%)-free flex layout
+     is never at risk of the chargePulse-on-transform bug (decisions/
+     lul1089-prompt-surface). This also now covers the charge-dodge keycap,
+     which used to run its own always-on amber scale-pulse (chargePulse) --
+     unified onto the same red flash as every other urgent row so the whole
+     component family satisfies "opacity only, no scale/bounce" below. */
+  .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: urgentFlash 0.42s ease-in-out infinite alternate; }
   @keyframes urgentFlash {
-    from { background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
-    to   { background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
+    from { background: var(--action-pill-key-bg); box-shadow: var(--action-pill-key-shadow); }
+    to   { background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); } }
+  /* LUL-2312 rule 4: transitions are opacity-only, 120-180ms, nothing pops --
+     a row's pill fades in on mount; there is deliberately no exit transition,
+     matching every one of these prompts' existing (zero-transition) hide
+     behaviour, so this is a pure improvement, not a new pop-in. */
+  @keyframes actionPromptFadeIn { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) {
-    #actionPrompt.urgent #actionKey { animation: none; background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
+    .actionPromptLine { animation: none; }
+    .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: none; background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); } }
 
-  /* LUL-213/LUL-304: charge-dodge visual key + countdown bar. The animation
-     duration is CHARGE_WINDOW (imported from lib/game/charge.ts, not
-     restated as a literal) so the bar can never drift from the real dodge
-     window -- see the comment on #chargePrompt in Hud.tsx for why that
-     constant is still spliced into CSS here rather than threaded through as
-     per-frame engine-emitted state. */
-  #chargePrompt { position: fixed; bottom: 130px; left: 50%; transform: translateX(-50%); z-index: 13;
-    display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
-  #chargeKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
-    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6);
-    animation: chargePulse 0.4s ease-in-out infinite alternate; }
-  #chargeBarTrack { width: 120px; height: 5px; border-radius: 999px; background: rgba(150,175,215,0.25); overflow: hidden; }
-  #chargeBar { height: 100%; width: 100%; background: #e8554a; transform-origin: left;
-    animation: chargeDrain ${CHARGE_WINDOW}s linear forwards; }
+  /* LUL-213/LUL-304: charge-dodge countdown bar -- durationSeconds comes from
+     CHARGE_WINDOW (lib/game/charge.ts) as an inline style on the element
+     itself now (components/Hud.tsx), not spliced into this stylesheet, so the
+     bar can never drift from the real dodge window without also threading it
+     through as per-frame engine state. */
+  .actionPromptProgressTrack { width: 120px; height: 5px; border-radius: 999px; background: rgba(150,175,215,0.25); overflow: hidden; }
+  .actionPromptProgressBar { height: 100%; width: 100%; background: #e8554a; transform-origin: left; animation: chargeDrain linear forwards; }
   @keyframes chargeDrain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-  @keyframes chargePulse { from { transform: scale(1); } to { transform: scale(1.08); } }
 
   /* death: video cutscene + loss text */
   #spotFlash { position: fixed; inset: 0; z-index: 12; pointer-events: none; opacity: 0;

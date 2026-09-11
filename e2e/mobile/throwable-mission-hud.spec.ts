@@ -3,7 +3,7 @@
 // Same engine-visible-effect discipline as the rest of e2e/mobile: assert
 // qaPlayerState()/#missionPanel content, not just that a button renders.
 import { test, expect } from '@playwright/test';
-import { boot, qaHook } from '../helpers';
+import { boot, qaHook, expectRowVisible } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });
 
@@ -22,7 +22,7 @@ test('qaGrabThrowable() shows #throwPrompt (mobile copy) and mounts the Throw bu
   expect(grabbed, 'qaGrabThrowable returned null -- no untaken stone at this seed').not.toBeNull();
 
   const prompt = page.locator('#throwPrompt');
-  await expect(prompt).toBeVisible({ timeout: 3_000 });
+  await expectRowVisible(page, 'throwPrompt');
   await expect(prompt).toContainText('tap');
 
   const throwBtn = page.getByTestId('mobileControls').getByText('Throw');

@@ -123,6 +123,24 @@ export function qaHook<K extends QaHookName>(page: Page, name: K, ...args: any[]
  * off-screen). This asserts the element's box actually intersects what a
  * player would see.
  */
+/**
+ * LUL-2312: #objective/#actionPrompt/#throwPrompt/#chargePrompt/#status are
+ * five always-mounted rows inside #actionSlot now (components/Hud.tsx),
+ * each an <ActionPrompt> (components/ActionPrompt.tsx) that toggles
+ * `data-visible="0"|"1"` on the row rather than mounting/unmounting it --
+ * the row's grid track stays laid out either way (no pop-in layout shift).
+ * Specs must assert on the attribute instead of the old `toHaveCount(0)` /
+ * `toBeVisible()` pair, which no longer distinguishes the two states now
+ * that the element is always in the DOM.
+ */
+export async function expectRowVisible(page: Page, id: string, timeout = 3_000) {
+  await expect(page.locator(`#${id}`)).toHaveAttribute('data-visible', '1', { timeout });
+}
+
+export async function expectRowHidden(page: Page, id: string, timeout = 3_000) {
+  await expect(page.locator(`#${id}`)).toHaveAttribute('data-visible', '0', { timeout });
+}
+
 export async function assertInViewport(locator: Locator, page: Page, label = '') {
   const box = await locator.boundingBox();
   const viewport = page.viewportSize();

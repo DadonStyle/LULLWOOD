@@ -8,7 +8,7 @@
 // declared in engine/forest-engine.d.ts) closes that gap by routing through
 // the real triggerDeath(), the same function every in-game catch calls.
 import { test, expect } from '@playwright/test';
-import { boot, enter, qaHook } from './helpers';
+import { boot, enter, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
 test('a Space press right after the death reveal must not restart the run, but one after the grace window still does', async ({ page }) => {
   test.setTimeout(45_000);
@@ -25,12 +25,15 @@ test('a Space press right after the death reveal must not restart the run, but o
   await page.keyboard.press('Space');
   await page.waitForTimeout(500);
   await expect(page.locator('#deathScreen'), 'an in-flight Space right at reveal must not restart the run').toBeVisible();
-  await expect(page.locator('#objective')).toHaveCount(0);
+  // LUL-2312: #objective is one of #actionSlot's always-mounted rows now --
+  // the !deathVisible gate on its `visible` prop (Hud.tsx) is what this
+  // asserts, not whether the element exists.
+  await expectRowHidden(page, 'objective');
 
   // A deliberate press once the grace window has actually elapsed still works --
   // LUL-1194's accessibility path, not something this fix should remove.
   await page.waitForTimeout(2_000);
   await page.keyboard.press('Space');
   await expect(page.locator('#deathScreen')).toBeHidden({ timeout: 5_000 });
-  await expect(page.locator('#objective')).toBeVisible();
+  await expectRowVisible(page, 'objective');
 });

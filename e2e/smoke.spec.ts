@@ -21,6 +21,8 @@ import {
   boot,
   enter,
   expectNoConsoleErrors,
+  expectRowHidden,
+  expectRowVisible,
   readObjective,
   trackConsoleErrors,
 } from './helpers';
@@ -108,11 +110,12 @@ test.describe('HUD lifted to React (LUL-34)', () => {
 
     await boot(page);
 
-    // Pre-entry: gate is mounted, objective/status are not -- the old
-    // version kept #objective/#status in the DOM at all times.
+    // Pre-entry: gate is mounted, objective/status carry no content -- LUL-2312
+    // made #objective/#status two of #actionSlot's five always-mounted rows,
+    // so "not shown" is now data-visible="0" rather than absence from the DOM.
     await expect(page.locator('#gate')).toHaveCount(1);
-    await expect(page.locator('#objective')).toHaveCount(0);
-    await expect(page.locator('#status')).toHaveCount(0);
+    await expectRowHidden(page, 'objective');
+    await expectRowHidden(page, 'status');
 
     // LUL-35 (pass 2) regression guard: the panel must open showing the values
     // the engine is actually running (CONFIG.walk 6, CONFIG.fog 0.04). It used
@@ -123,7 +126,7 @@ test.describe('HUD lifted to React (LUL-34)', () => {
 
     await enter(page);
     await expect(page.locator('#gate')).toHaveCount(0); // unmounted, not just hidden
-    await expect(page.locator('#objective')).toBeVisible();
+    await expectRowVisible(page, 'objective');
 
     // Drive the range inputs like a real drag would (Playwright's `fill()`
     // refuses `type=range`). Assigning `el.value` is NOT enough: React installs

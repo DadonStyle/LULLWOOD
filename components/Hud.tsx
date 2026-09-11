@@ -6,11 +6,13 @@ import MobileControls from './MobileControls';
 import OrientationGate from './OrientationGate';
 import SettingsPanel from './SettingsPanel';
 import GameMenu from './GameMenu';
+import ActionPrompt from './ActionPrompt';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 import { nextDeeperLungsCost, veilMaxHoldForTier, CARRIED, RESCUE, type RunPayout } from '@/lib/game/economy';
 import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
+import { CHARGE_WINDOW } from '@/lib/game/charge';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -267,6 +269,38 @@ const formatDuration = (totalSeconds: number) => {
   const m = Math.floor(s / 60);
   return `${m}:${(s % 60).toString().padStart(2, '0')}`;
 };
+
+// LUL-1089/LUL-2312: hide/veil action-slot row copy. Only one of the two
+// mechanics prompts at a time -- cover wins (engine enforces via
+// !coverPromptVisible in the veil condition, forest-engine.js), so this is a
+// single priority chain, not two independent branches. Returns props to
+// spread onto <ActionPrompt> rather than JSX so the caller doesn't need a
+// four-way conditional inline; called unconditionally (its result is only
+// ever displayed when the caller's own `visible` prop is true).
+function hideVeilPromptContent(
+  state: EngineHudState,
+  mobile: boolean,
+): { text: string; suffix?: string; keycap: string; tone: 'ready' | 'urgent' } {
+  const noun = state.coverPromptKind === 'log' ? 'hollow log' : 'bush';
+  if (state.coverPromptVisible) {
+    if (state.coverPromptUrgent) {
+      return mobile
+        ? { text: `the ${noun} is right there — TAP  `, keycap: 'Hide', tone: 'urgent' }
+        : { text: `the ${noun} is right there — PRESS  `, keycap: 'H', tone: 'urgent' };
+    }
+    return mobile
+      ? { text: 'Tap  ', keycap: 'Hide', suffix: `  to slip into the ${noun}`, tone: 'ready' }
+      : { text: 'Press  ', keycap: 'H', suffix: `  to hide in the ${noun}`, tone: 'ready' };
+  }
+  if (state.veilPromptUrgent) {
+    return mobile
+      ? { text: 'nowhere to hide — HOLD  ', keycap: 'Veil', tone: 'urgent' }
+      : { text: 'nowhere to hide — HOLD  ', keycap: 'F', suffix: '  for the veil', tone: 'urgent' };
+  }
+  return mobile
+    ? { text: 'it is hunting you — hold  ', keycap: 'Veil', tone: 'ready' }
+    : { text: 'it is hunting you — hold  ', keycap: 'F', suffix: '  for the mist veil', tone: 'ready' };
+}
 
 // LUL-1043: Embers, the run currency -- supersedes the LUL-84 personal-best
 // time survived this block used to hold (deleted: it rewarded dying slowly,
@@ -629,19 +663,29 @@ export default function Hud({
       <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} onOpenChange={setMenuOpen} />
       <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
-      {/* LUL-26: closed captions for predator calls -- the only warning
+      {/* LUL-26/LUL-2312: closed captions for predator calls -- the only warning
           channel for a player who can't hear the (fully synthesized) audio.
           `key` forces a remount per captionId so a caption that arrives while
           the previous one is still fading restarts the toast cleanly instead
-          of the old text lingering under a re-triggered fade. */}
+          of the old text lingering under a re-triggered fade. Rendered as an
+          <ActionPrompt> row positioned above #actionSlot (GameCanvas.tsx) --
+          tone="status" instead of the old dedicated amber #captionToast colour,
+          so every non-actionable HUD readout (this + the hidden/hunted status
+          row below) shares one look; declared in the PR, not silent. */}
       {/* LUL-2131: predator calls stop while playing===false but captionVisible/
           state.caption are toast state, not reset by triggerDeath/arriveHome --
           a caption in flight at the exact moment of win/death would otherwise
           keep fading in over the end screen. */}
       {captionVisible && state.caption && !state.winVisible && !state.deathVisible && (
-        <div id="captionToast" key={state.captionId} role="status" aria-live="polite">
-          {state.caption}
-        </div>
+        <ActionPrompt
+          id="captionToast"
+          key={state.captionId}
+          visible
+          text={state.caption}
+          tone="status"
+          role="status"
+          ariaLive="polite"
+        />
       )}
 
       {!state.entered && (
@@ -687,16 +731,6 @@ export default function Hud({
             )}
           </div>
           <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
-        </div>
-      )}
-
-      {/* CSS default for #objective/#status is `display: none` (they were only
-          ever shown by the old code writing `style.display = 'block'`) --
-          the inline override below reproduces that, otherwise the stylesheet
-          rule would hide them even though React has mounted the element. */}
-      {state.objectiveVisible && (
-        <div id="objective" className={state.objectiveReady ? 'ready' : undefined} style={{ display: 'block' }}>
-          {state.objectiveText}
         </div>
       )}
 
@@ -749,15 +783,6 @@ export default function Hud({
         </div>
       )}
 
-      {/* `hiding` is not a second flag: status only ever appears while hidden
-          (LUL-35 pass 2 removed the `statusHiding` field, which the engine only
-          ever set to the same value as `statusVisible`). */}
-      {state.statusVisible && (
-        <div id="status" className="hiding" style={{ display: 'block' }}>
-          {state.statusText}
-        </div>
-      )}
-
       {/* LUL-2131: gate on !winVisible/!deathVisible too -- entered stays true
           through the end screens (restart() never clears it), so this used to
           keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
@@ -791,102 +816,90 @@ export default function Hud({
         </div>
       )}
 
-      {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;
-          cover wins (engine enforces via !coverPromptVisible in veil condition).
-          Key/button name uses the same #actionKey pill style as #chargeKey above.
-          Double-spaces around the key name are house style (match "Press  E  to lift the child").
-          LUL-2131: coverPromptVisible/veilPromptVisible are only recomputed `if(playing)`
-          in the engine (forest-engine.js) and aren't reset by triggerDeath/arriveHome, so a
-          prompt live at the exact moment of win/death otherwise keeps rendering over the end
-          screen. Gate here rather than in the engine to keep this a render-layer fix. */}
-      {!state.winVisible && !state.deathVisible && (state.coverPromptVisible || state.veilPromptVisible) && (() => {
-        const noun = state.coverPromptKind === 'log' ? 'hollow log' : 'bush';
-        const urgentKeyStyle = state.reducedMotion
-          ? { animation: 'none', background: '#e8554a', boxShadow: '0 2px 26px rgba(232,85,74,0.85)' } as const
-          : undefined;
-        if(state.coverPromptVisible){
-          if(state.coverPromptUrgent){
-            return (
-              <div id="actionPrompt" className="urgent">
-                {mobile
-                  ? <>{`the ${noun} is right there — TAP  `}<span id="actionKey" style={urgentKeyStyle}>Hide</span></>
-                  : <>{`the ${noun} is right there — PRESS  `}<span id="actionKey" style={urgentKeyStyle}>H</span></>}
-              </div>
-            );
-          }
-          return (
-            <div id="actionPrompt">
-              {mobile
-                ? <>{'Tap  '}<span id="actionKey">Hide</span>{`  to slip into the ${noun}`}</>
-                : <>{'Press  '}<span id="actionKey">H</span>{`  to hide in the ${noun}`}</>}
-            </div>
-          );
-        }
-        if(state.veilPromptUrgent){
-          return (
-            <div id="actionPrompt" className="urgent">
-              {mobile
-                ? <>{`nowhere to hide — HOLD  `}<span id="actionKey" style={urgentKeyStyle}>Veil</span></>
-                : <>{`nowhere to hide — HOLD  `}<span id="actionKey" style={urgentKeyStyle}>F</span>{'  for the veil'}</>}
-            </div>
-          );
-        }
-        return (
-          <div id="actionPrompt">
-            {mobile
-              ? <>{`it is hunting you — hold  `}<span id="actionKey">Veil</span></>
-              : <>{`it is hunting you — hold  `}<span id="actionKey">F</span>{'  for the mist veil'}</>}
-          </div>
-        );
-      })()}
-
-      {/* LUL-1623: holding-a-throwable affordance -- there's no held-item mesh
-          in first person, so this is the only way the player knows they're
-          carrying a stone. Styled like the existing pickup/interact prompt
-          (#objective.ready); own id/position (#throwPrompt, see GameCanvas.tsx's
-          OVERLAY_STYLE) since it can be visible at the same time as #objective
-          (e.g. "Find the lost child" while also holding a stone).
-          LUL-2131: heldThrowable is only reset in restart() (forest-engine.js), not
-          triggerDeath/arriveHome, so it can still read true into the end screen. */}
-      {state.heldThrowable && !state.winVisible && !state.deathVisible && (
-        <div id="throwPrompt">
-          {mobile
-            ? <>{'Holding a stone — tap  '}<span id="throwKey">Throw</span></>
-            : <>{'Holding a stone — click to throw'}</>}
-        </div>
-      )}
-
-      {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
-          forces React to remount this element on every fresh charge (not on
-          overlapping ones, see beginChargeHud in the engine), which restarts
-          the CSS countdown bar animation from a clean 100%. The countdown
-          duration is CHARGE_WINDOW, imported into GameCanvas.tsx's OVERLAY_STYLE
-          (see lib/game/charge.ts) rather than passed here as engine state --
-          it's a fixed, learnable window by design, not a per-frame tunable
-          the HUD needs to stay in sync with. LUL-304: this used to restate the
-          value as a bare "1s" literal in the CSS; it's now the same constant.
-          LUL-617: on mobile the pill reads "JUMP" but #chargePrompt's CSS is
-          `pointer-events: none` (it's a caption on desktop, not a control) --
-          that made it a false affordance once the label became actionable
-          text. Override pointer-events + wire the same triggerTouchJump the
-          bottom-left Jump button uses, `onPointerDown` like ActionBtn (LUL-653:
-          avoids the browser's pan-gesture disambiguation on tap targets). The
-          bottom-left button stays too -- removing it is a UX call for the
-          Game Tester, not a code-correctness one. */}
-      {state.chargeVisible && (
-        <div
+      {/* LUL-2312: the one fixed bottom action slot -- a CSS grid of five
+          always-mounted rows (GameCanvas.tsx's #actionSlot), each an
+          <ActionPrompt>, in the founder's stated priority order top-to-bottom:
+          charge dodge > objective (E) > hide-or-veil > throwable > status.
+          Rows with nothing to show still occupy their grid track (no
+          pop-in layout shift when one appears/disappears) -- ActionPrompt
+          itself decides whether to render a pill inside that track.
+          Every row is gated on !winVisible && !deathVisible: engine state for
+          all five is only recomputed `if(playing)` (forest-engine.js's tick())
+          and resets one frame after triggerDeath()/arriveHome() flip
+          winVisible/deathVisible, so without the gate a prompt live at the
+          exact moment of win/death would render over the end screen for that
+          frame (LUL-2131 precedent -- previously only actionPrompt/throwPrompt
+          carried this gate; extended to all five here for consistency, not a
+          previously-reported bug on the other three). */}
+      <div id="actionSlot">
+        {/* LUL-213/LUL-304/LUL-617: charge-dodge keycap + countdown bar. `key`
+            on chargeToken forces the drain bar's CSS animation to restart from
+            a clean 100% on a *fresh* charge (not an overlapping one -- see
+            beginChargeHud in the engine); durationSeconds is CHARGE_WINDOW
+            (lib/game/charge.ts) so the bar can never drift from the real dodge
+            window without also threading it through as per-frame engine
+            state. tone="urgent" replaces the old #chargeKey's own always-on
+            amber scale-pulse (chargePulse) with the same red flash every other
+            urgent row uses -- LUL-2312 rule 4 bans scale/bounce transitions,
+            and unifying the two keeps this the only urgent animation in the
+            component family; declared here, not silent. On mobile the pill is
+            an actual tap target (pointer-events:auto + onPointerDown, LUL-653
+            avoids the browser's pan-gesture disambiguation), same
+            triggerTouchJump the bottom-left Jump button already uses -- that
+            button stays too, removing it is a UX call for a tester, not a
+            code-correctness one. */}
+        <ActionPrompt
           id="chargePrompt"
-          key={state.chargeToken}
-          style={mobile ? { pointerEvents: 'auto', touchAction: 'none', cursor: 'pointer' } : undefined}
+          testId={mobile ? 'chargePromptTap' : undefined}
+          visible={state.chargeVisible && !state.winVisible && !state.deathVisible}
+          tone="urgent"
+          keycap={mobile ? 'JUMP' : 'SPACE'}
+          reducedMotion={state.reducedMotion}
+          progress={{ token: state.chargeToken, durationSeconds: CHARGE_WINDOW }}
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchJump(); } : undefined}
-          data-testid={mobile ? 'chargePromptTap' : undefined}
-        >
-          <span id="chargeKey">{mobile ? 'JUMP' : 'SPACE'}</span>
-          <div id="chargeBarTrack">
-            <div id="chargeBar" />
-          </div>
-        </div>
-      )}
+        />
+        {/* objective (E) -- text is an opaque string from the engine
+            (objectiveText, forest-engine.js), sometimes with no key at all
+            ("Find the lost child · 40m"), so it is rendered as plain text
+            rather than parsed for a keycap chip -- engine contract unchanged. */}
+        <ActionPrompt
+          id="objective"
+          visible={state.objectiveVisible && !state.winVisible && !state.deathVisible}
+          tone={state.objectiveReady ? 'ready' : 'calm'}
+          text={state.objectiveText}
+        />
+        {/* LUL-1089: contextual hide/veil prompt -- only one of the two shown
+            at a time, cover wins (engine enforces via !coverPromptVisible in
+            the veil condition). Double-spaces around the key name are house
+            style (match "Press  E  to lift the child"). */}
+        <ActionPrompt
+          id="actionPrompt"
+          visible={(state.coverPromptVisible || state.veilPromptVisible) && !state.winVisible && !state.deathVisible}
+          reducedMotion={state.reducedMotion}
+          {...hideVeilPromptContent(state, mobile)}
+        />
+        {/* LUL-1623: holding-a-throwable affordance -- there's no held-item
+            mesh in first person, so this is the only way the player knows
+            they're carrying a stone. tone="ready" unconditionally, matching
+            the old #throwPrompt's always-amber styling (it never had a calm
+            state of its own). */}
+        <ActionPrompt
+          id="throwPrompt"
+          visible={state.heldThrowable && !state.winVisible && !state.deathVisible}
+          tone="ready"
+          text={mobile ? 'Holding a stone — tap  ' : 'Holding a stone — click to throw'}
+          keycap={mobile ? 'Throw' : undefined}
+        />
+        {/* `hiding` is not a second flag: status only ever appears while hidden
+            (LUL-35 pass 2 removed the `statusHiding` field, which the engine
+            only ever set to the same value as `statusVisible`). */}
+        <ActionPrompt
+          id="status"
+          visible={state.statusVisible && !state.winVisible && !state.deathVisible}
+          tone="status"
+          text={state.statusText}
+        />
+      </div>
 
       {state.winVisible && (
         <div id="winScreen" style={{ display: 'flex' }}>
