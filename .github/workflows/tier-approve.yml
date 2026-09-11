@@ -39,6 +39,13 @@ name: Tier approve
 #      would yield an empty set that trivially passes an "all green" test.
 #      See wiki systems/ci-github-token-blind-spot.
 #   4. IDEMPOTENT. Exits quietly if an approving review already exists.
+#   5. [NO-AUTO-MERGE] OVERRIDE. A PR can carry a founder-mandated pre-merge
+#      human check (e.g. before/after screenshots) that guard 1's path-based
+#      classification has no way to see. `[no-auto-merge]` alone on its own
+#      line in any commit on the branch skips approval unconditionally,
+#      regardless of tier -- one-way, author-settable, can only make a PR
+#      harder to auto-merge, never easier. decisions/0016 (LUL-2339/LUL-2338,
+#      LUL-2341). Checked in code between guard 1 and guard 3.
 #
 # Tier C is untouched: engine simulation, persistence, secrets, CI and merge
 # rules all keep their blocking human review.
@@ -203,6 +210,25 @@ jobs:
             echo "tier: $tier"
             if [ "$tier" = "C" ]; then
               echo "::notice::PR #$PR is Tier C -- blocking human review required. Not approving."
+              echo "::endgroup::"; continue
+            fi
+
+            # --- guard: [no-auto-merge] override marker (decisions/0016) ---
+            # LUL-2339/LUL-2338: a Tier-B-by-path PR can still carry a
+            # founder-mandated pre-merge human check (e.g. before/after
+            # screenshots) that pr-tier.mjs has no way to see -- it only reads
+            # file paths and CI check names by design (decisions/0014). This
+            # marker is the author's own one-way escape hatch: it can only
+            # make a PR *harder* to auto-merge, never easier, so it adds no
+            # new bypass surface. Same shape and same per-PR fetch as
+            # auto-pr.yml's [ship] scan (`gh api .../pulls/$PR/commits`
+            # instead of a local `git log` range -- this step's checkout is a
+            # single shallow ref, not a full clone of the PR branch, and this
+            # loop can process more than one PR per run, so a local git range
+            # diff isn't reliable here the way it is in auto-pr.yml).
+            commit_messages=$(gh api "repos/$REPO/pulls/$PR/commits" --paginate --jq '.[].commit.message')
+            if printf '%s\n' "$commit_messages" | grep -qE '^[[:space:]]*\[no-auto-merge\][[:space:]]*$'; then
+              echo "::notice::PR #$PR carries a [no-auto-merge] marker (decisions/0016) -- blocking human review required regardless of tier. Not approving."
               echo "::endgroup::"; continue
             fi
 
