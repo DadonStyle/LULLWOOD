@@ -8,16 +8,23 @@ import {
   applyPayout,
   freshEmbersState,
   veilMaxHoldForTier,
-  nextDeeperLungsCost,
-  purchaseDeeperLungs,
   DEEPER_LUNGS_HOLD_SECONDS,
   DEEPER_LUNGS_COSTS,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
   DEEPWATER_RETRIEVAL_BONUS,
   DEEPWATER_SPEEDRUN_BONUS,
+  purchase,
+  nextCost,
+  tierOf,
+  SHOP_CATALOG,
+  effectiveScentLifetime,
+  QUIET_STEP_COSTS,
+  POCKET_STONES_COSTS,
+  POCKET_STONES_RESERVE,
   type EmbersState,
 } from './economy.ts';
+import { SCENT_LIFETIME } from './scent.ts';
 
 // ---- computeDepth -----------------------------------------------------
 
@@ -293,46 +300,81 @@ test('veilMaxHoldForTier clamps past the max tier instead of going out of range'
   assert.equal(veilMaxHoldForTier(-1), 5);
 });
 
-test('nextDeeperLungsCost is 120/300/600 for tiers 0/1/2, then null once maxed', () => {
-  assert.equal(nextDeeperLungsCost(0), 120);
-  assert.equal(nextDeeperLungsCost(1), 300);
-  assert.equal(nextDeeperLungsCost(2), 600);
-  assert.equal(nextDeeperLungsCost(3), null);
+test('freshEmbersState starts at zero balance, empty tiers', () => {
+  const s = freshEmbersState();
+  assert.equal(s.balance, 0);
+  assert.deepEqual(s.tiers, {});
+});
+
+// ---- Generic catalog spend ------------------------------------------------
+
+test('SHOP_CATALOG has the three accepted items, 1,500 total across all tiers', () => {
+  const total = SHOP_CATALOG.reduce((sum, item) => sum + item.costs.reduce((a, b) => a + b, 0), 0);
+  assert.equal(total, 1500);
+});
+
+test('nextCost is 120/300/600 for deeperLungs tiers 0/1/2, then null once maxed', () => {
+  assert.equal(nextCost('deeperLungs', 0), 120);
+  assert.equal(nextCost('deeperLungs', 1), 300);
+  assert.equal(nextCost('deeperLungs', 2), 600);
+  assert.equal(nextCost('deeperLungs', 3), null);
   assert.equal(DEEPER_LUNGS_MAX_TIER, 3);
   assert.deepEqual(DEEPER_LUNGS_COSTS, [120, 300, 600]);
   assert.deepEqual(DEEPER_LUNGS_HOLD_SECONDS, [5, 6, 7, 8]);
 });
 
-test('purchaseDeeperLungs deducts the cost and bumps the tier when affordable', () => {
-  const s0: EmbersState = { balance: 150, tiers: { deeperLungs: 0 } };
-  const s1 = purchaseDeeperLungs(s0);
+test('nextCost is null for an unknown id', () => {
+  assert.equal(nextCost('nope', 0), null);
+});
+
+test('tierOf is 0 for an id with no key yet', () => {
+  const s: EmbersState = { balance: 0, tiers: {} };
+  assert.equal(tierOf(s, 'quietStep'), 0);
+});
+
+test('purchase deducts cost and bumps the tier when affordable', () => {
+  const s0: EmbersState = { balance: 150, tiers: {} };
+  const s1 = purchase(s0, 'deeperLungs');
   assert.equal(s1.balance, 30);
-  assert.equal(s1.tiers.deeperLungs, 1);
+  assert.equal(tierOf(s1, 'deeperLungs'), 1);
 });
 
-test('purchaseDeeperLungs is a no-op when the balance can\'t cover the next tier', () => {
-  const s0: EmbersState = { balance: 50, tiers: { deeperLungs: 0 } };
-  const s1 = purchaseDeeperLungs(s0);
-  assert.deepEqual(s1, s0);
+test('purchase is a no-op (same reference) when unaffordable', () => {
+  const s0: EmbersState = { balance: 50, tiers: {} };
+  const s1 = purchase(s0, 'deeperLungs');
+  assert.equal(s1, s0);
 });
 
-test('purchaseDeeperLungs is a no-op once fully upgraded, even with plenty of balance', () => {
-  const s0: EmbersState = { balance: 99999, tiers: { deeperLungs: 3 } };
-  const s1 = purchaseDeeperLungs(s0);
-  assert.deepEqual(s1, s0);
+test('purchase is a no-op once maxed, even with plenty of balance', () => {
+  const s0: EmbersState = { balance: 99999, tiers: { pocketStones: 1 } };
+  const s1 = purchase(s0, 'pocketStones');
+  assert.equal(s1, s0);
 });
 
-test('purchasing all three tiers in sequence costs exactly 120+300+600 and lands at tier 3', () => {
-  let s: EmbersState = { balance: 120 + 300 + 600, tiers: { deeperLungs: 0 } };
-  s = purchaseDeeperLungs(s);
-  s = purchaseDeeperLungs(s);
-  s = purchaseDeeperLungs(s);
-  assert.equal(s.tiers.deeperLungs, 3);
+test('purchase is a no-op for an unknown id', () => {
+  const s0: EmbersState = { balance: 99999, tiers: {} };
+  assert.equal(purchase(s0, 'nope'), s0);
+});
+
+test('purchasing quietStep twice in sequence costs 150+250 and lands at tier 2', () => {
+  let s: EmbersState = { balance: 400, tiers: {} };
+  s = purchase(s, 'quietStep');
+  s = purchase(s, 'quietStep');
+  assert.equal(tierOf(s, 'quietStep'), 2);
   assert.equal(s.balance, 0);
 });
 
-test('freshEmbersState starts at zero balance, zero tiers', () => {
-  const s = freshEmbersState();
-  assert.equal(s.balance, 0);
-  assert.equal(s.tiers.deeperLungs, 0);
+test('POCKET_STONES_COSTS/RESERVE are the accepted single-tier price and grant', () => {
+  assert.deepEqual(QUIET_STEP_COSTS, [150, 250]);
+  assert.deepEqual(POCKET_STONES_COSTS, [80]);
+  assert.equal(POCKET_STONES_RESERVE, 2);
+});
+
+// ---- effectiveScentLifetime ------------------------------------------------
+
+test('effectiveScentLifetime compounds 20% faster decay per Quiet Step tier', () => {
+  assert.equal(effectiveScentLifetime(0), SCENT_LIFETIME);
+  assert.equal(effectiveScentLifetime(1), SCENT_LIFETIME * 0.8);
+  assert.equal(effectiveScentLifetime(2), SCENT_LIFETIME * 0.8 * 0.8);
+  assert.equal(effectiveScentLifetime(9), effectiveScentLifetime(2)); // clamps at max tier
 });

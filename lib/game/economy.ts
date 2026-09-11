@@ -8,6 +8,7 @@
 // Do not add peril back into this module without a new ticket.
 
 import { VEIL_MAX_HOLD } from './veil.ts';
+import { SCENT_LIFETIME } from './scent.ts';
 
 // CEO ruling 2026-09-03: corrected table (wiki game/economy/tier-reward-multipliers §11).
 // Each pair is { win, loss } — win scales computeWinPayout total, loss scales
@@ -31,10 +32,12 @@ export interface RunPayout {
   total: number;
 }
 
-export interface EmbersTiers {
-  /** 0..DEEPER_LUNGS_MAX_TIER -- how many Deeper Lungs tiers are purchased. */
-  deeperLungs: number;
-}
+/** Keyed by SHOP_CATALOG id. Absent key === tier 0 (not purchased) — freshEmbersState()
+ * starts empty rather than pre-filling every known id, so a new catalog entry needs no
+ * migration of existing saves. Always read through tierOf(), never index directly --
+ * an absent key is `undefined` at runtime even though the Record type says `number`
+ * (no noUncheckedIndexedAccess in tsconfig.json). */
+export type EmbersTiers = Record<string, number>;
 
 export interface EmbersState {
   balance: number;
@@ -42,7 +45,7 @@ export interface EmbersState {
 }
 
 export function freshEmbersState(): EmbersState {
-  return { balance: 0, tiers: { deeperLungs: 0 } };
+  return { balance: 0, tiers: {} };
 }
 
 // ---- Earn ------------------------------------------------------------
@@ -153,15 +156,69 @@ export function veilMaxHoldForTier(tier: number): number {
   return DEEPER_LUNGS_HOLD_SECONDS[idx];
 }
 
-/** Cost to go from `tier` to `tier + 1`, or null once fully upgraded. */
-export function nextDeeperLungsCost(tier: number): number | null {
-  return tier >= DEEPER_LUNGS_MAX_TIER ? null : DEEPER_LUNGS_COSTS[tier];
+// ---- Spend: Quiet Step -- scent decays faster per tier ----------------
+// 20% faster decay per tier, compounding (tier2 decays 20% faster than tier1, which is
+// already 20% faster than base) -- same "derive from the base constant" discipline as
+// DEEPER_LUNGS_HOLD_SECONDS above, so a future SCENT_LIFETIME retune propagates here too.
+export const QUIET_STEP_LIFETIME_SECONDS = [
+  SCENT_LIFETIME,
+  SCENT_LIFETIME * 0.8,
+  SCENT_LIFETIME * 0.8 * 0.8,
+] as const;
+export const QUIET_STEP_COSTS = [150, 250] as const;
+export const QUIET_STEP_MAX_TIER = QUIET_STEP_COSTS.length;
+
+export function effectiveScentLifetime(tier: number): number {
+  const idx = Math.max(0, Math.min(QUIET_STEP_LIFETIME_SECONDS.length - 1, tier));
+  return QUIET_STEP_LIFETIME_SECONDS[idx];
 }
 
-/** No-ops (returns `state` unchanged) if already maxed or the balance can't
- * cover the next tier -- callers don't need to pre-check affordability. */
-export function purchaseDeeperLungs(state: EmbersState): EmbersState {
-  const cost = nextDeeperLungsCost(state.tiers.deeperLungs);
+// ---- Spend: Pocket Stones -- +2 free throwables per run ----------------
+// Single tier. Effect wiring lives in engine/forest-engine.js (enter()) -- this module
+// only owns the price and the reserve size, same split as VEIL_CHARM_PRICE above.
+export const POCKET_STONES_COSTS = [80] as const;
+export const POCKET_STONES_RESERVE = 2;
+
+// ---- Shop catalog -------------------------------------------------------
+// Single source of truth for what's for sale, driving both EmbersShop's render
+// (components/Hud.tsx) and setEmbers()'s clamp (engine/forest-engine.js). Adding a
+// fourth item means adding one entry here -- no new action, no new EmbersShop markup.
+export type ShopItemKind = 'permanent' | 'consumable';
+export interface ShopItem {
+  id: string;
+  label: string;
+  kind: ShopItemKind;
+  costs: readonly number[]; // costs[tier] = price to go from tier -> tier+1
+}
+export const SHOP_CATALOG: readonly ShopItem[] = [
+  { id: 'deeperLungs', label: 'Deeper Lungs', kind: 'permanent', costs: DEEPER_LUNGS_COSTS },
+  { id: 'quietStep', label: 'Quiet Step', kind: 'permanent', costs: QUIET_STEP_COSTS },
+  { id: 'pocketStones', label: 'Pocket Stones', kind: 'permanent', costs: POCKET_STONES_COSTS },
+];
+
+function catalogItem(id: string): ShopItem | undefined {
+  return SHOP_CATALOG.find((i) => i.id === id);
+}
+
+/** Always 0 for an id with no key yet -- the one safe way to read a tier. */
+export function tierOf(state: EmbersState, id: string): number {
+  return state.tiers[id] ?? 0;
+}
+
+/** Cost to go from `tier` to `tier + 1` for `id`, or null once maxed / for an unknown id. */
+export function nextCost(id: string, tier: number): number | null {
+  const item = catalogItem(id);
+  if (!item) return null;
+  return tier >= item.costs.length ? null : item.costs[tier];
+}
+
+/** No-op (returns `state` unchanged, same reference) if already maxed, unaffordable, or
+ * `id` isn't in the catalog -- callers don't need to pre-check. Replaces
+ * purchaseDeeperLungs(); callers that need "did this actually purchase" (the engine's
+ * cue-triple gate, see forest-engine.js) compare the returned reference to the input. */
+export function purchase(state: EmbersState, id: string): EmbersState {
+  const tier = tierOf(state, id);
+  const cost = nextCost(id, tier);
   if (cost === null || state.balance < cost) return state;
-  return { balance: state.balance - cost, tiers: { ...state.tiers, deeperLungs: state.tiers.deeperLungs + 1 } };
+  return { balance: state.balance - cost, tiers: { ...state.tiers, [id]: tier + 1 } };
 }

@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6006 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5269, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6058 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5321, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1313,17 +1313,31 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L4772, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L4877 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4947). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L4835, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L4956 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L4987). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
-- Deeper Lungs: unlock via shop button in post-run UI; one-time purchase per
-  tier (tiers 0–3, `DEEPER_LUNGS_COSTS` array), persisted alongside balance as
-  `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
-  duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
+- Shop catalog (LUL-2351): `SHOP_CATALOG` in `lib/game/economy.ts` is the single
+  source of truth for what's for sale — three permanent items, bought via the
+  generic `purchase(id)`/`nextCost(id, tier)`/`tierOf(state, id)` trio instead
+  of a per-item function. `tiers` is a `Record<string, number>` keyed by
+  catalog id; an absent key means tier 0 (not purchased) — `freshEmbersState()`
+  starts with `tiers: {}` rather than pre-filling every known id, so a new
+  catalog entry needs no save migration.
+  - **Deeper Lungs** (`deeperLungs`, tiers 0–3, `DEEPER_LUNGS_COSTS`): each
+    tier increases the max veil (mist-dim) hold duration via
+    `veilMaxHoldForTier()`.
+  - **Quiet Step** (`quietStep`, tiers 0–2, `QUIET_STEP_COSTS`): each tier
+    decays scent 20% faster (compounding), via `effectiveScentLifetime()`.
+    Lifetime-only — `SCENT_RADIUS_WALK`/`SCENT_RADIUS_RUN` are untouched.
+  - **Pocket Stones** (`pocketStones`, single tier, `POCKET_STONES_COSTS`):
+    grants `POCKET_STONES_RESERVE` (2) free throwable stones per run, auto-armed
+    into `heldThrowable` on `enter()` and re-armed from the reserve in
+    `throwThrowable()` — reuses the existing single-held-stone state machine
+    and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3182),
   reset to 0 on `enter()` (L3384) and recomputed every frame (`stepFrame()`,
@@ -1347,28 +1361,30 @@ design doc as turning horror into radar.
 - Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
   balance delta and calls `setEmbers()` to persist; engine gates all payouts
   behind `canArriveHome()` / `triggerDeath()` to prevent double-apply.
-- Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COSTS[tier]` and increases
-  `VEIL_MAX_HOLD` (via `veilMaxHoldForTier()`) until the next tier is purchased.
-  Purchase is final, persisted to localStorage and synced to `hudState` via
-  `deeperLungsTier` property.
+- Buy any `SHOP_CATALOG` item via `purchase(id)`: costs `nextCost(id, tierOf(state, id))`,
+  is a no-op (same object reference) if unaffordable, already maxed, or `id` isn't in the
+  catalog. A real purchase plays `embersPurchaseCue()` (decisions/0015-cue-triple's audio
+  leg, all three items including Deeper Lungs). Purchases are final, persisted to
+  localStorage and synced to `hudState` via the `embersTiers` property.
 
 **What it CANNOT do**
-- Spend on anything other than Deeper Lungs tiers.
+- Spend on anything outside `SHOP_CATALOG`.
 - Be lost/reset except via manual localStorage deletion (QA/debug only, not
   a player-facing action).
 
 **Behaviours & logic**
 - Persistence: `useEmbers()` hook in `components/Hud.tsx` (L225-241) reads
   stored balance on engine mount and writes to localStorage whenever balance
-  or tier change. Gated to skip writing stale zero defaults before stored
+  or tiers change. Gated to skip writing stale zero defaults before stored
   state is applied (ref `appliedRef` prevents persist effect from firing until
   apply-on-ready effect has run).
 - `veilMaxHoldForTier(tier)` adds `DEEPER_LUNGS_HOLD_SECONDS[tier]` to base
   `VEIL_MAX_HOLD` — each tier adds 1 second to the hold cap (5/6/7/8 seconds
   at tiers 0/1/2/3).
-- Win/death screen shows a shop button (wired to `purchaseDeeperLungs()`
-  action) only if the player has balance ≥ `DEEPER_LUNGS_COSTS[currentTier]` and
-  `currentTier < 3`.
+- Win/death screen (and the gate) render one shop button per `SHOP_CATALOG` item
+  still below its max tier (`EmbersShop` in `components/Hud.tsx`), each wired to
+  `purchase(item.id)`, disabled below that item's `nextCost`. A maxed item renders
+  a plain "maxed" row instead of a button.
 
 **Collision & physics profile**
 - N/A — not a spatial/world object.
@@ -1383,7 +1399,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L5242, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L5394, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**

@@ -353,6 +353,13 @@ declare global {
        * to a plain roaming state (state: 'roam', hunt: false, alert: 0). Returns
        * its predators index, or null if that species didn't spawn this seed. */
       qaStagePredatorNearThrowLanding?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number } | null;
+      /** LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
+       * lets a test assert the tier's effect without waiting out real decay. */
+      qaProbeScentLifetime?: () => number;
+      /** LUL-2351: throwablesReserve + heldThrowable + the purchase-cue fire count, so
+       * a test can assert Pocket Stones granted +2 throws and a purchase played its
+       * audio cue, without decoding actual WebAudio output. */
+      qaProbeEmbersPurchase?: () => { throwablesReserve: number; heldThrowable: boolean; purchaseCueCount: number };
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
