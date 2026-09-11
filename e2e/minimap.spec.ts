@@ -5,7 +5,7 @@
 import { test, expect } from '@playwright/test';
 import { boot } from './helpers';
 
-test.describe('minimap w2m stays on-canvas past the forest/bog seam', () => {
+test.describe('minimap w2m stays on-canvas past the forest/bog seam @fullmap', () => {
   test('a player-arrow point at z=200 (deep bog) is clamped on-canvas', async ({ page }) => {
     await boot(page, { qaHooks: true });
     const p = await page.evaluate(() => window.ForestEngine!.qaProbeMinimapPoint!(0, 200));
@@ -32,7 +32,7 @@ test.describe('minimap w2m stays on-canvas past the forest/bog seam', () => {
 // diff (see that spec's "Not covered"); this pins the one thing a test can
 // assert without one -- that home's world coordinate still maps on-canvas
 // through the same w2m() the ring drawing itself uses.
-test.describe('minimap home marker', () => {
+test.describe('minimap home marker @fullmap', () => {
   test('home renders as a ring on the minimap static layer', async ({ page }) => {
     await boot(page, { qaHooks: true });
     const p = await page.evaluate(() => window.ForestEngine!.qaProbeMinimapPoint!(0, 0));

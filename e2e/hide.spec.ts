@@ -8,22 +8,27 @@
 // this stays its own fast file instead of living inside smoke.spec.ts.
 //
 // LUL-212: `hidden` can no longer be entered anywhere -- it requires standing at
-// a dedicated hiding-spot prop (bush/hollow log; see findHideSpot() in the
-// engine). The seeded map is now load-bearing for this spec, so `qaTeleportToHideSpot`
+// a dedicated hiding-spot prop (bramble bush; see findHideSpot() in the
+// engine -- LUL-2311 later removed the hollow-log alternative). The seeded map
+// is now load-bearing for this spec, so `qaTeleportToHideSpot`
 // (added for this ticket) places the player at the nearest one before the first
 // KeyH press, the same "place deterministically instead of hunting the procedural
 // map" pattern e2e/positional-hiding.spec.ts already uses.
 import { test, expect } from '@playwright/test';
-import { boot, enter, expectRowVisible, expectRowHidden } from './helpers';
+import { boot, enter, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
 test.describe('H hide toggle', () => {
   test('H toggles the Hidden status HUD, and moving breaks cover automatically', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
+    // LUL-2329: no predator is used anywhere in this file, so building the
+    // exact bramble this test needs is safe (see
+    // docs/specs/lul-2329-e2e-migrate-qaworld-micro.md's inert-predator note).
+    await qaHook(page, 'qaBuildScene', { props: [{ kind: 'bramble', x: 10, z: 0 }] });
     const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
     if (spot === null) {
-      throw new Error('qaTeleportToHideSpot returned null -- no bush/hollow-log hiding spot was found for this seed');
+      throw new Error('qaTeleportToHideSpot returned null -- no bramble hiding spot was found for this seed');
     }
 
     // Not hiding yet: the #status row is mounted (LUL-2312: #actionSlot's

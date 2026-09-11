@@ -22,7 +22,7 @@ async function readPredatorState(page: import('@playwright/test').Page) {
   });
 }
 
-test.describe('predator determinism with seeded RNG', () => {
+test.describe('predator determinism with seeded RNG @fullmap', () => {
   test('two identical seeds produce identical predator positions after game ticks', async ({
     page: page1,
     context,

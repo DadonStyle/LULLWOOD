@@ -9,7 +9,7 @@ import { boot, enter, qaHook, QA_PINNED_SEED } from './helpers';
 import { LANDMARKS, CAVE, CONFIG } from '../engine/tuning';
 import { BOG_CENTER, BOG_INNER_RADIUS, BOG_OUTER_RADIUS, BOG_SPEED_MULTIPLIER } from '../lib/game/bog';
 
-test.describe('bog zone', () => {
+test.describe('bog zone @fullmap', () => {
   test('bogginess samples match the patch geometry', async ({ page }) => {
     await boot(page, { qaHooks: true });
 

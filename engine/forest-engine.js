@@ -64,6 +64,7 @@ import {
   pickAvoidDirection,
   slideVelocity,
   HIDE_KINDS,
+  WALKABLE_KINDS,
   CELL,
   gridKey as key,
   neighbourhood,
@@ -535,21 +536,22 @@ const throwableMesh = new THREE.InstancedMesh(throwableGeo, throwableMat, THROWA
 throwableMesh.frustumCulled = false;
 scene.add(throwableMesh);
 
-// ---- Hiding spots (LUL-212) -------------------------------------------
+// ---- Hiding spots (LUL-212, LUL-2311) -----------------------------------
 // Every cover prop still blocks line of sight the same way (see canSee()/
-// hasLOS() below -- that math is untouched). What changed: the player's
-// deliberate `hidden` stance (KeyH / touch Hide button) no longer works
-// anywhere you can find LOS-blocking geometry. It now requires standing at
-// one of two dedicated hiding-spot kinds -- researched against real-world
-// stealth/horror foley convention (rustling leaves read as the universal
-// "something is hiding in the brush" cue; a hollow log is the other classic
-// natural forest hiding spot) -- bramble ("bush", leaf rustle) and log
-// ("hollow log", a wood knock/creak). Rocks and tagged trees remain sight
-// -blocking obstacles you can duck behind incidentally, exactly as before,
-// but never a place you can formally "hide": no crouch, no stillness bonus,
-// no sound. That is the ticket's whole ask -- "hiding will only be in
-// specific places" -- narrowed to props that read as something a person
-// could actually climb into or behind, not just stand near.
+// hasLOS() below -- that math is untouched). The player's deliberate
+// `hidden` stance (KeyH / touch Hide button) does not work anywhere you can
+// find LOS-blocking geometry. It requires standing at the one dedicated
+// hiding-spot kind -- researched against real-world stealth/horror foley
+// convention (rustling leaves read as the universal "something is hiding in
+// the brush" cue) -- bramble ("bush", leaf rustle). Rocks, logs, and tagged
+// trees remain sight-blocking obstacles you can duck behind incidentally,
+// exactly as before, but never a place you can formally "hide": no crouch,
+// no stillness bonus, no sound. That is the original ticket's whole ask --
+// "hiding will only be in specific places" -- narrowed to props that read
+// as something a person could actually climb into or behind, not just
+// stand near. LUL-2311 later dropped log from that set entirely (founder:
+// a fallen log is walkable, thin cover, nothing you're visibly "inside" of
+// -- it never made sense as a hiding spot the way a bush does).
 // LUL-425: HIDE_KINDS itself now lives in lib/game/cover.ts, alongside
 // HIDE_RADIUS (used only inside findHideSpot(), which moved with it).
 
@@ -2147,7 +2149,7 @@ function effectiveDetect(p){
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -2389,6 +2391,21 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // hearCry()/the carriedCryPulse branch below for where p.alertedBy is set, and
         // hearNoise()/scentOnto()/spotOnto() for where it's cleared by every other channel.
         if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase'); }   // LUL-1194: run down mid-chase, in the open
+        // LUL-2320 (D): contact was reached (isCaught) but the kill was refused because the
+        // player is hidden and canSee() still reads false at that exact range -- e.g. (B)'s
+        // contact-range exception only fires while the target point is inside a HIDE_KINDS
+        // footprint (insideHideFootprint()); a hidden player who is otherwise concealed (a
+        // blind scentLock chase closing through real, solid cover, LUL-387's original case)
+        // can still reach literal contact range before canSee() ever reads true. Without
+        // this, the `else` below keeps steering
+        // `desx=ux;desz=uz` at full species speed directly at the player's exact position --
+        // already in contact, so every subsequent tick re-aims at (near-)zero distance,
+        // reading as the reported "stands on the player, pushes, jitters" glue. Drop straight
+        // into the sniff loop's approach->standoff hand-off (LUL-1090) instead of waiting for
+        // shouldGiveUpChase()'s distance/timer give-up below to eventually fire.
+        else if(hidden && isCaught(dist, p.rad)){
+          p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+        }
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
@@ -2673,7 +2690,7 @@ const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
-    hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble' | 'log'), for the exit sound
+    hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
     secondaryCanComplete = false,   // LUL-1666: same shape, for the retrieval item
@@ -2970,14 +2987,11 @@ function leafRustle(entering){
     src.start(t+d); src.stop(t+d+0.14);
   }
 }
-// Hollow log: a low resonant knock (short bandpassed noise burst + a falling
-// sine thump, the same "hollow body" pairing a real knock on dead wood
-// produces) plus, on entry only, a soft dry creak as the player settles in.
 // LUL-1255 (Ship 1 wayfinding S5): home-fire crackle, panned by bearing to
-// CONFIG.home. Reuses hollowLogSound()'s filtered-noise-burst chain below,
-// minus its sine thump -- a crackle is timbrally close to the log's dry-wood
-// knock, just softer and unpitched. Density (call interval), not pan, rises
-// as the player nears home -- see homeFireTimer's countdown in tick().
+// CONFIG.home -- a short bandpassed noise burst, timbrally close to a dry-
+// wood knock but softer and unpitched, no sine thump. Density (call
+// interval), not pan, rises as the player nears home -- see homeFireTimer's
+// countdown in tick().
 function homeFireCrackle(dist){
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
@@ -3000,29 +3014,6 @@ function homeFireCrackle(dist){
     pushState({ caption: `home fire crackling · ${cnear} · ${side}`, captionId: ++captionSeq });
   }
 }
-function hollowLogSound(entering){
-  if(!audio || !soundOn) return;
-  const { ctx, conv, master } = audio, t = ctx.currentTime;
-  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.1, false);
-  const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = 220; bp.Q.value = 6;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(entering ? 0.3 : 0.2, t+0.008); ng.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
-  nb.connect(bp); bp.connect(ng); ng.connect(master); ng.connect(conv); nb.start(t); nb.stop(t+0.18);
-
-  const o = ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(90, t+0.2);
-  const og = ctx.createGain();
-  og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(entering ? 0.22 : 0.14, t+0.01); og.gain.exponentialRampToValueAtTime(0.0001, t+0.22);
-  o.connect(og); og.connect(master); og.connect(conv); o.start(t); o.stop(t+0.24);
-
-  if(entering){
-    const cb = ctx.createBufferSource(); cb.buffer = noise(ctx, 0.3, true);
-    const cf = ctx.createBiquadFilter(); cf.type='bandpass'; cf.frequency.setValueAtTime(500, t+0.05); cf.frequency.linearRampToValueAtTime(340, t+0.32); cf.Q.value = 3;
-    const cg = ctx.createGain();
-    cg.gain.setValueAtTime(0.0001, t+0.05); cg.gain.exponentialRampToValueAtTime(0.09, t+0.09); cg.gain.exponentialRampToValueAtTime(0.0001, t+0.34);
-    cb.connect(cf); cf.connect(cg); cg.connect(master); cg.connect(conv); cb.start(t+0.05); cb.stop(t+0.36);
-  }
-}
-function playHideSfx(kind, entering){ if(kind === 'log') hollowLogSound(entering); else leafRustle(entering); }
 // The three call sites (KeyH, the touch Hide button, and tick()'s
 // movement-breaks-cover check) all funnel through these so entering/exiting
 // always agree on `hidden`/`hideTime`/`hideKind` and always play the right
@@ -3030,9 +3021,12 @@ function playHideSfx(kind, entering){ if(kind === 'log') hollowLogSound(entering
 // also the one place feature_engagement('hide') fires -- an earlier,
 // shadowed toggleHidden() carried that track() call but was dead code (a
 // later function declaration in the same scope wins in JS), so the event
-// never fired.
-function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; playHideSfx(spot.kind, true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); logChronicle('hide', { kind: spot.kind }); }
-function exitHide(){ if(!hidden) return; playHideSfx(hideKind, false); hidden = false; hideKind = null; }
+// never fired. LUL-2311: bramble is the only HIDE_KINDS member now, so
+// leafRustle() is the only hide sound -- the former per-kind dispatch
+// (playHideSfx()) and its hollow-log knock (hollowLogSound()) are deleted,
+// not kept, since nothing could call the log branch anymore.
+function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); logChronicle('hide', { kind: spot.kind }); }
+function exitHide(){ if(!hidden) return; leafRustle(false); hidden = false; hideKind = null; }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
   const spot = findHideSpot(player.x, player.z);
@@ -3822,9 +3816,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
   // Case 2: "hide behind cover -> predator sniffs -> backs off". LUL-212:
   // narrowed from "any dedicated cover prop (log/rock/bramble)" to only
-  // HIDE_KINDS (bramble/log) -- rock is still LOS-blocking cover but is no
-  // longer a place `hidden` can be entered, so a test staged on a rock would
-  // press KeyH and get nothing, then hang waiting for `investigate` to hold
+  // HIDE_KINDS (bramble, LUL-2311 dropped log) -- rock is still LOS-blocking
+  // cover but is no longer a place `hidden` can be entered, so a test
+  // staged on a rock would press KeyH and get nothing, then hang waiting
+  // for `investigate` to hold
   // (forest-engine.js: that loop re-escalates to `chase` every tick `!hidden`
   // holds). Not a tagged tree either: trees also sit in the movement
   // -collision grid, and placing a predator's direct approach straight
@@ -3843,8 +3838,8 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // the interior walk. The player lands `hideReach` from the prop's edge --
   // inside HIDE_RADIUS, so the immediately-following KeyH press actually
   // finds a hiding spot -- while the predator keeps the wider safety margin
-  // against unrelated tree overlap. With COVER_PROPS=220 (~65% bramble/log)
-  // some candidate is always clear.
+  // against unrelated tree overlap. With COVER_PROPS=220 (~25% bramble,
+  // LUL-2311 dropped log from HIDE_KINDS) some candidate is always clear.
   window.ForestEngine.qaHideBehindCover = function(){
     const idx = 0;
     const p = predators[idx];
@@ -3964,6 +3959,25 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { idx, x: p.x, z: p.z };
   };
 
+  // LUL-2320: places predator[kind] dx/dz from the player (player untouched, so KeyH staging
+  // done before this call survives it) directly into `chase` with a scentLock held open, the
+  // exact state the glue bug's root cause (#4 in the ticket) describes -- blind pursuit at
+  // full species speed with no LOS requirement while scentLock > 0. dx/dz is the caller's
+  // choice deliberately, not auto-placed at contact range, so a test can also exercise the
+  // normal "closing distance" leg before the predator arrives. Clears every higher-priority
+  // branch (charge/sightLock/alert/reroute/hunt) that would otherwise pre-empt `chase` this
+  // tick, same set qaStageForceHuntApproach already clears. Returns `{idx,x,z}`, or null if
+  // the species isn't spawned.
+  window.ForestEngine.qaStageChaseAtContact = function(kind, dx, dz){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    p.x = player.x + dx; p.z = player.z + dz;
+    p.vx = p.vz = 0; p.charge = null; p.sightLock = null; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+    p.hunt = false; p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.alertedBy = null;
+    return { idx, x: p.x, z: p.z };
+  };
+
   window.ForestEngine.qaIsApproachPianoActive = function(){
     return approachPianoActive;
   };
@@ -3982,12 +3996,29 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   };
 
   // LUL-212: teleport the player to the first generated hiding spot
-  // (bramble/log), no predator involved -- e2e/hide.spec.ts only needs a
-  // deterministic spot to press KeyH at, not a chase scenario.
-  window.ForestEngine.qaTeleportToHideSpot = function(){
-    const spot = coverData.find(c => HIDE_KINDS[c.kind]);
+  // (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of
+  // `kind` if given (LUL-2320, so a test can land on a specific non-hide
+  // cover prop like 'log'), no predator involved -- e2e/hide.spec.ts only
+  // needs a deterministic spot to press KeyH at, not a chase scenario.
+  window.ForestEngine.qaTeleportToHideSpot = function(kind){
+    const spot = kind ? coverData.find(c => c.kind === kind) : coverData.find(c => HIDE_KINDS[c.kind]);
     if(!spot) return null;
     player.x = spot.x; player.z = spot.z;
+    return spot.kind;
+  };
+
+  // LUL-2311: teleport the player next to any cover prop of the given kind,
+  // with no HIDE_KINDS check -- unlike qaTeleportToHideSpot above, this lets
+  // a test position the player at a walkable-but-not-hide-eligible prop
+  // (e.g. 'log') to assert KeyH is correctly a no-op there. Places the
+  // player just outside the prop's edge (like qaHideBehindCover's hideReach),
+  // not inside it, so a real KeyH press is the thing under test, not
+  // whether the player can stand there at all.
+  window.ForestEngine.qaTeleportNearCoverKind = function(kind){
+    const spot = coverData.find(c => c.kind === kind);
+    if(!spot) return null;
+    const edge = Math.max(spot.hx, spot.hz);
+    player.x = spot.x + edge + 1; player.z = spot.z;
     return spot.kind;
   };
 
@@ -3999,6 +4030,20 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // outside the cover AABB's local-x edge (not at its center) so hasLOS()
   // does not find the player inside the prop and self-block the sightline --
   // both player and lion are on the same side of the OBB, sightline clear.
+  //
+  // LUL-2358: the lion standoff used to be 4 units -- inside a chasing lion's
+  // own CATCH_MARGIN+rad contact range (2.3) after as little as (4-2.3)/9.2s
+  // =~ 0.18s of real chase movement at the lion's tuning.js speed (9.2), so
+  // every caller that advances game time past that (action-prompt.spec.ts's
+  // qaSetFixedStep/qaAdvance(0.5s) cases, and even a plain real-time
+  // page.waitForTimeout once LUL-1910's real GPU rendering stopped
+  // dt-clamp-dilating wall time -- wiki systems/dt-clamp-vs-walltime) hits
+  // triggerDeath() before the UI assertion ever runs, not a cover/veil bug.
+  // LION_STANDOFF keeps the lion within COVER_URGENT_RANGE (22, lib/game/
+  // cover.ts) so the urgent-tone premise still holds, while (LION_STANDOFF -
+  // CATCH_MARGIN-rad)/9.2 =~ 1.3s stays comfortably ahead of every caller's
+  // wait window.
+  const LION_STANDOFF = 14;
   window.ForestEngine.qaOpenHideNearLionAtHideSpot = function(){
     const spot = coverData.find(c => HIDE_KINDS[c.kind]);
     if(!spot) return null;
@@ -4011,9 +4056,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
-    // Lion is 4 more units in the same local-x direction -- clear sightline guaranteed.
-    lion.x = spot.x + (offset + 4) * co;
-    lion.z = spot.z - (offset + 4) * si;
+    // Lion is LION_STANDOFF more units in the same local-x direction -- clear sightline guaranteed.
+    lion.x = spot.x + (offset + LION_STANDOFF) * co;
+    lion.z = spot.z - (offset + LION_STANDOFF) * si;
     lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
     lion.state = 'chase'; lion.hunt = true;
     return { idx, kind: spot.kind };
@@ -4031,7 +4076,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const dist = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
     // LUL-659: x/z added so a caller can trace lateral movement around a cover
     // prop (e.g. avoidDir() steering), not just closing distance.
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), x: p.x, z: p.z, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
@@ -4109,10 +4154,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // LUL-388: reproduces the exact LUL-387 regression shape live -- a predator
   // mid-blind-scent-chase (scentLock > 0, so the 'chase' branch never falls
   // through to the canSee()-gated investigate transition), within catch range
-  // of the player, with a log/bramble cover prop's (HIDE_KINDS -- rock/reed
-  // now collide with the predator, LUL-1643, so this hook is restricted to
-  // the kinds that still don't) rotated AABB sitting on the segment between
-  // them so canSee() is false. Pre-fix this died instantly
+  // of the player, with a log/bramble cover prop's (WALKABLE_KINDS -- rock/
+  // reed now collide with the predator, LUL-1643, so this hook is restricted
+  // to the kinds that still don't; this is a walkability invariant, not a
+  // hide invariant -- this hook never presses KeyH, so it stays on
+  // WALKABLE_KINDS rather than the narrower post-LUL-2311 HIDE_KINDS) rotated
+  // AABB sitting on the segment between them so canSee() is false. Pre-fix
+  // this died instantly
   // (bare isCaught(dist, rad)); post-fix canCatchInChase() must keep gating
   // the kill on canSee() too. Existing hooks (qaHideBehindCover(Kind)) place
   // predator and player several units apart -- clear of the cover prop
@@ -4133,12 +4181,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(idx < 0) return null;
     const p = predators[idx];
     for(const c of coverData){
-      if(!HIDE_KINDS[c.kind]) continue;
+      if(!WALKABLE_KINDS[c.kind]) continue;
       const thin = Math.min(c.hx, c.hz);
       // Asymmetric on purpose: the predator (point A) never collides against
-      // a log/bramble cover prop (HIDE_KINDS) -- rock/reed now collide with
-      // the predator (LUL-1643), so this hook is restricted to the kinds
-      // that still don't -- so it can sit right at the box's thin face. The
+      // a log/bramble cover prop (WALKABLE_KINDS) -- rock/reed now collide
+      // with the predator (LUL-1643), so this hook is restricted to the
+      // kinds that still don't -- so it can sit right at the box's thin face. The
       // player (point B) very much does -- blocked()'s coverBlockedR(x,z,0.6)
       // call pads every prop by the player's own 0.6 radius -- so it needs
       // to clear thin+0.6, not just thin, or qaProbePlayer/blocked() would
@@ -4723,10 +4771,10 @@ function finishPickup(){
     lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
-// LUL-1258: M2 Deepwater's completion sting -- reuses hollowLogSound's
-// noise-burst + oscillator chain (same procedural building blocks, no new
-// audio files) for a short, distinct "found it" cue instead of a footstep
-// sound played out of context.
+// LUL-1258: M2 Deepwater's completion sting -- a noise-burst + oscillator
+// chain (same procedural building blocks used elsewhere, no new audio
+// files) for a short, distinct "found it" cue instead of a footstep sound
+// played out of context.
 function missionCompleteSting(){
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;

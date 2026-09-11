@@ -59,7 +59,7 @@ const MARGIN = 1.0;
 // (grinds into the trunk indefinitely, confirmed below).
 const MAX_MS = 8_000;
 
-test.describe('predator behind a tree reaches the player (LUL-1091 regression)', () => {
+test.describe('predator behind a tree reaches the player (LUL-1091 regression) @fullmap', () => {
   for (const kind of ['wolf', 'bear', 'lion'] as const) {
     test(`${kind}: staged directly behind a tree trunk, closes to contact range`, async ({ page }) => {
       // Deliberately no explicit test.setTimeout() override here -- the trace

@@ -111,9 +111,9 @@ declare global {
       // must check for null rather than assume the index is always valid.
       /** Teleports the player to the spawn clearing and a lion 4 units out, hunting. Returns the lion's `predators` index, or null if no lion spawned. */
       qaOpenHideNearLion?: () => number | null;
-      /** LUL-1089: teleports the player to the first hide-spot prop (bramble/log) and places a lion 4 units away in chase state. Returns { idx, kind } on success, or null if no hide spot or no lion spawned. */
+      /** LUL-1089: teleports the player to the first hide-spot prop (bramble; LUL-2311 dropped log) and places a lion 4 units away in chase state. Returns { idx, kind } on success, or null if no hide spot or no lion spawned. */
       qaOpenHideNearLionAtHideSpot?: () => { idx: number; kind: string } | null;
-      /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble/log; LUL-212 narrowed this from any non-tree cover prop). Returns 0, or null if no hiding-spot prop exists. */
+      /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble; LUL-212 narrowed this from any non-tree cover prop, LUL-2311 narrowed it again to bramble only). Returns 0, or null if no hiding-spot prop exists. */
       qaHideBehindCover?: () => number | null;
       /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind, playerX, playerZ } on success (playerX/playerZ per LUL-242, the player's placed position -- needed to compute an exact offset back to the predator, since cover-clearance separation and scent-pickup radius are different quantities), null if no clear hiding-spot placement exists. */
       qaHideBehindCoverKind?: (
@@ -129,10 +129,14 @@ declare global {
       qaStagePredatorGiveUp?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-2246: places predator `kind` dx/dz from the player, parks every other spawned predator out of range, and fast-forwards `sinceClose` to 29.9s so the next real tick(s) cross the 30s force-hunt threshold through the engine's own logic. Returns `{idx,x,z}`, or null if the species isn't spawned. */
       qaStageForceHuntApproach?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-2320: places predator `kind` dx/dz from the player and drops it straight into `chase` with a live `scentLock` (the exact blind-pursuit state the glue bug's root cause describes) -- player untouched. Returns `{idx,x,z}`, or null if the species isn't spawned. */
+      qaStageChaseAtContact?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-1620: teleports predator[idx] onto its own current roam waypoint so the next tick's arrival/repick runs immediately; returns {x,z} or null if idx doesn't resolve. */
       qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
-      /** LUL-212: teleports the player to the first generated hiding spot (bramble/log), no predator involved. Returns the spot's kind, or null if none were generated. */
-      qaTeleportToHideSpot?: () => string | null;
+      /** LUL-212: teleports the player to the first generated hiding spot (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of `kind` if given (LUL-2320). No predator involved. Returns the spot's kind, or null if none were generated / no prop of `kind` exists on this map. */
+      qaTeleportToHideSpot?: (kind?: 'log' | 'bramble') => string | null;
+      /** LUL-2311: teleports the player just outside the edge of the first cover prop of the given kind, no HIDE_KINDS check -- for asserting KeyH is a no-op beside a walkable-but-not-hide-eligible prop (e.g. 'log'). Returns the spot's kind, or null if none of that kind were generated. */
+      qaTeleportNearCoverKind?: (kind: string) => string | null;
       /** LUL-211: the player's world position and heading -- the only way a test can
        * see where movement actually ended up (player is init()-closure-local). */
       qaProbePlayer?: () => { x: number; z: number; yaw: number };
@@ -161,7 +165,9 @@ declare global {
        * check uses this tick -- poll these instead of racing wall-clock time
        * against game time (see wiki: systems/dt-clamp-vs-walltime).
        * LUL-659: `x`/`z` are the predator's raw world position, for tracing
-       * lateral movement (e.g. avoidDir() steering around cover) over time. */
+       * lateral movement (e.g. avoidDir() steering around cover) over time.
+       * LUL-2320: `rad` (`PSPEC[kind].rad`) lets a test compute the live contact-catch
+       * threshold (`rad + CATCH_MARGIN`) without hardcoding species constants. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
         state: string;
@@ -170,6 +176,7 @@ declare global {
         scentCalls: number;
         dist: number;
         canSee: boolean;
+        rad: number;
         x: number;
         z: number;
       } | null;

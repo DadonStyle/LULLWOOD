@@ -28,6 +28,8 @@ PR. If a future PR doesn't, the interaction matrix below is stale advertising,
 not a source of truth — treat any diff that changes gameplay-relevant code in
 `engine/forest-engine.js` as required to touch this file too.
 
+Cue-triple audit: see `docs/CUES.md`.
+
 ---
 
 ## Elements (main branch)
@@ -57,20 +59,21 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
   (`MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
-  within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
+  within `HIDE_RADIUS` (2.2u) of a `bramble` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
   edge distance via `distanceToCoverEdge()` in `lib/game/cover.ts`,
   LUL-405/LUL-430 fix — previously approximated the edge as a
   `Math.max(hx,hz)` circle, which over-extended the trigger several times
-  past the object's real thickness on an elongated log's thin side). Hiding
-  lowers eye
+  past the object's real thickness on an elongated prop's thin side; `log`
+  was in `HIDE_KINDS` at the time this fix landed but was removed later,
+  LUL-2311). Hiding lowers eye
   height (2.2→1.05, damped ~0.3s), silences footsteps/scent deposit, and
   shrinks predator detect range the longer it's held (`STILL_RAMP`=1.2s,
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5919 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5182, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5967 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5230, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -190,10 +193,14 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   (`eyeH + bob + jumpY`, L2375), never a raycast against the ground mesh.
 - Two different downstream checks read player position without going through
   `blocked()`: `hasLOS()` (sight, rotated-AABB raycast, includes tagged
-  trees `s>1.4`) and the distance-only scent/noise/catch/pickup/win checks
-  above — geometry gates *sight only*; it never gates scent or hearing
-  (`checkScent()` and `checkNoise()` take no cover/LOS
-  argument at all).
+  trees `s>1.4`) and the distance-only scent/noise/pickup/win checks above —
+  geometry gates *sight only*; it never gates scent or hearing (`checkScent()`
+  and `checkNoise()` take no cover/LOS argument at all). Catch is gated on
+  sight too, always: `chase`/`hunt` kill via `canCatchInChase()`/`isCaught()`,
+  which both require `canSee()` (and therefore `hasLOS()`) regardless of
+  `hidden` — this is unchanged by LUL-2320. What LUL-2320 changed is what
+  `hasLOS()`/`canSee()` themselves report while the player stands inside a
+  Log/Bramble's own footprint — see those cards and the predator card below.
 
 ---
 
@@ -428,6 +435,9 @@ one geometry builder (`makePredator()`), differentiated by the
   `coverBlockedR`/`canopyBlockedR`) — see above.
 - LOS: same rotated-AABB raycast as the player's own (`hasLOS()`), applied
   symmetrically (`canSee()` calls it both directions along the same line).
+  LUL-2320: a predator standing inside a log/bramble's own footprint is not
+  blinded by it either (`hasLOS()`'s symmetric origin-side skip) — matches
+  the player-side fix and keeps the raycast genuinely symmetric.
 - No ground collision (`p.g.position.y = bob` is a formula, not a raycast,
   same as the player).
 
@@ -451,7 +461,7 @@ one geometry builder (`makePredator()`), differentiated by the
 **What it CANNOT do**
 - Small/mid trees (`s <= 1.4`) never block LOS, only movement — there is no
   tree size below which line-of-sight blocking is guaranteed.
-- Cannot be a hiding spot (`HIDE_KINDS` only contains `bramble`/`log`) —
+- Cannot be a hiding spot (`HIDE_KINDS` only contains `bramble`, LUL-2311) —
   ducking behind a tagged tree blocks sight incidentally but never lets the
   player enter `hidden`.
 - Cannot block predator movement beyond the trunk radius — canopy collision
@@ -507,9 +517,11 @@ one geometry builder (`makePredator()`), differentiated by the
 ### Log (fallen wood)
 
 **What it can do**
-- Everything Rock can do, **plus**: is a valid `hidden`-stance location
-  (`HIDE_KINDS.log = true`) — entering/exiting plays a distinct "hollow
-  log knock" sound (`hollowLogSound()`).
+- Everything Rock can do (LOS-blocking cover), **plus**: it's walkable
+  (`WALKABLE_KINDS.log = true`, see "What it CANNOT do" below) — **but it is
+  NOT a `hidden`-stance location** (`HIDE_KINDS` dropped `log`, LUL-2311;
+  founder brief: a fallen log is thin, walkable cover with nothing to
+  visually be "inside" of, so pressing `KeyH` beside one does nothing).
 - ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()`), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
 - **LUL-384: the player walks and runs over it, no route-around needed** —
@@ -564,22 +576,38 @@ one geometry builder (`makePredator()`), differentiated by the
 **Collision & physics profile**
 - LOS-blocking for both actors, same as Rock (`hasLOS()`, unchanged).
 - **No movement collision for either actor** (LUL-384 removed the
-  player-only block; predators never had one). Catch resolves normally on
-  or beside a log — `isCaught()`/chase are proximity checks, never gated on
-  `blocked()`/`coverBlockedR()`, so a log is not a safe zone.
-- Still gates `findHideSpot()` (proximity search, `HIDE_RADIUS`=2.2u
-  beyond the prop's own edge, L908-922) — unaffected, that function reads
-  `coverGrid` directly and never calls `coverBlockedR()`.
+  player-only block; predators never had one). Catch stays gated on
+  `canSee()` always (`canCatchInChase()`/`isCaught()` in `hunt`, unchanged by
+  LUL-2320 — see the Player collision profile note above), but LUL-2320 fixed
+  what `canSee()` itself reports while standing on a log: `hasLOS()` no
+  longer treats the log's own footprint as occluding the point standing
+  inside it, so an **un-hidden** player on a log now reads as visible (and
+  is caught normally) the moment nothing else blocks the sightline, instead
+  of unconditionally. A **hidden** player's footprint still shields them at
+  range (`canSee()`'s `insideHideFootprint()` check), only reading visible
+  once a predator closes to contact range (`rad + CATCH_MARGIN`) — at that
+  point `canSee()` and `isCaught()` agree, so contact resolves the chase
+  (catch or the sniff-loop hand-off below) instead of gluing. Before
+  LUL-2320, `hasLOS()` treated the log's footprint as an occluder
+  unconditionally (hidden or not, any range), which made *any* player
+  standing on it invisible from every angle and glued a chasing predator at
+  contact range forever.
+- **LUL-2311: no longer gates `findHideSpot()`.** `HIDE_KINDS` dropped
+  `log`, so proximity to a log no longer makes `KeyH` succeed — that
+  eligibility now belongs to Bramble alone. The movement exemption above is
+  independent and unaffected (`WALKABLE_KINDS`, not `HIDE_KINDS`, backs it).
 
 ---
 
 ### Bramble (bush)
 
 **What it can do**
-- Everything Log can do (hiding-spot eligible, `HIDE_KINDS.bramble = true`),
-  with a distinct "leaf rustle" enter/exit sound (`leafRustle()`)
-  — researched against stealth/horror foley convention per the
-  LUL-212 handoff (wiki `game/lul212-hiding-spots`).
+- Everything Log can do (walkable, LOS-blocking cover), **plus**: it's the
+  **only** hiding-spot-eligible cover kind (`HIDE_KINDS.bramble = true` —
+  `HIDE_KINDS` dropped `log` entirely, LUL-2311), with a distinct "leaf
+  rustle" enter/exit sound (`leafRustle()`) — researched against
+  stealth/horror foley convention per the LUL-212 handoff (wiki
+  `game/lul212-hiding-spots`).
 - ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()`).
 - **LUL-1642: the player walks and runs over it too, same as Log** —
   `coverKindBlocksMovement('bramble')` is now `false`
@@ -594,9 +622,11 @@ one geometry builder (`makePredator()`), differentiated by the
   "sniffing broke — the animal found me while I was still hiding," reported
   as LUL-1642 (Bramble, unlike Log, is not fixed to matching a real "step
   over it" affordance — this is a deliberate deviation from LUL-384's
-  original walkable-vs-solid distinction, made to unify the two `HIDE_KINDS`
-  behind one detection path per the ticket's explicit ask, not an
-  independent design call).
+  original walkable-vs-solid distinction, made to unify Bramble and Log
+  (both `HIDE_KINDS` members at the time) behind one detection path per the
+  ticket's explicit ask, not an independent design call — LUL-2311 later
+  removed Log from `HIDE_KINDS`, but this movement/LOS-unification fix is
+  unaffected, since it was never about hide-eligibility itself).
 
 **What it CANNOT do**
 - Same as Log: no predator movement collision (never had one); as of
@@ -616,9 +646,13 @@ one geometry builder (`makePredator()`), differentiated by the
 **Collision & physics profile**
 - LOS-blocking for both actors, same as Log/Rock (`hasLOS()`, unchanged).
 - **No movement collision for either actor** (LUL-1642 matched Log's
-  LUL-384 exemption; predators never had one). `findHideSpot()`-eligible,
-  unaffected — that function reads `coverGrid` directly and never calls
-  `coverBlockedR()`.
+  LUL-384 exemption; predators never had one), independent of hide
+  eligibility. **The only `findHideSpot()`-eligible cover kind as of
+  LUL-2311** — that function reads `coverGrid`/`HIDE_KINDS` directly and
+  never calls `coverBlockedR()`, so this is unrelated to the movement
+  exemption above. Same LUL-2320 catch behaviour as Log above: `hidden`
+  protects at range via `canSee()`'s `insideHideFootprint()` check, contact
+  range still resolves the chase either way.
 
 ---
 
@@ -1074,6 +1108,20 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   assert pairwise non-overlap directly -- today's coverage exercises at most
   one populated row per test. Flagged as a `[QA-HOOK]` follow-up, not silently
   skipped.
+
+  **LUL-2358 fix.** Three cases (`urgent cover prompt`, `no nowrap overflow
+  and no mobile-control collision`, `reduced motion`) staged their chasing
+  lion via `qaTeleportToHideSpot()` + `qaOpenHideNearLion()`; the latter
+  resets the player to the spawn clearing (its own designed cover-free
+  scenario), clobbering the former's teleport, and placed the lion only 4
+  units out -- inside its `CATCH_MARGIN`+`rad` contact range within ~0.18s
+  at the lion's `tuning.js` speed (9.2), so `triggerDeath()` fired before
+  `data-tone` could ever read `"urgent"`. All three now use
+  `qaOpenHideNearLionAtHideSpot()` (`engine/forest-engine.js`), same as
+  `cover wins over veil`; that hook's lion standoff moved from a hardcoded
+  `4` to `LION_STANDOFF = 14` so a chasing lion can no longer close to catch
+  range before any of these tests' assertions run, while staying inside
+  `COVER_URGENT_RANGE` (22) for the urgent-tone premise.
   LUL-1089 adds five new `EngineHudState` fields: `coverPromptVisible`,
   `coverPromptUrgent`, `coverPromptKind` (`'bramble'|'log'|null`),
   `veilPromptVisible`, `veilPromptUrgent`. Cover prompt fires only while
@@ -1265,9 +1313,9 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L4711, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L4816 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4847). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L4772, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L4877 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L4908). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1281,7 +1329,7 @@ design doc as turning horror into radar.
   reset to 0 on `enter()` (L3384) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L4838: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L5208: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1517,8 +1565,8 @@ design doc as turning horror into radar.
   `'heard'` death cause instead of `'chase'`; cleared to `null` by every other hearing/sight/
   scent channel.
 - **Home fire crackle (S5).** `homeFireCrackle(dist)` (`engine/forest-engine.js`) is a
-  filtered-noise burst (reuses `hollowLogSound()`'s bandpass-noise chain, minus its sine thump)
-  panned by bearing to `CONFIG.home`, driven by a `homeFireTimer` on the same tempo-carries-
+  filtered-noise burst (no sine thump), panned by bearing to `CONFIG.home`, driven by a
+  `homeFireTimer` on the same tempo-carries-
   distance curve as the cry, firing only while `carrying`. Not predator-audible — this is the
   return leg's audio cue, not a detection channel. Caption (gated on `captionsOn`): `"home fire
   crackling · <near|far> · <side>"`.
@@ -1621,7 +1669,7 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
 | | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI | EM |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
 | **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | TRIG²¹ |
 | **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
 | **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
@@ -1737,12 +1785,17 @@ touches `generateCover()`.
 home at (0,0) r=3.6) — no code enforces their separation, but no seed can
 move either one, so there's nothing to verify per-seed. Defined by
 construction, not undefined.
-²⁰ **Changed, LUL-384.** Previously `C+LOS+HIDE` like Bramble. Log is now the
-one cover kind that doesn't block the player's movement either —
-`coverKindBlocksMovement('log')` is `false` (`lib/game/cover.ts`), read
-by `coverBlockedR()`. LOS and hide-spot eligibility are untouched (both read
-`coverGrid` independently of `coverBlockedR()`), so Log keeps `LOS+HIDE`;
-only the `C` is gone.
+²⁰ **Changed, LUL-384; changed again, LUL-2311.** LUL-384: previously
+`C+LOS+HIDE` like Bramble. Log became one of the cover kinds that doesn't
+block the player's movement — `coverKindBlocksMovement('log')` is `false`
+(`lib/game/cover.ts`), read by `coverBlockedR()`. At the time, LOS and
+hide-spot eligibility were untouched (both read `coverGrid` independently
+of `coverBlockedR()`), so Log kept `LOS+HIDE`; only the `C` was gone.
+LUL-2311: `HIDE_KINDS` dropped `log` entirely (founder brief: a fallen log
+is thin, walkable cover with nothing to visually be "inside" of) — Log now
+keeps `LOS` only. The walkable-movement exemption is unaffected and now
+lives on its own constant, `WALKABLE_KINDS` (`lib/game/cover.ts`), which
+`coverKindBlocksMovement('log')` reads instead of `HIDE_KINDS`.
 ²¹ **Embers** (LUL-1043) is a run-currency event tracker, not a spatial
 object — no movement collision or LOS interaction. `TRIG` marks events where
 Embers earnings are computed: Player earnings/spending gate, Child pickup
@@ -1767,7 +1820,10 @@ split (which kept Bramble solid on purpose, "the one prop a person would
 step over" being Log specifically) — called out here since the ticket
 asked explicitly for one unified hiding behaviour across both cover kinds
 rather than a bramble-only fix that left the two divergent. Rock/Reed,
-neither a hiding spot, are unaffected.
+neither a hiding spot, are unaffected. **LUL-2311** later removed Log from
+`HIDE_KINDS` (²⁰) — Bramble is now the only cover kind with `HIDE` at all,
+so this cell (`LOS+HIDE`) is unchanged but no longer has a Log counterpart
+to match.
 ²³ **Added, LUL-1643.** Predator movement now calls `blockedForPredator()`
 (`lib/game/cover.ts`) — `blockedR()` (tree/landmark circles) plus
 `coverBlockedR()` — instead of bare `blockedR()`, so Rock/Reed become real
@@ -1925,7 +1981,8 @@ the map; a small, single patch finally gave it one clean disc to draw. This pred
 already in the matrix above (Tree-shaped collision for both actors,
 Rock-shaped `C+LOS` for both actors as of LUL-1643 (²³), Log/Bramble-shaped
 LOS-only walkable cover) — Reed shares Rock's `coverKindBlocksMovement()`
-predicate (both `!HIDE_KINDS` kinds), so it also became a real predator
+predicate (both `!WALKABLE_KINDS` kinds, LUL-2311 -- previously `!HIDE_KINDS`,
+same value for both kinds either way), so it also became a real predator
 collider in the same change, not just a player one.
 
 ## Startled roosts, slice (a) (LUL-1914) — one-way predator-flush feedback

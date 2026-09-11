@@ -28,7 +28,7 @@ test('tapping the Hide button enters the same hold-still stance H enters on desk
 
   const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
   if (spot === null) {
-    throw new Error('qaTeleportToHideSpot returned null -- no bush/hollow-log hiding spot was found for this seed');
+    throw new Error('qaTeleportToHideSpot returned null -- no bramble hiding spot was found for this seed');
   }
 
   const before = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
