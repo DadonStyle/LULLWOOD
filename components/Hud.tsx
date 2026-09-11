@@ -9,7 +9,7 @@ import GameMenu from './GameMenu';
 import ActionPrompt from './ActionPrompt';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
-import { nextDeeperLungsCost, veilMaxHoldForTier, CARRIED, RESCUE, type RunPayout } from '@/lib/game/economy';
+import { SHOP_CATALOG, nextCost, veilMaxHoldForTier, effectiveScentLifetime, POCKET_STONES_RESERVE, CARRIED, RESCUE, type RunPayout } from '@/lib/game/economy';
 import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
@@ -96,7 +96,7 @@ export interface EngineHudState {
   // the first win/death this session), read alongside winVisible/deathVisible.
   embersBalance: number;
   livePileEmbers: number;   // LUL-1315: live unbanked total, run-only, 0 outside a run
-  embersDeeperLungsTier: number;
+  embersTiers: Record<string, number>;
   lastPayout: RunPayout | null;
   // LUL-1623: throwable distractions. heldThrowable gates the "holding a
   // stone — click/tap to throw" prompt; canGrabThrowable gates the "pick up
@@ -182,8 +182,8 @@ export interface EngineActions {
   setReducedMotion: (v: boolean) => void;
   setCaptions: (v: boolean) => void;
   // LUL-1043
-  setEmbers: (balance: number, deeperLungsTier: number) => void;
-  purchaseDeeperLungs: () => void;
+  setEmbers: (balance: number, tiers: Record<string, number>) => void;
+  purchase: (id: string) => void;
   // LUL-1666
   setMissionUnlocks: (unlocks: { deepwater: boolean }) => void;
   setSecondaryChoice: (kind: SecondaryKind | null) => void;
@@ -243,7 +243,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   captionId: 0,
   embersBalance: 0,
   livePileEmbers: 0,
-  embersDeeperLungsTier: 0,
+  embersTiers: {},
   lastPayout: null,
   heldThrowable: false,
   canGrabThrowable: false,
@@ -337,7 +337,7 @@ const EMBERS_KEY = 'lullwood:embers';
 
 interface PersistedEmbers {
   balance: number;
-  tiers: { deeperLungs: number };
+  tiers: Record<string, number>;
 }
 
 function readEmbers(): PersistedEmbers | null {
@@ -347,7 +347,11 @@ function readEmbers(): PersistedEmbers | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PersistedEmbers>;
     if (typeof parsed.balance !== 'number') return null;
-    return { balance: parsed.balance, tiers: { deeperLungs: parsed.tiers?.deeperLungs ?? 0 } };
+    const tiers: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed.tiers ?? {})) {
+      if (typeof v === 'number') tiers[k] = v;
+    }
+    return { balance: parsed.balance, tiers };
   } catch {
     return null;
   }
@@ -362,7 +366,7 @@ function writeEmbers(s: PersistedEmbers) {
   }
 }
 
-function useEmbers(actions: EngineActions | null, balance: number, deeperLungsTier: number) {
+function useEmbers(actions: EngineActions | null, balance: number, tiers: Record<string, number>) {
   // Track whether the apply-on-ready effect has run, so persist doesn't fire
   // with zero defaults before the stored balance is applied.
   const appliedRef = useRef(false);
@@ -374,16 +378,16 @@ function useEmbers(actions: EngineActions | null, balance: number, deeperLungsTi
     if (!actions) return;
     appliedRef.current = true;
     const stored = readEmbers();
-    if (stored) actions.setEmbers(stored.balance, stored.tiers.deeperLungs);
+    if (stored) actions.setEmbers(stored.balance, stored.tiers);
   }, [actions]);
 
-  // Persist whenever the engine's own balance/tier actually change -- after
+  // Persist whenever the engine's own balance/tiers actually change -- after
   // the apply-on-ready effect above, so a mount with a stored balance isn't
   // immediately overwritten by the engine's own zeroed default before it applies.
   useEffect(() => {
     if (!appliedRef.current) return;
-    writeEmbers({ balance, tiers: { deeperLungs: deeperLungsTier } });
-  }, [balance, deeperLungsTier]);
+    writeEmbers({ balance, tiers });
+  }, [balance, tiers]);
 }
 
 // LUL-1666: cross-session unlock record -- same split as useEmbers() above
@@ -513,28 +517,48 @@ function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, diffic
 // spend once per page load, not "between runs" the way the design
 // (wiki game/economy/embers) describes it. Declared explicitly in the PR
 // body as a stated extension of the ticket's literal wording, not a silent one.
-function EmbersShop({ balance, tier, actions }: { balance: number; tier: number; actions: EngineActions | null }) {
-  const cost = nextDeeperLungsCost(tier);
-  const currentHold = veilMaxHoldForTier(tier);
+function shopEffectCopy(id: string, tier: number): { current: string; next: string } {
+  if (id === 'deeperLungs') {
+    return { current: `veil hold ${veilMaxHoldForTier(tier)}s`, next: `veil hold ${veilMaxHoldForTier(tier + 1)}s` };
+  }
+  if (id === 'quietStep') {
+    return {
+      current: `scent fades in ${effectiveScentLifetime(tier).toFixed(1)}s`,
+      next: `scent fades in ${effectiveScentLifetime(tier + 1).toFixed(1)}s`,
+    };
+  }
+  // pocketStones: single tier, tier is always 0 here (cost==null branch handles tier 1)
+  return { current: 'no reserve stones', next: `+${POCKET_STONES_RESERVE} throwables/run` };
+}
+
+function EmbersShop({ balance, tiers, actions }: { balance: number; tiers: Record<string, number>; actions: EngineActions | null }) {
   return (
     <div id="embersShop">
       <div id="embersShopBalance">Embers: {balance}</div>
-      {cost == null ? (
-        <div id="embersShopMaxed">Deeper Lungs maxed — veil hold {currentHold}s</div>
-      ) : (
-        <button
-          className="buyBtn"
-          id="buyDeeperLungs"
-          disabled={balance < cost}
-          onClick={(e) => {
-            // #gate's own onClick would otherwise also fire enter() on this same click.
-            e.stopPropagation();
-            actions?.purchaseDeeperLungs();
-          }}
-        >
-          Deeper Lungs — veil hold {currentHold}s → {veilMaxHoldForTier(tier + 1)}s — {cost} embers
-        </button>
-      )}
+      {SHOP_CATALOG.map((item) => {
+        const tier = tiers[item.id] ?? 0;
+        const cost = nextCost(item.id, tier);
+        const copy = shopEffectCopy(item.id, tier);
+        return cost == null ? (
+          <div key={item.id} id={`embersShopMaxed-${item.id}`}>
+            {item.label} maxed — {copy.current}
+          </div>
+        ) : (
+          <button
+            key={item.id}
+            className="buyBtn"
+            id={`buy-${item.id}`}
+            disabled={balance < cost}
+            onClick={(e) => {
+              // #gate's own onClick would otherwise also fire enter() on this same click.
+              e.stopPropagation();
+              actions?.purchase(item.id);
+            }}
+          >
+            {item.label} — {copy.current} → {copy.next} — {cost} embers
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -546,7 +570,7 @@ export default function Hud({
   state: EngineHudState;
   actions: EngineActions | null;
 }) {
-  useEmbers(actions, state.embersBalance, state.embersDeeperLungsTier);
+  useEmbers(actions, state.embersBalance, state.embersTiers);
   useMissionUnlocks(actions, state.missionUnlocks);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
@@ -752,7 +776,7 @@ export default function Hud({
               </>
             )}
           </div>
-          <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
+          <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} />
         </div>
       )}
 
@@ -950,7 +974,7 @@ export default function Hud({
             >
               Play again
             </button>
-            <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
+            <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} />
           </div>
         </div>
       )}
@@ -977,7 +1001,7 @@ export default function Hud({
             >
               Try again
             </button>
-            <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
+            <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} />
           </div>
         </div>
       )}

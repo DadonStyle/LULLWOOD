@@ -17,7 +17,7 @@ export const ENGINE_ACTION_KEYS = [
   'triggerTouchHide', 'triggerTouchInteract', 'triggerTouchThrow',
   'triggerTouchJump', 'triggerTouchPause', 'triggerTouchToggleRun', 'setTouchVeil',
   'setDifficulty', 'setRunMode', 'setSensitivity', 'setInvertY', 'setReducedMotion', 'setCaptions',
-  'setEmbers', 'purchaseDeeperLungs',
+  'setEmbers', 'purchase',
   'setMissionUnlocks', 'setSecondaryChoice',
   // LUL-2230
   'setScentTrailVisible',
