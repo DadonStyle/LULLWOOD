@@ -49,3 +49,28 @@ test('#missionPanel is absent before entering and disappears for good once the p
   await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('#missionPanel')).toHaveCount(0);
 });
+
+// LUL-2442: components/GameMenu.tsx's open .menuPanel starts at ~72px absolute
+// (top:56px inside #gameMenu's own top:16px) and shares #missionPanel's
+// left:16px corner, landing right on top of it (#missionPanel is top:76px,
+// GameCanvas.tsx) -- the QA layout audit caught the first menu row ("Fullscreen:
+// off (F11)") overlapping the mission pill's "Deepwater" text. LUL-1942 already
+// solved this for the *closed* 48px toggle button; the open dropdown is taller
+// and was never covered. Same fix family as LUL-2410/2411/2414: hide the
+// panel rather than fight z-index, gated on the `menuOpen` state already
+// plumbed to MobileControls (components/Hud.tsx).
+test('#missionPanel is hidden while the game menu is open, and returns once closed', async ({ page }) => {
+  await boot(page, { qaHooks: true });
+  await enter(page);
+  const mission = await qaHook(page, 'qaProbeMission');
+  expect(mission, 'qaProbeMission returned null -- no mission drawn this run').not.toBeNull();
+  await expect(page.locator('#missionPanel')).toBeVisible({ timeout: 3_000 });
+
+  await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
+  await expect(page.locator('.menuPanel')).toBeVisible();
+  await expect(page.locator('#missionPanel')).toHaveCount(0);
+
+  await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
+  await expect(page.locator('.menuPanel')).toBeHidden();
+  await expect(page.locator('#missionPanel')).toBeVisible();
+});
