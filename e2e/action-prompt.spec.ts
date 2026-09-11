@@ -11,8 +11,8 @@
 // 1. Walk to a known bush → #actionPrompt is shown with the desktop-bramble calm string.
 // 2. Stage a chase within COVER_URGENT_RANGE → #actionPrompt carries data-tone="urgent".
 // 3. Cover and veil conditions both true → only cover string renders (precedence).
-// 4. At 390px viewport, #actionPrompt's bounding box does not intersect the mobile
-//    control root, and its scrollWidth <= clientWidth (no nowrap overflow).
+// 4. At a landscape mobile viewport, #actionPrompt's bounding box does not intersect
+//    the mobile control root, and its scrollWidth <= clientWidth (no nowrap overflow).
 // 5. With prefers-reduced-motion emulated, computed animation-name on the row's
 //    .actionPromptKey is 'none'.
 // 6. #actionSlot's five rows are always mounted, in the founder's stated
@@ -159,11 +159,21 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     expectNoConsoleErrors(errs);
   });
 
-  test('no nowrap overflow and no mobile-control collision at 390px', async ({ page }) => {
-    // Use mobile viewport (390px wide, 844px tall — iPhone 12)
-    await page.setViewportSize({ width: 390, height: 844 });
+  test('no nowrap overflow and no mobile-control collision (landscape mobile)', async ({ page }) => {
+    // LUL-2379: this used to be a 390x844 *portrait* viewport, which two
+    // things broke at once. (1) OrientationGate (components/OrientationGate.tsx,
+    // LUL-69) blocks all portrait mobile viewports behind a full-screen
+    // "rotate your device" overlay -- on a real phone this exact shape never
+    // reaches gameplay at all, so the test's own premise was untestable.
+    // (2) enter() clicks the hardcoded 1280x720 desktop centre (helpers.ts
+    // VIEW_X/VIEW_Y), which lands outside a 390-wide page entirely, so the
+    // entry gate never registered either. Use the same 727x393 landscape
+    // size (clears OrientationGate) and viewport-relative entry click every
+    // other mobile spec uses (e.g. e2e/mobile/hide.spec.ts) instead.
+    await page.setViewportSize({ width: 727, height: 393 });
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
-    await enter(page);
+    await page.mouse.click(727 / 2, 393 / 2);
+    await page.waitForTimeout(1200); // gate fade settle (mobile has no pointer-lock to wait on)
 
     // LUL-2358: qaOpenHideNearLionAtHideSpot() stages cover + a chasing,
     // sighted lion together -- see the comment on the "urgent cover prompt"
