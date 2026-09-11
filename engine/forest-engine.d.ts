@@ -386,6 +386,36 @@ declare global {
        * and the in-memory one-time gate, so a single boot can prove the
        * caption is first-time-only twice in the same test. */
       qaResetScentCaption?: () => void;
+      /** LUL-2328: builds a minimal, exact scene -- no rng, no full
+       * generateMap() -- for tests that don't need the real procedural
+       * forest. Clears and replaces treeData/coverData/bogTreeData and every
+       * predator's placement; landmarkData/throwableData/mission and the
+       * player's position are left untouched. `predators` matches the fixed
+       * 3-per-species pool by `kind` in array order (a 4th of the same kind
+       * is dropped); every unmatched predator is parked inert. Cover `kind`
+       * must be one of 'log'|'rock'|'bramble'|'reed' -- an unrecognised kind
+       * is dropped, not an error. Works with `?qaWorld=micro` and
+       * `?qaNoRender=1` (both boot-time URL params, not hooks -- see
+       * docs/specs/lul-2328-qa-world-micro-hooks.md). Returns the counts
+       * actually placed. */
+      qaBuildScene?: (scene: {
+        trees?: { x: number; z: number; s?: number }[];
+        props?: { kind: 'log' | 'rock' | 'bramble' | 'reed'; x: number; z: number; ry?: number }[];
+        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string }[];
+        child?: { x: number; z: number };
+        home?: { x: number; z: number };
+      }) => { trees: number; props: number; predators: number };
+      /** LUL-2328: renderer.info.memory (geometry/texture object counts,
+       * always available) plus performance.memory (Chrome-only -- null on
+       * engines that don't implement it, e.g. Firefox/Safari). Built for
+       * LUL-2324's memory-budget assertions (micro world < 400MB, full
+       * QA_PINNED_SEED map < 1.5GB JS heap + GPU buffers) -- `heap` is the
+       * number that budget actually checks; `renderer` is a secondary,
+       * cross-engine-safe signal. */
+      qaProbeMemory?: () => {
+        heap: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number } | null;
+        renderer: { geometries: number; textures: number };
+      };
       /** LUL-2225: bogginess (biomeAt) and the two multipliers derived from
        * it (bogSpeedMultiplier/bogNoiseMultiplier) at an arbitrary world
        * point -- lets a test sample the patch's shape/edge directly instead

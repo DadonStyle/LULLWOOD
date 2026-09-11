@@ -179,11 +179,11 @@ import { nearestLandmarkName } from '@/lib/game/chronicle';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
-  STAR, LW, DUST, BW, BSP, BOG_TREES, BOG_REEDS, COVER_PROPS, DUST_WIND_SPEED, WARM,
+  STAR, LW, DUST, BW, BSP, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
-  FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP,
+  FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -220,6 +220,23 @@ function init(onStateChange, inputMode) {
     timers.push(id);
     return id;
   }
+
+  // LUL-2328: qaWorld/qaNoRender are read once, here, before anything below
+  // reads CONFIG.mapSize/CONFIG.trees/CONFIG.coverProps/CONFIG.bogTrees/
+  // CONFIG.bogReeds for the first time this page life -- the very next
+  // statement (`half = CONFIG.mapSize / 2`) is the earliest such read. See
+  // applyQaWorldMicroPreset()'s comment (engine/tuning.js) for why that
+  // ordering is load-bearing. Absent by default, so both do nothing for real
+  // players; neither requires `?qaHooks=1` -- they change what generateMap()
+  // builds, not what's exposed on window.ForestEngine.
+  const qaParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+  if(qaParams && qaParams.get('qaWorld') === 'micro') applyQaWorldMicroPreset();
+  // Skips layoutTreeChunks()/layoutCoverMeshes()/layoutThrowableMeshes() inside
+  // generateMap() below -- the three calls that build real GPU/CPU InstancedMesh
+  // buffers -- while still running generateMap()'s full simulation (treeData/
+  // coverData/grid/buildGrid()/buildCoverGrid()) and keeping the renderer/HUD
+  // alive. See generateMap()'s own call sites for exactly which three.
+  const qaNoRender = !!(qaParams && qaParams.has('qaNoRender'));
 
 // ---- Knobs ---------------------------------------------------------------
 const half = CONFIG.mapSize / 2;
@@ -471,9 +488,9 @@ const foliageMat = new THREE.MeshStandardMaterial({ color: CONFIG.foliage, rough
 // bigger CONFIG.trees, so the original forest loop's rng draw count (and
 // every draw after it) is untouched -- see generateBogTrees() below.
 const bogParts = [
-  new THREE.InstancedMesh(trunkGeo, trunkMat,   BOG_TREES),
-  new THREE.InstancedMesh(cone1Geo, foliageMat, BOG_TREES),
-  new THREE.InstancedMesh(cone2Geo, foliageMat, BOG_TREES),
+  new THREE.InstancedMesh(trunkGeo, trunkMat,   CONFIG.bogTrees),
+  new THREE.InstancedMesh(cone1Geo, foliageMat, CONFIG.bogTrees),
+  new THREE.InstancedMesh(cone2Geo, foliageMat, CONFIG.bogTrees),
 ];
 bogParts.forEach(p => { p.frustumCulled = false; scene.add(p); });
 
@@ -502,10 +519,10 @@ const brambleMat = new THREE.MeshStandardMaterial({ color: 0x121a0e, roughness: 
 const reedGeo = new THREE.ConeGeometry(0.5, 1, 5);
 const reedMat = new THREE.MeshStandardMaterial({ color: 0x2e3b1c, roughness: 1 });
 const coverMeshes = {
-  log: new THREE.InstancedMesh(logGeo, logMat, COVER_PROPS),
-  rock: new THREE.InstancedMesh(rockGeo, rockMat, COVER_PROPS),
-  bramble: new THREE.InstancedMesh(brambleGeo, brambleMat, COVER_PROPS),
-  reed: new THREE.InstancedMesh(reedGeo, reedMat, COVER_PROPS),   // capacity reused, see layoutCoverMeshes()
+  log: new THREE.InstancedMesh(logGeo, logMat, CONFIG.coverProps),
+  rock: new THREE.InstancedMesh(rockGeo, rockMat, CONFIG.coverProps),
+  bramble: new THREE.InstancedMesh(brambleGeo, brambleMat, CONFIG.coverProps),
+  reed: new THREE.InstancedMesh(reedGeo, reedMat, CONFIG.coverProps),   // capacity reused, see layoutCoverMeshes()
 };
 Object.values(coverMeshes).forEach(m => { m.frustumCulled = false; scene.add(m); });
 
@@ -669,7 +686,7 @@ function generateCover(){
   for(const t of treeData) if(!t.culled && t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
 
   let tries = 0, placed = 0;
-  while(placed < COVER_PROPS && tries < COVER_PROPS*25){
+  while(placed < CONFIG.coverProps && tries < CONFIG.coverProps*25){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
@@ -727,7 +744,7 @@ function layoutCoverMeshes(){
   }
   for(const k in coverMeshes){
     const m = coverMeshes[k];
-    for(let i = counts[k]; i < COVER_PROPS; i++){
+    for(let i = counts[k]; i < CONFIG.coverProps; i++){
       dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
       dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
     }
@@ -904,7 +921,7 @@ function generateBogTrees(){
   // LUL-1483: was a direct scatter into the z-band (100% acceptance minus
   // nearLandmarks) -- now also rejects on biomeAt (~30% of the square is
   // boggy), so the try budget is raised to keep hitting BOG_TREES reliably.
-  while(bogTreeData.length < BOG_TREES && tries < BOG_TREES*200){
+  while(bogTreeData.length < CONFIG.bogTrees && tries < CONFIG.bogTrees*200){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     if(biomeAt(x, z) <= 0) continue;
@@ -957,7 +974,7 @@ function generateBogTrees(){
 // check now fires. No other generator's stream is affected.
 function generateReeds(){
   let tries = 0, placed = 0;
-  while(placed < BOG_REEDS && tries < BOG_REEDS*200){
+  while(placed < CONFIG.bogReeds && tries < CONFIG.bogReeds*200){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     const dist = Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z);
@@ -1075,11 +1092,11 @@ function generateMap(seed){
     }
     treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled });
   }
-  layoutTreeChunks(treeData);
+  if(!qaNoRender) layoutTreeChunks(treeData);
   buildGrid();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
-  generateCover(); layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
+  generateCover(); if(!qaNoRender) layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
   generateThrowables();
   generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
   pushState({ windX, windZ });   // LUL-1724: map-constant, pushed once, not per-frame
@@ -1111,9 +1128,9 @@ function generateMap(seed){
   // (see the comment on layoutTreePool() itself).
   const bogTreeDataPreThin = bogTreeData;
   thinGeneratedProps();   // LUL-2247: cross-category spacing + per-chunk caps -- draws no rng
-  layoutTreePool(bogParts, bogTreeDataPreThin, BOG_TREES, new Set(bogTreeData));   // moved out of generateBogTrees() -- needs the full array + kept set, not the thinned array alone
-  layoutThrowableMeshes();   // moved from right after generateThrowables() -- needs the thinned array too
-  layoutCoverMeshes();
+  layoutTreePool(bogParts, bogTreeDataPreThin, CONFIG.bogTrees, new Set(bogTreeData));   // moved out of generateBogTrees() -- needs the full array + kept set, not the thinned array alone
+  if(!qaNoRender) layoutThrowableMeshes();   // moved from right after generateThrowables() -- needs the thinned array too
+  if(!qaNoRender) layoutCoverMeshes();
   buildGrid();   // picks up bogTreeData for blockedR()/canopyBlockedR()
   placeLandmarks();
   buildGrid();   // LUL-374: re-run now landmarkData is populated, so blockedR()/predators'
@@ -4335,6 +4352,111 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     scentCaptionSeen = false; scentCaptionActive = false;
     try { localStorage.removeItem(SCENT_TRAIL_CAPTION_KEY); } catch(e){}
     pushState({ scentCaptionVisible: false });
+  };
+
+  // [QA-HOOK] LUL-2328: fixed, non-rng shape per cover kind -- rollCoverPropShape()
+  // (lib/game/cover.ts) rolls a random size in these same ranges every real
+  // generateCover() call; qaBuildScene() below is deliberately deterministic
+  // (no rng draw, so it never perturbs the seeded stream), so each kind gets
+  // one representative shape at the midpoint of rollCoverPropShape()'s own
+  // range instead. 'log' always renders long along x; callers wanting the
+  // other orientation pass ry = Math.PI/2.
+  const QA_COVER_SHAPE = {
+    log:     { hx: 1.85, hz: 0.475, y: 0.3 },
+    rock:    { hx: 1.35, hz: 1.28,  y: 0.74 },
+    bramble: { hx: 1.15, hz: 1.15,  y: 0.69 },
+    reed:    { hx: 0.7,  hz: 0.7,   y: 0.875 },
+  };
+  // [QA-HOOK] LUL-2328: builds a minimal, exact scene for a test that doesn't
+  // want a full procedurally-generated map -- child 2/2 of epic LUL-2324
+  // migrates the hook-staged e2e specs onto this instead of a real
+  // generateMap() boot. Deterministic and rng-free (every position/shape is
+  // caller-given or a fixed constant above), so it never touches the seeded
+  // rng stream and can be called after any generateMap(), any number of
+  // times. Clears and replaces treeData/coverData/bogTreeData and every
+  // predator's placement; landmarkData/throwableData/mission are left as
+  // whatever the last generateMap() produced (out of scope here -- see the
+  // spec's Out of scope section, docs/specs/lul-2328-qa-world-micro-hooks.md).
+  // Player position is also left untouched -- use qaTeleportHome/
+  // qaTeleportNearBaby or a hide-staging hook for that.
+  //
+  // `predators`: matched to the fixed 9-entry `predators` pool (3 per
+  // species, see the `for(const k of ['wolf','bear','lion'])` pool build
+  // above) by `kind`, in array order -- the Nth entry of a given kind claims
+  // that species' speciesIdx (N-1) slot, so at most 3 of any one kind can be
+  // placed; a 4th is silently dropped (documented limit, not a caller error
+  // the hook can usefully signal). Every unclaimed predator is parked
+  // `inert` exactly like placePredators()'s own inert branch (`x=z=-9999`,
+  // `g.visible=false`) so it can't be seen or scented.
+  window.ForestEngine.qaBuildScene = function(scene_){
+    const opts = scene_ || {};
+    treeData = (opts.trees || []).map(t => {
+      const s = t.s ?? 1.2;
+      return { x: t.x, z: t.z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled: false };
+    });
+    if(!qaNoRender) layoutTreeChunks(treeData);
+
+    coverData = (opts.props || [])
+      .filter(p => QA_COVER_SHAPE[p.kind])
+      .map(p => ({ x: p.x, z: p.z, kind: p.kind, ry: p.ry || 0, ...QA_COVER_SHAPE[p.kind] }));
+    buildCoverGrid();
+    if(!qaNoRender) layoutCoverMeshes();
+
+    bogTreeData = [];
+    layoutTreePool(bogParts, [], CONFIG.bogTrees, new Set());
+
+    buildGrid();
+
+    const byKind = new Map();
+    for(const spec of (opts.predators || [])){
+      const n = byKind.get(spec.kind) || 0;
+      if(n >= 3) continue;   // only 3 instances of any one kind exist -- see comment above
+      byKind.set(spec.kind, n + 1);
+      const p = predators.find(q => q.kind === spec.kind && q.speciesIdx === n);
+      if(!p) continue;
+      p.inert = false; p.g.visible = true;
+      p.x = spec.x; p.z = spec.z; p.wpx = spec.x; p.wpz = spec.z; p.vx = 0; p.vz = 0; p.yaw = 0;
+      p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
+      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.scentLock = 0; p.scentCalls = 0;
+      p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0;
+      p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
+      p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0;
+      p.g.position.set(spec.x, 0, spec.z); p.g.rotation.set(0, 0, 0);
+    }
+    for(const p of predators){
+      const claimed = (byKind.get(p.kind) || 0) > p.speciesIdx;
+      if(claimed) continue;
+      p.inert = true; p.g.visible = false; p.x = p.z = -9999;
+    }
+
+    if(opts.child){
+      baby.x = opts.child.x; baby.z = opts.child.z; baby.taken = false;
+      babyGroup.visible = true; babyGroup.position.set(baby.x, 0, baby.z);
+      placeBabyWisps();
+    }
+    if(opts.home){ CONFIG.home.x = opts.home.x; CONFIG.home.z = opts.home.z; }
+
+    return {
+      trees: treeData.length,
+      props: coverData.length,
+      predators: [...byKind.values()].reduce((a, b) => a + b, 0),
+    };
+  };
+
+  // [QA-HOOK] LUL-2328: renderer.info.memory (geometry/texture object counts,
+  // always available) plus performance.memory (Chrome-only -- Safari/Firefox
+  // don't implement it, so this reads null there; document that caveat at
+  // every call site rather than polyfilling a number that isn't real).
+  window.ForestEngine.qaProbeMemory = function(){
+    const perfMem = (typeof performance !== 'undefined' && performance.memory) ? {
+      usedJSHeapSize: performance.memory.usedJSHeapSize,
+      totalJSHeapSize: performance.memory.totalJSHeapSize,
+      jsHeapSizeLimit: performance.memory.jsHeapSizeLimit,
+    } : null;
+    return {
+      heap: perfMem,
+      renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures },
+    };
   };
 }
 
