@@ -1199,6 +1199,30 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   — reacts to whichever end screen is actually mounted with no engine change, and
   drops the transition so the hint can't still be fading (and overlapping) for up
   to 1.4s after the screen mounts.
+  LUL-2410: the local QA tester's deterministic bounding-box audit found `#hint`
+  (flat `top: 64px`) overlapping `#objective`'s `.actionPromptLine` on short
+  landscape phones (e.g. iPhone SE landscape, 667x375) — the same short-viewport
+  media query (`components/GameCanvas.tsx`, `@media (max-height: 420px) and
+  (pointer: coarse) and (hover: none), (max-height: 420px) and (max-width: 768px)`)
+  that sets `--action-slot-bottom: 190px` pushes `#actionSlot`'s rows up near the
+  top of the screen, into `#hint`'s band, and there's no free vertical gap left to
+  relocate either one into. Fixed in the same media query: `#hint { display: none
+  !important; }`. `display: none`, not `opacity: 0` (unlike the LUL-2158 fix
+  above) — the founder's overlap rule is enforced on raw DOM bounding boxes, so an
+  opacity-hidden `#hint` would still occupy its rect and keep tripping the audit
+  even though nothing is visibly drawn there; `display: none` collapses the box to
+  nothing. `!important` still needed to beat `enter()`'s inline `hint.style.opacity`
+  write. `#hint` is a transient onboarding caption the engine already fades out 5s
+  after `enter()`, and `#actionSlot`'s own rows carry the info a player needs at
+  this viewport, so dropping it here (rather than repositioning it) has no
+  functional cost.
+
+  **## e2e (LUL-2410).** `e2e/action-prompt.spec.ts` gained one case in the same
+  describe block: boots the micro world at 667x375, asserts `getComputedStyle(#hint)
+  .display === 'none'` right after `enter()` (beating the engine's synchronous
+  `opacity = '0.85'` write, not just outrunning its fade), then asserts `#hint`'s
+  and `#objective`'s `getBoundingClientRect()`s don't intersect. Verified
+  non-vacuous by reverting the CSS rule and watching it fail red (`received: "block"`).
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only

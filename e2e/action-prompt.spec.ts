@@ -211,6 +211,41 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     expect(collision, '#actionPrompt must not overlap mobile control row').toBe(false);
   });
 
+  test('LUL-2410: #hint stays hidden at a short landscape viewport, clear of #objective', async ({ page }) => {
+    // Same 667x375 iPhone SE landscape shape the local QA tester flagged --
+    // #actionSlot's --action-slot-bottom: 190px override (short-landscape
+    // media query above) pushes its rows, including #objective, up near the
+    // very top of the screen, into #hint's flat top: 64px band. See the
+    // LUL-2410 comment on that media query in components/GameCanvas.tsx.
+    await page.setViewportSize({ width: 667, height: 375 });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await page.mouse.click(667 / 2, 375 / 2);
+    await page.waitForTimeout(1200); // gate fade settle (mobile has no pointer-lock)
+
+    // enter() sets hint.style.opacity = '0.85' synchronously -- the fix must
+    // beat that inline write via !important, not just win a fade race. Check
+    // display (not just opacity) so #hint's box actually collapses to
+    // nothing instead of merely becoming invisible -- see the LUL-2410
+    // comment in components/GameCanvas.tsx for why a geometric collapse is
+    // required, not just an opacity fade.
+    const display = await page.evaluate(() => {
+      const el = document.getElementById('hint');
+      return el ? window.getComputedStyle(el).display : null;
+    });
+    expect(display, '#hint must be display: none at this viewport, not merely faded').toBe('none');
+
+    await expectRowVisible(page, 'objective');
+    const collision = await page.evaluate(() => {
+      const hint = document.getElementById('hint');
+      const objective = document.getElementById('objective');
+      if (!hint || !objective) return null;
+      const hb = hint.getBoundingClientRect();
+      const ob = objective.getBoundingClientRect();
+      return hb.left < ob.right && hb.right > ob.left && hb.top < ob.bottom && hb.bottom > ob.top;
+    });
+    expect(collision, '#hint must not overlap #objective').toBe(false);
+  });
+
   test('reduced motion: animation-name is none on the urgent row\'s keycap when media query emulated', async ({ page }) => {
     const errs = trackConsoleErrors(page);
     await page.emulateMedia({ reducedMotion: 'reduce' });
