@@ -2188,17 +2188,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pLakeMul; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
-      // LUL-2320 (C): a player who isn't hidden gets caught on contact regardless of LOS --
-      // matches the identical addition to `chase` above. Checked before the `!canSee` split
-      // (not folded into the `else` branch's existing isCaught check below) so an un-hidden
-      // player standing on a log gets caught even on the tick `canSee` happens to read false
-      // (e.g. some other real cover still breaks the raw sightline). A *hidden* player in
-      // contact is unaffected by this branch and falls through to the pre-existing
-      // `!canSee`/`else` split -- (B)'s own contact-range exception means `canSee` reads true
-      // there once actually in contact, so the existing `isCaught` check inside that `else`
-      // (unchanged, below) still catches them the same way it always has.
-      if(isCaught(dist, p.rad) && !hidden){ triggerDeath(p.kind, 'hunt'); }
-      else if(!canSee(p, dist)){
+      if(!canSee(p, dist)){
         // LUL-2246: a live force-hunt lock means this collapse is the 30s escalation
         // losing sight, not an ordinary hunt -- route into the existing scentLock blind-
         // chase path (`p.state === 'chase'`, :2037) at full species speed instead of the
@@ -2300,10 +2290,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // it heard the carried child's cry gets a distinguishable death cause -- see
         // hearCry()/the carriedCryPulse branch below for where p.alertedBy is set, and
         // hearNoise()/scentOnto()/spotOnto() for where it's cleared by every other channel.
-        // LUL-2320 (C): `hidden` threaded through -- an un-hidden player in contact is caught
-        // regardless of LOS (matches the `hunt` branch above); a hidden player keeps LUL-387's
-        // original LOS-gated guarantee.
-        if(canCatchInChase(canSee(p, dist), dist, p.rad, hidden)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase'); }   // LUL-1194: run down mid-chase, in the open
+        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase'); }   // LUL-1194: run down mid-chase, in the open
         // LUL-2320 (D): contact was reached (isCaught) but the kill was refused because the
         // player is hidden and canSee() still reads false at that exact range -- e.g. (B)'s
         // contact-range exception only fires while the target point is inside a HIDE_KINDS

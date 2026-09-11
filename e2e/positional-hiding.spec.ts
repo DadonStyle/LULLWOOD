@@ -283,9 +283,10 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
 
     // Same rig as the open-ground "hold-still alone does not save you" case
     // above: qaLurePredatorKind places the wolf 6 units away with hunt=true.
-    // Deliberately never press KeyH -- this is the un-hidden case rule (C)
-    // adds: contact should kill regardless of any residual LOS quirk from
-    // standing inside the log's own footprint.
+    // Deliberately never press KeyH -- this is the un-hidden case rule (A)
+    // fixes: hasLOS() no longer treats the log's own footprint as occluding
+    // the point standing inside it, so canSee() reads true and the existing
+    // canSee-gated kill check catches normally, with no LOS bypass needed.
     const kind = await page.evaluate(() => window.ForestEngine?.qaLurePredatorKind?.('wolf') ?? null);
     if (kind === null) {
       throw new Error('qaLurePredatorKind("wolf") returned null -- no wolf in predators');

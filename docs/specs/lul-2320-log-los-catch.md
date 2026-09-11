@@ -176,7 +176,30 @@ in `cover.test.ts` that omits it keeps its exact current result — verified aga
 a `coverGrid` containing a `HIDE_KINDS` box the test point sits inside, so this branch is
 unreached by any existing test either way, defaulted or not.
 
-### C — `canCatchInChase()` gains a `hidden` parameter
+### C — dropped during review (P0, PR #574 review 2026-09-11)
+
+**Amendment.** The `hidden`-bypass design below was implemented, then blocked by Code
+Review: for `hidden === false` (the default player state), `isCaught(dist, rad) && (canSee
+|| !hidden)` collapses to bare `isCaught(dist, rad)` — the LOS gate is removed for *every*
+un-hidden player against *any* cover, not just a log/bramble footprint. `e2e/blind-chase-
+cover.spec.ts` deliberately never presses `H` and requires `canSee` before a kill for
+exactly this reason (LUL-387); this bypass reintroduces that regression.
+
+**Resolution: rule C is removed, not rescoped.** (A) already makes an un-hidden player
+standing on a log/bramble read `canSee() === true` through the ordinary path (no other
+occluder in the way), so the motivating case needs no bypass. (B) shields a *hidden* player
+at range and stops shielding them at exactly `dist < rad + CATCH_MARGIN` — the identical
+threshold `isCaught()` uses — so `canSee()` and `isCaught()` agree the instant contact is
+reached; the existing (unmodified) `canCatchInChase(canSee, dist, rad)` already catches
+correctly at that point with no `hidden` parameter needed. `canCatchInChase()` and the
+`hunt`/`chase` call sites keep their pre-PR signatures. (D) is unaffected — it does not call
+`canCatchInChase()` and still handles the case where a *hidden* player reaches contact
+while shielded by real cover elsewhere (not a `HIDE_KINDS` footprint), where `canSee` and
+`isCaught` can disagree.
+
+The section below is kept for the historical record of what was tried; do not implement it.
+
+### C (superseded) — `canCatchInChase()` gains a `hidden` parameter
 
 `lib/game/predator.ts:64-66`:
 

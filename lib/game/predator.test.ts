@@ -84,24 +84,6 @@ test('canCatchInChase defers to isCaught\'s own margin when LOS holds -- not cau
   assert.equal(canCatchInChase(true, 1 + CATCH_MARGIN - 0.001, 1), true);
 });
 
-// ---- canCatchInChase `hidden` parameter (LUL-2320) ------------------------------
-
-test('canCatchInChase catches an un-hidden player in contact even without LOS -- the log/bramble glue fix', () => {
-  assert.equal(canCatchInChase(false, 1, 1, false), true);
-});
-
-test('canCatchInChase still catches an un-hidden player in contact with LOS', () => {
-  assert.equal(canCatchInChase(true, 1, 1, false), true);
-});
-
-test('canCatchInChase keeps LUL-387\'s guarantee for a hidden player -- no LOS means no kill', () => {
-  assert.equal(canCatchInChase(false, 1, 1, true), false);
-});
-
-test('canCatchInChase: `!hidden` never overrides isCaught -- still not in range is still not caught', () => {
-  assert.equal(canCatchInChase(false, 1 + CATCH_MARGIN, 1, false), false);
-});
-
 // ---- hasReachedSniffRange ------------------------------------------------------
 
 test('hasReachedSniffRange is false exactly at its margin (strict less-than)', () => {

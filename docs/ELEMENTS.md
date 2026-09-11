@@ -71,8 +71,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5735 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5104, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5722 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5091, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -573,18 +573,22 @@ one geometry builder (`makePredator()`), differentiated by the
 **Collision & physics profile**
 - LOS-blocking for both actors, same as Rock (`hasLOS()`, unchanged).
 - **No movement collision for either actor** (LUL-384 removed the
-  player-only block; predators never had one). Catch is **not** purely a
-  proximity check while `hidden` is true and the player's exact position is
-  inside the log's footprint: `hasLOS()` (LUL-2320) still treats that
-  footprint as concealment from every angle at range, same as it always did
-  for `hidden`, and only stops once a predator closes to contact range
-  (`rad + CATCH_MARGIN`) — `canSee()`'s new `insideHideFootprint()` check.
-  An **un-hidden** player standing on/at a log is caught on contact
-  regardless of LOS (`canCatchInChase()`'s `hidden` parameter) — walking
-  onto a log without pressing `H` is not a safe zone. Before LUL-2320,
-  `hasLOS()` treated the log's footprint as an occluder unconditionally
-  (hidden or not, any range), which made *any* player standing on it
-  uncatchable and glued a chasing predator at contact range forever.
+  player-only block; predators never had one). Catch stays gated on
+  `canSee()` always (`canCatchInChase()`/`isCaught()` in `hunt`, unchanged by
+  LUL-2320 — see the Player collision profile note above), but LUL-2320 fixed
+  what `canSee()` itself reports while standing on a log: `hasLOS()` no
+  longer treats the log's own footprint as occluding the point standing
+  inside it, so an **un-hidden** player on a log now reads as visible (and
+  is caught normally) the moment nothing else blocks the sightline, instead
+  of unconditionally. A **hidden** player's footprint still shields them at
+  range (`canSee()`'s `insideHideFootprint()` check), only reading visible
+  once a predator closes to contact range (`rad + CATCH_MARGIN`) — at that
+  point `canSee()` and `isCaught()` agree, so contact resolves the chase
+  (catch or the sniff-loop hand-off below) instead of gluing. Before
+  LUL-2320, `hasLOS()` treated the log's footprint as an occluder
+  unconditionally (hidden or not, any range), which made *any* player
+  standing on it invisible from every angle and glued a chasing predator at
+  contact range forever.
 - Still gates `findHideSpot()` (proximity search, `HIDE_RADIUS`=2.2u
   beyond the prop's own edge, L908-922) — unaffected, that function reads
   `coverGrid` directly and never calls `coverBlockedR()`.
@@ -637,7 +641,8 @@ one geometry builder (`makePredator()`), differentiated by the
   LUL-384 exemption; predators never had one). `findHideSpot()`-eligible,
   unaffected — that function reads `coverGrid` directly and never calls
   `coverBlockedR()`. Same LUL-2320 catch behaviour as Log above: `hidden`
-  protects at range, contact range still catches.
+  protects at range via `canSee()`'s `insideHideFootprint()` check, contact
+  range still resolves the chase either way.
 
 ---
 
@@ -1280,9 +1285,9 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L4646, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L4751 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4782). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L4633, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L4738 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L4769). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
