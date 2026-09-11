@@ -58,14 +58,23 @@ export function expectNoConsoleErrors({
  * `seed` (LUL-83) pins the generated map layout via `?seed=`; defaults to
  * `QA_PINNED_SEED` so every spec keeps exercising the known layout it was
  * written against. Pass `seed: null` to get the real fresh-per-load default.
+ * `qaWorld`/`qaNoRender` (LUL-2328) opt into the small-map boot preset and the
+ * mesh-construction skip, respectively -- see docs/specs/lul-2328-qa-world-micro-hooks.md.
  */
 export async function boot(
   page: Page,
-  { qaHooks = false, seed = QA_PINNED_SEED }: { qaHooks?: boolean; seed?: number | null } = {},
+  {
+    qaHooks = false,
+    seed = QA_PINNED_SEED,
+    qaWorld,
+    qaNoRender = false,
+  }: { qaHooks?: boolean; seed?: number | null; qaWorld?: 'micro'; qaNoRender?: boolean } = {},
 ) {
   const params = new URLSearchParams();
   if (qaHooks) params.set('qaHooks', '1');
   if (seed !== null) params.set('seed', String(seed));
+  if (qaWorld) params.set('qaWorld', qaWorld);
+  if (qaNoRender) params.set('qaNoRender', '1');
   const query = params.toString();
   await page.goto(query ? `/?${query}` : '/', { waitUntil: 'networkidle', timeout: 120_000 });
   // Both canvases exist = the engine's WebGL canvas joined the minimap canvas

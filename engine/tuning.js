@@ -19,6 +19,14 @@ export const CONFIG = {
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
+  // LUL-2328: coverProps/bogTrees/bogReeds moved onto CONFIG (were standalone
+  // COVER_PROPS/BOG_TREES/BOG_REEDS exports) so applyQaWorldMicroPreset()
+  // below can override them the same proven way it already overrides
+  // mapSize/trees -- a property mutation on this one shared object, not a
+  // second `let`-export live-binding mechanism. See that function's comment.
+  coverProps: 880,
+  bogTrees: 30,
+  bogReeds: 120,
   walk:    6,            // walking speed (units/s); Shift multiplies it
   fog:     0.04,
   eye:     2.2,          // eye height
@@ -155,14 +163,49 @@ export const BSP = 70;            // win-burst particles
 // LUL-2225: shrunk from 360 alongside the patch itself (BOG_OUTER_RADIUS
 // 135 -> 45, lib/game/bog.ts) so tree density inside the small patch stays
 // comparable to before, not "the same forest plus more trees" on a quarter
-// as much ground.
-export const BOG_TREES = 30;
-export const COVER_PROPS = 880;
-// LUL-2225: reeds get their own budget, no longer COVER_PROPS -- they're
+// as much ground. LUL-2328: value now lives at CONFIG.bogTrees -- see that
+// property's comment.
+//
+// LUL-2225: reeds get their own budget, no longer CONFIG.coverProps -- they're
 // placed only in the ring between BOG_INNER_RADIUS and BOG_OUTER_RADIUS
 // (they ARE the boundary a player reads), which is a much smaller target
-// area than the old 135-unit disc COVER_PROPS was tuned against.
-export const BOG_REEDS = 120;
+// area than the old 135-unit disc coverProps was tuned against. LUL-2328:
+// value now lives at CONFIG.bogReeds.
+
+// LUL-2328: boots a small, cheap world for QA/e2e specs that don't care about
+// map scale -- full-map software-GL boots were measured at 3.5-9 GB and
+// repeatedly OOM-killed the nightly QA host (epic LUL-2324). Reassigns this
+// module's own shared CONFIG object -- the same mutable-property mechanism
+// CONFIG.mapSize/CONFIG.trees already use at their real call sites
+// (engine/forest-engine.js:225 `half = CONFIG.mapSize/2`, :1066 the forest
+// tree loop) -- so every existing reader downstream (half/margin,
+// TREE_CHUNKS_PER_AXIS, the cover/bog generator loops, minimap scaling)
+// picks up the smaller values automatically, with no second code path per
+// constant. Must run before `const half = CONFIG.mapSize / 2` (near the top
+// of init()) -- every value here is read again after that point, never
+// before it, so ordering this as the very first statement in init() is
+// sufficient; see engine/forest-engine.js's qaWorld read site.
+//
+// LUL-2225's bog patch (BOG_CENTER {x:-40,z:80}, lib/game/bog.ts) is a fixed
+// absolute position, not derived from CONFIG.mapSize -- at mapSize:96 its
+// BOG_OUTER_RADIUS (45) would partially overlap the map's own edge, so
+// bogTrees/bogReeds are zeroed explicitly rather than relying on geometry to
+// exclude every candidate (which would instead spend each loop's full try
+// budget rejecting points, wastefully but harmlessly). LANDMARKS/CAVE/
+// CONFIG.lake are deliberately left untouched -- tuning.js's own LANDMARKS
+// comment already documents they're placed unconditionally regardless of map
+// size, so at this scale they simply sit at or past the map edge; not worth
+// a special case for six fixed props.
+//
+// Idempotent: always assigns the same target values (never scales off the
+// current value), so calling it more than once in one page life is safe.
+export function applyQaWorldMicroPreset(){
+  CONFIG.mapSize = 96;
+  CONFIG.trees = 40;
+  CONFIG.coverProps = 40;
+  CONFIG.bogTrees = 0;
+  CONFIG.bogReeds = 0;
+}
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two
 // non-tree generated props (cover/reed/bogTree/stone), regardless of kind,
