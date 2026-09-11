@@ -71,8 +71,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5688 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5057, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L5722 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5091, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -192,10 +192,14 @@ Cue-triple audit: see `docs/CUES.md`.
   (`eyeH + bob + jumpY`, L2375), never a raycast against the ground mesh.
 - Two different downstream checks read player position without going through
   `blocked()`: `hasLOS()` (sight, rotated-AABB raycast, includes tagged
-  trees `s>1.4`) and the distance-only scent/noise/catch/pickup/win checks
-  above — geometry gates *sight only*; it never gates scent or hearing
-  (`checkScent()` and `checkNoise()` take no cover/LOS
-  argument at all).
+  trees `s>1.4`) and the distance-only scent/noise/pickup/win checks above —
+  geometry gates *sight only*; it never gates scent or hearing (`checkScent()`
+  and `checkNoise()` take no cover/LOS argument at all). Catch is gated on
+  sight too, always: `chase`/`hunt` kill via `canCatchInChase()`/`isCaught()`,
+  which both require `canSee()` (and therefore `hasLOS()`) regardless of
+  `hidden` — this is unchanged by LUL-2320. What LUL-2320 changed is what
+  `hasLOS()`/`canSee()` themselves report while the player stands inside a
+  Log/Bramble's own footprint — see those cards and the predator card below.
 
 ---
 
@@ -430,6 +434,9 @@ one geometry builder (`makePredator()`), differentiated by the
   `coverBlockedR`/`canopyBlockedR`) — see above.
 - LOS: same rotated-AABB raycast as the player's own (`hasLOS()`), applied
   symmetrically (`canSee()` calls it both directions along the same line).
+  LUL-2320: a predator standing inside a log/bramble's own footprint is not
+  blinded by it either (`hasLOS()`'s symmetric origin-side skip) — matches
+  the player-side fix and keeps the raycast genuinely symmetric.
 - No ground collision (`p.g.position.y = bob` is a formula, not a raycast,
   same as the player).
 
@@ -566,9 +573,22 @@ one geometry builder (`makePredator()`), differentiated by the
 **Collision & physics profile**
 - LOS-blocking for both actors, same as Rock (`hasLOS()`, unchanged).
 - **No movement collision for either actor** (LUL-384 removed the
-  player-only block; predators never had one). Catch resolves normally on
-  or beside a log — `isCaught()`/chase are proximity checks, never gated on
-  `blocked()`/`coverBlockedR()`, so a log is not a safe zone.
+  player-only block; predators never had one). Catch stays gated on
+  `canSee()` always (`canCatchInChase()`/`isCaught()` in `hunt`, unchanged by
+  LUL-2320 — see the Player collision profile note above), but LUL-2320 fixed
+  what `canSee()` itself reports while standing on a log: `hasLOS()` no
+  longer treats the log's own footprint as occluding the point standing
+  inside it, so an **un-hidden** player on a log now reads as visible (and
+  is caught normally) the moment nothing else blocks the sightline, instead
+  of unconditionally. A **hidden** player's footprint still shields them at
+  range (`canSee()`'s `insideHideFootprint()` check), only reading visible
+  once a predator closes to contact range (`rad + CATCH_MARGIN`) — at that
+  point `canSee()` and `isCaught()` agree, so contact resolves the chase
+  (catch or the sniff-loop hand-off below) instead of gluing. Before
+  LUL-2320, `hasLOS()` treated the log's footprint as an occluder
+  unconditionally (hidden or not, any range), which made *any* player
+  standing on it invisible from every angle and glued a chasing predator at
+  contact range forever.
 - Still gates `findHideSpot()` (proximity search, `HIDE_RADIUS`=2.2u
   beyond the prop's own edge, L908-922) — unaffected, that function reads
   `coverGrid` directly and never calls `coverBlockedR()`.
@@ -620,7 +640,9 @@ one geometry builder (`makePredator()`), differentiated by the
 - **No movement collision for either actor** (LUL-1642 matched Log's
   LUL-384 exemption; predators never had one). `findHideSpot()`-eligible,
   unaffected — that function reads `coverGrid` directly and never calls
-  `coverBlockedR()`.
+  `coverBlockedR()`. Same LUL-2320 catch behaviour as Log above: `hidden`
+  protects at range via `canSee()`'s `insideHideFootprint()` check, contact
+  range still resolves the chase either way.
 
 ---
 
@@ -1263,9 +1285,9 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L4546, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L4659 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4706). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L4633, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L4738 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L4769). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1275,11 +1297,11 @@ design doc as turning horror into radar.
   `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
   duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3182),
-  reset to 0 on `enter()` (L3281) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3245),
+  reset to 0 on `enter()` (L3319) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L4838: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L5221: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1333,7 +1355,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L5018, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L5177, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
