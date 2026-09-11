@@ -316,7 +316,7 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     await expect(page.locator('#deathKind')).toHaveText('wolf');
   });
 
-  test('wolf: a blind-chasing predator resolves promptly on reaching a hidden player on a log, instead of gluing (LUL-2320)', async ({
+  test('wolf: a blind-chasing predator resolves promptly on reaching a hidden player on a bramble, instead of gluing (LUL-2320)', async ({
     page,
   }) => {
     test.setTimeout(60_000);
@@ -324,14 +324,14 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
-    const spotKind = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.('log') ?? null);
+    const spotKind = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.('bramble') ?? null);
     if (spotKind === null) {
-      throw new Error("qaTeleportToHideSpot('log') returned null -- no log was generated on this seed");
+      throw new Error("qaTeleportToHideSpot('bramble') returned null -- no bramble was generated on this seed");
     }
 
     await page.keyboard.press('KeyH');
     const afterHide = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
-    expect(afterHide?.hidden, 'KeyH should have entered `hidden` while standing on the log').toBe(true);
+    expect(afterHide?.hidden, 'KeyH should have entered `hidden` while standing on the bramble').toBe(true);
 
     // qaStageChaseAtContact places the wolf 4 units out (outside contact range,
     // rad+CATCH_MARGIN=2.1) with a live scentLock (SCENT_TRACK_TIME) -- the
