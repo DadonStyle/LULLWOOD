@@ -10,6 +10,7 @@ import ActionPrompt from './ActionPrompt';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
 import { SHOP_CATALOG, nextCost, veilMaxHoldForTier, effectiveScentLifetime, POCKET_STONES_RESERVE, CARRIED, RESCUE, type RunPayout } from '@/lib/game/economy';
+import { freshProgression, type Progression } from '@/lib/game/progression';
 import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
@@ -98,6 +99,13 @@ export interface EngineHudState {
   livePileEmbers: number;   // LUL-1315: live unbanked total, run-only, 0 outside a run
   embersTiers: Record<string, number>;
   lastPayout: RunPayout | null;
+  // LUL-2558: personal-best time + tier streak counter. `progression` is the whole
+  // record, for persistence only; `personalBest`/`tierStats`/`newRecord` are the
+  // current-tier summary read by RunRecap.
+  progression: Progression;
+  personalBest: number | null;
+  tierStats: { runs: number; wins: number; streak: number };
+  newRecord: boolean;
   // LUL-1623: throwable distractions. heldThrowable gates the "holding a
   // stone — click/tap to throw" prompt; canGrabThrowable gates the "pick up
   // a stone" prompt, mirroring objectiveReady's role for the child.
@@ -192,6 +200,8 @@ export interface EngineActions {
   // LUL-2307
   setHintsEnabled: (v: boolean) => void;
   resetHints: () => void;
+  // LUL-2558
+  setProgression: (p: Progression) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -245,6 +255,10 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   livePileEmbers: 0,
   embersTiers: {},
   lastPayout: null,
+  progression: freshProgression(),
+  personalBest: null,
+  tierStats: { runs: 0, wins: 0, streak: 0 },
+  newRecord: false,
   heldThrowable: false,
   canGrabThrowable: false,
   missionKind: null,
@@ -433,6 +447,49 @@ function useMissionUnlocks(actions: EngineActions | null, unlocks: { deepwater: 
   }, [unlocks]);
 }
 
+// LUL-2558: personal-best time + tier streak counter -- same two-effect split as
+// useMissionUnlocks() above. `readProgression()` deliberately does not validate shape
+// (unlike readMissionUnlocks()) -- the engine's setProgression() already re-validates
+// every field defensively, so double-validating in two places would just be the same
+// guard written twice.
+const PROGRESSION_KEY = 'lullwood:progression';
+
+function readProgression(): Progression | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(PROGRESSION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as Progression; // setProgression() in the engine re-validates every field
+  } catch {
+    return null;
+  }
+}
+
+function writeProgression(p: Progression) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PROGRESSION_KEY, JSON.stringify(p));
+  } catch {
+    // private mode / quota exceeded -- same no-op as writeEmbers/writeMissionUnlocks
+  }
+}
+
+function useProgression(actions: EngineActions | null, progression: Progression) {
+  const appliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!actions) return;
+    appliedRef.current = true;
+    const stored = readProgression();
+    if (stored) actions.setProgression?.(stored);
+  }, [actions]);
+
+  useEffect(() => {
+    if (!appliedRef.current) return;
+    writeProgression(progression);
+  }, [progression]);
+}
+
 // LUL-26: captions are the only channel carrying predator warnings for a deaf/
 // HoH player (every game sound is synthesized WebAudio, no other track exists),
 // so the toast needs its own visible lifetime -- the engine only ever sets
@@ -474,30 +531,46 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
 // first pushState after arriveHome()/triggerDeath() lands, so this never
 // renders with stale data from a previous run (lastPayout is set in the
 // same pushState call as winVisible/deathVisible).
-function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, difficulty }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[]; difficulty: 'lantern' | 'night' | 'blackout' }) {
+function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, difficulty, personalBest, tierStats, newRecord }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[]; difficulty: 'lantern' | 'night' | 'blackout'; personalBest: number | null; tierStats: { runs: number; wins: number; streak: number }; newRecord: boolean }) {
   const lines = formatChronicle(chronicle);
   const tierLabel = difficulty === 'lantern' ? 'Lantern' : difficulty === 'night' ? 'Night' : 'Blackout';
   return (
     <>
-      <p id="runRecap">
-        {tierLabel} · time survived: {formatDuration(survivedSeconds)}
-        {payout && (
-          <>
-            <br />
-            +{payout.depth} depth · +{payout.survival} survival
-            {isDeath ? (
-              <> · <span className="emberLoss">-{CARRIED + RESCUE} lost</span> (child &amp; rescue, forfeited)</>
-            ) : (
-              <>
-                {payout.carried > 0 && <> · +{payout.carried} child</>}
-                {payout.rescue > 0 && <> · +{payout.rescue} rescue</>}
-              </>
-            )}
-            {payout.spent > 0 && <> · −{payout.spent} charm</>}
-            {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
-          </>
+      <div id="runRecap">
+        <p>
+          {tierLabel} · time survived: {formatDuration(survivedSeconds)}
+          {payout && (
+            <>
+              <br />
+              +{payout.depth} depth · +{payout.survival} survival
+              {isDeath ? (
+                <> · <span className="emberLoss">-{CARRIED + RESCUE} lost</span> (child &amp; rescue, forfeited)</>
+              ) : (
+                <>
+                  {payout.carried > 0 && <> · +{payout.carried} child</>}
+                  {payout.rescue > 0 && <> · +{payout.rescue} rescue</>}
+                </>
+              )}
+              {payout.spent > 0 && <> · −{payout.spent} charm</>}
+              {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
+            </>
+          )}
+        </p>
+        {/* LUL-2558: nested inside #runRecap (not a sibling <p>) so
+            e2e/progression.spec.ts's `#runRecap` textContent read picks these
+            up too -- <p>, not <div>, since nothing outside this component
+            selects on tag; e2e/death-sequence.spec.ts's cause-text lookup
+            uses its own #deathCauseText id, not a `p:not(#runRecap)` count. */}
+        {personalBest != null && (
+          <p className={newRecord ? 'newRecord' : undefined}>
+            Personal Best: {formatDuration(personalBest)}{newRecord ? ' — New Record!' : ''}
+          </p>
         )}
-      </p>
+        <p>
+          {tierLabel} stats: Runs {tierStats.runs} · Wins {tierStats.wins}
+          {tierStats.runs > 0 ? ` (${Math.round((tierStats.wins / tierStats.runs) * 100)}%)` : ''} · Streak {tierStats.streak}
+        </p>
+      </div>
       {lines.length > 0 && (
         <ul id="runChronicle">
           {lines.map((line, i) => <li key={i}>{line}</li>)}
@@ -572,6 +645,7 @@ export default function Hud({
 }) {
   useEmbers(actions, state.embersBalance, state.embersTiers);
   useMissionUnlocks(actions, state.missionUnlocks);
+  useProgression(actions, state.progression);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
@@ -981,7 +1055,7 @@ export default function Hud({
             <h1>YOU WON</h1>
             <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
             <button
               ref={winRestartRef}
               className="restartBtn"
@@ -999,7 +1073,7 @@ export default function Hud({
         <div id="deathScreen" style={{ display: 'flex' }}>
           <div id="deathText" style={{ opacity: state.lossRevealed ? 1 : 0 }}>
             <h1>YOU LOSE</h1>
-            <p>
+            <p id="deathCauseText">
               {/* LUL-1194: #deathKind carries species for the existing e2e hooks
                   (e2e/*.spec.ts assert on it directly) but is no longer the copy
                   shown to the player -- that's DEATH_CAUSE_TEXT below, keyed on
@@ -1008,7 +1082,7 @@ export default function Hud({
               {DEATH_CAUSE_TEXT[state.deathCause]}
               {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} difficulty={state.difficulty} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
             <button
               ref={deathRestartRef}
               className="restartBtn"

@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6519 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5768, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6565 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5814, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1485,6 +1485,58 @@ design doc as turning horror into radar.
   still below its max tier (`EmbersShop` in `components/Hud.tsx`), each wired to
   `purchase(item.id)`, disabled below that item's `nextCost`. A maxed item renders
   a plain "maxed" row instead of a button.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
+### Progression: personal-best time + tier streak counter (LUL-2558)
+
+**What it is**
+- `progression`: per-`DifficultyTier` record (`lantern`/`night`/`blackout`) of
+  `{ bestTime, runs, wins, currentStreak }`, defined in the pure module
+  `lib/game/progression.ts` (`Progression`/`TierRecord`, same shape as
+  `lib/game/economy.ts`/`lib/game/outcome.ts` — no I/O, no wall-clock reads).
+  `bestTime` is the fastest WIN `survivedSeconds` for that tier (`null` = no
+  win yet, lower is better — this is time-to-win, not a score). `runs`
+  increments on every outcome (win or death); `wins` and `currentStreak`
+  increment only on a win, and `currentStreak` resets to 0 on a death.
+  `recordRun(p, difficulty, survivedSeconds, won)` is the one pure transition,
+  called at all three outcome sites — `finishPickup()` (the live win path),
+  `arriveHome()` (dead code per `decisions/lul-2281-pickup-is-the-win-2026-09-09`,
+  wired for parity only), and `triggerDeath()`.
+- Persisted via `localStorage['lullwood:progression']`, synced to `hudState`
+  through the engine action `setProgression()` (mirrors `setMissionUnlocks()`),
+  applied once on mount and re-validated field-by-field against an
+  arbitrary/stale stored shape rather than trusted as-is.
+- HUD fields: `personalBest` (current-tier `bestTime`), `tierStats`
+  (`{ runs, wins, streak }` for the current tier), `newRecord` (true only when
+  the run just beat a strictly-lower `bestTime`).
+
+**What it can do**
+- Set a new personal-best time on a win that is strictly faster than the
+  tier's existing `bestTime` (or the tier's first-ever win).
+- Extend a win streak across consecutive wins; a single death resets it to 0
+  without touching `bestTime` or `wins`.
+
+**What it CANNOT do**
+- Regress `bestTime` on a slower win, or set one on a death.
+- Affect economy: `recordRun()`/`setProgression()` never read or write
+  `embers`, `RunPayout`, or any `applyPayout()` call.
+
+**Behaviours & logic**
+- Persistence: `useProgression()` hook in `components/Hud.tsx`, identical
+  two-effect split to `useMissionUnlocks()` — apply-on-ready effect calls
+  `actions.setProgression?.(stored)` once `actions` exists, persist effect
+  writes the full record to localStorage on change, gated on the same
+  `appliedRef` guard so a fresh mount can't overwrite a stored record with
+  `freshProgression()` before the apply effect runs.
+- Display: `RunRecap` in `components/Hud.tsx` renders "Personal Best:
+  `<time>` — New Record!" (only when `personalBest` is set) and a
+  "`<tier>` stats: Runs N · Wins N (P%) · Streak N" line, reusing the
+  existing `formatDuration()` helper. Text-only per the ticket's scope trim —
+  no icon/glow/chime polish.
 
 **Collision & physics profile**
 - N/A — not a spatial/world object.

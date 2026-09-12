@@ -141,6 +141,9 @@ import {
   applySpend,
   VEIL_CHARM_PRICE,
 } from '@/lib/game/economy';
+// LUL-2558: personal-best time + tier streak counter. Pure transition, no Three.js --
+// mirrors how lib/game/economy.ts's transitions are imported above.
+import { freshProgression, recordRun } from '@/lib/game/progression';
 // LUL-1258: M2 Deepwater. Pure mission-state helpers, no Three.js -- mirrors
 // how lib/game/outcome.ts's transitions are imported above.
 import {
@@ -2991,6 +2994,11 @@ let cutsceneSkippable = false;   // set fresh on every triggerDeath(), read by t
 // pattern as setDifficulty/setRunMode/etc. -- see SettingsPanel.tsx) and
 // mutated in place by arriveHome/triggerDeath/purchase.
 let maxDistFromHome = 0, embers = freshEmbersState(), embersSpent = 0;
+// LUL-2558: personal-best time + tier streak counter, keyed per DifficultyTier. Synced
+// from components/Hud.tsx's localStorage read via setProgression() once on mount (same
+// pattern as embers/missionUnlocks above), mutated in place by recordRun() at each of the
+// three outcome call sites (finishPickup/arriveHome/triggerDeath).
+let progression = freshProgression();
 // LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
 // engine's own mutable locals (lib/game/outcome.ts is pure and holds no
 // state of its own) -- this snapshots them into the RunState shape the
@@ -5272,9 +5280,15 @@ function finishPickup(){
     pushState({ missionUnlocks: { ...missionUnlocks } });
   }
   embers = applyPayout(embers, payout);
+  // LUL-2558: personal-best time + tier streak counter.
+  const progressionResult = recordRun(progression, difficulty, survivedSeconds, true);
+  progression = progressionResult.progression;
   logChronicle('win');
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty });
+    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty,
+    progression: { ...progression }, personalBest: progression[difficulty].bestTime,
+    tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
+    newRecord: progressionResult.newRecord });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 // LUL-1258: M2 Deepwater's completion sting -- a noise-burst + oscillator
@@ -5393,9 +5407,16 @@ function arriveHome(){
     pushState({ missionUnlocks: { ...missionUnlocks } });
   }
   embers = applyPayout(embers, payout);
+  // LUL-2558: personal-best time + tier streak counter (dead-code parity only, see
+  // decisions/lul-2281-pickup-is-the-win-2026-09-09 -- arriveHome() is unreachable in real play).
+  const progressionResult = recordRun(progression, difficulty, survivedSeconds, true);
+  progression = progressionResult.progression;
   logChronicle('win');
   pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty });
+    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty,
+    progression: { ...progression }, personalBest: progression[difficulty].bestTime,
+    tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
+    newRecord: progressionResult.newRecord });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
 function triggerDeath(kind, cause){
@@ -5429,8 +5450,14 @@ function triggerDeath(kind, cause){
   // (persisted, see HAS_DIED_KEY above) -- skippable by any input every death after.
   cutsceneSkippable = hasDiedBefore;
   if(!hasDiedBefore){ hasDiedBefore = true; try { localStorage.setItem(HAS_DIED_KEY, '1'); } catch(e){} }
+  // LUL-2558: personal-best time + tier streak counter -- a death never sets a record.
+  const progressionResult = recordRun(progression, difficulty, survivedSeconds, false);
+  progression = progressionResult.progression;
   pushState({ deathVisible: true, deathKind: kind, deathCause: cause, lossRevealed: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying, chronicle: chronicle.slice() });
+    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying, chronicle: chronicle.slice(),
+    progression: { ...progression }, personalBest: progression[difficulty].bestTime,
+    tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
+    newRecord: progressionResult.newRecord });
   track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty, distance_from_home_m: deathDistanceFromHomeM });
   playDeathVideo();
   deathAudio(kind);
@@ -5538,6 +5565,25 @@ function purchase(id){
 function setMissionUnlocks(unlocks){
   missionUnlocks = { deepwater: !!(unlocks && unlocks.deepwater) };
   pushState({ missionUnlocks: { ...missionUnlocks } });
+}
+// LUL-2558: sync from components/Hud.tsx's localStorage read, once on mount -- same split
+// as setMissionUnlocks() above. `p` may be a stale/partial stored shape; every field is
+// re-validated defensively, never trusted as-is.
+function setProgression(p){
+  const tiers = ['lantern', 'night', 'blackout'];
+  const next = {};
+  for(const t of tiers){
+    const rec = p && p[t];
+    next[t] = {
+      bestTime: (rec && typeof rec.bestTime === 'number' && rec.bestTime >= 0) ? rec.bestTime : null,
+      runs: Math.max(0, Math.floor(rec && rec.runs) || 0),
+      wins: Math.max(0, Math.floor(rec && rec.wins) || 0),
+      currentStreak: Math.max(0, Math.floor(rec && rec.currentStreak) || 0),
+    };
+  }
+  progression = next;
+  pushState({ progression: { ...progression }, personalBest: progression[difficulty].bestTime,
+    tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak } });
 }
 // LUL-1666: player's pre-run menu pick for the *next* draw. No-ops outside
 // the pre-run menu the same way setDifficulty tolerates a bad value -- an
@@ -6579,7 +6625,9 @@ tick();
            setMissionUnlocks, setSecondaryChoice,
            setScentTrailVisible,
            // LUL-2307
-           setHintsEnabled, resetHints };
+           setHintsEnabled, resetHints,
+           // LUL-2558
+           setProgression };
 }
 
 function dispose() {
