@@ -103,12 +103,19 @@ test.describe('chunked streaming', () => {
     expect(chunks.totalInstances).toBeGreaterThan(0);
   });
 
-  test('moving near the child changes the live set and disposes old far chunks @fullmap', async ({ page }) => {
+  test('moving far from spawn changes the live set and disposes old far chunks @fullmap', async ({ page }) => {
     const errors = trackConsoleErrors(page);
     await boot(page, { qaWorld: 'full', qaHooks: true, seed: QA_PINNED_SEED });
 
     const before = await qaHook(page, 'qaProbeChunkStreaming');
-    await qaHook(page, 'qaTeleportNearBaby');
+    // Not qaTeleportNearBaby(): the child spawns at a random angle, half*(0.5-0.8)
+    // from spawn (see generateMap()) -- for plenty of angles that lands well
+    // inside STREAM_UNLOAD_CHEBYSHEV=3 of the spawn chunk (found live: this
+    // exact flake on the QA_PINNED_SEED baby position). Chunk (0,0) is the one
+    // corner guaranteed >3 chunks (index 4, the spawn chunk's row/col, is only
+    // 3 chunks from the far edge (index 7) but 4 from the near edge (index 0)
+    // on this 8x8 grid) from the spawn chunk regardless of seed.
+    await qaHook(page, 'qaTeleportTo', -HALF + 5, -HALF + 5);
     // updateStreamedChunks() runs every stepFrame() (the real RAF loop is
     // already ticking pre-`enter()`) -- one settle wait covers several frames
     // at 60fps.
@@ -120,10 +127,7 @@ test.describe('chunked streaming', () => {
     const afterSet = new Set<number>(after.liveChunks);
     expect(afterSet).not.toEqual(beforeSet);
 
-    // The spawn chunk itself (player started at (0,0)) must be far enough
-    // from the child (baby spawns "the other side" of the map, half*(0.5-0.8)
-    // away -- see generateMap()) to fall outside STREAM_UNLOAD_CHEBYSHEV=3
-    // and actually drop.
+    // The spawn chunk itself (player started at (0,0)) must have dropped.
     const spawnChunk = chunkIndexOf(0, 0);
     expect(afterSet.has(spawnChunk)).toBe(false);
 

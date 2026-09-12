@@ -984,7 +984,13 @@ function ensureCoverChunk(c){
 }
 // Disposes chunk `c`'s live cover meshes (never the shared geo/mat) and pulls
 // exactly this chunk's entries back out of coverGrid by reference. No-op if
-// the chunk isn't currently live.
+// the chunk isn't currently live. Only safe while `coverData` is still the
+// same array `coverChunkBuckets[c]` was built against -- the live-streaming
+// path (updateStreamedChunks() unloading a chunk as the player walks away)
+// is the only caller that holds that invariant. The full-reset path
+// (generateMap()/qaBuildScene()) has already overwritten `coverData` with
+// the next round's array by the time it drops the previous round's chunks,
+// so it uses dropCoverChunkMeshesOnly() below instead.
 function dropCoverChunk(c){
   const meshes = coverChunkMeshes[c];
   if(!meshes) return;
@@ -996,6 +1002,20 @@ function dropCoverChunk(c){
     const at = arr.indexOf(cv);
     if(at !== -1) arr.splice(at, 1);
   }
+  for(const kind in meshes){ scene.remove(meshes[kind]); meshes[kind].dispose(); }
+  coverChunkMeshes[c] = undefined;
+}
+// Full-reset counterpart of dropCoverChunk() -- disposes chunk `c`'s live
+// cover meshes without touching coverGrid or coverData. generateMap() and
+// qaBuildScene() both reassign coverData to the next round's array, then
+// reset coverGrid to a fresh empty Map right after this runs, so the
+// per-entry splice dropCoverChunk() does is both unobservable (the Map is
+// about to be thrown away) and unsafe (coverChunkBuckets[c] holds indices
+// into the PREVIOUS round's coverData, which can be shorter than the new
+// one -- coverData[i] reads undefined and throws on out-of-range i).
+function dropCoverChunkMeshesOnly(c){
+  const meshes = coverChunkMeshes[c];
+  if(!meshes) return;
   for(const kind in meshes){ scene.remove(meshes[kind]); meshes[kind].dispose(); }
   coverChunkMeshes[c] = undefined;
 }
@@ -1300,13 +1320,13 @@ function generateMap(seed){
   // buildCoverGrid() (generateCover()/generateReeds()/thinGeneratedProps())
   // populated it whole-map for generation-time overlap checks, but from here
   // on only a live chunk's own entries belong in it (ensureCoverChunk() adds
-  // them, dropCoverChunk() removes them), so coverBlockedR()/hasLOS()/
+  // them, dropCoverChunk() removes them during live streaming), so coverBlockedR()/hasLOS()/
   // findHideSpot()/canSee() only ever see cover that's actually rendered --
   // a deliberate, ticket-named consequence, not a bug. `player.x`/`player.z`
   // were reset to (0,0) above, before any of this, so the initial
   // updateStreamedChunks(true) streams in the ring around the real spawn
   // point, not wherever the player stood in the previous round.
-  for(const c of liveChunks){ dropChunk(c); dropCoverChunk(c); dropBogChunk(c); }
+  for(const c of liveChunks){ dropChunk(c); dropCoverChunkMeshesOnly(c); dropBogChunk(c); }
   liveChunks = new Set();
   lastStreamChunkX = null; lastStreamChunkZ = null;
   coverGrid = new Map();
@@ -4833,7 +4853,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // it only ever reflects what streams back in below (real cross-check:
     // e2e/qa-world-micro.spec.ts's qaStageWalkIntoCover() proves the staged
     // prop is genuinely reachable through coverData/coverGrid after this).
-    for(const c of liveChunks){ dropChunk(c); dropCoverChunk(c); dropBogChunk(c); }
+    for(const c of liveChunks){ dropChunk(c); dropCoverChunkMeshesOnly(c); dropBogChunk(c); }
     liveChunks = new Set();
     lastStreamChunkX = null; lastStreamChunkZ = null;
     coverGrid = new Map();

@@ -39,10 +39,10 @@ Cue-triple audit: see `docs/CUES.md`.
 **What it can do**
 - Move (WASD/arrows), walk or run (`Shift`, hold by default; toggle if the
   `runMode==='toggle'` accessibility setting is on, `ShiftLeft`/`ShiftRight`
-  edge-detect at L1506-1507 flips `toggleRunOn`),
+  edge-detect at L1526-1527 flips `toggleRunOn`),
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
-  `running` derivation at L2802. In toggle mode, touch's analogue is
+  `running` derivation at L2822. In toggle mode, touch's analogue is
   `triggerTouchToggleRun()` (gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6275 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5528, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6295 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5548, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -127,7 +127,7 @@ Cue-triple audit: see `docs/CUES.md`.
   only**), but branch `lul-26-difficulty-accessibility` is **not merged**.
   `engine/forest-engine.js` on `main` has no such identifiers today
   (verified by grep, 2026-08-18) and its own settings-panel comment
-  (L1692-1693) says so directly: "There is no separate modal settings
+  (L1712-1713) says so directly: "There is no separate modal settings
   surface today (LUL-70, still backlog)." Previous revisions of this doc
   cited engine line numbers for this bullet as if it were live; that was
   wrong at every revision, not just a drift artifact — see the LUL-411
@@ -171,7 +171,7 @@ Cue-triple audit: see `docs/CUES.md`.
   button, and `tick()`'s movement-breaks-cover check) already funnel
   through, so `feature_engagement('hide')` fires on every hide entry again.
 - Eye height (`eyeH`) is damped toward `hidden ? 1.05 : CONFIG.eye` (2.2) at
-  an ~0.3s time constant (`Math.min(1, dt*8)`, L2272), not snapped. **Fixed,
+  an ~0.3s time constant (`Math.min(1, dt*8)`, L2292), not snapped. **Fixed,
   LUL-273:** `canopyBlockedR()`/`blocked()` now recompute each tree's canopy
   radius live against this same `eyeH` (`canopyRadiusAtEye(t.s, eyeH,
   CANOPY_GEO)`) instead of the `crCanopy` cached at map-gen time for a fixed
@@ -180,7 +180,7 @@ Cue-triple audit: see `docs/CUES.md`.
   eye height sits closer to its wider base. See wiki
   `game/lul267-canopy-collision-fix`.
 - Player FOV for "can the player see the charging predator" gating is ~130°
-  total (`PLAYER_FOV_COS`, `cos(65°)`, L1679) — independent of the render
+  total (`PLAYER_FOV_COS`, `cos(65°)`, L1699) — independent of the render
   camera's own 70° vertical FOV (`camera`); this is a gameplay cone, not
   the literal viewport.
 
@@ -190,7 +190,7 @@ Cue-triple audit: see `docs/CUES.md`.
   rotated-AABB cover props. No collider vs. lake, home, fog, child, or
   predators — see above.
 - No vertical/ground collision at all: eye height is a formula
-  (`eyeH + bob + jumpY`, L2375), never a raycast against the ground mesh.
+  (`eyeH + bob + jumpY`, L2395), never a raycast against the ground mesh.
 - Two different downstream checks read player position without going through
   `blocked()`: `hasLOS()` (sight, rotated-AABB raycast, includes tagged
   trees `s>1.4`) and the distance-only scent/noise/pickup/win checks above —
@@ -211,7 +211,7 @@ Cue-triple audit: see `docs/CUES.md`.
   glowing and idly bobbing, marked by ambient "wisp" particles
   (`placeBabyWisps()`) so it's spottable through fog.
 - Be picked up once (`baby.taken`, `pickup()`), triggering a scripted
-  10s pickup cinematic (`tick()`'s `pickingUp` branch, L2329-2359) that ends
+  10s pickup cinematic (`tick()`'s `pickingUp` branch, L2349-2379) that ends
   in a sky-burst (`fireBoom()`).
 - Ride along at the player's position while carried, small and glowing
   (`carrying` branch, `tick()`), until the player crosses
@@ -322,7 +322,7 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What they can do (shared)**
 - Roam via random waypoints when nothing has noticed the player
-  (`state==='roam'`, L1010-1019). A predator that gives up an
+  (`state==='roam'`, L1030-1039). A predator that gives up an
   investigate/sniff or flank/hold loop (never a chase's distance-based
   give-up) stashes the player's position and gets a bounded number of
   ring-biased return-sweep waypoints (`LKP_MAX_SWEEPS`, `pickRoamWaypoint()`,
@@ -376,7 +376,7 @@ one geometry builder (`makePredator()`), differentiated by the
 - **Wolf and lion only**: telegraph-and-charge at 7-16 units range
   (`CHARGE_TRIGGER_MIN/MAX`, `lib/game/charge.ts`), dodgeable by a
   well-timed jump. Bear deliberately excluded — "the slow unavoidable
-  threat" (L1032-1033 comment) — contrast with wolf/lion is the design
+  threat" (L1052-1053 comment) — contrast with wolf/lion is the design
   intent, not an oversight.
 - Catch (kill) the player at `dist < rad+1.3` while actively seeing/hunting
   them (`triggerDeath()`, multiple call sites in `updatePredators()`).
@@ -422,7 +422,7 @@ one geometry builder (`makePredator()`), differentiated by the
   `CHARGE_COOLDOWN`=10s, `engine/tuning.js`) and the resulting movement.
 - Stuck detection: if a predator's actual movement falls under 35% of its
   intended speed for >3s while trying to move, it backs up along its last 6
-  trail points then picks a fresh random waypoint (`p.stuckT`, L1491-1496).
+  trail points then picks a fresh random waypoint (`p.stuckT`, L1511-1516).
   LUL-1091 shipped this at 0.8s but LUL-1597 reverted it: the shorter window
   is sensitive to per-frame wall-clock jitter, causing `predator-determinism`
   e2e divergence across parallel runs with the same seed. The pathfinding
@@ -901,7 +901,7 @@ one geometry builder (`makePredator()`), differentiated by the
 **Behaviours & logic**
 - Single scalar (`density`), read once per frame by the renderer itself.
   `forest-engine.js` now re-derives it every frame from `fogBase` +
-  `veilAmount` via `veilFogDensity()` (`lib/game/veil.ts`, called at L2657)
+  `veilAmount` via `veilFogDensity()` (`lib/game/veil.ts`, called at L2677)
   while the veil is in play — no longer a pure pass-through of whatever
   `setFog()` last set.
 
@@ -1266,7 +1266,7 @@ design doc as turning horror into radar.
 - Render every piece of state the engine pushes (`pushState()`, only sends
   a patch when a value actually changed).
 - Send **actions back**, never state: the full API `init()` returns
-  (L3162-3165) is `enter`, `restart`, `setPace`, `setFog`, `toggleSound`,
+  (L3182-3185) is `enter`, `restart`, `setPace`, `setFog`, `toggleSound`,
   `regenMap`, and nine touch-control setters (`setTouchMove`/`setTouchLook`/
   `setTouchSprint`/`triggerTouchHide`/`triggerTouchInteract`/
   `triggerTouchJump`/`triggerTouchPause`/`triggerTouchToggleRun`/
@@ -1319,9 +1319,9 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5042, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5163 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5194). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5062, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5183 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5214). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
@@ -1345,11 +1345,11 @@ design doc as turning horror into radar.
     `throwThrowable()` — reuses the existing single-held-stone state machine
     and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3182),
-  reset to 0 on `enter()` (L3556) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3202),
+  reset to 0 on `enter()` (L3576) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L5208: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L5228: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1405,7 +1405,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L5601, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L5621, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
