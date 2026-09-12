@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6565 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5814, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6640 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5861, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -392,6 +392,25 @@ one geometry builder (`makePredator()`), differentiated by the
   intent, not an oversight.
 - Catch (kill) the player at `dist < rad+1.3` while actively seeing/hunting
   them (`triggerDeath()`, multiple call sites in `updatePredators()`).
+- **Whole-map spawn + park/unpark (LUL-2250, epic LUL-2223 final child).**
+  `placePredators()` draws uniformly over the whole map (same
+  `[-half+margin, half-margin]²` draw `generateCover()`/`generateReeds()`/
+  `generateBogTrees()`/`generateThrowables()` already use) instead of the old
+  fixed annulus around the always-(0,0) spawn point; a predator whose chunk
+  is more than `STREAM_RADIUS_CHUNKS` (2, LUL-2249's 5×5 streaming ring) away
+  from the player's chunk is `p.parked`: not simulated (`updateWolfPack()`,
+  `updatePredators()`, the threat scan all skip it), not visible
+  (`p.g.visible`), and forgotten (`state`/`spotted`/`inv`/`lkpSweeps`/`hunt`
+  reset the tick it parks) so it reads no differently from one that was never
+  generated. Recomputed every tick in `tick()`, right before
+  `updatePredators()` runs. A `MIN_ACTIVE_HUNTERS` (2) / `HUNTER_GUARANTEE_T`
+  (90s) guarantee prevents an all-parked board: once fewer than 2 predators
+  have been active for 90s of game time, `relocateParkedHunter()` teleports
+  one parked predator (lowest array index) to a random cell on the streaming
+  ring's outer edge, at least 70 units from the player and outside
+  `playerCanSee()`, and logs `hunter_relocated` to the chronicle buffer (an
+  internal diagnostic only — deliberately not in `ChronicleCode`/
+  `formatChronicle()`, never player-facing).
 - **NOT live on `main`** — parking predators off-map (`p.inert`, `x=z=-9999`)
   under a lower difficulty preset's `activePerSpecies` was built on the
   unmerged LUL-26 branch. `placePredators()` on `main` (L704-726) has no
@@ -1398,17 +1417,17 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5278, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5399 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5434). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5339, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5467 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5508). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5434) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L5408) rather than recomputed later, since `player.x/z` can move on
+  (L5508) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L5476) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1440,7 +1459,7 @@ design doc as turning horror into radar.
     and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3696) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3736) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +

@@ -9,7 +9,7 @@
 // a regression that reintroduces dense clustering for some seed but not
 // others doesn't slip through. See docs/specs/lul-2247-prop-density.md.
 import { test, expect } from '@playwright/test';
-import { boot, QA_PINNED_SEED, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
+import { boot, enter, QA_PINNED_SEED, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
 // fullmap-reason: measures per-chunk prop caps over the full 8x8 chunk grid (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 const CAPS = { cover: 12, reed: 24, bogTree: 12, stone: 3 };
@@ -30,6 +30,15 @@ function chunkIndexOf(x: number, z: number): number {
   const cz = Math.min(TREE_CHUNKS_PER_AXIS - 1, Math.max(0, Math.floor((z + HALF) / TREE_CHUNK_SIZE)));
   return cx * TREE_CHUNKS_PER_AXIS + cz;
 }
+
+function chunkXZOf(x: number, z: number): [number, number] {
+  const cx = Math.min(TREE_CHUNKS_PER_AXIS - 1, Math.max(0, Math.floor((x + HALF) / TREE_CHUNK_SIZE)));
+  const cz = Math.min(TREE_CHUNKS_PER_AXIS - 1, Math.max(0, Math.floor((z + HALF) / TREE_CHUNK_SIZE)));
+  return [cx, cz];
+}
+
+// LUL-2250: same load radius placePredators()/tick() park predators outside of.
+const STREAM_RADIUS_CHUNKS = 2;
 
 for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_PINNED_SEED + 3]) {
   test(`prop density respects per-chunk caps and minimum spacing at seed ${seed} @fullmap`, async ({ page }) => {
@@ -168,5 +177,152 @@ test.describe('chunked streaming', () => {
 
     const blocked = await qaHook(page, 'qaProbeBlocked', liveTree.x, liveTree.z);
     expect(blocked).toBe(true);
+  });
+
+  // LUL-2250 (rollout step 6/6 of parent epic LUL-2223): placePredators() now
+  // draws uniformly over the whole map instead of a fixed annulus, and a
+  // predator outside the live streaming ring is `parked` -- not simulated,
+  // not visible, forgotten. See docs/specs/lul-2250-predator-spawn-park-hunter.md.
+  test('predators spawn uniformly whole-map and outside the ring start parked @fullmap', async ({ page }) => {
+    await boot(page, { qaWorld: 'full', qaHooks: true, seed: QA_PINNED_SEED });
+
+    const streaming = await qaHook(page, 'qaProbeChunkStreaming');
+    const pcx = Math.floor(streaming.playerChunk / TREE_CHUNKS_PER_AXIS);
+    const pcz = streaming.playerChunk % TREE_CHUNKS_PER_AXIS;
+
+    let sawParked = false, sawActive = false;
+    for (let i = 0; i < 9; i++) {
+      const p = await qaHook(page, 'qaPredatorState', i);
+      if (!p) continue;
+      const [ccx, ccz] = chunkXZOf(p.x, p.z);
+      const cheb = Math.max(Math.abs(ccx - pcx), Math.abs(ccz - pcz));
+      const expectedParked = cheb > STREAM_RADIUS_CHUNKS;
+      expect(p.parked, `predator ${i} parked`).toBe(expectedParked);
+      expect(p.visible, `predator ${i} visible`).toBe(!expectedParked);
+      if (expectedParked) sawParked = true; else sawActive = true;
+    }
+    // Whole-map draw means most of the 9 spawn outside the 39%-of-map ring --
+    // guard against a seed/regression where the parked/active split degenerates.
+    expect(sawParked, 'expected at least one parked predator at spawn').toBe(true);
+    expect(sawActive, 'expected at least one active predator at spawn').toBe(true);
+  });
+
+  for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2]) {
+    test(`the child-carry pickup point puts at least one predator in the ring, matching an off-annulus spawn at seed ${seed} @fullmap`, async ({ page }) => {
+      await boot(page, { qaWorld: 'full', qaHooks: true, seed });
+
+      const streaming = await qaHook(page, 'qaProbeChunkStreaming');
+      expect(streaming.liveChunks.length).toBeGreaterThan(0);
+
+      let sawActive = false;
+      for (let i = 0; i < 9 && !sawActive; i++) {
+        const p = await qaHook(page, 'qaPredatorState', i);
+        if (p && !p.parked) sawActive = true;
+      }
+      expect(sawActive, `seed ${seed}: expected at least one non-parked predator at spawn`).toBe(true);
+    });
+  }
+
+  test('unparking on approach and re-parking on retreat toggles visible+parked @fullmap', async ({ page }) => {
+    await boot(page, { qaWorld: 'full', qaHooks: true, seed: QA_PINNED_SEED });
+
+    // Find a predator parked at spawn (player at (0,0)) to walk up to.
+    let target: { idx: number; x: number; z: number } | null = null;
+    for (let i = 0; i < 9; i++) {
+      const p = await qaHook(page, 'qaPredatorState', i);
+      if (p && p.parked) { target = { idx: i, x: p.x, z: p.z }; break; }
+    }
+    expect(target, 'expected at least one parked predator at spawn to test unparking on').toBeTruthy();
+
+    const FIXED_DT = 0.02;
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await enter(page);
+
+    // Teleport into the same chunk as the target predator (well within the ring).
+    await qaHook(page, 'qaTeleportTo', target!.x, target!.z);
+    await qaHook(page, 'qaAdvance', 5); // a few ticks is enough for the per-tick recompute to fire
+
+    const near = await qaHook(page, 'qaPredatorState', target!.idx);
+    expect(near.parked, 'expected target to unpark once the player is in its chunk').toBe(false);
+    expect(near.visible, 'expected target to become visible once unparked').toBe(true);
+
+    // Retreat back to spawn -- far enough that the target re-parks.
+    await qaHook(page, 'qaTeleportTo', 0, 0);
+    await qaHook(page, 'qaAdvance', 5);
+
+    const far = await qaHook(page, 'qaPredatorState', target!.idx);
+    expect(far.parked, 'expected target to re-park once the player retreats').toBe(true);
+    expect(far.visible, 'expected target to become invisible once re-parked').toBe(false);
+    expect(far.state, 'expected the park transition to reset state to roam ("forgets you")').toBe('roam');
+  });
+
+  test('hunter guarantee relocates a parked predator when fewer than 2 are active @fullmap', async ({ page }) => {
+    await boot(page, { qaWorld: 'full', qaHooks: true, seed: QA_PINNED_SEED });
+
+    const FIXED_DT = 0.02;
+    const HUNTER_GUARANTEE_T = 90;
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await enter(page);
+
+    // Search every chunk on the 8x8 grid for the one whose 5x5 ring covers
+    // the fewest of the 9 predators' spawn-time positions, then stand there --
+    // this is deterministic (positions don't change pre-`playing`... but we're
+    // already `entered` here, so read positions fresh right before searching)
+    // and doesn't depend on guessing where a whole-map-random draw landed.
+    const positions: ({ x: number; z: number } | null)[] = [];
+    for (let i = 0; i < 9; i++) {
+      const p = await qaHook(page, 'qaPredatorState', i);
+      positions.push(p ? { x: p.x, z: p.z } : null);
+    }
+
+    let bestChunk = [0, 0], bestCount = Infinity;
+    for (let cx = 0; cx < TREE_CHUNKS_PER_AXIS; cx++) {
+      for (let cz = 0; cz < TREE_CHUNKS_PER_AXIS; cz++) {
+        let count = 0;
+        for (const pos of positions) {
+          if (!pos) continue;
+          const [pcx, pcz] = chunkXZOf(pos.x, pos.z);
+          if (Math.max(Math.abs(pcx - cx), Math.abs(pcz - cz)) <= STREAM_RADIUS_CHUNKS) count++;
+        }
+        if (count < bestCount) { bestCount = count; bestChunk = [cx, cz]; }
+      }
+    }
+    const targetX = bestChunk[0] * TREE_CHUNK_SIZE - HALF + TREE_CHUNK_SIZE / 2;
+    const targetZ = bestChunk[1] * TREE_CHUNK_SIZE - HALF + TREE_CHUNK_SIZE / 2;
+    await qaHook(page, 'qaTeleportTo', targetX, targetZ);
+    await qaHook(page, 'qaAdvance', 5);
+
+    const before = await qaHook(page, 'qaProbeActiveHunters');
+    expect(before.active, 'expected the searched-for corner to leave fewer than 2 active hunters').toBeLessThan(2);
+
+    // Each below-minimum stretch only relocates one predator before its own
+    // timer resets (see relocateParkedHunter()), so closing a 2-hunter deficit
+    // can take more than one HUNTER_GUARANTEE_T window -- advance enough
+    // cycles (with margin) to cover the worst case (0 active -> 2 relocations).
+    const cyclesNeeded = Math.max(1, 2 - before.active);
+    const seconds = cyclesNeeded * (HUNTER_GUARANTEE_T + 5) + 5;
+    const steps = Math.ceil(seconds / FIXED_DT);
+    await qaHook(page, 'qaAdvance', steps);
+
+    const after = await qaHook(page, 'qaProbeActiveHunters');
+    expect(after.active).toBeGreaterThanOrEqual(2);
+
+    // Find a predator that got relocated (was parked, now isn't) and confirm
+    // it landed outside the player's view and at least 70 units away, per
+    // relocateParkedHunter()'s own reject condition.
+    let relocated: { x: number; z: number } | null = null;
+    for (let i = 0; i < 9; i++) {
+      const p = await qaHook(page, 'qaPredatorState', i);
+      const before = positions[i];
+      if (!p || !before) continue;
+      const moved = Math.hypot(p.x - before.x, p.z - before.z) > 0.001;
+      if (moved && !p.parked) { relocated = { x: p.x, z: p.z }; break; }
+    }
+    expect(relocated, 'expected at least one predator to have been relocated').toBeTruthy();
+
+    const dist = Math.hypot(relocated!.x - targetX, relocated!.z - targetZ);
+    expect(dist).toBeGreaterThanOrEqual(70);
+    const canSee = await qaHook(page, 'qaProbePlayerCanSee', relocated!.x, relocated!.z);
+    expect(canSee).toBe(false);
   });
 });
