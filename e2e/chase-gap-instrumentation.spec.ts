@@ -75,4 +75,32 @@ test.describe('chase_gap instrumentation (LUL-2392)', () => {
     expect(gap.durationMs).toBeGreaterThan(expectedMs - 50);
     expect(gap.durationMs).toBeLessThan(expectedMs + 50);
   });
+
+  // Regression for the CHANGES_REQUESTED finding on PR #601: placePredators()
+  // (the exhaustive per-run reset generateMap()/qaRegenerateMap() calls) must
+  // clear p.gaveUpAt like every other per-run predator field, or a stale
+  // timestamp from a run that ended before scentOnto() re-fired survives into
+  // the next run and produces a bogus multi-minute chase_gap duration there.
+  test('placePredators() clears a stale gaveUpAt across a map regen', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    await qaHook(page, 'qaBuildScene', {
+      props: [{ kind: 'bramble', x: 10, z: 0 }],
+      predators: [{ kind: 'wolf', x: 15, z: 0, state: 'roam' }],
+    });
+    const spot = await qaHook(page, 'qaTeleportToHideSpot');
+    expect(spot).not.toBeNull();
+    await page.keyboard.press('KeyH');
+    await expectRowVisible(page, 'status');
+
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    const staged = await qaHook(page, 'qaStagePredatorGiveUp', 'wolf', 5, 0);
+    expect(staged).not.toBeNull();
+    await qaHook(page, 'qaAdvance', 1);
+    expect((await qaHook(page, 'qaPredatorState', 0)).gaveUpAt).not.toBeNull();
+
+    await qaHook(page, 'qaRegenerateMap', 12345);
+    expect((await qaHook(page, 'qaPredatorState', 0)).gaveUpAt).toBeNull();
+  });
 });

@@ -181,6 +181,7 @@ declare global {
         rad: number;
         x: number;
         z: number;
+        gaveUpAt: number | null;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
