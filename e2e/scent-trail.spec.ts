@@ -86,6 +86,10 @@ test.describe('scent trail visual (LUL-2230)', () => {
   test('running lays bigger, brighter points than walking (matches the alpha formula exactly), and standing still lets the trail decay to nothing', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-2539: this test's alpha formula and decay-to-nothing check both hardcode the base
+    // (no-wind) SCENT_LIFETIME=14 -- force wind off so the new 50/50 windHighSpeed roll can't
+    // make it flaky.
+    await qaHook(page, 'qaSetWindHighSpeed', false);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     await walkForward(page, 1);

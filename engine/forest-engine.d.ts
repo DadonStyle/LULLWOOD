@@ -147,8 +147,9 @@ declare global {
        * see where movement actually ended up (player is init()-closure-local). */
       qaProbePlayer?: () => { x: number; z: number; yaw: number };
       /** LUL-2189/LUL-2207: the module-scope wind unit vector (windX/windZ), set once per
-       * generateMap() by generateWind() -- map-constant, not per-frame. */
-      qaProbeWind?: () => { windX: number; windZ: number };
+       * generateMap() by generateWind() -- map-constant, not per-frame. windHighSpeed
+       * (LUL-2539) is the independently-rolled high-wind flag from the same call. */
+      qaProbeWind?: () => { windX: number; windZ: number; windHighSpeed: boolean };
       /** LUL-211/LUL-288: places the player off the -x face of the first reachable
        * cover prop of `kind`, facing it, so a held KeyW walks straight into it. The
        * standoff distance is rotation-aware (props render at prop.ry), so it clears
@@ -364,6 +365,9 @@ declare global {
        * to a plain roaming state (state: 'roam', hunt: false, alert: 0). Returns
        * its predators index, or null if that species didn't spawn this seed. */
       qaStagePredatorNearThrowLanding?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number } | null;
+      /** LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
+       * generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion. */
+      qaSetWindHighSpeed?: (v: boolean) => void;
       /** LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
        * lets a test assert the tier's effect without waiting out real decay. */
       qaProbeScentLifetime?: () => number;

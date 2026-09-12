@@ -27,6 +27,9 @@ test.describe('chase_gap instrumentation (LUL-2392)', () => {
   test('scentOnto() re-acquisition after a give-up reports duration_ms + difficulty', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-2539: this file seeds/reads scent points without asserting an exact lifetime, but
+    // force wind off anyway as cheap, consistent insurance against the new 50/50 roll.
+    await qaHook(page, 'qaSetWindHighSpeed', false);
 
     expect(await qaHook(page, 'qaProbeChaseGap')).toBeNull();
 
@@ -84,6 +87,9 @@ test.describe('chase_gap instrumentation (LUL-2392)', () => {
   test('placePredators() clears a stale gaveUpAt across a map regen', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-2539: this file seeds/reads scent points without asserting an exact lifetime, but
+    // force wind off anyway as cheap, consistent insurance against the new 50/50 roll.
+    await qaHook(page, 'qaSetWindHighSpeed', false);
 
     await qaHook(page, 'qaBuildScene', {
       props: [{ kind: 'bramble', x: 10, z: 0 }],
