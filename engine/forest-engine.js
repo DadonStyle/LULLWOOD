@@ -6090,7 +6090,17 @@ function stepFrame(dt, t){
       if(p.inert) continue;
       const [ccx, ccz] = chunkXZ(p.x, p.z);
       const wasParked = p.parked;
-      p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
+      // LUL-2569: a predator actively engaged with the player -- chasing,
+      // forced-hunting, or mid a last-known-position return sweep -- can
+      // wander (or be placed by its own search waypoint) outside the live
+      // streaming ring around the player's *current* chunk without the
+      // player having gone anywhere. That's the predator's own AI moving,
+      // not the player leaving its region, so it must not trip the "forgets
+      // you" reset below (which froze predator-memory.spec.ts's bounded
+      // sweep count at its very first tick). Same three states already
+      // share "is this predator coming for you" semantics at :6134.
+      const engaged = p.state === 'chase' || p.hunt || (p.state === 'roam' && p.lkpSweeps > 0);
+      p.parked = !engaged && Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
       if(p.parked && !wasParked){
         // LUL-2250: forgets you the moment you leave its region -- state and
         // hunt/lkp memory both reset, not just state, or a predator that was
