@@ -605,10 +605,10 @@ export default function Hud({
   // a player who presses Space/Enter *after* actually seeing the screen still
   // gets the same accessible path back in.
   // 2000ms, not a round guess: #winText's own opacity transition (GameCanvas.tsx's
-  // OVERLAY_STYLE, `transition: opacity 0.9s ease`) means winRevealed flips true a full
-  // 0.9s before the text is actually visible on screen -- a shorter delay measured from
-  // winRevealed still lands within or just after that fade, before a player has had any
-  // real chance to read "YOU WON" and decide to press something.
+  // OVERLAY_STYLE, `transition: opacity 0.5s ease`, LUL-2496) means winRevealed flips true a full
+  // 0.5s before the text is actually visible on screen -- #deathText stays at 0.9s -- a shorter
+  // delay measured from winRevealed still lands within or just after either fade, before a
+  // player has had any real chance to read "YOU WON" and decide to press something.
   const RESTART_FOCUS_DELAY_MS = 2000;
   const winRestartRef = useRef<HTMLButtonElement>(null);
   const deathRestartRef = useRef<HTMLButtonElement>(null);
@@ -979,6 +979,7 @@ export default function Hud({
         <div id="winScreen" style={{ display: 'flex' }}>
           <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
             <h1>YOU WON</h1>
+            <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} />
             <button

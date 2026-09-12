@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6111 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5374, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6117 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5380, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1281,7 +1281,8 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   Enter bypass the unskippable first cutscene via native button activation),
   giving Enter/Space a keyboard path back into a new run for free.
   LUL-1614: that focus is delayed `RESTART_FOCUS_DELAY_MS`=2000ms past the
-  `*Revealed` flip (sized past `#winText`'s own 0.9s fade), not immediate —
+  `*Revealed` flip (sized past `#winText`'s own fade — 0.5s since LUL-2496,
+  `#deathText` stays 0.9s), not immediate —
   an in-flight Space/Enter still held from active gameplay (Space also being
   the jump key) would otherwise activate the freshly-focused button the
   instant it gains focus, silently restarting the run before the player has
@@ -1295,6 +1296,13 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   death cutscene. `disabled` blocks both click and keyboard activation
   without a CSS change; the ref-focus effects already only fire on reveal,
   so this doesn't fight them.
+  LUL-2496 (Ending Ceremony cheap slice, from Feature Scout proposal LUL-2400):
+  `#winDialogue` adds a single fixed dialogue line ("You've brought her home.")
+  inside `#winText`, above the existing chronicle-shared closing line — an
+  addition, not a replacement, so `chronicle.test.ts`'s assertion on that line's
+  canonical phrasing (`lib/game/chronicle.ts`) still holds. The full proposal
+  (music stinger, visual glow, warm fog, readable chronicle) is deferred pending
+  an art director; only the dialogue line and the fade-duration change above shipped.
 
 LUL-1308 adds `#bearingPulse`, a screen-edge glow answering "which side is the nearest
 approaching predator on" for players who can't rely on the caption toggle (LUL-26) or
@@ -1367,13 +1375,26 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L4855, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L4976 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5011). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L4890, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5011 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5046). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
+- `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
+  distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
+  (L5013) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L5020) rather than recomputed later, since `player.x/z` can move on
+  once the death screen is up. Deliberately not `maxDistFromHome` (the run's
+  furthest point, already used by `computeDeathPayout`) -- this is where the
+  run actually ended. Also exposed on `qaProbeDeath()` as
+  `distanceFromHomeAtDeathM` (null before any death this run) for e2e
+  coverage (`e2e/death-sequence.spec.ts`). `lib/dashboard/aggregate.ts`'s
+  `computeOutcomesByTier()` is the per-tier win-rate/run-length/death-distance
+  counterpart to `computeOutcomes()` (which pools all tiers) --
+  `scripts/win-rate-by-tier.mjs` is the one-shot CLI that filters events to a
+  build range (git-ancestry, not string comparison) and prints it.
 - Shop catalog (LUL-2351): `SHOP_CATALOG` in `lib/game/economy.ts` is the single
   source of truth for what's for sale — three permanent items, bought via the
   generic `purchase(id)`/`nextCost(id, tier)`/`tierOf(state, id)` trio instead
@@ -1394,7 +1415,7 @@ design doc as turning horror into radar.
     and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3182),
-  reset to 0 on `enter()` (L3427) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3445) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5208: `computeDepth(maxDistFromHome) +

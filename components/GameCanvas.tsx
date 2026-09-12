@@ -350,7 +350,7 @@ const OVERLAY_STYLE = `
     transform-origin: 50% 50%; pointer-events: none; }
 
   #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
-    font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
+    font-size: 12px; line-height: 1.3; text-align: center; color: #9fb2cd;
     text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none; opacity: 1; }
 
   /* LUL-1912's minimap-clearance push only matters while the minimap is actually
@@ -415,7 +415,7 @@ const OVERLAY_STYLE = `
   #winScreen { position: fixed; inset: 0; z-index: 25; display: none;
     align-items: center; justify-content: center; text-align: center; padding: 24px;
     background: rgba(0,0,0,0); pointer-events: none; }
-  #winText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column;
+  #winText { opacity: 0; transition: opacity 0.5s ease; display: flex; flex-direction: column;
     align-items: center; gap: 6px; pointer-events: auto;
     background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86));
     padding: 24px; border-radius: 4px;
@@ -509,6 +509,17 @@ const OVERLAY_STYLE = `
        !important beats the engine's own inline hint.style.opacity writes
        (same precedent as the win/death :has() rules above). */
     #hint { display: none !important; }
+    /* LUL-2418: deepwater is fixed at top:110px/left:16px (the "Self/panel-anchored
+       keys" rule above), outside this media block, anchored below #missionPanel's
+       corner -- it never moves at this breakpoint. At the raised
+       --action-slot-bottom used here, #actionSlot's row 3 ("hide or veil") lands
+       right on top of it on Pixel-5-landscape (851x393). Same collision family as
+       LUL-2411, but that fix only addressed the win/death has() selector transition,
+       not this in-gameplay case. deepwater is a transient first-encounter hint
+       (LUL-2307 registry, fades once seen) and isn't in e2e/mobile/hints.spec.ts's
+       must-stay-visible set (only landmark is, per LUL-2414) -- hide it here the
+       same way #hint is. */
+    #hintCaption[data-hint-key="deepwater"] { display: none !important; }
     /* LUL-2414: the bottom self-anchored #hintCaption family (lake/bog/stamina/
        veil/landmark, see the "Self/panel-anchored keys" rule above) positions
        itself at bottom: action-slot-bottom + action-slot-height + 10px --

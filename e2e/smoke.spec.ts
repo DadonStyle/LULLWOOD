@@ -239,6 +239,8 @@ test.describe('lift the child / win', () => {
     // (the wall-clock-vs-dt-clamp mismatch LUL-1611 fixed) could ship silently.
     await expect(page.locator('#winText')).toHaveCSS('opacity', '1', { timeout: 30_000 });
     await expect(page.locator('#winScreen h1')).toHaveText('YOU WON');
+    // LUL-2496: Ending Ceremony cheap slice -- single dialogue line at boom completion.
+    await expect(page.locator('#winDialogue')).toHaveText("You've brought her home.");
 
     // LUL-197: arriveHome() used to skip the exitPointerLock()/cursor reset that
     // triggerDeath() and pickup() both do, so the win screen rendered underneath
