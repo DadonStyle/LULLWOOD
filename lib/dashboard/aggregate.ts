@@ -94,6 +94,75 @@ export function computeOutcomes(events: RawEvent[]): OutcomesResult {
   };
 }
 
+export type OutcomeTierKey = 'lantern' | 'night' | 'blackout' | 'unattributed';
+
+const OUTCOME_TIER_KEYS: OutcomeTierKey[] = ['lantern', 'night', 'blackout', 'unattributed'];
+
+export interface TierOutcomes {
+  winCount: number;
+  lossCount: number;
+  winRatePct: number | null;
+  runLengthMs: {
+    win: { p50: number | null; n: number };
+    loss: { p50: number | null; n: number };
+  };
+  /** Median distance in meters from home at the moment of death (`loss.distance_from_home_m`,
+   * LUL-2461). Null if no loss in this tier carries the field (pre-instrumentation builds). */
+  distanceFromHomeAtDeathM: { p50: number | null; n: number };
+}
+
+function tierOutcomesFor(wins: RawEvent[], losses: RawEvent[]): TierOutcomes {
+  const winDurations = wins.map((e) => numberProp(e, 'time_survived_ms')).filter((n): n is number => n !== null).sort((a, b) => a - b);
+  const lossDurations = losses.map((e) => numberProp(e, 'time_survived_ms')).filter((n): n is number => n !== null).sort((a, b) => a - b);
+  const deathDistances = losses.map((e) => numberProp(e, 'distance_from_home_m')).filter((n): n is number => n !== null).sort((a, b) => a - b);
+  const total = wins.length + losses.length;
+
+  return {
+    winCount: wins.length,
+    lossCount: losses.length,
+    winRatePct: total === 0 ? null : (wins.length / total) * 100,
+    runLengthMs: {
+      win: { p50: percentile(winDurations, 50), n: winDurations.length },
+      loss: { p50: percentile(lossDurations, 50), n: lossDurations.length },
+    },
+    distanceFromHomeAtDeathM: { p50: percentile(deathDistances, 50), n: deathDistances.length },
+  };
+}
+
+/**
+ * LUL-2461: win rate is measurable per difficulty tier today (win/loss already carry
+ * `difficulty`), just not broken out that way anywhere -- computeOutcomes() pools all
+ * tiers. This is the lightweight per-tier counterpart the Economist's LUL-1413
+ * blackout-multiplier pricing needs. Callers filter `events` to the desired build range
+ * (e.g. build_sha >= a known commit) before calling this -- ancestry checks need git,
+ * which this module deliberately does not touch (see file header).
+ */
+export function computeOutcomesByTier(events: RawEvent[]): Record<OutcomeTierKey, TierOutcomes> {
+  const wins = events.filter((e) => e.event === 'win');
+  const losses = events.filter((e) => e.event === 'loss');
+
+  const winsByTier = new Map<OutcomeTierKey, RawEvent[]>();
+  const lossesByTier = new Map<OutcomeTierKey, RawEvent[]>();
+  for (const key of OUTCOME_TIER_KEYS) {
+    winsByTier.set(key, []);
+    lossesByTier.set(key, []);
+  }
+  for (const e of wins) {
+    const d = stringProp(e, 'difficulty');
+    const key: OutcomeTierKey = d === 'lantern' || d === 'night' || d === 'blackout' ? d : 'unattributed';
+    winsByTier.get(key)!.push(e);
+  }
+  for (const e of losses) {
+    const d = stringProp(e, 'difficulty');
+    const key: OutcomeTierKey = d === 'lantern' || d === 'night' || d === 'blackout' ? d : 'unattributed';
+    lossesByTier.get(key)!.push(e);
+  }
+
+  return Object.fromEntries(
+    OUTCOME_TIER_KEYS.map((key) => [key, tierOutcomesFor(winsByTier.get(key)!, lossesByTier.get(key)!)]),
+  ) as Record<OutcomeTierKey, TierOutcomes>;
+}
+
 export interface SessionsResult {
   sessionCount: number;
   reachedGameplayRatePct: number | null;

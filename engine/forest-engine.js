@@ -2709,6 +2709,7 @@ const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
+    deathDistanceFromHomeM = null,   // LUL-2461: set by triggerDeath(), read by qaProbeDeath() + the loss telemetry event
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
@@ -4509,6 +4510,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return {
       dead, deathShown, cutsceneSkippable,
       sinceDeath: dead ? clock.elapsedTime - deathStart : null,
+      distanceFromHomeAtDeathM: dead ? deathDistanceFromHomeM : null,   // LUL-2461
       video: deathVideo ? { currentTime: deathVideo.currentTime, ended: deathVideo.ended,
                             paused: deathVideo.paused, readyState: deathVideo.readyState,
                             display: deathVideo.style.display } : null,
@@ -4991,6 +4993,10 @@ function triggerDeath(kind, cause){
   const next = outcomeTriggerDeath(runState());
   if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
   dead = next.dead; hidden = false; lastHideSpot = null; coverProbeAccum = 0; deathStart = clock.elapsedTime; deathShown = false;
+  // LUL-2461: distance from home at the moment of death, not maxDistFromHome
+  // (the run's furthest point) -- the Economist's blackout-pricing model
+  // (LUL-1413) wants where the run actually ended.
+  deathDistanceFromHomeM = Math.round(Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z));
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
@@ -5016,7 +5022,7 @@ function triggerDeath(kind, cause){
   if(!hasDiedBefore){ hasDiedBefore = true; try { localStorage.setItem(HAS_DIED_KEY, '1'); } catch(e){} }
   pushState({ deathVisible: true, deathKind: kind, deathCause: cause, lossRevealed: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying, chronicle: chronicle.slice() });
-  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty });
+  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty, distance_from_home_m: deathDistanceFromHomeM });
   playDeathVideo();
   deathAudio(kind);
 }

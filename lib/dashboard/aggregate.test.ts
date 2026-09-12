@@ -1,7 +1,7 @@
 // Node built-in test runner. Run: node --test lib/dashboard/aggregate.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement, computeEconomy } from './aggregate.ts';
+import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement, computeEconomy, computeOutcomesByTier } from './aggregate.ts';
 import type { RawEvent } from './events.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -338,4 +338,49 @@ test('computeEconomy: a tier with zero events yields nulls, not NaN', () => {
   assert.equal(economy.byDifficulty.blackout.failureBandPct, null);
   assert.equal(economy.byDifficulty.blackout.lossDepth.pctAbove24, null);
   assert.equal(Number.isNaN(economy.byDifficulty.blackout.winPayout.p50), false);
+});
+
+test('computeOutcomesByTier: win rate, run length and death distance, split per tier', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { time_survived_ms: 100000, difficulty: 'blackout' }),
+    ev('loss', BASE_TS, 'b', { time_survived_ms: 40000, distance_from_home_m: 20, predator_kind: 'wolf', difficulty: 'blackout' }),
+    ev('loss', BASE_TS, 'c', { time_survived_ms: 60000, distance_from_home_m: 40, predator_kind: 'bear', difficulty: 'blackout' }),
+    ev('win', BASE_TS, 'd', { time_survived_ms: 90000, difficulty: 'lantern' }),
+    ev('win', BASE_TS, 'e', { time_survived_ms: 95000, difficulty: 'lantern' }),
+  ];
+  const byTier = computeOutcomesByTier(events);
+  assert.equal(byTier.blackout.winCount, 1);
+  assert.equal(byTier.blackout.lossCount, 2);
+  assert.equal(byTier.blackout.winRatePct, (1 / 3) * 100);
+  assert.equal(byTier.blackout.runLengthMs.win.p50, 100000);
+  assert.equal(byTier.blackout.runLengthMs.loss.p50, 40000);
+  assert.equal(byTier.blackout.distanceFromHomeAtDeathM.p50, 20);
+  assert.equal(byTier.blackout.distanceFromHomeAtDeathM.n, 2);
+  assert.equal(byTier.lantern.winRatePct, 100);
+  assert.equal(byTier.lantern.distanceFromHomeAtDeathM.n, 0);
+  assert.equal(byTier.night.winCount, 0);
+  assert.equal(byTier.night.winRatePct, null);
+});
+
+test('computeOutcomesByTier: events without difficulty land in unattributed, tier ns sum to pooled', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { time_survived_ms: 100000 }),
+    ev('loss', BASE_TS, 'b', { time_survived_ms: 40000, predator_kind: 'wolf' }),
+    ev('win', BASE_TS, 'c', { time_survived_ms: 90000, difficulty: 'nonsense' }),
+  ];
+  const byTier = computeOutcomesByTier(events);
+  assert.equal(byTier.unattributed.winCount, 2);
+  assert.equal(byTier.unattributed.lossCount, 1);
+  assert.equal(byTier.lantern.winCount, 0);
+  assert.equal(byTier.night.winCount, 0);
+  assert.equal(byTier.blackout.winCount, 0);
+});
+
+test('computeOutcomesByTier: a tier with zero events yields nulls, not NaN', () => {
+  const events: RawEvent[] = [ev('win', BASE_TS, 'a', { time_survived_ms: 100000, difficulty: 'lantern' })];
+  const byTier = computeOutcomesByTier(events);
+  assert.equal(byTier.blackout.winRatePct, null);
+  assert.equal(byTier.blackout.runLengthMs.win.p50, null);
+  assert.equal(byTier.blackout.distanceFromHomeAtDeathM.p50, null);
+  assert.equal(Number.isNaN(byTier.blackout.runLengthMs.win.p50), false);
 });

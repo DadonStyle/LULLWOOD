@@ -316,6 +316,10 @@ declare global {
         deathShown: boolean;
         cutsceneSkippable: boolean;
         sinceDeath: number | null;
+        /** LUL-2461: distance in meters from CONFIG.home to the player's position at the
+         * moment triggerDeath() fired, mirroring the loss event's `distance_from_home_m`.
+         * `null` before any death this run. */
+        distanceFromHomeAtDeathM: number | null;
         video: { currentTime: number; ended: boolean; paused: boolean; readyState: number; display: string } | null;
       };
       /** LUL-2205: reads the live day/night pacing values -- timeOfRun (0 dawn
