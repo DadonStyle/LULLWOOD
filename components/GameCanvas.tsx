@@ -415,7 +415,7 @@ const OVERLAY_STYLE = `
   #winScreen { position: fixed; inset: 0; z-index: 25; display: none;
     align-items: center; justify-content: center; text-align: center; padding: 24px;
     background: rgba(0,0,0,0); pointer-events: none; }
-  #winText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column;
+  #winText { opacity: 0; transition: opacity 0.5s ease; display: flex; flex-direction: column;
     align-items: center; gap: 6px; pointer-events: auto;
     background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86));
     padding: 24px; border-radius: 4px;
