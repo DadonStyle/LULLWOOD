@@ -1559,7 +1559,7 @@ function updateBoom(dt){
   for(let i=0;i<BSP;i++){ bp[i*3]+=bspVel[i][0]*dt; bp[i*3+1]+=bspVel[i][1]*dt - 4*dt*e; bp[i*3+2]+=bspVel[i][2]*dt; }
   bspPts.geometry.attributes.position.needsUpdate = true;
   bspPts.material.opacity = Math.max(0, 1 - e/1.6);
-  if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*3.5));
+  if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*0.6));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
 }
 // LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
@@ -5689,9 +5689,13 @@ function stepFrame(dt, t){
     camera.rotation.set(player.pitch, player.yaw, 0);
     // LUL-1611: reveal the win text once the boom burst itself retires
     // (boomStart resets to -1 in updateBoom() at e>1.8s) instead of a
-    // wall-clock timer -- see arriveHome() for why. fireBoom() only ever
-    // fires from arriveHome(), so boomStart<0 here unambiguously means the
-    // win burst that just played has finished, not "no burst yet".
+    // wall-clock timer -- see arriveHome() for why. fireBoom() fires from
+    // the pickingUp cinematic's e>=9.3 keyframe in real play (LUL-2281) and
+    // from arriveHome() (unreachable in real play since LUL-2281 Decision 2,
+    // left in place) -- either way there is exactly one fireBoom() call per
+    // run (pickBoomed guards the cinematic path), so boomStart<0 here still
+    // unambiguously means the win burst that fired has finished, not "no
+    // burst yet".
     if(hudState.winVisible && !hudState.winRevealed && boomStart < 0) pushState({ winRevealed: true });
   }
 
