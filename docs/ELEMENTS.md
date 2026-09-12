@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6295 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5548, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6519 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5768, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -98,6 +98,14 @@ Cue-triple audit: see `docs/CUES.md`.
   point's radius by `WIND_AGAINST_RADIUS_MULTIPLIER` (0.8, i.e. -20%) at
   deposit time only — detection math (`isScentDetected`, drift) is unchanged.
   Wind direction is shown to the player via `#windIndicator` (see HUD section).
+- **LUL-2539/2485 cheap slice:** `windHighSpeed`, a per-run boolean rolled 50/50 in
+  `generateWind()` (`engine/forest-engine.js:1811`) from an independent seeded generator
+  (`mulberry32(currentSeed ^ 0x57494e44)`, not the shared `rng` stream, to avoid perturbing
+  `QA_PINNED_SEED` map-gen reproducibility), reduces the effective scent lifetime by
+  `WIND_HIGH_SPEED_LIFETIME_MULTIPLIER` (0.8, i.e. -20%) via `scentLifetimeWithWind()`
+  (`lib/game/scent.ts`) — stacks multiplicatively with the Quiet Step tier reduction, not a
+  replacement for it. No player-facing indicator; pure tuning knob per
+  [[decisions/lul-2485-scent-wind-tuning-accepted-2026-09-12]].
 - **As of `LUL-2230`**, the scent trail itself is rendered, not just implied by
   the wind arrow: a `THREE.Points` cloud (`scentTrailPts`) drawn every frame
   from the live `scentPoints` array, one mote per point, at its
@@ -328,7 +336,11 @@ one geometry builder (`makePredator()`), differentiated by the
   ring-biased return-sweep waypoints (`LKP_MAX_SWEEPS`, `pickRoamWaypoint()`,
   `lib/game/predator.ts`) before it truly forgets and reverts to the
   original uniform-random pick -- a predator that camping used to shake for
-  good now circles back a few times first (LUL-1573/LUL-1620).
+  good now circles back a few times first (LUL-1573/LUL-1620). A re-alert
+  mid-sweep (scent/noise/cry) that gives up again does not refill the count
+  back to `LKP_MAX_SWEEPS` (`armReturnSweep()`, `lib/game/predator.ts`) --
+  only a genuinely fresh loss of trail (no live sweep, or the player has
+  left `LKP_REPEAT_RADIUS`) arms a full memory (LUL-2505).
 - A `chase`'s distance-based give-up (`shouldGiveUpChase()`,
   `lib/game/predator.ts`) now compares against `effectiveDetect(p)` instead
   of the raw `PSPEC[kind].detect`, so the give-up radius scales with the
@@ -420,6 +432,17 @@ one geometry builder (`makePredator()`), differentiated by the
   lives in `lib/game/charge.ts`, unit-tested, imported into the engine —
   the engine only owns *when* one can start (`p.chargeCooldown<=0`,
   `CHARGE_COOLDOWN`=10s, `engine/tuning.js`) and the resulting movement.
+  LUL-2457: on `'cleared'` (a successfully dodged charge), the engine zeros
+  `p.vx`/`p.vz` (residual charge-sprint velocity used to close the gap and
+  re-catch the player within a couple of frames, the LUL-213/LUL-323 bug
+  shape recurring through the velocity-lerp door instead of the overshoot-
+  duration one) and arms `p.chargeRecoveryT = CHARGE_RECOVERY` (`lib/game/
+  charge.ts`, `(CHARGE_WINDOW + CHARGE_RUN_TIME) * 2`), which suppresses
+  `shouldRevertInvestigateToChase()`'s normal instant-revert
+  (`engine/forest-engine.js`, the `'investigate'` state) for that window —
+  a dodge landing mid-charge otherwise left the predator close enough that
+  the ordinary sniff-loop revert closed the gap again before the player got
+  any reaction time.
 - Stuck detection: if a predator's actual movement falls under 35% of its
   intended speed for >3s while trying to move, it backs up along its last 6
   trail points then picks a fresh random waypoint (`p.stuckT`, L1511-1516).
@@ -1159,6 +1182,30 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   the clearance push moved from keying off `data-admin-mode="1"` to keying
   off `data-show-minimap="1"`, since it tracks the minimap's own visibility,
   not admin mode's.
+  LUL-2310: fullscreen has a second entry point besides `GameMenu.tsx`'s
+  `menuFullscreen` button -- **F11** and **Alt+Enter** (`engine/
+  forest-engine.js`'s `keydown` handler), both routed through one shared
+  module, `lib/game/fullscreen.ts` (`toggleFullscreen`/`fullscreenSupported`/
+  `isFullscreenActive`), so the button and the keys can never implement two
+  different fullscreen behaviours the way EngineActions and init()'s return
+  object once drifted (LUL-1697). The module also adds the `webkit`-prefixed
+  fallback (`webkitRequestFullscreen`/`webkitExitFullscreen`/
+  `webkitFullscreenElement`/`webkitfullscreenchange`) Safari < 16.4 needs --
+  `fullscreenSupported()` is true if either the unprefixed or webkit API is
+  present, so `menuFullscreen` now renders there too. Browser collision
+  matrix (ticket has the full writeup): F11 is Chromium/Firefox's own
+  fullscreen key, so the keydown handler calls `e.preventDefault()` on it
+  before toggling, or the browser's own handling fires alongside this one and
+  `document.fullscreenElement` desyncs from what's on screen; Alt+Enter is
+  the fallback since F11 alone does nothing on macOS Chromium without Fn
+  held, and Firefox is inconsistent about whether the page ever sees F11 at
+  all. iOS/iPadOS Safari exposes neither API for a non-`<video>` element, so
+  the key does nothing and the button stays absent there, unchanged from
+  before. The keydown branch gates on `!won && !dead` rather than the usual
+  `isPlaying(runState())`, since it's meant to work on the pre-entry gate
+  screen too and only end screens should suppress it; `e.repeat` is dropped
+  so holding either combo down doesn't spam request/exit calls every OS
+  auto-repeat tick.
   LUL-2131: `#windIndicator`/`#windIndicatorHint` (and `#throwPrompt`, `#actionPrompt`,
   `#captionToast`, all `components/Hud.tsx`) now also gate on `!state.winVisible &&
   !state.deathVisible` -- `state.entered` alone stays true through both end screens
@@ -1199,6 +1246,30 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   — reacts to whichever end screen is actually mounted with no engine change, and
   drops the transition so the hint can't still be fading (and overlapping) for up
   to 1.4s after the screen mounts.
+  LUL-2410: the local QA tester's deterministic bounding-box audit found `#hint`
+  (flat `top: 64px`) overlapping `#objective`'s `.actionPromptLine` on short
+  landscape phones (e.g. iPhone SE landscape, 667x375) — the same short-viewport
+  media query (`components/GameCanvas.tsx`, `@media (max-height: 420px) and
+  (pointer: coarse) and (hover: none), (max-height: 420px) and (max-width: 768px)`)
+  that sets `--action-slot-bottom: 190px` pushes `#actionSlot`'s rows up near the
+  top of the screen, into `#hint`'s band, and there's no free vertical gap left to
+  relocate either one into. Fixed in the same media query: `#hint { display: none
+  !important; }`. `display: none`, not `opacity: 0` (unlike the LUL-2158 fix
+  above) — the founder's overlap rule is enforced on raw DOM bounding boxes, so an
+  opacity-hidden `#hint` would still occupy its rect and keep tripping the audit
+  even though nothing is visibly drawn there; `display: none` collapses the box to
+  nothing. `!important` still needed to beat `enter()`'s inline `hint.style.opacity`
+  write. `#hint` is a transient onboarding caption the engine already fades out 5s
+  after `enter()`, and `#actionSlot`'s own rows carry the info a player needs at
+  this viewport, so dropping it here (rather than repositioning it) has no
+  functional cost.
+
+  **## e2e (LUL-2410).** `e2e/action-prompt.spec.ts` gained one case in the same
+  describe block: boots the micro world at 667x375, asserts `getComputedStyle(#hint)
+  .display === 'none'` right after `enter()` (beating the engine's synchronous
+  `opacity = '0.85'` write, not just outrunning its fade), then asserts `#hint`'s
+  and `#objective`'s `getBoundingClientRect()`s don't intersect. Verified
+  non-vacuous by reverting the CSS rule and watching it fail red (`received: "block"`).
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
@@ -1233,7 +1304,8 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   Enter bypass the unskippable first cutscene via native button activation),
   giving Enter/Space a keyboard path back into a new run for free.
   LUL-1614: that focus is delayed `RESTART_FOCUS_DELAY_MS`=2000ms past the
-  `*Revealed` flip (sized past `#winText`'s own 0.9s fade), not immediate —
+  `*Revealed` flip (sized past `#winText`'s own fade — 0.5s since LUL-2496,
+  `#deathText` stays 0.9s), not immediate —
   an in-flight Space/Enter still held from active gameplay (Space also being
   the jump key) would otherwise activate the freshly-focused button the
   instant it gains focus, silently restarting the run before the player has
@@ -1247,6 +1319,13 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   death cutscene. `disabled` blocks both click and keyboard activation
   without a CSS change; the ref-focus effects already only fire on reveal,
   so this doesn't fight them.
+  LUL-2496 (Ending Ceremony cheap slice, from Feature Scout proposal LUL-2400):
+  `#winDialogue` adds a single fixed dialogue line ("You've brought her home.")
+  inside `#winText`, above the existing chronicle-shared closing line — an
+  addition, not a replacement, so `chronicle.test.ts`'s assertion on that line's
+  canonical phrasing (`lib/game/chronicle.ts`) still holds. The full proposal
+  (music stinger, visual glow, warm fog, readable chronicle) is deferred pending
+  an art director; only the dialogue line and the fade-duration change above shipped.
 
 LUL-1308 adds `#bearingPulse`, a screen-edge glow answering "which side is the nearest
 approaching predator on" for players who can't rely on the caption toggle (LUL-26) or
@@ -1319,13 +1398,26 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5062, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5183 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5214). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5278, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5399 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5434). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
+- `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
+  distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
+  (L5434) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L5408) rather than recomputed later, since `player.x/z` can move on
+  once the death screen is up. Deliberately not `maxDistFromHome` (the run's
+  furthest point, already used by `computeDeathPayout`) -- this is where the
+  run actually ended. Also exposed on `qaProbeDeath()` as
+  `distanceFromHomeAtDeathM` (null before any death this run) for e2e
+  coverage (`e2e/death-sequence.spec.ts`). `lib/dashboard/aggregate.ts`'s
+  `computeOutcomesByTier()` is the per-tier win-rate/run-length/death-distance
+  counterpart to `computeOutcomes()` (which pools all tiers) --
+  `scripts/win-rate-by-tier.mjs` is the one-shot CLI that filters events to a
+  build range (git-ancestry, not string comparison) and prints it.
 - Shop catalog (LUL-2351): `SHOP_CATALOG` in `lib/game/economy.ts` is the single
   source of truth for what's for sale — three permanent items, bought via the
   generic `purchase(id)`/`nextCost(id, tier)`/`tierOf(state, id)` trio instead
@@ -1338,18 +1430,20 @@ design doc as turning horror into radar.
     `veilMaxHoldForTier()`.
   - **Quiet Step** (`quietStep`, tiers 0–2, `QUIET_STEP_COSTS`): each tier
     decays scent 20% faster (compounding), via `effectiveScentLifetime()`.
-    Lifetime-only — `SCENT_RADIUS_WALK`/`SCENT_RADIUS_RUN` are untouched.
+    Lifetime-only — `SCENT_RADIUS_WALK`/`SCENT_RADIUS_RUN` are untouched. Stacks
+    multiplicatively with the high-wind `windHighSpeed` lifetime reduction (see the
+    wind bullet near `WIND_AGAINST_RADIUS_MULTIPLIER` above).
   - **Pocket Stones** (`pocketStones`, single tier, `POCKET_STONES_COSTS`):
     grants `POCKET_STONES_RESERVE` (2) free throwable stones per run, auto-armed
     into `heldThrowable` on `enter()` and re-armed from the reserve in
     `throwThrowable()` — reuses the existing single-held-stone state machine
     and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3202),
-  reset to 0 on `enter()` (L3576) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3612),
+  reset to 0 on `enter()` (L3696) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L5228: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1405,7 +1499,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L5621, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L5841, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1451,7 +1545,8 @@ design doc as turning horror into radar.
 - Fire a one-time unconditional caption + audio sting on completion, and show a two-line
   collapsed HUD panel (name + progress glyph) top-left whenever a mission exists and the player
   isn't carrying — mirrors the Embers/Stamina HUD-reflection pattern above, not a new panel
-  system.
+  system. **LUL-2442:** also hidden while `components/GameMenu.tsx`'s dropdown is open — its
+  open panel shares the same top-left corner and would otherwise overlap the mission pill.
 
 **What it CANNOT do**
 - Cannot be selected or seen by the player before the draw — the pool member is chosen silently

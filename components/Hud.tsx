@@ -605,10 +605,10 @@ export default function Hud({
   // a player who presses Space/Enter *after* actually seeing the screen still
   // gets the same accessible path back in.
   // 2000ms, not a round guess: #winText's own opacity transition (GameCanvas.tsx's
-  // OVERLAY_STYLE, `transition: opacity 0.9s ease`) means winRevealed flips true a full
-  // 0.9s before the text is actually visible on screen -- a shorter delay measured from
-  // winRevealed still lands within or just after that fade, before a player has had any
-  // real chance to read "YOU WON" and decide to press something.
+  // OVERLAY_STYLE, `transition: opacity 0.5s ease`, LUL-2496) means winRevealed flips true a full
+  // 0.5s before the text is actually visible on screen -- #deathText stays at 0.9s -- a shorter
+  // delay measured from winRevealed still lands within or just after either fade, before a
+  // player has had any real chance to read "YOU WON" and decide to press something.
   const RESTART_FOCUS_DELAY_MS = 2000;
   const winRestartRef = useRef<HTMLButtonElement>(null);
   const deathRestartRef = useRef<HTMLButtonElement>(null);
@@ -771,6 +771,8 @@ export default function Hud({
                 <b>F</b> — hold for the mist veil (dims your light, floods the world in mist, and cuts
                 how far predators can see you) — limited, watch the Veil meter
                 <br />
+                <b>F11</b> / <b>Alt+Enter</b> — fullscreen
+                <br />
                 <b>Deepwater</b> tag, top-left — reach the marked zone for a bonus Embers payout on a
                 successful run
               </>
@@ -783,8 +785,15 @@ export default function Hud({
       {/* LUL-1258: M2 Deepwater's minimal HUD panel -- decisions/missions-accepted-2026-09-01
           §2's "two collapsed lines, top-left, never occupying the play area". No
           expand-on-hold in this ship (declared simplification, spec S5) -- read-only
-          text, no touch target, so it needs no new EngineActions entry. */}
-      {state.missionKind && state.missionStatus && (
+          text, no touch target, so it needs no new EngineActions entry.
+          LUL-2442: GameMenu's open dropdown (top:56px inside #gameMenu, i.e. ~72px
+          absolute -- components/GameMenu.tsx) starts just 4px above #missionPanel's
+          own top:76px and shares its left:16px corner, so the panel's first row(s)
+          always land on top of the mission pill regardless of viewport -- LUL-1942's
+          76px push only cleared the *closed* 48px toggle button, not the open panel.
+          Same fix family as LUL-2410/2411/2414 (hide the losing element rather than
+          fight z-index) via the `menuOpen` state already plumbed to MobileControls above. */}
+      {state.missionKind && state.missionStatus && !menuOpen && (
         <div id="missionPanel">
           {MISSION_NAMES[state.missionKind]}
           <span id="missionGlyph">{state.missionStatus === 'complete' ? '●' : '○'}</span>
@@ -864,8 +873,14 @@ export default function Hud({
         <div
           id={state.hintKey === 'scent' ? 'scentTrailCaption' : 'hintCaption'}
           data-hint-key={state.hintKey ?? undefined}
+          // LUL-2459: exposed as custom properties (not left/top directly) so the
+          // short-landscape mobile breakpoint (GameCanvas.tsx) can clamp the
+          // rendered position clear of MobileControls.tsx's side columns via CSS
+          // clamp() -- the touch-control danger zone is a fixed pixel margin the
+          // engine's viewport-fraction projection can't see, and JS has no access
+          // to that CSS breakpoint's own state without duplicating it.
           style={state.hintKey && WORLD_HINT_KEYS.has(state.hintKey)
-            ? { left: `${state.hintX * 100}%`, top: `${state.hintY * 100}%` }
+            ? ({ '--hint-left': `${state.hintX * 100}%`, '--hint-top': `${state.hintY * 100}%` } as React.CSSProperties)
             : undefined}
         >
           {state.hintKey && WORLD_HINT_KEYS.has(state.hintKey) && (
@@ -964,6 +979,7 @@ export default function Hud({
         <div id="winScreen" style={{ display: 'flex' }}>
           <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
             <h1>YOU WON</h1>
+            <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} />
             <button

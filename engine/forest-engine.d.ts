@@ -120,6 +120,8 @@ declare global {
       qaLurePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => 'wolf' | 'bear' | 'lion' | null;
       /** LUL-65: seeds one synthetic scent point `age` game-seconds old at (player.x+dx, player.z+dz). */
       qaSeedScentPoint?: (dx: number, dz: number, age: number) => void;
+      /** LUL-2392: last {kind, durationMs, difficulty} the chase_gap analytics event fired with, or null if none yet this page load. */
+      qaProbeChaseGap?: () => { kind: 'wolf' | 'bear' | 'lion'; durationMs: number; difficulty: 'lantern' | 'night' | 'blackout' } | null;
       /** LUL-65: places `kind` on the drifted oldest live scent point, in `roam`. Null if none live or species not found. */
       qaProbeScentOnOldest?: (kind: 'wolf' | 'bear' | 'lion') => { age: number; dist: number } | null;
       /** LUL-65: state + distance-to-player + scentOnto() re-trigger count for `kind`. Null if not found.
@@ -156,6 +158,10 @@ declare global {
       qaStageChaseAtContact?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-1620: teleports predator[idx] onto its own current roam waypoint so the next tick's arrival/repick runs immediately; returns {x,z} or null if idx doesn't resolve. */
       qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
+      /** LUL-2505: marks every predator except idx `inert` (the same flag qaBuildScene's own parking uses) so a multi-second poll on the full map only ever sees idx's own contribution to the approach/piano threat scan, which skips inert predators entirely. Returns {idx,x,z}, or null if idx doesn't resolve. */
+      qaIsolatePredator?: (idx: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-2457: marks every predator `inert` (same flag as qaIsolatePredator), parking them off-map so a long `qaAdvance` window (e.g. the day/night ramp) can't be ended early by an ambient kill. Returns the count parked. */
+      qaClearAllPredators?: () => number;
       /** LUL-212: teleports the player to the first generated hiding spot (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of `kind` if given (LUL-2320). No predator involved. Returns the spot's kind, or null if none were generated / no prop of `kind` exists on this map. */
       qaTeleportToHideSpot?: (kind?: 'log' | 'bramble') => string | null;
       /** LUL-2311: teleports the player just outside the edge of the first cover prop of the given kind, no HIDE_KINDS check -- for asserting KeyH is a no-op beside a walkable-but-not-hide-eligible prop (e.g. 'log'). Returns the spot's kind, or null if none of that kind were generated. */
@@ -164,8 +170,9 @@ declare global {
        * see where movement actually ended up (player is init()-closure-local). */
       qaProbePlayer?: () => { x: number; z: number; yaw: number };
       /** LUL-2189/LUL-2207: the module-scope wind unit vector (windX/windZ), set once per
-       * generateMap() by generateWind() -- map-constant, not per-frame. */
-      qaProbeWind?: () => { windX: number; windZ: number };
+       * generateMap() by generateWind() -- map-constant, not per-frame. windHighSpeed
+       * (LUL-2539) is the independently-rolled high-wind flag from the same call. */
+      qaProbeWind?: () => { windX: number; windZ: number; windHighSpeed: boolean };
       /** LUL-211/LUL-288: places the player off the -x face of the first reachable
        * cover prop of `kind`, facing it, so a held KeyW walks straight into it. The
        * standoff distance is rotation-aware (props render at prop.ry), so it clears
@@ -202,6 +209,7 @@ declare global {
         rad: number;
         x: number;
         z: number;
+        gaveUpAt: number | null;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
@@ -339,6 +347,10 @@ declare global {
         deathShown: boolean;
         cutsceneSkippable: boolean;
         sinceDeath: number | null;
+        /** LUL-2461: distance in meters from CONFIG.home to the player's position at the
+         * moment triggerDeath() fired, mirroring the loss event's `distance_from_home_m`.
+         * `null` before any death this run. */
+        distanceFromHomeAtDeathM: number | null;
         video: { currentTime: number; ended: boolean; paused: boolean; readyState: number; display: string } | null;
       };
       /** LUL-2205: reads the live day/night pacing values -- timeOfRun (0 dawn
@@ -376,6 +388,13 @@ declare global {
        * to a plain roaming state (state: 'roam', hunt: false, alert: 0). Returns
        * its predators index, or null if that species didn't spawn this seed. */
       qaStagePredatorNearThrowLanding?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number } | null;
+      /** LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
+       * generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion. */
+      qaSetWindHighSpeed?: (v: boolean) => void;
+      /** LUL-2547: places predator[kind] dx/dz from the player's current position, reset to a
+       * plain roaming state. Returns its predators index and placed position, or null if that
+       * species didn't spawn this seed. */
+      qaStagePredatorNearPlayer?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
        * lets a test assert the tier's effect without waiting out real decay. */
       qaProbeScentLifetime?: () => number;
@@ -432,6 +451,9 @@ declare global {
        * gate (all keys, not just 'scent') -- the same resetHints() SettingsPanel's
        * "Reset hints" button calls in real play. */
       qaResetHints?: () => void;
+      /** LUL-2547: exposes the live chronicle buffer (normally only handed to React at
+       * win/death) so a test can assert an event was logged without ending the run. */
+      qaGetChronicle?: () => { t: number; code: string; args: Record<string, unknown> | null }[];
       /** LUL-2328: builds a minimal, exact scene -- no rng, no full
        * generateMap() -- for tests that don't need the real procedural
        * forest. Clears and replaces treeData/coverData/bogTreeData and every

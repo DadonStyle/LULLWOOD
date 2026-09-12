@@ -13,6 +13,7 @@
 import * as THREE from 'three';
 import { track } from '@/lib/analytics';
 import { jumpOffset, JUMP_DURATION } from '@/lib/game/jump';
+import { toggleFullscreen } from '@/lib/game/fullscreen';
 import {
   freshRunState,
   isPlaying,
@@ -33,6 +34,7 @@ import {
   startCharge,
   stepCharge,
   chargeSpeed,
+  CHARGE_RECOVERY,
   CHARGE_TRIGGER_MIN,
   CHARGE_TRIGGER_MAX,
 } from '@/lib/game/charge';
@@ -50,6 +52,7 @@ import {
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
   isMovingAgainstWind,
+  scentLifetimeWithWind,
   WIND_AGAINST_RADIUS_MULTIPLIER,
 } from '@/lib/game/scent';
 import {
@@ -79,7 +82,7 @@ import {
   COVER_PROBE_HZ,
 } from '@/lib/game/cover';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -96,12 +99,12 @@ import {
   BOG_OUTER_RADIUS,
 } from '@/lib/game/bog';
 import {
+  armReturnSweep,
   backOffPoint,
   canCatchInChase,
   CATCH_MARGIN,
   isCaught,
   isSniffImmune,
-  LKP_MAX_SWEEPS,
   pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
@@ -1744,7 +1747,7 @@ function updateBoom(dt){
   for(let i=0;i<BSP;i++){ bp[i*3]+=bspVel[i][0]*dt; bp[i*3+1]+=bspVel[i][1]*dt - 4*dt*e; bp[i*3+2]+=bspVel[i][2]*dt; }
   bspPts.geometry.attributes.position.needsUpdate = true;
   bspPts.material.opacity = Math.max(0, 1 - e/1.6);
-  if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*3.5));
+  if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*0.6));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
 }
 // LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
@@ -1905,7 +1908,7 @@ function makePredator(kind){
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
-    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false, sightLock:null,
+    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, chargeRecoveryT:0, inert:false, sightLock:null,
     noiseTarget:null, noiseTargetT:0 };
 }
 const predators = [];
@@ -1951,7 +1954,8 @@ function placePredators(){
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
-    p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0;
+    p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
+    p.gaveUpAt=null;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   mm.style.display = preset.minimap ? '' : 'none';
@@ -1991,9 +1995,14 @@ function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz,
 // back in.
 
 let windX = 1, windZ = 0;   // unit vector; redrawn once per generateMap(), see generateWind()
+let windHighSpeed = false;   // LUL-2539: rolled once per generateMap(), see generateWind()
 function generateWind(){
   const a = rng() * Math.PI * 2;
   windX = Math.cos(a); windZ = Math.sin(a);
+  // LUL-2539: independent one-shot generator, NOT the shared `rng` stream -- generateWind()
+  // is the last rng() consumer before generateBogTrees() (:1108), and drawing from the shared
+  // stream here would shift every later map-gen roll for the same seed (QA_PINNED_SEED drift).
+  windHighSpeed = mulberry32(currentSeed ^ 0x57494e44)() < 0.5;
 }
 
 let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 is always oldest)
@@ -2004,6 +2013,7 @@ let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 
 // 'scent' is just HINT_PRIORITY's first entry.
 let scentTrailVisible = true;   // engine-owned setting, same shape as captionsOn
 let scentLockEventCount = 0;   // bumped by scentOnto(); the 'scent' hint's dismiss-on-interaction signal
+let qaLastChaseGap = null;   // LUL-2392: last {kind, durationMs, difficulty} emitted by scentOnto()'s chase_gap track() call, QA-visible only
 let scentTrailLastFrame = { settingOn: true, rendered: false, points: [], livePoints: 0,
   captionVisible: false, captionSeen: false, veilAmount: 0, windX: 1, windZ: 0 };   // qaProbeScentTrail() snapshot, refreshed every tick
 function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrailVisible }); }
@@ -2094,6 +2104,12 @@ function resetHints(){
 }
 let hintActiveKey = null, hintActiveStartT = 0, hintDismissBaseline = 0;
 const _hintProjVec = new THREE.Vector3();   // scratch, reused every frame -- avoid per-point GC
+// LUL-2445: the fixed-height bottom touch-control row (MobileControls.tsx) eats the
+// bottom of short landscape viewports (e.g. pixel5-landscape 727x393), so a
+// world-anchored hint caption clamped all the way to 0.92 lands on top of it
+// (touchJump, 100% overlap). 0.78 leaves headroom above that row on every viewport
+// this game supports without needing a viewport-height branch.
+const HINT_Y_MAX = 0.78;
 // Projects a world point to a clamped viewport fraction, or null if it's outside the
 // camera frustum this frame. Generalizes the scent-mote projection math LUL-2230
 // introduced (was inline in the scent-only caption block) for reuse across every
@@ -2104,7 +2120,7 @@ function projectToScreen(x, y, z){
   if(!inFrustum) return null;
   return {
     x: Math.max(0.08, Math.min(0.92, (_hintProjVec.x + 1) / 2)),
-    y: Math.max(0.08, Math.min(0.92, (1 - _hintProjVec.y) / 2)),
+    y: Math.max(0.08, Math.min(HINT_Y_MAX, (1 - _hintProjVec.y) / 2)),
   };
 }
 
@@ -2112,7 +2128,7 @@ function depositScent(hot, againstWind){
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
   const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
   scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
-  while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0, effectiveScentLifetime(tierOf(embers, 'quietStep')))) scentPoints.shift();
+  while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed))) scentPoints.shift();
 }
 function checkScent(p){
   if(isCaveImmune(caveImmuneT)) return false;
@@ -2121,7 +2137,7 @@ function checkScent(p){
   const nose = p.kind === 'wolf' ? p.spec.nose * (1 - WOLF_BOG_MASK_STRENGTH * playerBogMask) : p.spec.nose;
   for(let i = scentPoints.length - 1; i >= 0; i--){
     const s = scentPoints[i], age = clock.elapsedTime - s.t0;
-    if(isScentDetected(s, age, p.x, p.z, windX, windZ, nose, effectiveScentLifetime(tierOf(embers, 'quietStep')), WRAP_SPAN)) return true;
+    if(isScentDetected(s, age, p.x, p.z, windX, windZ, nose, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed), WRAP_SPAN)) return true;
   }
   return false;
 }
@@ -2155,6 +2171,17 @@ function activateCavePower(){
 // without a tutorial or a status readout.
 function scentOnto(p){
   if(p.scentLock > 0) return;   // already tracking off a scent cue: don't re-trigger the roar
+  // LUL-2392: chase->roam gap, per difficulty tier, feeds LUL-1449 (Economist,
+  // Deeper Lungs veil-tree pricing). Only the scent channel closes this timer --
+  // see wiki game/m4-analytics-plan's 2026-09-12 addendum for why a sight/noise
+  // re-catch or a win/restart before the next scentOnto() just never reports
+  // that gap, rather than reporting it against the wrong channel.
+  if(p.gaveUpAt != null){
+    const durationMs = Math.round((clock.elapsedTime - p.gaveUpAt) * 1000);
+    track({ event: 'chase_gap', duration_ms: durationMs, difficulty });
+    qaLastChaseGap = { kind: p.kind, durationMs, difficulty };
+    p.gaveUpAt = null;
+  }
   p.alertedBy = null;   // LUL-1857: scent-driven, not the carried cry
   p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
@@ -2335,11 +2362,11 @@ function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN)
 // position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
 function effectiveDetect(p){
   if(isCaveImmune(caveImmuneT)) return 0;
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime, carrying });
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun), { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -2397,7 +2424,10 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // player already gets at :3173/:3179, applied to this predator's own (x,z).
     // LUL-1861: bog component dropped here -- LUL-1483's speed *= bogSpeedMultiplier(biomeAt(...))
     // below already applies bog once, terminally; keeping it here too double-applies it.
-    const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
+    // LUL-2422: CONFIG.speedScaleMul (default 1, set by applyQaWorldMicroPreset) folded in
+    // here so every `*pLakeMul` speed site below is scaled together -- mirrors detectScaleMul's
+    // fold-in at effectiveDetect() (LUL-2407).
+    const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake)) * (CONFIG.speedScaleMul || 1);
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
     // ticks in every state, so a lock set during `chase` has actually
@@ -2409,6 +2439,10 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // that helper's shape is deliberately pinned to scentLock/chargeCooldown
     // (see its own comment) and this field has nothing to do with either.
     if(p.sniffImmuneT > 0) p.sniffImmuneT -= dt;
+    // LUL-2457: same unconditional-every-state decay as sniffImmuneT above --
+    // see p.chargeRecoveryT's own comment at the 'cleared' branch below for
+    // why this exists.
+    if(p.chargeRecoveryT > 0) p.chargeRecoveryT -= dt;
 
     // LUL-213: an active charge owns movement outright until it resolves --
     // skips the roam/chase/investigate/flank chain below entirely, same as
@@ -2430,6 +2464,33 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // gone -- see qaChargePhase's fallback for why this is kept at all.
         p.lastCharge = { result: 'cleared', overshootDuration: p.charge.overshootDuration };
         p.charge = null; p.chargeCooldown = CHARGE_COOLDOWN;
+        // LUL-2457: every other state transition in this file that hands
+        // off to a slower behavior resets p.vx/p.vz outright (roam entry,
+        // alert/reroute/sightLock resets, etc.) -- this one didn't. p.vx/p.vz
+        // still carry the charge-sprint velocity (speed=chargeSpeed(dist),
+        // easily 4-5x a normal approach speed) when 'overshoot' hands off to
+        // 'investigate'/'approach' below, and the velocity-smoothing lerp
+        // that eases toward a new desx/desz/speed target (accel=3.6 -- see
+        // this loop's movement-integration step) doesn't erase that in one
+        // frame; it takes a good fraction of a second to bleed off. A dodge
+        // landing mid-charge (not just an unlucky exact-zero-gap case) left
+        // the predator close enough that this residual sprint velocity alone
+        // closed the gap and caught the player within a couple of frames --
+        // the LUL-213/LUL-323 bug shape recurring through a different door.
+        // Zeroing here matches every other transition's own convention and
+        // costs nothing: 'approach' re-accelerates from a stop exactly like
+        // it does for every non-charge entry into investigate.
+        p.vx = 0; p.vz = 0;
+        // LUL-2457: the velocity reset above fixes the near-instant re-catch,
+        // but a mid-window dodge can still leave the predator only a few
+        // units away, and the ordinary (unmodified, LUL-562/LUL-658)
+        // investigate/approach loop closes that on its own within a couple
+        // of real seconds even at normal speed -- no reaction window at all
+        // if the player doesn't also move. Suppress just the
+        // investigate->chase revert below (shouldRevertInvestigateToChase)
+        // for CHARGE_RECOVERY seconds; sniff/back/give-up/roam and every
+        // other transition in the loop run exactly as they already do.
+        p.chargeRecoveryT = CHARGE_RECOVERY;
         // "the animal continue... than continue normally": rejoin the
         // existing investigate/approach loop (LUL-22, not to be retuned)
         // rather than snapping straight back into a full chase mid-overshoot
@@ -2439,6 +2500,12 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       } else {
         p.charge = cs;
         facePlayer = cs.phase === 'telegraph';
+        // LUL-2469: chargeSpeed(cs.distance) intentionally not folded into pLakeMul/speedScaleMul --
+        // a charge only starts from 'chase' once canSee()+playerCanSee() both already hold (see the
+        // startCharge() call below), and canSee() is already scaled by CONFIG.detectScaleMul (LUL-2407),
+        // so on the QA micro map a charge can't begin until the predator is within the shrunk detect
+        // radius in the first place. speedScaleMul's problem case (roam wander crossing the map at full
+        // speed pre-detection) doesn't apply here.
         if(cs.phase !== 'telegraph'){ desx = p.chargeDirX; desz = p.chargeDirZ; speed = chargeSpeed(cs.distance); }
       }
     }
@@ -2541,7 +2608,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
           p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.x, WRAP_SPAN) : clamp(kept.x,-half+4,half-4);
           p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.z, WRAP_SPAN) : clamp(kept.z,-half+4,zMax-4); }
-        else { desx=wx/wd; desz=wz/wd; speed=2.3; }
+        else { desx=wx/wd; desz=wz/wd; speed=2.3*pLakeMul; }
       }
     } else if(p.state === 'chase'){
       // While scentLock (LUL-23) holds, this chase was triggered by a stale
@@ -2597,7 +2664,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
         }
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
-        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
+        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -2619,7 +2686,12 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // chase<->investigate forever at zero velocity. See
       // shouldRevertInvestigateToChase()'s comment in lib/game/predator.ts and
       // wiki game/lul223-chase-investigate-livelock for the confirmed repro.
-      if(shouldRevertInvestigateToChase(p.inv, hidden)){ p.state='chase'; }
+      // LUL-2457: p.chargeRecoveryT (armed on a dodged charge's own
+      // 'cleared' transition above) holds this predator out of the revert
+      // for a few real seconds -- see that transition's comment. Doesn't
+      // change this check's existing logic/timing for every other caller,
+      // just adds a gate that's normally already 0.
+      if(shouldRevertInvestigateToChase(p.inv, hidden) && p.chargeRecoveryT <= 0){ p.state='chase'; }
       else if(p.inv === 'approach'){
         // LUL-658: always report this tick's movement, even when it's also the
         // tick that reaches sniff range -- see stepApproach()'s comment in
@@ -2682,14 +2754,14 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN);
             p.inv = 'leave';
           }
-          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
+          else { const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       } else if(p.inv === 'leave'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); }
+        if(bd < 2){ const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       }
     } else if(p.state === 'flank'){
@@ -2713,7 +2785,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.sniffsLeft = holdOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(holdOutcome.next === 'hold') p.sniffTimer = rnd(1,4);
-          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); }
+          else { const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
@@ -2880,6 +2952,7 @@ const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
+    deathDistanceFromHomeM = null,   // LUL-2461: set by triggerDeath(), read by qaProbeDeath() + the loss telemetry event
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
@@ -2958,6 +3031,22 @@ on(window, 'keydown', e => {
   keys[e.code] = true;
   skipCutsceneIfAllowed();
   const playing = isPlaying(runState());
+  // LUL-2310: F11 (Chromium/Firefox's own fullscreen key -- see the browser
+  // collision matrix in the ticket) and Alt+Enter (the cross-browser game
+  // convention, since F11 alone does nothing on macOS without Fn held) both
+  // drive the same toggleFullscreen() the GameMenu button calls. `e.repeat`
+  // is dropped so holding either down doesn't spam requestFullscreen/exit
+  // calls every OS auto-repeat tick. preventDefault() on F11 is what stops
+  // Chromium/Firefox's *own* fullscreen handling from firing alongside this
+  // one -- without it the browser goes fullscreen but `document.
+  // fullscreenElement` stays null, so the menu label and this toggle both
+  // desync from what's on screen. Gated on `!won && !dead` (not `playing`,
+  // which also requires `entered`) so it works on the gate screen too, just
+  // not once an end screen is up.
+  if((e.code === 'F11' || (e.code === 'Enter' && e.altKey)) && !e.repeat && !won && !dead){
+    e.preventDefault();
+    toggleFullscreen();
+  }
   if(e.code === 'Escape' && playing){ if(locked) document.exitPointerLock(); else setPaused(true); }
   // LUL-26: toggle-run edge-triggers off keydown (not keyup) so the very
   // press that would have started a hold-run also starts a toggle-run --
@@ -3216,7 +3305,28 @@ function homeFireCrackle(dist){
 // leafRustle() is the only hide sound -- the former per-kind dispatch
 // (playHideSfx()) and its hollow-log knock (hollowLogSound()) are deleted,
 // not kept, since nothing could call the log branch anymore.
-function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); logChronicle('hide', { kind: spot.kind }); }
+function enterHide(spot){
+  hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true);
+  track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying });
+  logChronicle('hide', { kind: spot.kind });
+  // LUL-2547: hiding isn't silent -- a one-shot noise broadcast on entry, same shape as
+  // throwThrowable()'s per-predator loop (:4933-4947), but gated to `state === 'roam'` (the
+  // same gate the per-frame roam-branch noise check already uses, :2386) unlike throwThrowable's
+  // ungated loop. A thrown stone is a deliberate distraction meant to interrupt an active
+  // chase/hunt/charge; hiding is not -- broadcasting unconditionally would let hearNoise()
+  // downgrade an already-chasing predator straight to 'investigate', turning "duck into a bush"
+  // into a free chase-reset button. Only previously-unaware, roaming predators get newly alerted.
+  let alerted = 0;
+  for(const p of predators){
+    if(p.inert || p.state !== 'roam') continue;
+    if(checkThrowableNoise(Math.hypot(p.x - player.x, p.z - player.z), HIDE_ALERT_RADIUS)){ hearNoise(p); alerted++; }
+  }
+  logChronicle('hide_alert', { kind: spot.kind, alerted });
+  if(!hintSeen('hideAlert')){
+    markHintSeen('hideAlert');
+    if(captionsOn) pushState({ caption: 'Hiding makes noise — predators within earshot will investigate.', captionId: ++captionSeq });
+  }
+}
 function exitHide(){ if(!hidden) return; leafRustle(false); hidden = false; hideKind = null; }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
@@ -3858,10 +3968,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   };
 
   // LUL-2189/LUL-2207: exposes the module-scope wind unit vector (set once per
-  // generateMap() by generateWind(), engine/forest-engine.js:1591/1594) so a test
+  // generateMap() by generateWind(), engine/forest-engine.js:1810/1812) so a test
   // can derive #windIndicator's expected rotation instead of hardcoding an angle.
   window.ForestEngine.qaProbeWind = function(){
-    return { windX: windX, windZ: windZ };
+    return { windX: windX, windZ: windZ, windHighSpeed: windHighSpeed };
   };
 
   // Drops the player `standoff` units on the -x side of the first reachable
@@ -3977,6 +4087,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     scentPoints.push({ x: player.x + dx, z: player.z + dz, t0: clock.elapsedTime - age, radius: SCENT_RADIUS_WALK });
   };
 
+  // LUL-2392: last {kind, durationMs, difficulty} the chase_gap analytics event fired
+  // with (scentOnto()'s p.gaveUpAt consumption), or null if none has fired yet this
+  // page load. QA-only window into the tracked event -- avoids wiring a capturing
+  // sink through the engine just for a test to read what it already computed.
+  window.ForestEngine.qaProbeChaseGap = function(){
+    return qaLastChaseGap;
+  };
+
   // LUL-65: places a named predator on the drifted position of the oldest still-live
   // scent point and drops it into `roam` so checkScent()/scentOnto() run for real on
   // the next tick, the same way a wandering predator would find it -- this is what
@@ -3986,7 +4104,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeScentOnOldest = function(kind){
     if(!scentPoints.length) return null;
     const s = scentPoints[0], age = clock.elapsedTime - s.t0;
-    if(isScentExpired(age, effectiveScentLifetime(tierOf(embers, 'quietStep')))) return null;
+    if(isScentExpired(age, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed))) return null;
     const p = predators.find(pp => pp.kind === kind);
     if(!p) return null;
     const drift = scentDriftDistance(age);
@@ -4076,8 +4194,33 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       }
       if(!clear) continue;
       p.x = px; p.z = pz;
-      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
+      p.vx = p.vz = 0; p.alert = 0; p.stuckT = 0; p.sightLock = null;
+      // LUL-2457: two dead ends tried and measured live before this one --
+      // (1) leaving p.reroute/scentLock at 0: the 'chase' branch's own
+      // `p.scentLock <= 0 && !canSee(p,dist)` gate flips this predator to
+      // 'investigate'/'approach' on the very first tick (cover blocking LOS
+      // is exactly what !canSee() detects), and 'approach' movement isn't
+      // pinned to this spot -- over a several-second poll window it wanders
+      // far enough to leave detect range entirely (dist grew ~6.7 -> ~16.8
+      // over 5s). (2) giving it a live scentLock instead (mirroring
+      // stageBlindChaseThroughCover()'s fix for the same gate): keeps
+      // state='chase' but *moves* it -- the blind-chase 'else' branch always
+      // steers `desx=ux;desz=uz` straight at the player's exact position at
+      // full species speed, and predators never physically collide with
+      // cover (LUL-119/LUL-211) -- it walks straight through the prop's
+      // footprint and out the far side inside ~1s (measured: dist 6.7 -> 2.5,
+      // canSee flipped true, by 50 fixed-dt steps), long before a multi-
+      // second "still covered" assertion window ever reads it.
+      // p.reroute>0 is checked *before* p.hunt/state in updatePredators()'s
+      // branch chain, so it skips the whole canSee/chase/investigate
+      // machinery outright, not just once -- pointing its trail target
+      // (rrX/rrZ) at its own current position makes the reroute branch's own
+      // `bd > 0.4` movement gate false, so it holds position exactly, for as
+      // long as p.reroute lasts, with state/hunt left exactly as this hook's
+      // own doc comment says ("already in 'chase'"). 20s comfortably covers
+      // every existing caller's poll/advance window.
       p.state = 'chase'; p.hunt = false;
+      p.reroute = 20; p.rrX = p.x; p.rrZ = p.z;
       player.x = qx; player.z = qz;
       return idx;
     }
@@ -4138,6 +4281,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!p) return null;
     return { lkpX: p.lkpX, lkpZ: p.lkpZ, lkpSweeps: p.lkpSweeps };
   };
+
+  // [QA-HOOK] LUL-2547: exposes the live chronicle buffer (engine/forest-engine.js's own
+  // `chronicle` array, normally only handed to React at win/death) so a test can assert an event
+  // was logged without ending the run. Read-only; returns a copy so a test can't mutate engine state.
+  window.ForestEngine.qaGetChronicle = function(){ return chronicle.slice(); };
 
   // LUL-1620: finds the given species, places it `dx/dz` from the player's
   // *current* position (does not move the player, so KeyH/hidden staging
@@ -4215,6 +4363,43 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { x: p.x, z: p.z };
   };
 
+  // LUL-2505: marks every predator except idx `inert` -- the same flag
+  // qaBuildScene's own parking already relies on, which both updatePredators()
+  // (:2226) and the threat-metrics scan that computes `nearDist`/`approaching`
+  // (:5624ish, `if(p.inert) continue`) skip entirely. A test needs the *skip*,
+  // not just distance: `approaching` has no distance gate of its own -- any
+  // other predator's unrelated, independently-ticking investigate/chase/mid-
+  // sweep state holds the piano on regardless of how far away it physically
+  // is, so merely relocating the other 8 (as qaStageForceHuntApproach does for
+  // its own, single-tick-resolution purpose) does not isolate a multi-second
+  // polling window the way this hook needs to. This is exactly the "no
+  // isolation against the other 8 predators over multi-second poll windows"
+  // gap `docs/specs/lul-2329-e2e-migrate-qaworld-micro.md` already documented
+  // for this file; unlike `qaBuildScene` (which that spec avoided here because
+  // it wipes the natural cover `qaTeleportToHideSpot` depends on), flagging
+  // `inert` in place touches no cover state at all.
+  window.ForestEngine.qaIsolatePredator = function(idx){
+    const keep = predators[idx];
+    if(!keep) return null;
+    for(const other of predators){ if(other !== keep){ other.inert = true; } }
+    return { idx, x: keep.x, z: keep.z };
+  };
+
+  // LUL-2457: same `inert` flag as qaIsolatePredator above, applied to every
+  // predator with none kept -- for specs like e2e/day-night-cycle.spec.ts
+  // that hold `qaAdvance` open for two-plus minutes of game time to observe
+  // an unrelated system (the timeOfRun ramp) while the player stands still.
+  // Even at the LUL-2407/LUL-2422 QA-map-scaled detect/speed, a stationary
+  // player is well within reach of an ambient roam predator over that long a
+  // window; a mid-poll death silently stops `runElapsed` (only accumulates
+  // while `isPlaying()`), reading as a "timeOfRun undershoot" rather than
+  // the predator kill it actually is. Returns the count parked.
+  window.ForestEngine.qaClearAllPredators = function(){
+    let n = 0;
+    for(const p of predators){ if(!p.inert){ p.inert = true; p.g.visible = false; p.x = p.z = -9999; n++; } }
+    return n;
+  };
+
   // LUL-212: teleport the player to the first generated hiding spot
   // (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of
   // `kind` if given (LUL-2320, so a test can land on a specific non-hide
@@ -4268,6 +4453,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
+    // LUL-2457: LION_STANDOFF=14 was tuned against the full map's unscaled
+    // detect range (species detect 48 -- comfortably more than 14). On the
+    // micro world CONFIG.detectScaleMul shrinks effective detect to ~9.6, so
+    // the fixed 14-unit standoff falls *outside* detect range -- canSee()
+    // returns false on the very first tick, and the `p.hunt` branch in
+    // updatePredators() (the one this hook's state='chase'+hunt=true actually
+    // routes through) reads that as "lost sight" and flips to 'investigate'
+    // before any test assertion runs, never a caught-too-fast problem. Stay
+    // under whatever the map's actual effective detect range is right now
+    // (80% of it, leaving margin against the strict `<` in canSee()); on the
+    // full map this is a no-op since 0.8*48 > 14 and the min() picks 14 same
+    // as before.
+    const standoff = Math.min(LION_STANDOFF, effectiveDetect(lion) * 0.8);
     // LUL-2373: the first HIDE_KINDS spot found used to be taken unconditionally --
     // "clear sightline guaranteed" only followed from both endpoints sitting outside
     // the hide-spot's own footprint (true by construction below), but at
@@ -4283,8 +4481,8 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // Inverse rotation: (lx,lz) -> world offset (dx,dz) = (lx*co + lz*si, -lx*si + lz*co).
       const offset = spot.hx + 0.5;
       const px = spot.x + offset * co, pz = spot.z - offset * si;
-      // Lion is LION_STANDOFF more units in the same local-x direction.
-      const lx = spot.x + (offset + LION_STANDOFF) * co, lz = spot.z - (offset + LION_STANDOFF) * si;
+      // Lion is `standoff` more units in the same local-x direction.
+      const lx = spot.x + (offset + standoff) * co, lz = spot.z - (offset + standoff) * si;
       if(!geoHasLOS(lx, lz, px, pz, coverGrid, CELL, WRAP_SPAN)) continue;
       player.x = px; player.z = pz;
       lion.x = lx; lion.z = lz;
@@ -4307,7 +4505,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const dist = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
     // LUL-659: x/z added so a caller can trace lateral movement around a cover
     // prop (e.g. avoidDir() steering), not just closing distance.
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
@@ -4687,6 +4885,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return {
       dead, deathShown, cutsceneSkippable,
       sinceDeath: dead ? clock.elapsedTime - deathStart : null,
+      distanceFromHomeAtDeathM: dead ? deathDistanceFromHomeM : null,   // LUL-2461
       video: deathVideo ? { currentTime: deathVideo.currentTime, ended: deathVideo.ended,
                             paused: deathVideo.paused, readyState: deathVideo.readyState,
                             display: deathVideo.style.display } : null,
@@ -4735,10 +4934,27 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.state = 'roam'; p.hunt = false;
     return { idx };
   };
+  // [QA-HOOK] LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
+  // generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion.
+  window.ForestEngine.qaSetWindHighSpeed = function(v){ windHighSpeed = !!v; };
+  // [QA-HOOK] LUL-2547: places predator[kind] dx/dz from the *player's current position* (not a
+  // throw-landing point like qaStagePredatorNearThrowLanding) so a test can stage "predator within
+  // hide-alert radius" after qaTeleportToHideSpot() without qaBuildScene() wiping the natural cover
+  // spot that teleport depends on (same reason qaStagePredatorNearThrowLanding exists as its own
+  // hook rather than reusing qaBuildScene's predator placement).
+  window.ForestEngine.qaStagePredatorNearPlayer = function(kind, dx, dz){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    p.x = player.x + dx; p.z = player.z + dz;
+    p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+    p.state = 'roam'; p.hunt = false;
+    return { idx, x: p.x, z: p.z };
+  };
   // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
   // an e2e spec can't wait out 14s+ of real decay, so it asserts the tier's effect on this
   // number instead of on live scent-point aging.
-  window.ForestEngine.qaProbeScentLifetime = function(){ return effectiveScentLifetime(tierOf(embers, 'quietStep')); };
+  window.ForestEngine.qaProbeScentLifetime = function(){ return scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed); };
 
   // [QA-HOOK] LUL-2351: throwablesReserve + heldThrowable + the purchase-cue fire count,
   // so a spec can assert Pocket Stones granted +2 throws and that buying anything played
@@ -4879,7 +5095,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.scentLock = 0; p.scentCalls = 0;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
-      p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0;
+      p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;
       p.g.position.set(spec.x, 0, spec.z); p.g.rotation.set(0, 0, 0);
     }
     for(const p of predators){
@@ -5186,6 +5402,10 @@ function triggerDeath(kind, cause){
   const next = outcomeTriggerDeath(runState());
   if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
   dead = next.dead; hidden = false; lastHideSpot = null; coverProbeAccum = 0; deathStart = clock.elapsedTime; deathShown = false;
+  // LUL-2461: distance from home at the moment of death, not maxDistFromHome
+  // (the run's furthest point) -- the Economist's blackout-pricing model
+  // (LUL-1413) wants where the run actually ended.
+  deathDistanceFromHomeM = Math.round(Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z));
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
   const survivedSeconds = Math.max(0, deathStart - enteredAt);
@@ -5211,7 +5431,7 @@ function triggerDeath(kind, cause){
   if(!hasDiedBefore){ hasDiedBefore = true; try { localStorage.setItem(HAS_DIED_KEY, '1'); } catch(e){} }
   pushState({ deathVisible: true, deathKind: kind, deathCause: cause, lossRevealed: false, survivedSeconds,
     lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying, chronicle: chronicle.slice() });
-  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty });
+  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty, distance_from_home_m: deathDistanceFromHomeM });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -5755,9 +5975,13 @@ function stepFrame(dt, t){
     camera.rotation.set(player.pitch, player.yaw, 0);
     // LUL-1611: reveal the win text once the boom burst itself retires
     // (boomStart resets to -1 in updateBoom() at e>1.8s) instead of a
-    // wall-clock timer -- see arriveHome() for why. fireBoom() only ever
-    // fires from arriveHome(), so boomStart<0 here unambiguously means the
-    // win burst that just played has finished, not "no burst yet".
+    // wall-clock timer -- see arriveHome() for why. fireBoom() fires from
+    // the pickingUp cinematic's e>=9.3 keyframe in real play (LUL-2281) and
+    // from arriveHome() (unreachable in real play since LUL-2281 Decision 2,
+    // left in place) -- either way there is exactly one fireBoom() call per
+    // run (pickBoomed guards the cinematic path), so boomStart<0 here still
+    // unambiguously means the win burst that fired has finished, not "no
+    // burst yet".
     if(hudState.winVisible && !hudState.winRevealed && boomStart < 0) pushState({ winRevealed: true });
   }
 
@@ -6044,7 +6268,7 @@ function stepFrame(dt, t){
     const framePoints = [];
     for(let i = 0; i < scentPoints.length && n < SCENT_TRAIL_MAX; i++){
       const s = scentPoints[i], age = t - s.t0;
-      if(age < 0.6 || isScentExpired(age, effectiveScentLifetime(tierOf(embers, 'quietStep')))) continue;   // the mote under the player's own feet
+      if(age < 0.6 || isScentExpired(age, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed))) continue;   // the mote under the player's own feet
       const d = driftedScentPosition(s, age, windX, windZ);
       // Same wrapDelta() a wrapped-world checkScent() uses (lib/game/scent.ts's
       // isScentDetected), so a wrapped point renders as its nearest image to
@@ -6052,7 +6276,7 @@ function stepFrame(dt, t){
       const rx = player.x + wrapDelta(d.x, player.x, WRAP_SPAN);
       const rz = player.z + wrapDelta(d.z, player.z, WRAP_SPAN);
       const ry = 0.22 + (motionReduced() ? 0 : 0.06 * Math.sin(t*2 + i));
-      const alpha = Math.max(0, (1 - age/effectiveScentLifetime(tierOf(embers, 'quietStep'))) * (1 - 0.7*veilAmount) * (s.radius / SCENT_RADIUS_RUN));
+      const alpha = Math.max(0, (1 - age/scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed)) * (1 - 0.7*veilAmount) * (s.radius / SCENT_RADIUS_RUN));
       scentTrailPos[n*3] = rx; scentTrailPos[n*3+1] = ry; scentTrailPos[n*3+2] = rz;
       scentTrailCol[n*3]   = SCENT_TRAIL_COLOR.r * alpha;
       scentTrailCol[n*3+1] = SCENT_TRAIL_COLOR.g * alpha;
@@ -6151,7 +6375,7 @@ function stepFrame(dt, t){
     function hintWorldAnchor(key, anchor){
       if(key === 'scent'){
         return firstFrustum
-          ? { x: Math.max(0.08, Math.min(0.92, (firstFrustum.x + 1) / 2)), y: Math.max(0.08, Math.min(0.92, (1 - firstFrustum.y) / 2)) }
+          ? { x: Math.max(0.08, Math.min(0.92, (firstFrustum.x + 1) / 2)), y: Math.max(0.08, Math.min(HINT_Y_MAX, (1 - firstFrustum.y) / 2)) }
           : null;
       }
       return anchor ? projectToScreen(anchor.x, anchor.y, anchor.z) : null;

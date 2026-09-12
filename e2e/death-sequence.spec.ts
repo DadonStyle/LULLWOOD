@@ -110,4 +110,23 @@ test.describe('death sequence (qaForceDeath / qaProbeDeath)', () => {
     await page.locator('.restartBtn').evaluate((el) => (el as HTMLElement).click());
     await expect(page.locator('#deathScreen')).toBeHidden();
   });
+
+  // LUL-2461: distanceFromHomeAtDeathM feeds the same-name loss telemetry field
+  // the Economist's LUL-1413 blackout-pricing model reads -- assert the engine
+  // actually computes distance-from-home at the moment of death, not some other
+  // point (e.g. maxDistFromHome, the run's furthest point).
+  test('qaProbeDeath().distanceFromHomeAtDeathM is null before death, then the home distance at the death spot', async ({ page }) => {
+    test.setTimeout(30_000);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    expect((await qaHook(page, 'qaProbeDeath')).distanceFromHomeAtDeathM).toBeNull();
+
+    await page.evaluate(() => window.ForestEngine!.qaTeleportTo!(30, 40));
+    expect(await qaHook(page, 'qaForceDeath', 'wolf', 'hunt')).toBe(true);
+    await expect(page.locator('#deathScreen')).toBeVisible({ timeout: 5_000 });
+
+    // CONFIG.home is the origin (engine/tuning.js) -- hypot(30, 40) = 50.
+    expect((await qaHook(page, 'qaProbeDeath')).distanceFromHomeAtDeathM).toBe(50);
+  });
 });

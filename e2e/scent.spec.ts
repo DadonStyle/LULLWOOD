@@ -54,6 +54,9 @@ test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
   }) => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
+    // LUL-2539: seeds/reads a scent point without asserting an exact lifetime, but force wind
+    // off anyway as cheap, consistent insurance against the new 50/50 roll.
+    await qaHook(page, 'qaSetWindHighSpeed', false);
     // LUL-2107: park the real RAF loop -- from here on only qaAdvance() (via
     // advanceUntil below) moves simulation time.
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
@@ -165,6 +168,9 @@ test.describe('scent acquisition behind cover (LUL-196)', () => {
     // depends on). See docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-2539: seeds/reads a scent point without asserting an exact lifetime, but force wind
+    // off anyway as cheap, consistent insurance against the new 50/50 roll.
+    await qaHook(page, 'qaSetWindHighSpeed', false);
 
     // Stage: player behind cover, bear on far side.
     const staged = await page.evaluate(() =>

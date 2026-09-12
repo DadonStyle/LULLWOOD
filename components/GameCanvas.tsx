@@ -350,7 +350,7 @@ const OVERLAY_STYLE = `
     transform-origin: 50% 50%; pointer-events: none; }
 
   #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
-    font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
+    font-size: 12px; line-height: 1.3; text-align: center; color: #9fb2cd;
     text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none; opacity: 1; }
 
   /* LUL-1912's minimap-clearance push only matters while the minimap is actually
@@ -371,7 +371,22 @@ const OVERLAY_STYLE = `
      keys (WORLD_HINT_KEYS, Hud.tsx) set left/top inline from the engine-projected
      viewport fraction; translate lifts the pill clear above the world point instead
      of covering it, same as the old scent-only rule. */
+  /* LUL-2532: HINT_Y_MAX (engine/forest-engine.js) caps the raw engine fraction at
+     0.78, but that's a fixed viewport-height fraction while #actionSlot's reserved
+     region (bottom: var(--action-slot-bottom), height: var(--action-slot-height),
+     same vars #captionToast above keys off) is a fixed pixel band that differs per
+     breakpoint (24px/216px desktop vs. 190px/176px narrow) -- at a 720px-tall
+     viewport, 0.78 already lands inside that band (562px vs. the band's 480px top
+     edge), so translate(-50%,-120%)'s lift (which only clears ~20% of the pill's
+     own height above the anchor) isn't enough on its own (LUL-2532: QA caught
+     #scentTrailCaption's "↓" over .actionPromptLine at exactly this viewport/state).
+     min() re-derives the true ceiling in pixels instead. 24px covers translate's
+     ~20%-of-height clearance for the tallest realistic pill (three wrapped lines of
+     the "bear" hint text at the 240px mobile max-width below, ~57px tall) plus a
+     small visual gap -- tune it up if a future, longer HINT_TEXT entry still clips. */
   #scentTrailCaption, #hintCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
+    left: var(--hint-left, 50%);
+    top: min(var(--hint-top, 50%), calc(100% - var(--action-slot-bottom) - var(--action-slot-height) - 24px));
     max-width: 60vw; padding: 6px 14px; border-radius: 999px; pointer-events: none;
     background: rgba(18,34,34,0.6); border: 1px solid rgba(159,224,208,0.4);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
@@ -398,9 +413,15 @@ const OVERLAY_STYLE = `
      the moment caveImmuneT reaches 0, before the panel disappears). */
   #hintCaption[data-hint-key="caveImmune"] { left: 50%; top: 92px; transform: translateX(-50%); }
   /* LUL-2158 precedent (see #hint above): a fast death/win must never leave this
-     stranded over the end screen. */
+     stranded over the end screen. LUL-2411: opacity: 0 alone left the fixed-position
+     box's rect in place -- on mobile-pixel5-landscape the "deepwater" variant's
+     top:110px/left:16px rect still overlapped .actionPromptLine's "nowhere to hide --
+     HOLD" text while it (and #hintCaption) both remained painted through the
+     try-again/win-input-battery transition, tripping the deterministic bounding-box
+     audit exactly like #hint used to. display: none collapses the box itself. */
   body:has(#winScreen) #scentTrailCaption, body:has(#winScreen) #hintCaption,
-  body:has(#deathScreen) #scentTrailCaption, body:has(#deathScreen) #hintCaption { opacity: 0 !important; }
+  body:has(#deathScreen) #scentTrailCaption, body:has(#deathScreen) #hintCaption {
+    display: none !important; }
 
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;
@@ -408,7 +429,7 @@ const OVERLAY_STYLE = `
   #winScreen { position: fixed; inset: 0; z-index: 25; display: none;
     align-items: center; justify-content: center; text-align: center; padding: 24px;
     background: rgba(0,0,0,0); pointer-events: none; }
-  #winText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column;
+  #winText { opacity: 0; transition: opacity 0.5s ease; display: flex; flex-direction: column;
     align-items: center; gap: 6px; pointer-events: auto;
     background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86));
     padding: 24px; border-radius: 4px;
@@ -485,6 +506,83 @@ const OVERLAY_STYLE = `
   @media (max-height: 420px) and (pointer: coarse) and (hover: none),
          (max-height: 420px) and (max-width: 768px) {
     body { --action-slot-bottom: 190px; }
+    /* LUL-2410: --action-slot-bottom: 190px above pushes #actionSlot's rows
+       (grid-template-rows starting with the charge row) up near the very top
+       of a short landscape phone viewport (e.g. 667x375) -- there's no gap
+       left below #gate's header controls to also fit #hint's fixed top: 64px
+       band, so the objective row's .actionPromptLine sat on the same line as
+       #hint's text (73% box overlap, iPhone SE landscape). #hint is a
+       transient onboarding caption (engine fades it out 5s after enter(),
+       see the LUL-2158 comment above) and the objective/hide/throwable pills
+       in #actionSlot already carry the info a player needs at this size, so
+       drop it here rather than fight for vertical space. display: none (not
+       opacity: 0) so the box itself collapses to nothing -- the founder rule
+       is "boxes must never intersect", and an opacity-hidden #hint would
+       still occupy its top: 64px rect and keep tripping the deterministic
+       DOM-bounding-box audit even though nothing is visibly drawn there.
+       !important beats the engine's own inline hint.style.opacity writes
+       (same precedent as the win/death :has() rules above). */
+    #hint { display: none !important; }
+    /* LUL-2418: deepwater is fixed at top:110px/left:16px (the "Self/panel-anchored
+       keys" rule above), outside this media block, anchored below #missionPanel's
+       corner -- it never moves at this breakpoint. At the raised
+       --action-slot-bottom used here, #actionSlot's row 3 ("hide or veil") lands
+       right on top of it on Pixel-5-landscape (851x393). Same collision family as
+       LUL-2411, but that fix only addressed the win/death has() selector transition,
+       not this in-gameplay case. deepwater is a transient first-encounter hint
+       (LUL-2307 registry, fades once seen) and isn't in e2e/mobile/hints.spec.ts's
+       must-stay-visible set (only landmark is, per LUL-2414) -- hide it here the
+       same way #hint is. */
+    #hintCaption[data-hint-key="deepwater"] { display: none !important; }
+    /* LUL-2414: the bottom self-anchored #hintCaption family (lake/bog/stamina/
+       veil/landmark, see the "Self/panel-anchored keys" rule above) positions
+       itself at bottom: action-slot-bottom + action-slot-height + 10px --
+       190px + 176px + 10px = 376px at this breakpoint's own row/gap sizes,
+       taller than a 375px-tall viewport (iPhone SE landscape), so the pill
+       renders fully above the top edge ("offscreen" per the audit) regardless
+       of which of the five keys fires -- unlike #hint, e2e/mobile/hints.spec.ts
+       requires the landmark variant to stay legible at this exact breakpoint, so
+       hiding it outright isn't an option here. There is no room left *above*
+       #actionSlot (it now starts near the very top, see the comment above), but
+       MobileControls.tsx's touch-control wrapper (bottom: 24px + safe-area,
+       each stick/button column ~128px wide, anchored at the left/right edges via
+       justify-content: space-between) leaves a horizontally-centred gap clear of
+       both columns, in the band between #actionSlot's own bottom edge and the
+       touch-control wrapper's bottom edge. Re-anchor top (from #actionSlot's
+       bottom edge, 100vh - action-slot-bottom, plus a small gap) instead of
+       bottom, and narrow max-width so it can't reach either stick column on the
+       narrowest supported width (iPhone SE landscape, 667px). */
+    #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
+    #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
+    #hintCaption[data-hint-key="landmark"] {
+      top: calc(100vh - var(--action-slot-bottom) + 12px); bottom: auto;
+      max-width: min(60vw, 300px);
+    }
+    /* LUL-2459: the world-anchored keys (scent + WORLD_HINT_KEYS' still-unshipped
+       wolf/bear/lion/cover/throwable, Hud.tsx) track a real 3D point via the
+       engine's projectToScreen (forest-engine.js) and can land anywhere across
+       [8%,92%] of the viewport width -- unlike the self-anchored family above,
+       there's no fixed safe spot to re-home them to, so HINT_Y_MAX (LUL-2445)
+       alone doesn't help here: MobileControls.tsx's side control column (a
+       48px-radius stick + the row above it, 128px wide, plus the wrapper's 20px
+       edge padding = 148px) sits at a height that tracks viewport *height*, not
+       just the very bottom, so it can fall inside this caption's y-range on a
+       short viewport regardless of its own x-position. Confirmed on iPhone SE
+       landscape (667x375): the up-to-60vw/400px pill reached touchHide 7px past
+       its left edge even though its anchor (58.7% of 667px) wasn't near either
+       screen edge. Capping the pill at 240px (half 120px) and clamping its
+       centre to stay >=156px (148px control-column margin + 8px buffer) from
+       each edge -- minus that half-width -- keeps the rendered box clear of
+       both side columns on every viewport this breakpoint covers, without a
+       per-viewport branch (same one-global-constant approach LUL-2445 used for
+       HINT_Y_MAX). --hint-left is the raw engine fraction (Hud.tsx); the base
+       rule above uses it directly outside this breakpoint. */
+    #scentTrailCaption, #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
+    #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
+    #hintCaption[data-hint-key="throwable"] {
+      max-width: 240px;
+      left: clamp(276px, var(--hint-left, 50%), calc(100vw - 276px));
+    }
   }
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);

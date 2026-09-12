@@ -58,6 +58,15 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    // LUL-2422: this test idles at spawn through two back-to-back 8s+ windows with no
+    // player action -- on the 96u micro world (LUL-2377 default) a seeded predator can
+    // already be within its (post-LUL-2407-scaled) detect/travel range of spawn and kill
+    // the idle player before either window elapses, which reads as "the hint just never
+    // showed" (activeKey stuck null, seen never set) since triggerDeath() drops
+    // baseHintEligible via hudState.deathVisible. This test is about hint timing, not
+    // survival, so park every predator first -- same tool qaTeleportToHideSpot's own
+    // comment (`:4638`) documents for exactly this "can't be seen or scented" need.
+    await qaHook(page, 'qaBuildScene', { predators: [] });
 
     await qaHook(page, 'qaAdvance', stepsFor(0.1));
     let probe = await qaHook(page, 'qaProbeHints');
@@ -87,6 +96,12 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    // LUL-2422: park predators before the multi-round preemptive-hint drain below (up
+    // to ~33s idle at spawn) -- see the landmark test's comment above for the root
+    // cause (a seeded predator can reach and kill the idle player on the 96u micro
+    // world well inside that window, which local-qa's lul-2307-first-encounter-hints
+    // request caught as "seen.lake never becomes true").
+    await qaHook(page, 'qaBuildScene', { predators: [] });
     await clearPreemptiveHints(page);
 
     await qaHook(page, 'qaTeleportTo', CONFIG.lake.x, CONFIG.lake.z);
@@ -120,6 +135,9 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    // LUL-2422: see the landmark test's comment above -- this test idles at spawn
+    // through the same landmark-drain window before deepwater can take the slot.
+    await qaHook(page, 'qaBuildScene', { predators: [] });
 
     const mission = await qaHook(page, 'qaProbeMission');
     expect(mission?.kind).toBe('deepwater');

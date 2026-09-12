@@ -22,6 +22,11 @@ test.describe('day/night cycle (timeOfRun)', () => {
     // before the test ever gets a fixed-step handle on it.
     await qaHook(page, 'qaSetFixedStep', 1); // 1 game-second per step
     await enter(page);
+    // LUL-2457: 130s of game time is easily enough for an unrelated ambient
+    // predator to reach the stationary player even at the QA-map-scaled
+    // detect/speed -- a mid-poll kill silently stops runElapsed, reading as
+    // a timeOfRun bug instead of the ambient kill it actually is.
+    await qaHook(page, 'qaClearAllPredators');
 
     // Made to fail once on purpose: a fresh run must start at dawn, not mid-ramp.
     const atStart = await qaHook(page, 'qaProbeTimeOfRun');
@@ -62,6 +67,7 @@ test.describe('day/night cycle (timeOfRun)', () => {
     // ~1.2s settle wait otherwise runs real frames while already `playing`.
     await qaHook(page, 'qaSetFixedStep', 1);
     await enter(page);
+    await qaHook(page, 'qaClearAllPredators'); // LUL-2457: see the ramp test's comment
 
     const dawn = await qaHook(page, 'qaProbeTimeOfRun');
     // Made to fail once on purpose: at dawn the detect multiplier must be a no-op (1x).
@@ -90,6 +96,7 @@ test.describe('day/night cycle (timeOfRun)', () => {
     // settle wait otherwise runs real frames while already `playing`.
     await qaHook(page, 'qaSetFixedStep', 1);
     await enter(page);
+    await qaHook(page, 'qaClearAllPredators'); // LUL-2457: see the ramp test's comment
 
     const dawn = await qaHook(page, 'qaProbeTimeOfRun');
     expect(dawn.clock).toBe('6:00 AM');
