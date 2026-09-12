@@ -3899,8 +3899,33 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       }
       if(!clear) continue;
       p.x = px; p.z = pz;
-      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
+      p.vx = p.vz = 0; p.alert = 0; p.stuckT = 0; p.sightLock = null;
+      // LUL-2457: two dead ends tried and measured live before this one --
+      // (1) leaving p.reroute/scentLock at 0: the 'chase' branch's own
+      // `p.scentLock <= 0 && !canSee(p,dist)` gate flips this predator to
+      // 'investigate'/'approach' on the very first tick (cover blocking LOS
+      // is exactly what !canSee() detects), and 'approach' movement isn't
+      // pinned to this spot -- over a several-second poll window it wanders
+      // far enough to leave detect range entirely (dist grew ~6.7 -> ~16.8
+      // over 5s). (2) giving it a live scentLock instead (mirroring
+      // stageBlindChaseThroughCover()'s fix for the same gate): keeps
+      // state='chase' but *moves* it -- the blind-chase 'else' branch always
+      // steers `desx=ux;desz=uz` straight at the player's exact position at
+      // full species speed, and predators never physically collide with
+      // cover (LUL-119/LUL-211) -- it walks straight through the prop's
+      // footprint and out the far side inside ~1s (measured: dist 6.7 -> 2.5,
+      // canSee flipped true, by 50 fixed-dt steps), long before a multi-
+      // second "still covered" assertion window ever reads it.
+      // p.reroute>0 is checked *before* p.hunt/state in updatePredators()'s
+      // branch chain, so it skips the whole canSee/chase/investigate
+      // machinery outright, not just once -- pointing its trail target
+      // (rrX/rrZ) at its own current position makes the reroute branch's own
+      // `bd > 0.4` movement gate false, so it holds position exactly, for as
+      // long as p.reroute lasts, with state/hunt left exactly as this hook's
+      // own doc comment says ("already in 'chase'"). 20s comfortably covers
+      // every existing caller's poll/advance window.
       p.state = 'chase'; p.hunt = false;
+      p.reroute = 20; p.rrX = p.x; p.rrZ = p.z;
       player.x = qx; player.z = qz;
       return idx;
     }
@@ -4091,6 +4116,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
+    // LUL-2457: LION_STANDOFF=14 was tuned against the full map's unscaled
+    // detect range (species detect 48 -- comfortably more than 14). On the
+    // micro world CONFIG.detectScaleMul shrinks effective detect to ~9.6, so
+    // the fixed 14-unit standoff falls *outside* detect range -- canSee()
+    // returns false on the very first tick, and the `p.hunt` branch in
+    // updatePredators() (the one this hook's state='chase'+hunt=true actually
+    // routes through) reads that as "lost sight" and flips to 'investigate'
+    // before any test assertion runs, never a caught-too-fast problem. Stay
+    // under whatever the map's actual effective detect range is right now
+    // (80% of it, leaving margin against the strict `<` in canSee()); on the
+    // full map this is a no-op since 0.8*48 > 14 and the min() picks 14 same
+    // as before.
+    const standoff = Math.min(LION_STANDOFF, effectiveDetect(lion) * 0.8);
     // LUL-2373: the first HIDE_KINDS spot found used to be taken unconditionally --
     // "clear sightline guaranteed" only followed from both endpoints sitting outside
     // the hide-spot's own footprint (true by construction below), but at
@@ -4106,8 +4144,8 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // Inverse rotation: (lx,lz) -> world offset (dx,dz) = (lx*co + lz*si, -lx*si + lz*co).
       const offset = spot.hx + 0.5;
       const px = spot.x + offset * co, pz = spot.z - offset * si;
-      // Lion is LION_STANDOFF more units in the same local-x direction.
-      const lx = spot.x + (offset + LION_STANDOFF) * co, lz = spot.z - (offset + LION_STANDOFF) * si;
+      // Lion is `standoff` more units in the same local-x direction.
+      const lx = spot.x + (offset + standoff) * co, lz = spot.z - (offset + standoff) * si;
       if(!geoHasLOS(lx, lz, px, pz, coverGrid, CELL, WRAP_SPAN)) continue;
       player.x = px; player.z = pz;
       lion.x = lx; lion.z = lz;
