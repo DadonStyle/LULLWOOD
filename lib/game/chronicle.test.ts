@@ -76,6 +76,16 @@ test('formatChronicle handles hide in an unrecognized cover kind and predator_ga
   ]);
 });
 
+test('formatChronicle renders a line for hide_alert when a predator was alerted, and drops the line entirely when none were', () => {
+  const events: ChronicleEvent[] = [
+    { t: 12, code: 'hide_alert', args: { kind: 'bramble', alerted: 1 } },
+    { t: 20, code: 'hide_alert', args: { kind: 'bramble', alerted: 0 } },
+  ];
+  assert.deepEqual(formatChronicle(events), [
+    '0:12 — something stirred nearby as you went still.',
+  ]);
+});
+
 test('formatChronicle defaults a missing predator kind to "predator"', () => {
   const events: ChronicleEvent[] = [{ t: 0, code: 'scent_lock' }];
   assert.deepEqual(formatChronicle(events), ['0:00 — a predator caught your scent.']);

@@ -13,6 +13,7 @@ export type ChronicleCode =
   | 'scent_lock'
   | 'predator_gave_up'
   | 'hide'
+  | 'hide_alert'
   | 'pickup'
   | 'fog_tide_start'
   | 'fog_tide_end'
@@ -79,6 +80,9 @@ function lineFor(ev: ChronicleEvent): string {
     case 'scent_lock': return `a ${kind} caught your scent${near}.`;
     case 'predator_gave_up': return `the ${kind} lost your trail.`;
     case 'hide': return `you went still in ${HIDE_KIND_LABEL[String(a.kind)] || 'cover'}.`;
+    case 'hide_alert': return (a.alerted as number) > 0
+      ? `something stirred nearby as you went still.`
+      : '';
     case 'pickup': return 'you lifted the child.';
     case 'fog_tide_start': return 'a fog tide rolled in.';
     case 'fog_tide_end': return 'the fog tide passed.';
@@ -92,5 +96,9 @@ function lineFor(ev: ChronicleEvent): string {
 // the death/win screen -- see components/GameCanvas.tsx's #deathText/#winText
 // max-height fix landed in the same PR.
 export function formatChronicle(events: ChronicleEvent[], maxLines = 10): string[] {
-  return events.slice(-maxLines).map((ev) => `${fmtTime(ev.t)} — ${lineFor(ev)}`);
+  return events
+    .slice(-maxLines)
+    .map((ev) => ({ t: ev.t, line: lineFor(ev) }))
+    .filter((e) => e.line !== '')
+    .map((e) => `${fmtTime(e.t)} — ${e.line}`);
 }

@@ -40,6 +40,12 @@ export const CRY_NOISE_RADIUS = 32;
  * per-frame like isNoiseHeard() -- see carried-cry-fairness verdict mitigation 2. */
 export const CARRIED_NOISE_FLOOR = 0.4 * NOISE_RADIUS_WALK; // 5.6
 
+/** LUL-2547: hide-entry is a one-shot noise event, same "distance check, not a roll" shape as
+ * checkThrowableNoise() -- ducking into cover isn't silent, it's a rustle a nearby predator can
+ * notice. Default value; Game Economist owns retuning it once live `hide_alert` chronicle data
+ * (the `alerted` count below) gives a signal to tune against. */
+export const HIDE_ALERT_RADIUS = 20;
+
 /**
  * Whether a predator at `dist` from a throwable's landing point notices it. Pure
  * distance check, deliberately not probabilistic like isNoiseHeard() -- a thrown
