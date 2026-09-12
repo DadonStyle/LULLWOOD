@@ -5470,7 +5470,7 @@ function stepFrame(dt, t){
   // frame so it also holds correctly through the pickup cinematic and the
   // carry leg, not just while the movement block above is live.
   if(entered){
-    const distFromHome = 0;
+    const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
     if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
     if(!won && !dead){
       pushState({ livePileEmbers: computeDepth(maxDistFromHome) + computeSurvival(clock.elapsedTime - enteredAt) - embersSpent });
@@ -5522,7 +5522,7 @@ function stepFrame(dt, t){
     babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
     camera.position.set(player.x, eyeH + jumpY, player.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
-    const dh = 0;
+    const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
     // LUL-1255 (Ship 1 wayfinding S5): same tempo-carries-distance shape as
     // cryTimer (S3d) -- 5.5s far, 2s close, density rising as dh shrinks.
     homeFireTimer -= dt;
