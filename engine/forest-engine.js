@@ -82,7 +82,7 @@ import {
   COVER_PROBE_HZ,
 } from '@/lib/game/cover';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -1560,7 +1560,7 @@ function updateBoom(dt){
   for(let i=0;i<BSP;i++){ bp[i*3]+=bspVel[i][0]*dt; bp[i*3+1]+=bspVel[i][1]*dt - 4*dt*e; bp[i*3+2]+=bspVel[i][2]*dt; }
   bspPts.geometry.attributes.position.needsUpdate = true;
   bspPts.material.opacity = Math.max(0, 1 - e/1.6);
-  if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*3.5));
+  if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*0.6));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
 }
 // LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
@@ -3118,7 +3118,28 @@ function homeFireCrackle(dist){
 // leafRustle() is the only hide sound -- the former per-kind dispatch
 // (playHideSfx()) and its hollow-log knock (hollowLogSound()) are deleted,
 // not kept, since nothing could call the log branch anymore.
-function enterHide(spot){ hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true); track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying }); logChronicle('hide', { kind: spot.kind }); }
+function enterHide(spot){
+  hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true);
+  track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying });
+  logChronicle('hide', { kind: spot.kind });
+  // LUL-2547: hiding isn't silent -- a one-shot noise broadcast on entry, same shape as
+  // throwThrowable()'s per-predator loop (:4933-4947), but gated to `state === 'roam'` (the
+  // same gate the per-frame roam-branch noise check already uses, :2386) unlike throwThrowable's
+  // ungated loop. A thrown stone is a deliberate distraction meant to interrupt an active
+  // chase/hunt/charge; hiding is not -- broadcasting unconditionally would let hearNoise()
+  // downgrade an already-chasing predator straight to 'investigate', turning "duck into a bush"
+  // into a free chase-reset button. Only previously-unaware, roaming predators get newly alerted.
+  let alerted = 0;
+  for(const p of predators){
+    if(p.inert || p.state !== 'roam') continue;
+    if(checkThrowableNoise(Math.hypot(p.x - player.x, p.z - player.z), HIDE_ALERT_RADIUS)){ hearNoise(p); alerted++; }
+  }
+  logChronicle('hide_alert', { kind: spot.kind, alerted });
+  if(!hintSeen('hideAlert')){
+    markHintSeen('hideAlert');
+    if(captionsOn) pushState({ caption: 'Hiding makes noise — predators within earshot will investigate.', captionId: ++captionSeq });
+  }
+}
 function exitHide(){ if(!hidden) return; leafRustle(false); hidden = false; hideKind = null; }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
@@ -4051,6 +4072,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { lkpX: p.lkpX, lkpZ: p.lkpZ, lkpSweeps: p.lkpSweeps };
   };
 
+  // [QA-HOOK] LUL-2547: exposes the live chronicle buffer (engine/forest-engine.js's own
+  // `chronicle` array, normally only handed to React at win/death) so a test can assert an event
+  // was logged without ending the run. Read-only; returns a copy so a test can't mutate engine state.
+  window.ForestEngine.qaGetChronicle = function(){ return chronicle.slice(); };
+
   // LUL-1620: finds the given species, places it `dx/dz` from the player's
   // *current* position (does not move the player, so KeyH/hidden staging
   // done before this call survives it), and arms it one tick away from the
@@ -4701,6 +4727,20 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // [QA-HOOK] LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
   // generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion.
   window.ForestEngine.qaSetWindHighSpeed = function(v){ windHighSpeed = !!v; };
+  // [QA-HOOK] LUL-2547: places predator[kind] dx/dz from the *player's current position* (not a
+  // throw-landing point like qaStagePredatorNearThrowLanding) so a test can stage "predator within
+  // hide-alert radius" after qaTeleportToHideSpot() without qaBuildScene() wiping the natural cover
+  // spot that teleport depends on (same reason qaStagePredatorNearThrowLanding exists as its own
+  // hook rather than reusing qaBuildScene's predator placement).
+  window.ForestEngine.qaStagePredatorNearPlayer = function(kind, dx, dz){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    p.x = player.x + dx; p.z = player.z + dz;
+    p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
+    p.state = 'roam'; p.hunt = false;
+    return { idx, x: p.x, z: p.z };
+  };
   // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
   // an e2e spec can't wait out 14s+ of real decay, so it asserts the tier's effect on this
   // number instead of on live scent-point aging.
@@ -5698,9 +5738,13 @@ function stepFrame(dt, t){
     camera.rotation.set(player.pitch, player.yaw, 0);
     // LUL-1611: reveal the win text once the boom burst itself retires
     // (boomStart resets to -1 in updateBoom() at e>1.8s) instead of a
-    // wall-clock timer -- see arriveHome() for why. fireBoom() only ever
-    // fires from arriveHome(), so boomStart<0 here unambiguously means the
-    // win burst that just played has finished, not "no burst yet".
+    // wall-clock timer -- see arriveHome() for why. fireBoom() fires from
+    // the pickingUp cinematic's e>=9.3 keyframe in real play (LUL-2281) and
+    // from arriveHome() (unreachable in real play since LUL-2281 Decision 2,
+    // left in place) -- either way there is exactly one fireBoom() call per
+    // run (pickBoomed guards the cinematic path), so boomStart<0 here still
+    // unambiguously means the win burst that fired has finished, not "no
+    // burst yet".
     if(hudState.winVisible && !hudState.winRevealed && boomStart < 0) pushState({ winRevealed: true });
   }
 

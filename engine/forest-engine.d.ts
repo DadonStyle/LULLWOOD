@@ -368,6 +368,10 @@ declare global {
       /** LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
        * generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion. */
       qaSetWindHighSpeed?: (v: boolean) => void;
+      /** LUL-2547: places predator[kind] dx/dz from the player's current position, reset to a
+       * plain roaming state. Returns its predators index and placed position, or null if that
+       * species didn't spawn this seed. */
+      qaStagePredatorNearPlayer?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
        * lets a test assert the tier's effect without waiting out real decay. */
       qaProbeScentLifetime?: () => number;
@@ -424,6 +428,9 @@ declare global {
        * gate (all keys, not just 'scent') -- the same resetHints() SettingsPanel's
        * "Reset hints" button calls in real play. */
       qaResetHints?: () => void;
+      /** LUL-2547: exposes the live chronicle buffer (normally only handed to React at
+       * win/death) so a test can assert an event was logged without ending the run. */
+      qaGetChronicle?: () => { t: number; code: string; args: Record<string, unknown> | null }[];
       /** LUL-2328: builds a minimal, exact scene -- no rng, no full
        * generateMap() -- for tests that don't need the real procedural
        * forest. Clears and replaces treeData/coverData/bogTreeData and every

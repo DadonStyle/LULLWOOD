@@ -35,7 +35,21 @@ const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 // * STAMINA_SPRINT_MUL = 6 * 1.8 = 10.8) + CHASE_GAP (28) / budget (6) =
 // ~15.47 u/s. Not PSPEC_BASE's static tuning.js literal (8.5) -- that field
 // is overwritten at module load by this derived value.
-const WOLF_FULL_SPEED = 10.8 + 28 / 6;
+//
+// LUL-2457: boot() (e2e/helpers.ts) has defaulted to qaWorld=micro since
+// LUL-2377 (this spec predates that change) -- applyQaWorldMicroPreset()
+// (engine/tuning.js) sets CONFIG.speedScaleMul=0.2, folded into every
+// predator's pLakeMul in updatePredators() (forest-engine.js), the same site
+// e2e/qa-world-micro.spec.ts's speedScaleMul describe block asserts against.
+// Actual on-map movement is therefore 0.2x this raw formula, not the formula
+// itself -- un-scaled, this test asserted a floor 5x higher than the wolf can
+// ever actually move on the micro map and failed deterministically (CI run
+// 34686862465, shard 2/6, head 38eac238: "wolf only closed 9.02u over 3s"
+// against an un-scaled floor of 23.2u). The engine behavior this spec exists
+// to guard (LUL-2246's chase-not-approach collapse) was never broken; only
+// this assertion's math was stale.
+const QA_WORLD_MICRO_SPEED_SCALE = 0.2;
+const WOLF_FULL_SPEED = (10.8 + 28 / 6) * QA_WORLD_MICRO_SPEED_SCALE;
 
 test.describe('force-hunt escalation blind-chases at full species speed instead of collapsing to slow approach (LUL-2246)', () => {
   test('escalated hunt losing sight lands in chase, not investigate, and keeps closing distance', async ({ page }) => {
