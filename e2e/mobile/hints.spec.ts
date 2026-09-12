@@ -90,6 +90,25 @@ for (const viewport of VIEWPORTS) {
       await expect(caption).not.toContainText('landmarks in the fog are safe to navigate by');
     });
 
+    // LUL-2418: deepwater's #hintCaption is fixed at top:110px/left:16px outside this
+    // media block (Self/panel-anchored keys rule above), which used to collide with
+    // #actionSlot's raised row stack at this breakpoint. GameCanvas.tsx now hides it
+    // here the same way #hint is -- deepwater isn't in the must-stay-visible set
+    // (only landmark is, per LUL-2414), so hiding it outright is correct.
+    test('the deepwater hint stays hidden at this breakpoint (LUL-2418)', async ({ page }) => {
+      await boot(page, { qaHooks: true });
+      await enterMobile(page);
+      await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+      await qaHook(page, 'qaBuildScene', { predators: [] });
+
+      await qaHook(page, 'qaAdvance', stepsFor(0.1));
+      expect((await qaHook(page, 'qaProbeHints')).activeKey).toBe('landmark');
+      await qaHook(page, 'qaAdvance', stepsFor(8.1));
+      expect((await qaHook(page, 'qaProbeHints')).activeKey).toBe('deepwater');
+
+      await expect(page.locator('#hintCaption[data-hint-key="deepwater"]')).toBeHidden();
+    });
+
     test('the lake hint appears on first entry into the water, not on a second visit', async ({ page }) => {
       await boot(page, { qaHooks: true });
       await enterMobile(page);

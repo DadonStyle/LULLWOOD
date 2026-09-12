@@ -509,6 +509,17 @@ const OVERLAY_STYLE = `
        !important beats the engine's own inline hint.style.opacity writes
        (same precedent as the win/death :has() rules above). */
     #hint { display: none !important; }
+    /* LUL-2418: deepwater is fixed at top:110px/left:16px (the "Self/panel-anchored
+       keys" rule above), outside this media block, anchored below #missionPanel's
+       corner -- it never moves at this breakpoint. At the raised
+       --action-slot-bottom used here, #actionSlot's row 3 ("hide or veil") lands
+       right on top of it on Pixel-5-landscape (851x393). Same collision family as
+       LUL-2411, but that fix only addressed the win/death has() selector transition,
+       not this in-gameplay case. deepwater is a transient first-encounter hint
+       (LUL-2307 registry, fades once seen) and isn't in e2e/mobile/hints.spec.ts's
+       must-stay-visible set (only landmark is, per LUL-2414) -- hide it here the
+       same way #hint is. */
+    #hintCaption[data-hint-key="deepwater"] { display: none !important; }
     /* LUL-2414: the bottom self-anchored #hintCaption family (lake/bog/stamina/
        veil/landmark, see the "Self/panel-anchored keys" rule above) positions
        itself at bottom: action-slot-bottom + action-slot-height + 10px --
