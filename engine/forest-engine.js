@@ -2131,6 +2131,15 @@ function depositScent(hot, againstWind){
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
   const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
   scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
+  pruneScentPoints();
+}
+// LUL-2471: pruning was only ever run from depositScent(), so standing still
+// (no new deposit) left fully-decayed points sitting in the array forever --
+// qaProbeScentTrail().livePoints never reached 0 even though the rendered
+// trail had already faded. Called unconditionally once per stepFrame() tick
+// below, mirroring the LUL-2249 updateStreamedChunks() precedent for
+// movement-independent per-tick work.
+function pruneScentPoints(){
   while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed))) scentPoints.shift();
 }
 function checkScent(p){
@@ -5929,6 +5938,10 @@ function stepFrame(dt, t){
   // Cheap when the player's chunk hasn't changed (two Math.floor + a
   // compare) -- see updateStreamedChunks()'s own early return.
   updateStreamedChunks(false);
+  // LUL-2471: same reasoning as updateStreamedChunks(false) above -- must run
+  // every tick regardless of movement, or a stationary player's fully-decayed
+  // scent points never leave the array.
+  pruneScentPoints();
 
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this
