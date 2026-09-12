@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6578 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5823, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6618 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5857, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1398,17 +1398,17 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5278, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5399 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5434). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5319, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5463 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5504). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5434) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L5408) rather than recomputed later, since `player.x/z` can move on
+  (L5504) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L5472) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1455,7 +1455,7 @@ design doc as turning horror into radar.
     and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3696) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3716) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1787,16 +1787,31 @@ design doc as turning horror into radar.
   fully-drained mist-veil (`KeyF`) back to its unlock threshold instead of locking it out, the
   next time a full drain would otherwise happen. Second in-run Embers spend site, after Deeper
   Lungs (which is a between-run purchase, not in-run).
-- Purchase gate `canBuyVeilCharm`, computed every tick (`engine/forest-engine.js:4137`):
+- Purchase gate `canBuyVeilCharm`, computed every tick (`engine/forest-engine.js:6162`):
   `!carrying && !veilReserve && distStoneMarker < VEIL_CHARM_INTERACT_RADIUS &&
   computeDepth(maxDistFromHome) >= VEIL_CHARM_PRICE`. `VEIL_CHARM_INTERACT_RADIUS` (4 units,
   `engine/tuning.js:68`) and `VEIL_CHARM_PRICE` (15, `lib/game/economy.ts:74`).
-- `buyVeilCharm()` (`engine/forest-engine.js:3445`): sets `veilReserve = true`, adds
+- `buyVeilCharm()` (`engine/forest-engine.js:5207`): sets `veilReserve = true`, adds
   `VEIL_CHARM_PRICE` to `embersSpent`, fires a caption + `feature_engagement`/`veil_charm`
   telemetry event.
 - `stepVeilCharge()`'s `reserve` branch (`lib/game/veil.ts:59`): on a full drain, if `reserve` is
   true it snaps `charge` back to the unlock threshold and clears `reserve` instead of setting
   `locked`; identical to prior behaviour when `reserve` is false.
+- **Cue triple (LUL-2331/LUL-2321 Part 1).** Explain: the persistent offer prompt (below) names
+  the mechanic. Purchase tell: `buyVeilCharm()` calls the existing `embersPurchaseCue()`
+  (`engine/forest-engine.js:5345`, shared with every `SHOP_CATALOG` item) and sets
+  `stoneMarkerPulseT = 0.6`, a one-shot boost on top of the Stone Marker's ambient beacon-glow
+  pulse (`engine/forest-engine.js`, the `landmarkBeaconGlows` loop, ~`:6331-6340`), decayed
+  once per frame in `tick()`. Activation tell: the `reserveFired` block calls the new
+  `veilCharmReleaseCue()` (`engine/forest-engine.js:5361`, a descending 880→440Hz sweep, the
+  inverse of `embersPurchaseCue()`'s rising one, so the two are distinguishable by sound alone)
+  and `Hud.tsx` eases its own rendered `veilCharge` readout up over 0.4s
+  (`useVeilMeterRamp`, `components/Hud.tsx:650`) with a brief flash class on `#veilState`,
+  skipped outright when `reducedMotion` is set. `veilReserve` is exposed to React via
+  `pushState` for a `#veilCharmPip` (`✦`) next to `#veilState` while a charm is banked — note
+  `#veilState` lives inside `#panel`, hidden by default (admin-mode-gated, `e2e/admin-mode.spec.ts`),
+  so the pip/eased-meter are dev-visible only; the audio cues, the beacon pulse, and the prompt
+  text below are the player-visible/audible tells.
 
 **What it can do**
 - Reachable via both interact paths: desktop `KeyE` and mobile `triggerTouchInteract()` (the
@@ -1818,11 +1833,15 @@ design doc as turning horror into radar.
 
 **Behaviours & logic**
 - Reset per-run: `veilReserve = false; embersSpent = 0;` in `enter()`.
-- HUD prompt text (`engine/forest-engine.js`, the `objectiveText`/`objectiveReady` `pushState()`
-  block): `'Press  E  for a mist-charm  ·  15 embers'` when `canBuyVeilCharm` and no higher-priority
-  prompt (pickup/carry/mission) applies; `objectiveReady` is `canPickup || canBuyVeilCharm`.
+- HUD prompt text (`engine/forest-engine.js:6238`, the `objectiveText`/`objectiveReady`
+  `pushState()` block): `'Press  E  for a mist-charm  ·  15 embers  ·  saves your veil from
+  locking, once'` (LUL-2331) when `canBuyVeilCharm` and no higher-priority prompt (pickup/carry/
+  mission) applies; `objectiveReady` is `canPickup || canBuyVeilCharm`.
 - `RunRecap` (`components/Hud.tsx`) renders a `· −{payout.spent} charm` fragment when
   `payout.spent > 0`, so the earnings breakdown still reads as sums to `total` after a spend.
+- QA hooks (LUL-2331): `qaTeleportNearStoneMarker()` (`engine/forest-engine.js:4989`) teleports
+  2 units off the landmark's live position; `qaProbeVeil()` (`:4996`) returns
+  `{ charge, locked, reserve, releaseCueCount }`.
 
 **Collision & physics profile**
 - N/A — not a spatial/world object of its own. Uses the Stone Marker landmark's existing

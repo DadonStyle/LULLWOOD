@@ -623,6 +623,13 @@ const OVERLAY_STYLE = `
     .actionPromptLine { animation: none; }
     .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: none; background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); } }
 
+  /* LUL-2331: mist-charm activation tell -- Hud.tsx toggles this class for the same
+     400ms window it eases #veilState's displayed number up in (useVeilMeterRamp),
+     skipped entirely (class never applied) when state.reducedMotion is set. */
+  #veilState.veilRefillFlash { animation: veilRefillFlash 400ms ease-out; }
+  @keyframes veilRefillFlash {
+    from { color: #cfe8ff; } to { color: inherit; } }
+
   /* LUL-213/LUL-304: charge-dodge countdown bar -- durationSeconds comes from
      CHARGE_WINDOW (lib/game/charge.ts) as an inline style on the element
      itself now (components/Hud.tsx), not spliced into this stylesheet, so the
