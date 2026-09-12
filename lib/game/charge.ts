@@ -53,6 +53,22 @@ export const CHARGE_WINDOW = 1;
 export const CHARGE_TELL_TIME = 0.35;
 export const CHARGE_RUN_TIME = CHARGE_WINDOW - CHARGE_TELL_TIME;
 
+// LUL-2457: how long a predator stays unable to re-enter 'chase' via the
+// ordinary investigate->chase revert (lib/game/predator.ts
+// shouldRevertInvestigateToChase()) right after this same charge is
+// successfully dodged. A dodge that lands near the middle of the charging
+// sub-phase can still leave the predator only a few units away once
+// 'overshoot' resolves (see ChargeState.overshootDuration's own doc comment
+// -- the "repeats the run" math is symmetric, so it crosses back through the
+// exact original gap partway through the window, not just at the two
+// extremes review already covered). Sized the same generous way the LUL-2107
+// e2e budget sizes its own "let the charge fully resolve" window
+// (`(CHARGE_WINDOW + CHARGE_RUN_TIME) * 2`) -- long enough that a dodge
+// anywhere in the window gets a real, human-reaction-length gap before the
+// same predator can bite again, not just however many frames its own
+// residual overshoot position happens to leave.
+export const CHARGE_RECOVERY = (CHARGE_WINDOW + CHARGE_RUN_TIME) * 2;
+
 /** Per-frame trigger roll. `dist` is the live predator-to-player distance;
  * `dt` the frame's clamped delta (game time, not wall time -- see wiki
  * systems/dt-clamp-vs-walltime). Pass `rand` to make a test deterministic. */

@@ -34,6 +34,7 @@ import {
   startCharge,
   stepCharge,
   chargeSpeed,
+  CHARGE_RECOVERY,
   CHARGE_TRIGGER_MIN,
   CHARGE_TRIGGER_MAX,
 } from '@/lib/game/charge';
@@ -1719,7 +1720,7 @@ function makePredator(kind){
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
-    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false, sightLock:null,
+    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, chargeRecoveryT:0, inert:false, sightLock:null,
     noiseTarget:null, noiseTargetT:0 };
 }
 const predators = [];
@@ -1765,7 +1766,7 @@ function placePredators(){
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
-    p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0;
+    p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
     p.gaveUpAt=null;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
@@ -2245,6 +2246,10 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // that helper's shape is deliberately pinned to scentLock/chargeCooldown
     // (see its own comment) and this field has nothing to do with either.
     if(p.sniffImmuneT > 0) p.sniffImmuneT -= dt;
+    // LUL-2457: same unconditional-every-state decay as sniffImmuneT above --
+    // see p.chargeRecoveryT's own comment at the 'cleared' branch below for
+    // why this exists.
+    if(p.chargeRecoveryT > 0) p.chargeRecoveryT -= dt;
 
     // LUL-213: an active charge owns movement outright until it resolves --
     // skips the roam/chase/investigate/flank chain below entirely, same as
@@ -2266,6 +2271,33 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // gone -- see qaChargePhase's fallback for why this is kept at all.
         p.lastCharge = { result: 'cleared', overshootDuration: p.charge.overshootDuration };
         p.charge = null; p.chargeCooldown = CHARGE_COOLDOWN;
+        // LUL-2457: every other state transition in this file that hands
+        // off to a slower behavior resets p.vx/p.vz outright (roam entry,
+        // alert/reroute/sightLock resets, etc.) -- this one didn't. p.vx/p.vz
+        // still carry the charge-sprint velocity (speed=chargeSpeed(dist),
+        // easily 4-5x a normal approach speed) when 'overshoot' hands off to
+        // 'investigate'/'approach' below, and the velocity-smoothing lerp
+        // that eases toward a new desx/desz/speed target (accel=3.6 -- see
+        // this loop's movement-integration step) doesn't erase that in one
+        // frame; it takes a good fraction of a second to bleed off. A dodge
+        // landing mid-charge (not just an unlucky exact-zero-gap case) left
+        // the predator close enough that this residual sprint velocity alone
+        // closed the gap and caught the player within a couple of frames --
+        // the LUL-213/LUL-323 bug shape recurring through a different door.
+        // Zeroing here matches every other transition's own convention and
+        // costs nothing: 'approach' re-accelerates from a stop exactly like
+        // it does for every non-charge entry into investigate.
+        p.vx = 0; p.vz = 0;
+        // LUL-2457: the velocity reset above fixes the near-instant re-catch,
+        // but a mid-window dodge can still leave the predator only a few
+        // units away, and the ordinary (unmodified, LUL-562/LUL-658)
+        // investigate/approach loop closes that on its own within a couple
+        // of real seconds even at normal speed -- no reaction window at all
+        // if the player doesn't also move. Suppress just the
+        // investigate->chase revert below (shouldRevertInvestigateToChase)
+        // for CHARGE_RECOVERY seconds; sniff/back/give-up/roam and every
+        // other transition in the loop run exactly as they already do.
+        p.chargeRecoveryT = CHARGE_RECOVERY;
         // "the animal continue... than continue normally": rejoin the
         // existing investigate/approach loop (LUL-22, not to be retuned)
         // rather than snapping straight back into a full chase mid-overshoot
@@ -2461,7 +2493,12 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // chase<->investigate forever at zero velocity. See
       // shouldRevertInvestigateToChase()'s comment in lib/game/predator.ts and
       // wiki game/lul223-chase-investigate-livelock for the confirmed repro.
-      if(shouldRevertInvestigateToChase(p.inv, hidden)){ p.state='chase'; }
+      // LUL-2457: p.chargeRecoveryT (armed on a dodged charge's own
+      // 'cleared' transition above) holds this predator out of the revert
+      // for a few real seconds -- see that transition's comment. Doesn't
+      // change this check's existing logic/timing for every other caller,
+      // just adds a gate that's normally already 0.
+      if(shouldRevertInvestigateToChase(p.inv, hidden) && p.chargeRecoveryT <= 0){ p.state='chase'; }
       else if(p.inv === 'approach'){
         // LUL-658: always report this tick's movement, even when it's also the
         // tick that reaches sniff range -- see stepApproach()'s comment in
@@ -3920,8 +3957,33 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       }
       if(!clear) continue;
       p.x = px; p.z = pz;
-      p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
+      p.vx = p.vz = 0; p.alert = 0; p.stuckT = 0; p.sightLock = null;
+      // LUL-2457: two dead ends tried and measured live before this one --
+      // (1) leaving p.reroute/scentLock at 0: the 'chase' branch's own
+      // `p.scentLock <= 0 && !canSee(p,dist)` gate flips this predator to
+      // 'investigate'/'approach' on the very first tick (cover blocking LOS
+      // is exactly what !canSee() detects), and 'approach' movement isn't
+      // pinned to this spot -- over a several-second poll window it wanders
+      // far enough to leave detect range entirely (dist grew ~6.7 -> ~16.8
+      // over 5s). (2) giving it a live scentLock instead (mirroring
+      // stageBlindChaseThroughCover()'s fix for the same gate): keeps
+      // state='chase' but *moves* it -- the blind-chase 'else' branch always
+      // steers `desx=ux;desz=uz` straight at the player's exact position at
+      // full species speed, and predators never physically collide with
+      // cover (LUL-119/LUL-211) -- it walks straight through the prop's
+      // footprint and out the far side inside ~1s (measured: dist 6.7 -> 2.5,
+      // canSee flipped true, by 50 fixed-dt steps), long before a multi-
+      // second "still covered" assertion window ever reads it.
+      // p.reroute>0 is checked *before* p.hunt/state in updatePredators()'s
+      // branch chain, so it skips the whole canSee/chase/investigate
+      // machinery outright, not just once -- pointing its trail target
+      // (rrX/rrZ) at its own current position makes the reroute branch's own
+      // `bd > 0.4` movement gate false, so it holds position exactly, for as
+      // long as p.reroute lasts, with state/hunt left exactly as this hook's
+      // own doc comment says ("already in 'chase'"). 20s comfortably covers
+      // every existing caller's poll/advance window.
       p.state = 'chase'; p.hunt = false;
+      p.reroute = 20; p.rrX = p.x; p.rrZ = p.z;
       player.x = qx; player.z = qz;
       return idx;
     }
@@ -4081,6 +4143,21 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { idx, x: keep.x, z: keep.z };
   };
 
+  // LUL-2457: same `inert` flag as qaIsolatePredator above, applied to every
+  // predator with none kept -- for specs like e2e/day-night-cycle.spec.ts
+  // that hold `qaAdvance` open for two-plus minutes of game time to observe
+  // an unrelated system (the timeOfRun ramp) while the player stands still.
+  // Even at the LUL-2407/LUL-2422 QA-map-scaled detect/speed, a stationary
+  // player is well within reach of an ambient roam predator over that long a
+  // window; a mid-poll death silently stops `runElapsed` (only accumulates
+  // while `isPlaying()`), reading as a "timeOfRun undershoot" rather than
+  // the predator kill it actually is. Returns the count parked.
+  window.ForestEngine.qaClearAllPredators = function(){
+    let n = 0;
+    for(const p of predators){ if(!p.inert){ p.inert = true; p.g.visible = false; p.x = p.z = -9999; n++; } }
+    return n;
+  };
+
   // LUL-212: teleport the player to the first generated hiding spot
   // (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of
   // `kind` if given (LUL-2320, so a test can land on a specific non-hide
@@ -4134,6 +4211,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
+    // LUL-2457: LION_STANDOFF=14 was tuned against the full map's unscaled
+    // detect range (species detect 48 -- comfortably more than 14). On the
+    // micro world CONFIG.detectScaleMul shrinks effective detect to ~9.6, so
+    // the fixed 14-unit standoff falls *outside* detect range -- canSee()
+    // returns false on the very first tick, and the `p.hunt` branch in
+    // updatePredators() (the one this hook's state='chase'+hunt=true actually
+    // routes through) reads that as "lost sight" and flips to 'investigate'
+    // before any test assertion runs, never a caught-too-fast problem. Stay
+    // under whatever the map's actual effective detect range is right now
+    // (80% of it, leaving margin against the strict `<` in canSee()); on the
+    // full map this is a no-op since 0.8*48 > 14 and the min() picks 14 same
+    // as before.
+    const standoff = Math.min(LION_STANDOFF, effectiveDetect(lion) * 0.8);
     // LUL-2373: the first HIDE_KINDS spot found used to be taken unconditionally --
     // "clear sightline guaranteed" only followed from both endpoints sitting outside
     // the hide-spot's own footprint (true by construction below), but at
@@ -4149,8 +4239,8 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // Inverse rotation: (lx,lz) -> world offset (dx,dz) = (lx*co + lz*si, -lx*si + lz*co).
       const offset = spot.hx + 0.5;
       const px = spot.x + offset * co, pz = spot.z - offset * si;
-      // Lion is LION_STANDOFF more units in the same local-x direction.
-      const lx = spot.x + (offset + LION_STANDOFF) * co, lz = spot.z - (offset + LION_STANDOFF) * si;
+      // Lion is `standoff` more units in the same local-x direction.
+      const lx = spot.x + (offset + standoff) * co, lz = spot.z - (offset + standoff) * si;
       if(!geoHasLOS(lx, lz, px, pz, coverGrid, CELL, WRAP_SPAN)) continue;
       player.x = px; player.z = pz;
       lion.x = lx; lion.z = lz;
@@ -4729,7 +4819,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.scentLock = 0; p.scentCalls = 0;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
-      p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0;
+      p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;
       p.g.position.set(spec.x, 0, spec.z); p.g.rotation.set(0, 0, 0);
     }
     for(const p of predators){

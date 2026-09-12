@@ -137,6 +137,8 @@ declare global {
       qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
       /** LUL-2505: marks every predator except idx `inert` (the same flag qaBuildScene's own parking uses) so a multi-second poll on the full map only ever sees idx's own contribution to the approach/piano threat scan, which skips inert predators entirely. Returns {idx,x,z}, or null if idx doesn't resolve. */
       qaIsolatePredator?: (idx: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-2457: marks every predator `inert` (same flag as qaIsolatePredator), parking them off-map so a long `qaAdvance` window (e.g. the day/night ramp) can't be ended early by an ambient kill. Returns the count parked. */
+      qaClearAllPredators?: () => number;
       /** LUL-212: teleports the player to the first generated hiding spot (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of `kind` if given (LUL-2320). No predator involved. Returns the spot's kind, or null if none were generated / no prop of `kind` exists on this map. */
       qaTeleportToHideSpot?: (kind?: 'log' | 'bramble') => string | null;
       /** LUL-2311: teleports the player just outside the edge of the first cover prop of the given kind, no HIDE_KINDS check -- for asserting KeyH is a no-op beside a walkable-but-not-hide-eligible prop (e.g. 'log'). Returns the spot's kind, or null if none of that kind were generated. */
