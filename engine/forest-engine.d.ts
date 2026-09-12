@@ -97,6 +97,8 @@ declare global {
       qaLurePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => 'wolf' | 'bear' | 'lion' | null;
       /** LUL-65: seeds one synthetic scent point `age` game-seconds old at (player.x+dx, player.z+dz). */
       qaSeedScentPoint?: (dx: number, dz: number, age: number) => void;
+      /** LUL-2392: last {kind, durationMs, difficulty} the chase_gap analytics event fired with, or null if none yet this page load. */
+      qaProbeChaseGap?: () => { kind: 'wolf' | 'bear' | 'lion'; durationMs: number; difficulty: 'lantern' | 'night' | 'blackout' } | null;
       /** LUL-65: places `kind` on the drifted oldest live scent point, in `roam`. Null if none live or species not found. */
       qaProbeScentOnOldest?: (kind: 'wolf' | 'bear' | 'lion') => { age: number; dist: number } | null;
       /** LUL-65: state + distance-to-player + scentOnto() re-trigger count for `kind`. Null if not found.
@@ -133,6 +135,8 @@ declare global {
       qaStageChaseAtContact?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-1620: teleports predator[idx] onto its own current roam waypoint so the next tick's arrival/repick runs immediately; returns {x,z} or null if idx doesn't resolve. */
       qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
+      /** LUL-2505: marks every predator except idx `inert` (the same flag qaBuildScene's own parking uses) so a multi-second poll on the full map only ever sees idx's own contribution to the approach/piano threat scan, which skips inert predators entirely. Returns {idx,x,z}, or null if idx doesn't resolve. */
+      qaIsolatePredator?: (idx: number) => { idx: number; x: number; z: number } | null;
       /** LUL-212: teleports the player to the first generated hiding spot (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of `kind` if given (LUL-2320). No predator involved. Returns the spot's kind, or null if none were generated / no prop of `kind` exists on this map. */
       qaTeleportToHideSpot?: (kind?: 'log' | 'bramble') => string | null;
       /** LUL-2311: teleports the player just outside the edge of the first cover prop of the given kind, no HIDE_KINDS check -- for asserting KeyH is a no-op beside a walkable-but-not-hide-eligible prop (e.g. 'log'). Returns the spot's kind, or null if none of that kind were generated. */
@@ -179,6 +183,7 @@ declare global {
         rad: number;
         x: number;
         z: number;
+        gaveUpAt: number | null;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
