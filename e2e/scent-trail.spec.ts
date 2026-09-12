@@ -152,6 +152,10 @@ test.describe('scent trail visual (LUL-2230)', () => {
     await expect(caption).toHaveCount(0);
 
     // Does not show again without an explicit reset -- walk and turn again.
+    // (face forward again first -- the earlier turn-around left us facing
+    // yaw+PI, and walking forward in that state lays the trail back the
+    // way we came instead of past it.)
+    await qaHook(page, 'qaSetLookYaw', yaw);
     await walkForward(page, 2.5);
     await qaHook(page, 'qaSetLookYaw', yaw + Math.PI);
     await qaHook(page, 'qaAdvance', stepsFor(0.1));
