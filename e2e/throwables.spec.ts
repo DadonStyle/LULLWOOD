@@ -91,6 +91,13 @@ test.describe('throwables (LUL-1623)', () => {
     expect(before?.state).toBe('roam');
 
     await page.keyboard.press('KeyE');
+    // LUL-2352: heldThrowable only reaches the HUD through stepFrame()'s
+    // per-tick pushState (engine/forest-engine.js) -- qaSetFixedStep() above
+    // already parked the real RAF loop that would normally flush it, so
+    // #throwPrompt's data-visible attribute won't update until a frame is
+    // actually advanced. One step is enough; the noise-redirect polling
+    // below advances plenty more.
+    await qaHook(page, 'qaAdvance', 1);
     await expectRowVisible(page, 'throwPrompt');
 
     const locked = await page.evaluate(() => document.pointerLockElement !== null);
