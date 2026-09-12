@@ -217,6 +217,24 @@ export function pickRoamWaypoint(
   return { x: px + Math.cos(a) * r, z: pz + Math.sin(a) * r, sweepsLeft: 0 };
 }
 
+// LUL-2505: a give-up-to-roam transition should only arm a *fresh* LKP_MAX_SWEEPS memory if
+// there isn't already a live, unexhausted one for this same last-known-position -- otherwise a
+// predator that gets briefly re-alerted (scent/noise/cry, none of which check `hidden`) mid-sweep
+// and then gives up again gets a free refill, silently defeating the bound (LUL-1620/1573) and
+// reopening the camping exploit it closed. "Still live, same spot" reuses pickRoamWaypoint's own
+// LKP_REPEAT_RADIUS test against the *existing* lkpX/lkpZ, not the fresh give-up position -- the
+// two must agree on what counts as "the same spot" or a predator could get a partial-refill edge
+// case where the distance test passes here but fails on the very next arrival.
+export function armReturnSweep(
+  lkpSweeps: number, lkpX: number, lkpZ: number,
+  playerX: number, playerZ: number,
+): { lkpX: number; lkpZ: number; lkpSweeps: number } {
+  if (lkpSweeps > 0 && Math.hypot(playerX - lkpX, playerZ - lkpZ) <= LKP_REPEAT_RADIUS) {
+    return { lkpX, lkpZ, lkpSweeps };   // mid-sweep, same spot -- preserve, do not refill
+  }
+  return { lkpX: playerX, lkpZ: playerZ, lkpSweeps: LKP_MAX_SWEEPS };   // fresh loss of trail
+}
+
 // ---- investigate re-escalation gate (LUL-562) -------------------------------------
 // `investigate`'s `if(!hidden){ p.state='chase'; }` (main, line 1364) fired
 // for *any* `p.inv` sub-phase, including a freshly-entered 'approach' --  but
