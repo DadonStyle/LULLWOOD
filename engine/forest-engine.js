@@ -415,6 +415,9 @@ let lightDimmed = false;
 // (VEIL_RAMP), how thick it gets at full ramp (MIST_VEIL_FOG), and the mutable
 // per-frame state itself.
 let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, staminaLowCuePlayed = false, veilReserve = false, playerBogMask = 0;
+// LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
+// decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
+let stoneMarkerPulseT = 0;
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
 // last result between probes; coverProbeAccum counts elapsed seconds.
 let lastHideSpot = null, coverProbeAccum = 0;
@@ -3596,7 +3599,7 @@ let hudState = {
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
   // LUL-382: mist veil resource meter -- 1 is full charge, 0 is fully drained.
-  veilCharge: 1, veilLocked: false,
+  veilCharge: 1, veilLocked: false, veilReserve: false,
   chargeVisible: false, chargeToken: 0,
   caveImmuneActive: false, caveImmuneTimeLeft: 0,
   // LUL-1089: contextual action prompts
@@ -4979,6 +4982,20 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeEmbersPurchase = function(){
     return { throwablesReserve, heldThrowable, purchaseCueCount: qaEmbersPurchaseCueCount };
   };
+  // [QA-HOOK] LUL-2331: places the player 2 units off the Stone Marker's live position --
+  // mirrors qaTeleportNearThrowable, since applyQaWorldMicroPreset() (engine/tuning.js)
+  // deliberately leaves LANDMARKS untouched, so the marker keeps its full-map position even
+  // in the micro world. Reads the position at call time rather than a fixed offset.
+  window.ForestEngine.qaTeleportNearStoneMarker = function(){
+    const p = landmarkGroups.stoneMarker.position;
+    player.x = p.x + 2; player.z = p.z;
+    return { x: p.x, z: p.z };
+  };
+  // [QA-HOOK] LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. Includes the
+  // activation cue's fire count so a spec can assert it without decoding WebAudio output.
+  window.ForestEngine.qaProbeVeil = function(){
+    return { charge: veilCharge, locked: veilLocked, reserve: veilReserve, releaseCueCount: qaVeilCharmReleaseCueCount };
+  };
   // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
   // mission prompt and the objective are all on screen at once. Returns the target or null.
   window.ForestEngine.qaTeleportNearMission = function(){
@@ -5192,7 +5209,8 @@ function buyVeilCharm(){
   veilReserve = true;
   embersSpent += VEIL_CHARM_PRICE;
   pushState({ caption: 'a charm against the mist', captionId: ++captionSeq });
-  // Reuse the same short cue-primitive family as the reserveFired tell above for a confirming sound.
+  embersPurchaseCue();
+  stoneMarkerPulseT = 0.6;   // LUL-2331: one-shot beacon-glow boost, decayed in tick()
   track({ event: 'feature_engagement', feature: 'veil_charm', action: 'purchased' });
 }
 function setDown(){
@@ -5330,6 +5348,22 @@ function embersPurchaseCue(){
   const { ctx, conv, master } = audio, t = ctx.currentTime;
   const o = ctx.createOscillator(); o.type = 'sine';
   o.frequency.setValueAtTime(440, t); o.frequency.exponentialRampToValueAtTime(880, t + 0.12);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.35);
+}
+// LUL-2331: the Stone Marker charm firing (reserveFired) is a distinct moment from
+// buying it (embersPurchaseCue() above) -- descending sweep, the inverse of that rising one,
+// so the two are audibly distinguishable with sound alone, same rationale as
+// caveImmuneStartCue()/caveImmuneEndCue() below. qaVeilCharmReleaseCueCount mirrors
+// qaEmbersPurchaseCueCount's own counter idiom.
+let qaVeilCharmReleaseCueCount = 0;
+function veilCharmReleaseCue(){
+  qaVeilCharmReleaseCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(880, t); o.frequency.exponentialRampToValueAtTime(440, t + 0.12);
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.35);
@@ -5827,8 +5861,7 @@ function stepFrame(dt, t){
   veilCharge = veilStep.charge; veilLocked = veilStep.locked; veilReserve = veilStep.reserve;
   if(reserveFired){
     pushState({ caption: 'the charm held', captionId: ++captionSeq });
-    // Reuse whatever the nearest existing short one-shot cue primitive is (the same family as
-    // missionCompleteSting() -- grep for its definition and mirror it) for an audible tell.
+    veilCharmReleaseCue();
   }
   const dimmed = veilStep.active;
   if(dimmed !== lightDimmed){
@@ -5843,6 +5876,7 @@ function stepFrame(dt, t){
   }
   dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
   applyVignette(dimAmount);
+  if(stoneMarkerPulseT > 0) stoneMarkerPulseT = Math.max(0, stoneMarkerPulseT - dt);   // LUL-2331
   // LUL-382: mist ramp is deliberately slower than the vignette above (VEIL_RAMP
   // 1.6s vs. dimAmount's ~0.5s) -- the light pool reacts fast, the world's mist
   // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
@@ -5850,7 +5884,7 @@ function stepFrame(dt, t){
   veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
   scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
   hemiLight.intensity = HEMI_BASE_INTENSITY * (1 - timeOfRun * 0.7);
-  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, staminaCharge: Math.round(staminaCharge * 100) / 100, timeOfRunClock: formatTimeOfRunClock(timeOfRun) });
+  pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, veilReserve, staminaCharge: Math.round(staminaCharge * 100) / 100, timeOfRunClock: formatTimeOfRunClock(timeOfRun) });
 
   // LUL-27: Fog Tide. The clock only advances while `playing` -- same gate
   // the veil above reads -- so the pause menu freezes the cycle exactly like
@@ -6202,7 +6236,7 @@ function stepFrame(dt, t){
       // to prompt for (wiki decisions/lul-2281-pickup-is-the-win-2026-09-09
       // Decision 5).
       objectiveText: canPickup ? 'Press  E  to lift the child'
-        : (canBuyVeilCharm ? 'Press  E  for a mist-charm  ·  15 embers'
+        : (canBuyVeilCharm ? 'Press  E  for a mist-charm  ·  15 embers  ·  saves your veil from locking, once'
            : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
       statusVisible, statusText,
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
@@ -6297,7 +6331,13 @@ function stepFrame(dt, t){
   // LUL-1855/LUL-2248: every landmark's beacon glow pulses slowly, reads as a beacon not a glitch
   for(const kind in landmarkBeaconGlows){
     const cfg = LANDMARK_BEACONS[kind];
-    landmarkBeaconGlows[kind].material.opacity = cfg.opacityBase + Math.sin(t * cfg.pulseHz) * cfg.opacityAmp;
+    let opacity = cfg.opacityBase + Math.sin(t * cfg.pulseHz) * cfg.opacityAmp;
+    // LUL-2331: purchase-moment tell for the Stone Marker charm -- a one-shot boost on top
+    // of the ambient pulse above, decayed by stoneMarkerPulseT (set in buyVeilCharm()).
+    if(kind === 'stoneMarker' && stoneMarkerPulseT > 0){
+      opacity += motionReduced() ? 0.35 : 0.5 * (stoneMarkerPulseT / 0.6);
+    }
+    landmarkBeaconGlows[kind].material.opacity = opacity;
   }
 
   // pool breathes; its wisps rise

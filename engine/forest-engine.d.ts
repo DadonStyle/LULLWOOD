@@ -402,6 +402,14 @@ declare global {
        * a test can assert Pocket Stones granted +2 throws and a purchase played its
        * audio cue, without decoding actual WebAudio output. */
       qaProbeEmbersPurchase?: () => { throwablesReserve: number; heldThrowable: boolean; purchaseCueCount: number };
+      /** LUL-2331: places the player 2 units off the Stone Marker's live position -- mirrors
+       * qaTeleportNearThrowable, works regardless of where the landmark actually sits (the
+       * micro QA world leaves LANDMARKS untouched). Returns the marker's position. */
+      qaTeleportNearStoneMarker?: () => { x: number; z: number };
+      /** LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. `releaseCueCount` is
+       * the mist-charm activation cue's fire count, so a test can assert it fired without
+       * decoding actual WebAudio output. */
+      qaProbeVeil?: () => { charge: number; locked: boolean; reserve: boolean; releaseCueCount: number };
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
