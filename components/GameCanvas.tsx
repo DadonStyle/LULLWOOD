@@ -371,8 +371,22 @@ const OVERLAY_STYLE = `
      keys (WORLD_HINT_KEYS, Hud.tsx) set left/top inline from the engine-projected
      viewport fraction; translate lifts the pill clear above the world point instead
      of covering it, same as the old scent-only rule. */
+  /* LUL-2532: HINT_Y_MAX (engine/forest-engine.js) caps the raw engine fraction at
+     0.78, but that's a fixed viewport-height fraction while #actionSlot's reserved
+     region (bottom: var(--action-slot-bottom), height: var(--action-slot-height),
+     same vars #captionToast above keys off) is a fixed pixel band that differs per
+     breakpoint (24px/216px desktop vs. 190px/176px narrow) -- at a 720px-tall
+     viewport, 0.78 already lands inside that band (562px vs. the band's 480px top
+     edge), so translate(-50%,-120%)'s lift (which only clears ~20% of the pill's
+     own height above the anchor) isn't enough on its own (LUL-2532: QA caught
+     #scentTrailCaption's "↓" over .actionPromptLine at exactly this viewport/state).
+     min() re-derives the true ceiling in pixels instead. 24px covers translate's
+     ~20%-of-height clearance for the tallest realistic pill (three wrapped lines of
+     the "bear" hint text at the 240px mobile max-width below, ~57px tall) plus a
+     small visual gap -- tune it up if a future, longer HINT_TEXT entry still clips. */
   #scentTrailCaption, #hintCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
-    left: var(--hint-left, 50%); top: var(--hint-top, 50%);
+    left: var(--hint-left, 50%);
+    top: min(var(--hint-top, 50%), calc(100% - var(--action-slot-bottom) - var(--action-slot-height) - 24px));
     max-width: 60vw; padding: 6px 14px; border-radius: 999px; pointer-events: none;
     background: rgba(18,34,34,0.6); border: 1px solid rgba(159,224,208,0.4);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
