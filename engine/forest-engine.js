@@ -1985,13 +1985,24 @@ function relocateParkedHunter(pcx, pcz){
     }
   }
   if(!ring.length) return;   // never true at CONFIG.mapSize=480 (8x8 chunks, ring fits from any player position -- see spec body); guards the QA micro map (2x2) where parking never triggers at all
-  const [ccx, ccz] = ring[Math.floor(rng()*ring.length)];
-  const x0 = Math.max(-half+margin, ccx*TREE_CHUNK_SIZE - half), x1 = Math.min(half-margin, (ccx+1)*TREE_CHUNK_SIZE - half);
-  const z0 = Math.max(-half+margin, ccz*TREE_CHUNK_SIZE - half), z1 = Math.min(half-margin, (ccz+1)*TREE_CHUNK_SIZE - half);
-  let x, z, tries = 0;
-  do {
-    x = rnd(x0, x1); z = rnd(z0, z1); tries++;
-  } while((Math.hypot(x-player.x, z-player.z) < 70 || playerCanSee({x, z}) || blockedR(x, z, target.rad+0.5)) && tries < 60);
+  // shuffle so a chunk that can't geometrically satisfy dist>=70 from the player gets skipped
+  // in favor of a different ring chunk, instead of falling through with an invalid point (LUL-2571)
+  for(let i = ring.length-1; i > 0; i--){ const j = Math.floor(rng()*(i+1)); [ring[i], ring[j]] = [ring[j], ring[i]]; }
+  let x = null, z = null;
+  for(const [ccx, ccz] of ring){
+    const x0 = Math.max(-half+margin, ccx*TREE_CHUNK_SIZE - half), x1 = Math.min(half-margin, (ccx+1)*TREE_CHUNK_SIZE - half);
+    const z0 = Math.max(-half+margin, ccz*TREE_CHUNK_SIZE - half), z1 = Math.min(half-margin, (ccz+1)*TREE_CHUNK_SIZE - half);
+    const closestX = Math.max(x0, Math.min(player.x, x1)), closestZ = Math.max(z0, Math.min(player.z, z1));
+    if(Math.hypot(closestX-player.x, closestZ-player.z) < 70) continue;   // chunk can't satisfy the guarantee anywhere in its box
+    let cx, cz, tries = 0;
+    do {
+      cx = rnd(x0, x1); cz = rnd(z0, z1); tries++;
+    } while((Math.hypot(cx-player.x, cz-player.z) < 70 || playerCanSee({x: cx, z: cz}) || blockedR(cx, cz, target.rad+0.5)) && tries < 60);
+    if(Math.hypot(cx-player.x, cz-player.z) >= 70 && !playerCanSee({x: cx, z: cz}) && !blockedR(cx, cz, target.rad+0.5)){
+      x = cx; z = cz; break;
+    }
+  }
+  if(x === null) return;   // no ring chunk could place the predator >=70u this tick -- stay parked, retry on the next relocation call rather than violate the guarantee
   if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
   target.x = x; target.z = z; target.wpx = x; target.wpz = z;
   target.parked = false; target.g.visible = true; target.g.position.set(x, 0, z);
