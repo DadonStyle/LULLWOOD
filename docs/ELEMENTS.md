@@ -1281,7 +1281,8 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   Enter bypass the unskippable first cutscene via native button activation),
   giving Enter/Space a keyboard path back into a new run for free.
   LUL-1614: that focus is delayed `RESTART_FOCUS_DELAY_MS`=2000ms past the
-  `*Revealed` flip (sized past `#winText`'s own 0.9s fade), not immediate —
+  `*Revealed` flip (sized past `#winText`'s own fade — 0.5s since LUL-2496,
+  `#deathText` stays 0.9s), not immediate —
   an in-flight Space/Enter still held from active gameplay (Space also being
   the jump key) would otherwise activate the freshly-focused button the
   instant it gains focus, silently restarting the run before the player has
@@ -1295,6 +1296,13 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   death cutscene. `disabled` blocks both click and keyboard activation
   without a CSS change; the ref-focus effects already only fire on reveal,
   so this doesn't fight them.
+  LUL-2496 (Ending Ceremony cheap slice, from Feature Scout proposal LUL-2400):
+  `#winDialogue` adds a single fixed dialogue line ("You've brought her home.")
+  inside `#winText`, above the existing chronicle-shared closing line — an
+  addition, not a replacement, so `chronicle.test.ts`'s assertion on that line's
+  canonical phrasing (`lib/game/chronicle.ts`) still holds. The full proposal
+  (music stinger, visual glow, warm fog, readable chronicle) is deferred pending
+  an art director; only the dialogue line and the fade-duration change above shipped.
 
 LUL-1308 adds `#bearingPulse`, a screen-edge glow answering "which side is the nearest
 approaching predator on" for players who can't rely on the caption toggle (LUL-26) or
