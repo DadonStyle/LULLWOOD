@@ -37,6 +37,9 @@ test('buying each catalog item updates balance/tier text and fires the purchase 
   await seedEmbers(context, HIGH_BALANCE_EMBERS);
   const errs = trackConsoleErrors(page);
   await boot(page, { qaHooks: true, qaWorld: 'micro' });
+  // LUL-2539: this test asserts an exact base scentLifetime below -- force wind off so the
+  // new 50/50 windHighSpeed roll can't make it flaky.
+  await qaHook(page, 'qaSetWindHighSpeed', false);
   await expect(page.locator('#gate')).toBeVisible();
 
   await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 2000');

@@ -52,6 +52,7 @@ import {
   SCENT_RADIUS_RUN,
   SCENT_TRACK_TIME,
   isMovingAgainstWind,
+  scentLifetimeWithWind,
   WIND_AGAINST_RADIUS_MULTIPLIER,
 } from '@/lib/game/scent';
 import {
@@ -1807,9 +1808,14 @@ function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz,
 // back in.
 
 let windX = 1, windZ = 0;   // unit vector; redrawn once per generateMap(), see generateWind()
+let windHighSpeed = false;   // LUL-2539: rolled once per generateMap(), see generateWind()
 function generateWind(){
   const a = rng() * Math.PI * 2;
   windX = Math.cos(a); windZ = Math.sin(a);
+  // LUL-2539: independent one-shot generator, NOT the shared `rng` stream -- generateWind()
+  // is the last rng() consumer before generateBogTrees() (:1108), and drawing from the shared
+  // stream here would shift every later map-gen roll for the same seed (QA_PINNED_SEED drift).
+  windHighSpeed = mulberry32(currentSeed ^ 0x57494e44)() < 0.5;
 }
 
 let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 is always oldest)
@@ -1935,7 +1941,7 @@ function depositScent(hot, againstWind){
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
   const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
   scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
-  while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0, effectiveScentLifetime(tierOf(embers, 'quietStep')))) scentPoints.shift();
+  while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed))) scentPoints.shift();
 }
 function checkScent(p){
   if(isCaveImmune(caveImmuneT)) return false;
@@ -1944,7 +1950,7 @@ function checkScent(p){
   const nose = p.kind === 'wolf' ? p.spec.nose * (1 - WOLF_BOG_MASK_STRENGTH * playerBogMask) : p.spec.nose;
   for(let i = scentPoints.length - 1; i >= 0; i--){
     const s = scentPoints[i], age = clock.elapsedTime - s.t0;
-    if(isScentDetected(s, age, p.x, p.z, windX, windZ, nose, effectiveScentLifetime(tierOf(embers, 'quietStep')), WRAP_SPAN)) return true;
+    if(isScentDetected(s, age, p.x, p.z, windX, windZ, nose, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed), WRAP_SPAN)) return true;
   }
   return false;
 }
@@ -3752,10 +3758,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   };
 
   // LUL-2189/LUL-2207: exposes the module-scope wind unit vector (set once per
-  // generateMap() by generateWind(), engine/forest-engine.js:1591/1594) so a test
+  // generateMap() by generateWind(), engine/forest-engine.js:1810/1812) so a test
   // can derive #windIndicator's expected rotation instead of hardcoding an angle.
   window.ForestEngine.qaProbeWind = function(){
-    return { windX: windX, windZ: windZ };
+    return { windX: windX, windZ: windZ, windHighSpeed: windHighSpeed };
   };
 
   // Drops the player `standoff` units on the -x side of the first reachable
@@ -3888,7 +3894,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeScentOnOldest = function(kind){
     if(!scentPoints.length) return null;
     const s = scentPoints[0], age = clock.elapsedTime - s.t0;
-    if(isScentExpired(age, effectiveScentLifetime(tierOf(embers, 'quietStep')))) return null;
+    if(isScentExpired(age, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed))) return null;
     const p = predators.find(pp => pp.kind === kind);
     if(!p) return null;
     const drift = scentDriftDistance(age);
@@ -4718,6 +4724,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.state = 'roam'; p.hunt = false;
     return { idx };
   };
+  // [QA-HOOK] LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
+  // generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion.
+  window.ForestEngine.qaSetWindHighSpeed = function(v){ windHighSpeed = !!v; };
   // [QA-HOOK] LUL-2547: places predator[kind] dx/dz from the *player's current position* (not a
   // throw-landing point like qaStagePredatorNearThrowLanding) so a test can stage "predator within
   // hide-alert radius" after qaTeleportToHideSpot() without qaBuildScene() wiping the natural cover
@@ -4735,7 +4744,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
   // an e2e spec can't wait out 14s+ of real decay, so it asserts the tier's effect on this
   // number instead of on live scent-point aging.
-  window.ForestEngine.qaProbeScentLifetime = function(){ return effectiveScentLifetime(tierOf(embers, 'quietStep')); };
+  window.ForestEngine.qaProbeScentLifetime = function(){ return scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed); };
 
   // [QA-HOOK] LUL-2351: throwablesReserve + heldThrowable + the purchase-cue fire count,
   // so a spec can assert Pocket Stones granted +2 throws and that buying anything played
@@ -6022,7 +6031,7 @@ function stepFrame(dt, t){
     const framePoints = [];
     for(let i = 0; i < scentPoints.length && n < SCENT_TRAIL_MAX; i++){
       const s = scentPoints[i], age = t - s.t0;
-      if(age < 0.6 || isScentExpired(age, effectiveScentLifetime(tierOf(embers, 'quietStep')))) continue;   // the mote under the player's own feet
+      if(age < 0.6 || isScentExpired(age, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed))) continue;   // the mote under the player's own feet
       const d = driftedScentPosition(s, age, windX, windZ);
       // Same wrapDelta() a wrapped-world checkScent() uses (lib/game/scent.ts's
       // isScentDetected), so a wrapped point renders as its nearest image to
@@ -6030,7 +6039,7 @@ function stepFrame(dt, t){
       const rx = player.x + wrapDelta(d.x, player.x, WRAP_SPAN);
       const rz = player.z + wrapDelta(d.z, player.z, WRAP_SPAN);
       const ry = 0.22 + (motionReduced() ? 0 : 0.06 * Math.sin(t*2 + i));
-      const alpha = Math.max(0, (1 - age/effectiveScentLifetime(tierOf(embers, 'quietStep'))) * (1 - 0.7*veilAmount) * (s.radius / SCENT_RADIUS_RUN));
+      const alpha = Math.max(0, (1 - age/scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed)) * (1 - 0.7*veilAmount) * (s.radius / SCENT_RADIUS_RUN));
       scentTrailPos[n*3] = rx; scentTrailPos[n*3+1] = ry; scentTrailPos[n*3+2] = rz;
       scentTrailCol[n*3]   = SCENT_TRAIL_COLOR.r * alpha;
       scentTrailCol[n*3+1] = SCENT_TRAIL_COLOR.g * alpha;
