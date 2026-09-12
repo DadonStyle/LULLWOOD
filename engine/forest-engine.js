@@ -97,12 +97,12 @@ import {
   BOG_OUTER_RADIUS,
 } from '@/lib/game/bog';
 import {
+  armReturnSweep,
   backOffPoint,
   canCatchInChase,
   CATCH_MARGIN,
   isCaught,
   isSniffImmune,
-  LKP_MAX_SWEEPS,
   pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
@@ -2524,14 +2524,14 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN);
             p.inv = 'leave';
           }
-          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
+          else { const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       } else if(p.inv === 'leave'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
+        if(bd < 2){ const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       }
     } else if(p.state === 'flank'){
@@ -2555,7 +2555,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.sniffsLeft = holdOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(holdOutcome.next === 'hold') p.sniffTimer = rnd(1,4);
-          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
+          else { const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
@@ -4057,6 +4057,28 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!p) return null;
     p.x = p.wpx; p.z = p.wpz;
     return { x: p.x, z: p.z };
+  };
+
+  // LUL-2505: marks every predator except idx `inert` -- the same flag
+  // qaBuildScene's own parking already relies on, which both updatePredators()
+  // (:2226) and the threat-metrics scan that computes `nearDist`/`approaching`
+  // (:5624ish, `if(p.inert) continue`) skip entirely. A test needs the *skip*,
+  // not just distance: `approaching` has no distance gate of its own -- any
+  // other predator's unrelated, independently-ticking investigate/chase/mid-
+  // sweep state holds the piano on regardless of how far away it physically
+  // is, so merely relocating the other 8 (as qaStageForceHuntApproach does for
+  // its own, single-tick-resolution purpose) does not isolate a multi-second
+  // polling window the way this hook needs to. This is exactly the "no
+  // isolation against the other 8 predators over multi-second poll windows"
+  // gap `docs/specs/lul-2329-e2e-migrate-qaworld-micro.md` already documented
+  // for this file; unlike `qaBuildScene` (which that spec avoided here because
+  // it wipes the natural cover `qaTeleportToHideSpot` depends on), flagging
+  // `inert` in place touches no cover state at all.
+  window.ForestEngine.qaIsolatePredator = function(idx){
+    const keep = predators[idx];
+    if(!keep) return null;
+    for(const other of predators){ if(other !== keep){ other.inert = true; } }
+    return { idx, x: keep.x, z: keep.z };
   };
 
   // LUL-212: teleport the player to the first generated hiding spot
