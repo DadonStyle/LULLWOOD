@@ -4106,6 +4106,21 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { idx, x: keep.x, z: keep.z };
   };
 
+  // LUL-2457: same `inert` flag as qaIsolatePredator above, applied to every
+  // predator with none kept -- for specs like e2e/day-night-cycle.spec.ts
+  // that hold `qaAdvance` open for two-plus minutes of game time to observe
+  // an unrelated system (the timeOfRun ramp) while the player stands still.
+  // Even at the LUL-2407/LUL-2422 QA-map-scaled detect/speed, a stationary
+  // player is well within reach of an ambient roam predator over that long a
+  // window; a mid-poll death silently stops `runElapsed` (only accumulates
+  // while `isPlaying()`), reading as a "timeOfRun undershoot" rather than
+  // the predator kill it actually is. Returns the count parked.
+  window.ForestEngine.qaClearAllPredators = function(){
+    let n = 0;
+    for(const p of predators){ if(!p.inert){ p.inert = true; p.g.visible = false; p.x = p.z = -9999; n++; } }
+    return n;
+  };
+
   // LUL-212: teleport the player to the first generated hiding spot
   // (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of
   // `kind` if given (LUL-2320, so a test can land on a specific non-hide
