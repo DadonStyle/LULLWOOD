@@ -1418,6 +1418,21 @@ design doc as turning horror into radar.
   counterpart to `computeOutcomes()` (which pools all tiers) --
   `scripts/win-rate-by-tier.mjs` is the one-shot CLI that filters events to a
   build range (git-ancestry, not string comparison) and prints it.
+- `chase_gap` telemetry event (LUL-2392): fired from `scentOnto()` (`engine/forest-engine.js`)
+  when a predator re-acquires the player by scent after a chase->roam give-up --
+  `duration_ms` is the wall-clock gap, `difficulty` the tier. `p.gaveUpAt` is set at
+  all 4 give-up sites and reset in `placePredators()` so a give-up that outlives its
+  run never survives into the next one. `qaProbeChaseGap()` exposes the last fired gap
+  for e2e coverage (`e2e/chase-gap-instrumentation.spec.ts`). Feeds the Economist's
+  LUL-1449 measurement (Deeper Lungs veil-tree re-pricing, LUL-1439):
+  `lib/dashboard/aggregate.ts`'s `computeChaseGapByTier()` computes p50/p25 gap per tier,
+  `scripts/chase-gap-by-tier.mjs` is the one-shot CLI. **Adding an event to the
+  `lib/analytics.ts` emitter union is not enough** -- `lib/dashboard/events.ts`'s
+  `KNOWN_EVENTS` is a separate allowlist that `parseRawEvent()` gates every Blob
+  read-back on; PR #601 added `chase_gap` to the emitter but missed this file, so every
+  emitted event was silently dropped on read until this entry's fix (also caught
+  `engine_contract_violation`, LUL-2239, in the same gap). `lib/dashboard/events.test.ts`
+  now locks every emitted event name to also being in `KNOWN_EVENTS`.
 - Shop catalog (LUL-2351): `SHOP_CATALOG` in `lib/game/economy.ts` is the single
   source of truth for what's for sale — three permanent items, bought via the
   generic `purchase(id)`/`nextCost(id, tier)`/`tierOf(state, id)` trio instead
