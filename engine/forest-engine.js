@@ -34,6 +34,7 @@ import {
   startCharge,
   stepCharge,
   chargeSpeed,
+  CHARGE_RECOVERY,
   CHARGE_TRIGGER_MIN,
   CHARGE_TRIGGER_MAX,
 } from '@/lib/game/charge';
@@ -1719,7 +1720,7 @@ function makePredator(kind){
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
-    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, inert:false, sightLock:null,
+    charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, chargeRecoveryT:0, inert:false, sightLock:null,
     noiseTarget:null, noiseTargetT:0 };
 }
 const predators = [];
@@ -1765,7 +1766,7 @@ function placePredators(){
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
-    p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0;
+    p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
     p.gaveUpAt=null;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
@@ -2245,6 +2246,10 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // that helper's shape is deliberately pinned to scentLock/chargeCooldown
     // (see its own comment) and this field has nothing to do with either.
     if(p.sniffImmuneT > 0) p.sniffImmuneT -= dt;
+    // LUL-2457: same unconditional-every-state decay as sniffImmuneT above --
+    // see p.chargeRecoveryT's own comment at the 'cleared' branch below for
+    // why this exists.
+    if(p.chargeRecoveryT > 0) p.chargeRecoveryT -= dt;
 
     // LUL-213: an active charge owns movement outright until it resolves --
     // skips the roam/chase/investigate/flank chain below entirely, same as
@@ -2266,6 +2271,33 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // gone -- see qaChargePhase's fallback for why this is kept at all.
         p.lastCharge = { result: 'cleared', overshootDuration: p.charge.overshootDuration };
         p.charge = null; p.chargeCooldown = CHARGE_COOLDOWN;
+        // LUL-2457: every other state transition in this file that hands
+        // off to a slower behavior resets p.vx/p.vz outright (roam entry,
+        // alert/reroute/sightLock resets, etc.) -- this one didn't. p.vx/p.vz
+        // still carry the charge-sprint velocity (speed=chargeSpeed(dist),
+        // easily 4-5x a normal approach speed) when 'overshoot' hands off to
+        // 'investigate'/'approach' below, and the velocity-smoothing lerp
+        // that eases toward a new desx/desz/speed target (accel=3.6 -- see
+        // this loop's movement-integration step) doesn't erase that in one
+        // frame; it takes a good fraction of a second to bleed off. A dodge
+        // landing mid-charge (not just an unlucky exact-zero-gap case) left
+        // the predator close enough that this residual sprint velocity alone
+        // closed the gap and caught the player within a couple of frames --
+        // the LUL-213/LUL-323 bug shape recurring through a different door.
+        // Zeroing here matches every other transition's own convention and
+        // costs nothing: 'approach' re-accelerates from a stop exactly like
+        // it does for every non-charge entry into investigate.
+        p.vx = 0; p.vz = 0;
+        // LUL-2457: the velocity reset above fixes the near-instant re-catch,
+        // but a mid-window dodge can still leave the predator only a few
+        // units away, and the ordinary (unmodified, LUL-562/LUL-658)
+        // investigate/approach loop closes that on its own within a couple
+        // of real seconds even at normal speed -- no reaction window at all
+        // if the player doesn't also move. Suppress just the
+        // investigate->chase revert below (shouldRevertInvestigateToChase)
+        // for CHARGE_RECOVERY seconds; sniff/back/give-up/roam and every
+        // other transition in the loop run exactly as they already do.
+        p.chargeRecoveryT = CHARGE_RECOVERY;
         // "the animal continue... than continue normally": rejoin the
         // existing investigate/approach loop (LUL-22, not to be retuned)
         // rather than snapping straight back into a full chase mid-overshoot
@@ -2461,7 +2493,12 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // chase<->investigate forever at zero velocity. See
       // shouldRevertInvestigateToChase()'s comment in lib/game/predator.ts and
       // wiki game/lul223-chase-investigate-livelock for the confirmed repro.
-      if(shouldRevertInvestigateToChase(p.inv, hidden)){ p.state='chase'; }
+      // LUL-2457: p.chargeRecoveryT (armed on a dodged charge's own
+      // 'cleared' transition above) holds this predator out of the revert
+      // for a few real seconds -- see that transition's comment. Doesn't
+      // change this check's existing logic/timing for every other caller,
+      // just adds a gate that's normally already 0.
+      if(shouldRevertInvestigateToChase(p.inv, hidden) && p.chargeRecoveryT <= 0){ p.state='chase'; }
       else if(p.inv === 'approach'){
         // LUL-658: always report this tick's movement, even when it's also the
         // tick that reaches sniff range -- see stepApproach()'s comment in
@@ -4782,7 +4819,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.scentLock = 0; p.scentCalls = 0;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
-      p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0;
+      p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;
       p.g.position.set(spec.x, 0, spec.z); p.g.rotation.set(0, 0, 0);
     }
     for(const p of predators){
