@@ -8,6 +8,11 @@ import { boot, QA_PINNED_SEED, qaHook } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });
 
+// LUL-2249: folded here (rather than a new file) for the same reason as the
+// desktop counterpart in ../prop-density.spec.ts -- avoids growing
+// lib/e2e-policy/world-policy.test.ts's FULLMAP_ALLOWLIST for a case this
+// file's own reason already covers.
+
 const CAPS = { cover: 12, reed: 24, bogTree: 12, stone: 3 };
 const MIN_SPACING = 3.5;
 const SLOP = 1e-6;
@@ -34,3 +39,23 @@ for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_P
     expect(density.reedsInLakeClear, `seed ${seed} reeds inside CONFIG.lake.clear`).toBe(0);
   });
 }
+
+// LUL-2249: the streaming ring is distance-based (player world position), not
+// FOV-based -- CAMERA_FOV=85 on mobile widens the frustum but the same
+// STREAM_RADIUS_CHUNKS=2 ring applies unchanged. This proves that claim
+// rather than assume it, mirroring the first two desktop assertions in
+// ../prop-density.spec.ts's 'chunked streaming' describe.
+test('25 chunks are live at spawn on mobile (FOV 85) @fullmap', async ({ page }) => {
+  await boot(page, { qaWorld: 'full', qaHooks: true, seed: QA_PINNED_SEED });
+
+  const chunks = await qaHook(page, 'qaProbeTreeChunks');
+  expect(chunks.instantiated).toBe(25);
+});
+
+test("instance totals match the live chunks' own tree counts on mobile (FOV 85) @fullmap", async ({ page }) => {
+  await boot(page, { qaWorld: 'full', qaHooks: true, seed: QA_PINNED_SEED });
+
+  const chunks = await qaHook(page, 'qaProbeTreeChunks');
+  expect(chunks.totalInstances).toBe(chunks.expected);
+  expect(chunks.totalInstances).toBeGreaterThan(0);
+});

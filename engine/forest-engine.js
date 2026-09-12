@@ -238,11 +238,14 @@ function init(onStateChange, inputMode) {
   // builds, not what's exposed on window.ForestEngine.
   const qaParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   if(qaParams && qaParams.get('qaWorld') === 'micro') applyQaWorldMicroPreset();
-  // Skips layoutTreeChunks()/layoutCoverMeshes()/layoutThrowableMeshes() inside
-  // generateMap() below -- the three calls that build real GPU/CPU InstancedMesh
-  // buffers -- while still running generateMap()'s full simulation (treeData/
-  // coverData/grid/buildGrid()/buildCoverGrid()) and keeping the renderer/HUD
-  // alive. See generateMap()'s own call sites for exactly which three.
+  // Skips updateStreamedChunks()/layoutThrowableMeshes() inside generateMap()
+  // below -- LUL-2249: streaming replaced the old direct layoutTreeChunks()/
+  // layoutCoverMeshes() instantiate-everything calls with a ring-limited
+  // ensure/drop pass, and qaNoRender now skips that pass entirely (no chunk
+  // is ever "live", so no InstancedMesh -- see qaProbeTreeChunks().totalInstances
+  // === 0 under this flag, e2e/qa-world-micro.spec.ts) -- while still running
+  // generateMap()'s full simulation (treeData/coverData/grid/buildGrid()) and
+  // keeping the renderer/HUD alive. See generateMap()'s own call sites.
   const qaNoRender = !!(qaParams && qaParams.has('qaNoRender'));
 
 // ---- Knobs ---------------------------------------------------------------
@@ -490,16 +493,13 @@ const trunkMat   = new THREE.MeshStandardMaterial({ color: CONFIG.trunk,   rough
 const foliageMat = new THREE.MeshStandardMaterial({ color: CONFIG.foliage, roughness: 1 });
 
 // ---- Bog tree cover (LUL-25) -----------------------------------------------
-// Same trunk/foliage geometry, own InstancedMesh trio sized much smaller than
-// CONFIG.trees -- "thinner tree cover" per the ticket. A separate pool, not a
-// bigger CONFIG.trees, so the original forest loop's rng draw count (and
-// every draw after it) is untouched -- see generateBogTrees() below.
-const bogParts = [
-  new THREE.InstancedMesh(trunkGeo, trunkMat,   CONFIG.bogTrees),
-  new THREE.InstancedMesh(cone1Geo, foliageMat, CONFIG.bogTrees),
-  new THREE.InstancedMesh(cone2Geo, foliageMat, CONFIG.bogTrees),
-];
-bogParts.forEach(p => { p.frustumCulled = false; scene.add(p); });
+// Own data array, much smaller than CONFIG.trees -- "thinner tree cover" per
+// the ticket. A separate pool, not a bigger CONFIG.trees, so the original
+// forest loop's rng draw count (and every draw after it) is untouched -- see
+// generateBogTrees() below. LUL-2249: no longer a single fixed-capacity
+// InstancedMesh trio -- chunked the same way as the forest trees (see
+// ensureBogChunk()/dropBogChunk() below), reusing this same shared
+// trunkGeo/cone1Geo/cone2Geo/trunkMat/foliageMat.
 
 // ---- Cover props (LUL-43): brambles, fallen logs, rock shelves -----------
 // Purely visual + line-of-sight-blocking (see canSee()/hasLOS() below) --
@@ -525,13 +525,18 @@ const brambleMat = new THREE.MeshStandardMaterial({ color: 0x121a0e, roughness: 
 // the reeds' actual cost is the louder splash while wading (see bogNoiseMultiplier).
 const reedGeo = new THREE.ConeGeometry(0.5, 1, 5);
 const reedMat = new THREE.MeshStandardMaterial({ color: 0x2e3b1c, roughness: 1 });
-const coverMeshes = {
-  log: new THREE.InstancedMesh(logGeo, logMat, CONFIG.coverProps),
-  rock: new THREE.InstancedMesh(rockGeo, rockMat, CONFIG.coverProps),
-  bramble: new THREE.InstancedMesh(brambleGeo, brambleMat, CONFIG.coverProps),
-  reed: new THREE.InstancedMesh(reedGeo, reedMat, CONFIG.coverProps),   // capacity reused, see layoutCoverMeshes()
+// LUL-2249: was four fixed-capacity (CONFIG.coverProps) InstancedMesh, one per
+// kind, instantiated once and fully repainted by layoutCoverMeshes() every
+// generateMap() call. Replaced by a per-chunk, per-kind InstancedMesh sized to
+// that chunk's own count (ensureCoverChunk()/dropCoverChunk() below) -- this
+// map is now just the shared geometry/material lookup every chunk's meshes
+// draw from, never disposed.
+const COVER_GEO_MAT = {
+  log: [logGeo, logMat],
+  rock: [rockGeo, rockMat],
+  bramble: [brambleGeo, brambleMat],
+  reed: [reedGeo, reedMat],
 };
-Object.values(coverMeshes).forEach(m => { m.frustumCulled = false; scene.add(m); });
 
 // ---- Throwable distractions (LUL-1623) ------------------------------------
 // Not coverData/HIDE_KINDS per CTO plan decision 3 -- no LOS block, no
@@ -739,26 +744,9 @@ function generateThrowables(){
   // shorter length off-map (its `!t` branch) -- no rng consumed there either.
   throwableData = throwableData.filter(t => !bogKeepClear(t.x, t.z, 0));
 }
-function layoutCoverMeshes(){
-  const counts = { log: 0, rock: 0, bramble: 0, reed: 0 };
-  for(const c of coverData){
-    if(c.kind === 'tree') continue;
-    const i = counts[c.kind]++;
-    dummy.position.set(c.x, c.y, c.z);
-    dummy.rotation.set(0, c.ry, 0);
-    dummy.scale.set(c.hx*2, c.y*2, c.hz*2);
-    dummy.updateMatrix();
-    coverMeshes[c.kind].setMatrixAt(i, dummy.matrix);
-  }
-  for(const k in coverMeshes){
-    const m = coverMeshes[k];
-    for(let i = counts[k]; i < CONFIG.coverProps; i++){
-      dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
-      dummy.updateMatrix(); m.setMatrixAt(i, dummy.matrix);
-    }
-    m.instanceMatrix.needsUpdate = true;
-  }
-}
+// LUL-2249: layoutCoverMeshes() (repainted all four fixed-capacity meshes from
+// coverData every call) is gone -- ensureCoverChunk()/dropCoverChunk() below
+// do the same per-instance matrix layout, per chunk, on approach/departure.
 const _throwMat4 = new THREE.Matrix4();
 function layoutThrowableMeshes(){
   for(let i = 0; i < THROWABLE_COUNT; i++){
@@ -786,45 +774,31 @@ function layoutThrowableMeshes(){
 function nearLandmarks(x, z, pad){
   return !clearOfLandmarks(x, z, LANDMARKS, pad);
 }
-// LUL-375: shared by generateMap()'s forest-tree loop and generateBogTrees() --
-// same scatter-and-instance shape, differing only in which parts/data/count
-// triple they close over. Draw order per tree is rotation then brightness,
-// matching what both inlined copies did, since this feeds the seeded rng
-// stream (see the LUL-25 ordering comment above generateBogTrees()).
-// LUL-2247 review fix: `keptSet`, when passed, must be a Set of the exact
-// object references from `data` that survived thinGeneratedProps() -- an
-// entry not in the set is hidden (parked off-map like a past-`count` slot)
-// but still draws its rotation/tint rng() below. This is load-bearing: the
-// caller now passes the FULL pre-thin bog tree array so this function's
-// total rng() consumption stays fixed at data.length regardless of how many
-// of those trees the density thin later drops, for any seed. Before this
-// fix, the caller passed the already-thinned array, which shrank draw count
-// by exactly 2*(thinned-away count) and silently reshuffled every rng()
-// consumer after this call (placeCave(), pickMission()) for any seed dense
-// enough to trigger the thin -- caught in review on PR #556.
-function layoutTreePool(meshParts, data, count, keptSet){
+// LUL-375/LUL-2247, replaced by LUL-2249: this used to be layoutTreePool(),
+// shared by generateMap()'s forest-tree loop (until LUL-2249 moved trees onto
+// treeChunkTrios) and generateBogTrees()'s own instanced trio, drawing
+// rotation/tint rng() *and* writing the mesh in one pass. Streaming needs
+// those two split -- see the tree-chunk section above for why (rot/tint must
+// be stored on the object and drawn once, mesh writes happen later, per chunk,
+// on approach). This is the bog-only half of that split: draws rotation/tint
+// for the FULL pre-thin array, in order, same rng stream position
+// layoutTreePool() used to draw them from (immediately after
+// thinGeneratedProps(), nothing else consumes rng in between) -- so every
+// seed's post-tree rng draws (placeCave(), pickMission()) stay byte-identical.
+// `count` (CONFIG.bogTrees) mirrors layoutTreePool()'s own loop bound: `data`
+// can be shorter than `count` if generateBogTrees()'s try-budget didn't fill
+// it, and no draw happens past `data.length` (same as before). Entries the
+// later density thin drops still get rot/tint drawn here (this is the
+// load-bearing part LUL-2247 fixed in layoutTreePool() -- draw count must stay
+// fixed at data.length regardless of what thinGeneratedProps() keeps) but are
+// simply never in the final (already-thinned) bogTreeData array
+// ensureBogChunk() buckets from, so nothing extra needs parking off-map.
+function drawBogTreeVisuals(data, count){
   for(let i=0; i<count; i++){
-    const t = i < data.length ? data[i] : null;
-    const visible = !!t && (!keptSet || keptSet.has(t));
-    if(t){
-      const ry = rng()*Math.PI*2;   // always drawn when t exists -- see comment above
-      if(visible){
-        dummy.position.set(t.x, 0, t.z);
-        dummy.rotation.set(0, ry, 0);
-        dummy.scale.setScalar(t.s);
-      } else {
-        dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
-      }
-    } else { dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0); }
-    dummy.updateMatrix();
-    for(const p of meshParts) p.setMatrixAt(i, dummy.matrix);
-    const b = t ? 0.72 + rng()*0.5 : 1;   // always drawn when t exists, same reason as ry above
-    tintCol.setRGB(b*0.92, b, b*0.86);
-    meshParts[1].setColorAt(i, tintCol); meshParts[2].setColorAt(i, tintCol);
+    if(i >= data.length) break;
+    data[i].rot = rng()*Math.PI*2;
+    data[i].tint = 0.72 + rng()*0.5;
   }
-  for(const p of meshParts) p.instanceMatrix.needsUpdate = true;
-  if(meshParts[1].instanceColor) meshParts[1].instanceColor.needsUpdate = true;
-  if(meshParts[2].instanceColor) meshParts[2].instanceColor.needsUpdate = true;
 }
 // ---- E6: chunk the main forest pool so three.js can frustum-cull whole chunks ----
 // FogExp2 (density 0.04) already hides anything past ~40-60 units; the old single
@@ -842,80 +816,254 @@ function treeChunkIndex(x, z){
   return cx*TREE_CHUNKS_PER_AXIS + cz;
 }
 
-// Sparse array indexed by chunk id; each populated entry is [trunk, cone1, cone2]
-// for that chunk, or absent/undefined for a chunk with zero trees in it.
-let treeChunkTrios = [];
+// ---- LUL-2249: streamed chunk lifecycle ------------------------------------
+// Before this ticket, every populated chunk was instantiated up front and
+// stayed live forever (see git history for the old layoutTreeChunks()/
+// layoutCoverMeshes()/layoutTreePool() this replaces). Now only chunks within
+// STREAM_RADIUS_CHUNKS of the player's own chunk are "live" (hold real
+// InstancedMesh objects); everything else is bucketed data waiting to stream
+// in. "Chunk" always means the same TREE_CHUNK_SIZE cell every category below
+// buckets against -- one shared id space, not a second grid per category.
+//
+// Sparse arrays indexed by chunk id; a populated entry is that chunk's live
+// mesh (or trio), absent/undefined for a chunk that's either empty of that
+// category's data or simply not currently live.
+let treeChunkTrios = [];     // chunk id -> [trunk, cone1, cone2], live tree chunks only
+let treeChunkBuckets = [];   // chunk id -> indices into treeData, every populated chunk
+let coverChunkMeshes = [];   // chunk id -> { log?, rock?, bramble?, reed?: InstancedMesh }, live only
+let coverChunkBuckets = [];  // chunk id -> indices into coverData (non-'tree' kinds only)
+let bogChunkMeshes = [];     // chunk id -> [trunk, cone1, cone2], live bog chunks only
+let bogChunkBuckets = [];    // chunk id -> indices into bogTreeData
+let liveChunks = new Set();  // chunk ids currently live -- one liveness set, every category
+                              // streams in/out together since they all share one ring
 
-function layoutTreeChunks(data){
-  // Regenerate on every generateMap() call (restart/new seed draws a different
-  // tree count and placement per chunk) -- dispose the previous chunk meshes'
-  // own instanceMatrix/instanceColor GPU buffers via .dispose() before dropping
-  // the reference. Do NOT call .geometry.dispose() or .material.dispose() here:
-  // trunkGeo/cone1Geo/cone2Geo/trunkMat/foliageMat are shared with every other
-  // chunk AND with bogParts -- disposing them would break the bog tree pool.
-  for(const trio of treeChunkTrios){
-    if(!trio) continue;
-    for(const m of trio){ scene.remove(m); m.dispose(); }
-  }
-  treeChunkTrios = [];
-
+function bucketTreeChunks(data){
   const nChunks = TREE_CHUNKS_PER_AXIS * TREE_CHUNKS_PER_AXIS;
-  const buckets = Array.from({length: nChunks}, () => []);
+  treeChunkBuckets = Array.from({length: nChunks}, () => []);
   // Bucketing reads only t.x/t.z, already fixed in `data` before this runs --
   // no rng() draw here, so this cannot perturb the seeded stream.
-  for(let i=0; i<data.length; i++) buckets[treeChunkIndex(data[i].x, data[i].z)].push(i);
+  for(let i=0; i<data.length; i++) treeChunkBuckets[treeChunkIndex(data[i].x, data[i].z)].push(i);
+}
 
-  const localIndex = new Array(data.length);
-  for(let c=0; c<nChunks; c++) buckets[c].forEach((treeIdx, slot) => { localIndex[treeIdx] = slot; });
-
-  for(let c=0; c<nChunks; c++){
-    const count = buckets[c].length;
-    if(count === 0) continue;
-    const trio = [
-      new THREE.InstancedMesh(trunkGeo, trunkMat,   count),
-      new THREE.InstancedMesh(cone1Geo, foliageMat, count),
-      new THREE.InstancedMesh(cone2Geo, foliageMat, count),
-    ];
-    // frustumCulled left at the Object3D default (true) -- this is the whole point.
-    trio.forEach(m => scene.add(m));
-    treeChunkTrios[c] = trio;
-  }
-
-  // Same rng() draw, same order (tree index 0..data.length-1), same count as the
-  // old layoutTreePool loop -- only the destination mesh/slot differs, and that's
-  // decided above from x/z alone. This is why NO QA_PINNED_SEED re-pin is needed:
-  // the RNG stream this produces is byte-identical to before this ticket.
-  for(let i=0; i<data.length; i++){
-    const t = data[i];
-    // LUL-2225: yaw/brightness rng() draws happen unconditionally, in the
-    // same order as before this ticket, regardless of `culled` -- only the
-    // matrix written below differs. This is what keeps QA_PINNED_SEED byte-
-    // identical: culling changes what's rendered, never the rng stream.
-    const yaw = rng()*Math.PI*2;
-    const b = 0.72 + rng()*0.5;
+// Builds chunk `c`'s tree trio from its bucketed indices, reading the
+// rot/tint every tree already had drawn and stored on it at generate time
+// (generateMap()'s forest-tree loop, right where layoutTreeChunks() used to
+// draw them) -- no rng() call here, so streaming a chunk in/out can never
+// perturb the seeded stream. No-op if already live or the chunk has no trees.
+function ensureChunk(c){
+  if(treeChunkTrios[c]) return;
+  const idxs = treeChunkBuckets[c];
+  if(!idxs || idxs.length === 0) return;
+  const trio = [
+    new THREE.InstancedMesh(trunkGeo, trunkMat,   idxs.length),
+    new THREE.InstancedMesh(cone1Geo, foliageMat, idxs.length),
+    new THREE.InstancedMesh(cone2Geo, foliageMat, idxs.length),
+  ];
+  // frustumCulled left at the Object3D default (true) -- this is the whole
+  // point (E6): a whole chunk outside the view frustum is now free to skip.
+  idxs.forEach((ti, slot) => {
+    const t = treeData[ti];
+    // LUL-2225: a culled tree (sparse bog-core forest) is parked off-screen,
+    // same as before this ticket -- only what's rendered differs, never rng.
     if(t.culled){
       dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
     } else {
       dummy.position.set(t.x, 0, t.z);
-      dummy.rotation.set(0, yaw, 0);
+      dummy.rotation.set(0, t.rot, 0);
       dummy.scale.setScalar(t.s);
     }
     dummy.updateMatrix();
-    const trio = treeChunkTrios[treeChunkIndex(t.x, t.z)];
-    const slot = localIndex[i];
     for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
-    tintCol.setRGB(b*0.92, b, b*0.86);
+    tintCol.setRGB(t.tint*0.92, t.tint, t.tint*0.86);
     trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
+  });
+  for(const m of trio){
+    scene.add(m);
+    m.instanceMatrix.needsUpdate = true;
+    if(m.instanceColor) m.instanceColor.needsUpdate = true;
+    m.computeBoundingSphere();   // static after layout -- compute once, not per frame
   }
+  treeChunkTrios[c] = trio;
+}
+// Disposes chunk `c`'s live tree trio's own instanceMatrix/instanceColor GPU
+// buffers via .dispose(), then drops the reference -- never
+// .geometry.dispose()/.material.dispose(): trunkGeo/cone1Geo/cone2Geo/
+// trunkMat/foliageMat are shared with every other tree/bog chunk. No-op if
+// the chunk isn't currently live.
+function dropChunk(c){
+  const trio = treeChunkTrios[c];
+  if(!trio) return;
+  for(const m of trio){ scene.remove(m); m.dispose(); }
+  treeChunkTrios[c] = undefined;
+}
 
-  for(const trio of treeChunkTrios){
-    if(!trio) continue;
-    for(const m of trio){
-      m.instanceMatrix.needsUpdate = true;
-      if(m.instanceColor) m.instanceColor.needsUpdate = true;
-      m.computeBoundingSphere();   // static after layout -- compute once, not per frame
+// ---- ring controller --------------------------------------------------
+const STREAM_RADIUS_CHUNKS = 2;    // load radius: 5x5 = 300x300u square around the player's chunk
+const STREAM_UNLOAD_CHEBYSHEV = 3; // unload once Chebyshev distance exceeds this -- hysteresis band
+                                    // against a player oscillating across a single chunk boundary
+let lastStreamChunkX = null, lastStreamChunkZ = null;
+
+function chunkXZ(x, z){
+  return [
+    Math.min(TREE_CHUNKS_PER_AXIS-1, Math.max(0, Math.floor((x+half)/TREE_CHUNK_SIZE))),
+    Math.min(TREE_CHUNKS_PER_AXIS-1, Math.max(0, Math.floor((z+half)/TREE_CHUNK_SIZE))),
+  ];
+}
+
+// Called once per stepFrame() (see the movement/collision block below) plus
+// forced (`force=true`) right after every generateMap()/qaBuildScene() reset.
+// `CONFIG.wrapEnabled` is false, and chunkXZ()'s own clamp already keeps the
+// index in [0, TREE_CHUNKS_PER_AXIS) -- if wrapEnabled is ever flipped true,
+// this clamp is exactly where wraparound chunk math would need to go through
+// wrapDelta()/wrapCellIndex() instead (out of scope here, per the ticket).
+function updateStreamedChunks(force){
+  const [cx, cz] = chunkXZ(player.x, player.z);
+  if(!force && cx === lastStreamChunkX && cz === lastStreamChunkZ) return;   // the "not per frame" cost control
+  lastStreamChunkX = cx; lastStreamChunkZ = cz;
+
+  const wanted = new Set();
+  for(let dx = -STREAM_RADIUS_CHUNKS; dx <= STREAM_RADIUS_CHUNKS; dx++){
+    for(let dz = -STREAM_RADIUS_CHUNKS; dz <= STREAM_RADIUS_CHUNKS; dz++){
+      const ccx = cx+dx, ccz = cz+dz;
+      if(ccx < 0 || ccx >= TREE_CHUNKS_PER_AXIS || ccz < 0 || ccz >= TREE_CHUNKS_PER_AXIS) continue;
+      wanted.add(ccx*TREE_CHUNKS_PER_AXIS + ccz);
     }
   }
+  for(const c of wanted) if(!liveChunks.has(c)){ ensureChunk(c); ensureCoverChunk(c); ensureBogChunk(c); liveChunks.add(c); }
+  for(const c of Array.from(liveChunks)){
+    if(wanted.has(c)) continue;
+    const lcx = Math.floor(c/TREE_CHUNKS_PER_AXIS), lcz = c%TREE_CHUNKS_PER_AXIS;
+    const cheb = Math.max(Math.abs(lcx-cx), Math.abs(lcz-cz));
+    if(cheb > STREAM_UNLOAD_CHEBYSHEV){ dropChunk(c); dropCoverChunk(c); dropBogChunk(c); liveChunks.delete(c); }
+  }
+}
+
+// ---- cover/reed pool: per-chunk InstancedMesh, per-chunk coverGrid entries ----
+// coverData already carries x/z (bucketable via the same treeChunkIndex() every
+// category shares) and kind (log/rock/bramble/reed); 'tree' entries (tagged
+// forest trees, already handled above) are excluded.
+function bucketCoverChunks(){
+  const nChunks = TREE_CHUNKS_PER_AXIS * TREE_CHUNKS_PER_AXIS;
+  coverChunkBuckets = Array.from({length: nChunks}, () => []);
+  for(let i=0; i<coverData.length; i++){
+    if(coverData[i].kind === 'tree') continue;
+    coverChunkBuckets[treeChunkIndex(coverData[i].x, coverData[i].z)].push(i);
+  }
+}
+// Builds chunk `c`'s per-kind cover meshes (one InstancedMesh per kind present
+// in this chunk, sized to that kind's own count here) and pushes each
+// instance's cell into `coverGrid` -- the real, incremental half of this
+// ticket's collision change: coverBlockedR()/hasLOS()/findHideSpot()/canSee()
+// (lib/game/cover.ts, via `neighbourhood()`, generic over what Map holds it)
+// only ever see cover that's actually live. No-op if already live or empty.
+function ensureCoverChunk(c){
+  if(coverChunkMeshes[c]) return;
+  const idxs = coverChunkBuckets[c];
+  if(!idxs || idxs.length === 0) return;
+  const byKind = { log: [], rock: [], bramble: [], reed: [] };
+  for(const i of idxs) byKind[coverData[i].kind].push(i);
+  const meshes = {};
+  for(const kind in byKind){
+    const kindIdxs = byKind[kind];
+    if(kindIdxs.length === 0) continue;
+    const [geo, mat] = COVER_GEO_MAT[kind];
+    const m = new THREE.InstancedMesh(geo, mat, kindIdxs.length);
+    m.frustumCulled = false;   // matches the old fixed-capacity coverMeshes -- not part of this ticket's ask
+    kindIdxs.forEach((i, slot) => {
+      const cv = coverData[i];
+      dummy.position.set(cv.x, cv.y, cv.z);
+      dummy.rotation.set(0, cv.ry, 0);
+      dummy.scale.set(cv.hx*2, cv.y*2, cv.hz*2);
+      dummy.updateMatrix();
+      m.setMatrixAt(slot, dummy.matrix);
+      const k2 = key(Math.floor(cv.x/CELL), Math.floor(cv.z/CELL));
+      (coverGrid.get(k2) || coverGrid.set(k2, []).get(k2)).push(cv);
+    });
+    m.instanceMatrix.needsUpdate = true;
+    scene.add(m);
+    meshes[kind] = m;
+  }
+  coverChunkMeshes[c] = meshes;
+}
+// Disposes chunk `c`'s live cover meshes (never the shared geo/mat) and pulls
+// exactly this chunk's entries back out of coverGrid by reference. No-op if
+// the chunk isn't currently live. Only safe while `coverData` is still the
+// same array `coverChunkBuckets[c]` was built against -- the live-streaming
+// path (updateStreamedChunks() unloading a chunk as the player walks away)
+// is the only caller that holds that invariant. The full-reset path
+// (generateMap()/qaBuildScene()) has already overwritten `coverData` with
+// the next round's array by the time it drops the previous round's chunks,
+// so it uses dropCoverChunkMeshesOnly() below instead.
+function dropCoverChunk(c){
+  const meshes = coverChunkMeshes[c];
+  if(!meshes) return;
+  for(const i of (coverChunkBuckets[c] || [])){
+    const cv = coverData[i];
+    const k2 = key(Math.floor(cv.x/CELL), Math.floor(cv.z/CELL));
+    const arr = coverGrid.get(k2);
+    if(!arr) continue;
+    const at = arr.indexOf(cv);
+    if(at !== -1) arr.splice(at, 1);
+  }
+  for(const kind in meshes){ scene.remove(meshes[kind]); meshes[kind].dispose(); }
+  coverChunkMeshes[c] = undefined;
+}
+// Full-reset counterpart of dropCoverChunk() -- disposes chunk `c`'s live
+// cover meshes without touching coverGrid or coverData. generateMap() and
+// qaBuildScene() both reassign coverData to the next round's array, then
+// reset coverGrid to a fresh empty Map right after this runs, so the
+// per-entry splice dropCoverChunk() does is both unobservable (the Map is
+// about to be thrown away) and unsafe (coverChunkBuckets[c] holds indices
+// into the PREVIOUS round's coverData, which can be shorter than the new
+// one -- coverData[i] reads undefined and throws on out-of-range i).
+function dropCoverChunkMeshesOnly(c){
+  const meshes = coverChunkMeshes[c];
+  if(!meshes) return;
+  for(const kind in meshes){ scene.remove(meshes[kind]); meshes[kind].dispose(); }
+  coverChunkMeshes[c] = undefined;
+}
+
+// ---- bog tree pool: same per-chunk treatment, smaller scale ----------------
+// bogTreeData is already the final (post-thin) array by the time this ever
+// runs (see generateMap()'s reset sequence) -- every bucketed index renders.
+function bucketBogChunks(){
+  const nChunks = TREE_CHUNKS_PER_AXIS * TREE_CHUNKS_PER_AXIS;
+  bogChunkBuckets = Array.from({length: nChunks}, () => []);
+  for(let i=0; i<bogTreeData.length; i++) bogChunkBuckets[treeChunkIndex(bogTreeData[i].x, bogTreeData[i].z)].push(i);
+}
+function ensureBogChunk(c){
+  if(bogChunkMeshes[c]) return;
+  const idxs = bogChunkBuckets[c];
+  if(!idxs || idxs.length === 0) return;
+  const trio = [
+    new THREE.InstancedMesh(trunkGeo, trunkMat,   idxs.length),
+    new THREE.InstancedMesh(cone1Geo, foliageMat, idxs.length),
+    new THREE.InstancedMesh(cone2Geo, foliageMat, idxs.length),
+  ];
+  trio.forEach(m => { m.frustumCulled = false; });   // matches the old bogParts trio
+  idxs.forEach((bi, slot) => {
+    const t = bogTreeData[bi];
+    dummy.position.set(t.x, 0, t.z);
+    dummy.rotation.set(0, t.rot, 0);
+    dummy.scale.setScalar(t.s);
+    dummy.updateMatrix();
+    for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
+    tintCol.setRGB(t.tint*0.92, t.tint, t.tint*0.86);
+    trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
+  });
+  for(const m of trio){
+    scene.add(m);
+    m.instanceMatrix.needsUpdate = true;
+    if(m.instanceColor) m.instanceColor.needsUpdate = true;
+    m.computeBoundingSphere();
+  }
+  bogChunkMeshes[c] = trio;
+}
+function dropBogChunk(c){
+  const trio = bogChunkMeshes[c];
+  if(!trio) return;
+  for(const m of trio){ scene.remove(m); m.dispose(); }
+  bogChunkMeshes[c] = undefined;
 }
 // ---- Bog map band (LUL-25) --------------------------------------------------
 // generateBogTrees()/generateReeds()/applyHardBabySpawn() are all called from
@@ -937,13 +1085,14 @@ function generateBogTrees(){
     const s = 0.6 + rng()*1.3;   // thinner cover -- same scatter shape, smaller sizes than the forest
     bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
   }
-  // LUL-2247: layoutTreePool() moved out of here -- it now runs from
-  // generateMap(), after thinGeneratedProps() has filtered bogTreeData, so it
-  // can render only the surviving (post-thin) trees while still drawing
-  // rng() for the full pre-thin array (review fix -- see layoutTreePool()).
+  // LUL-2247/LUL-2249: drawBogTreeVisuals() moved out of here -- it now runs
+  // from generateMap(), after thinGeneratedProps() has filtered bogTreeData,
+  // so ensureBogChunk() can render only the surviving (post-thin) trees while
+  // drawBogTreeVisuals() still draws rng() for the full pre-thin array
+  // (review fix -- see drawBogTreeVisuals()'s own comment).
 }
 // Reeds: tall cover volumes, bog band only. Pushed into the same coverData
-// array log/rock/bramble use (see coverMeshes.reed above) so canSee()'s LOS
+// array log/rock/bramble use (see COVER_GEO_MAT.reed above) so canSee()'s LOS
 // raycast and the player's coverBlockedR() movement check treat them exactly
 // like any other prop, with zero changes to either function.
 //
@@ -1080,7 +1229,7 @@ function generateMap(seed){
   // LUL-2225: "sparse inside the bog, not none" -- every 4th tree that lands
   // within BOG_INNER_RADIUS of BOG_CENTER is kept, the rest marked `culled`.
   // Deterministic (a counter, no extra rng() draw) so this cannot perturb
-  // the seeded tree stream below it; layoutTreeChunks() parks culled trees
+  // the seeded tree stream below it; ensureChunk() parks culled trees
   // off-screen and addAllToGrid()/generateCover() skip them for collision/
   // hide-cover. Scoped to BOG_INNER_RADIUS specifically (not the wider
   // biomeAt > 0.5 threshold, which reaches ~35 units at this geometry) so
@@ -1100,11 +1249,21 @@ function generateMap(seed){
     }
     treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled });
   }
-  if(!qaNoRender) layoutTreeChunks(treeData);
+  // LUL-2249: rot/tint used to be drawn inside layoutTreeChunks()'s own
+  // per-tree loop, which ran here -- right after tree generation finished,
+  // before buildGrid()/placePredators() -- with nothing else consuming rng in
+  // between. Drawing them in a second pass over treeData, in the same index
+  // order, at the same point in the seeded stream, keeps every existing
+  // seed's tree/predator/etc. positions byte-identical; only *when* the
+  // resulting mesh gets built (streamed in per-chunk, later) has changed.
+  for(let i=0; i<treeData.length; i++){
+    treeData[i].rot = rng()*Math.PI*2;
+    treeData[i].tint = 0.72 + rng()*0.5;
+  }
   buildGrid();
   player.x = 0; player.z = 0; player.yaw = 0; player.pitch = -0.02;
   placePredators();
-  generateCover(); if(!qaNoRender) layoutCoverMeshes();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
+  generateCover();   // LUL-43: last rng consumer -- appends, doesn't reorder, the stream
   generateThrowables();
   generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
   pushState({ windX, windZ });   // LUL-1724: map-constant, pushed once, not per-frame
@@ -1131,14 +1290,18 @@ function generateMap(seed){
   generateReeds();
   // LUL-2247 review fix: capture the pre-thin array by reference before
   // thinGeneratedProps() reassigns bogTreeData to a filtered copy --
-  // layoutTreePool() below needs the full array so its rng() draw count
+  // drawBogTreeVisuals() below needs the full array so its rng() draw count
   // stays fixed at bogTreeData.length regardless of what the thin drops
-  // (see the comment on layoutTreePool() itself).
+  // (see the comment on drawBogTreeVisuals() itself).
   const bogTreeDataPreThin = bogTreeData;
   thinGeneratedProps();   // LUL-2247: cross-category spacing + per-chunk caps -- draws no rng
-  layoutTreePool(bogParts, bogTreeDataPreThin, CONFIG.bogTrees, new Set(bogTreeData));   // moved out of generateBogTrees() -- needs the full array + kept set, not the thinned array alone
+  // LUL-2249: same rot/tint extraction as the forest trees above -- draws for
+  // the FULL pre-thin array, in order, at the same rng stream position
+  // layoutTreePool() used to draw them from here (moved out of
+  // generateBogTrees() for the same LUL-2247 reason: needs the full array,
+  // not the thinned one, to keep its draw count fixed for any seed).
+  drawBogTreeVisuals(bogTreeDataPreThin, CONFIG.bogTrees);
   if(!qaNoRender) layoutThrowableMeshes();   // moved from right after generateThrowables() -- needs the thinned array too
-  if(!qaNoRender) layoutCoverMeshes();
   buildGrid();   // picks up bogTreeData for blockedR()/canopyBlockedR()
   placeLandmarks();
   buildGrid();   // LUL-374: re-run now landmarkData is populated, so blockedR()/predators'
@@ -1152,6 +1315,30 @@ function generateMap(seed){
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
                   // reasoning as the LUL-374 buildGrid() call above
+  // LUL-2249: hand off from "every populated chunk instantiated up front" to
+  // the streamed ring, now that treeData/coverData/bogTreeData are all at
+  // their final, post-thin state. Drop whatever the PREVIOUS seed left live
+  // (those meshes are sized for that seed's per-chunk counts, never
+  // reusable), rebucket this seed's data, and reset coverGrid to empty --
+  // buildCoverGrid() (generateCover()/generateReeds()/thinGeneratedProps())
+  // populated it whole-map for generation-time overlap checks, but from here
+  // on only a live chunk's own entries belong in it (ensureCoverChunk() adds
+  // them, dropCoverChunk() removes them during live streaming), so coverBlockedR()/hasLOS()/
+  // findHideSpot()/canSee() only ever see cover that's actually rendered --
+  // a deliberate, ticket-named consequence, not a bug. `player.x`/`player.z`
+  // were reset to (0,0) above, before any of this, so the initial
+  // updateStreamedChunks(true) streams in the ring around the real spawn
+  // point, not wherever the player stood in the previous round.
+  for(const c of liveChunks){ dropChunk(c); dropCoverChunkMeshesOnly(c); dropBogChunk(c); }
+  liveChunks = new Set();
+  lastStreamChunkX = null; lastStreamChunkZ = null;
+  coverGrid = new Map();
+  if(!qaNoRender){
+    bucketTreeChunks(treeData);
+    bucketCoverChunks();
+    bucketBogChunks();
+    updateStreamedChunks(true);
+  }
   // LUL-1093: moved from right after the tree-pool buildGrid() above.
   // bogTreeData/landmarkData don't exist until generateBogTrees()/
   // placeLandmarks() run, both below the old call site -- drawing from them
@@ -3670,15 +3857,38 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     };
   };
 
-  // LUL-1487 (E6): sanity check the chunked tree pool retains exactly one
-  // instance per generated tree -- no silent drop or double-count in the
-  // chunk bucketing.
+  // LUL-1487 (E6), extended by LUL-2249: sanity check the chunked tree pool
+  // retains exactly one instance per *live* tree -- no silent drop or
+  // double-count in the chunk bucketing. `chunks`/`totalInstances` keep their
+  // pre-streaming names for back-compat with any existing reader, but their
+  // meaning narrowed from "every populated chunk" (true for all of them
+  // before this ticket) to "every live (ring-limited) chunk" -- `instantiated`
+  // is the same number under the ticket's own explicit name, `populated` is
+  // the old "has tree data regardless of live state" count so a test can tell
+  // the two apart, and `expected` now means "trees in a currently-live chunk"
+  // (previously "every tree in the map", since every chunk used to be live --
+  // no existing consumer asserted that equality, confirmed by repo-wide grep).
   window.ForestEngine.qaProbeTreeChunks = function(){
     const trios = treeChunkTrios.filter(Boolean);
+    const populated = treeChunkBuckets.filter(b => b.length > 0).length;
     return {
       chunks: trios.length,
+      instantiated: trios.length,
+      populated,
       totalInstances: trios.reduce((n, t) => n + t[0].count, 0),
-      expected: treeData.length,
+      expected: treeData.filter(t => liveChunks.has(treeChunkIndex(t.x, t.z))).length,
+    };
+  };
+
+  // LUL-2249: liveChunks/cover/bog liveness + the player's own current chunk,
+  // for e2e assertions that a chunk-change moved the live set (and that old
+  // far chunks actually dropped) without reaching into module-private state.
+  window.ForestEngine.qaProbeChunkStreaming = function(){
+    return {
+      liveChunks: Array.from(liveChunks).sort((a, b) => a - b),
+      coverLive: coverChunkMeshes.reduce((n, m) => n + (m ? 1 : 0), 0),
+      bogLive: bogChunkMeshes.reduce((n, m) => n + (m ? 1 : 0), 0),
+      playerChunk: (function(){ const [cx, cz] = chunkXZ(player.x, player.z); return cx*TREE_CHUNKS_PER_AXIS + cz; })(),
     };
   };
 
@@ -4838,20 +5048,37 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // `g.visible=false`) so it can't be seen or scented.
   window.ForestEngine.qaBuildScene = function(scene_){
     const opts = scene_ || {};
+    // LUL-2249: rot/tint default to fixed values -- this synthetic path draws
+    // no rng at all (every position/shape is caller-given), so there's
+    // nothing to draw; ensureChunk() just needs the fields present
+    // (undefined would write a NaN transform, silently invisible).
     treeData = (opts.trees || []).map(t => {
       const s = t.s ?? 1.2;
-      return { x: t.x, z: t.z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled: false };
+      return { x: t.x, z: t.z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled: false, rot: 0, tint: 1 };
     });
-    if(!qaNoRender) layoutTreeChunks(treeData);
 
     coverData = (opts.props || [])
       .filter(p => QA_COVER_SHAPE[p.kind])
       .map(p => ({ x: p.x, z: p.z, kind: p.kind, ry: p.ry || 0, ...QA_COVER_SHAPE[p.kind] }));
-    buildCoverGrid();
-    if(!qaNoRender) layoutCoverMeshes();
 
     bogTreeData = [];
-    layoutTreePool(bogParts, [], CONFIG.bogTrees, new Set());
+
+    // LUL-2249: same full reset generateMap() does at the end of every call --
+    // drop whatever the previous scene left live (sized for different data),
+    // rebucket this synthetic scene's data, and let coverGrid start empty so
+    // it only ever reflects what streams back in below (real cross-check:
+    // e2e/qa-world-micro.spec.ts's qaStageWalkIntoCover() proves the staged
+    // prop is genuinely reachable through coverData/coverGrid after this).
+    for(const c of liveChunks){ dropChunk(c); dropCoverChunkMeshesOnly(c); dropBogChunk(c); }
+    liveChunks = new Set();
+    lastStreamChunkX = null; lastStreamChunkZ = null;
+    coverGrid = new Map();
+    if(!qaNoRender){
+      bucketTreeChunks(treeData);
+      bucketCoverChunks();
+      bucketBogChunks();
+      updateStreamedChunks(true);
+    }
 
     buildGrid();
 
@@ -5646,6 +5873,16 @@ function stepFrame(dt, t){
       noiseRadius = (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK) * bogNoiseMultiplier(playerBogginess);
     }
   }
+
+  // LUL-2249: once per stepFrame(), after every player.x/player.z write this
+  // function makes (confirmed by grepping every `player.x =`/`player.z =`
+  // assignment in stepFrame() -- the pair above is the last one) -- not
+  // nested inside the movement block above, so a position set directly by a
+  // QA teleport hook (qaTeleportNearBaby/qaTeleportHome/qaTeleportTo) still
+  // gets picked up on the very next frame even with zero movement input.
+  // Cheap when the player's chunk hasn't changed (two Math.floor + a
+  // compare) -- see updateStreamedChunks()'s own early return.
+  updateStreamedChunks(false);
 
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this
