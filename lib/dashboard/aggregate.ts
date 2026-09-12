@@ -130,6 +130,35 @@ function tierOutcomesFor(wins: RawEvent[], losses: RawEvent[]): TierOutcomes {
 }
 
 /**
+ * LUL-2392: median and p25 gap between a chase->roam give-up and the next scentOnto()
+ * re-acquisition, per difficulty tier -- feeds the Economist's LUL-1449 measurement for
+ * Deeper Lungs veil-tree re-pricing (LUL-1439). p25, not p50, decides tiers 2-3 (need
+ * 14-16s of quiet): the ticket's ask is specifically "does even a below-median run get
+ * enough quiet", which p50 alone cannot answer.
+ */
+export interface ChaseGapTierResult {
+  gapMs: { p50: number | null; p25: number | null; n: number };
+}
+
+export function computeChaseGapByTier(events: RawEvent[]): Record<OutcomeTierKey, ChaseGapTierResult> {
+  const gaps = events.filter((e) => e.event === 'chase_gap');
+  const byTier = new Map<OutcomeTierKey, number[]>();
+  for (const key of OUTCOME_TIER_KEYS) byTier.set(key, []);
+  for (const e of gaps) {
+    const d = stringProp(e, 'difficulty');
+    const key: OutcomeTierKey = d === 'lantern' || d === 'night' || d === 'blackout' ? d : 'unattributed';
+    const ms = numberProp(e, 'duration_ms');
+    if (ms !== null) byTier.get(key)!.push(ms);
+  }
+  return Object.fromEntries(
+    OUTCOME_TIER_KEYS.map((key) => {
+      const durations = byTier.get(key)!.sort((a, b) => a - b);
+      return [key, { gapMs: { p50: percentile(durations, 50), p25: percentile(durations, 25), n: durations.length } }];
+    }),
+  ) as Record<OutcomeTierKey, ChaseGapTierResult>;
+}
+
+/**
  * LUL-2461: win rate is measurable per difficulty tier today (win/loss already carry
  * `difficulty`), just not broken out that way anywhere -- computeOutcomes() pools all
  * tiers. This is the lightweight per-tier counterpart the Economist's LUL-1413

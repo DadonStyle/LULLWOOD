@@ -1985,24 +1985,35 @@ function relocateParkedHunter(pcx, pcz){
     }
   }
   if(!ring.length) return;   // never true at CONFIG.mapSize=480 (8x8 chunks, ring fits from any player position -- see spec body); guards the QA micro map (2x2) where parking never triggers at all
-  // shuffle so a chunk that can't geometrically satisfy dist>=70 from the player gets skipped
-  // in favor of a different ring chunk, instead of falling through with an invalid point (LUL-2571)
-  for(let i = ring.length-1; i > 0; i--){ const j = Math.floor(rng()*(i+1)); [ring[i], ring[j]] = [ring[j], ring[i]]; }
-  let x = null, z = null;
-  for(const [ccx, ccz] of ring){
+  // Drop any ring chunk whose closest point to the player is already <70u --
+  // no point sampling it, and (LUL-2571) it's what let the old single-chunk
+  // draw fall through with an invalid point when it picked exactly one of
+  // these. The remaining candidates keep the original one-chunk draw + 60-try
+  // shape (same rng() cost as before in the common case); only exhausting a
+  // chunk's 60 tries costs a second draw, which should be rare.
+  const candidates = ring.filter(([ccx, ccz]) => {
     const x0 = Math.max(-half+margin, ccx*TREE_CHUNK_SIZE - half), x1 = Math.min(half-margin, (ccx+1)*TREE_CHUNK_SIZE - half);
     const z0 = Math.max(-half+margin, ccz*TREE_CHUNK_SIZE - half), z1 = Math.min(half-margin, (ccz+1)*TREE_CHUNK_SIZE - half);
     const closestX = Math.max(x0, Math.min(player.x, x1)), closestZ = Math.max(z0, Math.min(player.z, z1));
-    if(Math.hypot(closestX-player.x, closestZ-player.z) < 70) continue;   // chunk can't satisfy the guarantee anywhere in its box
+    return Math.hypot(closestX-player.x, closestZ-player.z) >= 70;
+  });
+  if(!candidates.length) return;   // no ring chunk can satisfy the guarantee from the player's current spot -- stay parked, retry next relocation call
+  let x = null, z = null;
+  const pool = candidates.slice();
+  while(pool.length && x === null){
+    const idx = Math.floor(rng()*pool.length);
+    const [ccx, ccz] = pool.splice(idx, 1)[0];
+    const x0 = Math.max(-half+margin, ccx*TREE_CHUNK_SIZE - half), x1 = Math.min(half-margin, (ccx+1)*TREE_CHUNK_SIZE - half);
+    const z0 = Math.max(-half+margin, ccz*TREE_CHUNK_SIZE - half), z1 = Math.min(half-margin, (ccz+1)*TREE_CHUNK_SIZE - half);
     let cx, cz, tries = 0;
     do {
       cx = rnd(x0, x1); cz = rnd(z0, z1); tries++;
     } while((Math.hypot(cx-player.x, cz-player.z) < 70 || playerCanSee({x: cx, z: cz}) || blockedR(cx, cz, target.rad+0.5)) && tries < 60);
     if(Math.hypot(cx-player.x, cz-player.z) >= 70 && !playerCanSee({x: cx, z: cz}) && !blockedR(cx, cz, target.rad+0.5)){
-      x = cx; z = cz; break;
+      x = cx; z = cz;
     }
   }
-  if(x === null) return;   // no ring chunk could place the predator >=70u this tick -- stay parked, retry on the next relocation call rather than violate the guarantee
+  if(x === null) return;   // every geometrically-valid ring chunk was blocked/visible on every try -- stay parked, retry next relocation call rather than violate the guarantee
   if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
   target.x = x; target.z = z; target.wpx = x; target.wpz = z;
   target.parked = false; target.g.visible = true; target.g.position.set(x, 0, z);
@@ -2174,6 +2185,15 @@ function depositScent(hot, againstWind){
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
   const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
   scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
+  pruneScentPoints();
+}
+// LUL-2471: pruning was only ever run from depositScent(), so standing still
+// (no new deposit) left fully-decayed points sitting in the array forever --
+// qaProbeScentTrail().livePoints never reached 0 even though the rendered
+// trail had already faded. Called unconditionally once per stepFrame() tick
+// below, mirroring the LUL-2249 updateStreamedChunks() precedent for
+// movement-independent per-tick work.
+function pruneScentPoints(){
   while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed))) scentPoints.shift();
 }
 function checkScent(p){
@@ -5987,6 +6007,10 @@ function stepFrame(dt, t){
   // Cheap when the player's chunk hasn't changed (two Math.floor + a
   // compare) -- see updateStreamedChunks()'s own early return.
   updateStreamedChunks(false);
+  // LUL-2471: same reasoning as updateStreamedChunks(false) above -- must run
+  // every tick regardless of movement, or a stationary player's fully-decayed
+  // scent points never leave the array.
+  pruneScentPoints();
 
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this

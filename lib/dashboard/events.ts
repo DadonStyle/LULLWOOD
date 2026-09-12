@@ -10,6 +10,12 @@ export const KNOWN_EVENTS = [
   'loss',
   'session_length',
   'feature_engagement',
+  // LUL-2239's `engine_contract_violation` and LUL-2392's `chase_gap` were added to the
+  // lib/analytics.ts emitter union but never added here -- parseRawEvent() silently dropped
+  // every row of both as "unknown event" (LUL-2392 follow-up: this file, not the emitter or
+  // aggregate.ts, is what a dashboard read actually gates on).
+  'engine_contract_violation',
+  'chase_gap',
 ] as const;
 
 export type EventName = (typeof KNOWN_EVENTS)[number];

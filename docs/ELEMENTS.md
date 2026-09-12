@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6640 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5861, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6664 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5881, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1437,6 +1437,21 @@ design doc as turning horror into radar.
   counterpart to `computeOutcomes()` (which pools all tiers) --
   `scripts/win-rate-by-tier.mjs` is the one-shot CLI that filters events to a
   build range (git-ancestry, not string comparison) and prints it.
+- `chase_gap` telemetry event (LUL-2392): fired from `scentOnto()` (`engine/forest-engine.js`)
+  when a predator re-acquires the player by scent after a chase->roam give-up --
+  `duration_ms` is the wall-clock gap, `difficulty` the tier. `p.gaveUpAt` is set at
+  all 4 give-up sites and reset in `placePredators()` so a give-up that outlives its
+  run never survives into the next one. `qaProbeChaseGap()` exposes the last fired gap
+  for e2e coverage (`e2e/chase-gap-instrumentation.spec.ts`). Feeds the Economist's
+  LUL-1449 measurement (Deeper Lungs veil-tree re-pricing, LUL-1439):
+  `lib/dashboard/aggregate.ts`'s `computeChaseGapByTier()` computes p50/p25 gap per tier,
+  `scripts/chase-gap-by-tier.mjs` is the one-shot CLI. **Adding an event to the
+  `lib/analytics.ts` emitter union is not enough** -- `lib/dashboard/events.ts`'s
+  `KNOWN_EVENTS` is a separate allowlist that `parseRawEvent()` gates every Blob
+  read-back on; PR #601 added `chase_gap` to the emitter but missed this file, so every
+  emitted event was silently dropped on read until this entry's fix (also caught
+  `engine_contract_violation`, LUL-2239, in the same gap). `lib/dashboard/events.test.ts`
+  now locks every emitted event name to also being in `KNOWN_EVENTS`.
 - Shop catalog (LUL-2351): `SHOP_CATALOG` in `lib/game/economy.ts` is the single
   source of truth for what's for sale — three permanent items, bought via the
   generic `purchase(id)`/`nextCost(id, tier)`/`tierOf(state, id)` trio instead
@@ -1459,7 +1474,7 @@ design doc as turning horror into radar.
     and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3736) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3756) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1570,7 +1585,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L5841, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L5842, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**

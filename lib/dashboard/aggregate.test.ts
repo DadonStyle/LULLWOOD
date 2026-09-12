@@ -1,7 +1,15 @@
 // Node built-in test runner. Run: node --test lib/dashboard/aggregate.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement, computeEconomy, computeOutcomesByTier } from './aggregate.ts';
+import {
+  computeFunnel,
+  computeOutcomes,
+  computeSessions,
+  computeFeatureEngagement,
+  computeEconomy,
+  computeOutcomesByTier,
+  computeChaseGapByTier,
+} from './aggregate.ts';
 import type { RawEvent } from './events.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -383,4 +391,32 @@ test('computeOutcomesByTier: a tier with zero events yields nulls, not NaN', () 
   assert.equal(byTier.blackout.runLengthMs.win.p50, null);
   assert.equal(byTier.blackout.distanceFromHomeAtDeathM.p50, null);
   assert.equal(Number.isNaN(byTier.blackout.runLengthMs.win.p50), false);
+});
+
+test('computeChaseGapByTier: median and p25 gap, split per tier', () => {
+  const events: RawEvent[] = [
+    ev('chase_gap', BASE_TS, 'a', { duration_ms: 4000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'b', { duration_ms: 8000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'c', { duration_ms: 12000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'd', { duration_ms: 16000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'e', { duration_ms: 20000, difficulty: 'lantern' }),
+    ev('chase_gap', BASE_TS, 'f', { duration_ms: 30000, difficulty: 'lantern' }),
+  ];
+  const byTier = computeChaseGapByTier(events);
+  assert.equal(byTier.blackout.gapMs.n, 4);
+  assert.equal(byTier.blackout.gapMs.p50, 8000);
+  assert.equal(byTier.blackout.gapMs.p25, 4000);
+  assert.equal(byTier.lantern.gapMs.n, 2);
+  assert.equal(byTier.lantern.gapMs.p50, 20000);
+  assert.equal(byTier.night.gapMs.n, 0);
+  assert.equal(byTier.night.gapMs.p50, null);
+});
+
+test('computeChaseGapByTier: other event types and missing duration_ms are ignored', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { time_survived_ms: 1000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'b', { difficulty: 'blackout' }),
+  ];
+  const byTier = computeChaseGapByTier(events);
+  assert.equal(byTier.blackout.gapMs.n, 0);
 });
