@@ -1766,6 +1766,7 @@ function placePredators(){
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0;
+    p.gaveUpAt=null;
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   mm.style.display = preset.minimap ? '' : 'none';
@@ -1818,6 +1819,7 @@ let scentPoints = [];   // {x,z,t0,radius}, oldest first (push-only, so index 0 
 // 'scent' is just HINT_PRIORITY's first entry.
 let scentTrailVisible = true;   // engine-owned setting, same shape as captionsOn
 let scentLockEventCount = 0;   // bumped by scentOnto(); the 'scent' hint's dismiss-on-interaction signal
+let qaLastChaseGap = null;   // LUL-2392: last {kind, durationMs, difficulty} emitted by scentOnto()'s chase_gap track() call, QA-visible only
 let scentTrailLastFrame = { settingOn: true, rendered: false, points: [], livePoints: 0,
   captionVisible: false, captionSeen: false, veilAmount: 0, windX: 1, windZ: 0 };   // qaProbeScentTrail() snapshot, refreshed every tick
 function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrailVisible }); }
@@ -1975,6 +1977,17 @@ function activateCavePower(){
 // without a tutorial or a status readout.
 function scentOnto(p){
   if(p.scentLock > 0) return;   // already tracking off a scent cue: don't re-trigger the roar
+  // LUL-2392: chase->roam gap, per difficulty tier, feeds LUL-1449 (Economist,
+  // Deeper Lungs veil-tree pricing). Only the scent channel closes this timer --
+  // see wiki game/m4-analytics-plan's 2026-09-12 addendum for why a sight/noise
+  // re-catch or a win/restart before the next scentOnto() just never reports
+  // that gap, rather than reporting it against the wrong channel.
+  if(p.gaveUpAt != null){
+    const durationMs = Math.round((clock.elapsedTime - p.gaveUpAt) * 1000);
+    track({ event: 'chase_gap', duration_ms: durationMs, difficulty });
+    qaLastChaseGap = { kind: p.kind, durationMs, difficulty };
+    p.gaveUpAt = null;
+  }
   p.alertedBy = null;   // LUL-1857: scent-driven, not the carried cry
   p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
@@ -2426,7 +2439,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
         }
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
-        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
+        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -2511,14 +2524,14 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN);
             p.inv = 'leave';
           }
-          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); }
+          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       } else if(p.inv === 'leave'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); }
+        if(bd < 2){ p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       }
     } else if(p.state === 'flank'){
@@ -2542,7 +2555,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.sniffsLeft = holdOutcome.sniffsLeft;
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(holdOutcome.next === 'hold') p.sniffTimer = rnd(1,4);
-          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); }
+          else { p.lkpX=player.x; p.lkpZ=player.z; p.lkpSweeps=LKP_MAX_SWEEPS; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         }
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
@@ -3800,6 +3813,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     scentPoints.push({ x: player.x + dx, z: player.z + dz, t0: clock.elapsedTime - age, radius: SCENT_RADIUS_WALK });
   };
 
+  // LUL-2392: last {kind, durationMs, difficulty} the chase_gap analytics event fired
+  // with (scentOnto()'s p.gaveUpAt consumption), or null if none has fired yet this
+  // page load. QA-only window into the tracked event -- avoids wiring a capturing
+  // sink through the engine just for a test to read what it already computed.
+  window.ForestEngine.qaProbeChaseGap = function(){
+    return qaLastChaseGap;
+  };
+
   // LUL-65: places a named predator on the drifted position of the oldest still-live
   // scent point and drops it into `roam` so checkScent()/scentOnto() run for real on
   // the next tick, the same way a wandering predator would find it -- this is what
@@ -4130,7 +4151,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const dist = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
     // LUL-659: x/z added so a caller can trace lateral movement around a cover
     // prop (e.g. avoidDir() steering), not just closing distance.
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically

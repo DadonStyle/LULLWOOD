@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6096 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L5359, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6117 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5380, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1375,17 +1375,17 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L4835, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L4956 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4992). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L4890, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5011 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5046). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L4992) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L4999) rather than recomputed later, since `player.x/z` can move on
+  (L5013) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L5020) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1415,7 +1415,7 @@ design doc as turning horror into radar.
     and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3182),
-  reset to 0 on `enter()` (L3415) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3445) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5208: `computeDepth(maxDistFromHome) +
