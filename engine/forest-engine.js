@@ -904,6 +904,8 @@ function dropChunk(c){
 const STREAM_RADIUS_CHUNKS = 2;    // load radius: 5x5 = 300x300u square around the player's chunk
 const STREAM_UNLOAD_CHEBYSHEV = 3; // unload once Chebyshev distance exceeds this -- hysteresis band
                                     // against a player oscillating across a single chunk boundary
+const MIN_ACTIVE_HUNTERS = 2;
+const HUNTER_GUARANTEE_T = 90;   // seconds of game time an under-min board is tolerated
 let lastStreamChunkX = null, lastStreamChunkZ = null;
 
 function chunkXZ(x, z){
@@ -1912,7 +1914,7 @@ function makePredator(kind){
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
     charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, chargeRecoveryT:0, inert:false, sightLock:null,
-    noiseTarget:null, noiseTargetT:0 };
+    noiseTarget:null, noiseTargetT:0, parked:false };
 }
 const predators = [];
 // `speciesIdx` (0..2 within its species) is what LUL-26's `activePerSpecies`
@@ -1920,6 +1922,7 @@ const predators = [];
 // need to re-derive array position every restart.
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
 let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
+let sinceBelowMinHunters = 0;   // LUL-2250: seconds the active-hunter count has been below MIN_ACTIVE_HUNTERS
 let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
 let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
 let coverAmt = 0;   // LUL-144: eased 0..1 desaturation driven by the cover-feedback scan below
@@ -1949,10 +1952,13 @@ function placePredators(){
     // the deterministic, non-rng pushOutOfLakeClearance() -- unconditionally,
     // not just when the retry budget exhausts.
     let x, z, tries = 0;
-    do { const ang=rng()*Math.PI*2, d=half*(0.42+rng()*0.45); x=Math.cos(ang)*d; z=Math.sin(ang)*d; tries++; }
+    do { x=rnd(-half+margin, half-margin); z=rnd(-half+margin, half-margin); tries++; }
     while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 34 || blockedR(x, z, p.rad+0.5)) && tries < 60);
     if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
+    const [ccx, ccz] = chunkXZ(x, z), [pcx, pcz] = chunkXZ(player.x, player.z);
+    p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
+    if(p.parked) p.g.visible = false;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
@@ -1963,7 +1969,55 @@ function placePredators(){
   }
   mm.style.display = preset.minimap ? '' : 'none';
   sinceClose = 0; huntTime = 0; spotFlash = 0; bearingPulseT = 0; bearingPulseSide = null;
+  sinceBelowMinHunters = 0;
   activeCharges = 0; pushState({ chargeVisible: false });
+}
+function relocateParkedHunter(pcx, pcz){
+  const target = predators.find(p => !p.inert && p.parked);   // lowest array index, per the ticket
+  if(!target) return;   // every non-inert predator already active -- guarantee already holds
+  const ring = [];
+  for(let dx=-STREAM_RADIUS_CHUNKS; dx<=STREAM_RADIUS_CHUNKS; dx++){
+    for(let dz=-STREAM_RADIUS_CHUNKS; dz<=STREAM_RADIUS_CHUNKS; dz++){
+      if(Math.max(Math.abs(dx), Math.abs(dz)) !== STREAM_RADIUS_CHUNKS) continue;   // outer edge only
+      const ccx = pcx+dx, ccz = pcz+dz;
+      if(ccx < 0 || ccx >= TREE_CHUNKS_PER_AXIS || ccz < 0 || ccz >= TREE_CHUNKS_PER_AXIS) continue;
+      ring.push([ccx, ccz]);
+    }
+  }
+  if(!ring.length) return;   // never true at CONFIG.mapSize=480 (8x8 chunks, ring fits from any player position -- see spec body); guards the QA micro map (2x2) where parking never triggers at all
+  // Drop any ring chunk whose closest point to the player is already <70u --
+  // no point sampling it, and (LUL-2571) it's what let the old single-chunk
+  // draw fall through with an invalid point when it picked exactly one of
+  // these. The remaining candidates keep the original one-chunk draw + 60-try
+  // shape (same rng() cost as before in the common case); only exhausting a
+  // chunk's 60 tries costs a second draw, which should be rare.
+  const candidates = ring.filter(([ccx, ccz]) => {
+    const x0 = Math.max(-half+margin, ccx*TREE_CHUNK_SIZE - half), x1 = Math.min(half-margin, (ccx+1)*TREE_CHUNK_SIZE - half);
+    const z0 = Math.max(-half+margin, ccz*TREE_CHUNK_SIZE - half), z1 = Math.min(half-margin, (ccz+1)*TREE_CHUNK_SIZE - half);
+    const closestX = Math.max(x0, Math.min(player.x, x1)), closestZ = Math.max(z0, Math.min(player.z, z1));
+    return Math.hypot(closestX-player.x, closestZ-player.z) >= 70;
+  });
+  if(!candidates.length) return;   // no ring chunk can satisfy the guarantee from the player's current spot -- stay parked, retry next relocation call
+  let x = null, z = null;
+  const pool = candidates.slice();
+  while(pool.length && x === null){
+    const idx = Math.floor(rng()*pool.length);
+    const [ccx, ccz] = pool.splice(idx, 1)[0];
+    const x0 = Math.max(-half+margin, ccx*TREE_CHUNK_SIZE - half), x1 = Math.min(half-margin, (ccx+1)*TREE_CHUNK_SIZE - half);
+    const z0 = Math.max(-half+margin, ccz*TREE_CHUNK_SIZE - half), z1 = Math.min(half-margin, (ccz+1)*TREE_CHUNK_SIZE - half);
+    let cx, cz, tries = 0;
+    do {
+      cx = rnd(x0, x1); cz = rnd(z0, z1); tries++;
+    } while((Math.hypot(cx-player.x, cz-player.z) < 70 || playerCanSee({x: cx, z: cz}) || blockedR(cx, cz, target.rad+0.5)) && tries < 60);
+    if(Math.hypot(cx-player.x, cz-player.z) >= 70 && !playerCanSee({x: cx, z: cz}) && !blockedR(cx, cz, target.rad+0.5)){
+      x = cx; z = cz;
+    }
+  }
+  if(x === null) return;   // every geometrically-valid ring chunk was blocked/visible on every try -- stay parked, retry next relocation call rather than violate the guarantee
+  if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
+  target.x = x; target.z = z; target.wpx = x; target.wpz = z;
+  target.parked = false; target.g.visible = true; target.g.position.set(x, 0, z);
+  logChronicle('hunter_relocated', { kind: target.kind });
 }
 // steer a desired direction around trees the predator would otherwise walk into
 // LUL-593: the angle-fallback scan itself now lives in lib/game/cover.ts
@@ -2395,7 +2449,7 @@ function canSee(p, dist){
 // FLANK_SPEED_MUL also come from there; FLANK_ANGLE/FLANK_DIST_MUL are used
 // only inside flankTarget() now, so they don't need an engine-local copy.
 function updateWolfPack(dt){
-  const wolves = predators.filter(p => p.kind === 'wolf' && !p.inert);   // LUL-26: parked wolves don't flank
+  const wolves = predators.filter(p => p.kind === 'wolf' && !p.inert && !p.parked);   // LUL-26/LUL-2250: inert or off-ring-parked wolves don't flank
   for(const p of wolves) if(p.packTimer > 0) p.packTimer -= dt;
 
   const chasers = wolves.filter(p => p.state === 'chase' || p.hunt);
@@ -2429,7 +2483,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
   for(const p of predators){
-    if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
+    if(p.inert || p.parked) continue;   // LUL-26: parked out for the current difficulty preset; LUL-2250: outside the live streaming ring
     const dx = wrapDelta(player.x, p.x, WRAP_SPAN), dz = wrapDelta(player.z, p.z, WRAP_SPAN), dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
     // LUL-1309: predators wade too -- same per-position terrain sample the
@@ -3909,6 +3963,21 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     };
   };
 
+  // LUL-2250: active-hunter count + the guarantee timer, for e2e proving the
+  // 90s/2-hunter relocation fires.
+  window.ForestEngine.qaProbeActiveHunters = function(){
+    return {
+      active: predators.filter(p => !p.inert && !p.parked).length,
+      sinceBelowMin: sinceBelowMinHunters,
+    };
+  };
+
+  // LUL-2250: thin wrapper on playerCanSee() so e2e doesn't re-derive the FOV
+  // cone math to check a relocated hunter landed outside the player's view.
+  window.ForestEngine.qaProbePlayerCanSee = function(x, z){
+    return playerCanSee({ x, z });
+  };
+
   // LUL-2247: exposes the finished map's post-thin prop layout for e2e
   // assertions -- per-chunk counts by category (same categories
   // PROP_CHUNK_CAP keys), the minimum pairwise centre-to-centre distance
@@ -4522,7 +4591,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const dist = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
     // LUL-659: x/z added so a caller can trace lateral movement around a cover
     // prop (e.g. avoidDir() steering), not just closing distance.
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null };
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
@@ -5106,7 +5175,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       byKind.set(spec.kind, n + 1);
       const p = predators.find(q => q.kind === spec.kind && q.speciesIdx === n);
       if(!p) continue;
-      p.inert = false; p.g.visible = true;
+      p.inert = false; p.g.visible = true; p.parked = false;
       p.x = spec.x; p.z = spec.z; p.wpx = spec.x; p.wpz = spec.z; p.vx = 0; p.vz = 0; p.yaw = 0;
       p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
       p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.scentLock = 0; p.scentCalls = 0;
@@ -6049,6 +6118,44 @@ function stepFrame(dt, t){
   // two call sites (idle glow uses babyGroup position, carry uses player
   // position) -- the cry originates at the child, so it uses baby.x/z.
   const cryNoiseRadius = CRY_NOISE_RADIUS * fogTideGlowRangeMul(fogTideAmountAt(baby.x, baby.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
+  if(playing){
+    const [pcx, pcz] = chunkXZ(player.x, player.z);
+    let activeHunters = 0;
+    for(const p of predators){
+      if(p.inert) continue;
+      const [ccx, ccz] = chunkXZ(p.x, p.z);
+      const wasParked = p.parked;
+      // LUL-2569: a predator actively engaged with the player -- chasing,
+      // forced-hunting, or mid a last-known-position return sweep -- can
+      // wander (or be placed by its own search waypoint) outside the live
+      // streaming ring around the player's *current* chunk without the
+      // player having gone anywhere. That's the predator's own AI moving,
+      // not the player leaving its region, so it must not trip the "forgets
+      // you" reset below (which froze predator-memory.spec.ts's bounded
+      // sweep count at its very first tick). Same three states already
+      // share "is this predator coming for you" semantics at :6134.
+      const engaged = p.state === 'chase' || p.hunt || (p.state === 'roam' && p.lkpSweeps > 0);
+      p.parked = !engaged && Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
+      if(p.parked && !wasParked){
+        // LUL-2250: forgets you the moment you leave its region -- state and
+        // hunt/lkp memory both reset, not just state, or a predator that was
+        // mid force-hunt (p.hunt, checked *before* the state switch below --
+        // see the `else if(p.hunt)` branch at :2544) would resume an unbreakable
+        // beeline for the player the instant it's brought back by the hunter
+        // guarantee (§3) or a player backtrack, defeating "forgets you".
+        p.state = 'roam'; p.spotted = false; p.inv = ''; p.lkpSweeps = 0; p.hunt = false;
+        p.g.visible = false;
+      } else if(!p.parked && wasParked){
+        p.g.visible = true;
+      }
+      if(!p.parked) activeHunters++;
+    }
+    if(activeHunters < MIN_ACTIVE_HUNTERS) sinceBelowMinHunters += dt; else sinceBelowMinHunters = 0;
+    if(sinceBelowMinHunters > HUNTER_GUARANTEE_T){
+      relocateParkedHunter(pcx, pcz);
+      sinceBelowMinHunters = 0;
+    }
+  }
   if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
   if(playing) updateRoosts(dt);   // LUL-1914: roost feedback, same gate as predator AI
   carriedCryPulse = false;   // LUL-1857: one-tick pulse, consumed above -- clear so it isn't sticky
@@ -6066,7 +6173,7 @@ function stepFrame(dt, t){
   let exposedNow = false, coveredNow = false;
   if(playing){
     for(const p of predators){
-      if(p.inert) continue;   // LUL-26: parked out for the current difficulty preset
+      if(p.inert || p.parked) continue;   // LUL-26: parked out for the current difficulty preset; LUL-2250: outside the live streaming ring
       const dpd = Math.hypot(player.x - p.x, player.z - p.z);
       if(dpd < nearDist){ nearDist = dpd; nearP = p; }
       if(p.state==='chase' || p.hunt || (p.state==='investigate' && p.inv!=='back') || (p.state==='roam' && p.lkpSweeps > 0)) approaching = true;
