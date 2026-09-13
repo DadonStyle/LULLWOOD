@@ -22,27 +22,35 @@ and anything with an account attached.
 
 ## Contents
 
-[The thread — how a ticket becomes a release](#the-thread--how-a-ticket-becomes-a-release) — start here.
+[The thread — how a ticket becomes a release](#thread) — **start here.** One piece of work followed from
+idea to production, and the failure modes actually seen along the way.
 
-**The game**
+**The game** — what ships to players
 
-1. [The engine](#the-engine--engineforest-enginejs) — `engine/`
-2. [The React bridge](#the-react-bridge--components) — `components/`
-3. [The Next.js shell](#the-nextjs-shell--app-and-public) — `app/`, `public/`
-4. [Game logic and policy](#game-logic-and-policy--lib) — `lib/`
-5. [Tests](#tests--e2e-unit-tests-and-the-world-policy) — `e2e/`
-6. [Shipping](#shipping--scripts-github-and-the-release-flow) — `scripts/`, `.github/`
-7. [The written record](#the-written-record--docs-and-qa_regression) — `docs/`, `QA_REGRESSION/`
+| # | Chapter | Covers |
+|---|---|---|
+| 1 | [The engine](#engine) | `engine/` — the simulation, and every QA hook the tests drive it with |
+| 2 | [The React bridge](#react-bridge) | `components/` — HUD state, the element-id contract, mobile controls |
+| 3 | [The Next.js shell](#next-shell) | `app/`, `public/` — routes, API, metadata and the analytics surface |
+| 4 | [Game logic and policy](#lib) | `lib/` — the pure, unit-tested rules the engine delegates to |
+| 5 | [Tests](#tests) | `e2e/` — Playwright projects, the micro world, the `@fullmap` rule |
+| 6 | [Shipping](#shipping) | `scripts/`, `.github/` — tiers, `[ship]`, the release cut |
+| 7 | [The written record](#written-record) | `docs/`, `QA_REGRESSION/` — the element registry and the specs |
 
-**The studio**
+**The studio** — what builds it
 
-8. [Paperclip — the agent orchestrator](#paperclip--the-agent-orchestrator)
-9. [The Gate — concurrency control](#the-gate--concurrency-control-for-the-fleet)
-10. [Local models — the two Ollama instances](#local-models--the-two-ollama-instances)
-11. [The local QA rig](#the-local-qa-rig)
-12. [The machine](#the-machine--os-storage-memory-and-the-guards)
+| # | Chapter | Covers |
+|---|---|---|
+| 8 | [Paperclip](#paperclip) | the orchestrator, the board, the agent roster and the heartbeat model |
+| 9 | [The Gate](#the-gate) | slot-based concurrency control over a shared subscription |
+| 10 | [Local models](#ollama) | the GPU and CPU Ollama instances and the workers that use them |
+| 11 | [The local QA rig](#qa-rig) | the tester that gates release cuts without spending quota |
+| 12 | [The machine](#machine) | the host, its storage and memory model, and the guards |
+| 13 | [The wiki](#wiki) | the studio's institutional memory, 816 pages, server-side only |
 
 ---
+
+<a id="thread"></a>
 
 ## The thread — how a ticket becomes a release
 
@@ -53,18 +61,18 @@ flowchart TD
     FS --> CEO["CEO decides<br/>suggest_tasks interaction"]
     FD["founder brief"] --> CEO
     CEO --> B
-    DET["watchdog-run-check.mjs<br/>board-integrity-check.mjs<br/>host cron, zero model tokens"] --> B
+    DET["watchdog-run-check.mjs (*/30)<br/>board-integrity-check.mjs (*/15)<br/>host cron, zero model tokens"] --> B
     TRI["local QA triage.py<br/>BUG + local-qa-fingerprint"] --> B
     B[("Paperclip board<br/>LUL-nnnn")] -->|"assignment wakes the agent"| HB
 
-    HB["agent heartbeat"] --> G{"The Gate<br/>4 slots, FIFO queue, overflow<br/>Code Reviewer exempt"}
+    HB["agent heartbeat"] --> G{"The Gate<br/>4 slots, FIFO queue,<br/>separate overflow slot<br/>Code Reviewer exempt"}
     G -->|"slot granted"| J["run journal START<br/>agent-logs/slug.log"]
     J --> W["scratch clone under TMPDIR<br/>branch lul-n-slug<br/>spec, e2e section, checklist"]
     W -->|"git push, deploy key"| P["auto-pr.yml<br/>PR opened against release/next"]
     P --> CI["ci.yml on the branch push<br/>build,typecheck,lint then unit tests"]
     CI --> T{"tier by paths<br/>highest wins"}
     T -->|"A: ship-allowed.sh"| AM["automerge.yml<br/>squash on own-line ship + green"]
-    T -->|"B: tier-b-allowed.sh"| BA["bot-approve.yml<br/>still waits on Code Reviewer"]
+    T -->|"B: tier-b-allowed.sh"| BA["tier-approve.yml<br/>approves unattended on green CI"]
     T -->|"C: engine, secrets, CI, cuts"| CR["Code Reviewer blocking<br/>plus play verdict"]
     AM --> RN
     BA --> RN
@@ -72,7 +80,7 @@ flowchart TD
 
     RN --> PW["pr-e2e-watch, timer every 5 min<br/>full suite plus scenario audit<br/>comments local-qa PASS or FAIL at sha"]
     RN --> OD["local-qa-ondemand, every 20 min<br/>plus nightly 00:30"]
-    OD --> SA["scenario-audit.mjs<br/>18 states, 3 viewports"]
+    OD --> SA["scenario-audit.mjs<br/>18 states, 4 viewports"]
     SA --> TRI
     PW --> VC["version-cut.yml<br/>combined-suite shards 1-6<br/>on the release/next + main merge tree"]
     VC -.->|"LUL-2581: shard steps are<br/>continue-on-error"| HOLE["required checks green<br/>on a red suite"]
@@ -93,8 +101,11 @@ Four sources, one board. Nothing gets built that is not a Paperclip ticket.
   `~/.paperclip/shared/local-code/bin/ollama-idle-feature-scout-cron`. Whenever nothing else wants
   the card, it starts a transient `ollama-featurescout-<n>` unit that makes **one** `/api/generate`
   call to the GPU instance (`127.0.0.1:11434`, `hf.co/Qwen/Qwen3-8B-GGUF:Q5_K_M`,
-  `FEATURESCOUT_NUM_CTX=8192` so all 37 layers stay resident at ~65 tok/s) asking for 3-5 ideas that
-  are not already in `docs/ELEMENTS.md`, and appends them to `feature-leads/leads.md`. That file is
+  `FEATURESCOUT_NUM_CTX=8192` so all 37 layers stay resident — the shared 24576 context offloads only
+  27 of them) asking for 3-5 ideas that are not already in `docs/ELEMENTS.md`, and appends them to
+  `feature-leads/leads.md`. Decode measured today over 753 samples in `logs/ollama-gpu.log`: p50
+  **54.4 tok/s**, max 55.1. The 65.8 tok/s in the worker's own founder note is the number from the day
+  the context window was set and is superseded — see §10 before reporting a regression. That file is
   raw material, not a queue: the Feature Scout `cat`s it, keeps what survives a `$WIKI query`, writes
   a cross-linked proposal page, and truncates the file so triaged leads do not pile up. **Founder
   rule: the proposal never mentions Ollama, the local model, or `leads.md`.**
@@ -106,20 +117,29 @@ Four sources, one board. Nothing gets built that is not a Paperclip ticket.
   otherwise-idle board (they sat unread from 2026-09-09 to 2026-09-11 when that was not true).
 - **Founder tickets** land directly, usually as a verbatim brief in the description.
 - **The detectors file their own.** `scripts/watchdog-run-check.mjs --post` routes a red scheduled
-  workflow into a wake ticket (`review-gap-detector.yml` was red 99 of 102 consecutive scheduled runs
-  with nothing routing it anywhere). `scripts/board-integrity-check.mjs --post` catches the two
-  classes that used to need a hand-sweep: an approved, green PR with no live ticket, and a `blocked`
-  issue nothing can ever wake. Both run from host cron
-  (`~/.paperclip/shared/board-integrity/bin/board-integrity-cron`), never from GitHub Actions — CI
-  must never hold Paperclip credentials (LUL-523) — and detached from every agent session, because
-  the detector has to keep observing exactly when the agents are the ones stuck. Assignees live in
-  `shared/watchdog-router/env` (CTO) and `shared/board-integrity/env` (CEO).
+  workflow into a wake ticket (`review-gap-detector.yml` was red for **102 consecutive scheduled
+  runs** — 2026-08-22T15:26Z to 2026-08-26T06:01Z, 3.6 days — with the same offender reported every
+  time and nothing routing it anywhere; the "99 of 102" in the script header is the same event counted
+  mid-streak). `scripts/board-integrity-check.mjs --post` catches the two classes that used to need a
+  hand-sweep: an approved, green PR with no live ticket, and a `blocked` issue nothing can ever wake.
+  Both run from host cron — `watchdog-run-check.mjs` from
+  `~/.paperclip/shared/watchdog-router/bin/watchdog-router-cron` (`*/30`), `board-integrity-check.mjs`
+  from `~/.paperclip/shared/board-integrity/bin/board-integrity-cron` (`*/15`) — never from GitHub
+  Actions, because CI must never hold Paperclip credentials (LUL-523), and detached from every agent
+  session, because the detector has to keep observing exactly when the agents are the ones stuck.
+  Assignees live in `shared/watchdog-router/env` (CTO) and `shared/board-integrity/env` (CEO).
 - **The QA rig files its own too** — see §5.
 
-> **Trap when you file.** `--assignee-agent-id` wakes that agent immediately; `--status backlog` does
-> not stop it (10 backlog tickets produced 20+ failed runs in seconds on 2026-08-30, and all 10
-> flipped to `blocked`). Create unassigned, then `issue update <uuid> --status backlog
-> --assignee-agent-id <id>` — and do not pass `--comment` or `--resume`, which wake again.
+> **Trap when you file.** `--assignee-agent-id` wakes that agent immediately, and `--status backlog`
+> does not stop it. `backlog` only gates the *timer* heartbeat
+> (`TIMER_ACTIONABLE_ISSUE_STATUSES = ["todo","in_progress"]`, §8); assignment is a separate wake path
+> the status never covers. Creating *with* an assignee is the case that hurts, because the wake fires
+> against a ticket that has no history to recover from: on 2026-08-30, 10 backlog tickets produced 20+
+> failed runs in seconds and all 10 flipped to `blocked` and escalated to the assignee's manager.
+> Create unassigned — `issue create --status backlog` with **no** assignee — then `issue update <uuid>
+> --status backlog --assignee-agent-id <id>`. That second call still wakes the agent, once, which is
+> the point; what it does not do is strand the ticket if the wake fails. Do not pass `--comment` or
+> `--resume`, which wake again. While the fleet is out of quota, file unassigned and leave it.
 
 ### 2. An agent picks it up
 
@@ -129,15 +149,20 @@ Four sources, one board. Nothing gets built that is not a Paperclip ticket.
   of* the real Claude Code binary at `node_modules/.../claude-agent-sdk-linux-x64/claude` (only ever
   via `bin/gate-install.sh`), so every token-consuming session goes through it. `config.json` pins
   `x_min = x_max = 4` with `num_slots: 5`: four concurrent real sessions, a fair FIFO queue so a
-  blocked agent is served in order rather than starved, one bounded overflow slot so a direct
-  agent-to-agent call gets through at the limit, and the Code Reviewer (`code_reviewer_agent_id`)
-  always exempt so review is never delayed. It is fail-open: after `wrapper_max_wait_sec` (480 s,
-  200 s for the CTO, 360 s for the CEO) the wrapper execs the real binary anyway. Two consecutive
-  `POP-GRANT-TIMEOUT`s **park** an agent — `state/state.json` currently shows the CTO and CEO parked.
-  Read-only inspection (`bin/gate-status`, `gate-install.sh status`, `systemctl --user status
-  gate-daemon`) is fine at any time; **no agent may edit anything under that folder, ever, including
-  a one-line fix — file a ticket to the CTO instead.** `bin/gate-integrity-check` runs on cron and
-  alerts on any change.
+  blocked agent is served in order rather than starved, and — separately from those five slots — one
+  bounded overflow slot so a direct agent-to-agent call gets through at the limit. The fifth regular
+  slot is not the overflow slot and is structurally unreachable while X is frozen at 4 (§9); overflow
+  is its own field in `state.json` and its own line in `gate-status`, below `[0]`–`[4]`. The Code
+  Reviewer (`code_reviewer_agent_id`) is always exempt so review is never delayed. It is fail-open:
+  after `wrapper_max_wait_sec` (480 s, 200 s for the CTO, 360 s for the CEO) the wrapper execs the
+  real binary anyway. Two consecutive `POP-GRANT-TIMEOUT`s append the agent to `state.parked` —
+  `state/state.json` has listed the CTO and CEO there since 2026-09-12. **That list is write-only**:
+  `request_wake` never reads it, nothing expires an entry, and no auto-unpark exists (§9). It records
+  that the Gate timed the agent out twice; it is not a restriction, and a parked agent is granted a
+  slot like any other. Read-only inspection (`bin/gate-status`, `gate-install.sh status`, `systemctl
+  --user status gate-daemon`) is fine at any time; **no agent may edit anything under that folder,
+  ever, including a one-line fix — file a ticket to the CTO instead.** `bin/gate-integrity-check`
+  runs on a `*/10` cron and alerts on any change.
 - **The run journal is the first thing, before the inbox.**
   `tail -n 40 ~/.paperclip/shared/agent-logs/<slug>.log`. A `START` or `STEP` line for a ticket with
   no `DONE`/`HANDOFF` after it means the previous run was cut off — open that ticket and **continue
@@ -152,8 +177,7 @@ Four sources, one board. Nothing gets built that is not a Paperclip ticket.
 
 - **Scratch checkout.** Clone under `$TMPDIR` (a drop-in points it at `/home/noam/scratch`), **never
   into `/tmp`**, which is a tmpfs — i.e. RAM. 2443 abandoned ticket clones held 6.1 GB of the box's
-  15 GB on 2026-09-11, of which 1 MB was in use by a running process; that is what froze the studio
-  three times.
+  15 GB on 2026-09-11/12; that is what froze the studio three times.
   ```bash
   WORK="${TMPDIR:-/home/noam/scratch}/lul-<n>"
   git clone --quiet --branch release/next --single-branch https://github.com/DadonStyle/LULLWOOD.git "$WORK"
@@ -191,8 +215,11 @@ Four sources, one board. Nothing gets built that is not a Paperclip ticket.
 - **The engine/React contract.** Adding a key to `EngineActions` means, in the same PR: the engine
   function exists, it is in `init()`'s return object, it is in `ENGINE_ACTION_KEYS` in
   `lib/engine-contract.ts` (the exhaustiveness check fails `tsc` otherwise), a Playwright spec
-  exercises the React call site on desktop **and** mobile, and the spec's `## e2e` names it. Drift
-  here blanked production for every returning player once (LUL-1697).
+  exercises the React call site on desktop **and** mobile, and the spec's `## e2e` names it. This is
+  the LUL-1697 failure class, and it has fired in production: `setMissionUnlocks` was missing from the
+  returned object and blanked the page for every returning player who had a mission-unlock record in
+  `localStorage` (founder report 2026-09-09, ticket LUL-2221, now `done`). Players with a fresh
+  profile were unaffected, which is why the e2e suite — always a fresh browser context — never saw it.
 
 ### 4. Landing it
 
@@ -206,8 +233,11 @@ Four sources, one board. Nothing gets built that is not a Paperclip ticket.
   `auto-pr.yml` leaves a one-time comment saying so and blocks nothing. Leave the marker out and the
   PR stays open — the right default for a WIP push.
 - **`auto-pr.yml`** fires on any push to `lul-*`, checks the deployment budget, and opens or refreshes
-  a PR with `--base release/next` and the last commit subject as the title. `release/next` carries the
-  same checks as `main` but `strict: false`, so a branch never needs a backmerge just to let CI run.
+  a PR with `--base release/next` and the last commit subject as the title. It also classifies the
+  diff and, on a passing allowlist, approves under `SHIP_REVIEW_PAT` and arms native auto-merge; since
+  the founder directive of 2026-08-28 it arms every PR into `release/next` regardless of marker, which
+  supplies no review and bypasses nothing (§6). `release/next` carries the same checks as `main` but
+  `strict: false`, so a branch never needs a backmerge just to let CI run.
 - **Tier is decided by what the diff touches, highest wins**, stated in one line in the PR body
   (`Tier: B — components/Hud.tsx`). Two shell scripts encode the machine half:
   - `.github/scripts/ship-allowed.sh` (Tier A) permits `*.md`, `.github/*` except `workflows/`,
@@ -217,24 +247,31 @@ Four sources, one board. Nothing gets built that is not a Paperclip ticket.
     `engine/*`, the five simulation modules (`lib/game/predator.ts`, `scent.ts`, `cover.ts`,
     `outcome.ts`, `pack.ts`), `scripts/*`, `package.json`/`package-lock.json`, workflows, and both
     gate scripts.
-- **`automerge.yml`** runs on CI completion: own-line `[ship]` + green + the allowlist passing →
-  approve under `SHIP_REVIEW_PAT` and squash-merge. Release-train repair branches merge with
-  `--merge`, not `--squash` (LUL-1041).
+- **`automerge.yml`** is the fallback, on CI completion: own-line `[ship]` + green + the allowlist
+  passing + an `APPROVED` review at the current head → merge under `SHIP_REVIEW_PAT`. Release-train
+  repair branches merge with `--merge`, not `--squash` (LUL-1041).
 - **Who reviews what.** Tier A ships on green with no review and no play verdict. Tier C — engine
   simulation, persistence, anything touching secrets, tokens, auth, branch protection or merge rules,
   and release cuts — takes a blocking Code Reviewer pass plus a Game Tester play verdict; P0/P1 still
-  block there. Tier B is supposed to merge on green and open the review child issue after, and a
-  post-merge P0/P1 is a fix ticket rather than a revert. **Known gap:** `release/next` carries
-  `required_approving_review_count: 1`, so Tier B cannot literally merge on green. `bot-approve.yml`
-  records an approval as `github-actions[bot]` — a distinct identity from the studio PAT — only when
-  every required check is green, no approval exists, and it did not author the PR; wiring it to fire
-  automatically for Tier-B-only diffs is still open work, so Tier B waits on the Code Reviewer today.
-  No agent PAT can change the ruleset itself: every `PATCH` 404s for want of Administration scope.
+  block there. Tier B merges on green with the review child issue opened after, and a post-merge
+  P0/P1 is a fix ticket rather than a revert. It cannot *literally* merge on green: `release/next`
+  carries `required_approving_review_count: 1` with `bypass_actors: []`, so GitHub holds every PR at
+  `REVIEW_REQUIRED` whatever the policy says. **`tier-approve.yml` closes that gap automatically** —
+  on `workflow_run` of `CI: completed`, plus `pull_request`
+  (`opened`/`synchronize`/`reopened`/`ready_for_review`), it classifies the diff with
+  `scripts/pr-tier.mjs`, exits without approving on Tier C, and otherwise submits the approving review
+  under `SHIP_REVIEW_PAT`: only once every context the base ruleset requires is `SUCCESS`, only if no
+  approval exists, never on a PR that identity authored, and never when any commit carries an own-line
+  `[no-auto-merge]`. It is live and working — PR #590 carries its "Auto-approved as Tier B under the
+  development-first directive" review, PR #629 the Tier A equivalent. Do not confuse it with
+  `bot-approve.yml`, which is `workflow_dispatch`-only (inputs `pr` and `issue`) and exists to record a
+  Code Reviewer verdict as `github-actions[bot]`, a distinct identity from the studio PAT. No agent PAT
+  can change the ruleset itself: every `PATCH` 404s for want of Administration scope.
 
 ### 5. Verification
 
 **CI, on the branch push.** `ci.yml` triggers on `push` and `workflow_dispatch` only — *never*
-`pull_request*, and that is deliberate. PRs opened by `GITHUB_TOKEN` do not start `pull_request` runs
+`pull_request*`, and that is deliberate. PRs opened by `GITHUB_TOKEN` do not start `pull_request` runs
 at all; a `workflow_dispatch` run's check-runs attach to the commit but never enter the PR's
 `statusCheckRollup`, which is what `PUT /pulls/{n}/merge` evaluates; and a `skipped` check-run posted
 under a required name is treated by branch protection as **passing**, so a same-repo `pull_request`
@@ -243,14 +280,21 @@ satisfy a required check on this repo.
 
 Two jobs. `build, typecheck, lint` runs lint → `next typegen` → `tsc --noEmit` → `next build`.
 `unit tests` declares `needs: build` with `if: always()` and fails immediately if the build job did
-not succeed — because `unit tests` is the **only** required status check on `release/next` (`build,
-typecheck, lint` is required only on `main`), and PR #503 self-merged with a red build before that
-guard existed (LUL-2167). `if: always()` is mandatory there: a plain `needs:` on a failed dependency
-*skips* the job, and a skipped job posts a passing check under the required name. Three guards run
-before `npm ci` because they need no `node_modules`: the git-remote credential guard (the same PAT
-leaked three times this way), the `docs/ELEMENTS.md` citation guard (against a baseline that may
-shrink but never grow), and the duplicate-logic guard (nine tests once passed against a `lib/` copy
-while the engine shipped a divergent version). **Playwright does not run in `ci.yml`.**
+not succeed — PR #503 self-merged with a red build before that guard existed (LUL-2167), back when
+`unit tests` really was the only required status check on `release/next`. **It no longer is.** The
+live ruleset (`21050378`, updated 2026-09-09) requires three contexts on `release/next` — `unit
+tests`, `build, typecheck, lint` and `workflow guard check` — and `main` (`20886790`) requires those
+three plus `base branch guard`. `ci.yml`'s own LUL-2167 comment still claims `unit tests` is "the
+ONLY required status check" and is stale; read the list live, the way the gates themselves do:
+```bash
+gh api repos/DadonStyle/LULLWOOD/rules/branches/release%2Fnext
+```
+`if: always()` is still mandatory there: a plain `needs:` on a failed dependency *skips* the job, and
+a skipped job posts a passing check under the required name. Three guards run before `npm ci` because
+they need no `node_modules`: the git-remote credential guard (the same PAT leaked three times this
+way), the `docs/ELEMENTS.md` citation guard (against a baseline that may shrink but never grow), and
+the duplicate-logic guard (nine tests once passed against a `lib/` copy while the engine shipped a
+divergent version). **Playwright does not run in `ci.yml`.**
 
 **The local QA rig** — `~/.paperclip/shared/local-qa/`, founder-owned, not an agent: it reads no
 tickets and answers no comments. Three entry points, one `state/run.lock` flock shared between them,
@@ -265,13 +309,18 @@ so there is never more than one browser run on the box.
   On the version-cut PR a PASS **approves it as the founder** so native auto-merge can land it; any
   FAIL files one high-priority ticket to the CTO and says DO NOT MERGE. Red GitHub checks instead
   wake the PR owner. The cut PR is verified first, then the oldest PR. No agent runs Playwright for a
-  PR; this does.
+  PR; this does. That founder approval is the rig's only automatic one — it is **not** the studio's
+  only automatic approval (see `tier-approve.yml` in §4, and `approve-parked-runs.yml` for parked
+  `action_required` runs).
 - **`local-qa-ondemand`** (timer, every 20 min) starts `local-qa-run` when `release/next` has a new
   head, a new request file landed in `local-qa/requests/`, or someone touched
-  `state/run-requested`. `state/qa-paused` turns the whole thing off. The nightly is the same runner
-  at 00:30 under `systemd-run --user -p MemoryMax=8G -p MemorySwapMax=0`.
-- **`scenario-audit.mjs <baseURL> <outDir>`** is the deterministic driver. Per viewport — desktop and
-  two landscape phones — it walks one page through `gate → in-game → hint → menu-open →
+  `state/run-requested`. `state/qa-paused` stops this on-demand timer only — the 00:30 nightly and
+  `pr-e2e-watch` do not read it (§11). The nightly is the same runner at 00:30 under `systemd-run
+  --user -p MemoryMax=8G -p MemorySwapMax=0`.
+- **`scenario-audit.mjs <baseURL> <outDir>`** is the deterministic driver. Per viewport — desktop
+  1280×720 and two landscape phones (Pixel 5 at 727×393, iPhone SE at 667×375), plus a fourth
+  portrait Pixel 5 that records only the rotate gate, and an opt-in `desktop-1920x1080` behind
+  `LOCAL_QA_VIEWPORTS` — it walks one page through `gate → in-game → hint → menu-open →
   pickup-prompt → gather → ascend → win-burst → win → win-input-battery → play-again → hidden →
   charge → death-cutscene → death → death-input-battery → try-again → second-death`, snapshots every
   state, runs the HUD overlap rules on each snapshot, and asserts end-screen content, timings and
@@ -284,11 +333,13 @@ so there is never more than one browser run on the box.
   a Modelfile alias of `qwen3-vl:8b` on the CPU Ollama instance (`127.0.0.1:11435`, ~4-5 tok/s, ~7.5 GB
   resident) — is used only where a screenshot needs a judgement: the human sentence on overlap
   findings, and four narrow yes/no questions on the lose/win screenshots. At most
-  `LOCAL_QA_MAX_CASES` (12) model calls per run; deterministic tickets are never capped. Every ticket
-  is `[BUG]`-prefixed, assigned to the CTO, and carries `local-qa-fingerprint: <kind>-<10 hex>` on the
-  first line as the dedup key — keep that line intact when editing. Founder-priority specs (death,
-  lift/win, win-persist, the LUL-211 win screen, charge-dodge, replay) are reported every night even
-  when already in the baseline, so baseline diffing can never bury them.
+  `LOCAL_QA_MAX_CASES` (12) model calls per run; deterministic tickets are never capped. Budget
+  ~1.5–4 min of wall clock per image — the `_eval_s` figures in the reports count token generation
+  only and understate the real cost by a factor of 20–50 (§11). Every ticket is `[BUG]`-prefixed,
+  assigned to the CTO, and carries `local-qa-fingerprint: <kind>-<10 hex>` on the first line as the
+  dedup key — keep that line intact when editing. Founder-priority specs (death, lift/win,
+  win-persist, the LUL-211 win screen, charge-dodge, replay) are reported every night even when
+  already in the baseline, so baseline diffing can never bury them.
 - **Never**: weaken, skip or delete an assertion, widen a timeout, or re-pin the seed to make a run
   green. A failing test is a finding. If the test is wrong, say so on the ticket and fix the spec.
 
@@ -309,17 +360,18 @@ computes `suite_result`, treating missing artifacts as failure rather than trust
 data. The cut PR is opened as `Release vYYYY.MM.DD-N` and gets one comment: the run URL on success,
 **`DO NOT MERGE`** with the actual `suite_result` otherwise.
 
-**The known gate hole — LUL-2581, open and `blocked`, filed to the CTO on 2026-09-13.** The
-`playwright smoke suite (shard N/6)` step carries `continue-on-error: true` (LUL-1702, so all six
-results are collected rather than stopping at the first red). Branch protection requires the *job*,
-and the job's conclusion is `success` even when the Playwright run inside it failed. On PR #566 the
-six shards had **9 / 10 / 6 / 3 / 4 / 4** real failures, all six `shard-outcome` files read `failure`,
-the aggregate set `suite_result=failure` — and the PR showed **eight green required checks**. The red
-suite is caught today only by convention: a bot posts DO NOT MERGE and someone reads it. Arming
-auto-merge has also been advisory since 2026-09-05 (issue #311), so a red combined suite does not
-block arming either. The asked-for fix is small: make the job branch protection requires exit non-zero
-when `suite_result=failure`, and audit every other required check in the workflow for the same shape.
-Until that lands, **never read a cut PR's rollup as the suite result.**
+**The known gate hole — LUL-2581, open and `blocked`, filed by the founder on 2026-09-13 and assigned
+to the CEO.** The `playwright smoke suite (shard N/6)` step carries `continue-on-error: true`
+(LUL-1702, so all six results are collected rather than stopping at the first red). Branch protection
+requires the *job*, and the job's conclusion is `success` even when the Playwright run inside it
+failed. On PR #566 the six shards had **9 / 10 / 6 / 3 / 4 / 4** real failures, all six
+`shard-outcome` files read `failure`, the aggregate set `suite_result=failure` — and the PR showed
+**eight green required checks**. The red suite is caught today only by convention: a bot posts DO NOT
+MERGE and someone reads it. Arming auto-merge has also been advisory since 2026-09-05 (issue #311),
+so a red combined suite does not block arming either. The asked-for fix is small: make the job branch
+protection requires exit non-zero when `suite_result=failure`, and audit every other required check in
+the workflow for the same shape. Until that lands, **never read a cut PR's rollup as the suite
+result.**
 
 The merge itself is `cut-merge.yml`, dispatched with the PR number. It refuses anything that is not
 an open `base=main, head=release/next` PR, sources `.github/scripts/check-required-checks.sh`,
@@ -337,8 +389,11 @@ Vercel builds `main`. `vercel.json` sets `ignoreCommand: bash scripts/vercel-ign
 exits 0 (skip) when every changed path matches
 `^(\.github/|scripts/|DAILY_REPORTS/|NOAM_MDS/|QA_REGRESSION/|e2e/)|^[^/]+\.md$` — measured after 4 of
 9 previews built for commits touching no app code, `DAILY_REPORTS/` alone recurring nightly. `docs/`
-is deliberately *not* in that list, because LUL-47 plans a `/devlog` page that may source from it.
-An empty or parentless diff builds, to be safe.
+is deliberately *not* in that list, because the `/devlog` page (LUL-47, shipped — `app/devlog/`,
+`app/devlog/[slug]/`, `lib/devlog.ts` and the sitemap entries are all in the tree) may yet source
+content from it. The carve-out has outlived its ticket, and `scripts/vercel-ignore-ci-only.sh:18`
+still tells you to check LUL-47's status first — re-check the page, not the ticket, before relying on
+it. An empty or parentless diff builds, to be safe.
 
 What ships is `app/page.tsx`: server-rendered prose (the entire indexable surface — a `<canvas>` is one
 opaque node to a crawler) plus `<GameLoader/>` → `next/dynamic({ ssr: false })` → `components/GameCanvas.tsx`
@@ -349,16 +404,36 @@ opaque node to a crawler) plus `<GameLoader/>` → `next/dynamic({ ssr: false })
 
 **Quota exhaustion — the fleet is in `error` and runs stop mid-`STEP`.** One subscription, one 5-hour
 window, and it burns in roughly two hours with four Gate slots. Agents park in `error` on "session
-limit"; the watchdog cron holds them and revives them at the printed reset time — do not resume them
-by hand first.
+limit"; the watchdog cron holds each one and revives it at its own printed reset time — do not resume
+them by hand first.
 ```bash
-~/.paperclip/shared/watchdog/bin/watchdog check      # `line` exits 10 on HOLD
+~/.paperclip/shared/watchdog/bin/watchdog check    # always exits 0 since LUL-530 -- read the text
 ```
-Two things that have fooled people here. On 2026-09-13 the whole fleet failed on "You've hit your
-**weekly** limit · resets Sep 15, 3pm" and `parse_reset_text` had no `,?` in its regex, so every weekly
-limit parsed as `None` and the watchdog revived agents straight back into the wall. And **the Gate is
-not the cause**: under founder directive LUL-530 it is reporting-only and always says GO —
-`bin/gate-status` showing free slots proves nothing about quota.
+There is no non-zero exit to branch on any more. LUL-530 pins `status` to `GO` at the end of
+`assess()`, so `gate` and `line` exit 0 even under a hard block (§12); the `exit 10 = HOLD` line in
+the command's own `--help` is stale. Script an alert on the exit code and you have written a branch
+that can never fire during the exact outage it was meant to catch. The signal is in the output:
+`hard_block: yes`, and the per-agent `HOLD <name> -- its limit resets …` lines. Today it reads
+`hard 429 (weekly) in effect until Tue 15 Sep 15:00 IDT`.
+
+Two things have fooled people here.
+
+**The reset-text regex, and which copy of it you are looking at.** On 2026-09-13 the whole fleet
+failed on "You've hit your **weekly** limit · resets Sep 15, 3pm" and `_RESET_RE` had no `,?` after
+the day, so every weekly limit parsed as `None` and the watchdog revived agents straight back into the
+wall. The watchdog's copy was fixed the same day — which is why `watchdog check` now prints the
+correct Tuesday reset above. **The Gate's copy was not.** `the_gate/lib/gate_limits.py` carries
+`parse_reset_text` "copied verbatim from the watchdog" and still lacks the comma, so Gate suppression
+has been inert throughout this outage (§9). One bug, two copies, one of them fixed — check the file
+you actually care about.
+
+**The Gate is not the cause, but not for the reason people repeat.** LUL-530 (founder directive,
+2026-08-20) removed the *watchdog's* GO/HOLD gate — the `# ---- THE GATE IS REMOVED ----` block in
+`watchdog/bin/watchdog` — and put `gate_circuit_breaker.py` into shadow mode. It did not touch The
+Gate, which grants, queues and suppresses for real and has been granting slots all day (§9). What
+`bin/gate-status` cannot tell you is anything about quota: it reports slot occupancy, and under a
+weekly limit every slot is free precisely because every run dies instantly. Free slots prove the
+fleet is idle, never that the account has headroom.
 
 **A stalled tester lock — nothing is being verified and no one is told.** `local-qa-run`,
 `local-qa-ondemand` and `pr-e2e-watch` share one `flock` on
@@ -368,8 +443,12 @@ silent skip.
 tail -20 ~/.paperclip/shared/local-qa/state/ondemand.log   # "wanted to run (...) but the tester lock is held -- next tick"
 ```
 Repeating that line for hours with no `RUN:` between them means the lock is stuck, not busy. Check
-`state/qa-paused` too — that flag stops QA outright and is honoured by both the timer and
-`lullwood-boot-check`.
+`state/qa-paused` too — but know its reach. Exactly two programs read it, `local-qa-ondemand` and
+`watchdog/bin/lullwood-boot-check`, so it pauses on-demand runs and makes `lullwood-boot-check` keep
+the `pr-e2e-watch` timer stopped rather than restarting it on its 10-minute tick. It does **not** stop
+the 00:30 nightly cron, and it does not stop a `pr-e2e-watch` timer that is already running. To halt
+QA completely you also need `systemctl --user stop pr-e2e-watch.timer` and to comment the 00:30
+crontab line (§11).
 
 **Orphaned browsers — the box is starved and QA fails wholesale.** A killed run never reaches
 Playwright's teardown, so its browsers survive and the next run stacks more on top.
@@ -392,9 +471,13 @@ detectors were re-stranding one every cycle by filing to a paused assignee.
 ~/.local/bin/paperclipai issue list --api-base http://100.85.231.17:3100 \
   -C 5392c9fe-5b2a-43ee-974f-87a9da51150b --json    # cross-check assignees against agent status
 ```
-`issue list --json` pages and filters (it returned 97 of 184 once), so read the full set from Postgres
-(`127.0.0.1:54329`, `paperclip`/`paperclip`/`paperclip`) and write back through the CLI or REST. Never
-bulk-reassign to a live agent — assignment wakes it, once per ticket.
+`issue list --json` pages and filters (it returned 97 of 184 once), so the CLI is the wrong tool for a
+census. There is no `psql` on this box, but Paperclip bundles a `pg` client and the embedded Postgres
+on `127.0.0.1:54329` can be read directly through it — copy the connection block from
+`~/.paperclip/shared/watchdog/bin/founder-alert` (line 41), which is the founder's own working
+precedent and carries the settings so you do not have to put credentials in a ticket or a document.
+Read through that; **write back through the CLI or REST**, never with SQL, so the wake semantics and
+the audit trail survive. Never bulk-reassign to a live agent — assignment wakes it, once per ticket.
 
 **A red combined suite behind green checks — LUL-2581.** A cut PR showing every required check green
 while the suite is red. The rollup is not evidence; the shard outcomes are.
@@ -403,9 +486,10 @@ gh run view <version-cut-run-id> --log | grep -c "failed"      # per shard job
 gh run download <version-cut-run-id> -p 'version-cut-shard-outcome-*'   # six files, each success|failure
 ```
 The `aggregate real playwright result across shards` job's `suite_result` output and the workflow's
-own `DO NOT MERGE` comment on the PR are the honest signals today. Filed to the CTO (who owns
-`.github/**`, Tier C) on 2026-09-13; until it is closed, no cut merges on the strength of green ticks
-alone.
+own `DO NOT MERGE` comment on the PR are the honest signals today. Filed by the founder on 2026-09-13
+and assigned to the **CEO** (`6b780916…`), not to the CTO who owns `.github/**` as Tier C work — so
+expect a re-route before anyone can act on it. Until it is closed, no cut merges on the strength of
+green ticks alone.
 
 
 ---
@@ -417,6 +501,16 @@ The chapters below go from the inside out: the engine that owns the simulation, 
 renders its state, the shell that serves it, the pure logic it delegates to, the tests that hold it, the
 machinery that ships it, and the documents that record why any of it is the way it is.
 
+---
+
+# The game
+
+The repository is a Next.js 16 App Router app (TypeScript, React 19) wrapping a vendored Three.js engine.
+The chapters below go from the inside out: the engine that owns the simulation, the React layer that
+renders its state, the shell that serves it, the pure logic it delegates to, the tests that hold it, the
+machinery that ships it, and the documents that record why any of it is the way it is.
+
+<a id="engine"></a>
 
 ## The engine — engine/forest-engine.js
 
@@ -430,7 +524,7 @@ machinery that ships it, and the documents that record why any of it is the way 
 
 ### Why it is one big vendored module
 
-It was ported whole from a `forest.html` prototype (M1) and has been refactored *outward* rather than split. Three passes shaped what you see:
+It was ported whole from a `forest.html` prototype (M1) — literally: `afe05ec` injected the prototype's CSS and DOM overlay verbatim and vendored its inline `<script>` body byte-identical apart from swapping the base64 death-video URI for `/death.mp4`. The prototype (1,296 lines, three r128 off cdnjs, everything in one module-scope `<script>`) is not lost, only out of the working tree: `0ca2b04` (LUL-28, 2026-08-15) dropped `game/` once the port superseded it, so read it with `git show 5e46ed1:game/forest.html` (74,878 bytes) — see `wiki:game/prototype` for the verified inventory and `wiki:game/m1-status` for what M1 actually did. Since then the engine has been refactored *outward* rather than split. Three passes shaped what you see:
 
 - **LUL-17** gave it a real `init()`/`dispose()` lifecycle so it survives React StrictMode's double-invoked effects (`next.config.ts` keeps `reactStrictMode: true` and names this ticket). Every piece of former module-scope state now lives inside `init()`'s closure; every `addEventListener`/`setTimeout` goes through local `on()`/`later()` trackers so `dispose()` can undo it.
 - **LUL-28** made it a real ES module (`import * as THREE from 'three'`, bundled by Turbopack — the build output carries a `.next/turbopack` tree) instead of a `/public` script reading a `window.THREE` global. The IIFE wrapper was dropped; the body was deliberately **not reindented**, so the diff stayed reviewable.
@@ -473,6 +567,8 @@ Three ordering rules in the boot path are load-bearing:
 ### The frame: `tick()` → `stepFrame(dt, t)`
 
 `tick()` (`:6555`, first invoked at `:6559`) is three statements: request the next rAF, `const dt = clampDt(clock.getDelta()), t = clock.elapsedTime`, call `stepFrame(dt, t)`. `clampDt` caps dt at `DT_CLAMP_CEILING = 0.05` (`lib/game/scent.ts:32`). **Game time is not wall time** — under software rendering (swiftshader) at ~12 fps, game time accrues at ~63% of real time and never catches up. That ratio is quoted verbatim in `engine/forest-engine.js:4058`, `e2e/README.md` and `e2e/smoke.spec.ts:298`; LUL-1910 has since moved the nightly QA host onto a GPU path, so treat ~63% as the documented worst case rather than today's rig constant. This single fact is why almost every QA hook exists (`wiki: systems/dt-clamp-vs-walltime`).
+
+That wiki page carries a correction worth reading before you write any timing feature: **`clock.elapsedTime` itself is not dilated.** Verified against three's own `node_modules/three/src/core/Clock.js` — `getDelta()` computes `diff` from `performance.now()` and does `elapsedTime += diff` with the **unclamped** value, *before* the caller clamps the returned delta; `clock` is constructed once (`:5813`) and never `.stop()`/`.start()`'d again. So only hand-accumulated `x += dt` timers dilate — `sinceClose`, `hideTime`, `huntTime`, `ChargeState.t` (`lib/game/charge.ts:77`). Anything that snapshots `clock.elapsedTime` and diffs two snapshots — `deathStart`, `pickStart`, `enteredAt`/`survivedSeconds` (`:5281`, `:5424`) — is already exact wall clock. Two probes people reach for are therefore the wrong tool: `qaProbeElapsedTime()` (`:3827`) and `qaProbePredatorState().t` (`:4147`) both return `clock.elapsedTime` raw, and the engine's own LUL-99 comment above the latter (`:4143`) asserts the opposite — that the clock "runs slower than wall time and never catches up." It does not; the comment conflates the two categories and is a known-stale note, not a regression. `qaChargePhase().t` is the genuinely dilated one.
 
 `stepFrame()` (`:5818`) is the whole simulation, in order:
 
@@ -518,7 +614,7 @@ There is a second trap here: the full-reset path (`generateMap()`, `qaBuildScene
 
 `charge` → `sightLock` → `alert` → `reroute` → `hunt` → `state === 'roam' | 'chase' | 'investigate' | 'flank'`.
 
-The `investigate` sub-machine (`p.inv`) is `approach → standoff → sniff → back | leave`, and the code says in several places: **do not retune its timing** (LUL-22). Three separate livelock bugs have been fixed inside it (`shouldRevertInvestigateToChase`'s sub-phase restriction, `stepApproach`'s always-report-movement, the `hidden && isCaught` contact drop-out). The per-phase pacing is `stepApproach()`'s `speciesSpeed * 0.45` for `approach` (`lib/game/predator.ts:315`), the same 0.45× for the `standoff` walk (`:2752`), and 0.5× for `back`/`leave`.
+The `investigate` sub-machine (`p.inv`) is `approach → standoff → sniff → back | leave`, and four comments repeat the instruction **not to retune its timing** (`:1988`, `:2215`, `:2510`, `:2692`). That is LUL-22's own work order talking, not a convention an agent invented — `wiki:game/lul22-status` (Founding Engineer, 2026-08-15) records it as "the chase→investigate sniff cycle and its `1 + rand(0..3)` budget are untouched, per the work order's explicit instruction not to retune it." It is half-enforced. `lib/game/predator.test.ts` pins the 0.45 approach multiplier by name (`:302`, and again as `// 10 * 0.45` at `:277`) and pins every sub-phase transition (`rollSniffs`, `stepSniffLoop`, `stepFlankHold`, `shouldRevertInvestigateToChase`). What a retune would move silently is the pacing that never left the engine: the `standoff` walk's own `speed * 0.45` (`:2752`), the `0.5×` for `back` and `leave` (`:2776`, `:2780`), and the `rnd(1,5)` sniff dwell (`:2751`) — none of those are covered by a test. `approach` itself is `stepApproach()`'s `speciesSpeed * 0.45` (`lib/game/predator.ts:315`). Three separate livelock bugs have been fixed inside this machine (`shouldRevertInvestigateToChase`'s sub-phase restriction, `stepApproach`'s always-report-movement, the `hidden && isCaught` contact drop-out).
 
 **Five** detection channels, checked in priority order inside `roam`, all gated by a post-sniff `sniffImmuneT` grace (`isSniffImmune`, LUL-437):
 
@@ -637,13 +733,13 @@ The teardown closure is `activeDispose = function dispose()` at `:6563`, inside 
 6. `audio.ctx.close()`, guarded on `audio` existing and wrapped in try/catch.
 7. `activeDispose = null`, re-arming `init()`.
 
-Note what it does **not** do: `window.ForestEngine` (and any installed `qa*` hooks) is left in place after teardown.
+Note what it does **not** do: `window.ForestEngine` — and every `qa*` hook installed on it — is left in place after teardown. The consequence matters for any spec that disposes and remounts (`window.__qaRemount`, `e2e/lifecycle.spec.ts:115`): those hooks were installed *inside* `init()`'s closure, so they close over the **disposed** run's state and stay callable, returning stale values instead of throwing. `e2e/helpers.ts`'s `qaHook()` will not catch it — it throws only when the hook is *missing* from `window.ForestEngine`, and it is still there. Proof that a live engine is mounted is `boot()`'s two-canvas wait (`e2e/helpers.ts:89`: `window.ForestEngine` **and** exactly two `<canvas>` elements), never the presence of `window.ForestEngine` on its own.
 
 Note also what `dropChunk`/`dropCoverChunk`/`dropBogChunk` do **not** dispose: `trunkGeo`/`cone1Geo`/`cone2Geo`/`trunkMat`/`foliageMat` and the `COVER_GEO_MAT` entries are shared across every chunk and every map, so only each `InstancedMesh`'s own `instanceMatrix`/`instanceColor` GPU buffers are released per chunk. The shared pool is released once, by the `scene.traverse()` above.
 
 ### Gotchas, collected
 
-- **Game time ≠ wall time.** `dt` is clamped at 0.05s. Never assert on a wall-clock wait; poll the engine's own values (`qaProbePredatorState().t`, `qaChargePhase().t`, `qaProbeElapsedTime()`) or drive `qaSetFixedStep`/`qaAdvance`.
+- **Game time ≠ wall time — but only for `+= dt` timers.** `dt` is clamped at 0.05s. Never put a wall-clock deadline on a hand-accumulated timer: poll `qaChargePhase().t`, or drive `qaSetFixedStep`/`qaAdvance`. `qaProbeElapsedTime()` and `qaProbePredatorState().t` both hand back `clock.elapsedTime`, which is *undilated* real wall clock — fine for measuring elapsed reality, useless as a stand-in for game time, whatever `:4143`'s comment says.
 - **The rng stream is append-only.** A new `rng()` consumer anywhere but the tail of `generateMap()` reshuffles every recorded seed. Filter finished arrays; don't add rejections inside a generation loop.
 - **`coverGrid` reflects only live chunks.** Cover outside the 5×5 ring blocks neither LOS nor movement.
 - **`dropCoverChunk` vs `dropCoverChunkMeshesOnly`** — the first is only safe during live streaming, never on a full reset.
@@ -653,11 +749,15 @@ Note also what `dropChunk`/`dropCoverChunk`/`dropBogChunk` do **not** dispose: `
 - **`PSPEC_BASE` is a module singleton**, cloned per `init()` — otherwise one mount's speed assignment leaks into the next.
 - **`resLevels` is de-duplicated.** On a `devicePixelRatio === 1` display there are two rungs (`[1, 0.8]`), not three — don't index it by a fixed position.
 - **`hintSeenCache` caches negative results too.** An uncached miss means one synchronous `localStorage.getItem()` per unseen key *per frame*; under a tight `qaAdvance(hundreds)` loop that tripped Chromium's hung-renderer detector (observed as "Target crashed", LUL-2346).
-- **Stale comment:** `engine/forest-engine.js`'s own closing note (`:6697`) references a `three@0.128` pin (`decisions/0002-threejs-pin`); `e2e/smoke.spec.ts:34` mentions it historically too. The real pin is `0.185.1`; `ColorManagement.enabled = false` and `LEGACY_LIGHT_SCALE` are the compatibility shims that keep r128's look. (Earlier drafts of this document placed that stale note in `forest-engine.d.ts` — it is not there.)
+- **Stale comment:** `engine/forest-engine.js`'s own closing note (`:6697`) references a `three@0.128` pin (`decisions/0002-threejs-pin`); `e2e/smoke.spec.ts:34` mentions it historically too. The real pin is `0.185.1`; `ColorManagement.enabled = false` and `LEGACY_LIGHT_SCALE` are the compatibility shims that keep r128's look. The cited decision document is not missing — there is no `decisions/` directory anywhere in this tree, because every `decisions/NNNN-*` citation resolves to the wiki on the server: `decisions/0002-threejs-pin` (2026-08-14, Status Accepted, VP R&D, driver LUL-2) pinned `three@0.128.0` exactly against the r155 `useLegacyLights` flip over four hand-tuned dim lights and the r152 colour-space rework under the hand-rolled bloom chain, and named its own revisit trigger (a Game Tester with Playwright screenshot coverage of the night scene, or a feature r128 cannot do). That trigger was taken under LUL-975 (PR #228, `chore/three-r185`); only the comment at `:6697` outlived it. (Earlier drafts of this document placed that stale note in `forest-engine.d.ts` — it is not there.)
 - **Stale comment, second one:** the `buildGrid()` call after `placeLandmarks()` calls them "the four landmark meshes". `LANDMARKS` has six entries (`fireTower`, `stoneMarker`, `oak`, `drownedCar`, `radioMast`, `chapelSteeple`); the seventh built group is the cave, hidden unless `placeCave()`'s coin flip spawns it.
 - **`arriveHome()` / `setDown()` / the entire carry leg are live code on an unreachable path** since LUL-2281. Don't "clean them up".
 - **`const clock` is declared after the `generateMap()` call** that precedes it — a TDZ landmine for anyone adding a `clock.elapsedTime` read into map generation.
 
+
+<a id="react-bridge"></a>
+
+<a id="react-bridge"></a>
 
 ## The React bridge — components/
 
@@ -730,7 +830,7 @@ Sub-components defined in-file: `RunRecap` (renders `#runRecap` + `#runChronicle
 
 ### The ActionPrompt / action-slot system
 
-Before LUL-2312 there were five independently hand-positioned pills (`74/92/110/130px` bottom offsets, plus `#objective` at `top: 20px`) that kept drifting out of sync on mobile. Now `#actionSlot` is one fixed CSS grid column with five **always-mounted** rows, in the founder's priority order top-to-bottom:
+Before LUL-2312 there were five independently hand-positioned pills — `#status` at `bottom: 74px`, `#actionPrompt` at `92px`, `#throwPrompt` at `110px`, `#chargePrompt` at `130px`, plus `#objective` top-centre at `top: 20px` — that kept drifting out of sync on mobile (LUL-1779/1780 kept catching it). All five are recoverable verbatim from the LUL-2312 diff itself, `git show c352ab9 -- components/GameCanvas.tsx` (PR #569), which also folded `#captionToast`'s `bottom: 180px` and the mobile `240px` overrides into the shared `--action-slot-bottom`; the figures are still quoted in the replacement rule's own comment at `GameCanvas.tsx:476-479`, and none of the five offsets survives as a rule. Now `#actionSlot` is one fixed CSS grid column with five **always-mounted** rows, in the founder's priority order top-to-bottom:
 
 | # | Row id | Shows when | Tone | Keycap (desktop / mobile) |
 |---|---|---|---|---|
@@ -786,10 +886,10 @@ The branch is decided **once per mount** by `useState(() => isMobile())[0]` in f
 Three non-obvious mechanics:
 
 - **Stick sign flip.** `onMove={(nx, ny) => actions.setTouchMove(nx, -ny)}` — the stick reports screen-down-positive, the engine's `iz` axis is forward-positive. Flipped at the source so nothing downstream knows they disagree. The right stick's `setTouchLook(nx, ny)` is passed through unflipped.
-- **`setPointerCapture` is best-effort.** Both `Stick.handlePointerDown` and `HoldBtn` wrap it in `try/catch`: it throws `NotFoundError` for any pointerId the browser doesn't consider active, which a synthetically dispatched `PointerEvent` always is. Without the catch the throw aborted the handler before the state write, so in Playwright a stick tap never registered and the veil never engaged. (`Stick` captures on `e.currentTarget`, `HoldBtn` on `e.target` — an unexplained inconsistency, harmless only because both are inside the catch.)
+- **`setPointerCapture` is best-effort.** Both `Stick.handlePointerDown` and `HoldBtn` wrap it in `try/catch`: it throws `NotFoundError` for any pointerId the browser doesn't consider active, which a synthetically dispatched `PointerEvent` always is. Without the catch the throw aborted the handler before the state write, so in Playwright a stick tap never registered and the veil never engaged. (`Stick` captures on `e.currentTarget` (`:80`), `HoldBtn` on `e.target` (`:230`). Nothing records why, and nothing depends on it: `HoldBtn`'s only child is the text expression `{label}` (`:238`) and `Stick`'s thumb carries `pointerEvents: 'none'` (`:123`), so neither element can ever have a descendant as the event target and `e.target === e.currentTarget` in both. The split is chronological — `HoldBtn`'s line is original to LUL-529 (`7e2b29e`, PR #115); `Stick`'s came with the later LUL-702 (`90a692f`, PR #142), which matched the two `getBoundingClientRect()` call sites either side of it (`:67`, `:88`), where `currentTarget` is genuinely required. Worth aligning on `currentTarget` if the pill ever gains an element child.)
 - **`HoldBtn` vs `ActionBtn`.** Veil is a hold (`setTouchVeil(true/false)`, read per frame like `keys['KeyF']`), so it releases on `pointerup` *and* `pointercancel` — an OS swipe-back gesture mid-hold must release the veil, not strand it on. `Stick` binds the same pair for the same reason.
 
-The pause button's `left: 76px` is not cosmetic: `GameMenu`'s 48px hamburger anchors at `top/left: 16px` (z-index 20) and this wrapper's z-index 31 sat on top of it, silently eating every tap meant for the hamburger. (The LUL-2073 comment records this as `e2e/mobile/pause.spec.ts` timing out at 150s; the spec as it stands today carries no such timeout, so that figure is historical, not reproducible from the tree.)
+The pause button's `left: 76px` is not cosmetic: `GameMenu`'s 48px hamburger anchors at `top/left: 16px` (z-index 20) and this wrapper's z-index 31 sat on top of it, silently eating every tap meant for the hamburger. (The LUL-2073 comment, `MobileControls.tsx:307-314`, records `e2e/mobile/pause.spec.ts` timing out at 150s waiting for `menuToggle`'s click to register. That 150s is not a timeout of the spec's own — it is the suite-wide non-CI per-test budget, live in the tree at `playwright.config.ts:79` (`{ timeout: 150_000, expect: { timeout: 10_000 } }`, raised from `90_000` by `2dbaa02` / LUL-1257 / PR #445; the `process.env.CI` branch one line up is 240s). The spec was hitting the suite deadline.)
 
 `MobileControls` returns `null` when `winVisible || deathVisible || menuOpen` (`:269`), and separately when `!actions` (`:260`). It sits at z-index 30/31, above `#winScreen`/`#deathScreen` (25) and `.menuPanel` (21), and unmounting is the chosen fix family throughout — hide the losing element rather than fight z-index. `menuOpen` is plumbed `GameMenu → onOpenChange → Hud → MobileControls`, and the same flag hides `#missionPanel` (its `top: 76px/left: 16px` sits 4px below the open panel's `top: 56px` inside `#gameMenu`).
 
@@ -826,7 +926,7 @@ These ids, testids and attributes are load-bearing. `e2e/` (**93 files — 55 at
 
 - **Adding a key to `EngineActions` is a two-file change.** It must also be added to `ENGINE_ACTION_KEYS` (`lib/engine-contract.ts`) or `tsc` fails on the `MissingFromEngineActionKeys` assertion, and the engine's `init()` return object must actually carry it or `assertEngineContract` fires at runtime.
 - **`assertEngineContract` is blind to a `null` return.** It early-returns on `null` because that is the engine's legitimate re-entrant no-op. A real failure that returned `null` would pass silently.
-- **`#panel`'s "dev-only" hiding has a first-paint hole.** The rule is `body[data-admin-mode="0"] #panel`, which matches only the literal `"0"` — not an absent attribute. `SettingsPanel` writes `data-admin-mode` in an effect, so on first paint `#panel` has no matching rule and is **visible**. Compare the minimap rule two comments down, which deliberately uses `body:not([data-show-minimap="1"])` for exactly this reason. Whether the asymmetry is intentional is not recorded anywhere in the tree.
+- **`#panel`'s "dev-only" hiding has a first-paint hole.** The rule is `body[data-admin-mode="0"] #panel` (`GameCanvas.tsx:296`), which matches only the literal `"0"` — not an absent attribute. `SettingsPanel` writes `document.body.dataset.adminMode` in an effect (`SettingsPanel.tsx:117`), so in the window between first paint and that effect `#panel` has no matching rule and is **visible** — briefly, for every player. The minimap rule two comments down (`:309`) uses the absent-safe `body:not([data-show-minimap="1"])` form and has no such window; its comment says so in as many words. The asymmetry is drift, not a deliberate carve-out: LUL-650 (`a70c0ef`, PR #126) shipped the `="0"` form for *both* elements, and LUL-2309 (`a07775a`, PR #587) rewrote only the minimap when it gave it its own setting. No decision either way is recorded — nothing under the wiki's `decisions/`, and neither ticket's notes discuss the first-load window.
 - **`#panel` sliders are controlled, not `defaultValue`.** The engine is source of truth; a third copy of `pace`/`fog` defaults is how the earlier drift happened.
 - **`#secondaryPanel` and `#secondaryGlyph` have no CSS rule anywhere** (not in `OVERLAY_STYLE`, not in `app/globals.css`) and no e2e selector — they render in normal document flow, unlike the sibling `#missionPanel` which is `position: fixed; top: 76px; left: 16px; z-index: 10`. `#secondaryPanel` additionally takes a `complete` class on completion, which has no CSS rule either.
 - **The `#embersShopMaxed` CSS rule cannot match.** `OVERLAY_STYLE:468` styles `#embersShopMaxed`, but `EmbersShop` renders `id={`embersShopMaxed-${item.id}`}` (`Hud.tsx:620`; `e2e/embers-shop.spec.ts` and its mobile twin correctly select `#embersShopMaxed-pocketStones`).
@@ -838,6 +938,7 @@ These ids, testids and attributes are load-bearing. `e2e/` (**93 files — 55 at
 - **`lib/ui/hygiene.ts`'s own header comment points at a stale path** — it names `e2e/ui-hygiene.spec.ts` as the browser half; the file is actually `e2e/mobile/ui-hygiene.spec.ts` with the walker split out to `e2e/ui-hygiene-collect.ts`.
 - **`SuggestionBox` is not on the game page** — only `app/suggest/page.tsx`. Its guards (`MIN_LEN 3`, `MAX_LEN 300`, `website` honeypot, 429 → `rate_limited`) mirror `app/api/suggestions/route.ts` by intent, not literally: the route enforces `TEXT_PATTERN = /^[a-z ]{3,300}$/`, while the component *sanitizes* toward it (`raw.toLowerCase().replace(/[^a-z ]/g, '').slice(0, MAX_LEN)`) and gates submit on `text.trim().length >= MIN_LEN`. The duplication is deliberate (LUL-1917); the "byte for byte" phrasing in the source comment refers to the pattern, not the code.
 
+<a id="next-shell"></a>
 
 ## The Next.js shell — app/ and public/
 
@@ -967,7 +1068,7 @@ It calls `fetchEvents(range)` (`lib/dashboard/blob-source.ts`) then five pure ag
 - **Funnel** — per step: count, % of `page_view`, % of previous step.
 - **Outcomes** — win rate, losses broken down by predator (`wolf`/`bear`/`lion`), and time-survived P50/P90 split win vs loss.
 - **Sessions** — session count, reached-gameplay rate, duration P50/P90, D1 and D7 return. The page prints its own caveat: D1/D7 are computed only from `anon_id` sightings inside the window, so they undercount near its edges.
-- **Economy** — a pooled table (win/loss payout P50/P90 with n, failure band, loss depth P50/P95 and % above 24, plus the 120-balance-crossing count and purchase-within-3-runs count and pct), then one block per difficulty (`lantern`, `night`, `blackout`, plus `unattributed` only when it has non-zero n), then the falsification footer, then a second **"Economy by difficulty"** matrix table repeating the same metrics tier-by-tier in columns. `Loss depth > 24` renders `n/a — unreachable on this tier` for lantern and night rather than `0%` — the in-file comment gives child-spawn distance there as 60–96 m, structurally incapable of producing that depth, and a zero would read as "checked and fine". Note the *pooled* row prints a real percentage with no such guard. The footer restates falsification-card predictions P3–P6 verbatim (P3 failure band 12–24% lantern/night, 28–51% blackout; P4 loss-depth P95 ≤ 60 on blackout; P5 ≥60% purchase-within-3-runs; P6 win payout P50 [101,109] / [123,148]) and states plainly that the panel reports measurements only and does not evaluate them.
+- **Economy** — a pooled table (win/loss payout P50/P90 with n, failure band, loss depth P50/P95 and % above 24, plus the 120-balance-crossing count and purchase-within-3-runs count and pct), then one block per difficulty (`lantern`, `night`, `blackout`, plus `unattributed` only when it has non-zero n), then the falsification footer, then a second **"Economy by difficulty"** matrix table repeating the same metrics tier-by-tier in columns. `Loss depth > 24` renders `n/a — unreachable on this tier` for lantern and night rather than `0%` — the in-file comment gives child-spawn distance there as 60–96 m, structurally incapable of producing that depth, and a zero would read as "checked and fine". Note the *pooled* row prints a real percentage with no such guard. The footer prints predictions P3–P6 beside the live measurement so a miss is visible. They come from the economy **falsification card** — the Game Economist's standing set of numbered, falsifiable predictions about the tuned economy, written before the data arrived to discharge the CEO's ask in `decisions/embers-accepted-2026-08-29`, and kept on the wiki at `game/economy/falsification-card`, the path the footer itself cites in a `<code>` tag. The four bands the panel prints are **not** the card's originals: its §2 P3/P4/P6 were superseded on 2026-09-03 by `game/economy/panel-blind-to-difficulty` §5, after `win`/`loss` telemetry turned out to carry no `difficulty` field and the tiers to spawn the child in two disjoint distance bands. What ships is the per-tier replacement set — P3 failure band 12–24% lantern/night, 28–51% blackout; P4 loss-depth P95 ≤ 60 on blackout, *retired* as unreachable on lantern/night; P5 ≥60% purchase-within-3-runs, pooled and untouched by the correction; P6 win payout P50 [101,109] lantern/night, [123,148] blackout — which is why the `Loss depth > 24` guard above and this footer agree on the 60–96 m spawn band. The panel then states plainly that it reports measurements only and does not evaluate them, and that division is deliberate: judging a miss is the Economist's job, and the Economist opens no tickets — it carries the finding to the CEO as a `suggest_tasks` issue-thread interaction (§The thread, "The CEO decides"). `decisions/economy-horizon-2026-09-02` does not rule on the card; it names it as the thing that would reopen the Branch A horizon ruling, once the panel has real telemetry to read. As of 2026-09-13 nothing is reading it: the Game Economist sits in `status: error` on the shared weekly quota until **Tue 2026-09-15 15:00 Asia/Jerusalem**.
 - **Feature engagement** — feature/action/count, with an explicit empty state.
 
 Styling is inline `CSSProperties` (`#111` background, `#e8e8e8` text, shared `th`/`td` constants, 900px max width) — it shares nothing with `globals.css`.
@@ -1013,7 +1114,7 @@ Run unit tests with `npm test` → `node --test --experimental-test-module-mocks
 
 - **Env vars are baked in at build time on Vercel.** Setting `INTERNAL_DASHBOARD_SECRET`, `BLOB_READ_WRITE_TOKEN`, `NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION`, `NEXT_PUBLIC_BUILD_SHA` or any `SUGGESTIONS_*` var does nothing until a redeploy.
 - **Three services fail soft, differently.** Telemetry with no token → `204` (silently dropped). Suggestions with no credential → `503` (visible to the player). `/internal` with no secret → `404` (invisible to everyone).
-- **`vercel.json` skips deploys for whole directories.** Its `ignoreCommand` is `scripts/vercel-ignore-ci-only.sh`, which exits 0 (skip build) when every changed path matches `^(\.github/|scripts/|DAILY_REPORTS/|NOAM_MDS/|QA_REGRESSION/|e2e/)|^[^/]+\.md$`. Editing this document alone never produces a preview deploy. `docs/` is deliberately excluded from that list pending LUL-47.
+- **`vercel.json` skips deploys for whole directories.** Its `ignoreCommand` is `scripts/vercel-ignore-ci-only.sh`, which exits 0 (skip build) when every changed path matches `^(\.github/|scripts/|DAILY_REPORTS/|NOAM_MDS/|QA_REGRESSION/|e2e/)|^[^/]+\.md$`. Editing this document alone never produces a preview deploy. `docs/` is deliberately excluded from that list — a carve-out kept after LUL-47 shipped `/devlog` (commit `e4bc4cf`, PR #326, merged 2026-09-05). The script's own comment (`scripts/vercel-ignore-ci-only.sh:14-18`) still reads "LUL-47 plans a /devlog page that may source content from docs/" and tells you to check LUL-47's status first; it has shipped, and nothing under `app/devlog/` or `lib/devlog.ts` references `docs/` today, so the exclusion now rests on "may yet source from it", not on a pending ticket.
 - **The layout-canonical rule and the page-`openGraph` rule are not symmetric in practice.** Every route except `/` sets its own page-level `openGraph` (`/suggest`, `/devlog`, `/devlog/[slug]`), and none of them restates `siteName` or `locale` — so those routes ship social cards without `og:site_name`. Only `/` is asserted for `og:site_name` in `e2e/seo.spec.ts`, so the gap is untested. Treat the "restate the whole object" rule as a rule that is currently being broken deliberately for the secondary routes, not as something the code uniformly obeys.
 - **`lib/devlog.ts`'s header comment is wrong about paths** — it says posts live in `content/devlog/`; they are actually in `app/devlog/posts/`, which is what `[slug]/page.tsx` imports. Adding a post means creating `app/devlog/posts/<slug>.tsx` *and* adding its `meta` to the `POSTS` array; sitemap, index and route follow automatically.
 - **The one published devlog post contradicts the shipped game.** `the-return-trip` (dated 2026-09-05) describes a carry-the-child-home second act, and its registry `description` still says "carry them home … the predators can still take you on the way back"; `lib/site.ts` records that LUL-2281 (2026-09-09) made *lifting* the child the win and there is no return leg, and `app/page.tsx` says so explicitly ("there's no trip home to survive afterward"). The post is stale content in the indexable surface, and it is the newest `lastModified` feeding the `/devlog` sitemap entry.
@@ -1022,6 +1123,7 @@ Run unit tests with `npm test` → `node --test --experimental-test-module-mocks
 - **`allowedDevOrigins: ["127.0.0.1"]`** in `next.config.ts` exists because Next 16 answers 403 for `/_next/*` on an unrecognised dev Host — hitting the dev server on `127.0.0.1` instead of `localhost` otherwise reads as a hung game. Dev-only; LUL-35 pass 2 moved the Playwright suite onto a production build, so this now serves only humans running `npm run dev`.
 - **`reactStrictMode: true`** is safe only because `engine/forest-engine.js` exposes a real `dispose()` (LUL-17) that `GameCanvas` calls on unmount; StrictMode's double-invoked dev effects leave exactly one engine instance.
 
+<a id="lib"></a>
 
 ## Game logic and policy — lib/
 
@@ -1184,7 +1286,7 @@ Purpose: every mobile-UI defect the founder reported on 2026-08-30 (instruction 
 
 `engine/forest-engine.js` is plain JS behind a hand-written `.d.ts`, so `tsc` cannot see `init()`'s returned object drift from the `EngineActions` interface. That drift blanked production for every returning player once (`setMissionUnlocks` was in the interface and in the engine source but missing from the returned object). This file is both halves of the founder's 2026-09-09 rule:
 
-- **Type-level**: `ENGINE_ACTION_KEYS` (28 keys today, through LUL-2558's `setProgression`) is `as const satisfies readonly (keyof EngineActions)[]`, and a `MissingFromEngineActionKeys` exclusion type fails `tsc` if `EngineActions` ever gains a key the list lacks. Both directions are checked.
+- **Type-level**: `ENGINE_ACTION_KEYS` (30 keys today, through LUL-2558's `setProgression`) is `as const satisfies readonly (keyof EngineActions)[]`, and a `MissingFromEngineActionKeys` exclusion type fails `tsc` if `EngineActions` ever gains a key the list lacks. Both directions are checked.
 - **Runtime**: `assertEngineContract(actions)` is called right after `init()` returns (`components/GameCanvas.tsx:738`) and flags any listed key that is not a `function` on the returned object. It skips `null` (the legitimate re-entrant no-op), **throws** in dev or under `?qaHooks=1` naming the missing keys, and in production does `console.error` (which the Playwright `expectNoConsoleErrors` helper already fails on) plus an `engine_contract_violation` telemetry event. The import of `track` is relative *and* extension-qualified (`./analytics.ts`), not `@/`-aliased, because `npm test` is plain Node with no path-alias resolution.
 
 ### Site config and small utilities
@@ -1206,6 +1308,10 @@ Purpose: every mobile-UI defect the founder reported on 2026-08-30 (instruction 
 - Two module header comments are stale and will mislead you: `lib/devlog.ts` on where posts live, and `lib/ui/hygiene.ts` on which spec consumes it.
 
 
+<a id="tests"></a>
+
+<a id="tests"></a>
+
 ## Tests — e2e/, unit tests, and the world policy
 
 Two test systems, split by what they can see. **Unit tests** (`node --test`, colocated `*.test.ts`) cover pure logic only. **Playwright** (`e2e/`) covers everything that needs a real browser — rendering, input, persistence, and the engine simulation driven through `qa*` hooks. `AGENTS.md § Tests` states the split as a rule: "Pure logic only — no Three.js, no DOM, no `window`, no timers, no wall-clock reads, no unseeded `Math.random()`. Rendering and input stay Playwright's job."
@@ -1216,19 +1322,23 @@ For guarding the pure modules under `lib/` (and two API routes, and the `scripts
 
 **That bare invocation means Node's own default test-file discovery decides what runs, and it differs by Node version. This is the least obvious and most load-bearing fact about this suite:**
 
-- On the Node on this checkout's PATH (**v22.17.0**): `npm test` → **394 tests, ~2.2 s, green** — and all 394 come from the **17 `*.test.mjs` files under `scripts/`** (16 in `scripts/`, plus `scripts/lib/github-fetch.test.mjs`). **None of the 38 `*.test.ts` files are discovered or run.** Invoked by hand, `node --test lib/e2e-policy/world-policy.test.ts` on that Node dies with `ERR_UNKNOWN_FILE_EXTENSION: Unknown file extension ".ts"`.
-- On **v26.8.2**: the same command → **1102 tests, ~2.8 s** — the same 394 from `scripts/`, plus **708 from the `*.test.ts` files** (623 of those from `lib/game/` alone).
+- On the Node on this checkout's PATH (**v22.17.0**): `npm test` → **394 tests, ~2.3 s, green** — and all 394 come from the **17 `*.test.mjs` files under `scripts/`** (16 in `scripts/`, plus `scripts/lib/github-fetch.test.mjs`). **None of the 38 `*.test.ts` files are discovered or run.** Invoked by hand, `node --test lib/e2e-policy/world-policy.test.ts` on that Node dies with `ERR_UNKNOWN_FILE_EXTENSION: Unknown file extension ".ts"`.
+- On a newer Node (**v26.8.2** locally, **v22.23.2** on CI): the same command → **1102 tests, ~2.8 s** — the same 394 from `scripts/`, plus **708 from the `*.test.ts` files** (623 of those from `lib/game/` alone).
 
-So "394 tests, all green" is the *scripts-only* result and means the entire TypeScript suite silently did not run. Every workflow pins `node-version: 22` with a floating minor (`actions/setup-node` resolves it at run time), and nothing in the repo pins it further, so whether CI executes the TS tests depends on which 22.x the runner resolves and whether that minor's test runner globs `.ts` at all. **Unverifiable from this checkout — no Node 22.18+ is installed here to test it** — but it is the first thing to rule out when a unit test that should be red comes back green. (Node ≥22.18 strips types unflagged; an older Node 22 needs `--experimental-strip-types`, and type stripping is separate from discovery: a Node that strips but does not glob `.ts` still runs nothing.) Run `npm test` rather than invoking `node --test` by hand, and check the reported test count, not just the exit code.
+So "394 tests, all green" is the *scripts-only* result and means the entire TypeScript suite silently did not run. **CI is currently on the good side of that line**: every workflow pins `node-version: 22` with a floating minor, and on run [`34766181673`](https://github.com/DadonStyle/LULLWOOD/actions/runs/34766181673) (ci.yml, `release/next`, 2026-09-13) `actions/setup-node@v4` resolved it to **v22.23.2** and the `unit tests` job reported **`# tests 1102 / # pass 1102 / # fail 0`** — the 708 `.ts` tests included. Nothing in the repo pins the minor further, so the failure mode is latent rather than current: a runner that resolves 22 to an older minor executes 394 tests and still exits 0. (Node ≥22.18 strips types unflagged; an older Node 22 needs `--experimental-strip-types`, and type stripping is separate from discovery: a Node that strips but does not glob `.ts` still runs nothing.) Run `npm test` rather than invoking `node --test` by hand, and check the reported test count, not just the exit code — a local run on 22.17.0 is still the 394-test result.
 
 | Area | Files | Tests |
 |---|---|---|
 | Script/tooling guards | `scripts/*.test.mjs` — 16 files + `scripts/lib/github-fetch.test.mjs` (board integrity, merge/review/check gaps, pr-tier, daily-report, watchdogs, qa-regression) | **394** — the only ones that run on a Node without `.ts` discovery |
-| Game logic | `lib/game/*.test.ts` — 27 files (bog, cover, predator, scent, stamina, veil, wrap, outcome, progression, …) | 623 |
-| Engine boundary | `lib/engine-contract.test.ts` — asserts `init()`'s returned action object carries every `ENGINE_ACTION_KEYS` entry | — |
-| UI hygiene rules | `lib/ui/hygiene.test.ts` — fixtures are real measurements from the 2026-08-30 mobile audit at 851×393 (Pixel 5 **landscape**; `OrientationGate` blocks portrait play) | — |
-| e2e policy | `lib/e2e-policy/world-policy.test.ts` — the `@fullmap` gate (below), 5 assertions | — |
-| API / misc | `app/api/telemetry/route.test.ts`, `app/api/suggestions/route.test.ts`, `app/internal/dashboard/pipeline.test.ts`, `lib/dashboard/*.test.ts` (3), `lib/analytics.test.ts`, `proxy.test.ts` | — |
+| Game logic | `lib/game/*.test.ts` — 27 files (bog, cover, predator, scent, stamina, veil, wrap, outcome, progression, …) | **623** |
+| Dashboard | `lib/dashboard/aggregate.test.ts` **30**, `blob-source.test.ts` **7**, `events.test.ts` **2**; `app/internal/dashboard/pipeline.test.ts` **1** | **40** |
+| API routes | `app/api/telemetry/route.test.ts` **9**, `app/api/suggestions/route.test.ts` **8** | **17** |
+| UI hygiene rules | `lib/ui/hygiene.test.ts` — fixtures are real measurements from the 2026-08-30 mobile audit at 851×393 (Pixel 5 **landscape**; `OrientationGate` blocks portrait play) | **12** |
+| e2e policy | `lib/e2e-policy/world-policy.test.ts` — the `@fullmap` gate (below) | **5** |
+| Misc | `proxy.test.ts` **5**, `lib/analytics.test.ts` **2** | **7** |
+| Engine boundary | `lib/engine-contract.test.ts` — asserts `init()`'s returned action object carries every `ENGINE_ACTION_KEYS` entry | **4** |
+
+Counts measured file-by-file at `a47cef9` (`node --test --experimental-strip-types --experimental-test-module-mocks <file>`): **708 TypeScript tests, 685 of them under `lib/`**, 1102 with `scripts/`.
 
 Where it runs: `.github/workflows/ci.yml` (job `unit`, display name "unit tests", after the git-remote-credential, ELEMENTS.md-citation and duplicate-logic guards, which run before `npm ci`) and `.github/workflows/version-cut.yml` line 155, on shard 1 only. Unlike the Playwright step, the unit step has **no** `continue-on-error` — a red unit test fails the job and the run.
 
@@ -1270,9 +1380,11 @@ flowchart LR
 
 **Who runs it.** `ci.yml` does not run Playwright at all. `version-cut.yml` line 213 runs `npx playwright test --shard=${matrix.shard}/6 --project=chromium --project=mobile` — 6 shards, `continue-on-error: true` (LUL-1702: the combined suite result has been advisory for auto-merge arming since PR #314, and this flag stops a red suite from also tripping the LUL-685 run watchdog; the real per-shard outcome is still recorded and reported).
 
-The nightly is a **host cron** (`~/.local/bin/qa-regression`), deliberately never a GitHub Actions workflow — CI must not hold Paperclip credentials (LUL-523, same reason `board-integrity-check.mjs` and `watchdog-run-check.mjs` are plain Node scripts). It runs `npx playwright test --reporter=json` with no `--project` filter against `release/next` and pipes the JSON to `scripts/qa-regression.mjs`, which classifies each failure by spec path (`SEVERITY_MAP`), files a Paperclip ticket **only under `--post`** (dry-run otherwise) — P0 → `todo`/critical, everything else → `backlog` by severity, never `in_progress`; dedup is by an exact marker in the issue title scoped to open issues, so a repeat failure is not re-filed daily; assignee comes from `QA_REGRESSION_ASSIGNEE_AGENT_ID`, unset meaning unassigned — and writes `QA_REGRESSION/reports/<date>.md`. It never touches PR/merge gating and does not fail its own exit code on a game-breaking regression.
+The nightly *was* a **host cron**, deliberately never a GitHub Actions workflow — CI must not hold Paperclip credentials (LUL-523, same reason `board-integrity-check.mjs` and `watchdog-run-check.mjs` are plain Node scripts). That cron ran `npx playwright test --reporter=json` with no `--project` filter against `release/next` and piped the JSON to `scripts/qa-regression.mjs`, which classifies each failure by spec path (`SEVERITY_MAP`), files a Paperclip ticket **only under `--post`** (dry-run otherwise) — P0 → `todo`/critical, everything else → `backlog` by severity, never `in_progress`; dedup is by an exact marker in the issue title scoped to open issues, so a repeat failure is not re-filed daily; assignee comes from `QA_REGRESSION_ASSIGNEE_AGENT_ID`, unset meaning unassigned — and writes `QA_REGRESSION/reports/<date>.md`. It never touched PR/merge gating and did not fail its own exit code on a game-breaking regression.
 
-Two things the reports on disk say that the code does not. First, `qa-regression.mjs`'s own header claims the nightly runs "every project in playwright.config.ts except `replay`" — untrue: with no `--project` filter Playwright runs every project, and `QA_REGRESSION/reports/2026-09-06.md` carries a `replay/win.spec.ts … [replay]` failure line to prove it. Second, **that 2026-09-06 report is the newest on disk — seven days stale as of 2026-09-13 — and it recorded 77 tests with 32 failing**, overwhelmingly wall-clock timeouts (30s/45s/60s/90s) plus a handful of real behavioural failures in `positional-hiding.spec.ts` and `scent.spec.ts`. Treat "the nightly is green" as unverified; nothing in this repo proves the cron has run since.
+**It was retired on 2026-09-07 by founder directive**, and the repo has not caught up. Two path corrections, both checked on `100.85.231.17`: the script header and `QA_REGRESSION/README.md` name `~/.local/bin/qa-regression`, but that binary does not exist on the box (`~/.local/bin/` holds only `claude`, `gh`, `ollama`, `paperclip-status*`, `paperclipai`) — the driver that actually ran was `~/.paperclip/shared/qa-regression/bin/qa-regression-cron`. And the single 00:30 crontab line now reads `systemd-run --user --quiet --wait --collect --unit=local-qa-nightly -p MemoryMax=8G -p MemorySwapMax=0 -p CPUWeight=25 -p Nice=10 /home/noam/.paperclip/shared/local-qa/bin/local-qa-run`, tagged `# lullwood-local-qa (replaces lullwood-qa-regression, founder 2026-09-07; founder 2026-09-11: 8G cgroup cap + no swap …)`. `scripts/qa-regression.mjs` survives in the repo and its 394-test guard still runs, but **nothing schedules it**; the replacement is the local QA rig (§ The local QA rig), which reuses the same vendored checkout (`~/.paperclip/shared/qa-regression/vendor/lullwood`) and writes to `~/.paperclip/shared/local-qa/reports/` instead.
+
+Two things the reports on disk say that the code does not. First, `qa-regression.mjs`'s own header claims the nightly runs "every project in playwright.config.ts except `replay`" — untrue: with no `--project` filter Playwright runs every project, and `QA_REGRESSION/reports/2026-09-06.md` carries a `replay/win.spec.ts … [replay]` failure line to prove it. Second, **that 2026-09-06 report is the newest on disk, and it recorded 77 tests with 32 failing** — overwhelmingly wall-clock timeouts (30s/45s/60s/90s) plus a handful of real behavioural failures in `positional-hiding.spec.ts` and `scent.spec.ts`. The staleness is the handover, not a breakage: `~/.paperclip/shared/qa-regression/state/qa-regression.log` ends with the 2026-09-07 00:30 run that wrote that report and pushed `lul-qa-regression-2026-09-06`. The 00:30 slot itself is still firing — `journalctl --user -u local-qa-nightly` shows starts on 2026-09-12 and 2026-09-13, the latter OOM-killed at 01:07 after 37 min 50 s wall (8 G memory peak against the 8 G `MemoryMax`). So neither "the nightly is green" nor "the nightly is dead" is right: the old record stops at 2026-09-06, and the current nightly's health lives in the rig's own reports.
 
 ### `boot()` and the helper layer
 
@@ -1338,7 +1450,7 @@ Budgets, asserted by `e2e/qa-world-micro-budget.spec.ts` via `qaProbeMemory()`:
 
 ### The `@fullmap` rule and `FULLMAP_ALLOWLIST`
 
-Founder rule, 2026-09-11, LUL-2377: **the QA rig never boots the full 480u map.** It is enforced statically by `lib/e2e-policy/world-policy.test.ts` — a *unit* test, so it gates every PR through the existing "unit tests" check without touching CI. (With the caveat above: that gate only fires on a Node whose test runner discovers `.ts` files.) Static because the rule is about what a spec *asks the engine for*, which is visible in its source; a runtime check would need the very full-map boot it forbids.
+Founder rule, 2026-09-11, LUL-2377: **the QA rig never boots the full 480u map.** It is enforced statically by `lib/e2e-policy/world-policy.test.ts` — a *unit* test, so it gates every PR through the existing "unit tests" check without touching CI. (That gate does fire today: the 2026-09-13 CI run resolved Node 22 to v22.23.2 and executed all five of its assertions inside the 1102. It stops firing silently on any runner whose Node 22 minor does not glob `.ts` — the discovery caveat above.) Static because the rule is about what a spec *asks the engine for*, which is visible in its source; a runtime check would need the very full-map boot it forbids.
 
 A spec may boot the full map only if all three hold:
 
@@ -1385,15 +1497,16 @@ Three specs reach a page without `boot()`, and none of them trip the policy — 
 - **`e2e/mobile/ui-hygiene.spec.ts` is red on purpose** and is `testIgnore`d unless `UI_HYGIENE=1`. It asserts the 2026-08-30 mobile-audit defects are gone; they are not (LUL-1085..LUL-1089 are the fixes). Un-gating it would stamp every release cut's PR with known, already-ticketed failures — "a gate that is red on arrival gets bypassed, not fixed". Delete the `testIgnore` line when the fixes land.
 - **`e2e/**` is Tier A** (`scripts/pr-tier.mjs`: `[/^e2e\//, 'A']`) — ships on green, no review, no play verdict. So is any `*.test.*` file.
 - The mobile project uses `devices['Pixel 5']`, not an iPhone preset: iPhone presets default `browserType` to webkit and this repo installs chromium only.
-- Whole-suite wall-clock blowouts on the version-cut job have a known signature (entire specs blowing the 10s/90s budgets identically across runs — runs 33708960681, 33719198049 — while `git merge-tree` shows zero diff). The widened `CI` timeouts are the stopgap; the durable fix is making every affected spec's waits game-time-aware. The 2026-09-06 nightly report shows the same signature off-CI.
+- Whole-suite wall-clock blowouts on the version-cut job have a known signature (entire specs blowing the 10s/90s budgets identically across runs — runs 33708960681, 33719198049 — while `git merge-tree` shows zero diff). The widened `CI` timeouts are the stopgap; the durable fix is making every affected spec's waits game-time-aware. The final qa-regression report, 2026-09-06, shows the same signature off-CI.
 - `e2e/replay/*.spec.ts` are recording-only, not correctness checks — `death.spec.ts` duplicates a mechanic `smoke.spec.ts` already asserts (and picks one species deliberately), so do not treat it as coverage.
 
+<a id="shipping"></a>
 
 ## Shipping — scripts/, .github/ and the release flow
 
 Everything an agent can do to this repo it does through `git push`. Agents authenticate with an SSH deploy key that can push refs and nothing else — no API scope — so all shipping intent rides in the branch name (`lul-*`) and in commit messages (`[ship]`, `[no-auto-merge]`). `.github/workflows/` turns that into pull requests, reviews and merges; `scripts/` holds the gates, watchdogs and one-shot tooling those workflows call, plus the detectors that deliberately cannot live in CI because they need Paperclip credentials.
 
-Two long-lived branches. Feature work lands on `release/next`; `main` only ever receives a batched **version cut** from `release/next` (the release train, LUL-492/LUL-497). As of 2026-09-13 the two are identical (`main` @ `1816c5a`, cut PR #566; `release/next` @ `6656e8d`, sync-back PR #626) — worth knowing, because several divergence hazards below are latent only while the lane is ahead.
+Two long-lived branches. Feature work lands on `release/next`; `main` only ever receives a batched **version cut** from `release/next` (the release train, LUL-492/LUL-497). As of 2026-09-13 18:00 IDT the standing cut is PR #627 (`Release v2026.09.13-1`, merged 15:04 UTC) — `main` @ `313b962` — with sync-back PR #628 merged a minute behind it (15:05 UTC). `release/next` is already three commits ahead again, @ `c00e886` (PRs #629/#630, both `NOAM_MDS/ARCHITECTURE.md`). The cut before it was PR #566 (`Release v2026.09.09-4`, `main` @ `1816c5a`, merged 03:10 UTC) with sync-back PR #626 @ `6656e8d`. Worth knowing, because several divergence hazards below are latent only while the lane is ahead — which it is right now.
 
 > **`decisions/NNNN-*` are wiki documents, not repo paths.** Every `decisions/0010`, `0014`, `0015`, `0016` citation in the workflow headers and in this section points at `~/.paperclip/shared/wiki`. There is no `docs/decisions/` in this tree — grepping for one finds nothing.
 
@@ -1433,9 +1546,9 @@ Two jobs, both `timeout-minutes: 10`, both `actions/setup-node@v4` at Node 22 wi
 
 The three guard scripts run *before* `npm ci` because they need no `node_modules`. `npm test` is `node --test --experimental-test-module-mocks` with no path args — it discovers `*.test.mjs` by Node's default glob and nothing else (see the `*-cases.sh` gotcha below).
 
-`unit` declares `needs: build` **and** `if: always()`, with a first step that fails when `needs.build.result != 'success'`. That shape is load-bearing (LUL-2167): `unit tests` is the only required context on `release/next`, and PR #503 self-merged with `unit tests: success` / `build, typecheck, lint: failure` because the ruleset never looked at the second name. A plain `needs:` would *skip* `unit` on a red build, and a skipped job posts a `skipped` check-run that branch protection counts as passing — the exact outcome that must not happen. No agent PAT can fix this properly: the studio token has no Administration scope, and every ruleset `PATCH` 404s.
+`unit` declares `needs: build` **and** `if: always()`, with a first step that fails when `needs.build.result != 'success'`. That shape is load-bearing (LUL-2167): when the guard was written `unit tests` was the only required context on `release/next`, and PR #503 self-merged with `unit tests: success` / `build, typecheck, lint: failure` because the ruleset never looked at the second name. The ruleset has since been widened — as of its 2026-09-09 update `release/next` requires three contexts (`unit tests`, `build, typecheck, lint`, `workflow guard check`) — so the `needs: build` + `if: always()` shape is now belt-and-braces rather than the only gate. `ci.yml`'s own LUL-2167 comments (lines 107-110, 134, 217-224) still assert it is the only one; that was true when written and is no longer. A plain `needs:` would *skip* `unit` on a red build, and a skipped job posts a `skipped` check-run that branch protection counts as passing — the exact outcome that must not happen. No agent PAT can fix this properly: the studio token has no Administration scope, and every ruleset `PATCH` 404s.
 
-The Playwright suite does **not** run per push. Founder directive 2026-08-28 moved it to a once-daily host-cron run (`~/.local/bin/qa-regression` → `scripts/qa-regression.mjs`); its findings file Paperclip tickets by severity, write a dated `QA_REGRESSION/reports/<date>.md`, and never block a PR — the script deliberately does not even fail its own exit code on a game-breaking regression, only on a script/infra error.
+The Playwright suite does **not** run per push. Founder directive 2026-08-28 moved it to a once-daily host-cron run (`~/.local/bin/qa-regression` → `scripts/qa-regression.mjs`); its findings filed Paperclip tickets by severity, wrote a dated `QA_REGRESSION/reports/<date>.md`, and never blocked a PR — the script deliberately does not even fail its own exit code on a game-breaking regression, only on a script/infra error. **That cron is retired.** A second founder directive on 2026-09-07 replaced the single 00:30 crontab line with the local QA rig's `local-qa-run` (`systemd-run --user --quiet --wait --collect --unit=local-qa-nightly … /home/noam/.paperclip/shared/local-qa/bin/local-qa-run`, carrying an 8G `MemoryMax` with swap off since 2026-09-11). `~/.local/bin/qa-regression` no longer exists on the box and no crontab line references it; `scripts/qa-regression.mjs` survives in the repo with nothing scheduling it, which is why no `QA_REGRESSION/reports/` file is newer than `2026-09-06.md`. See §The local QA rig.
 
 ### PR tiers
 
@@ -1485,7 +1598,7 @@ All three exist for one reason: `main` (ruleset `20886790`) and `release/next` (
 
 All three match required checks **by name against the ruleset** (`gh api repos/$REPO/rules/branches/<base>`), never via `statusCheckRollup`'s `isRequired`. That field is `null` for every check on every PR here because the repo uses rulesets, not classic branch protection — selecting on it yields an empty set that trivially passes an "all green" test. **The shared implementation, `.github/scripts/check-required-checks.sh`, is used by only two of them** — `bot-approve.yml` and `cut-merge.yml`, both of which `. ./.github/scripts/check-required-checks.sh` (it must be **sourced, not executed**: it sets `$required_checks_ok` and leaves `required.txt`/`rollup.tsv` in the caller's cwd so the caller can add its own diagnostics). `tier-approve.yml` carries a **second, inlined copy** of the same ruleset-vs-rollup loop as its guard 3. The two copies agree today; nothing enforces that they keep agreeing, and `check-duplicate-logic.mjs` only polices `engine/` vs `lib/game/`, not this.
 
-`tier-approve.yml` pins `actions/checkout` to `${{ github.event.workflow_run.head_sha || github.sha }}`. Without that pin, a `workflow_run` checkout resolves to the *workflow file's* branch, not the PR head whose CI just finished — originally fatal because `scripts/pr-tier.mjs` did not exist on `main` and every approval attempt crashed with `MODULE_NOT_FOUND` (LUL-1339). That module has since reached `main` (cut PR #566), so the crash is gone, but the pin is still required for a different and permanent reason: without it the job would classify `main`'s tree instead of the PR's diff. Relatedly, a `workflow_run` run's own top-level `head_branch`/`head_sha` always report the default branch, so auditing this workflow by filtering runs on those fields produces a false "the trigger never fires" report (LUL-1699); the first step logs the real event payload for exactly that reason.
+`tier-approve.yml` pins `actions/checkout` to `${{ github.event.workflow_run.head_sha || github.sha }}`. Without that pin, a `workflow_run` checkout resolves to the *workflow file's* branch, not the PR head whose CI just finished — originally fatal because `scripts/pr-tier.mjs` did not exist on `main` and every approval attempt crashed with `MODULE_NOT_FOUND` (LUL-1339). That module has since reached `main` — not by a version cut but by direct PR #294 (`6f1010a`, base=`main`, head=`lul-1339-pr-tier-main-hotfix`, merged 2026-09-05 08:05Z), two days after `tier-approve.yml` itself took the same route (PR #272, 2026-09-03) — so the crash is gone, but the pin is still required for a different and permanent reason: without it the job would classify `main`'s tree instead of the PR's diff. Relatedly, a `workflow_run` run's own top-level `head_branch`/`head_sha` always report the default branch, so auditing this workflow by filtering runs on those fields produces a false "the trigger never fires" report (LUL-1699); the first step logs the real event payload for exactly that reason.
 
 ### The release cut
 
@@ -1495,7 +1608,7 @@ The `decide` job compares `main...release/next` and sets `should_cut`: schedule 
 
 **`combined-suite`** is the job that buys back what `strict_required_status_checks_policy: false` on `release/next` gives away. Each shard checks out `release/next` at `fetch-depth: 0`, then `git fetch --no-tags origin main` and `git merge --no-ff --no-edit FETCH_HEAD` — a conflict aborts the merge and fails with "needs a manual backmerge". The merge is a **live fetch per shard**, not a snapshot: matrix jobs share no filesystem, so a push landing mid-run can skew shards onto slightly different trees (an accepted tradeoff).
 
-Sharding: `strategy.fail-fast: false`, `matrix.shard: [1,2,3,4,5,6]`, job name `build the merge tree and run the full suite (shard N/6)`. The suite's ~22–26 min green-path cost is diffuse across all 65 tests, and `playwright.config.ts` has run `workers: 1` since its first commit (`0341e45`, LUL-20/21) for no stated reason; serialized on a merge tree already contending with three.js/WebGL rendering that became ~100 min wall-clock and ~30 cascading CDP timeouts (run 33633069397, LUL-1272). Sharding across separate runners fixes the contention without touching `workers: 1`, so local and per-PR runs are unaffected. It was widened 4→6 in LUL-1702 when 4-way shards ran 32–47 min against a ~26 min budget.
+Sharding: `strategy.fail-fast: false`, `matrix.shard: [1,2,3,4,5,6]`, job name `build the merge tree and run the full suite (shard N/6)`. The suite's ~22–26 min green-path cost is spread thinly across the whole suite rather than concentrated in a few slow specs, and `playwright.config.ts` has pinned `workers: 1` since its first commit (`0341e45`, LUL-20/21) for no reason anyone wrote down. Run serially on a merge tree already contending with three.js/WebGL rendering, that became ~100 min of wall clock and ~30 cascading CDP timeouts (run 33633069397, LUL-1272). Sharding across six separate runners removes the contention without touching `workers: 1`, so local and per-PR runs are unaffected. It was widened 4→6 in LUL-1702 when 4-way shards ran 32–47 min against a ~26 min budget. (The "65 tests" in `version-cut.yml`'s own comment at lines 95-96 is the LUL-927-era count and is badly stale: the local QA rig measured **212** tests on 2026-09-13, against 231 `test(` call sites in `e2e/**/*.spec.ts`. Nothing downstream reads the number — it is a comment — but do not cite it.)
 
 Per-shard step distribution matters: `unit tests`, `lint` and `typecheck` run **only on shard 1** (`if: matrix.shard == 1` — identical trees, no point running them six times); `npx next typegen` and `npx next build` run on **every** shard. Browsers are installed with `npx playwright install --with-deps chromium` (chromium only — the same constraint that forces the mobile project onto `devices['Pixel 5']`), and the Playwright step is `npx playwright test --shard=N/6 --project=chromium --project=mobile` (the `--project` filter was added in LUL-1702 — without it the recording-only `replay` project was silently paying for video encoding on every shard). Each shard writes `steps.playwright.outcome` to `shard-outcome/N.txt` and uploads it as artifact `version-cut-shard-outcome-N`, plus `test-results/` as `version-cut-playwright-results-shard-N`, both `retention-days: 14`.
 
@@ -1529,9 +1642,10 @@ Rulesets, not classic branch protection — `GET /branches/main/protection` retu
 | `bypass_actors` | `[]` | `[]` |
 | `strict_required_status_checks_policy` | `false` | `false` |
 | `dismiss_stale_reviews_on_push` | `false` | `false` |
-| Required contexts | includes `build, typecheck, lint`; `workflow guard check` and `base branch guard` are each described in their own workflow headers as required here | **only** `unit tests` |
+| `require_extra_approval_for_unattributed_changes` | `true` | `false` |
+| Required contexts | `build, typecheck, lint`, `unit tests`, `workflow guard check`, `base branch guard` | `unit tests`, `build, typecheck, lint`, `workflow guard check` |
 
-Every row above is reconstructed from workflow headers (`approve-parked-runs.yml` records the exact `gh api` probes and their answers; `bot-approve.yml`, `tier-approve.yml`, `auto-pr.yml`, `automerge.yml` and `cut-merge.yml` each restate parts of it). **Nothing in the repo pins the ruleset itself** — `check-required-checks.sh` and `tier-approve.yml` both read the required-context list live from `gh api repos/$REPO/rules/branches/<base>` on every run, precisely so the gates cannot drift from a checked-in copy. Treat the table as a snapshot of what the headers assert, not as ground truth this tree can verify.
+Every row above was read live on 2026-09-13 from `gh api repos/DadonStyle/LULLWOOD/rulesets/20886790` and `.../21050378` (`release/next`'s ruleset last updated 2026-09-09, `main`'s 2026-08-28); the workflow headers restate parts of it (`approve-parked-runs.yml` records the exact `gh api` probes and their answers; `bot-approve.yml`, `tier-approve.yml`, `auto-pr.yml`, `automerge.yml` and `cut-merge.yml` each restate more), and several of those restatements are now stale — the headers that still say `unit tests` is the only required context on `release/next` predate the 2026-09-09 widening. **Nothing in the repo pins the ruleset itself** — `check-required-checks.sh` and `tier-approve.yml` both read the required-context list live from `gh api repos/$REPO/rules/branches/<base>` on every run, precisely so the gates cannot drift from a checked-in copy. Treat the table as a dated snapshot of the API, not as anything this tree can verify.
 
 Practical consequences an engineer must internalise:
 
@@ -1554,7 +1668,7 @@ Three run as GitHub Actions, read GitHub only, and are **explicitly not required
 
 The two detectors that *do* expose an override exist so the detector can be proven to fire (point it at a known-bad PR with `0`; both parse `0` explicitly rather than through `Number(raw) || DEFAULT`, which would silently fall back). `review-gap-detector.yml` — the one with the worst measured reliability — is the one you cannot prove this way. `check-run-collision-guard.yml` (`workflow_run` on `CI` and `Workflow guard check`) runs `check-check-run-collisions.mjs` as defence-in-depth against the LUL-719 skip-over-failure pattern; it structurally cannot run before the collision exists, so it can only say "consider making this a required context". `scope-drift.yml` is non-blocking by construction (`continue-on-error: true` on the job, every `gh` call best-effort) and comments when a `lul-*` push's diff against `release/next` matches `^\.github/workflows/|^package\.json$|^\.github/CODEOWNERS$` — the backmerge-drag case.
 
-`deployment-budget.yml` is the visibility half of the Vercel cap (`'7,27,47 * * * *'`); the enforcement half is the same script gating `auto-pr.yml`. Vercel allows 100 deploys/24h and the founder's cap is 90: `.github/scripts/deployment-budget.sh` warns at `ALERT_50=50` and `ALERT_80=80` and **exits 1 at/over `FAIL_AT=90`** (all three are env-overridable). It counts from GitHub's Deployments API (Vercel mirrors every deploy there), so no `VERCEL_API_TOKEN` is needed. Pages land as *files* in a temp dir, never on argv — the live API blew past `ARG_MAX` the first time. Pagination stops when a page's oldest record predates the cutoff, an empty or short (<100) page arrives, or page 20 (2000 records) is exceeded, which exits 1 rather than looping. `DEPLOYMENT_BUDGET_FIXTURE` drives the real threshold logic from a JSON file, and the workflow's `fixture_count` dispatch input fabricates records so the fail-closed branch is provable live. `vercel.json`'s `ignoreCommand` is `bash scripts/vercel-ignore-ci-only.sh`, which exits 0 (skip preview) when every changed path matches `^(\.github/|scripts/|DAILY_REPORTS/|NOAM_MDS/|QA_REGRESSION/|e2e/)|^[^/]+\.md$`, and exits 1 (build) on an empty or unreadable diff — `docs/` is deliberately excluded from that list pending LUL-47.
+`deployment-budget.yml` is the visibility half of the Vercel cap (`'7,27,47 * * * *'`); the enforcement half is the same script gating `auto-pr.yml`. Vercel allows 100 deploys/24h and the founder's cap is 90: `.github/scripts/deployment-budget.sh` warns at `ALERT_50=50` and `ALERT_80=80` and **exits 1 at/over `FAIL_AT=90`** (all three are env-overridable). It counts from GitHub's Deployments API (Vercel mirrors every deploy there), so no `VERCEL_API_TOKEN` is needed. Pages land as *files* in a temp dir, never on argv — the live API blew past `ARG_MAX` the first time. Pagination stops when a page's oldest record predates the cutoff, an empty or short (<100) page arrives, or page 20 (2000 records) is exceeded, which exits 1 rather than looping. `DEPLOYMENT_BUDGET_FIXTURE` drives the real threshold logic from a JSON file, and the workflow's `fixture_count` dispatch input fabricates records so the fail-closed branch is provable live. `vercel.json`'s `ignoreCommand` is `bash scripts/vercel-ignore-ci-only.sh`, which exits 0 (skip preview) when every changed path matches `^(\.github/|scripts/|DAILY_REPORTS/|NOAM_MDS/|QA_REGRESSION/|e2e/)|^[^/]+\.md$`, and exits 1 (build) on an empty or unreadable diff. `docs/` is deliberately excluded from that list: a carve-out kept after LUL-47 shipped `/devlog` (`app/devlog/page.tsx`, `app/devlog/[slug]/`, `lib/devlog.ts`), on the theory that the page may yet source content from `docs/`. The carve-out outlived its ticket — `scripts/vercel-ignore-ci-only.sh:13-18` still says "LUL-47 plans a /devlog page" and asks you to check that ticket's status before adding `docs/`; it is now `done`, so the re-check it asks for is the one nobody has done.
 
 **Two checks cannot live in CI at all**, because they must cross-reference live Paperclip data and **CI must never hold Paperclip credentials** (LUL-523). Both are plain Node scripts run by an agent or host crontab that already has `PAPERCLIP_API_KEY`:
 
@@ -1574,7 +1688,7 @@ Every `*.mjs` *gate* here ships with a colocated `*.test.mjs` run by `npm test`;
 | `assert-two-parent-merge.mjs` | `cut-merge.yml`, `version-cut-finalize.yml` | a cut/sync merge must have exactly two parents |
 | `check-review-gap.mjs`, `check-merge-gap.mjs`, `check-required-check-gap.mjs`, `check-check-run-collisions.mjs` | the four detector workflows | see the watchdog table |
 | `diagnose-required-check-absence.mjs` | `bot-approve.yml` refusal path | names which of four causes ("never ran" / "still running" / "red" / "green but uncreditable") applies; diagnostic only, grants no credit |
-| `board-integrity-check.mjs`, `watchdog-run-check.mjs`, `qa-regression.mjs` | host cron / an agent with Paperclip creds | never wired into `.github/workflows/` |
+| `board-integrity-check.mjs`, `watchdog-run-check.mjs`, `qa-regression.mjs` | host cron / an agent with Paperclip creds | never wired into `.github/workflows/`; `qa-regression.mjs` has had **no** scheduler since its 00:30 cron was retired on 2026-09-07 |
 | `daily-report.mjs` | `daily-report.yml` | nightly `DAILY_REPORTS/` generation |
 | `setup-git-hooks.mjs` | `package.json` `prepare` | sets `core.hooksPath` to `.githooks/` (`pre-commit`, `pre-push` credential guards) on every `npm ci`; non-fatal by design, and a no-op with no `.git` — CI runs the guard independently |
 | `vercel-ignore-ci-only.sh` | `vercel.json` `ignoreCommand` | skip previews for CI-only diffs |
@@ -1586,7 +1700,7 @@ The shell gates in `.github/scripts/` each ship a colocated self-test — `ship-
 
 - **`cut-merge.yml` has no `actions/checkout` step.** Its only setup step is `actions/setup-node@v4`, yet the job then runs `. ./.github/scripts/check-required-checks.sh` and `node scripts/assert-two-parent-merge.mjs` (in a second step that also has no checkout). Neither file is in the workspace. Every other workflow that sources a repo script checks out first.
 - **`review-gap-detector.yml` pins `actions/checkout@v7` and `actions/setup-node@v7`.** The rest of the tree is 17× `actions/checkout@v4`, 11× `actions/setup-node@v4`, plus `upload-artifact@v4`/`download-artifact@v4`. No `v7` major exists for either action; an unresolvable action reference fails the job at step setup, on every run, which is a strong candidate explanation for the LUL-685 signature of red for 99 of 102 consecutive scheduled runs — but nothing on disk proves the causal link, so treat it as the first thing to test, not as established.
-- **`scripts/pr-tier.mjs` is now on `main`.** The standing warning that it "lives on `release/next` only and has never reached `main`" — still written into `tier-approve.yml`'s header — is stale: it landed with cut PR #566 (`main` @ `1816c5a`, 2026-09-13) and `main` and `release/next` are currently byte-identical for `pr-tier.mjs`, `tier-approve.yml` and both allowlist scripts. `tier-approve.yml`'s `ref:` pin is still required, but for the durable reason (a `workflow_run` checkout would otherwise classify `main`'s tree instead of the PR head), not for `MODULE_NOT_FOUND`.
+- **`scripts/pr-tier.mjs` is now on `main`.** The standing warning that it "lives on `release/next` only and has never reached `main`" — still written into `tier-approve.yml`'s header (lines 76 and 143) — is stale: it reached `main` on 2026-09-05 via **direct PR #294** (`6f1010a`, base=`main`, head=`lul-1339-pr-tier-main-hotfix`) — a hotfix straight onto `main`, not a version cut — two days after `tier-approve.yml` itself took the same route (PR #272). As of the #627 cut `main` and `release/next` are byte-identical for `pr-tier.mjs`, `tier-approve.yml` and both allowlist scripts (blob shas match on all four; the three commits `release/next` is ahead touch only `NOAM_MDS/ARCHITECTURE.md`). `tier-approve.yml`'s `ref:` pin is still required, but for the durable reason (a `workflow_run` checkout would otherwise classify `main`'s tree instead of the PR head), not for `MODULE_NOT_FOUND`.
 - **`auto-pr.yml`'s "main's copy" comments are wrong.** It reads both allowlists out of `FETCH_HEAD`, which that job sets to `origin/release/next`. Only `automerge.yml` reads `main`'s copy. Harmless while the branches are in sync; a real split the moment a gate change is merged to `release/next` and the cut hasn't run.
 - **`tier-approve.yml` does not use `check-required-checks.sh`.** It inlines its own copy of the ruleset-vs-rollup loop. Fix a bug in the shared script and you have fixed it in two of three callers.
 - **`SHIP_REVIEW_PAT` is the single point of failure for every automated merge.** Without it: `auto-pr.yml` skips arming, `automerge.yml` exits 1 with a `SHIP_REVIEW_FAILED` comment, `tier-approve.yml` refuses to approve anything, `version-cut-finalize.yml` leaves the sync-back PR for a human, and `daily-report.yml` exits 1 before pushing (pushing under `github.token` would silently recreate the unmergeable-PR bug). Several workflow headers still say the secret "has never been configured" (`automerge.yml` lines 31 and 292, `daily-report.yml` line 407); other headers written later say it is configured now (LUL-762 fallout on cut PR #239). The code handles both via `merge_token="${SHIP_REVIEW_TOKEN:-$GH_TOKEN}"`.
@@ -1596,6 +1710,10 @@ The shell gates in `.github/scripts/` each ship a colocated self-test — `ship-
 - **Concurrency keys must be `github.ref`-based, not SHA-based.** Keying on event + head SHA cannot cancel a superseded run, because two pushes in quick succession have different SHAs and land in different groups; LUL-894 measured 42/100 runs superseded while still running with only 3 actually `cancelled`, burning ~24% of CI wall-time on dead commits. `ci.yml` and `workflow-guard-check.yml` both now use `<name>-${{ github.event_name }}-${{ github.ref }}`.
 - **A fork PR has no automatic required-check coverage.** Removing the `pull_request` trigger from `ci.yml` and `workflow-guard-check.yml` was a named, deliberate tradeoff — `push` cannot see a fork's commits, and a `workflow_dispatch` green does not enter the rollup. Zero fork PRs have been received in this repo's history (per both workflow headers; not independently checkable here).
 
+
+<a id="written-record"></a>
+
+<a id="written-record"></a>
 
 ## The written record — docs/ and QA_REGRESSION/
 
@@ -1631,7 +1749,7 @@ Three rules give it its unusual discipline, all stated in the file's own header:
 
 **`U` cells become tickets, not guesses.** `## Notable UNDEFINED cells filed as tickets` is the mechanism: LUL-391 (PR #117), LUL-392 (#163), LUL-395 (#163), LUL-396 (LUL-450), plus LUL-394 and LUL-857 (struck through, no PR named) are closed; LUL-393 (predators have zero runtime awareness of the child's position and can stand on it) is still open at P3. The registry's job is to surface the hole and file it, not to invent an answer.
 
-**The citation guard (the interesting part).** `scripts/check-elements-citations.mjs` runs at `.github/workflows/ci.yml:159` as a step of the `unit tests` job, before `npm ci` (it needs no `node_modules`). That job is the *only* required status check on `release/next` (LUL-2167), so the guard is required by construction. The script has its own unit test, `scripts/check-elements-citations.test.mjs`. Its header records the measurement that forced it (LUL-588, superseding LUL-474): of 118 `L<n>` citations on `release/next` @ `af0c995`, 82 resolved to a symbol and **0 of those 82 were correct** — and re-checking each against the engine as it stood at the doc commit that introduced it showed 0 were correct *then* either, 65 of them already wrong the day they were written. So this was never drift from a good state, and "re-derive them by hand once more" (done three times) had no reason to stick. It also rules out a bulk auto-fix: the doc mixes declaration-site and interior-use-site citations, and an early rewriter collapsed distinct use sites onto one declaration line, so `--fix` now rewrites only where there is a per-item content proof.
+**The citation guard (the interesting part).** `scripts/check-elements-citations.mjs` runs at `.github/workflows/ci.yml:159` as a step of the `unit tests` job, before `npm ci` (it needs no `node_modules`). That job is one of the three required status checks on `release/next` — `unit tests`, `build, typecheck, lint`, `workflow guard check` (ruleset `21050378`, updated 2026-09-09; `main` requires those three plus `base branch guard`) — so the guard is required by construction. `ci.yml:107` still comments that `unit tests` is the ONLY required check on release/next (LUL-2167); that was true when the guard was written and is not true today. The script has its own unit test, `scripts/check-elements-citations.test.mjs`. Its header records the measurement that forced it (LUL-588, superseding LUL-474): of 118 `L<n>` citations on `release/next` @ `af0c995`, 82 resolved to a symbol and **0 of those 82 were correct** — and re-checking each against the engine as it stood at the doc commit that introduced it showed 0 were correct *then* either, 65 of them already wrong the day they were written. So this was never drift from a good state, and "re-derive them by hand once more" (done three times) had no reason to stick. It also rules out a bulk auto-fix: the doc mixes declaration-site and interior-use-site citations, and an early rewriter collapsed distinct use sites onto one declaration line, so `--fix` now rewrites only where there is a per-item content proof.
 
 Two ratchets came out of that, both checked-in JSON:
 
@@ -1654,7 +1772,7 @@ Run today against the checked-out tree, the guard reports: `51 citations; 9 anch
 
 Companion registry to ELEMENTS, standing under wiki `decisions/0015-cue-triple`. Fifteen rows, one per element the player can walk up to or trigger; columns are **visual cue**, **audio cue**, **explanation**, each cell a grep-verified `file:line` or the literal word `MISSING`. Passive world texture (fog, ambience, decoration) is out of scope by that decision's own Scope note.
 
-Its value is that it refuses to launder a gap into a ticket that does not fit. The first pass (LUL-2332, child of LUL-2321 Part 2, 2026-09-11, against `release/next` @ `c352ab9`) opened **no** new child ticket: the one gap with an engineering shape already had one (Stone Marker → LUL-2331, since closed); the fire tower ("no interaction of any kind hangs off it today — needs a product decision") and the embers pile ("no discrete trigger point exists to cue") went back to the CTO as ticket comments; every remaining `MISSING` — Cave immunity, Throwable pickup, Lake, Bog — was explanation-only and folded into LUL-2307 (status `blocked`, PR #570 open). It also carries live warnings, and the Throwable row records a genuine dead path (`state.canGrabThrowable` is pushed by the engine at `:5426`, commented as gating a "pick up stone" prompt at `:3220-3222`, and read by no component).
+Its value is that it refuses to launder a gap into a ticket that does not fit. The first pass (LUL-2332, child of LUL-2321 Part 2, 2026-09-11, against `release/next` @ `c352ab9`) opened **no** new child ticket: the one gap with an engineering shape already had one (Stone Marker → LUL-2331, since closed); the fire tower ("no interaction of any kind hangs off it today — needs a product decision") and the embers pile ("no discrete trigger point exists to cue") went back to the CTO as ticket comments; every remaining `MISSING` — Cave immunity, Throwable pickup, Lake, Bog — was explanation-only and folded into LUL-2307 (still `blocked` and assigned to the CTO; its implementation PR #570 merged 2026-09-11). It also carries live warnings, and the Throwable row records a genuine dead path (`state.canGrabThrowable` is pushed by the engine at `:5426`, commented as gating a "pick up stone" prompt at `:3220-3222`, and read by no component).
 
 **Gotcha — the warnings drift in both directions.** The Hollow log hide row says to re-check it once PR #571 (`lul-2311-remove-log-hiding`) lands and that it is "not yet true on `release/next`". In this tree it has landed: `lib/game/cover.ts:630` is `HIDE_KINDS = { bramble: true }`, with `WALKABLE_KINDS = { bramble: true, log: true }` at `:642`, and `docs/ELEMENTS.md` footnote ²⁰ already documents LUL-2311 as done. ELEMENTS is current here and CUES is stale — the reverse of the Bog case above. Neither file is self-dating beyond its `Written against` sha, so check both against the branch you are on.
 
@@ -1705,9 +1823,11 @@ Note the interaction with the tiers: `AGENTS.md` demotes the LUL-389 checklist i
 
 Renamed from `GAMES_REPLAY` by founder directive on 2026-08-28, when per-PR QA moved to a once-daily full regression run instead of a smoke suite on every push. It holds two unrelated things that share the folder.
 
+The pipeline below is the historical one: the 00:30 cron that drove it was retired on 2026-09-07 in favour of the local QA rig (§11). Every repo-side piece of it still exists, and all nine checked-in reports came out of it.
+
 ```mermaid
 flowchart TD
-  A["host cron ~/.local/bin/qa-regression<br/>00:30 server time"] --> B["npx playwright test --reporter=json<br/>every project except 'replay'"]
+  A["host cron ~/.local/bin/qa-regression<br/>00:30 server time<br/>retired 2026-09-07, see §11"] --> B["npx playwright test --reporter=json<br/>every project except 'replay'"]
   B --> C["scripts/qa-regression.mjs results.json --post"]
   C --> D["classify by SEVERITY_MAP<br/>(spec file path → P0..P3)"]
   D --> E["Paperclip ticket<br/>P0 → status todo / critical<br/>P1-P3 → backlog by severity"]
@@ -1716,11 +1836,11 @@ flowchart TD
   C -.->|"never gates a PR or merge;<br/>exits non-zero only on script/infra error"| G(["no effect on CI"])
 ```
 
-**1. `reports/` — the daily record.** `scripts/qa-regression.mjs` parses a Playwright JSON report, classifies each failure, files tickets, and writes `QA_REGRESSION/reports/<date>.md`. It is driven by a **host cron at 00:30 server time, never by a GitHub Actions workflow**: CI must never hold Paperclip credentials (LUL-523, same reason `board-integrity-check.mjs` and `watchdog-run-check.mjs` are plain Node scripts). The cron path `~/.local/bin/qa-regression` and the 00:30 time are documented in the script header and `QA_REGRESSION/README.md:8`; the crontab itself lives on the server and is not verifiable from the repo. Credentials come from `PAPERCLIP_API_URL` / `PAPERCLIP_COMPANY_ID` / `PAPERCLIP_API_KEY`, falling back to the durable CLI token at `~/.paperclip/auth.json` so an unattended cron works with no live agent session. A fourth env var, `QA_REGRESSION_ASSIGNEE_AGENT_ID`, decides who filed tickets are assigned to — **unset means unassigned**: the ticket lands on the board and wakes nobody, which is the intended state while the QA/reviewer agents are paused.
+**1. `reports/` — the daily record.** `scripts/qa-regression.mjs` parses a Playwright JSON report, classifies each failure, files tickets, and writes `QA_REGRESSION/reports/<date>.md`. It was driven by a **host cron at 00:30 server time, never by a GitHub Actions workflow**: CI must never hold Paperclip credentials (LUL-523, same reason `board-integrity-check.mjs` and `watchdog-run-check.mjs` are plain Node scripts). The script header and `QA_REGRESSION/README.md:8` still name that cron as `~/.local/bin/qa-regression` at 00:30, and both are now stale — the crontab *is* verifiable from the box, and it no longer says that. `~/.local/bin/` holds only `claude`, `gh`, `ollama`, `paperclip-status`, `paperclip-status-cron`, `paperclip-status-wiki.js`, `paperclipai`; the single 00:30 crontab line now runs `systemd-run --user --quiet --wait --collect --unit=local-qa-nightly … /home/noam/.paperclip/shared/local-qa/bin/local-qa-run`, tagged `# lullwood-local-qa (replaces lullwood-qa-regression, founder 2026-09-07)`. Nothing schedules `qa-regression.mjs` any more; it still runs by hand against a Playwright JSON report. Credentials come from `PAPERCLIP_API_URL` / `PAPERCLIP_COMPANY_ID` / `PAPERCLIP_API_KEY`, falling back to the durable CLI token at `~/.paperclip/auth.json` so an unattended cron works with no live agent session. A fourth env var, `QA_REGRESSION_ASSIGNEE_AGENT_ID`, decides who filed tickets are assigned to — **unset means unassigned**: the ticket lands on the board and wakes nobody, which is the intended state while the QA/reviewer agents are paused.
 
 Severity is a declared judgement call in `SEVERITY_MAP` (`qa-regression.mjs:59-77`), keyed on spec path — P0 is reserved for the core loop (`smoke`, `lifecycle`, `hide`, `win-persist`, `charge-dodge`, `blind-chase-cover`); P1 is `scent`, `cover-feedback`, `positional-hiding`, `input-mode`, all of `e2e/mobile/**`; P2 is explicit for `admin-mode`, `layout` and `map-seed` and is also the `DEFAULT_SEVERITY` for anything unmatched; P3 for `lul211-founder-report` and `seo`. `P0 → todo` + priority `critical`, everything else `→ backlog` by severity, never `in_progress` ("filing does not claim the work"). Dedup is by the exact marker `QA_REGRESSION_FAIL: <specFile> :: <title>` in the issue title (`:176`), scoped to open issues, so a failure that keeps failing does not open a new ticket every day.
 
-Crucially, **this never gates anything**: no required check, no PR comment, and a game-breaking regression does not change the script's exit code. It is a record and a ticket source. A run skipped because the account is near a rate-limit cap gets **no catch-up** — the next day's 00:30 run is the next data point, and the missing `2026-09-02.md` is that rule visible in the folder.
+Crucially, **this never gated anything**: no required check, no PR comment, and a game-breaking regression does not change the script's exit code. It is a record and a ticket source. A run skipped because the account was near a rate-limit cap got **no catch-up** — the next day's 00:30 run was the next data point, and the missing `2026-09-02.md` is that rule visible in the folder. The series stops at `2026-09-06.md` for a different reason: the cron was retired the next day, and its successor writes its reports to `~/.paperclip/shared/local-qa/reports/` on the server, outside the repo (§11).
 
 Reports are terse by design: a headline line (`Full e2e/ suite against release/next. 77 tests, 32 failing.`), a filed-ticket count, then `## P0 … ## P3` sections listing `` `spec.ts` :: test title [project] -- error ``, or `All green.`. Nine are checked in, and the series is worth reading as a whole rather than cherry-picking: 08-28 `65/62 failing` (62 tickets filed), 08-29 `65/62` (0 filed — dedup working), 08-30/08-31/09-01 `65/2`, 09-03 `68/65` (64 filed), 09-04 `70/67`, 09-05 `undefined/0` (`All green.`), 09-06 `77/32`. The suite has been substantially red for most of the window, and the test count has grown 65 → 77. They are committed through PRs like any other change.
 
@@ -1736,7 +1856,7 @@ What the retirement notes teach is the point of the folder. The LUL-216 clips we
 
 **Repo-weight budget** (clips only — `reports/*.md` are exempt): video is binary and permanent in git history, so keep clips seconds-long, downscaled to 960×540 (well under the 1280×720 canvas), and curated; prune a superseded clip **in the same PR that adds its replacement**; current total 3.04 MB for 2 clips; if the folder starts pushing the repo past a few tens of MB, stop and raise it. A fresh clip is warranted when a real session shows something the checked-in clips do not — a new mechanic, a visible bug fix, controls drift — not on every CI run or heartbeat.
 
-The README also records a *deliberate absence*: a collision clip is not added yet because PR #38 (`lul-211-regression-spec`, LUL-211/LUL-245, VP R&D) is already landing the canonical `qaProbePlayer` / `qaStageWalkIntoCover` hooks and a per-kind collision regression spec, and inventing a second set here would leave two competing APIs in the codebase. In the meantime the Game Tester ran a throwaway, uncommitted probe against tree/rock/log/bramble and confirmed the fix holds (wiki `game/lul237-replay-root-cause`). Writing down why something is missing is treated as part of the record, not an omission from it.
+The README also records a *deliberate absence*: a collision clip is not added yet because PR #38 (`lul-211-regression-spec`, LUL-211/LUL-245, filed under the old agent name *VP R&D* — the lead agent `6b780916-2a67-453b-852d-ceeb3d1ed4df`, live today as **CEO**, `role: ceo`; see §9) was already landing the canonical `qaProbePlayer` / `qaStageWalkIntoCover` hooks and a per-kind collision regression spec, and inventing a second set here would leave two competing APIs in the codebase. (#38 merged 2026-08-17; the README still calls it "open as of this writing", so the promised follow-up clip is overdue rather than blocked.) In the meantime the Game Tester ran a throwaway, uncommitted probe against tree/rock/log/bramble and confirmed the fix holds (wiki `game/lul237-replay-root-cause`). Writing down why something is missing is treated as part of the record, not an omission from it.
 
 
 ---
@@ -1747,6 +1867,18 @@ Everything above ships to players. Everything below builds it. The studio is a s
 over Tailscale, running the agent orchestrator, the local models, the QA rig, and the guards that keep them
 from starving each other.
 
+
+<a id="paperclip"></a>
+
+---
+
+# The studio
+
+Everything above ships to players. Everything below builds it. The studio is a single Ubuntu box reachable
+over Tailscale, running the agent orchestrator, the local models, the QA rig, and the guards that keep them
+from starving each other.
+
+<a id="paperclip"></a>
 
 ## Paperclip — the agent orchestrator
 
@@ -1776,19 +1908,29 @@ There is no per-agent API key and no interactive login on the box. `claude-token
 This is the fix for the September 2026 OAuth outage. Practical notes:
 
 - Rotating the token means editing that drop-in, `systemctl --user daemon-reload`, `systemctl --user restart paperclip`. Nothing else picks up a new value — running agents keep the old environment.
-- The token is one shared subscription, so the whole fleet hits the weekly limit together. As of 2026-09-13 every one of the last 200 heartbeat runs failed with `errorCode: acpx_turn_failed` and `error: "Internal error: You've hit your weekly limit · resets Sep 15, 3pm (Asia/Jerusalem)"`. Five agents sit in `status: error` (CEO, CTO, Founding Engineer, Feature Scout, Game Economist) — but **seven carry that string in `errorReason`**: Game Engineer and Code Reviewer still report `status: idle` with a stale quota error attached, so status alone under-counts the blast radius.
+- The token is one shared subscription, so the whole fleet hits the weekly limit together. As of 2026-09-13 every one of the last 200 heartbeat runs failed with `errorCode: acpx_turn_failed` and `error: "Internal error: You've hit your weekly limit · resets Sep 15, 3pm (Asia/Jerusalem)"` — that is **Tuesday** 2026-09-15 15:00 IDT, two days out from this read, not the coming morning. Five agents sit in `status: error` (CEO, CTO, Founding Engineer, Feature Scout, Game Economist) — but **seven carry that string in `errorReason`**: Game Engineer and Code Reviewer still report `status: idle` with a stale quota error attached, so status alone under-counts the blast radius.
 - Never print the value. It is mode-0600 for a reason, and a leaked token burns the whole fleet at once.
 
 ### Postgres on 127.0.0.1:54329
 
-The database is embedded — Paperclip ships its own server binary (`@embedded-postgres/linux-x64@18.1.0-beta.16`, PostgreSQL **18.1**) and starts it as a child process from `~/.paperclip/instances/default/db` on port **54329**, bound to loopback only, `password` auth for every line in `pg_hba.conf`. There is no `psql` client on the box and no `DATABASE_URL` anywhere in the instance; the credentials are managed inside the process. **In practice the only ways to read the data are the HTTP API and the CLI.**
+The database is embedded — Paperclip ships its own server binary (`@embedded-postgres/linux-x64@18.1.0-beta.16`; `select version()` answers PostgreSQL **18.1**) and starts it as a child process from `~/.paperclip/instances/default/db` on port **54329**, bound to loopback only, `password` auth for every line in `pg_hba.conf`.
 
-The schema is defined in drizzle — `@paperclipai/db/dist/schema/` holds 107 modules declaring **156 `pgTable` definitions** (the "107" is the file count, not the table count). The four that matter:
+There is no `psql` on the box — the embedded distribution's `native/bin` ships exactly three binaries, `initdb`, `pg_ctl`, `postgres` — and no `DATABASE_URL` anywhere in the instance. **That does not make the database unreadable, and the older advice to "read the DB through the API" is wrong.** The credentials are hard-coded (`paperclip`/`paperclip`/`paperclip`, `@paperclipai/db/dist/migration-runtime.js:107-108`) and the `pg` client bundled with Paperclip (8.23.0) talks to the socket directly. This is the same path the founder's own `founder-alert` watchdog uses (§12, `/home/noam/.paperclip/shared/watchdog/bin/founder-alert:41`):
+
+```bash
+node -e 'const {Client}=require("/home/noam/.local/lib/node_modules/paperclipai/node_modules/pg");
+const c=new Client({host:"127.0.0.1",port:54329,database:"paperclip",user:"paperclip",password:"paperclip"});
+c.connect().then(()=>c.query("select status,count(*) from issues group by status")).then(r=>{console.table(r.rows);return c.end()})'
+```
+
+Read through this; write back through the CLI or the HTTP API, so the server's invariants, audit columns and run bookkeeping still apply. Every count in this chapter that the API cannot reach came from that connection.
+
+The schema is defined in drizzle — `@paperclipai/db/dist/schema/` holds 107 modules declaring **156 `pgTable` definitions** (the "107" is the file count, not the table count), and the live catalog agrees: `select count(*) from pg_tables where schemaname='public'` returns 156. The four that matter:
 
 - **`agents`** — one row per agent. `name`, `role`, `status`, `reports_to` (self-FK, this is the org chart), `capabilities` (the one-paragraph job description), `adapter_type`, `adapter_config` jsonb (model, allowed tools, `maxTurnsPerRun`, `timeoutSec`, `graceSec`, `instructionsFilePath`, skill sync list), `runtime_config` jsonb (the heartbeat policy), `permissions` jsonb, `budget_monthly_cents` / `spent_monthly_cents`, `pause_reason`, `error_reason`, `last_heartbeat_at`.
 - **`issues`** — the board. `identifier` (unique, `LUL-####`), `status`, `priority`, `assignee_agent_id`, `parent_id`, `goal_id`, `origin_kind`, plus execution/monitor columns (`checkout_run_id`, `execution_run_id`, `execution_locked_at`, `monitor_next_check_at`). **Six** partial unique indexes stop the detectors from filing duplicates — `issues_active_task_watchdog_uq` (one open `task_watchdog` issue per origin) plus the same shape for `stale_run_evaluation`, `productivity_review`, `stranded_issue_recovery`, `liveness_recovery_incident` and `liveness_recovery_leaf`, and `issues_open_routine_execution_uq`. `issues_open_normalized_title_created_idx` indexes case/whitespace-normalized titles of non-`done`/`cancelled` issues.
 - **`heartbeat_runs`** — one row per agent invocation. `invocation_source`, `trigger_detail`, `status`, `started_at`/`finished_at`, `exit_code`, `error`, `error_code`, `usage_json` (model, cost, session reuse), `session_id_before`/`session_id_after`, `log_store`/`log_ref`, `liveness_state`, `continuation_attempt`, `scheduled_retry_*`, `process_pid`/`process_group_id`.
-- **`issue_thread_interactions`** — the structured way an agent asks a human (or its manager) something without blocking: `kind`, `status`, `continuation_policy`, `payload`/`result` jsonb, `source_run_id`. `continuation_policy` is `wake_assignee` on 60 of the 69 live rows (the other 9 are `none`), which is what makes an answer wake the agent that asked.
+- **`issue_thread_interactions`** — the structured way an agent asks a human (or its manager) something without blocking: `kind`, `status`, `continuation_policy`, `payload`/`result` jsonb, `source_run_id`. `continuation_policy` is `wake_assignee` on **112 of the 143 rows** (28 are `none`, 3 are `wake_assignee_on_accept`), which is what makes an answer wake the agent that asked.
 
 Enumerated values live in `@paperclipai/shared/dist/constants.js` (all verified against the file):
 
@@ -1804,11 +1946,11 @@ Enumerated values live in `@paperclipai/shared/dist/constants.js` (all verified 
 | `ISSUE_THREAD_INTERACTION_STATUSES` | `pending`, `accepted`, `rejected`, `answered`, `cancelled`, `expired`, `failed` |
 | `ISSUE_ORIGIN_KINDS` | `manual`, `routine_execution`, `stale_active_run_evaluation`, `harness_liveness_escalation`, `issue_productivity_review`, `stranded_issue_recovery`, `task_watchdog`, `task_watchdog_product_bug` (last entry is the constant `TASK_WATCHDOG_PRODUCT_BUG_ORIGIN_KIND`) |
 
-Board state on 2026-09-13: 33 `backlog`, 4 `todo`, 0 `in_progress`, 4 `in_review`, 72 `blocked`, 318 `cancelled`. `done` returns a full page at every ceiling offered — 500 from the CLI, 1000 from `?limit=1000` — so **the true `done` count is ≥ 1000 and is not obtainable from this API**; there is no cursor and no count endpoint.
+Board state, read straight out of that Postgres at 2026-09-13 20:05 IDT — **2 596 issues**: **2 157 `done`**, 318 `cancelled`, 78 `blocked`, 33 `backlog`, 6 `todo`, 4 `in_review`, 0 `in_progress`. The API cannot tell you this and will make the `done` count look unknowable: it returns a full page at every ceiling offered — 500 from the CLI, 1000 from `?limit=1000` — with no cursor and no count endpoint, so an API-only answer stalls at "≥ 1000". The database answers in one query.
 
-Thread interactions are the parking lot. Across the default 500-issue window there are 22 (10 `request_confirmation`, 9 `ask_user_questions`, 3 `suggest_tasks`; 12 `pending`, 4 `expired`, 4 `accepted`, 2 `answered`). Sweeping **every** reachable issue (1 431 across all seven statuses) turns up **69** — 35 `request_confirmation`, 22 `ask_user_questions`, 12 `suggest_tasks` — of which **45 are still `pending`** and 14 `expired`. **Pending interactions are where agent work silently parks**, and the 500-issue window shows less than a third of them.
+Thread interactions are the parking lot, and they are where the API undercounts worst. Across the default 500-issue window there are 22 (10 `request_confirmation`, 9 `ask_user_questions`, 3 `suggest_tasks`); sweeping **every** issue the API can reach (1 431 across all seven statuses) turns up 69. The table itself holds **143** — 82 `request_confirmation`, 37 `ask_user_questions`, 24 `suggest_tasks` — of which **103 are still `pending`**, 19 `expired`, 15 `accepted`, 6 `answered`. The gap is almost entirely `done` tickets: 124 of the 143 hang off an issue in `done`, precisely the status the 1000-row window cannot page past. **Pending interactions are where agent work silently parks**, and the API view shows well under half of them.
 
-Backups are hourly (`intervalMinutes: 60`), configured with `retentionDays: 30`, written to `~/.paperclip/instances/default/data/backups` (167 files, **27 GB**, oldest 2026-08-16, mean 163 MB, newest 197 MB and growing — by far the biggest thing Paperclip writes; the live DB is 917 MB, run logs 699 MB, agent workspaces 1.9 GB, instance logs 377 MB, on a 217 GB root at 44 % used). `GET /api/health` reports backup freshness with a `maxAgeHours: 26` threshold; it currently reads `status: ok`, age 0.1 h.
+Backups are hourly (`intervalMinutes: 60`), configured with `retentionDays: 30`, written to `~/.paperclip/instances/default/data/backups` (167 files, **27 GB**, oldest 2026-08-16, mean 163 MB, newest 197 MB and growing — by far the biggest thing Paperclip writes; the live DB is 917 MB, run logs 699 MB, agent workspaces 1.9 GB, instance logs 377 MB, on a 217 GB root at 44 % used). `GET /api/health` reports backup freshness with a `maxAgeHours: 26` threshold; it currently reads `status: ok`, age 0.1 h. The dumps are plain `pg_dump` gzip (`paperclip-20260913-190106.sql.gz`), so they are also a way to answer a historical question the live DB has already moved past.
 
 ### The HTTP API and UI on port 3100
 
@@ -1831,7 +1973,9 @@ POST /api/issues/{id}/checkout | /admin/force-release
 GET,POST /api/issues/{id}/interactions             → the ask-a-human channel
 ```
 
-`ISSUE_LIST_DEFAULT_LIMIT = 500`, `ISSUE_LIST_MAX_LIMIT = 1000` (`@paperclipai/server/dist/services/issues.js:27-28`), and the list endpoint has no cursor — so a full history read has to be sliced by status or date. The UI's poll interval was not verifiable from the shell; treat any specific number for it as unconfirmed.
+`ISSUE_LIST_DEFAULT_LIMIT = 500`, `ISSUE_LIST_MAX_LIMIT = 1000` (`@paperclipai/server/dist/services/issues.js:27-28`), and the list endpoint has no cursor — so a full history read has to be sliced by status or date, or done against Postgres directly.
+
+The board's apparent refresh rate is worth getting right, because it is not the roster. In the built UI bundle (`@paperclipai/server/ui-dist/assets/index-Cd3JwXvD.js`) the agent-list query carries **no `refetchInterval` at all** — the roster is refreshed by query invalidation from live events, not a timer. The ~15 s cadence the page seems to have belongs to the agents page's live-runs query: `resourceKey:"live-runs:agents-page", refetchInterval:15e3, leaderOnly:!0` — and `leaderOnly` means only the leader tab polls, so opening five tabs does not five times the load.
 
 ### The CLI: `~/.local/bin/paperclipai`
 
@@ -1863,7 +2007,7 @@ paperclipai heartbeat run --profile founder -a <agentId> --source on_demand   # 
 paperclipai board prompt --profile founder --agent cto --title "…" "<prompt>" # files a ticket AND wakes
 ```
 
-Argument shapes are inconsistent and this is a real trap: `agent list` and `issue list` **require** `-C/--company-id`, while `issue get/update` take a bare positional id and reject `--company-id`. `issue get <idOrIdentifier>` accepts the `LUL-####` identifier; `issue update <issueId>` is documented as UUID only. `board prompt` wakes the target agent unless you pass `--no-wake`. `agent get` likewise wants a UUID — a `urlKey` such as `cto` returns non-JSON and breaks a `| python3 -m json.tool` pipeline. And `issue list` has **no `--limit` flag at all**, so the CLI can never see past the server's 500 default; raising it to 1000 requires calling the HTTP endpoint directly.
+Argument shapes are inconsistent and this is a real trap: `agent list` and `issue list` **require** `-C/--company-id`, while `issue get/update` take a bare positional id and reject `--company-id`. `issue get <idOrIdentifier>` accepts the `LUL-####` identifier; `issue update <issueId>` is documented as UUID only. `board prompt` wakes the target agent unless you pass `--no-wake`. `agent get` likewise wants a UUID — a `urlKey` such as `cto` returns non-JSON and breaks a `| python3 -m json.tool` pipeline. And `issue list` has **no `--limit` flag at all**, so the CLI can never see past the server's 500 default; raising it to 1000 requires calling the HTTP endpoint directly, and seeing all 2 596 requires the database.
 
 ### Where agent instructions live
 
@@ -1915,7 +2059,7 @@ The per-agent policy is `runtime_config.heartbeat`, parsed by `parseHeartbeatPol
 | `intervalSec` | timer cadence | 900–21600 across the roster; `null` on Summarizer (on-demand only) |
 | `wakeOnDemand` | accept assignment / on-demand / automation wakes | defaults true; `false` on Game Tester |
 | `skipTimerWhenNoActionableWork` | drop a *timer* wake when the agent owns no issue in `todo` or `in_progress` (`TIMER_ACTIONABLE_ISSUE_STATUSES = ["todo","in_progress"]`, heartbeat.js:107) | defaults **false**; does not affect other sources |
-| `maxConcurrentRuns` | parallel runs for this agent | 1 everywhere here |
+| `maxConcurrentRuns` | parallel runs for this agent | `1` on all 15 live agents (re-read from `runtime_config->'heartbeat'` today, every row) |
 | `maxDailyRuns` / `maxDailyCostCents` | caps counted over a **UTC** day window | `maxDailyRuns` is `1` on Spec Researcher and Player Psychologist, null on the other 13; cost caps 500–10000 ¢ |
 | `cooldownSec` | *stored but never read* | **`parseHeartbeatPolicy` does not parse it and the string appears nowhere in `heartbeat.js`** — it survives only through `company-portability.js` export/import. Values on disk (10 s on nine agents, 60 s on the four research agents, null on the two built-ins) have no runtime effect |
 
@@ -1923,11 +2067,13 @@ Three behaviours to know. `skipTimerWhenNoActionableWork` explains an agent that
 
 The real gap-between-runs mechanism is `@paperclipai/server/dist/services/issue-rewake-throttle.js` (PAP-13775), not `cooldownSec`: after `ISSUE_REWAKE_NO_PROGRESS_THRESHOLD = 2` consecutive succeeded-but-no-issue-progress runs on the same issue by the same agent, further event-free re-wakes are held for an escalating cooldown — 120 s doubling per additional no-progress run, capped at 30 min, anchored to the last run's finish and computed over a 6 h lookback of the 8 most recent terminal runs. Only the four "assert issue state" reasons (`issue_assigned`, `issue_continuation_needed`, `issue_assignment_recovery`, `issue_graph_liveness_backstop`) and reason-less on-demand invokes pass through it; comments, approvals, monitors and server-side recovery retries bypass it entirely. A tool call inside the workspace does **not** reset the streak — only a comment, mutation, document, work product, interaction or scheduled continuation does.
 
-Runs are durable and inspectable. Each writes `data/run-logs/<companyId>/<agentId>/<runId>.ndjson` (`log_store: local_file`); 982 of the last 1000 runs have one, the other 18 have no `log_store` and no `started_at` at all. Snapshot of that 1000-run window (2026-09-13 ~18:10 IDT — these drift with every tick): outcomes `failed` 630 / `succeeded` 333 / `timed_out` 19 / `cancelled` 18; sources `automation` 383 / `assignment` 376 / `timer` 241; error codes `acpx_turn_failed` 627 / `timeout` 19 / `issue_terminal_status` 8 / `issue_assignee_changed` 5 / `issue_dependencies_blocked` 5; liveness `failed` 649 / `completed` 145 / `blocked` 82 / `advanced` 65 / `plan_only` 35 / `needs_followup` 6. By day: 168 on 09-13 (to mid-afternoon), 418 on 09-12, ≥396 on 09-11 — 09-11 is the oldest day in the window, so its count is a floor, not the day's total. The failure share is the quota outage, not the normal rate: 265 of the 667 errors carry the weekly-limit string, and all 200 most recent runs do.
+Runs are durable and inspectable. Each writes `data/run-logs/<companyId>/<agentId>/<runId>.ndjson` (`log_store: local_file`); 982 of the last 1000 runs have one, the other 18 have no `log_store` and no `started_at` at all. Snapshot of that 1000-run window (2026-09-13 ~18:10 IDT — these drift with every tick): outcomes `failed` 630 / `succeeded` 333 / `timed_out` 19 / `cancelled` 18; sources `automation` 383 / `assignment` 376 / `timer` 241; error codes `acpx_turn_failed` 627 / `timeout` 19 / `issue_terminal_status` 8 / `issue_assignee_changed` 5 / `issue_dependencies_blocked` 5; liveness `failed` 649 / `completed` 145 / `blocked` 82 / `advanced` 65 / `plan_only` 35 / `needs_followup` 6. The failure share is the quota outage, not the normal rate: 265 of the 667 errors carry the weekly-limit string, and all 200 most recent runs do.
+
+Do **not** take per-day totals from that window. Counted in the database over Asia/Jerusalem days, the fleet did **581 runs on 2026-09-11**, 510 on 09-12 and 255 so far on 09-13 (neighbours: 09-08 775, 09-09 519, 09-10 64), against a company total of **13 067** since 2026-08-13. The 1000-row API window bottoms out partway into 09-11 — it shows 396 — and buckets `created_at` in UTC rather than IDT, which also shaves 09-12 to roughly 420. Two independent errors compounding: truncation at the old end, timezone drift across every boundary.
 
 Cost is recorded per run in `usage_json`: 979 of 1000 are `billingType: subscription_included` against `provider: anthropic`, 365 report a non-zero `costUsd` (total $545.50 over the ~2.5-day window, max $13.03 in one run), models `claude-sonnet-5` 876 / `claude-haiku-4-5` 103. Note that `spent_monthly_cents` is **0 on every agent** — the monthly budget columns are inert here; the cap that actually fires is the per-agent daily one, summed from `cost_events` in `getHeartbeatDailyCapBlock`.
 
-ACP session state per agent lives under `companies/<id>/acp-engine/agents/<agentId>/` — `sessions` and `runtime-skills` in all 15 live agents, `run-stderr` in 12, and `memory` in only **2**. Per-agent repo checkouts are **not** uniform: only two git working trees exist on the whole instance — `workspaces/b204967c…/LULLWOOD` (Task Runner, 618 MB) and `workspaces/430d03c8…/repo` (CEO Board Assistant, 618 MB) — plus Game Tester's 589 MB `lul941-worktree` with no `.git`. Those three directories are effectively the entire 1.9 GB; every other workspace is a handful of MB of plan and note files.
+ACP session state per agent lives under `companies/<id>/acp-engine/agents/<agentId>/` — `sessions` and `runtime-skills` in all 15 live agents, `run-stderr` in 12, and `memory` in only **2**. Per-agent repo checkouts are **not** uniform: only two git working trees exist on the whole instance — `workspaces/b204967c…/LULLWOOD` (Task Runner, 618 MB) and `workspaces/430d03c8…/repo` (CEO Board Assistant, 618 MB) — plus Game Tester's 589 MB `lul941-worktree` with no `.git`. Those three directories are effectively the entire 1.9 GB; every other workspace is a handful of MB of plan and note files. The CEO Board Assistant's `repo` **is** the LULLWOOD repo under a different directory name — `git remote -v` returns `origin https://github.com/DadonStyle/LULLWOOD.git` for both fetch and push — abandoned on branch `lul-1679-race-condition-fix` at 5a623bc ("[ship]", 2026-09-07 11:36 IDT) and untouched since.
 
 `usage_json.configFreshness` records that a timer wake deliberately starts a **fresh session** (`"wake reason is heartbeat_timer (timer-driven wake starts fresh)"`), resetting `adapter`, `adapterConfig`, `agentRuntimeConfig`, `modelProfile`, `instructions`, `issueOverrides`, `workspaceConfig`, `environment`, `envBindings`, `secrets` and `runtimeSkills` — which is why an `AGENTS.md` edit takes effect without a restart. 953 of the last 1000 runs were fresh sessions; only 26 reused one.
 
@@ -1982,7 +2128,7 @@ Roster notes:
 - **`canCreateAgents` is CEO-only.** `canAssignTasks` is held by CEO, CTO and Founding Engineer. `canCreateSkills` is true for the other twelve **except** the two built-ins (Reflection Coach, Summarizer), which have it false.
 - **Tool grants are a two-tier story, and "only Task Runner can write" is only half true.** Task Runner is the only agent with an explicit allowlist that names write tools (`Read,Write,Edit,Grep,Glob,Bash`). But Founding Engineer, Game Engineer and Summarizer have `allowedTools: null` — **no allowlist at all**, i.e. the adapter's full default tool set, write tools included. Research agents get `Read,Grep,Glob,Bash,WebSearch,WebFetch`; the remaining eight get `Read,Grep,Glob,Bash`. So the four discovery/advisory agents genuinely cannot open a ticket or touch code, by tool grant as well as by instruction — but the two senior engineers are unrestricted, not restricted.
 - **`dangerouslySkipPermissions: true` is set on seven agents**, not one: CEO, CTO, Founding Engineer, Game Engineer, Code Reviewer, Backlog Keeper and Game Tester. It is absent (null) on the rest.
-- `graceSec: 15` sits beside `timeoutSec` in `adapterConfig` on twelve agents (absent on Feature Scout and the two built-ins); it is the grace the process runner pairs with `timeoutSec` in `@paperclipai/adapter-utils/dist/execution-target.js`, whose own defaults are 5–10 s. Its exact kill semantics were not read end-to-end.
+- `graceSec: 15` sits beside `timeoutSec` in `adapterConfig` on twelve agents (absent on Feature Scout and the two built-ins, where the runner's own 5–10 s defaults apply). It is **exactly the SIGTERM→SIGKILL window**. `runAdapterExecutionTargetProcess` (`@paperclipai/adapter-utils/dist/execution-target.js:292`, forwarding at `:342`) hands it to the process runner in `dist/server-utils.js`, which on `timeoutSec` expiry signals SIGTERM to the child's whole **process group** and schedules SIGKILL to the same group `Math.max(1, graceSec)` seconds later — so the value is floored at 1 s, and the identical escalation runs on the terminal-result cleanup path (`server-utils.js:2348` and `:2358`). Group signalling is possible only because the child is spawned `detached: process.platform !== "win32"` (`:2274`); a direct `child.kill` is the fallback if the group signal throws, and it is gated on `exitCode === null && signalCode === null` rather than on `child.killed`, so a SIGKILL follow-up is never suppressed.
 - Reflection Coach carries a `builtInMutationPolicy` inside `permissions` (`requiresDisplayedDiff`, `applyInSeparateFollowUpRun`, `requiresAcceptedTaskInteraction`) — it cannot change an instruction file in the same run that proposes the change.
 - The two built-ins (Reflection Coach, Summarizer) are provisioned by Paperclip itself, tagged `metadata.paperclipBuiltInAgent`, and manageable via `/api/companies/{id}/built-in-agents/{key}/{provision,reconcile,reset,status}` plus per-routine `enable|disable|run`.
 - Agents pull skills from a catalog via `adapterConfig.paperclipSkillSync.desiredSkills` (1–9 per agent; e.g. `paperclipai/paperclip/paperclip`, `paperclipai/bundled/paperclip-operations/issue-triage`, `paperclipai/optional/research/last30days`), synced with `POST /api/agents/{id}/skills/sync` into `acp-engine/agents/<id>/runtime-skills`.
@@ -1993,20 +2139,27 @@ Roster notes:
 
 - The active CLI profile is `default` and it is empty. Without `--profile founder` you get "required option '-C, --company-id' not specified" or a connection to nowhere.
 - `paperclipai` is not on a non-login `ssh` PATH (the unit sets its own PATH; your shell doesn't). Call it as `/home/noam/.local/bin/paperclipai`.
-- There is no `psql` on the box and no connection string on disk. Read the DB through the API.
-- `issue list` has no `--limit` flag, so the CLI always truncates at 500; the API tops out at 1000 with no cursor. Any "how many done tickets" answer from a single call is wrong — and today `done` saturates both ceilings, so the number is simply unknown.
+- There is no `psql` on the box and no connection string on disk — but the database is **not** out of reach. The `pg` client bundled at `/home/noam/.local/lib/node_modules/paperclipai/node_modules/pg` connects to `127.0.0.1:54329` as `paperclip`/`paperclip`/`paperclip`; `founder-alert` already does exactly this. Read through it, write through the CLI or the API.
+- `issue list` has no `--limit` flag, so the CLI always truncates at 500; the API tops out at 1000 with no cursor, and `done` saturates both. Any "how many done tickets" answer from a single API call is wrong. The honest number — 2 157 of 2 596 — comes from one `select status, count(*) from issues group by status`.
+- Anything you count out of `/api/companies/{id}/heartbeat-runs` is doubly skewed: truncated at 1000 rows, and bucketed by UTC rather than the IDT dates everything else on the box uses. Per-day run totals belong to the database.
 - `config.json`'s `server.host` (`100.120.53.118`) is stale. The unit binds the current tailnet address, `100.85.231.17`.
 - A `pauseReason` of `manual` is a founder decision, not a fault to correct — that is written into the CEO's instructions after it was violated.
 - `status` under-reports the outage: an agent can read `idle` while still carrying a quota `errorReason`. Check both.
 - `cooldownSec` in `runtime_config.heartbeat` is dead config. If you are trying to space out an agent's runs, you are looking at `issue-rewake-throttle.js`, not that field.
+- The board UI's roster list is event-invalidated, not polled. If the roster looks stale, the live-runs poll (15 s, leader tab only) is not what refreshes it, and a second browser tab will not help.
 - Terminated and deleted agents leave `instructions/`, `workspaces/` and `run-logs/` behind forever, and not symmetrically: **17 instruction dirs, 17 workspace entries, 16 run-log dirs, 15 live agents**. The workspace count includes an empty non-agent dir called `wt` and excludes Summarizer (never ran); Mobile Engineer has instructions only. Directory listings over-count the roster in one place and under-count it in another.
+- That `workspaces/wt` is not a Paperclip artifact and not a worktree: it is a stray `mkdir -p /home/noam/.paperclip/instances/default/workspaces/wt`, issued by the Founding Engineer inside run `88540e2f-45f3-4855-b026-3d2a58844e6d` (2026-09-09 21:23:38–21:32:56 IDT) in a shell block that was otherwise doing `git worktree` work on LUL-2282 — the command is verbatim in that run's `.ndjson`, and the directory's birth time is 21:24:56 IDT, inside the run. It has been empty ever since (no `.git`, no entries) and no line in `~/.paperclip/shared/git-hooks/state/checkout-audit.log` names the path. Safe to ignore; it holds nothing.
 - A failed instructions read does not fail the run — check stderr for `[paperclip] Warning: could not read agent instructions file` before concluding an agent "ignored" its brief.
 - `~/.paperclip/instances/default/logs/server.log` is 394 923 706 bytes (395 MB) and has no rotation — not from the unit, not from `/etc/logrotate.d`, not from cron. The hourly `ollama-log-rotate` cron covers the Ollama logs only.
 
 
+<a id="the-gate"></a>
+
+<a id="the-gate"></a>
+
 ## The Gate — concurrency control for the fleet
 
-The Gate caps how many Lullwood agents can have a real, token-consuming Claude Code session running at the same time. The fleet shares one Anthropic subscription account; when too many agents wake at once the account's 5-hour and weekly limits trip, and every agent in flight fails with a limit error at the same moment. `LUL-1154` is the measured evidence it was built for: 20 genuinely concurrent real sessions during a mass-reset wake, **despite every involved agent being individually configured `maxConcurrentRuns=1`** — Paperclip's own per-agent cap does not hold under that condition. (That `maxConcurrentRuns=1` detail comes from wiki `systems/the-gate`; it cannot be re-confirmed from live state today — the API now returns no `maxConcurrentRuns` field for any of the 15 agents.) The wiki page also names two unattributed mass-pause incidents (2026-09-03, 2026-09-05) and the cycle-scheduler removal as the other shapes of problem it answers.
+The Gate caps how many Lullwood agents can have a real, token-consuming Claude Code session running at the same time. The fleet shares one Anthropic subscription account; when too many agents wake at once the account's 5-hour and weekly limits trip, and every agent in flight fails with a limit error at the same moment. `LUL-1154` is the evidence it was built for: the 2026-09-01 weekly-reset burst that raced the fleet's whole 5-hour allowance in under an hour, **despite every involved agent being individually configured `maxConcurrentRuns=1`** — Paperclip's own per-agent cap does not hold under that condition. (Still true today: `runtimeConfig.heartbeat.maxConcurrentRuns` reads `1` on all 15 live agents — see the heartbeat table in §Paperclip; wiki `agents/roster.md` records the 2026-08-16 patch that took the last three stragglers from `20` to `1`. The cap is set; it simply does not hold under a mass-reset wake.) The *mechanism* is dated and reproducible from `invocationSource`/`triggerDetail`: an **assignment cascade**, not colliding timers — at 12:05:42 UTC, five minutes after the CEO's own reset-detection wake, four agents (Founding Engineer, Code Reviewer, CTO, CEO Board Assistant) all got `source=assignment` runs starting in the same second, because each assignment call fires an immediate, unconditional wake for its target with no awareness of the others. The *headline number* is not: wiki `systems/concurrency-guard` records "20 genuinely concurrent Claude sessions … Code Reviewer and CTO running 2 and 4 concurrent sessions", but rebuilding that day from the instance's own `heartbeat_runs` peaks at **13** simultaneously-running runs across 11 agents (15:12–15:25 IDT) and never shows any agent above 2. Read 20 / 2 / 4 as the contemporaneous operator count, not a figure anyone can re-derive today. The wiki also names two still-unattributed mass-pause incidents — 2026-09-03 20:38:42–20:42:08Z (seven agents at `pauseReason: manual`, six of them with no cover) and 2026-09-05 19:09:57–19:10:00Z (the same six) — and the cycle-scheduler removal as the other shapes of problem it answers.
 
 It is a queue, not a kill switch. It never sets `status=paused`, never requires a manual resume, and **fails open at every step**: if the daemon is unhealthy, the state lock is contended, the config is malformed, or a wait runs long, the agent runs ungated rather than not at all.
 
@@ -2089,9 +2242,9 @@ Queue tiers: `overflow_pending` drains before `routine`, with routine aging (`T_
 | `wrapper_max_wait_by_agent` | CTO `863cdf17…` → 200.0; **CEO** `6b780916…` → 360.0 |
 | `code_reviewer_agent_id` | `524aa88a-7c1a-4135-8109-5d69696bf60c` |
 
-`6b780916-2a67-453b-852d-ceeb3d1ed4df` is the **CEO** (`role=ceo`, the org-chart root), not a VP R&D — there is no VP R&D on this company. Every other agent reports up to the CEO or the CTO.
+`6b780916-2a67-453b-852d-ceeb3d1ed4df` is the **CEO** (`role=ceo`, the org-chart root), not a separate VP R&D — *VP R&D* is this same agent's former title (wiki `agents/roster.md` still lists the row "VP R&D | ceo | running | `claude-opus-5` | Lead agent"), and the old name survives only in older prose such as `QA_REGRESSION/README.md` and `shared/watchdog-router/env`'s dead fallback regex. Every other agent reports up to the CEO or the CTO.
 
-`gate-status` at 2026-09-13 18:15 IDT (the daemon has been up since 2026-09-12 20:00:53 IDT, `NRestarts=0`, PID 1908, RSS 6.9 MB):
+`gate-status`, re-run 2026-09-13 23:05 IDT (the daemon has been up since 2026-09-12 20:00:53 IDT, `NRestarts=0`, PID 1908, RSS 7.3 MB):
 
 ```
 The Gate -- status
@@ -2109,7 +2262,7 @@ The Gate -- status
 
 `state.json` additionally carries `x_next_increase_eligible_at = 1789299600.0` (2026-09-13 14:40 IDT, also past), `x_last_trip_reset = 1789281600.0` (2026-09-13 09:40 IDT) and `next_seq_value = 222`.
 
-Today's decision log (`state/decisions-2026-09-13.log`, 637 lines at 18:08) is the normal shape of an uncontended fleet: 150 × `GRANT`, 150 × `PID-WRITTEN`, 150 × `RELEASE-RECONCILED`, 150 × `RELEASE`, 18 × `SUPPRESSED-EXEC`, 18 × `WARN`, 1 × `SUPPRESS-CLEARED`. Zero `QUEUE` events, zero `POP`, zero overflow. Run durations today: min 2.3 s, median 12.3 s, p90 14.8 s, max 190.1 s — at X=4 with this heartbeat cadence the Gate is structurally idle and never contended.
+Today's decision log (`state/decisions-2026-09-13.log`) is the normal shape of an uncontended fleet, and only seven event types appear in it all day: at 18:08 it held 637 lines — 150 each of `GRANT`, `PID-WRITTEN`, `RELEASE-RECONCILED`, `RELEASE`, plus 18 × `SUPPRESSED-EXEC`, 18 × `WARN`, 1 × `SUPPRESS-CLEARED`; by 22:50 it was 1 037 lines, the four grant/release types at 250 each and the 18 / 18 / 1 unchanged since 09:40. Zero `QUEUE` events, zero `POP`, zero overflow. Run durations across today's 250 releases: min 2.3 s, median 12.5 s, p90 14.9 s, max 190.1 s — at X=4 with this heartbeat cadence the Gate is structurally idle and never contended.
 
 ### Tunables that matter
 
@@ -2128,7 +2281,7 @@ Today's decision log (`state/decisions-2026-09-13.log`, 637 lines at 18:08) is t
 | `gate.POP_TIMEOUT_WINDOW` | 600 s | Rolling window for the pop-timeout X-ADJUST proxy signal. |
 | `gate.POP_TIMEOUT_PARK_THRESHOLD` | 2 | Consecutive pop-grant timeouts before parking. |
 | `gate.TRIGGER_REASONS_MAX` | 20 | Caps the one append-only field in `state.json`. |
-| `gate-wrapper.SUPPRESSED_DAMP_SEC` | 120 s | Sleep before a suppressed exec, capped at `max_wait` (was 30 s until 2026-09-09; 30 s produced ~116 doomed runs a night). |
+| `gate-wrapper.SUPPRESSED_DAMP_SEC` | 120 s | Sleep before a suppressed exec, capped at `max_wait`. Was 30 s until 2026-09-09 08:46 (`state/backups/gate-wrapper.bak-pre-damp120-202609090846` still carries `SUPPRESSED_DAMP_SEC = 30.0`); the wrapper's comment calls that "~116 doomed runs a night" and the retained logs put it higher — 769 `SUPPRESSED-EXEC`s over the 30 s era, 55 / 165 / 296 in three successive 18:00–09:00 windows. |
 | `gate-daemon.LOCK_MISS_LIVENESS_HOLD` | 8 (~2 min) | Consecutive lock misses before liveness is withheld. |
 | `gate-daemon.INSTALL_CHECK_LOG_EVERY_SEC` | 60 s | Rate limit on the `GATE-NOT-INSTALLED` line. |
 | `gate_limits.MAX_SUPPRESS_SEC` | 8 days | Anything longer is treated as a parse error. |
@@ -2141,13 +2294,15 @@ The Gate does not compute a token budget. It reads what the account itself repor
 1. `shared/watchdog/state/error-first-seen.json`, rewritten by `watchdog-cron` every 10 min (`*/10` in the crontab) — the historical view.
 2. `fetch_limit_episodes_from_api`, the live view, which reads `GET /api/companies/5392c9fe-5b2a-43ee-974f-87a9da51150b/agents` for anything in `status=error` whose `errorReason` matches `LIMIT_ERROR_RE` (`session limit|usage limit|rate.?limit|weekly limit|quota|\b429\b`), and *then additionally* `GET …/heartbeat-runs?status=failed&limit=40`, treating any run finished within `FAILED_RUN_WINDOW_SEC = 20 min` whose error matches as an episode. Both against `http://100.85.231.17:3100`, authenticated with the durable board token read out of `~/.paperclip/auth.json` (same credential the watchdog uses). Any failure → `{}` and the watchdog file alone drives suppression.
 
-The reset time is parsed by `parse_reset_text` with the watchdog's regex (default TZ `Asia/Jerusalem`) into `state.session_limits[agent_id]`, capped at `MAX_SUPPRESS_SEC`.
+The reset time is parsed by `parse_reset_text` with the watchdog's regex (default TZ `Asia/Jerusalem`) into `state.session_limits[agent_id]`, capped at `MAX_SUPPRESS_SEC`. A **bare clock time means the next occurrence at or after `seen_at`**, and that rule has a sharp edge worth knowing before reading the log: the last `SUPPRESS-SET` in the whole history fired at 2026-09-12 09:40:06 IDT, six seconds *after* the reset it was parsing. The message was the bare-clock session-limit form (`Internal error: You've hit your session limit · resets 9:40am (Asia/Jerusalem)`, preserved in `watchdog/state/revivals.json`), so `candidate < local_seen` held by six seconds and the parser rolled it forward a day to `until = 1789281600.0` = 2026-09-13 09:40 IDT — a spurious extra 24 h of suppression for the Founding Engineer, while the other five agents were `SUPPRESS-CLEARED` in the very same tick.
 
 Until that epoch, every wake for that agent answers `SUPPRESSED` — heartbeat, watchdog revive, manual, every trigger type. Suppression deliberately outlives the watchdog clearing the agent's `error` flag, because that is exactly the moment the reset has *not* passed. Code Reviewer is never suppressed. Event types: `SUPPRESS-SET`, `SUPPRESS-CLEARED`, `SUPPRESSED-EXEC`, plus a `WARN` per refused wake.
 
 The API path exists because of a measured gap: on 2026-09-08 the account hit its **weekly** limit at 07:56 IDT and the Founding Engineer's adapter respawned 36 times in 9 minutes before suppression kicked in — the Gate's live read only looked at agents whose status was `error`, and during a respawn loop the status stays `running`.
 
-> **LIVE DEFECT, 2026-09-13 — suppression is currently inert.** The account is weekly-limited until Sun 2026-09-15 15:00 Asia/Jerusalem. Five agents (CTO, CEO, Founding Engineer, Feature Scout, Game Economist) sit in `status=error` and `error-first-seen.json` carries, for each, `"Internal error: You've hit your weekly limit · resets Sep 15, 3pm (Asia/Jerusalem)"`. `_RESET_RE` requires whitespace between the day and the clock (`(?P<month>[A-Z][a-z]{2})[a-z]*\s+(?P<day>\d{1,2})(?:\s+at)?\s+` then the clock) and does not tolerate the **comma** in `Sep 15, 3pm`. Running the deployed `parse_reset_text` against the live string returns `None`, and `limits_from_episodes` over the live file returns `{}` — which is exactly what `gate-status` shows for `session_limits`. The last `SUPPRESS-SET` was 2026-09-12 09:40 IDT; the last entry cleared at 2026-09-13 09:40:11 IDT and nothing has been set since. The Gate has granted 150 slots today straight into a dead account. The formats the wiki's 2026-09-08 entry quotes (`resets 3pm (Asia/Jerusalem)`) and an un-commaed `resets Sep 15 3pm (…)` both parse correctly, so the account's message format appears to have changed under the regex. This is a ticket for the CTO, not an edit (see the founder rule below).
+> **LIVE DEFECT, 2026-09-13 — suppression is currently inert.** The account is weekly-limited until **Tue** 2026-09-15 15:00 Asia/Jerusalem. Five agents (CTO, CEO, Founding Engineer, Feature Scout, Game Economist) sit in `status=error` and `error-first-seen.json` carries, for each, `"Internal error: You've hit your weekly limit · resets Sep 15, 3pm (Asia/Jerusalem)"`. `_RESET_RE` requires whitespace between the day and the clock (`(?P<month>[A-Z][a-z]{2})[a-z]*\s+(?P<day>\d{1,2})(?:\s+at)?\s+` then the clock) and does not tolerate the **comma** in `Sep 15, 3pm`. Running the deployed `parse_reset_text` against the live string returns `None`, and `limits_from_episodes` over the live file returns `{}` — which is exactly what `gate-status` shows for `session_limits`. The last `SUPPRESS-SET` was 2026-09-12 09:40:06 IDT; that entry cleared at 2026-09-13 09:40:11 IDT and nothing has been set since. The Gate had granted 150 slots by 18:08 and 250 by 22:50 today, all straight into a dead account.
+>
+> It is a format change, not a weekly-vs-5h distinction. `watchdog/state/revivals.json` preserves both weekly forms from this same account: `"weekly limit · resets 3pm (Asia/Jerusalem)"` (5 occurrences, 2026-09-08) and `"weekly limit · resets Sep 15, 3pm (Asia/Jerusalem)"` (9 occurrences, from 2026-09-12T21:30:25Z). Against the deployed parser the undated form and an un-commaed `resets Sep 15 3pm (…)` both parse (the latter to 1789473600.0 = 2026-09-15 15:00 IDT); only the commaed one returns `None`. In every retained sample the date appears exactly when the reset falls on a later calendar day, which is why session-limit messages — always within 5 hours — are bare-clock; whether the dated form is now permanent cannot be told from the box, since no session-limit message has arrived since the account went weekly on 2026-09-12. This is a ticket for the CTO, not an edit (see the founder rule below).
 
 ### The daemon
 
@@ -2163,7 +2318,7 @@ Single-daemon enforcement is doubled: `gate_io.acquire_daemon_lock()` on `state/
 
 **The founder rule, in force since 2026-09-06 and repeated in every live agent charter (`.../companies/<cid>/agents/<agent-id>/instructions/AGENTS.md` — present in all 15, absent only from the two orphaned instruction dirs of deleted agents) and in wiki `systems/the-gate`: no agent — any role, any tier — may touch, edit, delete, move, or work around any file under `the_gate/` (`lib/`, `bin/`, `config.json`, `systemd/`, `README.md`). No emergency carve-out. If the Gate looks broken, file a ticket and route it to the CTO; do not investigate by editing, and do not route around it by changing your own invocation path.** `state/` is explicitly outside the rule's file list (it changes constantly by design) but is nobody's to hand-edit either. Read-only commands are always fine: `bin/gate-status`, `bin/gate-install.sh status`, `systemctl --user status gate-daemon`.
 
-The mechanical reason a human operator must also use `gate-install.sh` rather than `scp`/edit-in-place: the permission classifier blocks direct writes to the SDK binary path, and a stale wrapper fails *silently* — the GATE_DIR incident (2026-09-06) left the Gate inert for ~10 minutes with zero log lines. The deploy path is: edit sources locally → `scp` into `the_gate/bin|lib` → `bash the_gate/bin/gate-install.sh install` → `systemctl --user restart gate-daemon` → `gate-integrity-check --write-manifest` → check `state/failopen.log`.
+The mechanical reason a human operator must also use `gate-install.sh` rather than `scp`/edit-in-place is *not* that anything blocks the write. Nothing on the server enforces the SDK binary path: `~/.claude/settings.json` carries only `env`, `tui` and `theme` — no `permissions`/`deny` block — and there is no `~/.claude/settings.local.json`, no `/etc/claude-code/` and no managed or project-level settings file. The enforcement that does exist is threefold and entirely procedural or after-the-fact: the standing founder rule, `gate-install.sh` as the only sanctioned writer of that path (atomic rename, refuses a symlinked target, self-tests the temp copy first), and the `*/10` `gate-integrity-check` hashing `lib/`, `bin/` and `systemd/` against the 12-file manifest. The wiki states it outright — detection, not prevention. What makes the deploy path load-bearing anyway is that a stale or half-installed wrapper fails *silently*: the GATE_DIR incident (2026-09-06) left the Gate inert for ~10 minutes with zero log lines. That figure is not reproducible and structurally never will be — the incident's defining symptom *was* the absence of log lines, and `state/failopen.log`, the only record that would have caught it, was created by its fix; the earliest retained decision log opens at `DAEMON-START` 2026-09-06 22:47:05 IDT, already after the fix. The ~10 minutes is the operator's contemporaneous note in `gate-wrapper`'s header, not a measurement anyone can re-run. The deploy path is: edit sources locally → `scp` into `the_gate/bin|lib` → `bash the_gate/bin/gate-install.sh install` → `systemctl --user restart gate-daemon` → `gate-integrity-check --write-manifest` → check `state/failopen.log`.
 
 `gate-install.sh install` is safe on a live fleet because every write to the target is temp-file + verify + `mv -f` (atomic rename, old inode untouched, so a process executing the old file keeps running). Before the rename it (a) refuses a symlinked target, (b) asserts from Python that the wrapper's `claude.real` will resolve to the expected backup, and (c) runs the temp copy under `GATE_SELFTEST=1` in a scrubbed `env -i PATH=/usr/bin:/bin HOME=… PAPERCLIP_AGENT_ID=selftest-agent` matching production, against a dummy `claude.real`, requiring a clean import of `gate`/`gate_io` and a parseable config. `install` also *updates* a stale wrapper (comparing to `bin/gate-wrapper` with `cmp -s`) — the earlier version exited 0 with "already installed" and a fixed wrapper never reached the install location. `uninstall` restores `claude.real` in seconds with zero residue.
 
@@ -2177,7 +2332,7 @@ The wrapper runs **before** the ACP `session/new` handshake. If a queued or supp
 
 A second coupling: Paperclip's per-agent `adapterConfig.timeoutSec` runs from spawn, so any wait eats that agent's working time and a wait ≥ `timeoutSec` kills the run. `wrapper_max_wait_by_agent` was sized on 2026-09-07 to keep each agent's ceiling under ~40% of its own timeout — CTO 540 s → 200 s, CEO 900 s → 360 s. **The CEO half of that is now stale**: the CEO's live `adapterConfig.timeoutSec` is 1800 s, not 900 s, so its 360 s ceiling is now ~20% of its timeout rather than 40% (conservative, not dangerous). The CTO's 540 s is unchanged. The rest of the fleet takes the 480 s default against timeouts of 900 s (Task Runner), 1200 s (CEO Board Assistant), 1440 s (Backlog Keeper) and 1800 s (everyone else) — so the "everyone else runs 1200–1800 s" framing understates the bottom of the range; Task Runner's 900 s leaves 480 s at 53% of its timeout. Reflection Coach and Summarizer carry no `timeoutSec` at all (both paused).
 
-When suppression's reset is further away than the safe wait, waiting is pointless — the wrapper logs `SUPPRESSED-EXEC`, damps `min(120 s, max_wait)`, and execs anyway so the *real* limit error is what Paperclip records and the watchdog holds. The damp exists because Paperclip's adapter respawns the `claude` process 2–3 s after every rate-limit exit for the whole run, producing ~20 doomed 429 calls a minute per agent.
+When suppression's reset is further away than the safe wait, waiting is pointless — the wrapper logs `SUPPRESSED-EXEC`, damps `min(120 s, max_wait)`, and execs anyway so the *real* limit error is what Paperclip records and the watchdog holds. The damp exists because Paperclip's adapter respawns the `claude` process 2–3 s after every rate-limit exit for the whole run, producing ~20 doomed calls a minute per agent. That rate is visible in the logs exactly once, in the three un-damped `SUPPRESSED-EXEC` lines an earlier wrapper wrote for the CTO on 2026-09-07 at 03:10:22, 03:10:25 and 03:10:27 IDT — 2.4 s apart, i.e. ~25/min, no `damp_sec` field. Every later line is floored by the damp itself: at the 30 s damp the median gap between an agent's consecutive doomed execs was 32–34 s (worst minute: 5 execs), and at 120 s it is four times that. The logs can therefore confirm the damp is working but can never re-measure the un-damped rate it was built for.
 
 ### Fail-open discipline, and reading failopen.log
 
@@ -2190,7 +2345,7 @@ The whole file is a readable history of the wait-ceiling changes: 124 × `waited
 ### Known rough edges
 
 - **`x_max` is 4, not 5.** The wiki and `config.json`'s own `_note_x_bounds` comment both still describe `x_max: 5` ("one step of headroom on a clean window"), but the deployed value is 4, per a later note: *"x_max=4 freezes X at the founder floor (LUL-1889)"*. Live range is `4-4`, so X-ADJUST can neither raise nor lower X — `x_cooldown_until` (2026-09-12 14:40 IDT) and `x_next_increase_eligible_at` (2026-09-13 14:40 IDT) are both already past with no effect. With `num_slots: 5`, **slot [4] is structurally unreachable** while X is frozen at 4.
-- **The reset-text regex does not match the account's current message.** See the boxed live defect above — suppression has been inert since 2026-09-13 09:40 IDT while the account is weekly-limited to 2026-09-15 15:00. This is the single highest-impact open issue in the Gate right now.
+- **The reset-text regex does not match the account's current message.** See the boxed live defect above — suppression has been inert since 2026-09-13 09:40 IDT while the account is weekly-limited to Tue 2026-09-15 15:00. This is the single highest-impact open issue in the Gate right now. The same parser carries a second, milder edge in the other direction: a *bare* clock parsed at or just after its own reset instant rolls forward a full day (2026-09-12, above), suppressing an agent 24 h longer than the account asked.
 - **Stale docs and stale comments.** `README.md` still says "starting at X=2, adaptive range 1-3" and still lists `bin/claude.real` in its layout; the wiki's "Wait ceiling: 60 seconds" section still says `wrapper_max_wait_sec` is 45; `config.json`'s own `_wrapper_max_wait_note` still opens "20 minutes --" describing the superseded 1200 s value; and `gate-wrapper`'s `SUPPRESSED_DAMP_SEC` comment still asserts the damp "must stay well under the 60 s ACP session-create timeout" while being 120 s — only safe because the drop-in raised that timeout to 600 s. `config.json` and `gate-status` are the truth.
 - **`parked` is write-only.** `_handle_pop_grant_timeout` appends a `ParkedEntry` (gate.py:697) after 2 consecutive `POP-GRANT-TIMEOUT`s, but `request_wake` never reads `state.parked`, nothing expires an entry, and no hourly auto-unpark exists (it is listed in `gate.py`'s header as production requirement #5, unimplemented). CTO and CEO have been listed as parked since 2026-09-12 07:00:07 IDT with their `pop_timeout_counters` back at 0 — a record, not an active restriction.
 - **Wall-clock, not monotonic.** `gate.py` requirement #2 asks the production layer to pass `time.monotonic()`-derived values into every duration comparison. Neither `gate-daemon` (3 × `time.time()`) nor `gate-wrapper` (15 × `time.time()`) contains a single `time.monotonic()` call. An NTP step can therefore perturb stall detection, grace periods, aging and cooldowns.
@@ -2200,6 +2355,10 @@ The whole file is a readable history of the wait-ceiling changes: 124 × `waited
 - **`state/restart-paperclip-when-idle.sh`** is a one-shot operator helper that polls every 20 s — with no overall time limit — for zero held slots and zero `status=running` agents, restarts `paperclip.service`, verifies the ACPX env var landed in the new pid's `/proc/<pid>/environ`, then promotes `_pending_after_paperclip_restart` into `config.json` and rewrites the integrity manifest. If the env var is missing it prints `ACPX env MISSING -- ceilings NOT promoted` and promotes nothing. Its log records both the 2026-09-07 22:33 abort ("never idle within 40 min", from an earlier time-limited version) and the 2026-09-07 23:38 promotion that raised the ceilings to their current values.
 
 
+<a id="ollama"></a>
+
+<a id="ollama"></a>
+
 ## Local models — the two Ollama instances
 
 Two Ollama servers run on the Lullwood box and nothing else does local inference. They exist so the cheap, repetitive work — brainstorming feature leads, looking at nightly QA screenshots, optional coding/question offload — never spends Claude quota, and so the studio keeps producing while the fleet's 5-hour window is burnt.
@@ -2208,7 +2367,7 @@ Two Ollama servers run on the Lullwood box and nothing else does local inference
 
 Both are **systemd *user* units** (`systemctl --user`, not system units — `systemctl cat ollama.service` without `--user` returns "No files found"), both `enabled` under `default.target`, and `loginctl show-user noam -p Linger` is `Linger=yes`, so they come up at boot with no login. `lullwood-boot-check` (cron `@reboot sleep 120` + every 10 min) restarts either if it is down; it covers `gate-daemon ollama ollama-cpu paperclip searxng` in one loop. Ollama version on the box is **0.33.2**, binary `/home/noam/.local/bin/ollama` (runtime libs under `~/.local/share/ollama-install/lib/ollama/`).
 
-Both were up at the time of writing (2026-09-13 18:15, box uptime 22 h, boot ≈ 2026-09-12 20:01). `ollama` has `NRestarts=0` since that boot; `ollama-cpu` has `NRestarts=2` — see the CPU section.
+Both were up at the time of writing (2026-09-13 23:03 IDT, box uptime 27 h, boot 2026-09-12 20:00:41). `ollama` has `NRestarts=0` since that boot; `ollama-cpu` reports `NRestarts=2` — but see the CPU section, where that number is shown to be a since-last-reset counter hiding a 117-restart boot loop.
 
 ### At a glance
 
@@ -2219,7 +2378,7 @@ Both were up at the time of writing (2026-09-13 18:15, box uptime 22 h, boot ≈
 | models dir | `OLLAMA_MODELS=/mnt/hdd/ollama-data` (5.5 G) | `OLLAMA_MODELS=/mnt/hdd/ollama-cpu-data` (5.8 G) |
 | model | `hf.co/Qwen/Qwen3-8B-GGUF:Q5_K_M` (`1806628832da`, 5.9 GB on disk, 6.7 GB resident) | `qwen3-vl:8b` (`901cae732162`) + alias `lullwood-qa-tester:latest` (`202720341d3f`), 6.1 GB each, **one shared blob** |
 | hardware | RTX 2070 SUPER, 8192 MiB VRAM, driver 595.84 / CUDA 13.2 | CPU only — `CUDA_VISIBLE_DEVICES=-1`, `OLLAMA_NUM_GPU=0`, `OLLAMA_LLM_LIBRARY=cpu_avx2` |
-| measured speed | eval **~54.5 tok/s** (702 samples in the live log: p50 54.49, max 55.06, only 2 below 40) | prompt eval **bimodal, 18–28 and 4.3–4.8 tok/s**; eval **4.0–5.0 tok/s**, tail to 0.91 |
+| measured speed | eval **~54.4 tok/s** (843 samples in the live log: p50 54.35, p90 54.80, max 55.06, only 2 below 40) | prefill **11.3–28.0 tok/s**; eval **4.0–5.4 tok/s** warm, 0.9–2.8 on the first request after a cold load. The "4.3–4.8 tok/s prompt eval" cluster is an artefact — see below |
 | idle unload | `OLLAMA_KEEP_ALIVE=10m` | `OLLAMA_KEEP_ALIVE=5m` (QA triage asks for `keep_alive: "20m"` per call) |
 | concurrency | `OLLAMA_MAX_LOADED_MODELS=1`, `OLLAMA_NUM_PARALLEL=1` | same |
 | effective cgroup | `MemoryMax=6G`, `MemoryHigh=infinity`, `MemorySwapMax=0`, `OOMScoreAdjust=200` | `MemoryHigh=10G`, `MemoryMax=11G`, `MemorySwapMax=0`, `OOMScoreAdjust=600` |
@@ -2246,19 +2405,19 @@ load_tensors:   CPU_Mapped model buffer size =   408.03 MiB
 load_tensors:        CUDA0 model buffer size =  5166.34 MiB
 ```
 
-At a larger context the same log shows `offloaded 20/37 layers` with `CPU_Mapped 2614.33 MiB / CUDA0 2960.05 MiB` — the spill that drops throughput by an order of magnitude, and the only thing in 702 timing samples that has ever pulled eval below 40 tok/s (the two outliers are 25.39 and **5.72** tok/s). Keep the scout at `num_ctx 8192`. Live check: `ollama ps` on 11434 should say `100% GPU`, and `/api/ps` should show `size_vram == size` (both `6734322072` right now). `nvidia-smi` shows **6575 MiB / 8192 MiB** in use on the card, of which the `llama-server` child accounts for 6554 MiB.
+At a larger context the same log shows `offloaded 20/37 layers` with `CPU_Mapped 2614.33 MiB / CUDA0 2960.05 MiB` — the spill that drops throughput by an order of magnitude, and the only thing in 843 timing samples that has ever pulled eval below 40 tok/s (the two outliers are 25.39 and **5.72** tok/s). Keep the scout at `num_ctx 8192`. Live check: `ollama ps` on 11434 should say `100% GPU`, and `/api/ps` should show `size_vram == size` (both `6734322072` right now). `nvidia-smi` shows **6575 MiB / 8192 MiB** in use on the card, of which the `llama-server` child accounts for 6554 MiB.
 
 The child is launched on an **ephemeral** loopback port (34935 today, not fixed) with `-c 8192 -np 1 -b 512 -ub 512 --flash-attn auto --context-shift --keep 4`, plus `--no-webui --offline --log-verbosity 4 --no-log-prefix --no-log-timestamps --no-jinja --chat-template chatml`.
 
 `Environment=OLLAMA_GPU_OVERHEAD=461373440` (exactly 440 MiB) is a founder cap from 2026-09-09: plan model placement for at most 7.7 GB of the card's 7786 MiB usable, leaving headroom rather than letting Ollama fill the card.
 
-`MemoryMax=6G` lives in `ollama.service.d/memory-guard.conf` (which also carries `MemorySwapMax=0` and `OOMPolicy=continue`) and its comment records why it is not lower: *"4G killed the runner 5x"*. The cgroup's `MemoryPeak` is currently exactly `6442450944` — it has touched the ceiling. 6 GB is the floor; do not reduce it.
+`MemoryMax=6G` lives in `ollama.service.d/memory-guard.conf` (which also carries `MemorySwapMax=0` and `OOMPolicy=continue`) and its comment records why it is not lower: *"4G killed the runner 5x"*. That is not folklore — `journalctl -k -b -3` holds all five, each a `CONSTRAINT_MEMCG` kill of `llama-server` inside `oom_memcg=…/app.slice/ollama.service` with `memory: usage 4194304kB, limit 4194304kB`, on 2026-09-11 at 03:56:01, 04:28:02, 09:44:02, 10:26:02 and 11:08:02. The drop-in's own mtime is 2026-09-11 12:10:29 — the cap went to 6G about an hour after the last one. The cgroup's `MemoryPeak` is currently exactly `6442450944` — it has touched the ceiling. 6 GB is the floor; do not reduce it.
 
-Five scout job logs record `EXCEPTION: HTTP Error 500: Internal Server Error`, historically diagnosed as the runner being OOM-killed inside this cgroup. Treat that as the working hypothesis, not a proven rule: the current `ollama-gpu.log` (since the 2026-09-12 boot) contains **zero** `signal: killed` lines, so nothing in today's logs demonstrates the link.
+Those same five kills are the five scout jobs that record `EXCEPTION: HTTP Error 500: Internal Server Error` — jobs 390, 405, 562, 582 and 602, whose `log.txt` mtimes match the kernel lines to the second. So the 500 *is* the runner being OOM-killed inside this cgroup, not a hypothesis. The catch is where to look: `ollama-gpu.log` only begins at the 2026-09-12 boot and contains **zero** `signal: killed` lines, so a grep of the log file will always come up empty for this. Use `journalctl -k -b -3` and `journalctl --user -u ollama.service`.
 
 **Asymmetry to know:** the GPU unit has `Nice=10` and IO priority but **no `CPUWeight`** (`systemctl --user show ollama -p CPUWeight` → `[not set]`). Only the CPU unit yields CPU shares to the fleet.
 
-**Unexplained-but-live:** `systemctl --user show ollama -p OOMScoreAdjust` returns `200`, and `/proc/<pid>/oom_score_adj` agrees — but **no unit file on disk sets it**. `DropInPaths` lists only `logging.conf` and `memory-guard.conf`, neither contains the directive, there is no `user.control` drop-in for this unit, and the user manager's own value is 100. The effective value is 200; where it comes from could not be determined from the box. Do not "restore" it by editing the unit without first finding the real source.
+**`OOMScoreAdjust=200` comes from systemd, not from a file.** `systemctl --user show ollama -p OOMScoreAdjust` returns 200 and `/proc/<pid>/oom_score_adj` agrees, while no unit file, no `*.d/` drop-in and no `user.control` drop-in contains the directive — because none is needed. systemd-user.conf(5) on this box (systemd 259, 259.5-0ubuntu3.4): `DefaultOOMScoreAdjust` "defaults to unset … except if the service manager is run for an unprivileged user, in which case this defaults to the service manager's OOM adjustment value plus 100". The user manager sits at 100, so `systemctl --user show -p DefaultOOMScoreAdjust` is `DefaultOOMScoreAdjust=200`, and every user service inherits it. `ollama-cpu.service`'s `OOMScoreAdjust=600` is the only explicit override on the box. Nothing here needs "restoring".
 
 ### CPU instance — `ollama-cpu.service`, port 11435
 
@@ -2268,17 +2427,31 @@ Serves the vision model that the nightly local-QA run uses to judge screenshots.
 
 Never point the QA tester at 11434 — it would evict the scout model and take the card.
 
-**The memory ceiling is a scar record, and the unit file's own numbers are dead text.** The escalation, read off the comments:
+**The prompt-eval numbers look bimodal and are not.** Of the 78 `prompt eval time` samples in `ollama-cpu.log`, 44 read `/ 1 tokens` — e.g. `222.39 ms / 1 tokens (222.39 ms per token, 4.50 tokens per second)`. That is a prompt already entirely in the KV cache, where llama.cpp divides a single ~210 ms CPU decode step by one token: it is the CPU's per-token *generation* latency wearing a prefill label, and the same tasks report 4.4–4.8 tok/s generation. Real batched prefill (the 34 multi-token samples, 211–3347 tokens) runs **11.3–28.0 tok/s**. Image-bearing calls are in the fast half, not the slow one: the `process_mtmd` requests prefill 2.4–2.6k tokens at 18.9–23.8 tok/s. Do not read the 4.x cluster as "images are slow".
+
+The genuinely slow samples are cold starts. Every eval below 4 tok/s (0.91, 1.29, 2.76) and every prefill below 15 tok/s (11.26, 11.29, 11.61, 14.47) belongs to `task 0` — the first request after a `load_model`, while the weights are still being paged off `/mnt/hdd`. The second request onward sits in the warm band.
+
+**The memory ceiling is a scar record, and the unit file's own numbers are dead text.** The escalation, read off the comments and checked against the journal:
 
 | where | `MemoryHigh` / `MemoryMax` | why |
 |---|---|---|
-| unit file body | 9.2G / 10.5G | after a kernel OOM at 11.2 GB peak, 2026-09-08 02:38, while the fleet was busy |
+| unit file body | 9.2G / 10.5G | after an OOM at 2026-09-08 02:38 while the fleet was busy. `journalctl -k -b -3`: `constraint=CONSTRAINT_NONE … global_oom, task_memcg=…/ollama-cpu.service, task=llama-server`, `anon-rss:11310468kB` — 10.8 GiB, i.e. ~11.3 GB. (The comment says "11.2 GB peak"; that figure matches no recorded field.) Note it was a *host* OOM, not this cap being hit |
 | `*.d/memory-guard.conf` (first version) | 8G / 8.6G | OOM-killed the vision model twice — cgroup peak 8194 MB; an image in the prompt needs more than 8 GB |
 | `*.d/memory-guard.conf` (current) | **10G / 11G** | second OOM at 9422 MB, the thinking pass with an image attached |
 
+Both of those last two peaks are in systemd's own accounting: `Consumed … 8G memory peak` at 2026-09-12 20:32:38 and `… 9.2G memory peak` at 20:43:31, the second being the exact mtime of the current drop-in.
+
 `*.d/` wins over the unit body, so the live values are 10G/11G — confirmed by `systemctl --user show` (`10737418240` / `11811160064`). There are **also** transient `50-MemoryHigh.conf` / `50-MemoryMax.conf` drop-ins under `/run/user/1000/systemd/user.control/` from a `systemctl set-property`, carrying the same two numbers; they vanish on reboot and the on-disk file reproduces them, so behaviour is stable either way. `MemoryPeak` on the cgroup is `10242428928` (~9.5 GiB) — the real workload sits just under the soft cap.
 
-`OOMScoreAdjust=600` is deliberate: if the kernel must kill something, this service is picked *before* Paperclip or the agents. Repeated `ollama-cpu` restarts therefore mean host memory pressure (historically Chromium), not a sick service — fix the pressure, not the unit. It has restarted twice since the 2026-09-12 boot, and `ollama-cpu.log` carries the matching failure at 2026-09-12 21:30:37: `Load failed ... error="llama-server process has terminated: signal: killed"`. `MemorySwapMax=0` on both units means no swap-thrash death spiral; `OOMPolicy=continue` keeps the unit alive when a child is killed. The RAM pressure this was fighting turned out to be `/tmp` (a tmpfs holding 6.1 GB of abandoned clones), fixed at the source.
+`OOMScoreAdjust=600` is deliberate: if the kernel must kill something, this service is picked *before* Paperclip or the agents. Repeated `ollama-cpu` restarts therefore mean host memory pressure (historically Chromium), not a sick service — fix the pressure, not the unit. `MemorySwapMax=0` on both units means no swap-thrash death spiral; `OOMPolicy=continue` keeps the unit alive when a child is killed. The RAM pressure this was fighting turned out to be `/tmp` (a tmpfs holding 6.1 GB of abandoned clones), fixed at the source.
+
+**`NRestarts=2` on this unit is misleading — it is a since-last-reset counter, not a boot total.** The journal for the current boot holds **119** `Scheduled restart job` lines. 117 of them fall between 20:00:59 and 20:11:02 on 2026-09-12, a five-second crash loop straight out of boot whose cause is in the log file, not the journal:
+
+```
+Error: mkdir /mnt/hdd/ollama-cpu-data: permission denied: ensure path elements are traversable
+```
+
+`/mnt/hdd` (`/dev/sdb1`, ext4) was not yet traversable when the user manager started the unit; `Restart=always` kept it retrying until the mount appeared, then it came up and the counter reset. That is the difference between the two units' restart policies earning its keep. The two restarts `NRestarts` actually reports are later and different in kind: `status=9/KILL` exits at 21:02:34 and 21:10:51, the second of which `ollama-cpu.log` records at 21:30:37 as `Load failed … error="llama-server process has terminated: signal: killed"`.
 
 **`OLLAMA_NUM_THREADS=10` in the unit file is a no-op.** The `cpu-guard.conf` drop-in says so in writing: Ollama reads it in neither its config dump nor its documentation; thread count is a per-request option (`options.num_thread`). The settings that actually keep this service out of the fleet's way are `CPUWeight=25` and `Nice=10` in that same drop-in. Do not tune `OLLAMA_NUM_THREADS` expecting an effect.
 
@@ -2293,11 +2466,13 @@ Sep 13 01:07:52  Failed with result 'oom-kill'
 Sep 13 01:07:52  Consumed 4h 51min 11.989s CPU time over 37min 50.609s wall clock time, 8G memory peak
 ```
 
-That is the Playwright/Chromium side hitting its own 8 GB cap, not the vision model hitting 11 GB. Budget the nightly at ~38 min of wall clock (4h51m of CPU across cores), not "~1 h", and check `journalctl --user -u local-qa-nightly` before blaming Ollama for a missing QA report.
+That is the Playwright/Chromium side hitting its own 8 GB cap, not the vision model hitting 11 GB. Check `journalctl --user -u local-qa-nightly` before blaming Ollama for a missing QA report.
+
+**Do not take 38 minutes as the budget.** That is how long the run above survived before being killed, not how long a pass takes, and the journal holds only two `local-qa-nightly` invocations ever — this one, and 2026-09-12, which never started work at all: `local-qa.log` records `2026-09-12T00:30:02+03:00 another run holds the lock` (the 00:20 on-demand run, 00:20:02–01:35, still held `state/run.lock`), and `state/runs/2026-09-12/` was created empty and abandoned. The lone `Started` line in the journal is the correct and complete record of that skip. For a real figure, use the runs of the same `local-qa-run` script that do complete, from `local-qa.log`'s start markers and report lines: **roughly 1.5–2 h** (2026-09-13 01:50→~03:40, 18:16→~19:59, 2026-09-12 00:20→before 01:56). The "~1 h" that older notes quote is low but far closer than 38 min.
 
 ### Why the vision model is not on the GPU
 
-The card is 8 GB. The scout model holds 6.7 GB of it and is meant to stay resident; two models cannot share it, so the vision model would evict the scout. Nightly QA is well under an hour a day and tolerates ~4.5 tok/s; the scout runs hundreds of times a day and does not. A second GPU or a 16 GB card would move the vision model first.
+The card is 8 GB. The scout model holds 6.7 GB of it and is meant to stay resident; two models cannot share it, so the vision model would evict the scout. Nightly QA is a couple of hours a day at most and tolerates ~4.5 tok/s; the scout runs hundreds of times a day and does not. A second GPU or a 16 GB card would move the vision model first.
 
 ### Per-instance logs and hourly rotation
 
@@ -2312,7 +2487,7 @@ Those two are the only files in that directory. Rotation is a crontab entry at *
 43 * * * * /usr/bin/python3 /home/noam/.paperclip/shared/ram-cleanup/bin/ollama-log-rotate >/dev/null 2>&1
 ```
 
-It globs `ollama-*.log`, and for any file over `MAX_MB = 64` copies it to `<name>.1` and then **truncates in place**. Truncation rather than rename is deliberate and load-bearing: systemd holds the open descriptor, so renaming would leave it writing to an unnamed file. Exactly one previous generation is kept; the older `.1` is overwritten. Every error is swallowed (`except OSError: pass`), so a failed rotation is silent — check sizes, not exit codes. At inspection (2026-09-13 18:16) the files were 3,935,610 B and 2,463,933 B, well under the cap, and no `.1` existed yet.
+It globs `ollama-*.log`, and for any file over `MAX_MB = 64` copies it to `<name>.1` and then **truncates in place**. Truncation rather than rename is deliberate and load-bearing: systemd holds the open descriptor, so renaming would leave it writing to an unnamed file. Exactly one previous generation is kept; the older `.1` is overwritten. Every error is swallowed (`except OSError: pass`), so a failed rotation is silent — check sizes, not exit codes. At inspection (2026-09-13 23:03) the files were 4,345,818 B and 2,665,927 B, well under the cap, and no `.1` existed yet.
 
 Both logs are effectively binary to `grep` (the llama-server child emits control bytes) — use `grep -a`. The useful lines are `slot print_timing:` for tok/s and `load_tensors:` for offload.
 
@@ -2398,7 +2573,7 @@ The current failure mode is therefore *paraphrasing the anchor*, not malformed p
   >> /home/noam/.paperclip/shared/local-code/idle-scout-cron.log 2>&1
 ```
 
-Founder directive 2026-09-05 removed the old rate-limit (`hard_block`) gate: Ollama should be *constantly* in use, and since every real dispatcher preempts synchronously, the only question the cron answers is "is the GPU idle right now". With the fleet out of its weekly quota (until 2026-09-15 15:00 Jerusalem) nothing is dispatching real work at all, so the scout currently owns the GPU end to end — an idle-looking fleet next to a pegged GPU is the expected picture this weekend, not a fault.
+Founder directive 2026-09-05 removed the old rate-limit (`hard_block`) gate: Ollama should be *constantly* in use, and since every real dispatcher preempts synchronously, the only question the cron answers is "is the GPU idle right now". With the fleet out of its weekly quota (until **Tuesday 2026-09-15 15:00 Asia/Jerusalem**) nothing is dispatching real work at all, so the scout currently owns the GPU end to end — an idle-looking fleet next to a pegged GPU is the expected picture until then, not a fault.
 
 The tick takes a non-blocking `flock` on `idle-scout-cron.lock` so ticks never overlap, then runs in this order — **the real-work busy check is still first; what moved is the scout's own running-check**:
 
@@ -2419,9 +2594,9 @@ calling ollama model=hf.co/Qwen/Qwen3-8B-GGUF:Q5_K_M
 
 (`ELEMENTS.md` is 137,644 bytes as of today; the 136,498 above is what that run read.)
 
-`FEATURESCOUT_NUM_CTX = 8192` is scout-specific and measured: the shared `NUM_CTX = 24576` does not fit in 7.7 GB of VRAM — Ollama offloads only 27/37 layers, the rest runs on CPU (71% GPU, 15.7 tok/s alone, **0.29 tok/s** when Chromium held the card; that is how job 346 hit the timeout). At 8192 all 37 layers are resident; the founder's note records 65.8 tok/s at the time, and today's log sits at ~54.5. `FEATURESCOUT_HTTP_TIMEOUT_SEC = 18 min` is a client-side deadline deliberately *below* the 20-min `RuntimeMaxSec`, so a hung generate raises and `finish("failed")` records it instead of systemd SIGKILLing with the registry still saying `running`.
+`FEATURESCOUT_NUM_CTX = 8192` is scout-specific and measured: the shared `NUM_CTX = 24576` does not fit in 7.7 GB of VRAM — Ollama offloads only 27/37 layers, the rest runs on CPU (71% GPU, 15.7 tok/s alone, **0.29 tok/s** when Chromium held the card; that is how job 346 hit the timeout). At 8192 all 37 layers are resident; the founder's note records 65.8 tok/s at the time, and today's log sits at ~54.4. `FEATURESCOUT_HTTP_TIMEOUT_SEC = 18 min` is a client-side deadline deliberately *below* the 20-min `RuntimeMaxSec`, so a hung generate raises and `finish("failed")` records it instead of systemd SIGKILLing with the registry still saying `running`.
 
-Attempt counter was at **2127** on 2026-09-13 18:16, with 2127 job directories under `featurescout-jobs/` — the directory count tracks the counter exactly, roughly one job every 2 minutes, all day.
+Attempt counter was at **2270** on 2026-09-13 23:03, with 2270 job directories under `featurescout-jobs/` — the directory count tracks the counter exactly, roughly one job every 2 minutes, all day.
 
 #### `feature-leads/leads.md` and the `extract_leads` structure rule
 
@@ -2435,7 +2610,7 @@ It is a plain file and **not a wiki page**, on purpose: a review found `wiki que
 leads.md is 298269 bytes (> 262144) and undrained -- skipping append
 ```
 
-`leads.md` has not grown since 11:28 on 2026-09-13 and no job has appended since. Two distinct reasons show up in the logs, not one: across the last 38 attempts (2090–2127), **34** hit the size gate above and **4** logged `no structured ideas in the response -- nothing appended`. The unblock for the first is for the Feature Scout agent to drain the file, not to raise the limit; the second is just the model failing to produce a list that run.
+`leads.md` has not grown since 11:28 on 2026-09-13 and no job has appended since. The gate first fired at attempt **1923**. Two distinct reasons show up in the logs, not one: across attempts 2090–2270 (181 runs), **174** hit the size gate and **7** logged `no structured ideas in the response -- nothing appended`; the last 40 attempts are all size gate. The unblock for the first is for the Feature Scout agent to drain the file, not to raise the limit; the second is just the model failing to produce a list that run.
 
 **The structure rule.** `extract_leads()` keeps only the numbered list the prompt asked for and drops everything around it:
 
@@ -2451,10 +2626,14 @@ This exists because `think: False` makes Ollama emit no `<think>` tags, so `stri
 
 - `systemctl cat ollama.service` fails without `--user`. Both Ollamas *and* SearXNG are user units; add `XDG_RUNTIME_DIR=/run/user/1000` when driving them from cron.
 - `ollama.service`'s `Description=` still says "CPU-only, no root available". Ignore it; the model is 100% on the GPU.
-- `ollama.service`'s live `OOMScoreAdjust=200` is set by no file on disk. Find the source before "fixing" it.
+- `ollama.service`'s `OOMScoreAdjust=200` is set by no file and needs none — it is systemd's `DefaultOOMScoreAdjust` for an unprivileged user manager (manager's own 100, plus 100). Do not add a directive to "fix" it.
+- The scout's `HTTP Error 500`s are runner OOM-kills, but the evidence is in `journalctl -k -b -3` / `journalctl --user -u ollama.service`, not in `ollama-gpu.log` — that file only starts at the 2026-09-12 boot and has no `signal: killed` lines at all.
+- The CPU instance's "4.3–4.8 tok/s prompt eval" cluster is every `/ 1 tokens` sample: a cached prompt, one decode step, not a prefill rate. Real prefill is 11.3–28 tok/s, and the image calls are in the fast half.
+- `NRestarts` is a since-last-reset counter. `ollama-cpu` reads 2 while this boot's journal holds 119 restarts, 117 of them a `mkdir /mnt/hdd/ollama-cpu-data: permission denied` loop before the disk was traversable. Count `Scheduled restart job` lines, not `NRestarts`.
 - `OLLAMA_NUM_THREADS=10` on the CPU unit does nothing. `CPUWeight=25` + `Nice=10` are the real knobs.
 - `ollama-cpu.service`'s in-body `MemoryHigh=9.2G` / `MemoryMax=10.5G` are overridden to 10G/11G by `*.d/memory-guard.conf`. Read the drop-in, not the unit.
-- A missing nightly QA report is usually `local-qa-nightly` OOM-killing in its own 8G cgroup (as on 2026-09-13 01:07), not `ollama-cpu`. Check `journalctl --user -u local-qa-nightly` first.
+- A missing nightly QA report is usually `local-qa-nightly` OOM-killing in its own 8G cgroup (as on 2026-09-13 01:07), not `ollama-cpu`. Check `journalctl --user -u local-qa-nightly` first — and note that only two nightlies have ever been invoked, one of which skipped on the run lock.
+- Budget a completed QA pass at ~1.5–2 h. The "37min 50s" in the 2026-09-13 journal line is how long it lasted before the OOM kill, not how long the job takes.
 - `ollama-code-worker` no longer emits diffs. The registry's "corrupt patch" reasons are fossils; today's failures read `change #N: …`.
 - The header of `leads.md` claims the worker "now runs with thinking enabled". It does not — `THINK = False` and the worker's own comment explains the revert. The header is stale.
 - `call_ollama()`'s comment says "No client-side timeout, same rationale as the coding worker" immediately above a call that passes `timeout=FEATURESCOUT_HTTP_TIMEOUT_SEC`. The code is right, the comment is stale.
@@ -2463,6 +2642,7 @@ This exists because `think: False` makes Ollama emit no `<think>` tags, so `stri
 - `grep` treats both instance logs as binary. Use `grep -a`.
 - Raising `FEATURESCOUT_NUM_CTX` without re-checking `size_vram == size` in `/api/ps` is how the GPU silently starts spilling to CPU at 0.3 tok/s.
 
+<a id="qa-rig"></a>
 
 ## The local QA rig
 
@@ -2523,7 +2703,7 @@ The `state/qa-paused` check happens before any of the three, so a paused rig nev
 
 Verification builds the sha in `state/pr-work/`, runs the scenario audit on **port 3124** and the full suite, writing `state/pr-runs/<sha7>/`. A completed prior run for the same sha (nightly or PR) is reused; an *incomplete* one is renamed `…-incomplete-<ts>` and redone. Timeouts: `npm ci` 1800 s, build 1800 s, scenario audit 2400 s, suite **9000 s (150 min)** — a suite timeout is reported as a rig verdict, not a PR verdict, and `chrome-headless-shell` / `playwright test` are `pkill -KILL`ed.
 
-`evaluate()` decides PASS: no `critical-page` finding, no founder-priority failure, no unskipped `state-unreached` high finding (high findings of kind `timing` are excluded from the high set entirely), and **no hard failure that is not already in `state/e2e-baseline.json`**. That baseline is the nightly's known-failing list (currently 15 entries of 212 tests, dated 2026-09-13); `timedOut` results are treated as rig noise, not failures. Note that `pr-e2e-watch` keeps its **own** `FOUNDER_PRIORITY` table, which is close to but not identical with `triage.py`'s: it matches `smoke.spec` on `death|catch|lift|carry|home|win`, `win-persist`, `lul211-founder-report`, `charge-dodge` and `returning-player`, and does *not* split desktop from mobile `win-persist` the way triage does.
+`evaluate()` decides PASS: no `critical-page` finding, no founder-priority failure, no unskipped `state-unreached` high finding (high findings of kind `timing` are excluded from the high set entirely), and **no hard failure that is not already in `state/e2e-baseline.json`**. That baseline is the nightly's known-failing list (`state/e2e-baseline.json`, dated 2026-09-13: 15 entries of 212 tests at the 18:16 snapshot below, 16 of 212 once the 19:59 run had re-diffed it); `timedOut` results are treated as rig noise, not failures. Note that `pr-e2e-watch` keeps its **own** `FOUNDER_PRIORITY` table, which is close to but not identical with `triage.py`'s: it matches `smoke.spec` on `death|catch|lift|carry|home|win`, `win-persist`, `lul211-founder-report`, `charge-dodge` and `returning-player`, and does *not* split desktop from mobile `win-persist` the way triage does.
 
 How it gates a release cut:
 
@@ -2707,8 +2887,11 @@ Live picture at 2026-09-13 18:16 IDT: runs exist back to 2026-09-08; today's are
 
 The line `no e2e results file: founder-priority tests NOT verified tonight` belongs to the **-prod** report, not the local one. The production-smoke triage is invoked with `-` in place of `results.json` by design, so that line appears in every `*-prod.md` report going back to 2026-09-09; it is not a symptom.
 
-`pr-e2e-watch` is ticking cleanly every 5 min. At 17:15 today it passed and auto-approved the version-cut PR **#627 @`6656e8d`** (`approve #627: rc=0`). Since 17:20 every tick reports **PR #620 @`7c8aaa9`** red on unit tests and calls `wake_for_red()`; the fingerprint dedup means the log line repeats but no duplicate ticket is filed. Fleet agents are idle because the weekly quota is exhausted until 2026-09-15 15:00 Jerusalem — the rig itself is unaffected, since it is cron/systemd-driven and uses no fleet quota.
+`pr-e2e-watch` is ticking cleanly every 5 min. At 17:15 today it passed and auto-approved the version-cut PR **#627 @`6656e8d`** (`verifying #627 'Release v2026.09.13-1' @6656e8d (cut=True); 0 more waiting` at 17:15:02, `approve #627: rc=0` one second later — one second because the 0626 nightly had already built `6656e8d`, so the completed run was reused rather than redone). Since 17:20 every tick reports **PR #620 @`7c8aaa9`** red on unit tests and calls `wake_for_red()`; the fingerprint dedup means the log line repeats but no duplicate ticket is filed. The approval landed: #627 merged at 18:04 IDT (2026-09-13T15:04:17Z) as `main` @ `313b962`, and sync-back PR **#628** merged a minute after it as `3b129fb` — which is the head the `-1816` on-demand run picked up. Fleet agents are idle because the weekly quota is exhausted until **Tuesday 2026-09-15 15:00 Asia/Jerusalem** — the rig itself is unaffected, since it is cron/systemd-driven and uses no fleet quota.
 
+Re-checked at **2026-09-13 23:01 IDT**, that picture has moved on exactly as the design predicts. `-1816` finished; a further on-demand run `-1959` built `c00e886` — the current `release/next` head, and the same head `state/ondemand-last.json` now records (`{"head": "c00e8866…", "rc": 1, "at": "2026-09-13 22:02:30"}`) — and wrote `reports/2026-09-13-1959.md` at 21:34: 8 tickets filed, 10 of 12 model calls used, 1 deterministic case, suite **195 passed, 12 failed, 4 timed out**, **2 new against the baseline** and 1 no longer failing, which is why the baseline is now 16 entries rather than the 15 of the 0626 run. `local-qa-ondemand.service` is back to `inactive`, `local-qa-ondemand.timer` and `pr-e2e-watch.timer` are both `active`, `state/qa-paused` is still absent, and `pr-e2e-watch` is still on its 5-minute beat (last tick 22:56:21), still logging `#620 @7c8aaa9: GitHub checks red (unit tests) -- waking the PR owner` followed by `no PR waiting on e2e`, and still filing no duplicate ticket.
+
+<a id="machine"></a>
 
 ## The machine — OS, storage, memory and the guards
 
@@ -2767,7 +2950,15 @@ UUID=11225c29-1096-4f6e-934f-259f3dfe4f50 /mnt/hdd ext4 defaults,nofail,x-system
 
 `/tmp` is a **tmpfs, 7.6 G, backed by RAM**, as is `/dev/shm` (7.6 G). Every byte an agent writes to `/tmp` is a byte the fleet cannot use.
 
-On 2026-09-11/12 agents left **2443 abandoned per-ticket repo clones** in `/tmp`, holding **6.1 GB of the 15 GiB** (both figures survive only in the drop-in comments below; the clones are gone and cannot be re-measured). The box froze three times. Two fixes, both live:
+On 2026-09-11/12 agents left **2443 abandoned per-ticket repo clones** in `/tmp`, holding **~5.5 GB of the 15 GiB** — of which only **1 MB** was actually held open by a running process. The box froze three times.
+
+> **Do not quote the `2443 entries / 6.1 GB` pairing** that the `tmpdir.conf` and `memory-guard.conf` comments carry: it splices two different readings. The founder's audit script `~/tmp-audit.py` (2026-09-12 12:58, "AUDIT ONLY -- this script deletes nothing", run before any cleanup) *estimated* "2400 entries, 6.1 GB of the 15 GB of RAM"; `~/tmp-rescue.py` (12:59, written after the audit's per-entry walk) records the *measured* result — "2443 entries, 5.5 GB, of which only 1 MB was actually held by a running process." Use 2443 entries / ~5.5 GB / ~1 MB live.
+
+That 1 MB is the whole diagnosis, and the rescue script's docstring states it: `MemAvailable` sat near 1 GB through the 18:36–18:44 freeze while the kernel reported **no OOM kill**, because nothing had leaked — the memory was parked in a RAM-backed filesystem, unreclaimable, and the only place it could go was swap, which is why the 4 GB swap file was 100 % full. (Both scripts are stamped 12:58/12:59 on 09-12, so the freeze they describe is the one on 09-11.)
+
+The clones were also **moved, not deleted**: `tmp-rescue.py` relocates only entries that nothing running holds (`/proc/<pid>/cwd`, `exe`, `fd/*`) and that have not been touched for `MIN_AGE_H=12`, on the argument that an agent paused mid-ticket may still want its worktree and uncommitted work in one would be unrecoverable. `/home/noam/tmp-rescue-20260912` still holds **2210 entries, 3.9 G** on the root SSD — part of the 91 G above, pruned by nothing, and the only re-measurable remnant of the freeze.
+
+Two fixes, both live:
 
 1. **Scratch moved to disk.** A `tmpdir.conf` drop-in sets `Environment=TMPDIR=/home/noam/scratch` on `paperclip.service`, `pr-e2e-watch.service` and `local-qa-ondemand.service`. `/home/noam/scratch` is on the root SSD (635 M in use right now, 11 entries — Playwright profiles and artifacts from the in-flight run, a `lul-2569` checkout, a transform cache).
 2. **A sweeper as backstop** — `scratch-sweep`, below — because a run killed mid-ticket never reaches its own cleanup.
@@ -2798,7 +2989,7 @@ Note the ollama-cpu row: the **unit file** still says `MemoryHigh=9.2G` / `Memor
 
 The drop-ins under `*.service.d/` carry the real operational history and are worth reading before changing any cap:
 
-- `ollama-cpu.service.d/memory-guard.conf` — first set to 8 G/8.6 G, which OOM-killed the vision model twice (cgroup peak 8194 MB, then 9422 MB on a thinking pass with an image attached). Now `MemoryHigh=10G`/`MemoryMax=11G`. The prior copies survive as `.bak-20260912` and `.bak-20260912-toolow`.
+- `ollama-cpu.service.d/memory-guard.conf` — first set to 8 G/8.6 G, which OOM-killed the vision model twice (cgroup peak 8194 MB, then 9422 MB on a thinking pass with an image attached). Now `MemoryHigh=10G`/`MemoryMax=11G`. The prior copies survive as `.bak-20260912` and `.bak-20260912-toolow`. **Both peaks are corroborated by systemd itself**, still in the current boot's journal: `ollama-cpu.service: Consumed 36min 23.690s CPU time over 20min 54.171s wall clock time, 8G memory peak` at 2026-09-12 20:32:38 and `… 9.2G memory peak` at 20:43:31 (8194 MiB = 8.00 GiB, 9422 MiB = 9.20 GiB), the two moments the `.bak-20260912-toolow` and live copies were written. So are the kills behind them — 20:18:30, 20:31:49, 20:42:38. Read them correctly, though: all three are **global** OOM kills, `oom-kill:constraint=CONSTRAINT_NONE … global_oom, task_memcg=…/ollama-cpu.service, task=llama-server`. The host ran out of memory and `OOMScoreAdjust=600` nominated this unit as the victim; the cgroup ceiling was never itself hit.
 - `ollama.service.d/memory-guard.conf` — 4 G killed the runner 5×; raised to 6 G.
 - `ollama.service.d/logging.conf` and `ollama-cpu.service.d/logging.conf` — `StandardOutput`/`StandardError` = `append:/home/noam/.paperclip/shared/logs/ollama-gpu.log` and `…/ollama-cpu.log`. These two drop-ins are the reason `ollama-log-rotate` must truncate rather than rename (below).
 - `paperclip.service.d/the-gate.conf` — `ExecStartPre=-…/gate-install.sh install` re-asserts the Gate wrapper on every start so an npm/SDK upgrade cannot silently leave the fleet ungated, plus `ACPX_CLAUDE_ACP_SESSION_CREATE_TIMEOUT_MS=600000` (60 s → 10 min) so a queued wrapper wait is not killed as an ACP timeout.
@@ -2839,6 +3030,8 @@ The nightly QA line is not a plain command — it is wrapped so a runaway Chromi
   -p Environment=TMPDIR=/home/noam/scratch -p MemoryMax=8G -p MemorySwapMax=0 \
   -p CPUWeight=25 -p Nice=10 /home/noam/.paperclip/shared/local-qa/bin/local-qa-run
 ```
+
+Its tag comment carries the provenance: `# lullwood-local-qa (replaces lullwood-qa-regression, founder 2026-09-07; founder 2026-09-11: 8G cgroup cap + no swap so a runaway Chromium dies alone instead of freezing the host)`. **The older `~/.local/bin/qa-regression` cron that drove `scripts/qa-regression.mjs` directly is gone** — `~/.local/bin/` holds only `claude`, `gh`, `ollama`, `paperclip-status`, `paperclip-status-cron`, `paperclip-status-wiki.js`, `paperclipai`, and no crontab line references it. Anywhere else in this document still naming that path is describing a retired route; the script survives in the repo but nothing schedules it.
 
 **Gotcha:** cron on this box has no `pam_systemd` session line — `grep -c pam_systemd /etc/pam.d/cron` returns **0** — so `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` are *not* set for cron jobs. Any cron script that talks to `systemctl --user` must export them itself; `lullwood-boot-check` and that `systemd-run` line both do. `ram-cleanup-cron`'s header documents a version of this bug that silently disabled its own safety net.
 
@@ -2907,7 +3100,7 @@ Today's log shows the memory condition working as designed: the timer was stoppe
 
 `~/.paperclip/shared/ram-cleanup/bin/scratch-sweep` (79 lines), daily at 04:17. The backstop for the `/tmp` freeze.
 
-Sweeps `/home/noam/scratch` and `/tmp` (`SCRATCH_SWEEP_DIRS`, colon-separated) for top-level entries older than `SCRATCH_SWEEP_AGE_DAYS=3`. Two absolute protections: it skips anything whose name starts with `systemd-private`, `.X11`, `.ICE`, `.font`, `.XIM`, `snap-private` or `claude-`, and it builds a `held` set by reading every `/proc/<pid>/cwd`, `exe` and `fd/*` link — an entry any running process has open, is `cwd` in, or is executing from is never touched. (That `held` set is why the live Postgres socket in `/tmp` survives.) It logs only when it removes something: `state/scratch-sweep.log` records `swept 1 entries, 0 MB` and `swept 120 entries, 571 MB`, both on 2026-09-12. **Nothing since** — with a 3-day floor and the freeze cleaned up on the 12th, no entry has aged in yet. Silence in that log is the expected state, not evidence the job is broken.
+Sweeps `/home/noam/scratch` and `/tmp` (`SCRATCH_SWEEP_DIRS`, colon-separated) for top-level entries older than `SCRATCH_SWEEP_AGE_DAYS=3`. Two absolute protections: it skips anything whose name starts with `systemd-private`, `.X11`, `.ICE`, `.font`, `.XIM`, `snap-private` or `claude-`, and it builds a `held` set by reading every `/proc/<pid>/cwd`, `exe` and `fd/*` link — an entry any running process has open, is `cwd` in, or is executing from is never touched. (That `held` set is why the live Postgres socket in `/tmp` survives.) It logs only when it removes something: `state/scratch-sweep.log` records `swept 1 entries, 0 MB` and `swept 120 entries, 571 MB`, both on 2026-09-12. **Nothing since** — with a 3-day floor and the freeze cleaned up on the 12th, no entry has aged in yet. Silence in that log is the expected state, not evidence the job is broken. Note that this log begins *after* the manual clear, which is why it is not a source for the freeze's own numbers.
 
 `ollama-log-rotate` (hourly at :43) caps each `~/.paperclip/shared/logs/ollama-*.log` — in practice exactly `ollama-gpu.log` and `ollama-cpu.log` — at `MAX_MB=64`, copying to a single `.1` generation. It then **truncates the original in place** rather than renaming, deliberately: systemd holds the descriptor via the `logging.conf` `append:` drop-ins, so a rename would leave it writing to a nameless file. Both logs are currently well under the cap (3.8 MB and 2.4 MB).
 
@@ -2929,7 +3122,7 @@ Credentials live at `~/.config/lullwood/founder-alert.env` (verified mode `600`,
 
 ### The watchdog — quota ledger, HOLD, revive
 
-`~/.paperclip/shared/watchdog/bin/watchdog` (57,766 bytes ≈ 56 KB of Python), driven by `watchdog-cron` every 10 minutes. It makes **zero model calls**: every signal is read from local Claude Code transcripts on disk (`~/.claude/projects/*/*.jsonl`) plus one unmetered Paperclip request, credentialed from `~/.paperclip/auth.json`.
+`~/.paperclip/shared/watchdog/bin/watchdog` (57,766 bytes ≈ 56 KB of Python), driven by `watchdog-cron` every 10 minutes. It makes **zero model calls**: every signal is read from local Claude Code transcripts on disk (`~/.claude/projects/*/*.jsonl` — 12,641 files there today, 328 of them written today; the glob is big enough that a bare `ls` of it returns `Argument list too long`, which is not the same as empty) plus one unmetered Paperclip request, credentialed from `~/.paperclip/auth.json`.
 
 Per tick `watchdog-cron` runs, in order, appending to `state/watchdog.log` (trimmed to the last 2000 lines whenever it passes 5000):
 
@@ -2937,16 +3130,23 @@ Per tick `watchdog-cron` runs, in order, appending to `state/watchdog.log` (trim
 
 **The ledger.** `read_ledger()` scans the transcripts for usage records and 429s. Two corrections are baked in and must not be undone:
 
-- **Bill each `message.id` once.** One API message appears on several transcript lines — streaming writes a record per content block, and resumed/forked sessions replay earlier messages carrying their *original* timestamps back into the window. Counting lines read 233 % of a cap the account was provably under on 2026-08-14 and held the studio on a limit that did not exist. Records with no id cannot be deduped and are all kept, erring toward over-counting.
+- **Bill each `message.id` once.** One API message appears on several transcript lines — streaming writes a record per content block, and resumed/forked sessions replay earlier messages carrying their *original* timestamps back into the window. Counting lines read 233 % of a cap the account was provably under on 2026-08-14 and held the studio on a limit that did not exist. That exact percentage is the source's own comment (`bin/watchdog:250`) and is not re-derivable today, but the incident is corroborated outside it: wiki `systems/rate-limit-watchdog`, trap 3, records **338 transcript records against 153 real messages** that day — a 2.3× inflation whose factor varies per run and therefore does **not** cancel out of the used/cap ratio. Records with no id cannot be deduped and are all kept, erring toward over-counting.
 - **`weighted_tokens()`** normalizes to billing weight, not raw count: `input × 1.0 + output × 5.0 + cache_creation × 1.25 + cache_read × 0.1`. A cache-heavy agent would otherwise look 10× hungrier than it is.
 
 **Weekly vs session parsing.** `classify_limit()` is a plain text match on the error: contains `week` → `weekly`, `month` → `monthly`, otherwise `session`. `parse_reset_text()` turns `resets 2:30pm (Asia/Jerusalem)` into an absolute UTC instant; a bare clock time means the *next* occurrence at or after the moment the limit was reported, never a time already past. The dated branch matches `resets Sep 15, 3pm` — **the comma was the bug**: the account emits one, the regex did not allow it, and so every *weekly* limit parsed as `None` until the founder fixed it on 2026-09-13 (`watchdog.bak-20260913-weeklyparse`, 57,566 bytes, is the prior copy; the fix is 200 bytes).
 
-`weekly_window_start()` prefers `observed_weekly_anchor()` — the reset moment a real weekly 429 reported — over the configured guess, stepping in whole 7-day blocks. Using the guessed `weekly_reset_weekday=0` / `hour=0` / `tz=Asia/Jerusalem` anchor after a real 429 had named the truth is what held the studio for **126 hours on 2026-08-18**.
+`weekly_window_start()` prefers `observed_weekly_anchor()` — the reset moment a real weekly 429 reported — over the configured guess, stepping in whole 7-day blocks. Using the guessed `weekly_reset_weekday=0` / `hour=0` / `tz=Asia/Jerusalem` anchor after a real 429 had named the truth is what held the studio for **126 hours on 2026-08-18**. That is not just source-comment history: wiki `systems/watchdog-weekly-reset-anchor` (created 2026-08-18, LUL-383, VP R&D) records the 429's own observation — `reset_at 2026-08-18T12:00:00Z`, the server's real lift — beside what the gate printed 2h50m *after* the block had already been lifted:
+
+```
+weekly cap  100.1%  147,544,604 / 147,427,564   (learned cap)
+            resets Mon 24 Aug 00:00 IDT (in 126h09m)
+```
+
+Two errors compounded in the same direction: `used_week` kept summing from the guessed Monday 00:00, so 147.5M tokens the reset had already wiped still counted; and the reported reset was 126 hours late. The page also explains why nothing self-corrected — falsification is `cap_week_falsified = not cap_week_learned and floor_week > cap_week`, deliberately switched off once the cap is *learned*, which is right for a cap and fatal when the cap is learned and the window is still a guess.
 
 **Cap tracking is off.** Founder directive 2026-09-06: `assess()` no longer learns, bootstraps or calculates any ceiling. `learned_cap()`, `sustained_without_limit()`, `record_observation()` and both `bootstrap_*_token_cap` config values (8 M and 40 M) are dead code kept as history. The only thing that can produce HOLD is an unexpired, directly-observed 429 with its own server-reported reset and no newer successful work after it — or `monthly_cap_cents` being exceeded, and that is `0` (uncapped) because the studio runs the subscription adapter with no per-token spend to cap. **Spend is still measured while being uncapped**: the check prints `no cap set; spent $10369.81`.
 
-**The gate itself is removed.** Founder directive 2026-08-20 (LUL-530): `status` is pinned to `GO` at the end of `assess()` so `gate` and `line` exit 0, `quiet`/`park` do nothing, and the restart-only commands run freely. The verdict a gate *would* have returned is preserved as `withheld_status`/`withheld_reason` for audit and nothing reads it. `quiet` (turning every agent's heartbeat off) now refuses and cron must not call it — the one unacceptable outcome is a studio left asleep. `unquiet --force` runs every tick and only ever restores.
+**The gate itself is removed.** Founder directive 2026-08-20 (LUL-530): `status` is pinned to `GO` at the end of `assess()` so `gate` and `line` exit 0, `quiet`/`park` do nothing, and the restart-only commands run freely. The verdict a gate *would* have returned is preserved as `withheld_status`/`withheld_reason` for audit and nothing reads it. `quiet` (turning every agent's heartbeat off) now refuses and cron must not call it — the one unacceptable outcome is a studio left asleep. `unquiet --force` runs every tick and only ever restores. Note the consequence for anything you script on top: there is **no non-zero exit to branch on**, even during a hard weekly block. The signals are the `hard_block: yes` field and the `HOLD … -- its limit resets …` block in the text, not the exit code.
 
 Live at the 18:10 tick, verbatim:
 
@@ -2969,7 +3169,7 @@ OK -- nothing parked
 OK -- nothing quieted
 ```
 
-All five agents are held, correctly, by a real server-reported reset. This is the shape of a healthy quota outage, not a stuck studio.
+All five agents are held, correctly, by a real server-reported reset. This is the shape of a healthy quota outage, not a stuck studio. (Today is Sunday 2026-09-13 and the reset is **Tuesday** the 15th — anywhere this document says "Tue 2026-09-15" the weekday is wrong, not the instant.)
 
 **Revive — breaking the deadlock.** A limit kills every live agent, and clearing an agent's error state requires a live agent. Cron is the only actor left standing.
 
@@ -3013,10 +3213,162 @@ Listening sockets, complete as of 18:20:
 ### Gotchas worth knowing before you touch anything
 
 - **`ollama.service`'s description and its inline comment both lie, differently.** The `Description=` line reads `Ollama local model server (CPU-only, no root available -- see systems/local-ollama.md)`; a separate comment in `[Service]` reads `CPU-only: no NVIDIA driver stack exists on this box (no root to install one)`. Driver 595.84 is installed, CUDA 13.2 is present, and `llama-server` is holding 6575 MiB of VRAM right now. Both texts are stale; `OLLAMA_GPU_OVERHEAD=461373440` in the same file — the founder's 2026-09-09 cap, planning placement for a 7786 MiB usable card — is the current truth.
-- **Paperclip's instance config carries a stale IP.** `~/.paperclip/instances/default/config.json` has `server.bind: "tailnet"`, `server.port: 3100`, and `server.host: "100.120.53.118"` — an address this node no longer has. The live listener is correctly on 100.85.231.17, so `bind: "tailnet"` is evidently resolving the current tailnet IP at runtime and the `host` field is inert. I could not confirm from outside the binary whether that stays true across a tailnet IP change; if the bind ever lands on the wrong address, correct `server.host` first.
+- **Paperclip's instance config carries a stale IP, and it is inert — verified inside the binary.** `~/.paperclip/instances/default/config.json` has `server.bind: "tailnet"`, `server.port: 3100`, and `server.host: "100.120.53.118"`, an address this node no longer has. A changed tailnet IP **is** picked up on the next restart and `server.host` does not need correcting. `@paperclipai/server/dist/config.js`'s `detectTailnetBindHost()` runs `tailscale ip -4` at config load (`TAILSCALE_DETECT_TIMEOUT_MS = 3000`, stderr ignored, first non-empty line wins), preferring `PAPERCLIP_TAILNET_BIND_HOST` when that env var is set; `@paperclipai/shared/dist/network-bind.js`'s `resolveRuntimeBind()` then returns `{host: tailnetBindHost}` for `bind: "tailnet"` and reads the config's `host` **only** as a fallback when detection returned nothing — and in that fallback it also raises `server.bind=tailnet requires a detected Tailscale address or PAPERCLIP_TAILNET_BIND_HOST`. So the stale `host` can only ever be reached through a detection failure that announces itself. Live: `tailscale ip -4` → `100.85.231.17` from `/usr/bin/tailscale`, and the listener matches.
 - The two Ollama instances are **not** interchangeable: `:11434` is GPU-backed with `/mnt/hdd/ollama-data` (`Qwen3-8B-GGUF:Q5_K_M`, `OLLAMA_KEEP_ALIVE=10m`); `:11435` is forced CPU (`CUDA_VISIBLE_DEVICES=-1`, `OLLAMA_NUM_GPU=0`, `OLLAMA_LLM_LIBRARY=cpu_avx2`, `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, `KEEP_ALIVE=5m`) with its own `/mnt/hdd/ollama-cpu-data` holding `qwen3-vl:8b` and `lullwood-qa-tester:latest`. Both run `OLLAMA_NUM_PARALLEL=1` / `OLLAMA_MAX_LOADED_MODELS=1` deliberately.
 - **`MemorySwapMax=0` + `OOMPolicy=continue` is true of the *guarded* units only** — paperclip, both ollamas, pr-e2e-watch, local-qa-ondemand. `gate-daemon` and `searxng` have no memory guard at all and sit at systemd's defaults (`MemorySwapMax=infinity`, `OOMPolicy=stop`). Where the guard is set it is intentional: a cgroup that cannot swap dies fast and alone rather than dragging the whole box through minutes of thrash, and `OOMPolicy=continue` keeps the service alive when one child is killed.
+- **A cgroup cap is not what usually kills things here.** Every ollama-cpu kill in the current boot is `constraint=CONSTRAINT_NONE … global_oom` — the host ran dry and `OOMScoreAdjust=600` volunteered that unit. `MemoryMax` decides *who* dies when the box is already out of memory more often than it decides *that* something dies.
 - `MemAvailable` on this box routinely swings between ~3.6 GB and ~13.3 GB within half an hour — today's boot-check log alone spans 3652 MB to 13345 MB. Any threshold you add must tolerate that.
 - Paperclip's 9 G cap is shared with its embedded Postgres, and `MemoryPeak` has already touched it. Treat 9 G as a two-tenant budget.
 - `~/.config/systemd/user/` contains several `.bak-*` files next to the live units, and the `*.service.d/` directories contain `.bak-*` drop-ins. Edit the live unit or the live `.conf`, not a backup, and `systemctl --user daemon-reload` after.
 - The Gate is live and healthy right now — `gate-install.sh status` returns `UP TO DATE`, `gate-status` shows `daemon liveness fresh`, `x_current 4 (range 4-4)`, all five slots free, 2 parked sessions, both queues empty. That is the expected picture under a quota hold. Touch it only through `gate-install.sh`.
+
+<a id="wiki"></a>
+
+### The wiki
+
+Every cross-agent fact in this document that is not in the tree resolves in the wiki — 816 pages on
+this box, server-side only, never in git. It has its own chapter: see [The wiki](#wiki).
+
+<a id="wiki"></a>
+
+## The wiki — the studio's memory
+
+### Where it lives, and what it is
+
+The fleet's institutional memory is **not in this repository**. It is 816 markdown pages on the Lullwood server at `/home/noam/.paperclip/shared/wiki/wiki`, and nothing syncs it to git, Vercel, or GitHub. Every `wiki:` reference in a source comment — `wiki: systems/dt-clamp-vs-walltime`, `wiki:game/port-plan`, `decisions/0015-cue-triple` — points there. Grepping this tree for those paths finds nothing, which is the trap; the release chapter already carries the same warning for `decisions/NNNN-*`.
+
+It is an implementation of Karpathy's `llm-wiki` pattern, adopted on the studio's first day as `decisions/0001-shared-wiki` ("ADR 0001 — Shared LLM Wiki over PARA memory"): knowledge is compiled once into a persistent interlinked markdown tree, and later questions are answered *against the wiki* rather than re-derived. The contrast that gives it its purpose is per-agent PARA memory (`$AGENT_HOME/memory/`, `MEMORY.md`), which is private to one agent and invisible to every other. Anything a second agent would benefit from is supposed to land here instead.
+
+Three layers sit under `~/.paperclip/shared/wiki/`:
+
+| Path | Owner | Rule |
+|---|---|---|
+| `raw/` | humans + agents | Immutable source documents, `chmod 444`. Only two files: the founding hiring plan and the base64-stripped `forest.html` prototype the whole port was decided against. |
+| `wiki/` | agents | The 816 pages. Fully agent-owned. |
+| `CLAUDE.md` | VP R&D | The schema: structure, page format, conventions, the ten rules. Read this before anything else. |
+| `bin/wiki` | VP R&D | A dependency-free Node CLI, ~1300 lines. The **only** supported way to write. |
+
+**How a person reads it.** SSH to the box; nothing is served over HTTP.
+
+```bash
+WIKI=/home/noam/.paperclip/shared/wiki/bin/wiki
+$WIKI status                       # page counts, who holds which lock
+$WIKI query dt clamp wall time     # scored full-text search over all pages
+$WIKI read systems/dt-clamp-vs-walltime
+$WIKI log --limit 20               # what every agent has done recently
+$WIKI history <page>; $WIKI restore <page> [ts]
+```
+
+`wiki/index.md` (124 KB) is the generated catalog — every page, one line, grouped by `type`; it is the right entry point and it is also slightly behind (its header says 814 pages, last rebuilt 2026-09-12 by the Feature Scout, against 816 on disk). `wiki/log.md` is a 1.3 MB append-only journal, `## [YYYY-MM-DD] op | subject`. Neither may be hand-edited.
+
+**The `.history/` trap.** Every overwrite snapshots the previous version to `wiki/.history/<page-id>/<iso8601>.md`, newest 20 per page. That is currently **870 snapshot files across 274 page directories** — more than half of what a naive `find` returns (1686 files vs. 816 real pages). Every grep must exclude it:
+
+```bash
+grep -rl "<term>" ~/.paperclip/shared/wiki/wiki --include=*.md | grep -v /.history/
+```
+
+The CLI's own walk skips dotfiles, so `wiki query`, `wiki index` and `wiki lint` are already clean; only hand-rolled greps are exposed.
+
+**Writing is CLI-only, and that is enforced by consequence rather than by permission.** `Write`, `Edit`, `cat >` and `sed` all bypass the per-page lock and silently clobber a concurrent edit. Three such incidents (2026-08-16 ×2, 2026-08-20) are why `wiki write` now refuses a write that would drop >40% of a page's bytes or remove an existing `## ` heading unless `--replace` is passed, and why `--append`/`--prepend` exist as first-class merges under the lock.
+
+### The taxonomy
+
+Twenty-four top-level directories plus loose root pages. The schema in `CLAUDE.md` suggests seven of them; the other seventeen grew organically, and the size distribution shows which suggestions actually took.
+
+| Directory | Pages | What belongs | Real examples |
+|---|---:|---|---|
+| `game/` | **423** | Everything about the product: per-ticket diagnoses, root causes, verification results, specs, plans. Overwhelmingly ticket-shaped (`lulNNN-*`). Split into four namespaces below the root. | `game/port-plan` — "Next.js Port Plan (M2)"; `game/repo-structure` — "Repo structure — read NOAM_MDS/ARCHITECTURE.md first"; `game/qa-hooks-silent-noop`; `game/lul237-replay-root-cause` |
+| ↳ `game/mechanics/` | 56 | Feature Scout's namespace — what exists in the world and what the player *does*. | "PROPOSAL: Set her down — the carry leg's missing verb"; `game/mechanics/lul1623-throwables-input-conflicts` |
+| ↳ `game/economy/` | 26 | Game Economist's namespace — earn, spend, risk, lose. | "PROPOSAL: Embers — bank the child's warmth or lose it"; `game/economy/tier-reward-multipliers` |
+| ↳ `game/psychology/` | 15 | Player Psychologist's namespace — why it feels a way and why they return. | "FINDING: difficulty is the only choice the player ever makes"; `game/psychology/carry-detection-fairness` |
+| `systems/` | **158** | Infrastructure, CI, the fleet, and the traps. The most-cited namespace in this codebase. | `systems/dt-clamp-vs-walltime` — "The dt clamp makes wall-clock timeouts lie in headless tests"; `systems/the-gate` — "The Gate -- fleet concurrency limiter (OFF LIMITS to every agent)"; `systems/headless-qa-rig`; `systems/release-train`; `systems/concurrency-limit` |
+| `decisions/` | **69** | ADRs: the decision, the alternatives rejected, why — so nobody relitigates. 16 numbered, 53 ticket-named. | see below |
+| `playbooks/` | **33** | Repeatable how-tos and API traps. Some are enormous (`review-protocol.md` is 286 KB, `paperclip-api-traps.md` 176 KB). | "Paperclip API — the traps that cost real calls"; "Playbook — Onboarding a New Agent"; `playbooks/using-the-wiki` |
+| *(root, loose)* | **33** | Unfiled. Backlog-keeper cycle reports, `lulNNNN-*` tombstones, board audits. Mostly things that should have landed in `status/` or `process/`. | `backlog-keeper-2026-09-03-prune-cycle.md`; `board-state-anomaly-2026-09-03.md`; `lul-1277-tombstone.md` |
+| `process/` | **29** | How the board and the pipeline behave, as observed. Heavily CEO Board Assistant. | `process/board-precedents` — "shapes the CEO Board Assistant may act on"; `process/ticket-closure-rot` — "shipped work that the board still calls `backlog`" |
+| `status/` | **17** | Point-in-time snapshots, explicitly dated and expected to age out. | "Quota hold, 2026-08-15 — LIFTED, the studio is running again"; `status/studio-review-2026-09-07` |
+| `incidents/` | **13** | What broke, why, and the fix. Filenames are ISO-dated. | "DAILY_REPORTS stopped producing on 2026-08-24 and every run since was g…"; `incidents/2026-09-03-shared-tree-concurrent-branch-switch` — "Near-miss — concurrent branch switch in shared /home/noam/lullwood" |
+| `specs/` | **11** | Implementation specs the engineers build against. | "Implementation spec — E2-E6, the bigger wrapping world (LUL-1094)"; "SPEC: LUL-1438 carry-leg fairness — invert the light curve" |
+| `concept/` | 8 | Misc. analysis pages; overlaps `systems/` with no clear boundary. | `concept/lul1769-swiftshader-boot-cost-artifact` |
+| `company/` | 5 | Mission, milestones, budget, approval gates. | "Milestones M0-M5"; "Approval Gates" |
+| `audit/` | 2 | Board- and code-health audits with their disposition. | "The 77 blocked tickets were mostly a cycle-scheduler artifact"; `audit/lul1330-ceo-tickets-closed-2026-09-02` |
+| `lessons/` | 2 | Generalized post-mortem learnings, as distinct from the incident itself. | "Two live runs can claim the same backlog issue within the same mi…"; "LUL-1074 concurrency storm — three sibling CEO runs on one ticket" |
+| `research/` | 2 | Local-model / web-research digests. | `research/local-digest`, `research/local-queries` (200 KB) |
+| `duplicate-tickets/` | 2 | Ticket-vs-PR duplication findings. | `duplicate-tickets/lul2125-vs-pr507` |
+| `pitfalls/` | 1 | Intended for "this API lies to you" notes; almost entirely absorbed by `systems/`. | "blockedBy PATCH silently no-ops when the blocker issue is assigne…" |
+| `conventions/` | 1 | Intended for coding conventions; effectively dead — conventions live in `AGENTS.md` and `docs/` instead. | `conventions/react-memoization` |
+| `agents/` | 1 | Role charters and ownership boundaries. Only the roster was ever written. | "Agent Roster" — headcount, `maxConcurrentRuns`, the withdrawn 10-agent cap |
+| `routing/` | 1 | Misrouted-ticket forensics. | "LUL-1911/LUL-1912 orphaned as blocked tombstones under Founding E…" |
+| `blockers/`, `corrections/`, `log/`, `ops/`, `project/` | 1 each | One-off namespaces created by a single agent and never used again. | `ops/task-runner-paused-2026-09-05`; `corrections/lul393-close-note` |
+
+Authorship, by `updated_by` across all 816 pages: VP R&D 167, Founding Engineer 140, Code Reviewer 112, CTO 83, Game Engineer 73, Game Tester 57, Feature Scout 53, Board Operator 35, Game Economist 22, Backlog Keeper 17, Task Runner 13, Player Psychologist 11. The operation mix in `log.md` is the more telling number: **3621 reads, 3109 queries, 2648 edits, 15 creates, 2 ingests, 1 restore.** It is read far more than it is written, which is the behaviour the pattern wants.
+
+### `decisions/NNNN-*` — the numbered records
+
+The convention is ADR-style: `decisions/NNNN-<slug>`, frontmatter `type: decision`, a body carrying **Date / Status / Driver / Scope**, then Decision, Why, Consequences, Related. **16 of the 69 pages in `decisions/` are numbered**; the rest use `<ticket>-<slug>-<date>` (`lul-2400-ending-ceremony-accepted-2026-09-12`) and are per-ticket rulings rather than standing policy.
+
+The numbering has two defects worth knowing before you cite one. **0004–0008 were never written** — the sequence jumps from `0003-quota-triage` to `0009-force-push-conflict-pending`. And **five numbers are duplicated** by unrelated decisions: 0010, 0012, 0013, 0014 and 0015 each name two different pages. A bare `decisions/0014` citation — which `.github/workflows/tier-approve.yml:220`, `scripts/pr-tier.mjs:28` and `scripts/pr-tier.test.mjs:50` all use — is genuinely ambiguous between `0014-tier-b-automation` and `0014-board-open-count-growth-accepted-2026-09-07`. Always cite the full slug.
+
+These are the numbered records that are load-bearing for this repository today, each verified as cited from a tracked file:
+
+| Page | What it fixes in place | Cited from |
+|---|---|---|
+| `0001-shared-wiki` | The wiki itself; also the canonical "company started 2026-08-13" date. | `scripts/daily-report.mjs:30,324`, `DAILY_REPORTS/README.md:72`, `DAILY_REPORTS/2026-08-13.md:5` |
+| `0002-threejs-pin` | "Pin `three@0.128.0` for the Next.js port" — exact pin, no caret. **Now stale; see below.** | `code-reviewer-AGENTS.md:30` names it "the one most likely to be violated silently" |
+| `0010-no-force-push` | Force-push banned on every branch including your own; branches track `main` by backmerge only. | `auto-pr.yml:182`, `automerge.yml:162`, `approve-parked-runs.yml:34`, `version-cut-finalize.yml:19`, `docs/FEATURE_CHECKLIST.md:48` |
+| `0010-wind-hud-overrides-no-readouts` | The LUL-1724 wind indicator overrides LUL-195's no-numeric-readouts stance. | `docs/specs/lul-1724-wind-direction-awareness.md:262` |
+| `0011-pat-leaked-via-remote-url` | Treat a PAT embedded in an `origin` URL as burned; the incident that created the guard. | `scripts/check-git-remote-credentials.mjs:5`, `daily-report.yml:30,227` |
+| `0012-feature-impact-bar` | Every feature must have big, visible world impact — the founder's bar. | `lib/game/veil.ts:9`, `docs/FEATURE_CHECKLIST.md:21,72`, `docs/ELEMENTS.md:982,1051` |
+| `0012-mobile-parity-mandate` | Mobile is half of every ticket (LUL-527). | `docs/specs/set-her-down.md:281` |
+| `0014-tier-b-automation` | Tier B has no automated approval path; the allowlist policy the bot quotes. | `auto-pr.yml:226,265`, `automerge.yml:222,242` |
+| `0015-cue-triple` | Every interactive map feature ships a visual cue, an audio cue and an explanation. A missing leg is P1. | `docs/CUES.md:3,28`, `docs/FEATURE_CHECKLIST.md:29,77`, `docs/ELEMENTS.md:1481`, `docs/specs/TEMPLATE.md:46`, three `docs/specs/lul-2*` specs |
+| `0016-tier-approve-no-auto-merge-marker` | The `[no-auto-merge]` structural override marker. | `tier-approve.yml:47,216,231` |
+
+`docs/CUES.md` exists *only* as the standing registry for `0015-cue-triple`, and `docs/FEATURE_CHECKLIST.md` is essentially four wiki decisions transcribed into checkbox form. Two documents in this repo are downstream artifacts of pages that are not in it.
+
+### How agents are supposed to use it
+
+Verified against the live instruction bundles at `~/.paperclip/instances/default/companies/<cid>/agents/<agent-id>/instructions/`, and against the role templates in `~/.paperclip/shared/agent-roles/`.
+
+**All 17 agent directories carry `WIKI.md`** beside `AGENTS.md`, but only `AGENTS.md` is injected into a session — so `WIKI.md` is reached only because **13** of the 17 `AGENTS.md` files tell the agent to read it, and **10** carry the verbatim `## Shared state — the wiki (MANDATORY)` block. The four that do neither never learn the wiki exists.
+
+The loop each agent is given is four steps:
+
+1. **Query before you research.** `$WIKI query <terms>` — first, always. If the wiki answers it, cite the page id and move on. Duplicated research is the waste the wiki exists to kill, and it has a price tag: the Game Engineer's charter opens with "The studio has shipped the same mechanic twice. Cost: a whole branch, thrown away" (`systems/lul38-branch-vs-main-duplicate-work`), and orders `$WIKI query` *before* `git log` and before grepping the engine.
+2. **Do the work.**
+3. **Write what you learned, in the same run you learned it.** "Context dies at session end; files do not." Because `$AGENT_HOME` memory is unreadable by every other agent, a durable finding that stays there is lost.
+4. **Cross-link the new page** from at least one existing page, or lint flags it an orphan.
+
+The role-specific bindings are sharper than the generic block:
+
+- **Code Reviewer** — the wiki is stated as the thing that distinguishes it from a generic reviewer: *"reviewing without querying it first is malpractice."* It must query the subsystem the diff touches before forming an opinion, must read `game/repo-structure`, the accepted `decisions/*`, `game/port-plan`, and the `systems/*` traps, and must **cite page ids in findings** — "this duplicates the clamp logic described in `systems/dt-clamp-vs-walltime`" is a finding with authority; "this looks duplicated" is an opinion. The closing rule is the curation mechanism: *"A finding you have made three times is a wiki page you failed to write."* It owns `playbooks/review-protocol`.
+- **Game Engineer / Game Tester** — `$WIKI query` before writing code; gameplay, visual and audio claims are marked **unverified** in the wiki until the tester confirms them, the same bar as `AGENTS.md`. And: *"If you knowingly depart from something recorded in the wiki (a `decisions/NNNN-*` page, a plan page, or a ticket's stated scope) — say it explicitly in your handoff comment and file the ticket yourself."*
+- **The Discovery Team** (Feature Scout / Game Economist / Player Psychologist) — three disjoint namespaces (`game/mechanics/`, `game/economy/`, `game/psychology/`), and `$WIKI log` at the start of every cycle is named as *the single mechanism* that stops two of them independently proposing halves of the same feature. Their charter's hard line: **"the wiki or it does not exist."**
+- **CEO Board Assistant** — `$WIKI query board-precedents <ticket shape>` is step one of every run, and its reply format carries a mandatory `PRECEDENT <wiki page id, or "none">` field. `process/board-precedents` is a genuine decision table, not a note.
+
+**Relation to tickets.** The wiki is not a ticket tracker and does not replace one: rulings live here, work lives on the Paperclip board, and the two are joined by the LUL number in the page id. A durable page (`decisions/lul-2308-store-expansion-accepted-2026-09-11`) settles what was decided; the ticket tracks whether it shipped. Departing from a page requires a *ticket*, filed by the departing agent — a wiki edit alone is explicitly not enough.
+
+**Curation.** `CLAUDE.md` assigns the schema and `wiki lint` to **VP R&D**, which the roster confirms ("Lead agent; owns the wiki schema and lint"). VP R&D is the single largest contributor (167 pages) and still active — 85 of the last 400 logged operations, most recently `decisions/lul-2541-replay-progression-accepted-2026-09-12`. Lint is specified to run once per cycle and to **report, never rewrite**. In practice it does not appear to run at all, which is the subject of the next section.
+
+### The failure mode: nothing checks a `wiki:` citation
+
+**93 files in this repository cite a wiki page** — engine comments, every Playwright spec family, `lib/game` modules, six workflows, `docs/`, `scripts/`. Across them, 83 distinct paths. The five most-cited are `systems/dt-clamp-vs-walltime` (26), `systems/unit-testing-standard` (18), `systems/lul44-diagnosis-and-fix` (10), `systems/headless-qa-rig` (7) and `game/lul274-input-mode-separation` (7). These are not decorative: they carry the reason a test polls instead of sleeping, why the engine is one file, and why `lib/` owns the decision while the engine owns the state.
+
+None of them is checked by anything. There is no linter, no CI step, no pre-commit hook that resolves a `wiki:` path — and there cannot easily be one, because CI runs on GitHub-hosted runners that have no access to the server the wiki lives on. Two failure shapes follow, and both are live today.
+
+**1. Broken references — a cited page that does not exist.** Two of the 83 resolve to nothing:
+
+- `lib/game/cover.ts:9` — `// canSee stay in the engine for now; see wiki game/lul450-status for why`. There is no `game/lul450-status`. The nearest pages are `systems/main-red-since-lul450` and `game/lul384-status`; neither explains the layering choice the comment defers to.
+- `docs/specs/lul-2320-log-los-catch.md:505` — cites `game/lul2320-log-los-catch`. No page by that id, and no page anywhere in the wiki mentions LUL-2320. The spec pointed forward at a write-up that was never filed.
+
+Three more paths (`systems/unit-testing-`, `decisions/lul-2281-`, `decisions/lul-2281-pickup-is-`) are the same defect in a milder form: a page id wrapped across two comment lines, so a mechanical resolver — and a reader copy-pasting — gets a truncated id.
+
+**2. Silent content drift — the cited page still exists, and is now wrong.** This is the worse one, because nothing about it looks broken. The clearest instance runs through three pages at once:
+
+- `decisions/0002-threejs-pin` still reads **Status: Accepted**, `updated: 2026-08-14`, and mandates `"three": "0.128.0"` — *"exact pin, no caret"*, with a documented revisit trigger. The repository has shipped **`three@0.185.1`** since commit `5085c48` (2026-08-29); `origin/main` and `origin/release/next` both carry it, with `@types/three` at `0.185.4`. The ADR was superseded by the code and never marked superseded, in direct violation of rule 6 of the schema ("Supersede, don't delete").
+- `systems/three-r185-upgrade` — the page that *was* tracking the upgrade — is frozen at `updated: 2026-08-28` and states flatly: *"There is no pull request for this branch… The studio still ships r128."* It landed the next day. That page is cited four times from this repo.
+- `game/port-plan:85` still says *"`three@0.128.0`, exact pin."* The same page is cited from `engine/forest-engine.d.ts:2` for the claim that `lib/game/` decomposition is "still-open scope" — written 2026-08-14, when `lib/game/` did not exist. It now holds roughly seventy modules and their unit tests.
+
+The studio's own tooling would catch the first class of failure and not the second, if it ran. `wiki lint` reports broken cross-references, orphans, stale pages, metadata problems, open TODOs and stuck locks — but it only resolves `[[page-id]]` links *between wiki pages*. It has no knowledge of this repository, so a `wiki:` path in a source comment is invisible to it by construction. And the evidence that lint is not being run is strong: **365 of the 816 pages carry a `type` outside the CLI's seven-value `PAGE_TYPES` set** (`status`, `finding`, `incident`, `lesson`, `playbook`, `log`, `system`, `proposal`, `note`, `report`, …), every one of which lint reports as a metadata problem; and `log.md` contains no `lint` operation in 47,156 lines — though lint only appends to the log when passed `--log`, so that is suggestive rather than conclusive. Its staleness check is also structurally inert: `STALE_PAGE_DAYS = 45`, and the oldest page in the wiki was written 2026-08-13, 31 days ago. **No page on this wiki can be flagged stale until 2026-09-27.**
+
+The shape of the fix is already in this repository, for a different document. `scripts/check-elements-citations.mjs` exists because `docs/ELEMENTS.md`'s ~118 `L<n>` line citations into the engine had been re-derived by hand three times and *"nothing ever failed when they drifted"*; when LUL-588 finally measured them, **0 of 82 resolvable citations were correct**, and 65 had been wrong on the day they were written. It now gates CI against a shrink-only baseline. The `wiki:` citations are the same class of reference with the same absence of a check, one network hop further away — and, unlike `L<n>` numbers, they silently survive being wrong because the page still opens and still reads plausibly.
