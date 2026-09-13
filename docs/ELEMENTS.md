@@ -28,6 +28,8 @@ PR. If a future PR doesn't, the interaction matrix below is stale advertising,
 not a source of truth — treat any diff that changes gameplay-relevant code in
 `engine/forest-engine.js` as required to touch this file too.
 
+Cue-triple audit: see `docs/CUES.md`.
+
 ---
 
 ## Elements (main branch)
@@ -37,10 +39,10 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
 **What it can do**
 - Move (WASD/arrows), walk or run (`Shift`, hold by default; toggle if the
   `runMode==='toggle'` accessibility setting is on, `ShiftLeft`/`ShiftRight`
-  edge-detect at L1506-1507 flips `toggleRunOn`),
+  edge-detect at L1526-1527 flips `toggleRunOn`),
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
-  `running` derivation at L2802. In toggle mode, touch's analogue is
+  `running` derivation at L2822. In toggle mode, touch's analogue is
   `triggerTouchToggleRun()` (gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
@@ -57,20 +59,21 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
   (`MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
-  within `HIDE_RADIUS` (2.2u) of a `bramble` or `log` cover prop's true,
+  within `HIDE_RADIUS` (2.2u) of a `bramble` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
   edge distance via `distanceToCoverEdge()` in `lib/game/cover.ts`,
   LUL-405/LUL-430 fix — previously approximated the edge as a
   `Math.max(hx,hz)` circle, which over-extended the trigger several times
-  past the object's real thickness on an elongated log's thin side). Hiding
-  lowers eye
+  past the object's real thickness on an elongated prop's thin side; `log`
+  was in `HIDE_KINDS` at the time this fix landed but was removed later,
+  LUL-2311). Hiding lowers eye
   height (2.2→1.05, damped ~0.3s), silences footsteps/scent deposit, and
   shrinks predator detect range the longer it's held (`STILL_RAMP`=1.2s,
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L5527 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L4898, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6618 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L5857, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -95,6 +98,14 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   point's radius by `WIND_AGAINST_RADIUS_MULTIPLIER` (0.8, i.e. -20%) at
   deposit time only — detection math (`isScentDetected`, drift) is unchanged.
   Wind direction is shown to the player via `#windIndicator` (see HUD section).
+- **LUL-2539/2485 cheap slice:** `windHighSpeed`, a per-run boolean rolled 50/50 in
+  `generateWind()` (`engine/forest-engine.js:1811`) from an independent seeded generator
+  (`mulberry32(currentSeed ^ 0x57494e44)`, not the shared `rng` stream, to avoid perturbing
+  `QA_PINNED_SEED` map-gen reproducibility), reduces the effective scent lifetime by
+  `WIND_HIGH_SPEED_LIFETIME_MULTIPLIER` (0.8, i.e. -20%) via `scentLifetimeWithWind()`
+  (`lib/game/scent.ts`) — stacks multiplicatively with the Quiet Step tier reduction, not a
+  replacement for it. No player-facing indicator; pure tuning knob per
+  [[decisions/lul-2485-scent-wind-tuning-accepted-2026-09-12]].
 - **As of `LUL-2230`**, the scent trail itself is rendered, not just implied by
   the wind arrow: a `THREE.Points` cloud (`scentTrailPts`) drawn every frame
   from the live `scentPoints` array, one mote per point, at its
@@ -124,7 +135,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   only**), but branch `lul-26-difficulty-accessibility` is **not merged**.
   `engine/forest-engine.js` on `main` has no such identifiers today
   (verified by grep, 2026-08-18) and its own settings-panel comment
-  (L1692-1693) says so directly: "There is no separate modal settings
+  (L1712-1713) says so directly: "There is no separate modal settings
   surface today (LUL-70, still backlog)." Previous revisions of this doc
   cited engine line numbers for this bullet as if it were live; that was
   wrong at every revision, not just a drift artifact — see the LUL-411
@@ -168,7 +179,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   button, and `tick()`'s movement-breaks-cover check) already funnel
   through, so `feature_engagement('hide')` fires on every hide entry again.
 - Eye height (`eyeH`) is damped toward `hidden ? 1.05 : CONFIG.eye` (2.2) at
-  an ~0.3s time constant (`Math.min(1, dt*8)`, L2272), not snapped. **Fixed,
+  an ~0.3s time constant (`Math.min(1, dt*8)`, L2292), not snapped. **Fixed,
   LUL-273:** `canopyBlockedR()`/`blocked()` now recompute each tree's canopy
   radius live against this same `eyeH` (`canopyRadiusAtEye(t.s, eyeH,
   CANOPY_GEO)`) instead of the `crCanopy` cached at map-gen time for a fixed
@@ -177,7 +188,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   eye height sits closer to its wider base. See wiki
   `game/lul267-canopy-collision-fix`.
 - Player FOV for "can the player see the charging predator" gating is ~130°
-  total (`PLAYER_FOV_COS`, `cos(65°)`, L1679) — independent of the render
+  total (`PLAYER_FOV_COS`, `cos(65°)`, L1699) — independent of the render
   camera's own 70° vertical FOV (`camera`); this is a gameplay cone, not
   the literal viewport.
 
@@ -187,13 +198,17 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   rotated-AABB cover props. No collider vs. lake, home, fog, child, or
   predators — see above.
 - No vertical/ground collision at all: eye height is a formula
-  (`eyeH + bob + jumpY`, L2375), never a raycast against the ground mesh.
+  (`eyeH + bob + jumpY`, L2395), never a raycast against the ground mesh.
 - Two different downstream checks read player position without going through
   `blocked()`: `hasLOS()` (sight, rotated-AABB raycast, includes tagged
-  trees `s>1.4`) and the distance-only scent/noise/catch/pickup/win checks
-  above — geometry gates *sight only*; it never gates scent or hearing
-  (`checkScent()` and `checkNoise()` take no cover/LOS
-  argument at all).
+  trees `s>1.4`) and the distance-only scent/noise/pickup/win checks above —
+  geometry gates *sight only*; it never gates scent or hearing (`checkScent()`
+  and `checkNoise()` take no cover/LOS argument at all). Catch is gated on
+  sight too, always: `chase`/`hunt` kill via `canCatchInChase()`/`isCaught()`,
+  which both require `canSee()` (and therefore `hasLOS()`) regardless of
+  `hidden` — this is unchanged by LUL-2320. What LUL-2320 changed is what
+  `hasLOS()`/`canSee()` themselves report while the player stands inside a
+  Log/Bramble's own footprint — see those cards and the predator card below.
 
 ---
 
@@ -204,7 +219,7 @@ not a source of truth — treat any diff that changes gameplay-relevant code in
   glowing and idly bobbing, marked by ambient "wisp" particles
   (`placeBabyWisps()`) so it's spottable through fog.
 - Be picked up once (`baby.taken`, `pickup()`), triggering a scripted
-  10s pickup cinematic (`tick()`'s `pickingUp` branch, L2329-2359) that ends
+  10s pickup cinematic (`tick()`'s `pickingUp` branch, L2349-2379) that ends
   in a sky-burst (`fireBoom()`).
 - Ride along at the player's position while carried, small and glowing
   (`carrying` branch, `tick()`), until the player crosses
@@ -315,13 +330,17 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What they can do (shared)**
 - Roam via random waypoints when nothing has noticed the player
-  (`state==='roam'`, L1010-1019). A predator that gives up an
+  (`state==='roam'`, L1030-1039). A predator that gives up an
   investigate/sniff or flank/hold loop (never a chase's distance-based
   give-up) stashes the player's position and gets a bounded number of
   ring-biased return-sweep waypoints (`LKP_MAX_SWEEPS`, `pickRoamWaypoint()`,
   `lib/game/predator.ts`) before it truly forgets and reverts to the
   original uniform-random pick -- a predator that camping used to shake for
-  good now circles back a few times first (LUL-1573/LUL-1620).
+  good now circles back a few times first (LUL-1573/LUL-1620). A re-alert
+  mid-sweep (scent/noise/cry) that gives up again does not refill the count
+  back to `LKP_MAX_SWEEPS` (`armReturnSweep()`, `lib/game/predator.ts`) --
+  only a genuinely fresh loss of trail (no live sweep, or the player has
+  left `LKP_REPEAT_RADIUS`) arms a full memory (LUL-2505).
 - A `chase`'s distance-based give-up (`shouldGiveUpChase()`,
   `lib/game/predator.ts`) now compares against `effectiveDetect(p)` instead
   of the raw `PSPEC[kind].detect`, so the give-up radius scales with the
@@ -369,7 +388,7 @@ one geometry builder (`makePredator()`), differentiated by the
 - **Wolf and lion only**: telegraph-and-charge at 7-16 units range
   (`CHARGE_TRIGGER_MIN/MAX`, `lib/game/charge.ts`), dodgeable by a
   well-timed jump. Bear deliberately excluded — "the slow unavoidable
-  threat" (L1032-1033 comment) — contrast with wolf/lion is the design
+  threat" (L1052-1053 comment) — contrast with wolf/lion is the design
   intent, not an oversight.
 - Catch (kill) the player at `dist < rad+1.3` while actively seeing/hunting
   them (`triggerDeath()`, multiple call sites in `updatePredators()`).
@@ -413,9 +432,20 @@ one geometry builder (`makePredator()`), differentiated by the
   lives in `lib/game/charge.ts`, unit-tested, imported into the engine —
   the engine only owns *when* one can start (`p.chargeCooldown<=0`,
   `CHARGE_COOLDOWN`=10s, `engine/tuning.js`) and the resulting movement.
+  LUL-2457: on `'cleared'` (a successfully dodged charge), the engine zeros
+  `p.vx`/`p.vz` (residual charge-sprint velocity used to close the gap and
+  re-catch the player within a couple of frames, the LUL-213/LUL-323 bug
+  shape recurring through the velocity-lerp door instead of the overshoot-
+  duration one) and arms `p.chargeRecoveryT = CHARGE_RECOVERY` (`lib/game/
+  charge.ts`, `(CHARGE_WINDOW + CHARGE_RUN_TIME) * 2`), which suppresses
+  `shouldRevertInvestigateToChase()`'s normal instant-revert
+  (`engine/forest-engine.js`, the `'investigate'` state) for that window —
+  a dodge landing mid-charge otherwise left the predator close enough that
+  the ordinary sniff-loop revert closed the gap again before the player got
+  any reaction time.
 - Stuck detection: if a predator's actual movement falls under 35% of its
   intended speed for >3s while trying to move, it backs up along its last 6
-  trail points then picks a fresh random waypoint (`p.stuckT`, L1491-1496).
+  trail points then picks a fresh random waypoint (`p.stuckT`, L1511-1516).
   LUL-1091 shipped this at 0.8s but LUL-1597 reverted it: the shorter window
   is sensitive to per-frame wall-clock jitter, causing `predator-determinism`
   e2e divergence across parallel runs with the same seed. The pathfinding
@@ -428,6 +458,9 @@ one geometry builder (`makePredator()`), differentiated by the
   `coverBlockedR`/`canopyBlockedR`) — see above.
 - LOS: same rotated-AABB raycast as the player's own (`hasLOS()`), applied
   symmetrically (`canSee()` calls it both directions along the same line).
+  LUL-2320: a predator standing inside a log/bramble's own footprint is not
+  blinded by it either (`hasLOS()`'s symmetric origin-side skip) — matches
+  the player-side fix and keeps the raycast genuinely symmetric.
 - No ground collision (`p.g.position.y = bob` is a formula, not a raycast,
   same as the player).
 
@@ -451,7 +484,7 @@ one geometry builder (`makePredator()`), differentiated by the
 **What it CANNOT do**
 - Small/mid trees (`s <= 1.4`) never block LOS, only movement — there is no
   tree size below which line-of-sight blocking is guaranteed.
-- Cannot be a hiding spot (`HIDE_KINDS` only contains `bramble`/`log`) —
+- Cannot be a hiding spot (`HIDE_KINDS` only contains `bramble`, LUL-2311) —
   ducking behind a tagged tree blocks sight incidentally but never lets the
   player enter `hidden`.
 - Cannot block predator movement beyond the trunk radius — canopy collision
@@ -507,9 +540,11 @@ one geometry builder (`makePredator()`), differentiated by the
 ### Log (fallen wood)
 
 **What it can do**
-- Everything Rock can do, **plus**: is a valid `hidden`-stance location
-  (`HIDE_KINDS.log = true`) — entering/exiting plays a distinct "hollow
-  log knock" sound (`hollowLogSound()`).
+- Everything Rock can do (LOS-blocking cover), **plus**: it's walkable
+  (`WALKABLE_KINDS.log = true`, see "What it CANNOT do" below) — **but it is
+  NOT a `hidden`-stance location** (`HIDE_KINDS` dropped `log`, LUL-2311;
+  founder brief: a fallen log is thin, walkable cover with nothing to
+  visually be "inside" of, so pressing `KeyH` beside one does nothing).
 - ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()`), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
 - **LUL-384: the player walks and runs over it, no route-around needed** —
@@ -564,22 +599,38 @@ one geometry builder (`makePredator()`), differentiated by the
 **Collision & physics profile**
 - LOS-blocking for both actors, same as Rock (`hasLOS()`, unchanged).
 - **No movement collision for either actor** (LUL-384 removed the
-  player-only block; predators never had one). Catch resolves normally on
-  or beside a log — `isCaught()`/chase are proximity checks, never gated on
-  `blocked()`/`coverBlockedR()`, so a log is not a safe zone.
-- Still gates `findHideSpot()` (proximity search, `HIDE_RADIUS`=2.2u
-  beyond the prop's own edge, L908-922) — unaffected, that function reads
-  `coverGrid` directly and never calls `coverBlockedR()`.
+  player-only block; predators never had one). Catch stays gated on
+  `canSee()` always (`canCatchInChase()`/`isCaught()` in `hunt`, unchanged by
+  LUL-2320 — see the Player collision profile note above), but LUL-2320 fixed
+  what `canSee()` itself reports while standing on a log: `hasLOS()` no
+  longer treats the log's own footprint as occluding the point standing
+  inside it, so an **un-hidden** player on a log now reads as visible (and
+  is caught normally) the moment nothing else blocks the sightline, instead
+  of unconditionally. A **hidden** player's footprint still shields them at
+  range (`canSee()`'s `insideHideFootprint()` check), only reading visible
+  once a predator closes to contact range (`rad + CATCH_MARGIN`) — at that
+  point `canSee()` and `isCaught()` agree, so contact resolves the chase
+  (catch or the sniff-loop hand-off below) instead of gluing. Before
+  LUL-2320, `hasLOS()` treated the log's footprint as an occluder
+  unconditionally (hidden or not, any range), which made *any* player
+  standing on it invisible from every angle and glued a chasing predator at
+  contact range forever.
+- **LUL-2311: no longer gates `findHideSpot()`.** `HIDE_KINDS` dropped
+  `log`, so proximity to a log no longer makes `KeyH` succeed — that
+  eligibility now belongs to Bramble alone. The movement exemption above is
+  independent and unaffected (`WALKABLE_KINDS`, not `HIDE_KINDS`, backs it).
 
 ---
 
 ### Bramble (bush)
 
 **What it can do**
-- Everything Log can do (hiding-spot eligible, `HIDE_KINDS.bramble = true`),
-  with a distinct "leaf rustle" enter/exit sound (`leafRustle()`)
-  — researched against stealth/horror foley convention per the
-  LUL-212 handoff (wiki `game/lul212-hiding-spots`).
+- Everything Log can do (walkable, LOS-blocking cover), **plus**: it's the
+  **only** hiding-spot-eligible cover kind (`HIDE_KINDS.bramble = true` —
+  `HIDE_KINDS` dropped `log` entirely, LUL-2311), with a distinct "leaf
+  rustle" enter/exit sound (`leafRustle()`) — researched against
+  stealth/horror foley convention per the LUL-212 handoff (wiki
+  `game/lul212-hiding-spots`).
 - ~25% of cover-prop rolls (`roll >= 0.75`, `generateCover()`).
 - **LUL-1642: the player walks and runs over it too, same as Log** —
   `coverKindBlocksMovement('bramble')` is now `false`
@@ -594,9 +645,11 @@ one geometry builder (`makePredator()`), differentiated by the
   "sniffing broke — the animal found me while I was still hiding," reported
   as LUL-1642 (Bramble, unlike Log, is not fixed to matching a real "step
   over it" affordance — this is a deliberate deviation from LUL-384's
-  original walkable-vs-solid distinction, made to unify the two `HIDE_KINDS`
-  behind one detection path per the ticket's explicit ask, not an
-  independent design call).
+  original walkable-vs-solid distinction, made to unify Bramble and Log
+  (both `HIDE_KINDS` members at the time) behind one detection path per the
+  ticket's explicit ask, not an independent design call — LUL-2311 later
+  removed Log from `HIDE_KINDS`, but this movement/LOS-unification fix is
+  unaffected, since it was never about hide-eligibility itself).
 
 **What it CANNOT do**
 - Same as Log: no predator movement collision (never had one); as of
@@ -616,9 +669,13 @@ one geometry builder (`makePredator()`), differentiated by the
 **Collision & physics profile**
 - LOS-blocking for both actors, same as Log/Rock (`hasLOS()`, unchanged).
 - **No movement collision for either actor** (LUL-1642 matched Log's
-  LUL-384 exemption; predators never had one). `findHideSpot()`-eligible,
-  unaffected — that function reads `coverGrid` directly and never calls
-  `coverBlockedR()`.
+  LUL-384 exemption; predators never had one), independent of hide
+  eligibility. **The only `findHideSpot()`-eligible cover kind as of
+  LUL-2311** — that function reads `coverGrid`/`HIDE_KINDS` directly and
+  never calls `coverBlockedR()`, so this is unrelated to the movement
+  exemption above. Same LUL-2320 catch behaviour as Log above: `hidden`
+  protects at range via `canSee()`'s `insideHideFootprint()` check, contact
+  range still resolves the chase either way.
 
 ---
 
@@ -731,6 +788,10 @@ one geometry builder (`makePredator()`), differentiated by the
   player does. The `charge` dash is explicitly exempt (LUL-1309).
 - Bias the ambient "twinkle" chime to play brighter/more often when the
   player is near it (`distLake < CONFIG.lake.r*3`, `tick()`).
+- Explain itself once: the first step into `inLakeWater()` fires the `lake`
+  first-encounter hint ("chest-deep water — half pace. predators wade too"),
+  persisted so it only ever shows once per install. See "Hints" below and
+  `docs/specs/lul-2307-first-encounter-hints.md`.
 - Deflect a predator's roam/stuck-recovery waypoint: `updatePredators()`'s
   two waypoint-pick sites (fresh roam target, and the stuck-recovery
   fallback) both route the candidate through `keepWaypointOffLake()`, which
@@ -781,8 +842,10 @@ one geometry builder (`makePredator()`), differentiated by the
   both already avoid (LUL-38 comment, L85: "reuses the spawn point, no new
   rng draw"). If `CONFIG.home` ever moved off the spawn point, this
   protection would silently stop applying.
-- Is not drawn on the minimap (`drawMinimapStatic()` renders trees and the
-  lake only — home has no minimap marker).
+- Drawn on the minimap as a warm stroked ring only, not a filled disc, so it
+  reads distinctly from the lake/bog fills (`drawMinimapStatic()`, LUL-2248) —
+  a fixed 4px minimap radius, since `CONFIG.home.r` is a gameplay proximity
+  radius, not a visual size.
 
 **Behaviours & logic**
 - Static, no RNG draw — same every seed, every restart.
@@ -861,7 +924,7 @@ one geometry builder (`makePredator()`), differentiated by the
 **Behaviours & logic**
 - Single scalar (`density`), read once per frame by the renderer itself.
   `forest-engine.js` now re-derives it every frame from `fogBase` +
-  `veilAmount` via `veilFogDensity()` (`lib/game/veil.ts`, called at L2657)
+  `veilAmount` via `veilFogDensity()` (`lib/game/veil.ts`, called at L2677)
   while the veil is in play — no longer a pure pass-through of whatever
   `setFog()` last set.
 
@@ -1014,11 +1077,74 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
   `hudState`/`pushState()`/`emitState()`: objective text,
   hiding status, win/death screens, charge-dodge prompt, the contextual
-  `#actionPrompt` (LUL-1089: hide/veil prompts), the post-run recap
+  hide/veil prompt (LUL-1089), the post-run recap
   (`#runRecap`). **Not** difficulty/accessibility controls or captions —
   those were built on the unmerged LUL-26 branch; see the Player section's
   note. There is no separate modal settings surface on `main` today
   (engine's own comment, L1692-1693: "LUL-70, still backlog").
+  LUL-2312 pulled every one of those bottom-centre prompts (`#objective`,
+  `#actionPrompt`, `#throwPrompt`, `#chargePrompt`, `#status`) plus
+  `#captionToast` into one component, `ActionPrompt` (`components/
+  ActionPrompt.tsx`), rendered as five always-mounted rows inside a single
+  fixed CSS-grid column, `#actionSlot` (`components/GameCanvas.tsx`). Each
+  `EngineHudState` field named below still means exactly what it did before
+  -- this was a render-layer consolidation only, no engine change. The old
+  element ids survive as `id`/`data-testid` on each row (e2e continuity); the
+  per-element CSS rules and their five independent bottom-offset magic
+  numbers (74/92/110/130px, plus `#objective`'s separate `top:20px`) did not.
+
+  | slot row (priority, top to bottom) | `EngineHudState` fields | `id` |
+  |---|---|---|
+  | charge dodge | `chargeVisible`, `chargeToken` | `#chargePrompt` |
+  | objective (E) | `objectiveVisible`, `objectiveText`, `objectiveReady` | `#objective` |
+  | hide or veil | `coverPromptVisible/Urgent/Kind`, `veilPromptVisible/Urgent` | `#actionPrompt` |
+  | throwable | `heldThrowable` | `#throwPrompt` |
+  | status (hidden/hunted) | `statusVisible`, `statusText` | `#status` |
+
+  `#captionToast` (predator-call captions) reuses the same component,
+  positioned as its own row just above `#actionSlot` rather than as a sixth
+  slot row, since it isn't part of the E/H/F/SPACE priority stack. It moved
+  off its old dedicated amber colour onto the shared `tone="status"` look
+  (same as the hidden/hunted row) -- a declared visual change, not a silent
+  one. `#caveImmunePanel`/`#hint` stayed top-side and out of scope (the
+  ticket's own "may", not "must").
+
+  **## e2e (LUL-2312).** `e2e/action-prompt.spec.ts` rewritten: every
+  `.toHaveClass(/urgent/)` became `toHaveAttribute('data-tone', 'urgent')`,
+  `#actionKey` became `.actionPromptKey` scoped under the row, and a new
+  `#actionSlot row order` describe block pins the five ids' DOM order
+  (`chargePrompt, objective, actionPrompt, throwPrompt, status`) independent
+  of any gameplay staging. `e2e/helpers.ts` gained `expectRowVisible`/
+  `expectRowHidden` (assert `data-visible` rather than mount/unmount) --
+  every other spec that asserted `toHaveCount(0)` or `toBeVisible()`/
+  `toBeHidden()` on `#objective`/`#status`/`#actionPrompt`/`#throwPrompt`/
+  `#chargePrompt` now uses one of those two instead, since none of the five
+  ever unmounts any more: `hide.spec.ts`, `death-persist.spec.ts`,
+  `smoke.spec.ts`, `throwable-mission-hud.spec.ts` (+ its `mobile/` half),
+  `throwables.spec.ts` (+ `mobile/`), `win-persist.spec.ts`,
+  `lul211-founder-report.spec.ts`, `predator-memory.spec.ts`,
+  `charge-dodge.spec.ts`, `mobile/charge-prompt-tap.spec.ts`. `scent-trail.
+  spec.ts`'s `assertNoOverlap` helper also treats a zero-area box as nothing
+  to overlap, since an empty row's content collapses to zero width rather
+  than disappearing from the DOM. Not done in this PR (no existing QA hook
+  supports it): a single scenario with all five rows populated at once to
+  assert pairwise non-overlap directly -- today's coverage exercises at most
+  one populated row per test. Flagged as a `[QA-HOOK]` follow-up, not silently
+  skipped.
+
+  **LUL-2358 fix.** Three cases (`urgent cover prompt`, `no nowrap overflow
+  and no mobile-control collision`, `reduced motion`) staged their chasing
+  lion via `qaTeleportToHideSpot()` + `qaOpenHideNearLion()`; the latter
+  resets the player to the spawn clearing (its own designed cover-free
+  scenario), clobbering the former's teleport, and placed the lion only 4
+  units out -- inside its `CATCH_MARGIN`+`rad` contact range within ~0.18s
+  at the lion's `tuning.js` speed (9.2), so `triggerDeath()` fired before
+  `data-tone` could ever read `"urgent"`. All three now use
+  `qaOpenHideNearLionAtHideSpot()` (`engine/forest-engine.js`), same as
+  `cover wins over veil`; that hook's lion standoff moved from a hardcoded
+  `4` to `LION_STANDOFF = 14` so a chasing lion can no longer close to catch
+  range before any of these tests' assertions run, while staying inside
+  `COVER_URGENT_RANGE` (22) for the urgent-tone premise.
   LUL-1089 adds five new `EngineHudState` fields: `coverPromptVisible`,
   `coverPromptUrgent`, `coverPromptKind` (`'bramble'|'log'|null`),
   `veilPromptVisible`, `veilPromptUrgent`. Cover prompt fires only while
@@ -1039,17 +1165,47 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   lost the explanation a few seconds into a run and never got it back, so the
   hint is now always visible for the whole run (same mount gating as before).
   LUL-1933 found that push
-  unconditional, so it followed every real player (`#minimap` is
-  `display:none` under `data-admin-mode="0"`, see above) and collided with
-  `MobileControls.tsx`'s bottom-anchored Hide/Veil column on short landscape
-  phones. `top:184px; right:16px`/`#windIndicatorHint`'s `top:214px` now apply
-  only under `body[data-admin-mode="1"]`; the default (real player) position
-  reverts to LUL-1724's original `top:20px; right:20px` (`#windIndicatorHint`
-  `top:50px; right:8px`), verified clear of `MobileControls` at every tested
-  viewport. LUL-2057 found the arrow's own ~54px rendered box (28px font,
-  ~1.2 line-height) still overlapped the hint's first line at that 30px gap;
-  `#windIndicatorHint`'s `top` moved to `64px` (default) / `228px`
-  (`data-admin-mode="1"`), a 14px increase in both, to clear it.
+  unconditional, so it followed every real player (`#minimap` was
+  `display:none` under `data-admin-mode="0"`, the default, at the time) and
+  collided with `MobileControls.tsx`'s bottom-anchored Hide/Veil column on
+  short landscape phones. `top:184px; right:16px`/`#windIndicatorHint`'s
+  `top:214px` now apply only while the minimap is actually visible; the
+  default (minimap off) position reverts to LUL-1724's original
+  `top:20px; right:20px` (`#windIndicatorHint` `top:50px; right:8px`),
+  verified clear of `MobileControls` at every tested viewport. LUL-2057 found
+  the arrow's own ~54px rendered box (28px font, ~1.2 line-height) still
+  overlapped the hint's first line at that 30px gap; `#windIndicatorHint`'s
+  `top` moved to `64px` (default) / `228px` (minimap visible), a 14px
+  increase in both, to clear it. LUL-2309 gave the minimap its own
+  `showMinimap` setting, decoupled from admin mode (`#minimap` is now
+  `display:none` under `body:not([data-show-minimap="1"])`, default OFF) --
+  the clearance push moved from keying off `data-admin-mode="1"` to keying
+  off `data-show-minimap="1"`, since it tracks the minimap's own visibility,
+  not admin mode's.
+  LUL-2310: fullscreen has a second entry point besides `GameMenu.tsx`'s
+  `menuFullscreen` button -- **F11** and **Alt+Enter** (`engine/
+  forest-engine.js`'s `keydown` handler), both routed through one shared
+  module, `lib/game/fullscreen.ts` (`toggleFullscreen`/`fullscreenSupported`/
+  `isFullscreenActive`), so the button and the keys can never implement two
+  different fullscreen behaviours the way EngineActions and init()'s return
+  object once drifted (LUL-1697). The module also adds the `webkit`-prefixed
+  fallback (`webkitRequestFullscreen`/`webkitExitFullscreen`/
+  `webkitFullscreenElement`/`webkitfullscreenchange`) Safari < 16.4 needs --
+  `fullscreenSupported()` is true if either the unprefixed or webkit API is
+  present, so `menuFullscreen` now renders there too. Browser collision
+  matrix (ticket has the full writeup): F11 is Chromium/Firefox's own
+  fullscreen key, so the keydown handler calls `e.preventDefault()` on it
+  before toggling, or the browser's own handling fires alongside this one and
+  `document.fullscreenElement` desyncs from what's on screen; Alt+Enter is
+  the fallback since F11 alone does nothing on macOS Chromium without Fn
+  held, and Firefox is inconsistent about whether the page ever sees F11 at
+  all. iOS/iPadOS Safari exposes neither API for a non-`<video>` element, so
+  the key does nothing and the button stays absent there, unchanged from
+  before. The keydown branch gates on `!won && !dead` rather than the usual
+  `isPlaying(runState())`, since it's meant to work on the pre-entry gate
+  screen too and only end screens should suppress it; `e.repeat` is dropped
+  so holding either combo down doesn't spam request/exit calls every OS
+  auto-repeat tick.
   LUL-2131: `#windIndicator`/`#windIndicatorHint` (and `#throwPrompt`, `#actionPrompt`,
   `#captionToast`, all `components/Hud.tsx`) now also gate on `!state.winVisible &&
   !state.deathVisible` -- `state.entered` alone stays true through both end screens
@@ -1060,8 +1216,13 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   sticks/buttons sit at z-index 30/31, genuinely above the end screens, not just
   behind them at a lower z-index -- and `GameMenu.tsx`'s `#gameMenu` (hamburger +
   panel, z-index 20), which does the same. `#chargePrompt` needed no HUD-layer
-  gate: the engine already resets `chargeVisible: false` in both `arriveHome()` and
-  `triggerDeath()` (`engine/forest-engine.js`).
+  gate at the time: the engine already resets `chargeVisible: false` in both
+  `arriveHome()` and `triggerDeath()` (`engine/forest-engine.js`). LUL-2312
+  added the same `!winVisible && !deathVisible` gate to `#chargePrompt` and
+  `#objective`/`#status` anyway, once all five moved into one component --
+  redundant with the engine-side reset for the one-frame gap between
+  `triggerDeath()`/`arriveHome()` running and the *next* `tick()` actually
+  clearing the flag, but consistent across all five rows rather than three.
   LUL-2231: LUL-2131's `MobileControls.tsx` unmount left two gaps. First, its
   sticks/buttons (z-index 30/31) were never gated on `GameMenu.tsx`'s own open
   `.menuPanel` (z-index 21) -- nothing in that pairing unmounts for the other, so
@@ -1085,6 +1246,30 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   — reacts to whichever end screen is actually mounted with no engine change, and
   drops the transition so the hint can't still be fading (and overlapping) for up
   to 1.4s after the screen mounts.
+  LUL-2410: the local QA tester's deterministic bounding-box audit found `#hint`
+  (flat `top: 64px`) overlapping `#objective`'s `.actionPromptLine` on short
+  landscape phones (e.g. iPhone SE landscape, 667x375) — the same short-viewport
+  media query (`components/GameCanvas.tsx`, `@media (max-height: 420px) and
+  (pointer: coarse) and (hover: none), (max-height: 420px) and (max-width: 768px)`)
+  that sets `--action-slot-bottom: 190px` pushes `#actionSlot`'s rows up near the
+  top of the screen, into `#hint`'s band, and there's no free vertical gap left to
+  relocate either one into. Fixed in the same media query: `#hint { display: none
+  !important; }`. `display: none`, not `opacity: 0` (unlike the LUL-2158 fix
+  above) — the founder's overlap rule is enforced on raw DOM bounding boxes, so an
+  opacity-hidden `#hint` would still occupy its rect and keep tripping the audit
+  even though nothing is visibly drawn there; `display: none` collapses the box to
+  nothing. `!important` still needed to beat `enter()`'s inline `hint.style.opacity`
+  write. `#hint` is a transient onboarding caption the engine already fades out 5s
+  after `enter()`, and `#actionSlot`'s own rows carry the info a player needs at
+  this viewport, so dropping it here (rather than repositioning it) has no
+  functional cost.
+
+  **## e2e (LUL-2410).** `e2e/action-prompt.spec.ts` gained one case in the same
+  describe block: boots the micro world at 667x375, asserts `getComputedStyle(#hint)
+  .display === 'none'` right after `enter()` (beating the engine's synchronous
+  `opacity = '0.85'` write, not just outrunning its fade), then asserts `#hint`'s
+  and `#objective`'s `getBoundingClientRect()`s don't intersect. Verified
+  non-vacuous by reverting the CSS rule and watching it fail red (`received: "block"`).
   LUL-1103 adds `#runChronicle`, a `<ul>` inside `RunRecap()` (`components/Hud.tsx`)
   below the existing time/payout line: a short chronological log of the run
   ("0:41 — a wolf caught your scent near the Leaning Stone.") instead of only
@@ -1119,7 +1304,8 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   Enter bypass the unskippable first cutscene via native button activation),
   giving Enter/Space a keyboard path back into a new run for free.
   LUL-1614: that focus is delayed `RESTART_FOCUS_DELAY_MS`=2000ms past the
-  `*Revealed` flip (sized past `#winText`'s own 0.9s fade), not immediate —
+  `*Revealed` flip (sized past `#winText`'s own fade — 0.5s since LUL-2496,
+  `#deathText` stays 0.9s), not immediate —
   an in-flight Space/Enter still held from active gameplay (Space also being
   the jump key) would otherwise activate the freshly-focused button the
   instant it gains focus, silently restarting the run before the player has
@@ -1133,6 +1319,13 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   death cutscene. `disabled` blocks both click and keyboard activation
   without a CSS change; the ref-focus effects already only fire on reveal,
   so this doesn't fight them.
+  LUL-2496 (Ending Ceremony cheap slice, from Feature Scout proposal LUL-2400):
+  `#winDialogue` adds a single fixed dialogue line ("You've brought her home.")
+  inside `#winText`, above the existing chronicle-shared closing line — an
+  addition, not a replacement, so `chronicle.test.ts`'s assertion on that line's
+  canonical phrasing (`lib/game/chronicle.ts`) still holds. The full proposal
+  (music stinger, visual glow, warm fog, readable chronicle) is deferred pending
+  an art director; only the dialogue line and the fade-duration change above shipped.
 
 LUL-1308 adds `#bearingPulse`, a screen-edge glow answering "which side is the nearest
 approaching predator on" for players who can't rely on the caption toggle (LUL-26) or
@@ -1152,7 +1345,7 @@ design doc as turning horror into radar.
 - Render every piece of state the engine pushes (`pushState()`, only sends
   a patch when a value actually changed).
 - Send **actions back**, never state: the full API `init()` returns
-  (L3162-3165) is `enter`, `restart`, `setPace`, `setFog`, `toggleSound`,
+  (L3182-3185) is `enter`, `restart`, `setPace`, `setFog`, `toggleSound`,
   `regenMap`, and nine touch-control setters (`setTouchMove`/`setTouchLook`/
   `setTouchSprint`/`triggerTouchHide`/`triggerTouchInteract`/
   `triggerTouchJump`/`triggerTouchPause`/`triggerTouchToggleRun`/
@@ -1205,23 +1398,67 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L4438, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L4543 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L4574). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5319, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5463 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5504). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
-- Deeper Lungs: unlock via shop button in post-run UI; one-time purchase per
-  tier (tiers 0–3, `DEEPER_LUNGS_COSTS` array), persisted alongside balance as
-  `tiers.deeperLungs`. Each tier increases the max veil (mist-dim) hold
-  duration via `veilMaxHoldForTier()` in `lib/game/economy.ts`.
+- `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
+  distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
+  (L5504) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L5472) rather than recomputed later, since `player.x/z` can move on
+  once the death screen is up. Deliberately not `maxDistFromHome` (the run's
+  furthest point, already used by `computeDeathPayout`) -- this is where the
+  run actually ended. Also exposed on `qaProbeDeath()` as
+  `distanceFromHomeAtDeathM` (null before any death this run) for e2e
+  coverage (`e2e/death-sequence.spec.ts`). `lib/dashboard/aggregate.ts`'s
+  `computeOutcomesByTier()` is the per-tier win-rate/run-length/death-distance
+  counterpart to `computeOutcomes()` (which pools all tiers) --
+  `scripts/win-rate-by-tier.mjs` is the one-shot CLI that filters events to a
+  build range (git-ancestry, not string comparison) and prints it.
+- `chase_gap` telemetry event (LUL-2392): fired from `scentOnto()` (`engine/forest-engine.js`)
+  when a predator re-acquires the player by scent after a chase->roam give-up --
+  `duration_ms` is the wall-clock gap, `difficulty` the tier. `p.gaveUpAt` is set at
+  all 4 give-up sites and reset in `placePredators()` so a give-up that outlives its
+  run never survives into the next one. `qaProbeChaseGap()` exposes the last fired gap
+  for e2e coverage (`e2e/chase-gap-instrumentation.spec.ts`). Feeds the Economist's
+  LUL-1449 measurement (Deeper Lungs veil-tree re-pricing, LUL-1439):
+  `lib/dashboard/aggregate.ts`'s `computeChaseGapByTier()` computes p50/p25 gap per tier,
+  `scripts/chase-gap-by-tier.mjs` is the one-shot CLI. **Adding an event to the
+  `lib/analytics.ts` emitter union is not enough** -- `lib/dashboard/events.ts`'s
+  `KNOWN_EVENTS` is a separate allowlist that `parseRawEvent()` gates every Blob
+  read-back on; PR #601 added `chase_gap` to the emitter but missed this file, so every
+  emitted event was silently dropped on read until this entry's fix (also caught
+  `engine_contract_violation`, LUL-2239, in the same gap). `lib/dashboard/events.test.ts`
+  now locks every emitted event name to also being in `KNOWN_EVENTS`.
+- Shop catalog (LUL-2351): `SHOP_CATALOG` in `lib/game/economy.ts` is the single
+  source of truth for what's for sale — three permanent items, bought via the
+  generic `purchase(id)`/`nextCost(id, tier)`/`tierOf(state, id)` trio instead
+  of a per-item function. `tiers` is a `Record<string, number>` keyed by
+  catalog id; an absent key means tier 0 (not purchased) — `freshEmbersState()`
+  starts with `tiers: {}` rather than pre-filling every known id, so a new
+  catalog entry needs no save migration.
+  - **Deeper Lungs** (`deeperLungs`, tiers 0–3, `DEEPER_LUNGS_COSTS`): each
+    tier increases the max veil (mist-dim) hold duration via
+    `veilMaxHoldForTier()`.
+  - **Quiet Step** (`quietStep`, tiers 0–2, `QUIET_STEP_COSTS`): each tier
+    decays scent 20% faster (compounding), via `effectiveScentLifetime()`.
+    Lifetime-only — `SCENT_RADIUS_WALK`/`SCENT_RADIUS_RUN` are untouched. Stacks
+    multiplicatively with the high-wind `windHighSpeed` lifetime reduction (see the
+    wind bullet near `WIND_AGAINST_RADIUS_MULTIPLIER` above).
+  - **Pocket Stones** (`pocketStones`, single tier, `POCKET_STONES_COSTS`):
+    grants `POCKET_STONES_RESERVE` (2) free throwable stones per run, auto-armed
+    into `heldThrowable` on `enter()` and re-armed from the reserve in
+    `throwThrowable()` — reuses the existing single-held-stone state machine
+    and HUD prompt verbatim, no new UI.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3182),
-  reset to 0 on `enter()` (L3256) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3612),
+  reset to 0 on `enter()` (L3716) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L4838: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1239,28 +1476,82 @@ design doc as turning horror into radar.
 - Bank on win/death: `applyPayout()` in `lib/game/economy.ts` computes
   balance delta and calls `setEmbers()` to persist; engine gates all payouts
   behind `canArriveHome()` / `triggerDeath()` to prevent double-apply.
-- Unlock Deeper Lungs: each tier costs `DEEPER_LUNGS_COSTS[tier]` and increases
-  `VEIL_MAX_HOLD` (via `veilMaxHoldForTier()`) until the next tier is purchased.
-  Purchase is final, persisted to localStorage and synced to `hudState` via
-  `deeperLungsTier` property.
+- Buy any `SHOP_CATALOG` item via `purchase(id)`: costs `nextCost(id, tierOf(state, id))`,
+  is a no-op (same object reference) if unaffordable, already maxed, or `id` isn't in the
+  catalog. A real purchase plays `embersPurchaseCue()` (decisions/0015-cue-triple's audio
+  leg, all three items including Deeper Lungs). Purchases are final, persisted to
+  localStorage and synced to `hudState` via the `embersTiers` property.
 
 **What it CANNOT do**
-- Spend on anything other than Deeper Lungs tiers.
+- Spend on anything outside `SHOP_CATALOG`.
 - Be lost/reset except via manual localStorage deletion (QA/debug only, not
   a player-facing action).
 
 **Behaviours & logic**
 - Persistence: `useEmbers()` hook in `components/Hud.tsx` (L225-241) reads
   stored balance on engine mount and writes to localStorage whenever balance
-  or tier change. Gated to skip writing stale zero defaults before stored
+  or tiers change. Gated to skip writing stale zero defaults before stored
   state is applied (ref `appliedRef` prevents persist effect from firing until
   apply-on-ready effect has run).
 - `veilMaxHoldForTier(tier)` adds `DEEPER_LUNGS_HOLD_SECONDS[tier]` to base
   `VEIL_MAX_HOLD` — each tier adds 1 second to the hold cap (5/6/7/8 seconds
   at tiers 0/1/2/3).
-- Win/death screen shows a shop button (wired to `purchaseDeeperLungs()`
-  action) only if the player has balance ≥ `DEEPER_LUNGS_COSTS[currentTier]` and
-  `currentTier < 3`.
+- Win/death screen (and the gate) render one shop button per `SHOP_CATALOG` item
+  still below its max tier (`EmbersShop` in `components/Hud.tsx`), each wired to
+  `purchase(item.id)`, disabled below that item's `nextCost`. A maxed item renders
+  a plain "maxed" row instead of a button.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
+### Progression: personal-best time + tier streak counter (LUL-2558)
+
+**What it is**
+- `progression`: per-`DifficultyTier` record (`lantern`/`night`/`blackout`) of
+  `{ bestTime, runs, wins, currentStreak }`, defined in the pure module
+  `lib/game/progression.ts` (`Progression`/`TierRecord`, same shape as
+  `lib/game/economy.ts`/`lib/game/outcome.ts` — no I/O, no wall-clock reads).
+  `bestTime` is the fastest WIN `survivedSeconds` for that tier (`null` = no
+  win yet, lower is better — this is time-to-win, not a score). `runs`
+  increments on every outcome (win or death); `wins` and `currentStreak`
+  increment only on a win, and `currentStreak` resets to 0 on a death.
+  `recordRun(p, difficulty, survivedSeconds, won)` is the one pure transition,
+  called at all three outcome sites — `finishPickup()` (the live win path),
+  `arriveHome()` (dead code per `decisions/lul-2281-pickup-is-the-win-2026-09-09`,
+  wired for parity only), and `triggerDeath()`.
+- Persisted via `localStorage['lullwood:progression']`, synced to `hudState`
+  through the engine action `setProgression()` (mirrors `setMissionUnlocks()`),
+  applied once on mount and re-validated field-by-field against an
+  arbitrary/stale stored shape rather than trusted as-is.
+- HUD fields: `personalBest` (current-tier `bestTime`), `tierStats`
+  (`{ runs, wins, streak }` for the current tier), `newRecord` (true only when
+  the run just beat a strictly-lower `bestTime`).
+
+**What it can do**
+- Set a new personal-best time on a win that is strictly faster than the
+  tier's existing `bestTime` (or the tier's first-ever win).
+- Extend a win streak across consecutive wins; a single death resets it to 0
+  without touching `bestTime` or `wins`.
+
+**What it CANNOT do**
+- Regress `bestTime` on a slower win, or set one on a death.
+- Affect economy: `recordRun()`/`setProgression()` never read or write
+  `embers`, `RunPayout`, or any `applyPayout()` call.
+
+**Behaviours & logic**
+- Persistence: `useProgression()` hook in `components/Hud.tsx`, identical
+  two-effect split to `useMissionUnlocks()` — apply-on-ready effect calls
+  `actions.setProgression?.(stored)` once `actions` exists, persist effect
+  writes the full record to localStorage on change, gated on the same
+  `appliedRef` guard so a fresh mount can't overwrite a stored record with
+  `freshProgression()` before the apply effect runs.
+- Display: `RunRecap` in `components/Hud.tsx` renders "Personal Best:
+  `<time>` — New Record!" (only when `personalBest` is set) and a
+  "`<tier>` stats: Runs N · Wins N (P%) · Streak N" line, reusing the
+  existing `formatDuration()` helper. Text-only per the ticket's scope trim —
+  no icon/glow/chime polish.
 
 **Collision & physics profile**
 - N/A — not a spatial/world object.
@@ -1275,7 +1566,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L4924, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L5841, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1321,7 +1612,8 @@ design doc as turning horror into radar.
 - Fire a one-time unconditional caption + audio sting on completion, and show a two-line
   collapsed HUD panel (name + progress glyph) top-left whenever a mission exists and the player
   isn't carrying — mirrors the Embers/Stamina HUD-reflection pattern above, not a new panel
-  system.
+  system. **LUL-2442:** also hidden while `components/GameMenu.tsx`'s dropdown is open — its
+  open panel shares the same top-left corner and would otherwise overlap the mission pill.
 
 **What it CANNOT do**
 - Cannot be selected or seen by the player before the draw — the pool member is chosen silently
@@ -1376,8 +1668,9 @@ design doc as turning horror into radar.
 **What it is**
 - A permanent, always-rendered decorative `LANDMARKS` entry (`engine/tuning.js`, `kind:
   'radioMast', x: 30, z: 175`) with its own pulsing red beacon glow sprite
-  (`buildRadioMast()`/`radioMastBeaconGlow`, `RADIO_MAST_BEACON_GLOW` tuning, LUL-1855). It
-  predates LUL-1666/LUL-1697 and its appearance is unchanged by them.
+  (`buildRadioMast()`, `LANDMARK_BEACONS.radioMast` tuning, LUL-1855; generalised to all six
+  landmarks by LUL-2248 — see Landmark Beacons below — `radioMast`'s hue/scale/pulse are
+  unchanged). It predates LUL-1666/LUL-1697 and its appearance is unchanged by them.
 
 **What it can do**
 - **LUL-1666/LUL-1697:** when the player's pre-run secondary choice is `retrieval` (see Missions
@@ -1456,8 +1749,8 @@ design doc as turning horror into radar.
   `'heard'` death cause instead of `'chase'`; cleared to `null` by every other hearing/sight/
   scent channel.
 - **Home fire crackle (S5).** `homeFireCrackle(dist)` (`engine/forest-engine.js`) is a
-  filtered-noise burst (reuses `hollowLogSound()`'s bandpass-noise chain, minus its sine thump)
-  panned by bearing to `CONFIG.home`, driven by a `homeFireTimer` on the same tempo-carries-
+  filtered-noise burst (no sine thump), panned by bearing to `CONFIG.home`, driven by a
+  `homeFireTimer` on the same tempo-carries-
   distance curve as the cry, firing only while `carrying`. Not predator-audible — this is the
   return leg's audio cue, not a detection channel. Caption (gated on `captionsOn`): `"home fire
   crackling · <near|far> · <side>"`.
@@ -1494,16 +1787,31 @@ design doc as turning horror into radar.
   fully-drained mist-veil (`KeyF`) back to its unlock threshold instead of locking it out, the
   next time a full drain would otherwise happen. Second in-run Embers spend site, after Deeper
   Lungs (which is a between-run purchase, not in-run).
-- Purchase gate `canBuyVeilCharm`, computed every tick (`engine/forest-engine.js:4137`):
+- Purchase gate `canBuyVeilCharm`, computed every tick (`engine/forest-engine.js:6162`):
   `!carrying && !veilReserve && distStoneMarker < VEIL_CHARM_INTERACT_RADIUS &&
   computeDepth(maxDistFromHome) >= VEIL_CHARM_PRICE`. `VEIL_CHARM_INTERACT_RADIUS` (4 units,
   `engine/tuning.js:68`) and `VEIL_CHARM_PRICE` (15, `lib/game/economy.ts:74`).
-- `buyVeilCharm()` (`engine/forest-engine.js:3445`): sets `veilReserve = true`, adds
+- `buyVeilCharm()` (`engine/forest-engine.js:5207`): sets `veilReserve = true`, adds
   `VEIL_CHARM_PRICE` to `embersSpent`, fires a caption + `feature_engagement`/`veil_charm`
   telemetry event.
 - `stepVeilCharge()`'s `reserve` branch (`lib/game/veil.ts:59`): on a full drain, if `reserve` is
   true it snaps `charge` back to the unlock threshold and clears `reserve` instead of setting
   `locked`; identical to prior behaviour when `reserve` is false.
+- **Cue triple (LUL-2331/LUL-2321 Part 1).** Explain: the persistent offer prompt (below) names
+  the mechanic. Purchase tell: `buyVeilCharm()` calls the existing `embersPurchaseCue()`
+  (`engine/forest-engine.js:5345`, shared with every `SHOP_CATALOG` item) and sets
+  `stoneMarkerPulseT = 0.6`, a one-shot boost on top of the Stone Marker's ambient beacon-glow
+  pulse (`engine/forest-engine.js`, the `landmarkBeaconGlows` loop, ~`:6331-6340`), decayed
+  once per frame in `tick()`. Activation tell: the `reserveFired` block calls the new
+  `veilCharmReleaseCue()` (`engine/forest-engine.js:5361`, a descending 880→440Hz sweep, the
+  inverse of `embersPurchaseCue()`'s rising one, so the two are distinguishable by sound alone)
+  and `Hud.tsx` eases its own rendered `veilCharge` readout up over 0.4s
+  (`useVeilMeterRamp`, `components/Hud.tsx:650`) with a brief flash class on `#veilState`,
+  skipped outright when `reducedMotion` is set. `veilReserve` is exposed to React via
+  `pushState` for a `#veilCharmPip` (`✦`) next to `#veilState` while a charm is banked — note
+  `#veilState` lives inside `#panel`, hidden by default (admin-mode-gated, `e2e/admin-mode.spec.ts`),
+  so the pip/eased-meter are dev-visible only; the audio cues, the beacon pulse, and the prompt
+  text below are the player-visible/audible tells.
 
 **What it can do**
 - Reachable via both interact paths: desktop `KeyE` and mobile `triggerTouchInteract()` (the
@@ -1525,11 +1833,15 @@ design doc as turning horror into radar.
 
 **Behaviours & logic**
 - Reset per-run: `veilReserve = false; embersSpent = 0;` in `enter()`.
-- HUD prompt text (`engine/forest-engine.js`, the `objectiveText`/`objectiveReady` `pushState()`
-  block): `'Press  E  for a mist-charm  ·  15 embers'` when `canBuyVeilCharm` and no higher-priority
-  prompt (pickup/carry/mission) applies; `objectiveReady` is `canPickup || canBuyVeilCharm`.
+- HUD prompt text (`engine/forest-engine.js:6238`, the `objectiveText`/`objectiveReady`
+  `pushState()` block): `'Press  E  for a mist-charm  ·  15 embers  ·  saves your veil from
+  locking, once'` (LUL-2331) when `canBuyVeilCharm` and no higher-priority prompt (pickup/carry/
+  mission) applies; `objectiveReady` is `canPickup || canBuyVeilCharm`.
 - `RunRecap` (`components/Hud.tsx`) renders a `· −{payout.spent} charm` fragment when
   `payout.spent > 0`, so the earnings breakdown still reads as sums to `total` after a spend.
+- QA hooks (LUL-2331): `qaTeleportNearStoneMarker()` (`engine/forest-engine.js:4989`) teleports
+  2 units off the landmark's live position; `qaProbeVeil()` (`:4996`) returns
+  `{ charge, locked, reserve, releaseCueCount }`.
 
 **Collision & physics profile**
 - N/A — not a spatial/world object of its own. Uses the Stone Marker landmark's existing
@@ -1560,7 +1872,7 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
 | | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI | EM |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS+HIDE²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
 | **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | TRIG²¹ |
 | **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
 | **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
@@ -1676,12 +1988,17 @@ touches `generateCover()`.
 home at (0,0) r=3.6) — no code enforces their separation, but no seed can
 move either one, so there's nothing to verify per-seed. Defined by
 construction, not undefined.
-²⁰ **Changed, LUL-384.** Previously `C+LOS+HIDE` like Bramble. Log is now the
-one cover kind that doesn't block the player's movement either —
-`coverKindBlocksMovement('log')` is `false` (`lib/game/cover.ts`), read
-by `coverBlockedR()`. LOS and hide-spot eligibility are untouched (both read
-`coverGrid` independently of `coverBlockedR()`), so Log keeps `LOS+HIDE`;
-only the `C` is gone.
+²⁰ **Changed, LUL-384; changed again, LUL-2311.** LUL-384: previously
+`C+LOS+HIDE` like Bramble. Log became one of the cover kinds that doesn't
+block the player's movement — `coverKindBlocksMovement('log')` is `false`
+(`lib/game/cover.ts`), read by `coverBlockedR()`. At the time, LOS and
+hide-spot eligibility were untouched (both read `coverGrid` independently
+of `coverBlockedR()`), so Log kept `LOS+HIDE`; only the `C` was gone.
+LUL-2311: `HIDE_KINDS` dropped `log` entirely (founder brief: a fallen log
+is thin, walkable cover with nothing to visually be "inside" of) — Log now
+keeps `LOS` only. The walkable-movement exemption is unaffected and now
+lives on its own constant, `WALKABLE_KINDS` (`lib/game/cover.ts`), which
+`coverKindBlocksMovement('log')` reads instead of `HIDE_KINDS`.
 ²¹ **Embers** (LUL-1043) is a run-currency event tracker, not a spatial
 object — no movement collision or LOS interaction. `TRIG` marks events where
 Embers earnings are computed: Player earnings/spending gate, Child pickup
@@ -1706,7 +2023,10 @@ split (which kept Bramble solid on purpose, "the one prop a person would
 step over" being Log specifically) — called out here since the ticket
 asked explicitly for one unified hiding behaviour across both cover kinds
 rather than a bramble-only fix that left the two divergent. Rock/Reed,
-neither a hiding spot, are unaffected.
+neither a hiding spot, are unaffected. **LUL-2311** later removed Log from
+`HIDE_KINDS` (²⁰) — Bramble is now the only cover kind with `HIDE` at all,
+so this cell (`LOS+HIDE`) is unchanged but no longer has a Log counterpart
+to match.
 ²³ **Added, LUL-1643.** Predator movement now calls `blockedForPredator()`
 (`lib/game/cover.ts`) — `blockedR()` (tree/landmark circles) plus
 `coverBlockedR()` — instead of bare `blockedR()`, so Rock/Reed become real
@@ -1760,6 +2080,13 @@ single fixed zone: `biomeAt(x, z)` derives bogginess from distance to `BOG_CENTE
 bogginess) and `BOG_OUTER_RADIUS` (dry), same edge-softness approach as before. Cost model
 (`bogSpeedMultiplier`/`bogNoiseMultiplier`, splash foley) is byte-for-byte unchanged from
 LUL-1483 — only *where* bogginess is nonzero has changed, twice.
+
+**LUL-2307**: the first step past `biomeAt(x,z) > 0.05` fires the `bog` first-encounter
+hint ("bog — half pace, but it masks your scent from wolves"), persisted so it only ever
+shows once per install — see "Hints" below and
+`docs/specs/lul-2307-first-encounter-hints.md`. The mask itself (LUL-1902's
+`BOG_MASK_DECAY_TIME`, wolf-only nose reduction) is unchanged; this only adds the copy
+explaining it.
 
 **LUL-2225 (current shape)**: the founder rejected what LUL-2084 shipped for LUL-1902 --
 ~24.9% of the map, with `oak`/`drownedCar` deliberately blended inside it. `BOG_CENTER`
@@ -1815,13 +2142,17 @@ first landmark whose spawn and visibility are conditional per-round (~50%
 via a seeded coin-flip in `generateMap()`, drawn last in the rng stream)
 rather than always-present; walking into its `interactR` grants a one-shot
 25s sight+scent detection immunity (`CAVE_IMMUNITY_TIME`, `lib/game/cave.ts`),
-hooked into `effectiveDetect()`/`canSee()`/`checkScent()`. As of LUL-1855,
-`radioMast` additionally carries a small fog-exempt additive sprite on its
-beacon (`RADIO_MAST_BEACON_GLOW`, `engine/tuning.js`) so it stays visible as a
-dim, slowly-pulsing point past the fog line that erases the other five -- a
-bearing, not a lit scene; the other five landmarks (other than `cave` and
-`radioMast`) are unchanged and still fog-occluded at the same distances
-documented above. and
+hooked into `effectiveDetect()`/`canSee()`/`checkScent()`. As of LUL-1855
+(`radioMast` only) and generalised to the other five by **LUL-2248**, every
+non-`cave` landmark carries a small fog-exempt additive sprite on its beacon
+(`LANDMARK_BEACONS`, `engine/tuning.js` -- one entry per `LANDMARKS[].kind`,
+same scale/opacity/pulse, distinct hue per kind so a beacon reads
+unambiguously as a bearing to a specific landmark) so it stays visible as a
+dim, slowly-pulsing point past the fog line that erases the rest of the
+landmark's geometry -- a bearing, not a lit scene. `cave` has no beacon (its
+spawn/visibility are conditional per-round, out of scope for LUL-2248). LUL-2248
+also colours each landmark's minimap square by its beacon hue and draws
+`CONFIG.home` as a warm ring on the minimap (`drawMinimapStatic()`). and
 the `Bog` biome itself: continuous bogginess 0 (dry) to 1 (deepest), not
 boolean, so a patch edge scales speed/noise in rather than stepping. It
 scales player/predator walk speed down and noise radius up while standing in
@@ -1853,7 +2184,8 @@ the map; a small, single patch finally gave it one clean disc to draw. This pred
 already in the matrix above (Tree-shaped collision for both actors,
 Rock-shaped `C+LOS` for both actors as of LUL-1643 (²³), Log/Bramble-shaped
 LOS-only walkable cover) — Reed shares Rock's `coverKindBlocksMovement()`
-predicate (both `!HIDE_KINDS` kinds), so it also became a real predator
+predicate (both `!WALKABLE_KINDS` kinds, LUL-2311 -- previously `!HIDE_KINDS`,
+same value for both kinds either way), so it also became a real predator
 collider in the same change, not just a player one.
 
 ## Startled roosts, slice (a) (LUL-1914) — one-way predator-flush feedback
@@ -1874,3 +2206,44 @@ is a feedback/presentation layer, same class as `#bearingPulse` (LUL-1308) and
 LUL-1855's beacon glow. Slice (b) (two-way, player-triggered, Tier C) and slice
 (c) (`lib/game/eventSites.ts`-registered) are deferred — see wiki
 `decisions/startled-roosts-2026-09-07`.
+
+## Hints — first-encounter explanations (LUL-2307, generalizes LUL-2230)
+
+One small engine-side registry (`HINT_PRIORITY`/`HINT_TEXT`, `engine/forest-engine.js`)
+replaces LUL-2230's bespoke scent-only caption with a `{key -> text/trigger}` table covering
+thirteen keys: `scent`, `landmark`, `lake`, `bog`, `deepwater`, `wolf`/`bear`/`lion`,
+`stamina`, `cover` (hollow log/bramble), `caveImmune`, `throwable`, `veil`. Each key fires
+once per install, the first time its trigger condition is true while `entered && !hidden &&
+!win && !death` and the `Show hints` setting is on. Only one hint shows at a time;
+`HINT_PRIORITY` order both breaks same-frame ties and lets a higher-priority key preempt a
+lower-priority one already showing (not marked "seen" when preempted, so it can still fire
+later) — needed because `landmark` is eligible unconditionally from frame one and would
+otherwise occupy the slot for its full 8s before e.g. `scent` ever got a turn. A pill caption (`#hintCaption`,
+`components/Hud.tsx`/`GameCanvas.tsx`) shows for 8s or until a key-specific dismiss-on-
+interaction event (e.g. `scent`: the first `scentOnto()` call; `wolf`/`bear`/`lion`/`cover`:
+the player hides; `throwable`: the player grabs it), then persists "seen" under
+`lullwood:hints:<key>` so it never shows again on that install — `lullwood:hints:scent`
+falls back to reading LUL-2230's old `lullwood:scentTrailCaptionSeen` key so an install that
+already saw the scent caption doesn't see it a second time under the new key.
+
+**Anchoring**: `scent`/`wolf`/`bear`/`lion`/`cover`/`throwable` are world-anchored — a real 3D
+point (the mote/animal/prop/stone), projected to a viewport fraction via the same
+camera-frustum math LUL-2230 introduced (`projectToScreen()`, generalized out of the
+scent-only inline version). `lake`/`bog`/`deepwater`/`stamina`/`caveImmune`/`veil`/`landmark`
+have no natural 3D point (or, for stamina/veil, no player-facing meter to anchor to at all —
+see `SettingsPanel.tsx`'s own note that `#panel`'s stamina/veil readouts are dev-only;
+`landmark` fires unconditionally on entry with nothing specific to point at, same as the old
+toast it replaces) and are positioned by a fixed `[data-hint-key]` CSS rule instead:
+`deepwater`/`caveImmune` sit below their own `#missionPanel`/`#caveImmunePanel`;
+`lake`/`bog`/`stamina`/`veil`/`landmark` share the bottom-center spot `#captionToast`
+(predator-call captions) already uses, above `#actionSlot`.
+
+**Settings**: `Show hints` checkbox (default on, next to `Show my scent trail`) and a `Reset
+hints` button (clears every `lullwood:hints:*` key) in `SettingsPanel.tsx`.
+
+**QA hooks**: `qaProbeHints()` (active key + full seen-map), `qaResetHints()` (clears every
+key). `qaResetScentCaption()` (LUL-2230) is kept as a thin `scent`-only alias.
+
+See `docs/specs/lul-2307-first-encounter-hints.md` for the full per-key trigger table and the
+declared simplifications (no per-cover-kind copy branching, constant CSS position instead of
+a DOM-measured one for the six fixed-anchor keys).

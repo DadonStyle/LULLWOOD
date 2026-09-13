@@ -5,7 +5,6 @@ import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from 
 import { track, startSessionTracking } from '@/lib/analytics';
 import { initTelemetryTransport } from '@/lib/telemetry-transport';
 import { isMobile } from '@/lib/input-mode';
-import { CHARGE_WINDOW } from '@/lib/game/charge';
 import { assertEngineContract } from '@/lib/engine-contract';
 
 // CSS verbatim from the original single-file prototype (M2 wiki plan:
@@ -18,14 +17,40 @@ import { assertEngineContract } from '@/lib/engine-contract';
 // LUL-34 (M2b): the gate/objective/status/win/death/panel *markup* moved out of
 // this string and into <Hud> (components/Hud.tsx) as real JSX driven by engine
 // state -- see that file. The rules below stay here because the elements Hud
-// renders still use these ids/classes (#gate, #objective, .ready, #status,
-// .hiding, #winScreen, #deathScreen, #deathText, #panel, .restartBtn, ...), and
-// splitting one stylesheet across two files for no reason would just make it
-// harder to diff against the original CSS.
+// renders still use these ids/classes (#gate, #winScreen, #deathScreen,
+// #deathText, #panel, .restartBtn, ...), and splitting one stylesheet across
+// two files for no reason would just make it harder to diff against the
+// original CSS. LUL-2312: #objective/#actionPrompt/#throwPrompt/#chargePrompt/
+// #status are gone from this list -- see #actionSlot/.actionPromptRow below.
 const OVERLAY_STYLE = `
   html, body { height: 100%; margin: 0; background: #0a0e15; overflow: hidden;
     overscroll-behavior: none; touch-action: manipulation;
-    font-family: ui-sans-serif, system-ui, sans-serif; color: #b9c8dd; }
+    font-family: ui-sans-serif, system-ui, sans-serif; color: #b9c8dd;
+    /* LUL-2312: shared tokens for every ActionPrompt row (components/
+       ActionPrompt.tsx) -- see the #actionSlot comment further down for what
+       each one means. Declared here, unconditionally and first in source
+       order, so the mobile/short-viewport overrides below (which only set
+       these on a matching media query) always win when they match -- a
+       custom property's cascade follows normal specificity/source-order
+       rules same as any other declaration, so the override must come later
+       in the stylesheet than this default. */
+    --action-pill-bg: rgba(12,17,26,0.6);
+    --action-pill-border-calm: rgba(150,175,215,0.16);
+    --action-pill-border-ready: rgba(255,200,140,0.45);
+    --action-pill-border-status: rgba(120,200,150,0.4);
+    --action-pill-color-calm: #d7c3b0;
+    --action-pill-color-ready: #ffdca8;
+    --action-pill-color-status: #9fd7b0;
+    --action-pill-key-bg: #f0c79a;
+    --action-pill-key-color: #1a1006;
+    --action-pill-key-shadow: 0 2px 20px rgba(240,199,154,0.6);
+    --action-pill-urgent-bg: #e8554a;
+    --action-pill-urgent-shadow: 0 2px 26px rgba(232,85,74,0.85);
+    --action-slot-row: 36px;
+    --action-slot-row-charge: 48px;
+    --action-slot-gap: 6px;
+    --action-slot-bottom: 24px;
+    --action-slot-height: calc(var(--action-slot-row-charge) + (4 * var(--action-slot-row)) + (4 * var(--action-slot-gap))); }
   canvas { display: block; }
 
   #vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none;
@@ -95,11 +120,14 @@ const OVERLAY_STYLE = `
      same media features JS's matchMedia does), or LUL-198's overlap returns
      for viewports isMobile() calls mobile that this query doesn't catch. */
   @media (max-width: 768px), (pointer: coarse) and (hover: none) {
-    #panel { bottom: 240px; }
-    /* LUL-1089: raise #actionPrompt clear of the mobile control row (z-index 30,
-       bottom: 24px+safe-area). 240px matches #panel's own mobile override above;
-       the prompt rides above the controls rather than behind them. */
-    #actionPrompt { bottom: 240px; }
+    /* LUL-2312: one shared clearance value for every bottom-centre HUD piece
+       that has to clear the mobile control row (z-index 30, bottom:
+       24px+safe-area) -- #panel and #actionSlot used to restate 240px
+       independently (LUL-1089), which is exactly the kind of duplicated magic
+       number LUL-1779 kept tripping over. #actionSlot's own rule picks this up
+       via bottom: var(--action-slot-bottom). */
+    body { --action-slot-bottom: 240px; }
+    #panel { bottom: var(--action-slot-bottom); }
     /* LUL-69: ~44px is the standard (WCAG 2.5.5 / Apple HIG / Material)
        minimum touch-target side -- desktop's 6px/12px padding at 12px font
        sits well under that, and the founder's own complaint was "HUD sized
@@ -224,41 +252,38 @@ const OVERLAY_STYLE = `
     #settingsPanel fieldset { margin: 0; }
   }
 
-  /* LUL-26: closed captions for predator calls -- every sound in this game is
-     synthesized WebAudio with no other track, so this is the sole warning
-     channel for a player who can't hear it. Sits above #status (bottom: 74px)
-     and below #chargePrompt (bottom: 130px) so a caption and a charge-dodge
-     prompt can never overlap. */
-  #captionToast { position: fixed; bottom: 180px; left: 50%; transform: translateX(-50%); z-index: 14;
-    padding: 7px 16px; border-radius: 999px; white-space: nowrap; pointer-events: none;
-    background: rgba(12,17,26,0.72); border: 1px solid rgba(150,175,215,0.22);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8; text-shadow: 0 1px 6px rgba(0,0,0,0.8);
-    animation: captionFade 0.25s ease; }
-  @keyframes captionFade { from { opacity: 0; transform: translate(-50%, 4px); } to { opacity: 1; transform: translateX(-50%); } }
+  /* LUL-26/LUL-2312: closed captions for predator calls -- every sound in this
+     game is synthesized WebAudio with no other track, so this is the sole
+     warning channel for a player who can't hear it. Rendered as an
+     <ActionPrompt tone="status"> (Hud.tsx) -- .actionPromptLine supplies the
+     pill chrome and its own mount fade, so this rule is positioning only: a
+     row above #actionSlot, offset by the slot's own (variable) height so the
+     two can never collide regardless of how many action-slot rows are
+     currently populated. */
+  #captionToast { position: fixed; left: 50%; transform: translateX(-50%); z-index: 14;
+    bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px);
+    pointer-events: none; }
 
   /* LUL-26: high-contrast HUD. Presentation only -- SettingsPanel.tsx toggles
      this via document.body.dataset.highContrast, the same direct-DOM pattern
      LUL-144's cover desaturation already uses (data-los-covered). Brightens
      HUD chrome only; the WebGL scene itself is untouched. */
+  /* LUL-2312: every #objective/#status/#actionPrompt/#throwPrompt/#captionToast
+     high-contrast override collapses onto the shared .actionPromptRow/
+     .actionPromptLine classes -- data-tone carries the same distinction the old
+     per-id overrides did (ready==objective.ready/actionPrompt's calm state,
+     urgent==actionPrompt.urgent, status==status.hiding, now also captionToast). */
   body[data-high-contrast="1"] #panel,
-  body[data-high-contrast="1"] #objective,
-  body[data-high-contrast="1"] #status,
-  body[data-high-contrast="1"] #actionPrompt,
-  body[data-high-contrast="1"] #throwPrompt,
-  body[data-high-contrast="1"] #captionToast,
+  body[data-high-contrast="1"] .actionPromptLine,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
-  body[data-high-contrast="1"] #objective.ready { color: #ffe6b0; border-color: #ffcf7a; }
-  body[data-high-contrast="1"] #status.hiding { color: #baffcf; border-color: #6fe89a; }
-  body[data-high-contrast="1"] #captionToast { color: #ffe6b0; }
-  body[data-high-contrast="1"] #actionPrompt { color: #ffe6b0; border-color: #ffcf7a; }
-  body[data-high-contrast="1"] #actionPrompt.urgent { color: #ff9f9f; border-color: #ff6b6b; }
-  body[data-high-contrast="1"] #throwPrompt { color: #ffe6b0; border-color: #ffcf7a; }
+  body[data-high-contrast="1"] .actionPromptRow[data-tone="ready"] .actionPromptLine { color: #ffe6b0; border-color: #ffcf7a; }
+  body[data-high-contrast="1"] .actionPromptRow[data-tone="urgent"] .actionPromptLine { color: #ff9f9f; border-color: #ff6b6b; }
+  body[data-high-contrast="1"] .actionPromptRow[data-tone="status"] .actionPromptLine { color: #baffcf; border-color: #6fe89a; }
 
   /* LUL-650: admin mode. Presentation only, same dataset-flag pattern as
      high-contrast above -- SettingsPanel.tsx toggles document.body.dataset.adminMode.
      Default OFF hides the tuning/dev HUD (#panel's pace/mist/sound/regen/fullscreen
-     controls, plus #minimap); ON is today's behaviour, unchanged.
+     controls); ON is today's behaviour, unchanged.
      LUL-650/LUL-656 originally carved #settingsBtn and #lightState/#veilState out
      of this rule so a player who turned admin mode off wouldn't lose Settings or
      the hold-to-veil readout. LUL-1085 (hamburger-menu migration) superseded that:
@@ -267,12 +292,21 @@ const OVERLAY_STYLE = `
      embersBalance) with no exemption selector. There is no carve-out left --
      every #panel child, #lightState/#veilState included, is hidden by default
      (LUL-1824/game/lul1724-panel-dev-only-finding). The real player-facing tell
-     for veil/light is the in-world vignette dim + fog billow, not this HUD.
-     #minimap needs !important: the engine writes its own inline
-     mm.style.display (blackout difficulty preset, forest-engine.js), which
-     beats a plain rule. */
+     for veil/light is the in-world vignette dim + fog billow, not this HUD. */
   body[data-admin-mode="0"] #panel { display: none !important; }
-  body[data-admin-mode="0"] #minimap { display: none !important; }
+
+  /* LUL-2309: the minimap got its own player-facing setting, decoupled from
+     admin mode (LUL-2248 turned it into a navigation aid -- home ring + beacon
+     colours -- not a dev tool). Default OFF, same as adminMode/highContrast.
+     Selects on the attribute being ABSENT or "0", not just "0": before
+     SettingsPanel's effect runs on first paint there is no data-show-minimap
+     attribute at all, and an absent attribute must still hide, not show by
+     falling through to no matching rule.
+     !important still needed: the engine writes its own inline mm.style.display
+     (blackout difficulty preset, forest-engine.js) -- when this rule doesn't
+     apply (setting is on), that inline style is what correctly still hides the
+     minimap under blackout. */
+  body:not([data-show-minimap="1"]) #minimap { display: none !important; }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
   #pausePrompt { position: fixed; inset: 0; z-index: 15; display: none;
@@ -280,15 +314,6 @@ const OVERLAY_STYLE = `
     background: radial-gradient(120% 90% at 50% 50%, rgba(6,9,15,0.35), rgba(6,9,15,0.72));
     font-size: 15px; letter-spacing: 0.08em; color: #cdd9ea;
     text-shadow: 0 2px 20px rgba(0,0,0,0.8); }
-
-  /* objective banner */
-  #objective { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 12;
-    display: none; padding: 8px 18px; border-radius: 999px; white-space: nowrap;
-    background: rgba(12,17,26,0.6); border: 1px solid rgba(150,175,215,0.16);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.04em; color: #d7c3b0;
-    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  #objective.ready { color: #ffdca8; border-color: rgba(255,200,140,0.45); }
 
   /* LUL-1258: M2 Deepwater's minimal mission panel -- two collapsed lines,
      top-left, per decisions/missions-accepted-2026-09-01 §2. Small and
@@ -325,30 +350,78 @@ const OVERLAY_STYLE = `
     transform-origin: 50% 50%; pointer-events: none; }
 
   #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
-    font-size: 10px; line-height: 1.3; text-align: center; color: #9fb2cd;
+    font-size: 12px; line-height: 1.3; text-align: center; color: #9fb2cd;
     text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none; opacity: 1; }
 
-  /* LUL-1912's minimap-clearance push only matters in admin/dev view -- #minimap is
-     display:none for every real player (data-admin-mode="0"), so top:20/right:20 above
-     is what players and the QA tester actually see; push down only under admin mode. */
-  body[data-admin-mode="1"] #windIndicator { top: 184px; }
-  body[data-admin-mode="1"] #windIndicatorHint { top: 228px; }
+  /* LUL-1912's minimap-clearance push only matters while the minimap is actually
+     visible -- top:20/right:20 above is what a player with the minimap off (still
+     the default, LUL-2309) and the QA tester actually see. Keyed off
+     data-show-minimap now that visibility is decoupled from admin mode; used to
+     key off data-admin-mode="1" back when the minimap only ever showed under
+     admin mode. */
+  body[data-show-minimap="1"] #windIndicator { top: 184px; }
+  body[data-show-minimap="1"] #windIndicatorHint { top: 228px; }
 
-  /* LUL-2230: one-time scent-trail explanation, anchored to the engine-projected
-     screen position of the mote it's explaining (left/top set inline, viewport
-     fractions -- see components/Hud.tsx). Same pill style as #caveImmunePanel
-     above; translate lifts it clear above the mote instead of covering it. */
-  #scentTrailCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
+  /* LUL-2307: generic first-encounter hint caption, generalizing LUL-2230's
+     scent-only #scentTrailCaption -- scent is now just one entry in the engine's
+     HINT_PRIORITY list (engine/forest-engine.js), and keeps its original id/glyph
+     class (Hud.tsx) since e2e/scent-trail.spec.ts and e2e/mobile/scent-trail.spec.ts
+     assert on #scentTrailCaption directly and must pass unchanged -- every other
+     key renders through the new #hintCaption/.hintCaptionGlyph instead. World-anchored
+     keys (WORLD_HINT_KEYS, Hud.tsx) set left/top inline from the engine-projected
+     viewport fraction; translate lifts the pill clear above the world point instead
+     of covering it, same as the old scent-only rule. */
+  /* LUL-2532: HINT_Y_MAX (engine/forest-engine.js) caps the raw engine fraction at
+     0.78, but that's a fixed viewport-height fraction while #actionSlot's reserved
+     region (bottom: var(--action-slot-bottom), height: var(--action-slot-height),
+     same vars #captionToast above keys off) is a fixed pixel band that differs per
+     breakpoint (24px/216px desktop vs. 190px/176px narrow) -- at a 720px-tall
+     viewport, 0.78 already lands inside that band (562px vs. the band's 480px top
+     edge), so translate(-50%,-120%)'s lift (which only clears ~20% of the pill's
+     own height above the anchor) isn't enough on its own (LUL-2532: QA caught
+     #scentTrailCaption's "↓" over .actionPromptLine at exactly this viewport/state).
+     min() re-derives the true ceiling in pixels instead. 24px covers translate's
+     ~20%-of-height clearance for the tallest realistic pill (three wrapped lines of
+     the "bear" hint text at the 240px mobile max-width below, ~57px tall) plus a
+     small visual gap -- tune it up if a future, longer HINT_TEXT entry still clips. */
+  #scentTrailCaption, #hintCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
+    left: var(--hint-left, 50%);
+    top: min(var(--hint-top, 50%), calc(100% - var(--action-slot-bottom) - var(--action-slot-height) - 24px));
     max-width: 60vw; padding: 6px 14px; border-radius: 999px; pointer-events: none;
     background: rgba(18,34,34,0.6); border: 1px solid rgba(159,224,208,0.4);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
     font-size: 12px; letter-spacing: 0.03em; color: #cdf3e8; text-align: center;
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  .scentTrailCaptionGlyph { color: #9fe0d0; margin-right: 4px; }
+  .scentTrailCaptionGlyph, .hintCaptionGlyph { color: #9fe0d0; margin-right: 4px; }
+  /* Self/panel-anchored keys (lake/bog/stamina/veil -- no real 3D point, and no
+     player-facing meter to anchor to today; landmark -- fires unconditionally on
+     entry, no single object to point at, same as the old toast it replaces -- see
+     docs/specs/lul-2307-first-encounter-hints.md) share one bottom-center position:
+     the same spot #captionToast already uses above #actionSlot, so "about your own
+     state" reads consistently with predator-call captions. No inline left/top is set
+     for these (Hud.tsx), so the position rule lives entirely here. */
+  #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
+  #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
+  #hintCaption[data-hint-key="landmark"] {
+    left: 50%; top: auto; transform: translateX(-50%);
+    bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px);
+  }
+  /* deepwater: below #missionPanel's top:76px/left:16px corner (:320 above). */
+  #hintCaption[data-hint-key="deepwater"] { left: 16px; top: 110px; transform: none; }
+  /* caveImmune: below #caveImmunePanel's top:56px/left:50% corner (:332 above); reuses
+     its own copy so the two never show at once in practice (the hint dismisses itself
+     the moment caveImmuneT reaches 0, before the panel disappears). */
+  #hintCaption[data-hint-key="caveImmune"] { left: 50%; top: 92px; transform: translateX(-50%); }
   /* LUL-2158 precedent (see #hint above): a fast death/win must never leave this
-     stranded over the end screen. */
-  body:has(#winScreen) #scentTrailCaption,
-  body:has(#deathScreen) #scentTrailCaption { opacity: 0 !important; }
+     stranded over the end screen. LUL-2411: opacity: 0 alone left the fixed-position
+     box's rect in place -- on mobile-pixel5-landscape the "deepwater" variant's
+     top:110px/left:16px rect still overlapped .actionPromptLine's "nowhere to hide --
+     HOLD" text while it (and #hintCaption) both remained painted through the
+     try-again/win-input-battery transition, tripping the deterministic bounding-box
+     audit exactly like #hint used to. display: none collapses the box itself. */
+  body:has(#winScreen) #scentTrailCaption, body:has(#winScreen) #hintCaption,
+  body:has(#deathScreen) #scentTrailCaption, body:has(#deathScreen) #hintCaption {
+    display: none !important; }
 
   /* win screen -- transparent container (mirrors #deathScreen) so the fireBoom()
      particle burst on the canvas below is fully visible for the ~1.8s it runs;
@@ -356,7 +429,7 @@ const OVERLAY_STYLE = `
   #winScreen { position: fixed; inset: 0; z-index: 25; display: none;
     align-items: center; justify-content: center; text-align: center; padding: 24px;
     background: rgba(0,0,0,0); pointer-events: none; }
-  #winText { opacity: 0; transition: opacity 0.9s ease; display: flex; flex-direction: column;
+  #winText { opacity: 0; transition: opacity 0.5s ease; display: flex; flex-direction: column;
     align-items: center; gap: 6px; pointer-events: auto;
     background: radial-gradient(120% 90% at 50% 42%, rgba(34,20,12,0.72), rgba(6,7,12,0.86));
     padding: 24px; border-radius: 4px;
@@ -400,65 +473,171 @@ const OVERLAY_STYLE = `
   .buyBtn:disabled { opacity: 0.45; cursor: default; }
   .buyBtn:focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
 
-  /* LUL-1623: holding-a-throwable affordance. Sits above #status (74px) so it
-     never overlaps the hidden/hunted line or #actionPrompt (92px) -- all three
-     can in principle be visible together (holding a stone while hidden). */
-  #throwPrompt { position: fixed; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 12;
-    display: flex; align-items: center; gap: 0; pointer-events: none;
-    padding: 7px 16px; border-radius: 999px; white-space: nowrap;
-    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
-    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  #throwKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
-    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
+  /* LUL-2312: one fixed bottom action slot, replacing #objective (was
+     top-centre)/#actionPrompt/#throwPrompt/#chargePrompt/#status -- five
+     independently hand-positioned pills (74/92/110/130px bottom offsets plus
+     #objective's separate top:20px) that LUL-1779/1780 kept catching drifting
+     out of sync on mobile. #actionSlot is a CSS grid column, one fixed-height
+     track per row, always laid out in this priority order regardless of which
+     rows currently have content -- so a row appearing/disappearing never
+     shifts any other row (no pop-in layout shift). Rows, top (highest
+     priority, nearest screen centre) to bottom (nearest the screen edge):
+       1. charge dodge   (SPACE/JUMP -- survival-critical, own drain bar)
+       2. objective (E)  (lift the child / mist-charm / drowned car / distance)
+       3. hide or veil   (H/Hide or F/Veil -- cover always wins over veil)
+       4. throwable      (holding a stone -- click / tap Throw)
+       5. status         (hidden / hunted)
+     --action-pill-* custom properties are the "same tokens" requirement --
+     the exact values #objective's pill used to hardcode, now named once and
+     shared by every row via components/ActionPrompt.tsx's .actionPromptLine.
+     --action-slot-row / --action-slot-row-charge / --action-slot-gap define
+     the grid's fixed row heights in one place (defaults declared on the top
+     html, body rule above); --action-slot-height derives the slot's total
+     footprint from them so #captionToast (below) can sit just above it
+     without restating the arithmetic. */
+  /* LUL-1088 precedent: a landscape phone is short, not narrow -- five stacked
+     rows plus the mobile control-row clearance below them does not fit a
+     ~390px-tall viewport (e.g. Pixel 5 landscape, 851x393) at the desktop row
+     sizes above. Tighten rows/gap and (combined with the mobile query below)
+     the slot's own clearance specifically, without touching #panel's. */
+  @media (max-height: 420px) {
+    html, body { --action-slot-row: 30px; --action-slot-row-charge: 40px; --action-slot-gap: 4px; }
+  }
+  @media (max-height: 420px) and (pointer: coarse) and (hover: none),
+         (max-height: 420px) and (max-width: 768px) {
+    body { --action-slot-bottom: 190px; }
+    /* LUL-2410: --action-slot-bottom: 190px above pushes #actionSlot's rows
+       (grid-template-rows starting with the charge row) up near the very top
+       of a short landscape phone viewport (e.g. 667x375) -- there's no gap
+       left below #gate's header controls to also fit #hint's fixed top: 64px
+       band, so the objective row's .actionPromptLine sat on the same line as
+       #hint's text (73% box overlap, iPhone SE landscape). #hint is a
+       transient onboarding caption (engine fades it out 5s after enter(),
+       see the LUL-2158 comment above) and the objective/hide/throwable pills
+       in #actionSlot already carry the info a player needs at this size, so
+       drop it here rather than fight for vertical space. display: none (not
+       opacity: 0) so the box itself collapses to nothing -- the founder rule
+       is "boxes must never intersect", and an opacity-hidden #hint would
+       still occupy its top: 64px rect and keep tripping the deterministic
+       DOM-bounding-box audit even though nothing is visibly drawn there.
+       !important beats the engine's own inline hint.style.opacity writes
+       (same precedent as the win/death :has() rules above). */
+    #hint { display: none !important; }
+    /* LUL-2418: deepwater is fixed at top:110px/left:16px (the "Self/panel-anchored
+       keys" rule above), outside this media block, anchored below #missionPanel's
+       corner -- it never moves at this breakpoint. At the raised
+       --action-slot-bottom used here, #actionSlot's row 3 ("hide or veil") lands
+       right on top of it on Pixel-5-landscape (851x393). Same collision family as
+       LUL-2411, but that fix only addressed the win/death has() selector transition,
+       not this in-gameplay case. deepwater is a transient first-encounter hint
+       (LUL-2307 registry, fades once seen) and isn't in e2e/mobile/hints.spec.ts's
+       must-stay-visible set (only landmark is, per LUL-2414) -- hide it here the
+       same way #hint is. */
+    #hintCaption[data-hint-key="deepwater"] { display: none !important; }
+    /* LUL-2414: the bottom self-anchored #hintCaption family (lake/bog/stamina/
+       veil/landmark, see the "Self/panel-anchored keys" rule above) positions
+       itself at bottom: action-slot-bottom + action-slot-height + 10px --
+       190px + 176px + 10px = 376px at this breakpoint's own row/gap sizes,
+       taller than a 375px-tall viewport (iPhone SE landscape), so the pill
+       renders fully above the top edge ("offscreen" per the audit) regardless
+       of which of the five keys fires -- unlike #hint, e2e/mobile/hints.spec.ts
+       requires the landmark variant to stay legible at this exact breakpoint, so
+       hiding it outright isn't an option here. There is no room left *above*
+       #actionSlot (it now starts near the very top, see the comment above), but
+       MobileControls.tsx's touch-control wrapper (bottom: 24px + safe-area,
+       each stick/button column ~128px wide, anchored at the left/right edges via
+       justify-content: space-between) leaves a horizontally-centred gap clear of
+       both columns, in the band between #actionSlot's own bottom edge and the
+       touch-control wrapper's bottom edge. Re-anchor top (from #actionSlot's
+       bottom edge, 100vh - action-slot-bottom, plus a small gap) instead of
+       bottom, and narrow max-width so it can't reach either stick column on the
+       narrowest supported width (iPhone SE landscape, 667px). */
+    #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
+    #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
+    #hintCaption[data-hint-key="landmark"] {
+      top: calc(100vh - var(--action-slot-bottom) + 12px); bottom: auto;
+      max-width: min(60vw, 300px);
+    }
+    /* LUL-2459: the world-anchored keys (scent + WORLD_HINT_KEYS' still-unshipped
+       wolf/bear/lion/cover/throwable, Hud.tsx) track a real 3D point via the
+       engine's projectToScreen (forest-engine.js) and can land anywhere across
+       [8%,92%] of the viewport width -- unlike the self-anchored family above,
+       there's no fixed safe spot to re-home them to, so HINT_Y_MAX (LUL-2445)
+       alone doesn't help here: MobileControls.tsx's side control column (a
+       48px-radius stick + the row above it, 128px wide, plus the wrapper's 20px
+       edge padding = 148px) sits at a height that tracks viewport *height*, not
+       just the very bottom, so it can fall inside this caption's y-range on a
+       short viewport regardless of its own x-position. Confirmed on iPhone SE
+       landscape (667x375): the up-to-60vw/400px pill reached touchHide 7px past
+       its left edge even though its anchor (58.7% of 667px) wasn't near either
+       screen edge. Capping the pill at 240px (half 120px) and clamping its
+       centre to stay >=156px (148px control-column margin + 8px buffer) from
+       each edge -- minus that half-width -- keeps the rendered box clear of
+       both side columns on every viewport this breakpoint covers, without a
+       per-viewport branch (same one-global-constant approach LUL-2445 used for
+       HINT_Y_MAX). --hint-left is the raw engine fraction (Hud.tsx); the base
+       rule above uses it directly outside this breakpoint. */
+    #scentTrailCaption, #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
+    #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
+    #hintCaption[data-hint-key="throwable"] {
+      max-width: 240px;
+      left: clamp(276px, var(--hint-left, 50%), calc(100vw - 276px));
+    }
+  }
 
-  /* status line (hiding / hunted) */
-  #status { position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%); z-index: 12;
-    display: none; padding: 7px 16px; border-radius: 999px; white-space: nowrap;
-    background: rgba(12,17,26,0.6); border: 1px solid rgba(150,175,215,0.16);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.03em; text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  #status.hiding { color: #9fd7b0; border-color: rgba(120,200,150,0.4); }
+  #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
+    z-index: 12; display: grid;
+    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
+    row-gap: var(--action-slot-gap); justify-items: center; pointer-events: none; }
 
-  /* LUL-1089: contextual hide/veil prompt. Sits between #status (74px) and
-     #chargePrompt (130px). Calm state: amber (#ffdca8) matching #objective.ready —
-     the game's existing "available now" grammar. Urgent: red (#e8554a) matching
-     #chargeBar — the only red in the HUD, already meaning "act now".
-     urgentFlash animates background + box-shadow only — never transform, never
-     layout — so the translateX(-50%) centring is never overridden mid-panic. */
-  #actionPrompt { position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 12;
-    display: flex; align-items: center; gap: 0; pointer-events: none;
+  .actionPromptRow { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; }
+  .actionPromptLine { display: flex; align-items: center; gap: 0; pointer-events: none;
     padding: 7px 16px; border-radius: 999px; white-space: nowrap;
-    background: rgba(12,17,26,0.6); border: 1px solid rgba(255,200,140,0.45);
+    background: var(--action-pill-bg); border: 1px solid var(--action-pill-border-calm);
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    font-size: 13px; letter-spacing: 0.03em; color: #ffdca8;
-    text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
-  #actionPrompt #actionKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
-    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
-  #actionPrompt.urgent #actionKey { animation: urgentFlash 0.42s ease-in-out infinite alternate; }
+    font-size: 13px; letter-spacing: 0.03em; color: var(--action-pill-color-calm);
+    text-shadow: 0 1px 6px rgba(0,0,0,0.7);
+    animation: actionPromptFadeIn 150ms ease; }
+  .actionPromptRow[data-tone="ready"] .actionPromptLine,
+  .actionPromptRow[data-tone="urgent"] .actionPromptLine { color: var(--action-pill-color-ready); border-color: var(--action-pill-border-ready); }
+  .actionPromptRow[data-tone="status"] .actionPromptLine { color: var(--action-pill-color-status); border-color: var(--action-pill-border-status); }
+  .actionPromptKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+    color: var(--action-pill-key-color); background: var(--action-pill-key-bg); box-shadow: var(--action-pill-key-shadow); }
+  /* LUL-1780: tone="urgent" is the one flashing state -- background/box-shadow
+     only, never transform, so the row's own translateX(-50%)-free flex layout
+     is never at risk of the chargePulse-on-transform bug (decisions/
+     lul1089-prompt-surface). This also now covers the charge-dodge keycap,
+     which used to run its own always-on amber scale-pulse (chargePulse) --
+     unified onto the same red flash as every other urgent row so the whole
+     component family satisfies "opacity only, no scale/bounce" below. */
+  .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: urgentFlash 0.42s ease-in-out infinite alternate; }
   @keyframes urgentFlash {
-    from { background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6); }
-    to   { background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
+    from { background: var(--action-pill-key-bg); box-shadow: var(--action-pill-key-shadow); }
+    to   { background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); } }
+  /* LUL-2312 rule 4: transitions are opacity-only, 120-180ms, nothing pops --
+     a row's pill fades in on mount; there is deliberately no exit transition,
+     matching every one of these prompts' existing (zero-transition) hide
+     behaviour, so this is a pure improvement, not a new pop-in. */
+  @keyframes actionPromptFadeIn { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) {
-    #actionPrompt.urgent #actionKey { animation: none; background: #e8554a; box-shadow: 0 2px 26px rgba(232,85,74,0.85); } }
+    .actionPromptLine { animation: none; }
+    .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: none; background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); } }
 
-  /* LUL-213/LUL-304: charge-dodge visual key + countdown bar. The animation
-     duration is CHARGE_WINDOW (imported from lib/game/charge.ts, not
-     restated as a literal) so the bar can never drift from the real dodge
-     window -- see the comment on #chargePrompt in Hud.tsx for why that
-     constant is still spliced into CSS here rather than threaded through as
-     per-frame engine-emitted state. */
-  #chargePrompt { position: fixed; bottom: 130px; left: 50%; transform: translateX(-50%); z-index: 13;
-    display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
-  #chargeKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
-    color: #1a1006; background: #f0c79a; box-shadow: 0 2px 20px rgba(240,199,154,0.6);
-    animation: chargePulse 0.4s ease-in-out infinite alternate; }
-  #chargeBarTrack { width: 120px; height: 5px; border-radius: 999px; background: rgba(150,175,215,0.25); overflow: hidden; }
-  #chargeBar { height: 100%; width: 100%; background: #e8554a; transform-origin: left;
-    animation: chargeDrain ${CHARGE_WINDOW}s linear forwards; }
+  /* LUL-2331: mist-charm activation tell -- Hud.tsx toggles this class for the same
+     400ms window it eases #veilState's displayed number up in (useVeilMeterRamp),
+     skipped entirely (class never applied) when state.reducedMotion is set. */
+  #veilState.veilRefillFlash { animation: veilRefillFlash 400ms ease-out; }
+  @keyframes veilRefillFlash {
+    from { color: #cfe8ff; } to { color: inherit; } }
+
+  /* LUL-213/LUL-304: charge-dodge countdown bar -- durationSeconds comes from
+     CHARGE_WINDOW (lib/game/charge.ts) as an inline style on the element
+     itself now (components/Hud.tsx), not spliced into this stylesheet, so the
+     bar can never drift from the real dodge window without also threading it
+     through as per-frame engine state. */
+  .actionPromptProgressTrack { width: 120px; height: 5px; border-radius: 999px; background: rgba(150,175,215,0.25); overflow: hidden; }
+  .actionPromptProgressBar { height: 100%; width: 100%; background: #e8554a; transform-origin: left; animation: chargeDrain linear forwards; }
   @keyframes chargeDrain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-  @keyframes chargePulse { from { transform: scale(1); } to { transform: scale(1.08); } }
 
   /* death: video cutscene + loss text */
   #spotFlash { position: fixed; inset: 0; z-index: 12; pointer-events: none; opacity: 0;

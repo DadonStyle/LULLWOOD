@@ -21,6 +21,9 @@ import {
   boot,
   enter,
   expectNoConsoleErrors,
+  expectRowHidden,
+  expectRowVisible,
+  qaHook,
   readObjective,
   trackConsoleErrors,
 } from './helpers';
@@ -39,7 +42,7 @@ test.describe('initial load', () => {
   test('title gate, engine API, two canvases, no console errors', async ({ page }) => {
     const errors = trackConsoleErrors(page);
 
-    await boot(page);
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
 
     const load = await page.evaluate(() => ({
       title: document.title,
@@ -74,6 +77,12 @@ test.describe('initial load', () => {
     expect(load.text).toContain('hold still');
 
     await enter(page);
+    // LUL-2329: qaWorld=micro's small map lets a roaming predator reach and
+    // kill the player during the real-time 2.5s walk below with non-trivial
+    // odds (confirmed empirically). qaBuildScene with no `predators` key
+    // parks every predator inert; this test asserts DOM text, not map
+    // content. See docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
+    await qaHook(page, 'qaBuildScene', {});
     await page.keyboard.down('KeyW');
     await page.waitForTimeout(2500);
     await page.keyboard.up('KeyW');
@@ -106,13 +115,14 @@ test.describe('HUD lifted to React (LUL-34)', () => {
   }) => {
     const errors = trackConsoleErrors(page);
 
-    await boot(page);
+    await boot(page, { qaWorld: 'micro' });
 
-    // Pre-entry: gate is mounted, objective/status are not -- the old
-    // version kept #objective/#status in the DOM at all times.
+    // Pre-entry: gate is mounted, objective/status carry no content -- LUL-2312
+    // made #objective/#status two of #actionSlot's five always-mounted rows,
+    // so "not shown" is now data-visible="0" rather than absence from the DOM.
     await expect(page.locator('#gate')).toHaveCount(1);
-    await expect(page.locator('#objective')).toHaveCount(0);
-    await expect(page.locator('#status')).toHaveCount(0);
+    await expectRowHidden(page, 'objective');
+    await expectRowHidden(page, 'status');
 
     // LUL-35 (pass 2) regression guard: the panel must open showing the values
     // the engine is actually running (CONFIG.walk 6, CONFIG.fog 0.04). It used
@@ -123,7 +133,7 @@ test.describe('HUD lifted to React (LUL-34)', () => {
 
     await enter(page);
     await expect(page.locator('#gate')).toHaveCount(0); // unmounted, not just hidden
-    await expect(page.locator('#objective')).toBeVisible();
+    await expectRowVisible(page, 'objective');
 
     // Drive the range inputs like a real drag would (Playwright's `fill()`
     // refuses `type=range`). Assigning `el.value` is NOT enough: React installs
@@ -198,7 +208,7 @@ test.describe('lift the child / win', () => {
     // (wiki systems/dt-clamp-vs-walltime, same reasoning as the predator-hunt
     // test above budgeting 120s for the same divergence).
     test.setTimeout(75_000);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());
@@ -229,6 +239,8 @@ test.describe('lift the child / win', () => {
     // (the wall-clock-vs-dt-clamp mismatch LUL-1611 fixed) could ship silently.
     await expect(page.locator('#winText')).toHaveCSS('opacity', '1', { timeout: 30_000 });
     await expect(page.locator('#winScreen h1')).toHaveText('YOU WON');
+    // LUL-2496: Ending Ceremony cheap slice -- single dialogue line at boom completion.
+    await expect(page.locator('#winDialogue')).toHaveText("You've brought her home.");
 
     // LUL-197: arriveHome() used to skip the exitPointerLock()/cursor reset that
     // triggerDeath() and pickup() both do, so the win screen rendered underneath
@@ -276,7 +288,7 @@ test.describe('predator catch / death', () => {
   for (const kind of ['wolf', 'bear', 'lion'] as const) {
     test(`a hunting ${kind} closes the distance and kills you`, async ({ page }) => {
       test.setTimeout(120_000);
-      await boot(page, { qaHooks: true });
+      await boot(page, { qaHooks: true, qaWorld: 'micro' });
       await enter(page);
 
       // In-game, the trigger is standing still: if no predator has been within 20
@@ -294,6 +306,17 @@ test.describe('predator catch / death', () => {
       // (`p.rad + 1.3`, max 2.8). What is under test is unchanged: it still has to
       // close the distance itself, and the catch and triggerDeath paths run for
       // real. Only the waiting (and which species gets tested) is controlled.
+      //
+      // LUL-2329: qaWorld=micro's much smaller map puts every one of the 9
+      // predators statistically close together, so an *unrelated* species can
+      // now reach and kill the player before the lured one does (confirmed
+      // empirically: the wolf case killed via a lion instead) -- something
+      // the full 480-wide map made vanishingly unlikely. qaBuildScene parks
+      // every predator not named in its own `predators` array `inert` (see
+      // docs/specs/lul-2329-e2e-migrate-qaworld-micro.md), which is exactly
+      // the isolation this needs; qaLurePredatorKind still does the real
+      // positioning/hunt-forcing afterward, unchanged.
+      await qaHook(page, 'qaBuildScene', { predators: [{ kind, x: 6, z: 0 }] });
       const lured = await page.evaluate(
         (k) => window.ForestEngine?.qaLurePredatorKind?.(k) ?? null,
         kind,

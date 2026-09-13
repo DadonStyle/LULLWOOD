@@ -6,11 +6,14 @@ import MobileControls from './MobileControls';
 import OrientationGate from './OrientationGate';
 import SettingsPanel from './SettingsPanel';
 import GameMenu from './GameMenu';
+import ActionPrompt from './ActionPrompt';
 import { isMobile } from '@/lib/input-mode';
 import { track } from '@/lib/analytics';
-import { nextDeeperLungsCost, veilMaxHoldForTier, CARRIED, RESCUE, type RunPayout } from '@/lib/game/economy';
+import { SHOP_CATALOG, nextCost, veilMaxHoldForTier, effectiveScentLifetime, POCKET_STONES_RESERVE, CARRIED, RESCUE, type RunPayout } from '@/lib/game/economy';
+import { freshProgression, type Progression } from '@/lib/game/progression';
 import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
+import { CHARGE_WINDOW } from '@/lib/game/charge';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -59,6 +62,9 @@ export interface EngineHudState {
   // while locked, even if held.
   veilCharge: number;
   veilLocked: boolean;
+  // LUL-2331: true once the Stone Marker mist-charm is banked, false again the frame it
+  // fires (saves a would-be lock). Drives the HUD pip and the eased refill below.
+  veilReserve: boolean;
   // LUL-1904: cave detection-immunity countdown -- 0 while inactive.
   caveImmuneActive:   boolean;
   caveImmuneTimeLeft: number;
@@ -94,8 +100,15 @@ export interface EngineHudState {
   // the first win/death this session), read alongside winVisible/deathVisible.
   embersBalance: number;
   livePileEmbers: number;   // LUL-1315: live unbanked total, run-only, 0 outside a run
-  embersDeeperLungsTier: number;
+  embersTiers: Record<string, number>;
   lastPayout: RunPayout | null;
+  // LUL-2558: personal-best time + tier streak counter. `progression` is the whole
+  // record, for persistence only; `personalBest`/`tierStats`/`newRecord` are the
+  // current-tier summary read by RunRecap.
+  progression: Progression;
+  personalBest: number | null;
+  tierStats: { runs: number; wins: number; streak: number };
+  newRecord: boolean;
   // LUL-1623: throwable distractions. heldThrowable gates the "holding a
   // stone — click/tap to throw" prompt; canGrabThrowable gates the "pick up
   // a stone" prompt, mirroring objectiveReady's role for the child.
@@ -125,15 +138,31 @@ export interface EngineHudState {
   // streamed per-frame -- see engine/forest-engine.js's logChronicle()
   // comment). lib/game/chronicle.ts's formatChronicle() renders it.
   chronicle: ChronicleEvent[];
-  // LUL-2230: the scent trail visual + its one-time explanation. `scentTrailVisible`
-  // is the persisted Settings toggle (default on); `scentCaptionVisible`/X/Y are
-  // pushed per-frame, viewport fractions, only while the one-time caption is on
-  // screen (same per-frame-push pattern veilCharge above uses).
+  // LUL-2230: the scent trail visual. `scentTrailVisible` is the persisted
+  // Settings toggle (default on).
   scentTrailVisible: boolean;
-  scentCaptionVisible: boolean;
-  scentCaptionX: number;
-  scentCaptionY: number;
+  // LUL-2307: generic first-encounter hint captions (replaces LUL-2230's
+  // scentCaptionVisible/X/Y -- scent is now just one entry in the engine's
+  // HINT_PRIORITY list). `hintsEnabled` is the persisted Settings toggle
+  // (default on); `hintVisible`/`hintKey`/`hintText`/X/Y are pushed
+  // per-frame, only while a hint is on screen (same per-frame-push pattern
+  // veilCharge above uses). `hintX`/`hintY` (viewport fractions) only matter
+  // for WORLD_HINT_KEYS below -- fixed-anchor hints are positioned by CSS
+  // keyed on `hintKey` (components/GameCanvas.tsx), not these fields.
+  hintsEnabled: boolean;
+  hintVisible: boolean;
+  hintKey: string | null;
+  hintText: string;
+  hintX: number;
+  hintY: number;
 }
+
+// LUL-2307: world-anchored hint keys render the down-arrow glyph and use the
+// engine-projected hintX/hintY; the rest (lake/bog/deepwater/stamina/
+// caveImmune/veil/landmark -- no real 3D point, or no player-facing panel to
+// anchor to) are positioned by a fixed `[data-hint-key]` CSS rule instead. See
+// docs/specs/lul-2307-first-encounter-hints.md.
+const WORLD_HINT_KEYS = new Set(['scent', 'wolf', 'bear', 'lion', 'cover', 'throwable']);
 
 export interface EngineActions {
   enter: () => void;
@@ -164,13 +193,18 @@ export interface EngineActions {
   setReducedMotion: (v: boolean) => void;
   setCaptions: (v: boolean) => void;
   // LUL-1043
-  setEmbers: (balance: number, deeperLungsTier: number) => void;
-  purchaseDeeperLungs: () => void;
+  setEmbers: (balance: number, tiers: Record<string, number>) => void;
+  purchase: (id: string) => void;
   // LUL-1666
   setMissionUnlocks: (unlocks: { deepwater: boolean }) => void;
   setSecondaryChoice: (kind: SecondaryKind | null) => void;
   // LUL-2230
   setScentTrailVisible: (v: boolean) => void;
+  // LUL-2307
+  setHintsEnabled: (v: boolean) => void;
+  resetHints: () => void;
+  // LUL-2558
+  setProgression: (p: Progression) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -202,6 +236,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lightDimmed: false,
   veilCharge: 1,
   veilLocked: false,
+  veilReserve: false,
   caveImmuneActive: false,
   caveImmuneTimeLeft: 0,
   coverPromptVisible: false,
@@ -222,8 +257,12 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   captionId: 0,
   embersBalance: 0,
   livePileEmbers: 0,
-  embersDeeperLungsTier: 0,
+  embersTiers: {},
   lastPayout: null,
+  progression: freshProgression(),
+  personalBest: null,
+  tierStats: { runs: 0, wins: 0, streak: 0 },
+  newRecord: false,
   heldThrowable: false,
   canGrabThrowable: false,
   missionKind: null,
@@ -235,9 +274,12 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   windZ: 0,
   chronicle: [],
   scentTrailVisible: true,
-  scentCaptionVisible: false,
-  scentCaptionX: 0.5,
-  scentCaptionY: 0.5,
+  hintsEnabled: true,
+  hintVisible: false,
+  hintKey: null,
+  hintText: '',
+  hintX: 0.5,
+  hintY: 0.5,
 };
 
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
@@ -268,6 +310,38 @@ const formatDuration = (totalSeconds: number) => {
   return `${m}:${(s % 60).toString().padStart(2, '0')}`;
 };
 
+// LUL-1089/LUL-2312: hide/veil action-slot row copy. Only one of the two
+// mechanics prompts at a time -- cover wins (engine enforces via
+// !coverPromptVisible in the veil condition, forest-engine.js), so this is a
+// single priority chain, not two independent branches. Returns props to
+// spread onto <ActionPrompt> rather than JSX so the caller doesn't need a
+// four-way conditional inline; called unconditionally (its result is only
+// ever displayed when the caller's own `visible` prop is true).
+function hideVeilPromptContent(
+  state: EngineHudState,
+  mobile: boolean,
+): { text: string; suffix?: string; keycap: string; tone: 'ready' | 'urgent' } {
+  const noun = 'bush'; // LUL-2311: bramble is the only hide-eligible cover kind now
+  if (state.coverPromptVisible) {
+    if (state.coverPromptUrgent) {
+      return mobile
+        ? { text: `the ${noun} is right there — TAP  `, keycap: 'Hide', tone: 'urgent' }
+        : { text: `the ${noun} is right there — PRESS  `, keycap: 'H', tone: 'urgent' };
+    }
+    return mobile
+      ? { text: 'Tap  ', keycap: 'Hide', suffix: `  to slip into the ${noun}`, tone: 'ready' }
+      : { text: 'Press  ', keycap: 'H', suffix: `  to hide in the ${noun}`, tone: 'ready' };
+  }
+  if (state.veilPromptUrgent) {
+    return mobile
+      ? { text: 'nowhere to hide — HOLD  ', keycap: 'Veil', tone: 'urgent' }
+      : { text: 'nowhere to hide — HOLD  ', keycap: 'F', suffix: '  for the veil', tone: 'urgent' };
+  }
+  return mobile
+    ? { text: 'it is hunting you — hold  ', keycap: 'Veil', tone: 'ready' }
+    : { text: 'it is hunting you — hold  ', keycap: 'F', suffix: '  for the mist veil', tone: 'ready' };
+}
+
 // LUL-1043: Embers, the run currency -- supersedes the LUL-84 personal-best
 // time survived this block used to hold (deleted: it rewarded dying slowly,
 // see wiki game/economy/state-of-play). Same client-only persistence
@@ -281,7 +355,7 @@ const EMBERS_KEY = 'lullwood:embers';
 
 interface PersistedEmbers {
   balance: number;
-  tiers: { deeperLungs: number };
+  tiers: Record<string, number>;
 }
 
 function readEmbers(): PersistedEmbers | null {
@@ -291,7 +365,11 @@ function readEmbers(): PersistedEmbers | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PersistedEmbers>;
     if (typeof parsed.balance !== 'number') return null;
-    return { balance: parsed.balance, tiers: { deeperLungs: parsed.tiers?.deeperLungs ?? 0 } };
+    const tiers: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed.tiers ?? {})) {
+      if (typeof v === 'number') tiers[k] = v;
+    }
+    return { balance: parsed.balance, tiers };
   } catch {
     return null;
   }
@@ -306,7 +384,7 @@ function writeEmbers(s: PersistedEmbers) {
   }
 }
 
-function useEmbers(actions: EngineActions | null, balance: number, deeperLungsTier: number) {
+function useEmbers(actions: EngineActions | null, balance: number, tiers: Record<string, number>) {
   // Track whether the apply-on-ready effect has run, so persist doesn't fire
   // with zero defaults before the stored balance is applied.
   const appliedRef = useRef(false);
@@ -318,16 +396,16 @@ function useEmbers(actions: EngineActions | null, balance: number, deeperLungsTi
     if (!actions) return;
     appliedRef.current = true;
     const stored = readEmbers();
-    if (stored) actions.setEmbers(stored.balance, stored.tiers.deeperLungs);
+    if (stored) actions.setEmbers(stored.balance, stored.tiers);
   }, [actions]);
 
-  // Persist whenever the engine's own balance/tier actually change -- after
+  // Persist whenever the engine's own balance/tiers actually change -- after
   // the apply-on-ready effect above, so a mount with a stored balance isn't
   // immediately overwritten by the engine's own zeroed default before it applies.
   useEffect(() => {
     if (!appliedRef.current) return;
-    writeEmbers({ balance, tiers: { deeperLungs: deeperLungsTier } });
-  }, [balance, deeperLungsTier]);
+    writeEmbers({ balance, tiers });
+  }, [balance, tiers]);
 }
 
 // LUL-1666: cross-session unlock record -- same split as useEmbers() above
@@ -373,6 +451,49 @@ function useMissionUnlocks(actions: EngineActions | null, unlocks: { deepwater: 
   }, [unlocks]);
 }
 
+// LUL-2558: personal-best time + tier streak counter -- same two-effect split as
+// useMissionUnlocks() above. `readProgression()` deliberately does not validate shape
+// (unlike readMissionUnlocks()) -- the engine's setProgression() already re-validates
+// every field defensively, so double-validating in two places would just be the same
+// guard written twice.
+const PROGRESSION_KEY = 'lullwood:progression';
+
+function readProgression(): Progression | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(PROGRESSION_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as Progression; // setProgression() in the engine re-validates every field
+  } catch {
+    return null;
+  }
+}
+
+function writeProgression(p: Progression) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PROGRESSION_KEY, JSON.stringify(p));
+  } catch {
+    // private mode / quota exceeded -- same no-op as writeEmbers/writeMissionUnlocks
+  }
+}
+
+function useProgression(actions: EngineActions | null, progression: Progression) {
+  const appliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!actions) return;
+    appliedRef.current = true;
+    const stored = readProgression();
+    if (stored) actions.setProgression?.(stored);
+  }, [actions]);
+
+  useEffect(() => {
+    if (!appliedRef.current) return;
+    writeProgression(progression);
+  }, [progression]);
+}
+
 // LUL-26: captions are the only channel carrying predator warnings for a deaf/
 // HoH player (every game sound is synthesized WebAudio, no other track exists),
 // so the toast needs its own visible lifetime -- the engine only ever sets
@@ -414,30 +535,46 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
 // first pushState after arriveHome()/triggerDeath() lands, so this never
 // renders with stale data from a previous run (lastPayout is set in the
 // same pushState call as winVisible/deathVisible).
-function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, difficulty }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[]; difficulty: 'lantern' | 'night' | 'blackout' }) {
+function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, difficulty, personalBest, tierStats, newRecord }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[]; difficulty: 'lantern' | 'night' | 'blackout'; personalBest: number | null; tierStats: { runs: number; wins: number; streak: number }; newRecord: boolean }) {
   const lines = formatChronicle(chronicle);
   const tierLabel = difficulty === 'lantern' ? 'Lantern' : difficulty === 'night' ? 'Night' : 'Blackout';
   return (
     <>
-      <p id="runRecap">
-        {tierLabel} · time survived: {formatDuration(survivedSeconds)}
-        {payout && (
-          <>
-            <br />
-            +{payout.depth} depth · +{payout.survival} survival
-            {isDeath ? (
-              <> · <span className="emberLoss">-{CARRIED + RESCUE} lost</span> (child &amp; rescue, forfeited)</>
-            ) : (
-              <>
-                {payout.carried > 0 && <> · +{payout.carried} child</>}
-                {payout.rescue > 0 && <> · +{payout.rescue} rescue</>}
-              </>
-            )}
-            {payout.spent > 0 && <> · −{payout.spent} charm</>}
-            {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
-          </>
+      <div id="runRecap">
+        <p>
+          {tierLabel} · time survived: {formatDuration(survivedSeconds)}
+          {payout && (
+            <>
+              <br />
+              +{payout.depth} depth · +{payout.survival} survival
+              {isDeath ? (
+                <> · <span className="emberLoss">-{CARRIED + RESCUE} lost</span> (child &amp; rescue, forfeited)</>
+              ) : (
+                <>
+                  {payout.carried > 0 && <> · +{payout.carried} child</>}
+                  {payout.rescue > 0 && <> · +{payout.rescue} rescue</>}
+                </>
+              )}
+              {payout.spent > 0 && <> · −{payout.spent} charm</>}
+              {' '}= <span className="emberGain">{payout.total} embers</span> · balance: {balance}
+            </>
+          )}
+        </p>
+        {/* LUL-2558: nested inside #runRecap (not a sibling <p>) so
+            e2e/progression.spec.ts's `#runRecap` textContent read picks these
+            up too -- <p>, not <div>, since nothing outside this component
+            selects on tag; e2e/death-sequence.spec.ts's cause-text lookup
+            uses its own #deathCauseText id, not a `p:not(#runRecap)` count. */}
+        {personalBest != null && (
+          <p className={newRecord ? 'newRecord' : undefined}>
+            Personal Best: {formatDuration(personalBest)}{newRecord ? ' — New Record!' : ''}
+          </p>
         )}
-      </p>
+        <p>
+          {tierLabel} stats: Runs {tierStats.runs} · Wins {tierStats.wins}
+          {tierStats.runs > 0 ? ` (${Math.round((tierStats.wins / tierStats.runs) * 100)}%)` : ''} · Streak {tierStats.streak}
+        </p>
+      </div>
       {lines.length > 0 && (
         <ul id="runChronicle">
           {lines.map((line, i) => <li key={i}>{line}</li>)}
@@ -457,30 +594,85 @@ function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, diffic
 // spend once per page load, not "between runs" the way the design
 // (wiki game/economy/embers) describes it. Declared explicitly in the PR
 // body as a stated extension of the ticket's literal wording, not a silent one.
-function EmbersShop({ balance, tier, actions }: { balance: number; tier: number; actions: EngineActions | null }) {
-  const cost = nextDeeperLungsCost(tier);
-  const currentHold = veilMaxHoldForTier(tier);
+function shopEffectCopy(id: string, tier: number): { current: string; next: string } {
+  if (id === 'deeperLungs') {
+    return { current: `veil hold ${veilMaxHoldForTier(tier)}s`, next: `veil hold ${veilMaxHoldForTier(tier + 1)}s` };
+  }
+  if (id === 'quietStep') {
+    return {
+      current: `scent fades in ${effectiveScentLifetime(tier).toFixed(1)}s`,
+      next: `scent fades in ${effectiveScentLifetime(tier + 1).toFixed(1)}s`,
+    };
+  }
+  // pocketStones: single tier, tier is always 0 here (cost==null branch handles tier 1)
+  return { current: 'no reserve stones', next: `+${POCKET_STONES_RESERVE} throwables/run` };
+}
+
+function EmbersShop({ balance, tiers, actions }: { balance: number; tiers: Record<string, number>; actions: EngineActions | null }) {
   return (
     <div id="embersShop">
       <div id="embersShopBalance">Embers: {balance}</div>
-      {cost == null ? (
-        <div id="embersShopMaxed">Deeper Lungs maxed — veil hold {currentHold}s</div>
-      ) : (
-        <button
-          className="buyBtn"
-          id="buyDeeperLungs"
-          disabled={balance < cost}
-          onClick={(e) => {
-            // #gate's own onClick would otherwise also fire enter() on this same click.
-            e.stopPropagation();
-            actions?.purchaseDeeperLungs();
-          }}
-        >
-          Deeper Lungs — veil hold {currentHold}s → {veilMaxHoldForTier(tier + 1)}s — {cost} embers
-        </button>
-      )}
+      {SHOP_CATALOG.map((item) => {
+        const tier = tiers[item.id] ?? 0;
+        const cost = nextCost(item.id, tier);
+        const copy = shopEffectCopy(item.id, tier);
+        return cost == null ? (
+          <div key={item.id} id={`embersShopMaxed-${item.id}`}>
+            {item.label} maxed — {copy.current}
+          </div>
+        ) : (
+          <button
+            key={item.id}
+            className="buyBtn"
+            id={`buy-${item.id}`}
+            disabled={balance < cost}
+            onClick={(e) => {
+              // #gate's own onClick would otherwise also fire enter() on this same click.
+              e.stopPropagation();
+              actions?.purchase(item.id);
+            }}
+          >
+            {item.label} — {copy.current} → {copy.next} — {cost} embers
+          </button>
+        );
+      })}
     </div>
   );
+}
+
+// LUL-2331: the engine snaps veilCharge instantly the frame the mist-charm reserve fires
+// (lib/game/veil.ts's stepVeilCharge, the `reserve` branch) -- this eases the HUD's own
+// *rendered* copy of that number up over 400ms instead, same "engine owns state, HUD owns
+// presentation" split the file already uses for captions. Outside that window, the display
+// tracks the raw engine value directly. `ramping` also drives the brief flash class.
+const VEIL_REFILL_RAMP_MS = 400;
+
+function useVeilMeterRamp(veilCharge: number, veilReserve: boolean, reducedMotion: boolean) {
+  // `ramp` is null whenever no refill is in flight -- displayVeilCharge then reads
+  // veilCharge directly instead of a mirrored copy (no separate synced state to drift).
+  const [ramp, setRamp] = useState<{ value: number } | null>(null);
+  const prevReserveRef = useRef(veilReserve);
+  const displayVeilCharge = ramp ? ramp.value : veilCharge;
+
+  useEffect(() => {
+    const fired = prevReserveRef.current && !veilReserve;
+    prevReserveRef.current = veilReserve;
+    if (!fired || reducedMotion) return;
+    const from = displayVeilCharge;
+    const to = veilCharge;
+    const start = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / VEIL_REFILL_RAMP_MS);
+      if (t < 1) { setRamp({ value: from + (to - from) * t }); raf = requestAnimationFrame(step); }
+      else setRamp(null);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [veilReserve, reducedMotion]);
+
+  return { displayVeilCharge, ramping: ramp !== null };
 }
 
 export default function Hud({
@@ -490,8 +682,9 @@ export default function Hud({
   state: EngineHudState;
   actions: EngineActions | null;
 }) {
-  useEmbers(actions, state.embersBalance, state.embersDeeperLungsTier);
+  useEmbers(actions, state.embersBalance, state.embersTiers);
   useMissionUnlocks(actions, state.missionUnlocks);
+  useProgression(actions, state.progression);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
@@ -502,6 +695,7 @@ export default function Hud({
   // sticks/buttons don't render on top of the menu (see MobileControls.tsx).
   const [menuOpen, setMenuOpen] = useState(false);
   const captionVisible = useCaptionToast(state.captionsOn, state.captionId);
+  const { displayVeilCharge, ramping: veilRefillRamping } = useVeilMeterRamp(state.veilCharge, state.veilReserve, state.reducedMotion);
 
   // LUL-1194: the keyboard is otherwise dead on end screens (isPlaying() gates
   // every keydown branch in the engine on !won && !dead) -- focusing the
@@ -525,10 +719,10 @@ export default function Hud({
   // a player who presses Space/Enter *after* actually seeing the screen still
   // gets the same accessible path back in.
   // 2000ms, not a round guess: #winText's own opacity transition (GameCanvas.tsx's
-  // OVERLAY_STYLE, `transition: opacity 0.9s ease`) means winRevealed flips true a full
-  // 0.9s before the text is actually visible on screen -- a shorter delay measured from
-  // winRevealed still lands within or just after that fade, before a player has had any
-  // real chance to read "YOU WON" and decide to press something.
+  // OVERLAY_STYLE, `transition: opacity 0.5s ease`, LUL-2496) means winRevealed flips true a full
+  // 0.5s before the text is actually visible on screen -- #deathText stays at 0.9s -- a shorter
+  // delay measured from winRevealed still lands within or just after either fade, before a
+  // player has had any real chance to read "YOU WON" and decide to press something.
   const RESTART_FOCUS_DELAY_MS = 2000;
   const winRestartRef = useRef<HTMLButtonElement>(null);
   const deathRestartRef = useRef<HTMLButtonElement>(null);
@@ -599,9 +793,13 @@ export default function Hud({
         <span id="lightState">Light: {state.lightDimmed ? 'dimmed' : 'normal'}</span>
         {/* LUL-382: veil charge meter -- the cost/limit on the mist veil (F). Empty
             means F does nothing until it regenerates; "recharging" means a full drain
-            locked it out until charge climbs back past the unlock threshold. */}
-        <span id="veilState">
-          Veil: {Math.round(state.veilCharge * 100)}%{state.veilLocked ? ' (recharging)' : ''}
+            locked it out until charge climbs back past the unlock threshold.
+            LUL-2331: `displayVeilCharge` eases up over 0.4s on the mist-charm reserve
+            firing (useVeilMeterRamp above); `veilRefillRamping` drives the same-window
+            flash class. `veilCharmPip` shows only while a charm is banked. */}
+        <span id="veilState" className={veilRefillRamping ? 'veilRefillFlash' : undefined}>
+          Veil: {Math.round(displayVeilCharge * 100)}%{state.veilLocked ? ' (recharging)' : ''}
+          {state.veilReserve && <span id="veilCharmPip"> ✦</span>}
         </span>
         {/* LUL-1113: stamina resource meter -- the cost on sprint. Decays while
             sprinting, regenerates while walking. */}
@@ -629,19 +827,29 @@ export default function Hud({
       <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} onOpenChange={setMenuOpen} />
       <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
-      {/* LUL-26: closed captions for predator calls -- the only warning
+      {/* LUL-26/LUL-2312: closed captions for predator calls -- the only warning
           channel for a player who can't hear the (fully synthesized) audio.
           `key` forces a remount per captionId so a caption that arrives while
           the previous one is still fading restarts the toast cleanly instead
-          of the old text lingering under a re-triggered fade. */}
+          of the old text lingering under a re-triggered fade. Rendered as an
+          <ActionPrompt> row positioned above #actionSlot (GameCanvas.tsx) --
+          tone="status" instead of the old dedicated amber #captionToast colour,
+          so every non-actionable HUD readout (this + the hidden/hunted status
+          row below) shares one look; declared in the PR, not silent. */}
       {/* LUL-2131: predator calls stop while playing===false but captionVisible/
           state.caption are toast state, not reset by triggerDeath/arriveHome --
           a caption in flight at the exact moment of win/death would otherwise
           keep fading in over the end screen. */}
       {captionVisible && state.caption && !state.winVisible && !state.deathVisible && (
-        <div id="captionToast" key={state.captionId} role="status" aria-live="polite">
-          {state.caption}
-        </div>
+        <ActionPrompt
+          id="captionToast"
+          key={state.captionId}
+          visible
+          text={state.caption}
+          tone="status"
+          role="status"
+          ariaLive="polite"
+        />
       )}
 
       {!state.entered && (
@@ -674,37 +882,36 @@ export default function Hud({
               <>
                 <b>WASD</b> — move &nbsp;·&nbsp; <b>mouse</b> — look &nbsp;·&nbsp; <b>Shift</b> — run
                 <br />
-                <b>H</b> — hide (bushes &amp; hollow logs only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
+                <b>H</b> — hide (bushes only) &nbsp;·&nbsp; <b>E</b> — lift the child &nbsp;·&nbsp; <b>Esc</b> — menu
                 <br />
                 <b>Space</b> — jump (also how you clear a charging wolf or lion)
                 <br />
                 <b>F</b> — hold for the mist veil (dims your light, floods the world in mist, and cuts
                 how far predators can see you) — limited, watch the Veil meter
                 <br />
+                <b>F11</b> / <b>Alt+Enter</b> — fullscreen
+                <br />
                 <b>Deepwater</b> tag, top-left — reach the marked zone for a bonus Embers payout on a
                 successful run
               </>
             )}
           </div>
-          <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
-        </div>
-      )}
-
-      {/* CSS default for #objective/#status is `display: none` (they were only
-          ever shown by the old code writing `style.display = 'block'`) --
-          the inline override below reproduces that, otherwise the stylesheet
-          rule would hide them even though React has mounted the element. */}
-      {state.objectiveVisible && (
-        <div id="objective" className={state.objectiveReady ? 'ready' : undefined} style={{ display: 'block' }}>
-          {state.objectiveText}
+          <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} />
         </div>
       )}
 
       {/* LUL-1258: M2 Deepwater's minimal HUD panel -- decisions/missions-accepted-2026-09-01
           §2's "two collapsed lines, top-left, never occupying the play area". No
           expand-on-hold in this ship (declared simplification, spec S5) -- read-only
-          text, no touch target, so it needs no new EngineActions entry. */}
-      {state.missionKind && state.missionStatus && (
+          text, no touch target, so it needs no new EngineActions entry.
+          LUL-2442: GameMenu's open dropdown (top:56px inside #gameMenu, i.e. ~72px
+          absolute -- components/GameMenu.tsx) starts just 4px above #missionPanel's
+          own top:76px and shares its left:16px corner, so the panel's first row(s)
+          always land on top of the mission pill regardless of viewport -- LUL-1942's
+          76px push only cleared the *closed* 48px toggle button, not the open panel.
+          Same fix family as LUL-2410/2411/2414 (hide the losing element rather than
+          fight z-index) via the `menuOpen` state already plumbed to MobileControls above. */}
+      {state.missionKind && state.missionStatus && !menuOpen && (
         <div id="missionPanel">
           {MISSION_NAMES[state.missionKind]}
           <span id="missionGlyph">{state.missionStatus === 'complete' ? '●' : '○'}</span>
@@ -749,15 +956,6 @@ export default function Hud({
         </div>
       )}
 
-      {/* `hiding` is not a second flag: status only ever appears while hidden
-          (LUL-35 pass 2 removed the `statusHiding` field, which the engine only
-          ever set to the same value as `statusVisible`). */}
-      {state.statusVisible && (
-        <div id="status" className="hiding" style={{ display: 'block' }}>
-          {state.statusText}
-        </div>
-      )}
-
       {/* LUL-2131: gate on !winVisible/!deathVisible too -- entered stays true
           through the end screens (restart() never clears it), so this used to
           keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
@@ -777,123 +975,131 @@ export default function Hud({
         <div id="windIndicatorHint">wind — move into the arrow to lower your scent trail</div>
       )}
 
-      {/* LUL-2230: one-time explanation for the scent trail visual, anchored to the
-          engine-projected screen position of the first mote the player can actually
-          see (scentCaptionX/Y, viewport fractions). Gated on !winVisible/!deathVisible
-          like #hint (LUL-2158 precedent) so a fast death never shows it over "YOU LOSE". */}
-      {state.scentCaptionVisible && !state.winVisible && !state.deathVisible && (
+      {/* LUL-2307: generic first-encounter hint caption, generalizing LUL-2230's
+          scent-only version -- scent is now just one HINT_PRIORITY entry
+          (engine/forest-engine.js). World-anchored keys (WORLD_HINT_KEYS above)
+          get the engine-projected screen position (hintX/Y, viewport fractions)
+          and the down-arrow glyph; the rest are positioned by a fixed
+          `[data-hint-key]` CSS rule (components/GameCanvas.tsx) instead. The
+          'scent' key keeps its original #scentTrailCaption id/glyph class
+          instead of the new generic #hintCaption/.hintCaptionGlyph --
+          e2e/scent-trail.spec.ts and e2e/mobile/scent-trail.spec.ts assert on
+          `#scentTrailCaption` directly and must pass unchanged. Gated on
+          !winVisible/!deathVisible like #hint (LUL-2158 precedent) so a fast
+          death never shows it over "YOU LOSE". */}
+      {state.hintVisible && !state.winVisible && !state.deathVisible && (
         <div
-          id="scentTrailCaption"
-          style={{ left: `${state.scentCaptionX * 100}%`, top: `${state.scentCaptionY * 100}%` }}
+          id={state.hintKey === 'scent' ? 'scentTrailCaption' : 'hintCaption'}
+          data-hint-key={state.hintKey ?? undefined}
+          // LUL-2459: exposed as custom properties (not left/top directly) so the
+          // short-landscape mobile breakpoint (GameCanvas.tsx) can clamp the
+          // rendered position clear of MobileControls.tsx's side columns via CSS
+          // clamp() -- the touch-control danger zone is a fixed pixel margin the
+          // engine's viewport-fraction projection can't see, and JS has no access
+          // to that CSS breakpoint's own state without duplicating it.
+          style={state.hintKey && WORLD_HINT_KEYS.has(state.hintKey)
+            ? ({ '--hint-left': `${state.hintX * 100}%`, '--hint-top': `${state.hintY * 100}%` } as React.CSSProperties)
+            : undefined}
         >
-          <span className="scentTrailCaptionGlyph" aria-hidden="true">↓</span>
-          this is your scent trail — predators follow it
+          {state.hintKey && WORLD_HINT_KEYS.has(state.hintKey) && (
+            <span className={state.hintKey === 'scent' ? 'scentTrailCaptionGlyph' : 'hintCaptionGlyph'} aria-hidden="true">↓</span>
+          )}
+          {state.hintText}
         </div>
       )}
 
-      {/* LUL-1089: contextual action prompt — hide or veil. Only one shown at a time;
-          cover wins (engine enforces via !coverPromptVisible in veil condition).
-          Key/button name uses the same #actionKey pill style as #chargeKey above.
-          Double-spaces around the key name are house style (match "Press  E  to lift the child").
-          LUL-2131: coverPromptVisible/veilPromptVisible are only recomputed `if(playing)`
-          in the engine (forest-engine.js) and aren't reset by triggerDeath/arriveHome, so a
-          prompt live at the exact moment of win/death otherwise keeps rendering over the end
-          screen. Gate here rather than in the engine to keep this a render-layer fix. */}
-      {!state.winVisible && !state.deathVisible && (state.coverPromptVisible || state.veilPromptVisible) && (() => {
-        const noun = state.coverPromptKind === 'log' ? 'hollow log' : 'bush';
-        const urgentKeyStyle = state.reducedMotion
-          ? { animation: 'none', background: '#e8554a', boxShadow: '0 2px 26px rgba(232,85,74,0.85)' } as const
-          : undefined;
-        if(state.coverPromptVisible){
-          if(state.coverPromptUrgent){
-            return (
-              <div id="actionPrompt" className="urgent">
-                {mobile
-                  ? <>{`the ${noun} is right there — TAP  `}<span id="actionKey" style={urgentKeyStyle}>Hide</span></>
-                  : <>{`the ${noun} is right there — PRESS  `}<span id="actionKey" style={urgentKeyStyle}>H</span></>}
-              </div>
-            );
-          }
-          return (
-            <div id="actionPrompt">
-              {mobile
-                ? <>{'Tap  '}<span id="actionKey">Hide</span>{`  to slip into the ${noun}`}</>
-                : <>{'Press  '}<span id="actionKey">H</span>{`  to hide in the ${noun}`}</>}
-            </div>
-          );
-        }
-        if(state.veilPromptUrgent){
-          return (
-            <div id="actionPrompt" className="urgent">
-              {mobile
-                ? <>{`nowhere to hide — HOLD  `}<span id="actionKey" style={urgentKeyStyle}>Veil</span></>
-                : <>{`nowhere to hide — HOLD  `}<span id="actionKey" style={urgentKeyStyle}>F</span>{'  for the veil'}</>}
-            </div>
-          );
-        }
-        return (
-          <div id="actionPrompt">
-            {mobile
-              ? <>{`it is hunting you — hold  `}<span id="actionKey">Veil</span></>
-              : <>{`it is hunting you — hold  `}<span id="actionKey">F</span>{'  for the mist veil'}</>}
-          </div>
-        );
-      })()}
-
-      {/* LUL-1623: holding-a-throwable affordance -- there's no held-item mesh
-          in first person, so this is the only way the player knows they're
-          carrying a stone. Styled like the existing pickup/interact prompt
-          (#objective.ready); own id/position (#throwPrompt, see GameCanvas.tsx's
-          OVERLAY_STYLE) since it can be visible at the same time as #objective
-          (e.g. "Find the lost child" while also holding a stone).
-          LUL-2131: heldThrowable is only reset in restart() (forest-engine.js), not
-          triggerDeath/arriveHome, so it can still read true into the end screen. */}
-      {state.heldThrowable && !state.winVisible && !state.deathVisible && (
-        <div id="throwPrompt">
-          {mobile
-            ? <>{'Holding a stone — tap  '}<span id="throwKey">Throw</span></>
-            : <>{'Holding a stone — click to throw'}</>}
-        </div>
-      )}
-
-      {/* LUL-213: the visual key for the charge dodge -- `key` on chargeToken
-          forces React to remount this element on every fresh charge (not on
-          overlapping ones, see beginChargeHud in the engine), which restarts
-          the CSS countdown bar animation from a clean 100%. The countdown
-          duration is CHARGE_WINDOW, imported into GameCanvas.tsx's OVERLAY_STYLE
-          (see lib/game/charge.ts) rather than passed here as engine state --
-          it's a fixed, learnable window by design, not a per-frame tunable
-          the HUD needs to stay in sync with. LUL-304: this used to restate the
-          value as a bare "1s" literal in the CSS; it's now the same constant.
-          LUL-617: on mobile the pill reads "JUMP" but #chargePrompt's CSS is
-          `pointer-events: none` (it's a caption on desktop, not a control) --
-          that made it a false affordance once the label became actionable
-          text. Override pointer-events + wire the same triggerTouchJump the
-          bottom-left Jump button uses, `onPointerDown` like ActionBtn (LUL-653:
-          avoids the browser's pan-gesture disambiguation on tap targets). The
-          bottom-left button stays too -- removing it is a UX call for the
-          Game Tester, not a code-correctness one. */}
-      {state.chargeVisible && (
-        <div
+      {/* LUL-2312: the one fixed bottom action slot -- a CSS grid of five
+          always-mounted rows (GameCanvas.tsx's #actionSlot), each an
+          <ActionPrompt>, in the founder's stated priority order top-to-bottom:
+          charge dodge > objective (E) > hide-or-veil > throwable > status.
+          Rows with nothing to show still occupy their grid track (no
+          pop-in layout shift when one appears/disappears) -- ActionPrompt
+          itself decides whether to render a pill inside that track.
+          Every row is gated on !winVisible && !deathVisible: engine state for
+          all five is only recomputed `if(playing)` (forest-engine.js's tick())
+          and resets one frame after triggerDeath()/arriveHome() flip
+          winVisible/deathVisible, so without the gate a prompt live at the
+          exact moment of win/death would render over the end screen for that
+          frame (LUL-2131 precedent -- previously only actionPrompt/throwPrompt
+          carried this gate; extended to all five here for consistency, not a
+          previously-reported bug on the other three). */}
+      <div id="actionSlot">
+        {/* LUL-213/LUL-304/LUL-617: charge-dodge keycap + countdown bar. `key`
+            on chargeToken forces the drain bar's CSS animation to restart from
+            a clean 100% on a *fresh* charge (not an overlapping one -- see
+            beginChargeHud in the engine); durationSeconds is CHARGE_WINDOW
+            (lib/game/charge.ts) so the bar can never drift from the real dodge
+            window without also threading it through as per-frame engine
+            state. tone="urgent" replaces the old #chargeKey's own always-on
+            amber scale-pulse (chargePulse) with the same red flash every other
+            urgent row uses -- LUL-2312 rule 4 bans scale/bounce transitions,
+            and unifying the two keeps this the only urgent animation in the
+            component family; declared here, not silent. On mobile the pill is
+            an actual tap target (pointer-events:auto + onPointerDown, LUL-653
+            avoids the browser's pan-gesture disambiguation), same
+            triggerTouchJump the bottom-left Jump button already uses -- that
+            button stays too, removing it is a UX call for a tester, not a
+            code-correctness one. */}
+        <ActionPrompt
           id="chargePrompt"
-          key={state.chargeToken}
-          style={mobile ? { pointerEvents: 'auto', touchAction: 'none', cursor: 'pointer' } : undefined}
+          testId={mobile ? 'chargePromptTap' : undefined}
+          visible={state.chargeVisible && !state.winVisible && !state.deathVisible}
+          tone="urgent"
+          keycap={mobile ? 'JUMP' : 'SPACE'}
+          reducedMotion={state.reducedMotion}
+          progress={{ token: state.chargeToken, durationSeconds: CHARGE_WINDOW }}
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchJump(); } : undefined}
-          data-testid={mobile ? 'chargePromptTap' : undefined}
-        >
-          <span id="chargeKey">{mobile ? 'JUMP' : 'SPACE'}</span>
-          <div id="chargeBarTrack">
-            <div id="chargeBar" />
-          </div>
-        </div>
-      )}
+        />
+        {/* objective (E) -- text is an opaque string from the engine
+            (objectiveText, forest-engine.js), sometimes with no key at all
+            ("Find the lost child · 40m"), so it is rendered as plain text
+            rather than parsed for a keycap chip -- engine contract unchanged. */}
+        <ActionPrompt
+          id="objective"
+          visible={state.objectiveVisible && !state.winVisible && !state.deathVisible}
+          tone={state.objectiveReady ? 'ready' : 'calm'}
+          text={state.objectiveText}
+        />
+        {/* LUL-1089: contextual hide/veil prompt -- only one of the two shown
+            at a time, cover wins (engine enforces via !coverPromptVisible in
+            the veil condition). Double-spaces around the key name are house
+            style (match "Press  E  to lift the child"). */}
+        <ActionPrompt
+          id="actionPrompt"
+          visible={(state.coverPromptVisible || state.veilPromptVisible) && !state.winVisible && !state.deathVisible}
+          reducedMotion={state.reducedMotion}
+          {...hideVeilPromptContent(state, mobile)}
+        />
+        {/* LUL-1623: holding-a-throwable affordance -- there's no held-item
+            mesh in first person, so this is the only way the player knows
+            they're carrying a stone. tone="ready" unconditionally, matching
+            the old #throwPrompt's always-amber styling (it never had a calm
+            state of its own). */}
+        <ActionPrompt
+          id="throwPrompt"
+          visible={state.heldThrowable && !state.winVisible && !state.deathVisible}
+          tone="ready"
+          text={mobile ? 'Holding a stone — tap  ' : 'Holding a stone — click to throw'}
+          keycap={mobile ? 'Throw' : undefined}
+        />
+        {/* `hiding` is not a second flag: status only ever appears while hidden
+            (LUL-35 pass 2 removed the `statusHiding` field, which the engine
+            only ever set to the same value as `statusVisible`). */}
+        <ActionPrompt
+          id="status"
+          visible={state.statusVisible && !state.winVisible && !state.deathVisible}
+          tone="status"
+          text={state.statusText}
+        />
+      </div>
 
       {state.winVisible && (
         <div id="winScreen" style={{ display: 'flex' }}>
           <div id="winText" style={{ opacity: state.winRevealed ? 1 : 0 }}>
             <h1>YOU WON</h1>
+            <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
             <button
               ref={winRestartRef}
               className="restartBtn"
@@ -902,7 +1108,7 @@ export default function Hud({
             >
               Play again
             </button>
-            <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
+            <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} />
           </div>
         </div>
       )}
@@ -911,7 +1117,7 @@ export default function Hud({
         <div id="deathScreen" style={{ display: 'flex' }}>
           <div id="deathText" style={{ opacity: state.lossRevealed ? 1 : 0 }}>
             <h1>YOU LOSE</h1>
-            <p>
+            <p id="deathCauseText">
               {/* LUL-1194: #deathKind carries species for the existing e2e hooks
                   (e2e/*.spec.ts assert on it directly) but is no longer the copy
                   shown to the player -- that's DEATH_CAUSE_TEXT below, keyed on
@@ -920,7 +1126,7 @@ export default function Hud({
               {DEATH_CAUSE_TEXT[state.deathCause]}
               {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
-            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} difficulty={state.difficulty} />
+            <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
             <button
               ref={deathRestartRef}
               className="restartBtn"
@@ -929,7 +1135,7 @@ export default function Hud({
             >
               Try again
             </button>
-            <EmbersShop balance={state.embersBalance} tier={state.embersDeeperLungsTier} actions={actions} />
+            <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} />
           </div>
         </div>
       )}

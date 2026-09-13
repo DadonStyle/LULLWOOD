@@ -81,7 +81,7 @@
 // mechanic; it is a rendering/telegraph-reading concern, not a dodge-outcome
 // one. Not asserted on here for that reason -- see LUL-302 for its own fix.
 import { test, expect } from '@playwright/test';
-import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
+import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors, expectRowVisible, expectRowHidden } from './helpers';
 import { CHARGE_TELL_TIME, CHARGE_RUN_TIME, CHARGE_WINDOW } from '../lib/game/charge';
 
 // "Well into" the charging sub-phase. ChargeState.t is cumulative since the
@@ -117,7 +117,6 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       await qaHook(page, 'qaSetFixedStep', FIXED_DT);
       const advanceGameTime = (steps: number) => qaHook(page, 'qaAdvance', steps);
 
-      const chargePrompt = page.locator('#chargePrompt');
       const deathScreen = page.locator('#deathScreen');
 
       async function triggerAndGetIdx(): Promise<number> {
@@ -125,9 +124,7 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
         if (idxOrNull === null) {
           throw new Error(`qaTriggerCharge('${kind}') returned null -- that species isn't spawned`);
         }
-        await expect(chargePrompt, 'telegraph HUD never appeared after qaTriggerCharge').toBeVisible({
-          timeout: 5_000,
-        });
+        await expectRowVisible(page, 'chargePrompt', 5_000);
         return idxOrNull;
       }
 
@@ -170,10 +167,7 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       // the DOM-flush timeout below only needs to cover React's own paint,
       // not any remaining game time.
       await advanceGameTime(RESOLVE_STEPS);
-      await expect(
-        chargePrompt,
-        `${kind}: an immediate/telegraph-phase dodge never cleared the charge HUD -- resolution stalled`,
-      ).toBeHidden({ timeout: 2_000 });
+      await expectRowHidden(page, 'chargePrompt', 2_000);
       const earlyDied = await deathScreen.isVisible();
       expect(
         earlyDied,
@@ -196,11 +190,7 @@ test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', ()
       await advanceToMidCharge(idx2);
       await page.keyboard.press('Space');
       await advanceGameTime(RESOLVE_STEPS);
-      await expect(
-        chargePrompt,
-        `${kind}: a mid-charge dodge never cleared the charge HUD -- resolution stalled, or the predator caught ` +
-          `the player outright (check #deathScreen/test output)`,
-      ).toBeHidden({ timeout: 2_000 });
+      await expectRowHidden(page, 'chargePrompt', 2_000);
       const lateDied = await deathScreen.isVisible();
       expect(
         lateDied,

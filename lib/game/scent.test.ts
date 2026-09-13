@@ -9,6 +9,7 @@ import {
   isScentExpired,
   isScentPastPruneCutoff,
   scentDriftDistance,
+  scentLifetimeWithWind,
   scentPickupRadius,
   SCENT_LIFETIME,
   WIND_DRIFT_CAP,
@@ -51,6 +52,26 @@ test('isMovingAgainstWind is false when moving perpendicular to the wind (dot ==
 
 test('isMovingAgainstWind is false for zero movement (dot === 0)', () => {
   assert.equal(isMovingAgainstWind(0, 0, 1, 0), false);
+});
+
+// ---- scentLifetimeWithWind ----------------------------------------------
+
+test('scentLifetimeWithWind leaves lifetime unchanged when wind is not high', () => {
+  assert.equal(scentLifetimeWithWind(14, false), 14);
+});
+
+test('scentLifetimeWithWind applies the default 20% reduction under high wind', () => {
+  assert.equal(scentLifetimeWithWind(14, true), 14 * 0.8);
+});
+
+test('scentLifetimeWithWind stacks multiplicatively on top of an already tier-reduced lifetime', () => {
+  // 11.2 is Quiet Step tier 1's already-wind-adjusted lifetime; feeding it back in proves the
+  // two knobs stack multiplicatively rather than one overriding the other.
+  assert.equal(scentLifetimeWithWind(14 * 0.8, true), 14 * 0.8 * 0.8);
+});
+
+test('scentLifetimeWithWind honors an explicit multiplier override', () => {
+  assert.equal(scentLifetimeWithWind(14, true, 0.5), 7);
 });
 
 // ---- expiry / prune boundary ------------------------------------------------

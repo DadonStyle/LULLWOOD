@@ -1,5 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import GameLoader from "@/components/GameLoader";
+
+// LUL-2375: the canonical is per page, not inherited from the layout -- with
+// it on the layout every child route (/suggest) declared itself a duplicate
+// of the homepage and Google would fold it into "/". Only `alternates` here:
+// a page-level `openGraph` would REPLACE the layout's whole openGraph object
+// (Next merges metadata per top-level key), dropping the social description.
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 // Server-rendered content shell, LUL-46 (M3b). The game itself stays
 // client-only (GameLoader -> next/dynamic({ ssr: false })) and visually owns
@@ -23,7 +33,7 @@ export default function Home() {
         <h1>Lullwood — a free browser horror game</h1>
         <p className="about-tagline">
           A lost, glowing child is out there in the fog. You have to go and
-          get them.
+          get her.
         </p>
         <section>
           <h2>The premise</h2>
@@ -49,7 +59,7 @@ export default function Home() {
           <p>
             When something starts hunting you, running is usually the wrong
             answer: sprinting lays a stronger scent trail and a moving
-            silhouette is easy to track. Duck into a bush or a hollow log,
+            silhouette is easy to track. Duck into a bush,
             press <strong>H</strong>, and hold still until it loses you.
             Reach the child and press <strong>E</strong> to lift her —
             that&apos;s the win.
@@ -72,7 +82,7 @@ export default function Home() {
               predator
             </li>
             <li>
-              <strong>H</strong> — hide (bushes and hollow logs only)
+              <strong>H</strong> — hide (bushes only)
             </li>
             <li>
               <strong>F</strong> — hold for the mist veil, which dims your
@@ -96,7 +106,7 @@ export default function Home() {
             Most horror games hand you a weapon. Lullwood doesn&apos;t.
             Predators track you by line of sight and by a decaying scent
             trail you leave behind as you move — the only tool you have is
-            stillness: duck into a bush or a hollow log, hold still, and let
+            stillness: duck into a bush, hold still, and let
             them lose the trail. You win the instant you reach the child and
             lift her — there&apos;s no trip home to survive afterward.
           </p>

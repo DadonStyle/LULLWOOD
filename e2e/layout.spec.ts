@@ -12,6 +12,7 @@
 // on both a desktop and a mobile viewport.
 import { test, expect, type Page } from '@playwright/test';
 import { boot } from './helpers';
+// fullmap-reason: canvas-fills-viewport check on the shipped default boot (no query params) (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 async function canvasRect(page: Page) {
   return page.evaluate(() => {
@@ -25,7 +26,7 @@ async function canvasRect(page: Page) {
   });
 }
 
-test.describe('game canvas covers the full screen', () => {
+test.describe('game canvas covers the full screen @fullmap', () => {
   for (const [name, viewport] of [
     ['desktop', { width: 1280, height: 720 }],
     ['mobile', { width: 390, height: 844 }],
@@ -34,7 +35,7 @@ test.describe('game canvas covers the full screen', () => {
       page,
     }) => {
       await page.setViewportSize(viewport);
-      await boot(page);
+      await boot(page, { qaWorld: 'full' });
 
       const rect = await canvasRect(page);
       expect(rect, 'the game canvas must be present').not.toBeNull();

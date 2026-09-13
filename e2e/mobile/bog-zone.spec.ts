@@ -8,6 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { boot, qaHook, QA_PINNED_SEED } from '../helpers';
 import { LANDMARKS, CAVE, CONFIG } from '../../engine/tuning';
 import { BOG_CENTER, BOG_INNER_RADIUS, BOG_OUTER_RADIUS, BOG_SPEED_MULTIPLIER } from '../../lib/game/bog';
+// fullmap-reason: the bog is zeroed in the micro preset; this spec measures the real bog patch on a phone viewport (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 test.use({ viewport: { width: 727, height: 393 } });
 
@@ -34,9 +35,9 @@ async function walkForward(page: Page, steps: number) {
   await stick.dispatchEvent('pointerup', { ...pointerOpts, clientX: cx, clientY: cy - 30 });
 }
 
-test.describe('bog zone (mobile)', () => {
+test.describe('bog zone (mobile) @fullmap', () => {
   test('bogginess samples match the patch geometry', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
 
     const center = await qaHook(page, 'qaProbeBog', BOG_CENTER.x, BOG_CENTER.z);
     expect(center.bogginess).toBe(1);
@@ -56,7 +57,7 @@ test.describe('bog zone (mobile)', () => {
   });
 
   test('nothing else spawns inside the patch', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
     const kc = await qaHook(page, 'qaProbeBogKeepClear');
     expect(kc.coverInside).toBe(0);
     expect(kc.throwablesInside).toBe(0);
@@ -70,7 +71,7 @@ test.describe('bog zone (mobile)', () => {
   });
 
   test('walking through the bog via the left stick is measurably slower than dry ground', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
     await enterMobile(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
@@ -96,7 +97,7 @@ test.describe('bog zone (mobile)', () => {
   });
 
   test('blackout spawns the child beyond the bog on four pinned seeds; normal mode does not', async ({ page }) => {
-    await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED });
     await qaHook(page, 'qaSetDifficulty', 'hard');
 
     for (const seed of [QA_PINNED_SEED, 1, 2, 3]) {

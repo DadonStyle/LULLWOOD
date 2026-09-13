@@ -126,3 +126,18 @@ export function isMovingAgainstWind(
 ): boolean {
   return mvx * windX + mvz * windZ < 0;
 }
+
+// Sibling to WIND_AGAINST_RADIUS_MULTIPLIER above (LUL-1724, same "-20% at wind" shape, but on
+// lifetime rather than deposit radius). LUL-2539/2485 cheap slice.
+export const WIND_HIGH_SPEED_LIFETIME_MULTIPLIER = 0.8; // CEO-accepted: 20% reduction
+
+/** Wraps an already-tier-adjusted lifetime (economy.ts's `effectiveScentLifetime(tier)`) with
+ * the high-wind reduction. Two independent multiplicative knobs stack here, not merge --
+ * economy.ts's Quiet Step math stays wind-ignorant, this only ever receives its output. */
+export function scentLifetimeWithWind(
+  baseLifetime: number,
+  highWind: boolean,
+  multiplier: number = WIND_HIGH_SPEED_LIFETIME_MULTIPLIER,
+): number {
+  return highWind ? baseLifetime * multiplier : baseLifetime;
+}

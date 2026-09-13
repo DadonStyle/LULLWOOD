@@ -58,14 +58,29 @@ export function expectNoConsoleErrors({
  * `seed` (LUL-83) pins the generated map layout via `?seed=`; defaults to
  * `QA_PINNED_SEED` so every spec keeps exercising the known layout it was
  * written against. Pass `seed: null` to get the real fresh-per-load default.
+ * `qaWorld`/`qaNoRender` (LUL-2328) opt into the small-map boot preset and the
+ * mesh-construction skip, respectively -- see docs/specs/lul-2328-qa-world-micro-hooks.md.
  */
 export async function boot(
   page: Page,
-  { qaHooks = false, seed = QA_PINNED_SEED }: { qaHooks?: boolean; seed?: number | null } = {},
+  {
+    qaHooks = false,
+    seed = QA_PINNED_SEED,
+    // LUL-2377 (founder rule 2026-09-11): the micro world is the DEFAULT. A spec
+    // gets the 480u forest only by passing `qaWorld: 'full'` explicitly, and
+    // only inside a file tagged `@fullmap` with a `// fullmap-reason:` line --
+    // lib/e2e-policy/world-policy.test.ts fails the unit-test run otherwise.
+    // The QA rig never runs @fullmap; the `fullmap` Playwright project exists
+    // only under E2E_FULLMAP=1 (playwright.config.ts).
+    qaWorld = 'micro',
+    qaNoRender = false,
+  }: { qaHooks?: boolean; seed?: number | null; qaWorld?: 'micro' | 'full'; qaNoRender?: boolean } = {},
 ) {
   const params = new URLSearchParams();
   if (qaHooks) params.set('qaHooks', '1');
   if (seed !== null) params.set('seed', String(seed));
+  if (qaWorld === 'micro') params.set('qaWorld', 'micro');
+  if (qaNoRender) params.set('qaNoRender', '1');
   const query = params.toString();
   await page.goto(query ? `/?${query}` : '/', { waitUntil: 'networkidle', timeout: 120_000 });
   // Both canvases exist = the engine's WebGL canvas joined the minimap canvas
@@ -114,6 +129,24 @@ export function qaHook<K extends QaHookName>(page: Page, name: K, ...args: any[]
     },
     { name, args } as { name: string; args: unknown[] },
   );
+}
+
+/**
+ * LUL-2312: #objective/#actionPrompt/#throwPrompt/#chargePrompt/#status are
+ * five always-mounted rows inside #actionSlot now (components/Hud.tsx),
+ * each an <ActionPrompt> (components/ActionPrompt.tsx) that toggles
+ * `data-visible="0"|"1"` on the row rather than mounting/unmounting it --
+ * the row's grid track stays laid out either way (no pop-in layout shift).
+ * Specs must assert on the attribute instead of the old `toHaveCount(0)` /
+ * `toBeVisible()` pair, which no longer distinguishes the two states now
+ * that the element is always in the DOM.
+ */
+export async function expectRowVisible(page: Page, id: string, timeout = 3_000) {
+  await expect(page.locator(`#${id}`)).toHaveAttribute('data-visible', '1', { timeout });
+}
+
+export async function expectRowHidden(page: Page, id: string, timeout = 3_000) {
+  await expect(page.locator(`#${id}`)).toHaveAttribute('data-visible', '0', { timeout });
 }
 
 /**

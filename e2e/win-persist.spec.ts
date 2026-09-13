@@ -18,11 +18,11 @@
 // engine change landed for item 1; this spec is the regression guard the
 // ticket asked for regardless.
 import { test, expect } from '@playwright/test';
-import { boot, enter, readObjective } from './helpers';
+import { boot, enter, readObjective, expectRowVisible, expectRowHidden } from './helpers';
 
 test('win screen is mandatory and persists until the player restarts', async ({ page }) => {
   test.setTimeout(75_000);
-  await boot(page, { qaHooks: true });
+  await boot(page, { qaHooks: true, qaWorld: 'micro' });
   await enter(page);
 
   await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());
@@ -80,7 +80,7 @@ test('win screen is mandatory and persists until the player restarts', async ({ 
 // a deliberate press after the delay still works -- both halves asserted here.
 test('a Space press right after the win reveal must not restart the run, but one after the grace window still does', async ({ page }) => {
   test.setTimeout(45_000);
-  await boot(page, { qaHooks: true });
+  await boot(page, { qaHooks: true, qaWorld: 'micro' });
   await enter(page);
 
   await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());
@@ -95,12 +95,14 @@ test('a Space press right after the win reveal must not restart the run, but one
   await page.keyboard.press('Space');
   await page.waitForTimeout(500);
   await expect(page.locator('#winScreen'), 'an in-flight Space right at reveal must not restart the run').toBeVisible();
-  await expect(page.locator('#objective')).toHaveCount(0);
+  // LUL-2312: #objective is one of #actionSlot's always-mounted rows now --
+  // the !winVisible gate on its `visible` prop (Hud.tsx) is what this asserts.
+  await expectRowHidden(page, 'objective');
 
   // A deliberate press once the grace window has actually elapsed still works --
   // this is LUL-1194's accessibility path, not something this fix should remove.
   await page.waitForTimeout(2_000);
   await page.keyboard.press('Space');
   await expect(page.locator('#winScreen')).toBeHidden({ timeout: 5_000 });
-  await expect(page.locator('#objective')).toBeVisible();
+  await expectRowVisible(page, 'objective');
 });

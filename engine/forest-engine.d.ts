@@ -70,6 +70,10 @@ declare global {
       /** LUL-1093: w2m(x,z)'s clamped pixel output plus the minimap canvas size (mm),
        * so a test can assert an arbitrary world point stays on-canvas. */
       qaProbeMinimapPoint?: (x: number, z: number) => { px: number; py: number; mm: number };
+      /** LUL-2248: per-landmark beacon sprite presence + fog-exemption, one entry per
+       * LANDMARKS kind, so a test can assert the sprite exists and reads past the fog line
+       * without a screenshot. */
+      qaProbeLandmarkBeacons?: () => Array<{ kind: string; x: number; z: number; visible: boolean; fog: boolean | null }>;
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */
@@ -86,6 +90,29 @@ declare global {
         total: number;
         reedsInLakeClear: number;
       };
+      /** LUL-1487 (E6), extended by LUL-2249: `chunks`/`instantiated` are the
+       * count of currently-live (ring-streamed) tree chunks, `populated` is
+       * every chunk that has tree data regardless of live state, `totalInstances`
+       * is the summed instance count across live chunks, and `expected` is
+       * every tree whose chunk is currently live -- `totalInstances` must
+       * equal `expected`. Was pre-existing/untyped (LUL-2257's own note);
+       * declared now that this ticket extends the contract. */
+      qaProbeTreeChunks?: () => {
+        chunks: number;
+        instantiated: number;
+        populated: number;
+        totalInstances: number;
+        expected: number;
+      };
+      /** LUL-2249: the ring-streamed chunk lifecycle's own live state --
+       * which chunk ids are currently live, how many cover/bog chunks of
+       * those are live, and the player's own current chunk id. */
+      qaProbeChunkStreaming?: () => {
+        liveChunks: number[];
+        coverLive: number;
+        bogLive: number;
+        playerChunk: number;
+      };
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
       /** Same as qaLurePredator, filtered to the given species. Returns the
@@ -93,6 +120,8 @@ declare global {
       qaLurePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => 'wolf' | 'bear' | 'lion' | null;
       /** LUL-65: seeds one synthetic scent point `age` game-seconds old at (player.x+dx, player.z+dz). */
       qaSeedScentPoint?: (dx: number, dz: number, age: number) => void;
+      /** LUL-2392: last {kind, durationMs, difficulty} the chase_gap analytics event fired with, or null if none yet this page load. */
+      qaProbeChaseGap?: () => { kind: 'wolf' | 'bear' | 'lion'; durationMs: number; difficulty: 'lantern' | 'night' | 'blackout' } | null;
       /** LUL-65: places `kind` on the drifted oldest live scent point, in `roam`. Null if none live or species not found. */
       qaProbeScentOnOldest?: (kind: 'wolf' | 'bear' | 'lion') => { age: number; dist: number } | null;
       /** LUL-65: state + distance-to-player + scentOnto() re-trigger count for `kind`. Null if not found.
@@ -107,9 +136,9 @@ declare global {
       // must check for null rather than assume the index is always valid.
       /** Teleports the player to the spawn clearing and a lion 4 units out, hunting. Returns the lion's `predators` index, or null if no lion spawned. */
       qaOpenHideNearLion?: () => number | null;
-      /** LUL-1089: teleports the player to the first hide-spot prop (bramble/log) and places a lion 4 units away in chase state. Returns { idx, kind } on success, or null if no hide spot or no lion spawned. */
+      /** LUL-1089: teleports the player to the first hide-spot prop (bramble; LUL-2311 dropped log) and places a lion 4 units away in chase state. Returns { idx, kind } on success, or null if no hide spot or no lion spawned. */
       qaOpenHideNearLionAtHideSpot?: () => { idx: number; kind: string } | null;
-      /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble/log; LUL-212 narrowed this from any non-tree cover prop). Returns 0, or null if no hiding-spot prop exists. */
+      /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble; LUL-212 narrowed this from any non-tree cover prop, LUL-2311 narrowed it again to bramble only). Returns 0, or null if no hiding-spot prop exists. */
       qaHideBehindCover?: () => number | null;
       /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind, playerX, playerZ } on success (playerX/playerZ per LUL-242, the player's placed position -- needed to compute an exact offset back to the predator, since cover-clearance separation and scent-pickup radius are different quantities), null if no clear hiding-spot placement exists. */
       qaHideBehindCoverKind?: (
@@ -125,16 +154,25 @@ declare global {
       qaStagePredatorGiveUp?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-2246: places predator `kind` dx/dz from the player, parks every other spawned predator out of range, and fast-forwards `sinceClose` to 29.9s so the next real tick(s) cross the 30s force-hunt threshold through the engine's own logic. Returns `{idx,x,z}`, or null if the species isn't spawned. */
       qaStageForceHuntApproach?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-2320: places predator `kind` dx/dz from the player and drops it straight into `chase` with a live `scentLock` (the exact blind-pursuit state the glue bug's root cause describes) -- player untouched. Returns `{idx,x,z}`, or null if the species isn't spawned. */
+      qaStageChaseAtContact?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
       /** LUL-1620: teleports predator[idx] onto its own current roam waypoint so the next tick's arrival/repick runs immediately; returns {x,z} or null if idx doesn't resolve. */
       qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
-      /** LUL-212: teleports the player to the first generated hiding spot (bramble/log), no predator involved. Returns the spot's kind, or null if none were generated. */
-      qaTeleportToHideSpot?: () => string | null;
+      /** LUL-2505: marks every predator except idx `inert` (the same flag qaBuildScene's own parking uses) so a multi-second poll on the full map only ever sees idx's own contribution to the approach/piano threat scan, which skips inert predators entirely. Returns {idx,x,z}, or null if idx doesn't resolve. */
+      qaIsolatePredator?: (idx: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-2457: marks every predator `inert` (same flag as qaIsolatePredator), parking them off-map so a long `qaAdvance` window (e.g. the day/night ramp) can't be ended early by an ambient kill. Returns the count parked. */
+      qaClearAllPredators?: () => number;
+      /** LUL-212: teleports the player to the first generated hiding spot (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of `kind` if given (LUL-2320). No predator involved. Returns the spot's kind, or null if none were generated / no prop of `kind` exists on this map. */
+      qaTeleportToHideSpot?: (kind?: 'log' | 'bramble') => string | null;
+      /** LUL-2311: teleports the player just outside the edge of the first cover prop of the given kind, no HIDE_KINDS check -- for asserting KeyH is a no-op beside a walkable-but-not-hide-eligible prop (e.g. 'log'). Returns the spot's kind, or null if none of that kind were generated. */
+      qaTeleportNearCoverKind?: (kind: string) => string | null;
       /** LUL-211: the player's world position and heading -- the only way a test can
        * see where movement actually ended up (player is init()-closure-local). */
       qaProbePlayer?: () => { x: number; z: number; yaw: number };
       /** LUL-2189/LUL-2207: the module-scope wind unit vector (windX/windZ), set once per
-       * generateMap() by generateWind() -- map-constant, not per-frame. */
-      qaProbeWind?: () => { windX: number; windZ: number };
+       * generateMap() by generateWind() -- map-constant, not per-frame. windHighSpeed
+       * (LUL-2539) is the independently-rolled high-wind flag from the same call. */
+      qaProbeWind?: () => { windX: number; windZ: number; windHighSpeed: boolean };
       /** LUL-211/LUL-288: places the player off the -x face of the first reachable
        * cover prop of `kind`, facing it, so a held KeyW walks straight into it. The
        * standoff distance is rotation-aware (props render at prop.ry), so it clears
@@ -157,7 +195,9 @@ declare global {
        * check uses this tick -- poll these instead of racing wall-clock time
        * against game time (see wiki: systems/dt-clamp-vs-walltime).
        * LUL-659: `x`/`z` are the predator's raw world position, for tracing
-       * lateral movement (e.g. avoidDir() steering around cover) over time. */
+       * lateral movement (e.g. avoidDir() steering around cover) over time.
+       * LUL-2320: `rad` (`PSPEC[kind].rad`) lets a test compute the live contact-catch
+       * threshold (`rad + CATCH_MARGIN`) without hardcoding species constants. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
         state: string;
@@ -166,8 +206,10 @@ declare global {
         scentCalls: number;
         dist: number;
         canSee: boolean;
+        rad: number;
         x: number;
         z: number;
+        gaveUpAt: number | null;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
@@ -305,6 +347,10 @@ declare global {
         deathShown: boolean;
         cutsceneSkippable: boolean;
         sinceDeath: number | null;
+        /** LUL-2461: distance in meters from CONFIG.home to the player's position at the
+         * moment triggerDeath() fired, mirroring the loss event's `distance_from_home_m`.
+         * `null` before any death this run. */
+        distanceFromHomeAtDeathM: number | null;
         video: { currentTime: number; ended: boolean; paused: boolean; readyState: number; display: string } | null;
       };
       /** LUL-2205: reads the live day/night pacing values -- timeOfRun (0 dawn
@@ -342,6 +388,28 @@ declare global {
        * to a plain roaming state (state: 'roam', hunt: false, alert: 0). Returns
        * its predators index, or null if that species didn't spawn this seed. */
       qaStagePredatorNearThrowLanding?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number } | null;
+      /** LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
+       * generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion. */
+      qaSetWindHighSpeed?: (v: boolean) => void;
+      /** LUL-2547: places predator[kind] dx/dz from the player's current position, reset to a
+       * plain roaming state. Returns its predators index and placed position, or null if that
+       * species didn't spawn this seed. */
+      qaStagePredatorNearPlayer?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
+       * lets a test assert the tier's effect without waiting out real decay. */
+      qaProbeScentLifetime?: () => number;
+      /** LUL-2351: throwablesReserve + heldThrowable + the purchase-cue fire count, so
+       * a test can assert Pocket Stones granted +2 throws and a purchase played its
+       * audio cue, without decoding actual WebAudio output. */
+      qaProbeEmbersPurchase?: () => { throwablesReserve: number; heldThrowable: boolean; purchaseCueCount: number };
+      /** LUL-2331: places the player 2 units off the Stone Marker's live position -- mirrors
+       * qaTeleportNearThrowable, works regardless of where the landmark actually sits (the
+       * micro QA world leaves LANDMARKS untouched). Returns the marker's position. */
+      qaTeleportNearStoneMarker?: () => { x: number; z: number };
+      /** LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. `releaseCueCount` is
+       * the mist-charm activation cue's fire count, so a test can assert it fired without
+       * decoding actual WebAudio output. */
+      qaProbeVeil?: () => { charge: number; locked: boolean; reserve: boolean; releaseCueCount: number };
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
@@ -378,10 +446,52 @@ declare global {
        * look-input path writes) so a test can turn to face its own scent
        * trail without pointer lock. Read-only otherwise -- no movement. */
       qaSetLookYaw?: (rad: number) => void;
-      /** LUL-2230: clears the persisted `lullwood:scentTrailCaptionSeen` flag
-       * and the in-memory one-time gate, so a single boot can prove the
-       * caption is first-time-only twice in the same test. */
+      /** LUL-2230/LUL-2307: clears the persisted "seen" flag and in-memory gate for
+       * the 'scent' hint only, so a single boot can prove the caption is
+       * first-time-only twice in the same test. Thin alias over the generic hint
+       * registry -- prefer qaResetHints() for new tests. */
       qaResetScentCaption?: () => void;
+      /** LUL-2307: the active first-encounter hint's key (null if none) plus the
+       * full seen-map by key, so a test can assert both "this hint showed" and "no
+       * other hint has been marked seen yet" without racing the 8s/dismiss timer. */
+      qaProbeHints?: () => { activeKey: string | null; seen: Record<string, boolean> };
+      /** LUL-2307: clears every hint's persisted "seen" flag and the in-memory
+       * gate (all keys, not just 'scent') -- the same resetHints() SettingsPanel's
+       * "Reset hints" button calls in real play. */
+      qaResetHints?: () => void;
+      /** LUL-2547: exposes the live chronicle buffer (normally only handed to React at
+       * win/death) so a test can assert an event was logged without ending the run. */
+      qaGetChronicle?: () => { t: number; code: string; args: Record<string, unknown> | null }[];
+      /** LUL-2328: builds a minimal, exact scene -- no rng, no full
+       * generateMap() -- for tests that don't need the real procedural
+       * forest. Clears and replaces treeData/coverData/bogTreeData and every
+       * predator's placement; landmarkData/throwableData/mission and the
+       * player's position are left untouched. `predators` matches the fixed
+       * 3-per-species pool by `kind` in array order (a 4th of the same kind
+       * is dropped); every unmatched predator is parked inert. Cover `kind`
+       * must be one of 'log'|'rock'|'bramble'|'reed' -- an unrecognised kind
+       * is dropped, not an error. Works with `?qaWorld=micro` and
+       * `?qaNoRender=1` (both boot-time URL params, not hooks -- see
+       * docs/specs/lul-2328-qa-world-micro-hooks.md). Returns the counts
+       * actually placed. */
+      qaBuildScene?: (scene: {
+        trees?: { x: number; z: number; s?: number }[];
+        props?: { kind: 'log' | 'rock' | 'bramble' | 'reed'; x: number; z: number; ry?: number }[];
+        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string }[];
+        child?: { x: number; z: number };
+        home?: { x: number; z: number };
+      }) => { trees: number; props: number; predators: number };
+      /** LUL-2328: renderer.info.memory (geometry/texture object counts,
+       * always available) plus performance.memory (Chrome-only -- null on
+       * engines that don't implement it, e.g. Firefox/Safari). Built for
+       * LUL-2324's memory-budget assertions (micro world < 400MB, full
+       * QA_PINNED_SEED map < 1.5GB JS heap + GPU buffers) -- `heap` is the
+       * number that budget actually checks; `renderer` is a secondary,
+       * cross-engine-safe signal. */
+      qaProbeMemory?: () => {
+        heap: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number } | null;
+        renderer: { geometries: number; textures: number };
+      };
       /** LUL-2225: bogginess (biomeAt) and the two multipliers derived from
        * it (bogSpeedMultiplier/bogNoiseMultiplier) at an arbitrary world
        * point -- lets a test sample the patch's shape/edge directly instead

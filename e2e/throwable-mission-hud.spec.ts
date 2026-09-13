@@ -8,23 +8,24 @@
 // under e2e/mobile/, picked up by the `mobile` Playwright project's own
 // testDir; see playwright.config.ts LUL-275).
 import { test, expect } from '@playwright/test';
-import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
+import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors, expectRowVisible, expectRowHidden } from './helpers';
 
 test.describe('#throwPrompt via qaGrabThrowable()', () => {
   test('grabbing the nearest stone shows #throwPrompt; restart clears it', async ({ page }) => {
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
-    // Made to fail once on purpose: with no throwable held yet, the prompt must not be present.
-    await expect(page.locator('#throwPrompt')).toHaveCount(0);
+    // Made to fail once on purpose: with no throwable held yet, the prompt must not be shown.
+    // LUL-2312: #throwPrompt is one of #actionSlot's always-mounted rows now --
+    // "not present" is data-visible="0", not absence from the DOM.
+    await expectRowHidden(page, 'throwPrompt');
 
     const grabbed = await qaHook(page, 'qaGrabThrowable');
     expect(grabbed, 'qaGrabThrowable returned null -- no untaken stone at this seed').not.toBeNull();
 
-    const prompt = page.locator('#throwPrompt');
-    await expect(prompt).toBeVisible({ timeout: 3_000 });
-    await expect(prompt).toContainText('click to throw');
+    await expectRowVisible(page, 'throwPrompt');
+    await expect(page.locator('#throwPrompt')).toContainText('click to throw');
 
     // heldThrowable itself isn't on qaPlayerState -- #throwPrompt's visibility
     // and copy above are the engine-visible effect: Hud.tsx renders this text
@@ -35,19 +36,19 @@ test.describe('#throwPrompt via qaGrabThrowable()', () => {
 
   test('restart() clears heldThrowable and hides #throwPrompt', async ({ page }) => {
     test.setTimeout(45_000);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     const grabbed = await qaHook(page, 'qaGrabThrowable');
     expect(grabbed).not.toBeNull();
-    await expect(page.locator('#throwPrompt')).toBeVisible({ timeout: 3_000 });
+    await expectRowVisible(page, 'throwPrompt');
 
     expect(await qaHook(page, 'qaForceDeath', 'wolf', 'hunt')).toBe(true);
     // "Try again" -- the only in-game restart() path (e2e/death-sequence.spec.ts's convention).
     await expect(page.locator('#deathText')).toHaveCSS('opacity', '1', { timeout: 10_000 });
     await page.locator('.restartBtn').evaluate((el) => (el as HTMLElement).click());
 
-    await expect(page.locator('#throwPrompt')).toHaveCount(0, { timeout: 5_000 });
+    await expectRowHidden(page, 'throwPrompt', 5_000);
   });
 });
 

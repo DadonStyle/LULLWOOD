@@ -9,7 +9,7 @@
 // real off a throw a test actually triggered, not a synthetic hearThrowableNoise() call.
 // See e2e/mobile/throwables.spec.ts for the touch half.
 import { test, expect } from '@playwright/test';
-import { boot, enter, qaHook, VIEW_X, VIEW_Y, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
+import { boot, enter, qaHook, VIEW_X, VIEW_Y, trackConsoleErrors, expectNoConsoleErrors, expectRowVisible, expectRowHidden } from './helpers';
 
 // Fixed step for the noise-redirect case, matching scent.spec.ts / positional-hiding.spec.ts
 // (LUL-2107: qaSetFixedStep/qaAdvance instead of a real-RAF wall-clock poll).
@@ -40,12 +40,13 @@ test.describe('throwables (LUL-1623)', () => {
     expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
 
     // Made to fail once on purpose: standing next to the stone without pressing
-    // E yet must not already hold it.
-    await expect(page.locator('#throwPrompt')).toHaveCount(0);
+    // E yet must not already hold it. LUL-2312: #throwPrompt is one of
+    // #actionSlot's always-mounted rows now -- "not held" is data-visible="0".
+    await expectRowHidden(page, 'throwPrompt');
 
     await page.keyboard.press('KeyE');
 
-    await expect(page.locator('#throwPrompt')).toBeVisible({ timeout: 3_000 });
+    await expectRowVisible(page, 'throwPrompt');
     await expect(page.locator('#throwPrompt')).toContainText('click to throw');
 
     expectNoConsoleErrors(errs);
@@ -59,7 +60,7 @@ test.describe('throwables (LUL-1623)', () => {
     expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
 
     await page.keyboard.press('KeyE');
-    await expect(page.locator('#throwPrompt')).toBeVisible({ timeout: 3_000 });
+    await expectRowVisible(page, 'throwPrompt');
 
     // throwThrowable() only fires from the real mousedown handler while Pointer
     // Lock is engaged (engine/forest-engine.js) -- enter() above already
@@ -69,7 +70,7 @@ test.describe('throwables (LUL-1623)', () => {
 
     await page.mouse.click(VIEW_X, VIEW_Y);
 
-    await expect(page.locator('#throwPrompt')).toHaveCount(0, { timeout: 3_000 });
+    await expectRowHidden(page, 'throwPrompt', 3_000);
   });
 
   test('a thrown rock lures a nearby roaming predator into investigate', async ({ page }) => {
@@ -90,7 +91,14 @@ test.describe('throwables (LUL-1623)', () => {
     expect(before?.state).toBe('roam');
 
     await page.keyboard.press('KeyE');
-    await expect(page.locator('#throwPrompt')).toBeVisible({ timeout: 3_000 });
+    // LUL-2352: heldThrowable only reaches the HUD through stepFrame()'s
+    // per-tick pushState (engine/forest-engine.js) -- qaSetFixedStep() above
+    // already parked the real RAF loop that would normally flush it, so
+    // #throwPrompt's data-visible attribute won't update until a frame is
+    // actually advanced. One step is enough; the noise-redirect polling
+    // below advances plenty more.
+    await qaHook(page, 'qaAdvance', 1);
+    await expectRowVisible(page, 'throwPrompt');
 
     const locked = await page.evaluate(() => document.pointerLockElement !== null);
     expect(locked, 'Pointer Lock must be engaged for the left-click below to reach throwThrowable()').toBe(true);

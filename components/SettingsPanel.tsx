@@ -24,13 +24,21 @@ interface PersistedSettings {
   // absent/never-persisted key must not read as "off" the way the other
   // boolean settings above correctly default to falsy.
   scentTrailVisible: boolean;
+  // LUL-2307: default on, same `!== false` idiom as scentTrailVisible above.
+  hintsEnabled: boolean;
   highContrast: boolean;
   // LUL-650: dev/tuning HUD (the #panel pace/mist/sound/regen/fullscreen
-  // controls, plus #minimap). Same presentation-only shape as highContrast --
-  // no engine action, applied via a document.body dataset flag. Defaults to
-  // OFF (see readSettings() below): a player shouldn't see dev GUI unless
-  // they opt in.
+  // controls). Same presentation-only shape as highContrast -- no engine
+  // action, applied via a document.body dataset flag. Defaults to OFF (see
+  // readSettings() below): a player shouldn't see dev GUI unless they opt in.
   adminMode: boolean;
+  // LUL-2309: the minimap became a player-facing navigation aid (home ring +
+  // beacon colours, LUL-2248) and needs its own player-visible toggle rather
+  // than riding along with the dev-only admin mode above. Same
+  // presentation-only shape and falsy default idiom as adminMode/highContrast
+  // (NOT the `!== false` default-on idiom scentTrailVisible/hintsEnabled use
+  // above) -- a never-persisted key must read as OFF.
+  showMinimap: boolean;
 }
 
 function readSettings(): Partial<PersistedSettings> {
@@ -70,6 +78,8 @@ export default function SettingsPanel({
   const [highContrast, setHighContrast] = useState(() => !!readSettings().highContrast);
   // LUL-650: defaults OFF (`!!undefined` on a never-persisted key is `false`).
   const [adminMode, setAdminMode] = useState(() => !!readSettings().adminMode);
+  // LUL-2309: defaults OFF, same idiom as adminMode above.
+  const [showMinimap, setShowMinimap] = useState(() => !!readSettings().showMinimap);
   // LUL-1088: "(instead of hold Shift)" names a keyboard key that doesn't exist
   // on a touch device -- same isMobile() single source of truth every other
   // mobile surface uses (see components/OrientationGate.tsx).
@@ -92,6 +102,8 @@ export default function SettingsPanel({
     // existing player's first load after this ships) doesn't turn the trail
     // off -- only an explicit `false` in storage does.
     actions.setScentTrailVisible(s.scentTrailVisible !== false);
+    // LUL-2307: same default-on idiom as scentTrailVisible above.
+    actions.setHintsEnabled(s.hintsEnabled !== false);
   }, [actions]);
 
   // Presentation-only: no engine action for this, so it's applied directly to
@@ -105,6 +117,10 @@ export default function SettingsPanel({
     document.body.dataset.adminMode = adminMode ? '1' : '0';
   }, [adminMode]);
 
+  useEffect(() => {
+    document.body.dataset.showMinimap = showMinimap ? '1' : '0';
+  }, [showMinimap]);
+
   // Persist whenever any of these actually change -- after the apply-on-ready
   // effect above, so a mount with a stored `sensitivity: 1.4` doesn't get
   // immediately re-written as the engine's own default before it applies.
@@ -117,8 +133,10 @@ export default function SettingsPanel({
       reducedMotion: state.reducedMotion,
       captionsOn: state.captionsOn,
       scentTrailVisible: state.scentTrailVisible,
+      hintsEnabled: state.hintsEnabled,
       highContrast,
       adminMode,
+      showMinimap,
     });
   }, [
     state.difficulty,
@@ -128,8 +146,10 @@ export default function SettingsPanel({
     state.reducedMotion,
     state.captionsOn,
     state.scentTrailVisible,
+    state.hintsEnabled,
     highContrast,
     adminMode,
+    showMinimap,
   ]);
 
   if (!open) return null;
@@ -208,13 +228,38 @@ export default function SettingsPanel({
           />
           Show my scent trail
         </label>
+        {/* LUL-2307: one-time first-encounter explanations (lake, bog, predators,
+            stamina, ...) -- see docs/specs/lul-2307-first-encounter-hints.md. */}
+        <label className="radioRow">
+          <input
+            type="checkbox"
+            checked={state.hintsEnabled}
+            onChange={(e) => actions?.setHintsEnabled(e.target.checked)}
+          />
+          Show hints
+        </label>
+        {/* Not a <label>: this row has no associated checkbox/radio, just the
+            button itself -- reuses .radioRow purely for the row spacing/min-height. */}
+        <div className="radioRow">
+          <button type="button" onClick={() => actions?.resetHints()}>
+            Reset hints
+          </button>
+        </div>
         <label className="radioRow">
           <input type="checkbox" checked={highContrast} onChange={(e) => setHighContrast(e.target.checked)} />
           High-contrast HUD
         </label>
         <label className="radioRow">
+          <input
+            type="checkbox"
+            checked={showMinimap}
+            onChange={(e) => setShowMinimap(e.target.checked)}
+          />
+          Minimap
+        </label>
+        <label className="radioRow">
           <input type="checkbox" checked={adminMode} onChange={(e) => setAdminMode(e.target.checked)} />
-          Admin mode (show pace/mist panel &amp; minimap)
+          Admin mode (show pace/mist panel)
         </label>
         {/* Fog density already has an adjustable control -- the "Mist" slider
             in the main #panel (components/Hud.tsx) -- which is exactly the

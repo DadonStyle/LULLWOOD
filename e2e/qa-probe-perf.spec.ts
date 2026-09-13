@@ -13,6 +13,7 @@
 // qaProbeElapsedTime, see e2e/qa-fixed-clock.spec.ts), hence the `as any` reads.
 import { test, expect } from '@playwright/test';
 import { boot } from './helpers';
+// fullmap-reason: boot-cost probe of the real map (LUL-1768) (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 async function readPerf(page: import('@playwright/test').Page) {
   return page.evaluate(() => (window as any).ForestEngine.qaProbePerf());
@@ -22,9 +23,9 @@ async function readTreeChunks(page: import('@playwright/test').Page) {
   return page.evaluate(() => (window as any).ForestEngine.qaProbeTreeChunks());
 }
 
-test.describe('qaProbePerf scene stats', () => {
+test.describe('qaProbePerf scene stats @fullmap', () => {
   test('triangles/calls reflect the real scene, not the constant post-process blit', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
     await page.waitForTimeout(300); // let a couple of real frames render, same settle as the baseline-perf method
 
     const perf = await readPerf(page);
@@ -40,7 +41,7 @@ test.describe('qaProbePerf scene stats', () => {
   });
 
   test('a second probe after moving still reflects the scene, not a stale blit', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
     await page.waitForTimeout(300);
     await page.evaluate(() => (window as any).ForestEngine.qaTeleportNearBaby());
     await page.waitForTimeout(300);

@@ -57,7 +57,10 @@ test.describe('death sequence (qaForceDeath / qaProbeDeath)', () => {
       expect(await qaHook(page, 'qaForceDeath', 'wolf', cause)).toBe(true);
       await expect(page.locator('#deathScreen')).toBeVisible({ timeout: 5_000 });
       await expect(page.locator('#deathKind')).toHaveText('wolf');
-      await expect(page.locator('#deathText p:not(#runRecap)')).toContainText(CAUSE_TEXT[cause]);
+      // LUL-2558: #deathCauseText is the cause-text <p>'s own id -- a
+      // `p:not(#runRecap)` count no longer isolates it now that RunRecap
+      // renders more than one <p> inside #runRecap (personal-best/tier-stats).
+      await expect(page.locator('#deathCauseText')).toContainText(CAUSE_TEXT[cause]);
     });
   }
 
@@ -109,5 +112,24 @@ test.describe('death sequence (qaForceDeath / qaProbeDeath)', () => {
     await expect(page.locator('#deathText')).toHaveCSS('opacity', '1', { timeout: 3_000 });
     await page.locator('.restartBtn').evaluate((el) => (el as HTMLElement).click());
     await expect(page.locator('#deathScreen')).toBeHidden();
+  });
+
+  // LUL-2461: distanceFromHomeAtDeathM feeds the same-name loss telemetry field
+  // the Economist's LUL-1413 blackout-pricing model reads -- assert the engine
+  // actually computes distance-from-home at the moment of death, not some other
+  // point (e.g. maxDistFromHome, the run's furthest point).
+  test('qaProbeDeath().distanceFromHomeAtDeathM is null before death, then the home distance at the death spot', async ({ page }) => {
+    test.setTimeout(30_000);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    expect((await qaHook(page, 'qaProbeDeath')).distanceFromHomeAtDeathM).toBeNull();
+
+    await page.evaluate(() => window.ForestEngine!.qaTeleportTo!(30, 40));
+    expect(await qaHook(page, 'qaForceDeath', 'wolf', 'hunt')).toBe(true);
+    await expect(page.locator('#deathScreen')).toBeVisible({ timeout: 5_000 });
+
+    // CONFIG.home is the origin (engine/tuning.js) -- hypot(30, 40) = 50.
+    expect((await qaHook(page, 'qaProbeDeath')).distanceFromHomeAtDeathM).toBe(50);
   });
 });

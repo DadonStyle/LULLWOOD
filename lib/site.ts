@@ -23,8 +23,14 @@ export const SITE_TITLE = 'Lullwood — Free Browser Horror Game, No Download';
 // dark") is a great in-game line and a poor meta description: 36 chars, no
 // nouns anyone searches for. This keeps the tone but earns the click and lands
 // in the ~150-160 char window Google renders without truncating.
+// LUL-2281 (2026-09-09) made lifting the child the win -- there is no carry-home
+// leg any more, so the snippet must not promise one (founder SEO pass 2026-09-11).
 export const SITE_DESCRIPTION =
-  'A glowing child is lost in the fog. Cross a night forest, hide from wolves, bears and lions that hunt by sight and scent, and carry her home. Free in browser.';
+  'A glowing child is lost in the fog. Cross a night forest, hide from wolves, bears and lions that hunt by sight and scent, and reach her first. Free in browser.';
+
+// Brand colour for the manifest / theme-color -- the HUD's night ground
+// (components/GameCanvas.tsx uses rgba(12,17,26,…) for every pill).
+export const SITE_THEME_COLOR = '#0c111a';
 
 // Short, atmospheric line for social cards, where mood beats keywords -- a
 // shared link is seen by people, not crawlers.

@@ -1,7 +1,15 @@
 // Node built-in test runner. Run: node --test lib/dashboard/aggregate.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement, computeEconomy } from './aggregate.ts';
+import {
+  computeFunnel,
+  computeOutcomes,
+  computeSessions,
+  computeFeatureEngagement,
+  computeEconomy,
+  computeOutcomesByTier,
+  computeChaseGapByTier,
+} from './aggregate.ts';
 import type { RawEvent } from './events.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -338,4 +346,77 @@ test('computeEconomy: a tier with zero events yields nulls, not NaN', () => {
   assert.equal(economy.byDifficulty.blackout.failureBandPct, null);
   assert.equal(economy.byDifficulty.blackout.lossDepth.pctAbove24, null);
   assert.equal(Number.isNaN(economy.byDifficulty.blackout.winPayout.p50), false);
+});
+
+test('computeOutcomesByTier: win rate, run length and death distance, split per tier', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { time_survived_ms: 100000, difficulty: 'blackout' }),
+    ev('loss', BASE_TS, 'b', { time_survived_ms: 40000, distance_from_home_m: 20, predator_kind: 'wolf', difficulty: 'blackout' }),
+    ev('loss', BASE_TS, 'c', { time_survived_ms: 60000, distance_from_home_m: 40, predator_kind: 'bear', difficulty: 'blackout' }),
+    ev('win', BASE_TS, 'd', { time_survived_ms: 90000, difficulty: 'lantern' }),
+    ev('win', BASE_TS, 'e', { time_survived_ms: 95000, difficulty: 'lantern' }),
+  ];
+  const byTier = computeOutcomesByTier(events);
+  assert.equal(byTier.blackout.winCount, 1);
+  assert.equal(byTier.blackout.lossCount, 2);
+  assert.equal(byTier.blackout.winRatePct, (1 / 3) * 100);
+  assert.equal(byTier.blackout.runLengthMs.win.p50, 100000);
+  assert.equal(byTier.blackout.runLengthMs.loss.p50, 40000);
+  assert.equal(byTier.blackout.distanceFromHomeAtDeathM.p50, 20);
+  assert.equal(byTier.blackout.distanceFromHomeAtDeathM.n, 2);
+  assert.equal(byTier.lantern.winRatePct, 100);
+  assert.equal(byTier.lantern.distanceFromHomeAtDeathM.n, 0);
+  assert.equal(byTier.night.winCount, 0);
+  assert.equal(byTier.night.winRatePct, null);
+});
+
+test('computeOutcomesByTier: events without difficulty land in unattributed, tier ns sum to pooled', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { time_survived_ms: 100000 }),
+    ev('loss', BASE_TS, 'b', { time_survived_ms: 40000, predator_kind: 'wolf' }),
+    ev('win', BASE_TS, 'c', { time_survived_ms: 90000, difficulty: 'nonsense' }),
+  ];
+  const byTier = computeOutcomesByTier(events);
+  assert.equal(byTier.unattributed.winCount, 2);
+  assert.equal(byTier.unattributed.lossCount, 1);
+  assert.equal(byTier.lantern.winCount, 0);
+  assert.equal(byTier.night.winCount, 0);
+  assert.equal(byTier.blackout.winCount, 0);
+});
+
+test('computeOutcomesByTier: a tier with zero events yields nulls, not NaN', () => {
+  const events: RawEvent[] = [ev('win', BASE_TS, 'a', { time_survived_ms: 100000, difficulty: 'lantern' })];
+  const byTier = computeOutcomesByTier(events);
+  assert.equal(byTier.blackout.winRatePct, null);
+  assert.equal(byTier.blackout.runLengthMs.win.p50, null);
+  assert.equal(byTier.blackout.distanceFromHomeAtDeathM.p50, null);
+  assert.equal(Number.isNaN(byTier.blackout.runLengthMs.win.p50), false);
+});
+
+test('computeChaseGapByTier: median and p25 gap, split per tier', () => {
+  const events: RawEvent[] = [
+    ev('chase_gap', BASE_TS, 'a', { duration_ms: 4000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'b', { duration_ms: 8000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'c', { duration_ms: 12000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'd', { duration_ms: 16000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'e', { duration_ms: 20000, difficulty: 'lantern' }),
+    ev('chase_gap', BASE_TS, 'f', { duration_ms: 30000, difficulty: 'lantern' }),
+  ];
+  const byTier = computeChaseGapByTier(events);
+  assert.equal(byTier.blackout.gapMs.n, 4);
+  assert.equal(byTier.blackout.gapMs.p50, 8000);
+  assert.equal(byTier.blackout.gapMs.p25, 4000);
+  assert.equal(byTier.lantern.gapMs.n, 2);
+  assert.equal(byTier.lantern.gapMs.p50, 20000);
+  assert.equal(byTier.night.gapMs.n, 0);
+  assert.equal(byTier.night.gapMs.p50, null);
+});
+
+test('computeChaseGapByTier: other event types and missing duration_ms are ignored', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', { time_survived_ms: 1000, difficulty: 'blackout' }),
+    ev('chase_gap', BASE_TS, 'b', { difficulty: 'blackout' }),
+  ];
+  const byTier = computeChaseGapByTier(events);
+  assert.equal(byTier.blackout.gapMs.n, 0);
 });

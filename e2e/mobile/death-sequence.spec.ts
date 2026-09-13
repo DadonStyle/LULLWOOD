@@ -48,7 +48,10 @@ test.describe('death sequence (qaForceDeath / qaProbeDeath, mobile)', () => {
       expect(await qaHook(page, 'qaForceDeath', 'wolf', cause)).toBe(true);
       await expect(page.locator('#deathScreen')).toBeVisible({ timeout: 5_000 });
       await expect(page.locator('#deathKind')).toHaveText('wolf');
-      await expect(page.locator('#deathText p:not(#runRecap)')).toContainText(CAUSE_TEXT[cause]);
+      // LUL-2558: #deathCauseText is the cause-text <p>'s own id -- a
+      // `p:not(#runRecap)` count no longer isolates it now that RunRecap
+      // renders more than one <p> inside #runRecap (personal-best/tier-stats).
+      await expect(page.locator('#deathCauseText')).toContainText(CAUSE_TEXT[cause]);
     });
   }
 

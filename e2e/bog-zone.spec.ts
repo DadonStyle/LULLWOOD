@@ -8,10 +8,11 @@ import { test, expect } from '@playwright/test';
 import { boot, enter, qaHook, QA_PINNED_SEED } from './helpers';
 import { LANDMARKS, CAVE, CONFIG } from '../engine/tuning';
 import { BOG_CENTER, BOG_INNER_RADIUS, BOG_OUTER_RADIUS, BOG_SPEED_MULTIPLIER } from '../lib/game/bog';
+// fullmap-reason: the bog is zeroed in the micro preset (BOG_CENTER sits outside a 96u map); this spec measures the real bog patch (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
-test.describe('bog zone', () => {
+test.describe('bog zone @fullmap', () => {
   test('bogginess samples match the patch geometry', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
 
     const center = await qaHook(page, 'qaProbeBog', BOG_CENTER.x, BOG_CENTER.z);
     expect(center.bogginess).toBe(1);
@@ -46,7 +47,7 @@ test.describe('bog zone', () => {
   });
 
   test('nothing else spawns inside the patch', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
     const kc = await qaHook(page, 'qaProbeBogKeepClear');
     expect(kc.coverInside).toBe(0);
     expect(kc.throwablesInside).toBe(0);
@@ -64,7 +65,7 @@ test.describe('bog zone', () => {
   });
 
   test('walking through the bog is measurably slower than dry ground', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', 1 / 60);
 
@@ -95,7 +96,7 @@ test.describe('bog zone', () => {
   });
 
   test('blackout spawns the child beyond the bog on four pinned seeds; normal mode does not', async ({ page }) => {
-    await boot(page, { qaHooks: true, seed: QA_PINNED_SEED });
+    await boot(page, { qaWorld: 'full',  qaHooks: true, seed: QA_PINNED_SEED });
     await qaHook(page, 'qaSetDifficulty', 'hard');
 
     for (const seed of [QA_PINNED_SEED, 1, 2, 3]) {
@@ -113,7 +114,7 @@ test.describe('bog zone', () => {
   });
 
   test('the bog patch is drawn on the minimap, sized to BOG_OUTER_RADIUS', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaWorld: 'full',  qaHooks: true });
     const point = await qaHook(page, 'qaProbeMinimapPoint', BOG_CENTER.x, BOG_CENTER.z);
     expect(point.px).toBeGreaterThanOrEqual(0);
     expect(point.px).toBeLessThanOrEqual(point.mm);

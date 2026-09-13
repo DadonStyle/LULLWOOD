@@ -28,20 +28,27 @@
 //   current roam waypoint so the next tick's arrival/repick runs
 //   immediately, instead of waiting out the real ~10-20s travel per sweep leg.
 import { test, expect } from '@playwright/test';
-import { boot, enter } from './helpers';
+import { boot, enter, expectRowVisible } from './helpers';
 
 // Bounded loop margin: LKP_MAX_SWEEPS (3) repicks are needed to exhaust the
 // count, plus headroom for the one repick each arrival triggers.
 const LKP_MAX_SWEEPS_PLUS_MARGIN = 6;
 
+// LUL-2329: left on the full map -- qaTeleportToHideSpot needs a real,
+// naturally-generated hide-spot prop, and the tests below that follow it with
+// qaStagePredatorGiveUp have no isolation against the other 8 predators over
+// their multi-second poll windows (qaBuildScene would guarantee isolation but
+// also wipes the natural cover this hook depends on). See
+// docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
+//
 // Hides the player at a deterministic spot (qaTeleportToHideSpot, same hook
 // e2e/hide.spec.ts uses) and confirms `hidden` actually took via the #status
 // HUD, so callers don't silently proceed with a not-actually-hidden player.
 async function hidePlayer(page: import('@playwright/test').Page) {
   const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
-  expect(spot, 'qaTeleportToHideSpot must find a bush/hollow-log spot for this seed').not.toBeNull();
+  expect(spot, 'qaTeleportToHideSpot must find a bramble spot for this seed').not.toBeNull();
   await page.keyboard.press('KeyH');
-  await expect(page.locator('#status')).toBeVisible();
+  await expectRowVisible(page, 'status');
 }
 
 test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
@@ -109,6 +116,16 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     expect(staged).not.toBeNull();
     const { idx } = staged!;
 
+    // LUL-2505: the piano gate reads `approaching`/`nearDist` across *every*
+    // spawned predator, not just this one -- on the full map (this file's own
+    // documented no-isolation tradeoff, docs/specs/lul-2329-e2e-migrate-
+    // qaworld-micro.md), the multi-second polling below can otherwise catch
+    // an unrelated predator mid-investigate/chase, or an unrelated predator's
+    // mere proximity gating a *different* predator's approach, and the piano
+    // would never go quiet for reasons that have nothing to do with this
+    // predator's own bounded sweep count reaching 0.
+    await page.evaluate((i) => window.ForestEngine?.qaIsolatePredator?.(i), idx);
+
     await expect
       .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx))?.lkpSweeps, {
         message: 'lkpSweeps did not arm after give-up',
@@ -158,5 +175,52 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
         timeout: 5_000,
       })
       .toBe(false);
+  });
+
+  test('a predator re-alerted mid-sweep does not have its return-sweep count refilled (LUL-2505)', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await hidePlayer(page);
+
+    const staged = await page.evaluate(() => window.ForestEngine?.qaStagePredatorGiveUp?.('bear', 20, 0) ?? null);
+    expect(staged).not.toBeNull();
+    const { idx } = staged!;
+
+    await expect
+      .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx))?.lkpSweeps, {
+        message: 'lkpSweeps did not arm after give-up',
+        timeout: 5_000,
+      })
+      .toBe(3);
+
+    // One arrival: player hasn't moved, so playerDistFromLkp stays 0 (inside
+    // LKP_REPEAT_RADIUS) -- deterministically 3 -> 2, matching
+    // pickRoamWaypoint's own unit-tested decrement.
+    await page.evaluate((i) => window.ForestEngine?.qaFastForwardPredatorToWaypoint?.(i), idx);
+    await expect
+      .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx))?.lkpSweeps, {
+        message: 'lkpSweeps did not decrement to 2 after the first arrival',
+        timeout: 5_000,
+      })
+      .toBe(2);
+
+    // Re-stage the same predator through the give-up pipeline again --
+    // qaStagePredatorGiveUp only touches state/inv/sniffsLeft/sniffTimer, not
+    // lkpX/lkpZ/lkpSweeps, so this stands in for a real mid-sweep re-alert
+    // (scent/noise/cry, none of which check `hidden`) without waiting out an
+    // actual re-detection roll.
+    await page.evaluate(() => window.ForestEngine?.qaStagePredatorGiveUp?.('bear', 20, 0));
+    await expect
+      .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx))?.state, {
+        message: 'predator did not return to roam after the second give-up',
+        timeout: 5_000,
+      })
+      .toBe('roam');
+
+    // LUL-2505: pre-fix this reads 3 (refilled to LKP_MAX_SWEEPS on every
+    // give-up, regardless of the live count) -- post-fix it stays 2
+    // (armReturnSweep preserves a live mid-sweep count near the same spot).
+    const lkp = await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx);
+    expect(lkp?.lkpSweeps, 'a mid-sweep re-alert must not refill lkpSweeps back to LKP_MAX_SWEEPS').toBe(2);
   });
 });

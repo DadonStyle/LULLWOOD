@@ -25,6 +25,8 @@ per-role, per-PR habit instead of something only the reviewer remembers.
 - [ ] Grepped for an existing helper/mechanic that already does this before
       calling it new.
 - [ ] Scoped to this ticket — no unrelated changes riding along.
+- [ ] Names the visual cue, the audio cue and the one-line explanation the
+      player sees the first time (`decisions/0015-cue-triple`).
 
 ## 2. Developer implementing it
 
@@ -38,10 +40,17 @@ per-role, per-PR habit instead of something only the reviewer remembers.
       by the reviewer (`systems/unit-testing-standard`, LUL-280).
 - [ ] `## e2e` section of the spec satisfied: named spec updated, named hooks
       landed, in this PR.
+- [ ] The spec boots the **micro world** and stages its case with
+      `qaBuildScene` / the `qa*` hooks -- never the full map (founder rule
+      LUL-2377; `lib/e2e-policy/world-policy.test.ts` fails the PR otherwise).
+      A new or changed behaviour has a hook that reaches it.
 - [ ] Branch kept current via backmerge, never rebase/force-push
       (`decisions/0010-no-force-push`).
 - [ ] Ran the affected spec(s) locally/headlessly before pushing — not just
       `tsc`/`next build`.
+- [ ] Visual cue + audio cue + first-encounter explanation shipped in this
+      PR, each e2e-asserted (probe or DOM), each honouring reducedMotion /
+      soundOn / captionsOn.
 
 ## 3. Reviewer (PR gate)
 
@@ -57,11 +66,17 @@ per-role, per-PR habit instead of something only the reviewer remembers.
       `systems/unit-testing-standard`; everything else stays a P2/P3 nit.
 - [ ] Spec has an `## e2e` section naming real files — missing = block on
       Tier B/C.
+- [ ] Behaviour change without a `qa*` hook and a micro-world spec = P1
+      (founder rule LUL-2377). A new `@fullmap` spec needs a reason the micro
+      world cannot express it, or it is a block.
 - [ ] Big-impact bar (`decisions/0012-feature-impact-bar`) — if the diff
       reads as tuning or HUD-only, raise it as a scope objection early, not
       as a late merge block. Not a new P0/P1 class on its own.
 - [ ] DRY pass: duplication is P2/P3 by default; only block (P1) if you can
       name the concrete divergence that breaks the game.
+- [ ] Cue triple present (`decisions/0015-cue-triple`) — missing one is P1
+      on a feature PR, same severity class as a missing `docs/ELEMENTS.md`
+      update.
 
 ## 4. QA (local QA tester, nightly)
 

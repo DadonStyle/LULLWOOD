@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  armReturnSweep,
   backOffPoint,
   canCatchInChase,
   CATCH_MARGIN,
@@ -469,6 +470,34 @@ test('pickRoamWaypoint is inclusive at exactly the repeat radius boundary', () =
   const rng = () => 0;
   const pick = pickRoamWaypoint(rng, 0, 0, 0, 0, 2, LKP_REPEAT_RADIUS, /*half*/240);
   assert.equal(pick.sweepsLeft, 1);
+});
+
+// ---- armReturnSweep (LUL-2505) ------------------------------------------------
+
+test('armReturnSweep arms a fresh memory when there is no live sweep (lkpSweeps=0)', () => {
+  const arm = armReturnSweep(0, 999, 999, 10, 20);
+  assert.equal(arm.lkpSweeps, LKP_MAX_SWEEPS);
+  assert.equal(arm.lkpX, 10);
+  assert.equal(arm.lkpZ, 20);
+});
+
+test('armReturnSweep preserves a live mid-sweep count and the existing lkp point instead of refilling', () => {
+  const arm = armReturnSweep(2, 5, 5, 5, 5);   // player right on top of the existing lkp point
+  assert.equal(arm.lkpSweeps, 2);
+  assert.equal(arm.lkpX, 5);
+  assert.equal(arm.lkpZ, 5);
+});
+
+test('armReturnSweep treats a player who has left the repeat radius as a fresh loss of trail, even with sweeps remaining', () => {
+  const arm = armReturnSweep(2, 0, 0, LKP_REPEAT_RADIUS + 0.01, 0);
+  assert.equal(arm.lkpSweeps, LKP_MAX_SWEEPS);
+  assert.equal(arm.lkpX, LKP_REPEAT_RADIUS + 0.01);
+  assert.equal(arm.lkpZ, 0);
+});
+
+test('armReturnSweep is inclusive at exactly the repeat radius boundary -- preserves, matching pickRoamWaypoint\'s own boundary', () => {
+  const arm = armReturnSweep(2, 0, 0, LKP_REPEAT_RADIUS, 0);
+  assert.equal(arm.lkpSweeps, 2);
 });
 
 // ---- wrap span (LUL-1485) ----------------------------------------------------

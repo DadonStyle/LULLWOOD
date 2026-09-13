@@ -20,16 +20,20 @@ const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
  * Bounding-box intersection check, matching the LUL-2224 wind-hint spec's
  * helper. `.boundingBox()` on a locator that currently matches zero elements
  * waits out the full actionability timeout instead of returning null (only a
- * matched-but-invisible element resolves to null quickly) -- `#status` and
- * `#actionPrompt` are contextual and usually absent, so `.count()` must be
- * checked first or this hangs for 150s on every call against them.
+ * matched-but-invisible element resolves to null quickly), so `.count()` must
+ * be checked first or this hangs for 150s on every call.
+ * LUL-2312: `#status`/`#objective`/`#actionPrompt` are three of #actionSlot's
+ * always-mounted rows now (never absent, so `.count()` alone no longer skips
+ * them) -- an empty row's `.actionPromptRow` has no content, so its content
+ * box collapses to zero width (`justify-items: center` sizes it to content,
+ * not the grid track); a zero-area box is also treated as nothing to overlap.
  */
 async function assertNoOverlap(page: Page, selA: string, selB: string) {
   const locA = page.locator(selA), locB = page.locator(selB);
   if ((await locA.count()) === 0 || (await locB.count()) === 0) return;
   const a = await locA.boundingBox();
   const b = await locB.boundingBox();
-  if (!a || !b) return; // matched but not currently visible -- nothing to overlap
+  if (!a || !b || a.width === 0 || a.height === 0 || b.width === 0 || b.height === 0) return; // nothing to overlap
   const overlaps =
     a.x < b.x + b.width && a.x + a.width > b.x &&
     a.y < b.y + b.height && a.y + a.height > b.y;
@@ -82,6 +86,10 @@ test.describe('scent trail visual (LUL-2230)', () => {
   test('running lays bigger, brighter points than walking (matches the alpha formula exactly), and standing still lets the trail decay to nothing', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-2539: this test's alpha formula and decay-to-nothing check both hardcode the base
+    // (no-wind) SCENT_LIFETIME=14 -- force wind off so the new 50/50 windHighSpeed roll can't
+    // make it flaky.
+    await qaHook(page, 'qaSetWindHighSpeed', false);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     await walkForward(page, 1);
@@ -144,6 +152,10 @@ test.describe('scent trail visual (LUL-2230)', () => {
     await expect(caption).toHaveCount(0);
 
     // Does not show again without an explicit reset -- walk and turn again.
+    // (face forward again first -- the earlier turn-around left us facing
+    // yaw+PI, and walking forward in that state lays the trail back the
+    // way we came instead of past it.)
+    await qaHook(page, 'qaSetLookYaw', yaw);
     await walkForward(page, 2.5);
     await qaHook(page, 'qaSetLookYaw', yaw + Math.PI);
     await qaHook(page, 'qaAdvance', stepsFor(0.1));
@@ -157,6 +169,37 @@ test.describe('scent trail visual (LUL-2230)', () => {
     probe = await qaHook(page, 'qaProbeScentTrail');
     expect(probe.captionVisible, 'resetting the gate must let the caption show again').toBe(true);
     expect(probe.captionSeen).toBe(false);
+  });
+
+  test('the caption never overlaps the reserved action-slot region when anchored near the y-clamp ceiling (LUL-2532)', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+
+    // A close, ground-level (ry~0.22) point directly ahead projects far down
+    // in the frame, pushing hintY (engine/forest-engine.js's hintWorldAnchor)
+    // to HINT_Y_MAX (0.78) -- confirmed empirically (a 1-world-unit offset
+    // lands --hint-top at exactly 78% on this viewport) as the exact geometry
+    // the nightly QA rig's "play-again" repro hit, landing #scentTrailCaption's
+    // lifted box inside #actionSlot's #objective row ("Find the lost child").
+    // qaSeedScentPoint places the point in world space, so it's offset along
+    // the player's own current forward vector (matches the fx/fz formula the
+    // engine itself uses, e.g. forest-engine.js:1607).
+    const { yaw } = await qaHook(page, 'qaProbePlayer');
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    await page.evaluate(([dx, dz]) => {
+      window.ForestEngine?.qaSeedScentPoint?.(dx, dz, 1);
+    }, [fx * 1, fz * 1]);
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+
+    const probe = await qaHook(page, 'qaProbeScentTrail');
+    expect(probe.points.some((p: { inFrustum: boolean }) => p.inFrustum), 'the seeded close point must be in frustum').toBe(true);
+    expect(probe.captionVisible).toBe(true);
+    const caption = page.locator('#scentTrailCaption');
+    await expect(caption).toBeVisible();
+    await assertInViewport(caption, page, '#scentTrailCaption');
+    await assertNoOverlap(page, '#scentTrailCaption', '#objective');
+    await assertNoOverlap(page, '#scentTrailCaption', '#actionPrompt');
   });
 
   test('never shows over the win or death screen', async ({ page }) => {

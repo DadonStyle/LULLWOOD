@@ -24,13 +24,26 @@ something.>
 
 **Specs.** `e2e/<file>.spec.ts` — '<test title>' (new | extended | must pass unchanged). One
 line per spec.
+**World.** micro (default — stage the case with `qaBuildScene({...})`: list the exact trees,
+props, predators, child/home the spec places) | `@fullmap` + the one reason the micro world
+cannot express it (founder rule LUL-2377: the QA rig never runs `@fullmap`; the allowlist in
+`lib/e2e-policy/world-policy.test.ts` may only shrink).
 **Hooks.** `window.ForestEngine.qaXxx(args): ReturnType` — one-line behaviour — new (declare
 in `engine/forest-engine.d.ts`, install inside the `?qaHooks` block in `init()`) | existing
-(`engine/forest-engine.js:<line>`).
+(`engine/forest-engine.js:<line>`). Every behaviour change needs a hook that reaches it.
 **Tester scenario.** Which nightly check in `shared/local-qa/QA_TESTER.md` covers this, or
 the request file `shared/local-qa/requests/<lul-id>-<slug>.md` written with this spec.
 "None: not player-visible" needs a reason.
 **Not covered.** Feel, audio, real-device items that stay manual, and why.
+
+## Cues
+
+**Visual.** <what the player sees change in the world or HUD, and where -- file:line for the render/HUD call site>.
+**Audio.** <the one-shot sound function name and file:line -- new or existing -- gated by `soundOn`>.
+**Explanation.** <the exact one-line text the player sees the first time (or every time, if a persistent gate), and file:line for the caption call site -- gated by `captionsOn`>.
+**Reduced motion.** <what the visual cue degrades to when `reducedMotion` is true, or "static, no animation to reduce" if it was never animated>.
+
+See `decisions/0015-cue-triple` on the wiki.
 
 ## Constraints
 

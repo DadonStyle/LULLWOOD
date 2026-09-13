@@ -61,6 +61,19 @@ export function isCaught(dist: number, rad: number): boolean {
 // `isCaught()`; this gives `chase` the identical guarantee explicitly,
 // instead of leaving the kill check gateless whenever the LOS-losing branch
 // above doesn't fire (which `scentLock > 0` guarantees it won't).
+// LUL-2320: a `hidden`-keyed bypass here (`isCaught && (canSee || !hidden)`) was tried and
+// reverted during this ticket's review -- for `hidden === false` (the default player state)
+// that collapses to bare `isCaught`, which reintroduces the exact LUL-387 regression this
+// function exists to prevent, for *any* cover, not just the log/bramble footprint the ticket
+// was about (see e2e/blind-chase-cover.spec.ts, which deliberately never presses `H` and
+// still requires canSee before a kill). The log/bramble bug is fixed upstream instead: (A)
+// `hasLOS()` (cover.ts) no longer treats the walkable box a target is standing in as
+// self-occluding, so an un-hidden player on a log/bramble already reads `canSee() === true`
+// via the ordinary path below with no bypass needed here; (B) `canSee()`'s
+// `insideHideFootprint()` exception keeps a *hidden* player shielded at range and drops that
+// shield at exactly the same `rad + CATCH_MARGIN` contact threshold `isCaught()` itself uses,
+// so the two agree the instant contact is reached. This function stays exactly the LUL-387
+// shape: a kill requires both proximity and an actual sightline.
 export function canCatchInChase(canSee: boolean, dist: number, rad: number): boolean {
   return canSee && isCaught(dist, rad);
 }
@@ -202,6 +215,24 @@ export function pickRoamWaypoint(
   }
   const a = rng() * Math.PI * 2, r = half * (ROAM_STEP_FRAC.min + rng() * ROAM_STEP_FRAC.range);
   return { x: px + Math.cos(a) * r, z: pz + Math.sin(a) * r, sweepsLeft: 0 };
+}
+
+// LUL-2505: a give-up-to-roam transition should only arm a *fresh* LKP_MAX_SWEEPS memory if
+// there isn't already a live, unexhausted one for this same last-known-position -- otherwise a
+// predator that gets briefly re-alerted (scent/noise/cry, none of which check `hidden`) mid-sweep
+// and then gives up again gets a free refill, silently defeating the bound (LUL-1620/1573) and
+// reopening the camping exploit it closed. "Still live, same spot" reuses pickRoamWaypoint's own
+// LKP_REPEAT_RADIUS test against the *existing* lkpX/lkpZ, not the fresh give-up position -- the
+// two must agree on what counts as "the same spot" or a predator could get a partial-refill edge
+// case where the distance test passes here but fails on the very next arrival.
+export function armReturnSweep(
+  lkpSweeps: number, lkpX: number, lkpZ: number,
+  playerX: number, playerZ: number,
+): { lkpX: number; lkpZ: number; lkpSweeps: number } {
+  if (lkpSweeps > 0 && Math.hypot(playerX - lkpX, playerZ - lkpZ) <= LKP_REPEAT_RADIUS) {
+    return { lkpX, lkpZ, lkpSweeps };   // mid-sweep, same spot -- preserve, do not refill
+  }
+  return { lkpX: playerX, lkpZ: playerZ, lkpSweeps: LKP_MAX_SWEEPS };   // fresh loss of trail
 }
 
 // ---- investigate re-escalation gate (LUL-562) -------------------------------------

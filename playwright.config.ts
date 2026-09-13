@@ -110,7 +110,48 @@ export default defineConfig({
       // project below), which this desktop project can't give it -- excluded
       // the same way, not doubled up.
       testIgnore: ['**/replay/**', '**/mobile/**'],
+      // LUL-2329: `@fullmap`-tagged tests (full 480-wide procedural map, the
+      // dominant memory cost -- see docs/specs/lul-2329-e2e-migrate-qaworld-micro.md)
+      // run in the dedicated `fullmap` project below instead, never here.
+      grepInvert: /@fullmap/,
     },
+    // LUL-2329: every `@fullmap`-tagged test (real-geometry specs that boot the
+    // full procedural map on purpose -- map-seed/minimap/predator-determinism/
+    // layout/bog-zone/prop-density/qa-probe-perf/tree-pathing and a couple of
+    // lul211-founder-report describes) runs here instead of in `chromium`
+    // above. `dependencies: ['chromium']` is Playwright's own "do not start
+    // until every test in the dependency project has finished" guarantee --
+    // `workers: 1`/`fullyParallel: false` already serialized everything as a
+    // side effect of an unrelated setting, but this makes "full-map tests run
+    // last, alone, never concurrently with anything else" an explicit config
+    // fact that survives a future `workers` bump instead of relying on that
+    // accident. `bin/local-qa-run` (shared/local-qa/, founder-owned) runs plain
+    // `npx playwright test` with no `--project` filter, so this is transparent
+    // to it -- same total coverage, just `chromium` then `fullmap` in order.
+    // LUL-2377 (founder rule 2026-09-11): the full 480u map is never loaded by
+    // the QA rig -- a full-map page costs 3.5-9 GB under software WebGL and froze
+    // the host twice. The @fullmap specs (map generation, bog, prop density,
+    // minimap seam, the full-map memory budget) exist only when a developer
+    // opts in locally with E2E_FULLMAP=1, desktop and mobile alike.
+    ...(process.env.E2E_FULLMAP
+      ? [
+          {
+            name: 'fullmap',
+            testDir: './e2e',
+            use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 720 } },
+            testIgnore: ['**/replay/**', '**/mobile/**'],
+            grep: /@fullmap/,
+            dependencies: ['chromium'],
+          },
+          {
+            name: 'fullmap-mobile',
+            testDir: './e2e/mobile',
+            use: { ...devices['Pixel 5'] },
+            grep: /@fullmap/,
+            dependencies: ['mobile'],
+          },
+        ]
+      : []),
     // LUL-216: dedicated project for recording QA_REGRESSION/ clips. Kept separate
     // from the `chromium` smoke project so CI's per-run/per-shard smoke suite
     // never pays for a video (which is `retain-on-failure` above, i.e. off on a
@@ -144,6 +185,8 @@ export default defineConfig({
     {
       name: 'mobile',
       testDir: './e2e/mobile',
+      // LUL-2377: same rule as the chromium project -- @fullmap only under E2E_FULLMAP=1.
+      grepInvert: /@fullmap/,
       // LUL-1092: ui-hygiene.spec.ts is RED ON PURPOSE -- it asserts the UI
       // defects found in the 2026-08-30 mobile audit are gone, and they are
       // not gone yet (LUL-1085..LUL-1089 are the fixes). Every other project
