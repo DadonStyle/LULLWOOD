@@ -27,6 +27,20 @@
 // - qaFastForwardPredatorToWaypoint(idx): teleports a predator onto its own
 //   current roam waypoint so the next tick's arrival/repick runs
 //   immediately, instead of waiting out the real ~10-20s travel per sweep leg.
+//
+// LUL-2663: every expect.poll() here used the framework default's neighbourhood
+// (5_000/10_000ms) -- a stark outlier against this suite's own established
+// precedent for game-time-gated polls (positional-hiding.spec.ts 20_000ms,
+// scent.spec.ts up to 45_000ms; wiki systems/dt-clamp-vs-walltime's "Third
+// occurrence" corollary: reading an engine-exposed value removes the
+// guessed-wrong-instant failure mode, but the poll's own timeout is still a
+// wall-clock budget that must survive rig dilation). The nightly rig's "piano
+// stops" run (PR #647, c04ec75) timed out mid-suite at 5s on two different
+// lines across its two attempts (lkpSweeps stuck at 1, then the piano-off
+// check) -- not the same assertion both times, the signature of a budget too
+// tight for a contended run rather than a deterministic logic bug. Widened to
+// 20_000ms to match sibling precedent; the assertions themselves are
+// unchanged.
 import { test, expect } from '@playwright/test';
 import { boot, enter, expectRowVisible } from './helpers';
 
@@ -64,7 +78,7 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     await expect
       .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx))?.lkpSweeps, {
         message: 'lkpSweeps did not arm to LKP_MAX_SWEEPS after the investigate/sniff give-up transition',
-        timeout: 5_000,
+        timeout: 20_000,
       })
       .toBe(3);
 
@@ -87,7 +101,7 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     await expect
       .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx))?.lkpSweeps, {
         message: 'lkpSweeps did not arm after give-up',
-        timeout: 5_000,
+        timeout: 20_000,
       })
       .toBeGreaterThan(0);
 
@@ -96,7 +110,7 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     await expect
       .poll(async () => page.evaluate(() => window.ForestEngine?.qaIsApproachPianoActive?.() ?? false), {
         message: 'approach piano should be audible while hidden during a return sweep (clause 2: !hidden dropped from the gate)',
-        timeout: 5_000,
+        timeout: 20_000,
       })
       .toBe(true);
 
@@ -129,14 +143,14 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     await expect
       .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx))?.lkpSweeps, {
         message: 'lkpSweeps did not arm after give-up',
-        timeout: 5_000,
+        timeout: 20_000,
       })
       .toBeGreaterThan(0);
 
     await expect
       .poll(async () => page.evaluate(() => window.ForestEngine?.qaIsApproachPianoActive?.() ?? false), {
         message: 'approach piano should be audible while a sweep is live',
-        timeout: 5_000,
+        timeout: 20_000,
       })
       .toBe(true);
 
@@ -154,7 +168,7 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
       await expect
         .poll(async () => (await page.evaluate((i2) => window.ForestEngine?.qaGetPredatorLkp?.(i2) ?? null, idx))?.lkpSweeps, {
           message: `lkpSweeps did not change from ${before} after fast-forwarding to the waypoint`,
-          timeout: 5_000,
+          timeout: 20_000,
         })
         .not.toBe(before);
     }
@@ -162,7 +176,7 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     await expect
       .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx))?.lkpSweeps, {
         message: 'lkpSweeps did not reach 0 after fast-forwarding through the bounded sweep count',
-        timeout: 10_000,
+        timeout: 20_000,
       })
       .toBe(0);
 
@@ -172,7 +186,7 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     await expect
       .poll(async () => page.evaluate(() => window.ForestEngine?.qaIsApproachPianoActive?.() ?? true), {
         message: 'approach piano should stop once the bounded sweep count is exhausted',
-        timeout: 5_000,
+        timeout: 20_000,
       })
       .toBe(false);
   });
@@ -189,7 +203,7 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     await expect
       .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx))?.lkpSweeps, {
         message: 'lkpSweeps did not arm after give-up',
-        timeout: 5_000,
+        timeout: 20_000,
       })
       .toBe(3);
 
@@ -200,7 +214,7 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     await expect
       .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaGetPredatorLkp?.(i) ?? null, idx))?.lkpSweeps, {
         message: 'lkpSweeps did not decrement to 2 after the first arrival',
-        timeout: 5_000,
+        timeout: 20_000,
       })
       .toBe(2);
 
@@ -213,7 +227,7 @@ test.describe('predator memory return sweeps + audio tell (LUL-1620)', () => {
     await expect
       .poll(async () => (await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx))?.state, {
         message: 'predator did not return to roam after the second give-up',
-        timeout: 5_000,
+        timeout: 20_000,
       })
       .toBe('roam');
 
