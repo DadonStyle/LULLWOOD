@@ -47,6 +47,27 @@ async function walkForward(page: Page, seconds: number) {
   await page.keyboard.up('KeyW');
 }
 
+// LUL-2649: a single qaAdvance() call of hundreds of steps runs stepFrame()
+// -- including its real renderer.render() -- synchronously in one page.evaluate,
+// with no yield back to Chromium's event loop until every step is done. That's
+// the same "synchronous qaAdvance(hundreds-of-steps) loops" hazard the
+// hintSeen() cache comment in engine/forest-engine.js already documents
+// (LUL-2346): long enough and it trips Chromium's hung-renderer watchdog
+// ("Target crashed"), observed repeatedly on the nightly rig's CPU-starved
+// runner for exactly this test's 750-step (15s) decay wait -- the only
+// qaAdvance() in this whole suite past 10s of game time. Splitting it into
+// chunks with a real await between each gives the renderer a chance to
+// breathe; the simulated result is identical either way since qaAdvance
+// only ever adds qaFixedDt * steps to clock.elapsedTime regardless of how
+// many calls that's split across.
+async function qaAdvanceChunked(page: Page, totalSteps: number, chunk = 100) {
+  let remaining = totalSteps;
+  while (remaining > 0) {
+    await qaHook(page, 'qaAdvance', Math.min(chunk, remaining));
+    remaining -= chunk;
+  }
+}
+
 test.describe('scent trail visual (LUL-2230)', () => {
   test('walking lays a fading trail at the drifted position a predator actually smells', async ({ page }) => {
     await boot(page, { qaHooks: true });
@@ -115,7 +136,7 @@ test.describe('scent trail visual (LUL-2230)', () => {
 
     // Standing still: no new points, and the existing ones decay out of both
     // the picture and the array over SCENT_LIFETIME (14s).
-    await qaHook(page, 'qaAdvance', stepsFor(15));
+    await qaAdvanceChunked(page, stepsFor(15));
     const decayed = await qaHook(page, 'qaProbeScentTrail');
     expect(decayed.points.length, 'the picture must decay, not just stop growing').toBe(0);
     expect(decayed.livePoints, 'the underlying array must actually decay too').toBe(0);

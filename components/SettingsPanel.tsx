@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { EngineActions, EngineHudState } from './Hud';
 import { isMobile } from '@/lib/input-mode';
 
@@ -85,6 +85,20 @@ export default function SettingsPanel({
   // mobile surface uses (see components/OrientationGate.tsx).
   const mobile = useState(() => isMobile())[0];
 
+  // LUL-2649: guards the persist effect below until the apply-on-ready effect
+  // has actually run. `actions` is null on the very first render (the engine
+  // loads async in GameCanvas.tsx) -- without this gate, the persist effect
+  // still fires on that first render with `state`'s hardcoded defaults
+  // (INITIAL_HUD_STATE in Hud.tsx, e.g. scentTrailVisible: true) and
+  // overwrites a real player's stored `false` back to `true` in localStorage
+  // *before* the code below gets a chance to read it, so every reload of a
+  // customized setting silently reverted to the default the next time this
+  // ran. A ref (not state) so flipping it doesn't itself trigger a render --
+  // the actions.setX() calls below already do that once their new value
+  // differs from the engine's current default, which is what re-runs the
+  // persist effect with this gate now open.
+  const appliedSettingsRef = useRef(false);
+
   // Apply persisted settings once the engine is ready to receive them (mirrors
   // the rest of the codebase's `actions != null` readiness check -- see
   // TouchControls / the panel sliders in Hud.tsx). Runs once per engine
@@ -104,6 +118,7 @@ export default function SettingsPanel({
     actions.setScentTrailVisible(s.scentTrailVisible !== false);
     // LUL-2307: same default-on idiom as scentTrailVisible above.
     actions.setHintsEnabled(s.hintsEnabled !== false);
+    appliedSettingsRef.current = true;
   }, [actions]);
 
   // Presentation-only: no engine action for this, so it's applied directly to
@@ -124,7 +139,14 @@ export default function SettingsPanel({
   // Persist whenever any of these actually change -- after the apply-on-ready
   // effect above, so a mount with a stored `sensitivity: 1.4` doesn't get
   // immediately re-written as the engine's own default before it applies.
+  // LUL-2649: declaration order alone doesn't guarantee that -- both effects
+  // fire on the same first commit, and the one above still early-returns
+  // while `actions` is null, so this write used to run anyway with `state`'s
+  // hardcoded defaults and clobber real stored values (see
+  // appliedSettingsRef's comment above). Skip every write until that effect
+  // has actually applied the persisted settings at least once.
   useEffect(() => {
+    if (!appliedSettingsRef.current) return;
     writeSettings({
       difficulty: state.difficulty,
       runMode: state.runMode,
