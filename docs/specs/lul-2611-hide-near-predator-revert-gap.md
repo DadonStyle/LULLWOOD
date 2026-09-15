@@ -139,6 +139,38 @@ change** affecting every sight-based chase in the game, not a narrow revert-path
 needs its own design sign-off rather than being guessed at inside this Tier C diff — see the
 ticket comment bouncing this specific question to the CTO.
 
+## Second commit (0cf6799): chase LOS-flicker tolerance + QA pursuit-speed fix
+
+CTO decision (2026-09-15, on this ticket) for the "Second gap found live" question above:
+give `spotOnto()`-triggered chases a short, separate LOS grace instead of reusing `scentLock`
+(reusing `scentLock` would widen the blind-chase-through-cover exemption, the give-up distance
+math, and the charge-trigger gate everywhere `scentLock` is checked — a global
+detection-difficulty change, not a fix for this one edge case). Two independent changes landed
+in the same commit:
+
+1. **`p.sightFlicker` / `SIGHT_FLICKER_TIME` / `shouldDowngradeChase()`
+   (`lib/game/predator.ts`, wired at `engine/forest-engine.js`'s `chase` state's
+   canSee()-loses-sight gate) — a real, always-on production gameplay change.** Every
+   sight-triggered chase now tolerates a 0.4s line-of-sight flicker before downgrading to
+   `investigate`/`approach`, where before it downgraded on the very next tick that `canSee()`
+   went false. `p.sightFlicker` refreshes to `SIGHT_FLICKER_TIME` every tick `canSee()` is
+   true and decays unconditionally every tick regardless of state (same shape as
+   `p.sniffImmuneT`); see `docs/ELEMENTS.md`'s "Chase LOS-flicker tolerance" bullet (Wolf /
+   Bear / Lion section) for the full mechanic writeup — added in this same PR after
+   LUL-2712/LUL-2703 flagged this commit shipped with zero mention of it anywhere (PR body,
+   comments, or this doc).
+2. **`pPursuitMul`, the two `desx=ux;desz=uz;speed=p.spec.speed*pPursuitMul` lines in
+   `updatePredators()`'s `chase`/`hunt` branches.** QA-only in effect: `CONFIG.speedScaleMul`
+   defaults to 1 (no-op) and is only `0.2` under `applyQaWorldMicroPreset()`
+   (`engine/tuning.js:22,218`), the mandatory micro-QA-world preset (LUL-2377). Fixes a
+   pursuit-speed bug the sightFlicker work surfaced live: `speedScaleMul` was folded into
+   every state's `pLakeMul` (LUL-2422), including `chase`/`hunt`'s full-species-speed lines —
+   at the micro world's 0.2 factor a lion's full chase speed (9.2*0.2=1.84u/s) could never
+   catch a walking player (6u/s, unscaled), independent of state-machine correctness.
+   `pPursuitMul` is water-only (no `speedScaleMul`), used only at those two full-speed lines;
+   every other state keeps `pLakeMul` unchanged. No production effect (`speedScaleMul` is 1 on
+   the full map).
+
 ## e2e
 
 **Specs.**
@@ -151,19 +183,37 @@ ticket comment bouncing this specific question to the CTO.
   touched).
 - `lib/game/predator.test.ts` — 3 new unit cases for `shouldRevertInvestigateToChase`'s new
   param (see Verification).
+- `e2e/sight-flicker.spec.ts` (LUL-2712, new) — "a sight-triggered chase tolerates a sub-0.4s
+  LOS break, then downgrades past it" — drives a real chase in the micro world against a solid
+  `rock` cover prop, breaks LOS for 15 ticks (0.3s, under `SIGHT_FLICKER_TIME`) and asserts
+  `state` stays `chase`, then breaks LOS for 5 more ticks (0.4s cumulative) and asserts it
+  downgrades to `investigate`/`approach` — closing the LUL-2377 gap the ticket named: proves
+  `p.sightFlicker` is actually set/decremented and consulted at the live `canSee(p,dist)` call
+  site (`updatePredators()`), not just correct in isolation the way
+  `lib/game/predator.test.ts`'s pure-function unit tests already did. Uses solid cover
+  (`rock`), not the walkable kind (`bramble`/`log`) the rest of this doc's specs use — a
+  walkable prop lets a blind-chasing predator physically walk into its own footprint well
+  inside 0.4s, which `hasLOS()`'s LUL-2320(A) hiding exemption then reads as an unconditional
+  clear sightline (confirmed live while writing this spec), a different mechanism than the one
+  under test here.
 
 **World.** micro (default, unchanged by this diff — both specs already ran on `qaWorld:'micro'`,
 `positional-hiding` via the default, `cover-feedback` via the same default despite its own
-stale comment, now corrected).
+stale comment, now corrected; `sight-flicker.spec.ts` also default-micro).
 
-**Hooks.** No new hooks. `qaHideBehindCover()` (`engine/forest-engine.js:4289`, existing)
-gains isolation as an internal behaviour change only — its signature and return value are
-unchanged.
+**Hooks.** `qaHideBehindCover()` (`engine/forest-engine.js:4289`, existing) gains isolation as
+an internal behaviour change only — its signature and return value are unchanged.
+`qaPredatorState()` (`engine/forest-engine.js:4688`, existing) gains one new field,
+`sightFlicker: p.sightFlicker`, for `e2e/sight-flicker.spec.ts` above to assert against
+directly instead of only inferring the value from `state` transitions.
 
 **Tester scenario.** None: this is a state-machine/test-isolation fix with existing e2e
 coverage already asserting the exact behaviour (see Specs above); no new player-visible
 surface. The existing nightly `local-qa-request: lul-2611-hiding-near-predator` scenario
-(narrower, visual, already passing) is unaffected and continues to run.
+(narrower, visual, already passing) is unaffected and continues to run. The sightFlicker
+grace (0cf6799) is also engine-internal only — no new HUD element, copy, or cue — so no
+`shared/local-qa/requests/` file is filed for it either; `e2e/sight-flicker.spec.ts` above is
+its only coverage.
 
 **Not covered.** `hide-alert.spec.ts`'s "the first-hide caption shows once and does not
 repeat" failure (LUL-2611's third listed spec) — investigated but not root-caused with the

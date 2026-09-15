@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6822 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6023, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6826 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6027, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -375,6 +375,18 @@ one geometry builder (`makePredator()`), differentiated by the
   (`tick()`) uses a separate, wider `SNIFF_STATUS_RANGE` (8 units, declared
   next to `SNIFF_STANDOFF` so the two can't drift apart) so the warning still
   reads once the predator has settled at its standoff distance.
+- **Chase LOS-flicker tolerance (LUL-2611/LUL-2712).** A sight-triggered
+  chase (`spotOnto()`) sets no `scentLock`, unlike a scent-triggered one
+  (`scentOnto()`) — before this, `chase`'s canSee()-loses-sight gate
+  (`updatePredators()`) downgraded it to `investigate`/`approach` on the very
+  next tick it lost the player, even for a single-frame flicker at a cover
+  edge. `p.sightFlicker` (`SIGHT_FLICKER_TIME`, 0.4s,
+  `shouldDowngradeChase()`, `lib/game/predator.ts`) is refreshed to 0.4s
+  every tick `canSee()` is true and decays unconditionally every tick
+  regardless of state (same shape as `p.sniffImmuneT`); the downgrade only
+  fires once `scentLock<=0 && sightFlicker<=0 && !canSee()`. Sight only --
+  does not touch `scentLock`'s own blind-chase leash or the distance-based
+  give-up above. Runs for every chase, every player, every difficulty.
 - Force-hunt: if nothing has been within 20 units of the player for 30s, the
   nearest predator switches straight to `hunt` and comes for you at full
   speed. LUL-2246: losing sight while `hunt` is active now sets a 25s
@@ -1417,16 +1429,16 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5426, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5577 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5631). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5430, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5581 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5635). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5631) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L5635) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L5638) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
