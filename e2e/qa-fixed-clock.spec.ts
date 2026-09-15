@@ -16,8 +16,16 @@ test.describe('deterministic QA test clock', () => {
   test('qaAdvance moves game time by exactly the requested amount, not wall time', async ({ page }) => {
     await boot(page, { qaHooks: true });
 
-    const before = await readElapsedTime(page);
+    // Read `before` only after the RAF loop is parked -- reading it first
+    // (the original bug) leaves a wall-clock-timed gap between the read and
+    // qaSetFixedStep() actually cancelling the pending frame, during which
+    // the still-running real loop keeps advancing clock.elapsedTime. That
+    // gap is small and invisible on a fast rig but real on the nightly
+    // rig's CPU-starved concurrent build+test load (LUL-2649): observed
+    // drift up to ~0.36s, corrupting the "moved by exactly 1.0s" assertion
+    // with real time that was never meant to be measured.
     await page.evaluate(() => (window as any).ForestEngine.qaSetFixedStep(0.02));
+    const before = await readElapsedTime(page);
     await page.evaluate(() => (window as any).ForestEngine.qaAdvance(50)); // 50 x 0.02s = 1.0s game time
     const after = await readElapsedTime(page);
 
