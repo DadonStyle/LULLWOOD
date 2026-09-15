@@ -47,6 +47,27 @@ async function walkForward(page: Page, seconds: number) {
   await page.keyboard.up('KeyW');
 }
 
+// LUL-2649: a single qaAdvance() call of hundreds of steps runs stepFrame()
+// -- including its real renderer.render() -- synchronously in one page.evaluate,
+// with no yield back to Chromium's event loop until every step is done. That's
+// the same "synchronous qaAdvance(hundreds-of-steps) loops" hazard the
+// hintSeen() cache comment in engine/forest-engine.js already documents
+// (LUL-2346): long enough and it trips Chromium's hung-renderer watchdog
+// ("Target crashed"), observed repeatedly on the nightly rig's CPU-starved
+// runner for exactly this test's 750-step (15s) decay wait -- the only
+// qaAdvance() in this whole suite past 10s of game time. Splitting it into
+// chunks with a real await between each gives the renderer a chance to
+// breathe; the simulated result is identical either way since qaAdvance
+// only ever adds qaFixedDt * steps to clock.elapsedTime regardless of how
+// many calls that's split across.
+async function qaAdvanceChunked(page: Page, totalSteps: number, chunk = 100) {
+  let remaining = totalSteps;
+  while (remaining > 0) {
+    await qaHook(page, 'qaAdvance', Math.min(chunk, remaining));
+    remaining -= chunk;
+  }
+}
+
 test.describe('scent trail visual (LUL-2230)', () => {
   test('walking lays a fading trail at the drifted position a predator actually smells', async ({ page }) => {
     await boot(page, { qaHooks: true });
@@ -115,7 +136,7 @@ test.describe('scent trail visual (LUL-2230)', () => {
 
     // Standing still: no new points, and the existing ones decay out of both
     // the picture and the array over SCENT_LIFETIME (14s).
-    await qaHook(page, 'qaAdvance', stepsFor(15));
+    await qaAdvanceChunked(page, stepsFor(15));
     const decayed = await qaHook(page, 'qaProbeScentTrail');
     expect(decayed.points.length, 'the picture must decay, not just stop growing').toBe(0);
     expect(decayed.livePoints, 'the underlying array must actually decay too').toBe(0);
@@ -178,19 +199,36 @@ test.describe('scent trail visual (LUL-2230)', () => {
 
     // A close, ground-level (ry~0.22) point directly ahead projects far down
     // in the frame, pushing hintY (engine/forest-engine.js's hintWorldAnchor)
-    // to HINT_Y_MAX (0.78) -- confirmed empirically (a 1-world-unit offset
-    // lands --hint-top at exactly 78% on this viewport) as the exact geometry
-    // the nightly QA rig's "play-again" repro hit, landing #scentTrailCaption's
-    // lifted box inside #actionSlot's #objective row ("Find the lost child").
+    // to HINT_Y_MAX (0.78), landing #scentTrailCaption's lifted box inside
+    // #actionSlot's #objective row ("Find the lost child") if it weren't
+    // clamped -- the nightly QA rig's "play-again" repro hit this geometry.
     // qaSeedScentPoint places the point in world space, so it's offset along
     // the player's own current forward vector (matches the fx/fz formula the
     // engine itself uses, e.g. forest-engine.js:1607).
+    //
+    // The render loop drifts every point downwind before projecting it
+    // (driftedScentPosition(), same math the oldest-point assertion above
+    // checks), so the raw deposit must be pre-compensated by the wind, or
+    // the resulting geometry (and the frustum check below) depends on
+    // whichever direction the seed's wind draw happens to land on --
+    // LUL-2250's placePredators() rewrite shifted the shared RNG stream wind
+    // is drawn from, which broke this test the first time. FORWARD_DIST=4 is
+    // the target *drifted* distance directly ahead: at CONFIG.eye=2.2,
+    // ry=0.22 and this rig's 70 deg vertical FOV, anything under ~2.83 units
+    // away falls outside the camera's 35 deg half-FOV entirely (inFrustum
+    // false, not just clamped) -- 4 keeps a safety margin while still
+    // producing the steep look-down angle the Y_MAX clamp exists for.
     const { yaw } = await qaHook(page, 'qaProbePlayer');
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    const wind = await qaHook(page, 'qaProbeWind');
+    const WIND_STRENGTH = 3.2, WIND_DRIFT_CAP = 9;
+    const FORWARD_DIST = 4;
+    const SEED_AGE = 1, ADVANCE_S = 0.1;   // matches the age param + the qaAdvance below
+    const drift = Math.min(WIND_DRIFT_CAP, WIND_STRENGTH * (SEED_AGE + ADVANCE_S));
     await page.evaluate(([dx, dz]) => {
       window.ForestEngine?.qaSeedScentPoint?.(dx, dz, 1);
-    }, [fx * 1, fz * 1]);
-    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+    }, [fx * FORWARD_DIST - wind.windX * drift, fz * FORWARD_DIST - wind.windZ * drift]);
+    await qaHook(page, 'qaAdvance', stepsFor(ADVANCE_S));
 
     const probe = await qaHook(page, 'qaProbeScentTrail');
     expect(probe.points.some((p: { inFrustum: boolean }) => p.inFrustum), 'the seeded close point must be in frustum').toBe(true);

@@ -16,7 +16,14 @@ test('menuFullscreen stays absent on mobile when the Fullscreen API is unsupport
   await page.addInitScript(() => {
     Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, get: () => false });
     // No webkit* fallback either -- this is the "neither API exists" case
-    // (old iOS Safari), not just "unprefixed is missing".
+    // (old iOS Safari), not just "unprefixed is missing". LUL-2649: this
+    // comment described the intent but the code never actually did it --
+    // this rig's Chromium reports webkitFullscreenEnabled=true even in the
+    // mobile-emulated project, so fullscreenSupported()'s `||` fallback
+    // (lib/game/fullscreen.ts) picked that up and the button rendered
+    // anyway. Stub the prefixed property too so the test matches its own
+    // stated case.
+    Object.defineProperty(document, 'webkitFullscreenEnabled', { configurable: true, get: () => false });
   });
   await boot(page);
 

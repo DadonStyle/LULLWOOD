@@ -113,6 +113,11 @@ declare global {
         bogLive: number;
         playerChunk: number;
       };
+      /** LUL-2250: active (non-inert, non-parked) predator count + how long
+       * the board has been under MIN_ACTIVE_HUNTERS, for the hunter-guarantee e2e. */
+      qaProbeActiveHunters?: () => { active: number; sinceBelowMin: number };
+      /** LUL-2250: thin wrapper on the engine's own playerCanSee() FOV check. */
+      qaProbePlayerCanSee?: (x: number, z: number) => boolean;
       /** Returns the lured predator's kind, or null if none was found. */
       qaLurePredator?: () => 'wolf' | 'bear' | 'lion' | null;
       /** Same as qaLurePredator, filtered to the given species. Returns the
@@ -210,6 +215,8 @@ declare global {
         x: number;
         z: number;
         gaveUpAt: number | null;
+        parked: boolean;
+        visible: boolean;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a

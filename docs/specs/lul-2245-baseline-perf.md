@@ -75,3 +75,31 @@ LUL-2257 to fix `qaProbePerf()` (read `sceneRT`'s render stats before the
 post-process passes overwrite them) before step 6 depends on this metric;
 `clock.elapsedTime` and boot-to-networkidle are unaffected by this and are
 usable as-is.
+
+## Post-streaming numbers (LUL-2250, epic step 6/6 -- closes LUL-2223)
+
+Measured against commit `0d584613a9effc93f37e1a2c153df2c848fd5924`
+(`origin/release/next` tip after PR #620 merged, 2026-09-15), same method as
+above (`next dev`, same seed, same two probe points, same two viewports).
+LUL-2257's `qaProbePerf()` fix has landed, so `calls`/`triangles` below are
+real scene stats, not the constant post-process-blit artifact the baseline
+recorded.
+
+| Viewport | Boot-to-networkidle (ms) | Point | calls | triangles | clock.elapsedTime (s) |
+|---|---|---|---|---|---|
+| Desktop 1280x720 | 1151 | at spawn | 143 | 70,294 | 0.50 |
+| Desktop 1280x720 | 1151 | near child | 138 | 78,276 | 0.80 |
+| Mobile 727x393 (Pixel 5 emu) | 983 | at spawn | 147 | 72,464 | 0.40 |
+| Mobile 727x393 (Pixel 5 emu) | 983 | near child | 139 | 80,244 | 0.70 |
+
+Boot-to-networkidle is in the same range as the pre-streaming baseline
+(1381ms/854ms) -- both numbers are dominated by `next dev`'s on-demand page
+compile on the very first request of a fresh server process, not by map
+size; the epic's real boot-time criterion (LUL-2249, "well below 58.7s")
+was already verified separately against a production build. `calls`/
+`triangles` are not comparable to the baseline row (that row's `1`/`2` was
+the known-broken post-process-blit read, not a real measurement of a
+smaller scene) -- these are the first real numbers recorded for this
+metric, both well within `qaProbePerf()`'s own render budget and consistent
+with only the ~5x5 streaming ring (not the whole map) being instantiated at
+once.
