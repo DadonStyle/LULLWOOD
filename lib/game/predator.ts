@@ -94,6 +94,26 @@ export function shouldGiveUpChase(scentLock: number, dist: number, detect: numbe
   return scentLock <= 0 && dist > detect * 1.5;
 }
 
+// ---- chase LOS-flicker tolerance (LUL-2611) ------------------------------------------
+// The chase -> investigate downgrade (forest-engine.js's own comment above that gate)
+// already tolerates a blind `scentLock` chase without downgrading -- but `spotOnto()`
+// (a sight-triggered chase) sets no `scentLock`, unlike its sibling `scentOnto()`. That
+// gives a freshly re-spotted chase zero tolerance for a single-frame LOS flicker, which is
+// exactly what a cover edge produces (the founder's "hiding doesn't hold" report,
+// live-traced: a predator re-spots the player leaving cover, then the very next occluded
+// tick drops it to 0.45x investigate/approach speed, which can't reliably close on a
+// normal-speed player). CTO decision (LUL-2611, 2026-09-15): do not reuse `scentLock` for
+// this -- it's load-bearing for the blind-chase-through-cover exemption on the catch check,
+// `shouldGiveUpChase`'s distance/timer math, and the charge-trigger gate, so widening it to
+// cover every sight chase would be a global detection-difficulty change, not a fix for this
+// edge case, and risks the LUL-562/658/223 investigate/approach livelock guards. `sightFlicker`
+// is a separate, short-lived grace consulted only at this one gate -- every other
+// `scentLock`-gated branch is untouched.
+export const SIGHT_FLICKER_TIME = 0.4; // seconds a sight-triggered chase tolerates one blind tick
+export function shouldDowngradeChase(scentLock: number, sightFlicker: number, canSeeNow: boolean): boolean {
+  return scentLock <= 0 && sightFlicker <= 0 && !canSeeNow;
+}
+
 // ---- per-tick timer decay ------------------------------------------------------
 // `scentLock` and `chargeCooldown` both tick down unconditionally, in every
 // predator state, every frame (lines 903-905 on main). That is load-bearing:

@@ -14,8 +14,10 @@ import {
   pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
+  shouldDowngradeChase,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
+  SIGHT_FLICKER_TIME,
   SNIFF_APPROACH_MARGIN,
   SNIFF_IMMUNITY_TIME,
   SNIFF_STANDOFF,
@@ -127,6 +129,35 @@ test('shouldGiveUpChase gives up a hair past the leash', () => {
 
 test('shouldGiveUpChase is false when close, even with scentLock expired', () => {
   assert.equal(shouldGiveUpChase(0, 1, 10), false);
+});
+
+// ---- shouldDowngradeChase (LUL-2611) ---------------------------------------------------
+
+test('shouldDowngradeChase holds through a single blind tick while sightFlicker has not expired', () => {
+  assert.equal(shouldDowngradeChase(0, SIGHT_FLICKER_TIME, false), false);
+});
+
+test('shouldDowngradeChase downgrades normally once the flicker grace has expired', () => {
+  assert.equal(shouldDowngradeChase(0, 0, false), true);
+});
+
+test('shouldDowngradeChase treats a negative sightFlicker as expired, same as scentLock', () => {
+  assert.equal(shouldDowngradeChase(0, -0.01, false), true);
+});
+
+test('shouldDowngradeChase never downgrades while sight actually holds, regardless of either timer', () => {
+  assert.equal(shouldDowngradeChase(0, 0, true), false);
+});
+
+test('shouldDowngradeChase: scentLock alone still blocks the downgrade, sightFlicker untouched', () => {
+  // The pre-existing scentLock branch (LUL-23, blind scent chase) is unmodified by this fix:
+  // a live scentLock holds off the downgrade on its own even with no sightFlicker grace left.
+  assert.equal(shouldDowngradeChase(0.001, 0, false), false);
+});
+
+test('shouldDowngradeChase: both timers expired and no sight is the only downgrade case', () => {
+  assert.equal(shouldDowngradeChase(0.001, SIGHT_FLICKER_TIME, false), false);
+  assert.equal(shouldDowngradeChase(-1, -1, false), true);
 });
 
 // ---- tickTimers -----------------------------------------------------------------

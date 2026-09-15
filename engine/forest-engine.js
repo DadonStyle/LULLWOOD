@@ -108,8 +108,10 @@ import {
   pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
+  shouldDowngradeChase,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
+  SIGHT_FLICKER_TIME,
   SNIFF_IMMUNITY_TIME,
   SNIFF_STATUS_RANGE,
   sniffStandoffPoint,
@@ -1914,7 +1916,7 @@ function makePredator(kind){
     phase:rng()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0, standX:0, standZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
-    packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
+    packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0, sightFlicker:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
     charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, chargeRecoveryT:0, inert:false, sightLock:null,
     noiseTarget:null, noiseTargetT:0, parked:false };
@@ -1964,7 +1966,7 @@ function placePredators(){
     if(p.parked) p.g.visible = false;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
-    p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
+    p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0; p.sightFlicker=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
     p.gaveUpAt=null;
@@ -2497,6 +2499,19 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // here so every `*pLakeMul` speed site below is scaled together -- mirrors detectScaleMul's
     // fold-in at effectiveDetect() (LUL-2407).
     const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake)) * (CONFIG.speedScaleMul || 1);
+    // LUL-2611: speedScaleMul's own comment (engine/tuning.js) says its job is crossing-time
+    // parity for roam wander and the staged qaTeleportNear*/qaStageChaseAtContact-style safety
+    // window -- not pursuit-speed parity against a live, moving player. Folding it into every
+    // `*pLakeMul` site (LUL-2422) missed that distinction: at the micro world's 0.2 factor, a
+    // lion's full chase speed (9.2*0.2=1.84u/s) can never close on or even keep pace with the
+    // player's own (unscaled) walk speed (6u/s), so the `chase`/`hunt` full-species-speed lines
+    // below -- the two states whose whole job is "catch a player that may be moving" -- use this
+    // water-only multiplier instead of pLakeMul. Every other state (roam/investigate/flank/
+    // reroute/standoff) is untouched: those don't need to out-pace a moving player (investigate/
+    // approach is deliberately 0.45x even on the full map) and existing specs
+    // (qaStageChaseAtContact's wolf-glue test, force-hunt-closes, scent/scent-trail) already
+    // pass against a stationary or scent-driven target, unaffected by this split.
+    const pPursuitMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
     // ticks in every state, so a lock set during `chase` has actually
@@ -2512,6 +2527,9 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // see p.chargeRecoveryT's own comment at the 'cleared' branch below for
     // why this exists.
     if(p.chargeRecoveryT > 0) p.chargeRecoveryT -= dt;
+    // LUL-2611: same unconditional-every-state decay as sniffImmuneT above -- see
+    // shouldDowngradeChase's comment in lib/game/predator.ts for why this exists.
+    if(p.sightFlicker > 0) p.sightFlicker -= dt;
 
     // LUL-213: an active charge owns movement outright until it resolves --
     // skips the roam/chase/investigate/flank chain below entirely, same as
@@ -2626,7 +2644,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
-        else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pPursuitMul; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -2690,7 +2708,13 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // chase since the player isn't hidden -- zero-speed forever. Keep
       // chasing blind while scentLock holds; once it expires, gate on sight
       // the same way a spotted chase always has.
-      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); }
+      // LUL-2611: spotOnto() (a sight-triggered chase) sets no scentLock, unlike
+      // scentOnto() -- see shouldDowngradeChase's comment in lib/game/predator.ts for why
+      // that leaves a sight chase zero tolerance for a single blind tick at a cover edge.
+      // p.sightFlicker is a short, separate grace for exactly that: refreshed here while
+      // sight actually holds, consulted only at this gate.
+      if(canSee(p, dist)) p.sightFlicker = SIGHT_FLICKER_TIME;
+      if(shouldDowngradeChase(p.scentLock, p.sightFlicker, canSee(p, dist))){ p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -2732,7 +2756,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         else if(hidden && isCaught(dist, p.rad)){
           p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
         }
-        else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pPursuitMul; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -5236,7 +5260,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.x = spec.x; p.z = spec.z; p.wpx = spec.x; p.wpz = spec.z; p.vx = 0; p.vz = 0; p.yaw = 0;
       p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
       p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.scentLock = 0; p.scentCalls = 0;
-      p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0;
+      p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0; p.sightFlicker = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
       p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;
       p.g.position.set(spec.x, 0, spec.z); p.g.rotation.set(0, 0, 0);
