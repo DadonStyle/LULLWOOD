@@ -4250,6 +4250,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     lion.x = player.x + 4; lion.z = player.z;
     lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
     lion.state = 'chase'; lion.hunt = true;
+    lion.alertedBy = null; lion.charge = null;
     return idx;
   };
 
