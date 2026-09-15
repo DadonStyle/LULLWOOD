@@ -4274,7 +4274,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       if(!HIDE_KINDS[c.kind]) continue;
       const edge = Math.max(c.hx, c.hz), predReach = edge + 3, hideReach = edge + 1;
       const px = c.x - predReach, pz = c.z, qx = c.x + hideReach, qz = c.z;
-      if(blockedR(px, pz, p.rad) || blocked(qx, qz)) continue;
+      if(predatorBlocked(px, pz, p.rad) || blocked(qx, qz)) continue;
       let clear = true;
       const STEPS = 12;
       for(let i = 1; i < STEPS; i++){
@@ -4334,7 +4334,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       if(!HIDE_KINDS[c.kind]) continue;
       const edge = Math.max(c.hx, c.hz), predReach = edge + 3, hideReach = edge + 1;
       const px = c.x - predReach, pz = c.z, qx = c.x + hideReach, qz = c.z;
-      if(blockedR(px, pz, p.rad) || blocked(qx, qz)) continue;
+      if(predatorBlocked(px, pz, p.rad) || blocked(qx, qz)) continue;
       let clear = true;
       const STEPS = 12;
       for(let i = 1; i < STEPS; i++){

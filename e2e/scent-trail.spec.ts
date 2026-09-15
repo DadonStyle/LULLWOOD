@@ -178,19 +178,36 @@ test.describe('scent trail visual (LUL-2230)', () => {
 
     // A close, ground-level (ry~0.22) point directly ahead projects far down
     // in the frame, pushing hintY (engine/forest-engine.js's hintWorldAnchor)
-    // to HINT_Y_MAX (0.78) -- confirmed empirically (a 1-world-unit offset
-    // lands --hint-top at exactly 78% on this viewport) as the exact geometry
-    // the nightly QA rig's "play-again" repro hit, landing #scentTrailCaption's
-    // lifted box inside #actionSlot's #objective row ("Find the lost child").
+    // to HINT_Y_MAX (0.78), landing #scentTrailCaption's lifted box inside
+    // #actionSlot's #objective row ("Find the lost child") if it weren't
+    // clamped -- the nightly QA rig's "play-again" repro hit this geometry.
     // qaSeedScentPoint places the point in world space, so it's offset along
     // the player's own current forward vector (matches the fx/fz formula the
     // engine itself uses, e.g. forest-engine.js:1607).
+    //
+    // The render loop drifts every point downwind before projecting it
+    // (driftedScentPosition(), same math the oldest-point assertion above
+    // checks), so the raw deposit must be pre-compensated by the wind, or
+    // the resulting geometry (and the frustum check below) depends on
+    // whichever direction the seed's wind draw happens to land on --
+    // LUL-2250's placePredators() rewrite shifted the shared RNG stream wind
+    // is drawn from, which broke this test the first time. FORWARD_DIST=4 is
+    // the target *drifted* distance directly ahead: at CONFIG.eye=2.2,
+    // ry=0.22 and this rig's 70 deg vertical FOV, anything under ~2.83 units
+    // away falls outside the camera's 35 deg half-FOV entirely (inFrustum
+    // false, not just clamped) -- 4 keeps a safety margin while still
+    // producing the steep look-down angle the Y_MAX clamp exists for.
     const { yaw } = await qaHook(page, 'qaProbePlayer');
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    const wind = await qaHook(page, 'qaProbeWind');
+    const WIND_STRENGTH = 3.2, WIND_DRIFT_CAP = 9;
+    const FORWARD_DIST = 4;
+    const SEED_AGE = 1, ADVANCE_S = 0.1;   // matches the age param + the qaAdvance below
+    const drift = Math.min(WIND_DRIFT_CAP, WIND_STRENGTH * (SEED_AGE + ADVANCE_S));
     await page.evaluate(([dx, dz]) => {
       window.ForestEngine?.qaSeedScentPoint?.(dx, dz, 1);
-    }, [fx * 1, fz * 1]);
-    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+    }, [fx * FORWARD_DIST - wind.windX * drift, fz * FORWARD_DIST - wind.windZ * drift]);
+    await qaHook(page, 'qaAdvance', stepsFor(ADVANCE_S));
 
     const probe = await qaHook(page, 'qaProbeScentTrail');
     expect(probe.points.some((p: { inFrustum: boolean }) => p.inFrustum), 'the seeded close point must be in frustum').toBe(true);
