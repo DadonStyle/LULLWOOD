@@ -271,8 +271,29 @@ export function armReturnSweep(
 // it after a real player action (breaking cover) flips `hidden` false
 // between frames -- never on the same tick 'standoff' is set, unlike
 // 'approach' which can be freshly (re-)entered with `hidden` already false.
-export function shouldRevertInvestigateToChase(inv: string, hidden: boolean): boolean {
-  return !hidden && (inv === 'sniff' || inv === 'back' || inv === 'standoff');
+//
+// LUL-2611 (the founder's "hiding doesn't hold" report): 'approach' was
+// excluded outright above, but that leaves a real gap -- a player who is
+// hidden+in-cover when a chase collapses into investigate/approach (e.g. the
+// lured-hunt collapse, engine/forest-engine.js's `p.hunt` branch), then
+// un-hides while the predator is still mid-approach (hasn't yet reached
+// sniff range), has no path back to a kill-capable state: 'approach' never
+// canSee()-gates, so it just keeps plodding forward at 0.45x speed. The
+// LUL-658 livelock this exclusion guards against is specifically a same-tick
+// case -- 'approach' freshly entered with `hidden` already `false` on entry
+// (a fresh chase collapse where the player was never hidden at all) -- so
+// the fix distinguishes *entry* hidden state from *current* hidden state
+// instead of re-deriving purely from this snapshot: `approachEnteredHidden`
+// is edge-triggered, stamped once by the engine at every `p.inv='approach'`
+// assignment (see forest-engine.js), true only when the player was hidden
+// at that exact moment. A same-tick fresh entry with `hidden` already false
+// stamps `false` and this still won't fire (LUL-658 preserved); a real
+// un-hide *during* an ongoing approach stamped `true` at entry now reverts.
+export function shouldRevertInvestigateToChase(
+  inv: string, hidden: boolean, approachEnteredHidden?: boolean,
+): boolean {
+  return !hidden && (inv === 'sniff' || inv === 'back' || inv === 'standoff'
+    || (inv === 'approach' && approachEnteredHidden === true));
 }
 
 // ---- investigate approach step (LUL-658) ------------------------------------------

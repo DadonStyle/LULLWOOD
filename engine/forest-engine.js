@@ -2287,7 +2287,7 @@ function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRa
 // approach behavior for free.
 function hearNoise(p){
   p.alertedBy = null;   // LUL-1857: footstep-driven, not the carried cry -- see triggerDeath(:1879)'s cause override
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
   leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
   if(captionsOn){
@@ -2302,7 +2302,7 @@ function hearNoise(p){
 // branch below. No new p.state/p.inv value; see spec §4.6 for the correctness
 // fix this makes to the CTO plan's literal "reuse hearNoise() unchanged."
 function hearThrowableNoise(p, tx, tz){
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: tx, z: tz };
   p.noiseTargetT = rnd(THROWABLE_INVESTIGATE_TIME[0], THROWABLE_INVESTIGATE_TIME[1]);
@@ -2318,7 +2318,7 @@ function hearThrowableNoise(p, tx, tz){
 // this section exists to fix (see S3a of the wayfinding spec).
 function hearCry(p){
   p.alertedBy = 'cry';   // LUL-1857 mitigation 4: lets triggerDeath(:1879) name "heard the child"
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: baby.x, z: baby.z };
   p.noiseTargetT = Infinity;
@@ -2564,7 +2564,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // existing investigate/approach loop (LUL-22, not to be retuned)
         // rather than snapping straight back into a full chase mid-overshoot
         // -- it just sprinted past you and has to notice you again.
-        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 3);
+        p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 3);
         endChargeHud();
       } else {
         p.charge = cs;
@@ -2622,7 +2622,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // (non-escalated) hunts, e.g. LUL-26 preset `startHunting`, still fall through to
         // the pre-existing investigate/approach collapse below, unchanged.
         if(p.scentLock > 0){ p.state='chase'; p.hunt=false; }
-        else { p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
+        else { p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
@@ -2690,7 +2690,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // chase since the player isn't hidden -- zero-speed forever. Keep
       // chasing blind while scentLock holds; once it expires, gate on sight
       // the same way a spotted chase always has.
-      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = rollSniffs(rng, 4); }
+      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -2730,7 +2730,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // into the sniff loop's approach->standoff hand-off (LUL-1090) instead of waiting for
         // shouldGiveUpChase()'s distance/timer give-up below to eventually fire.
         else if(hidden && isCaught(dist, p.rad)){
-          p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+          p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
         }
         else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
@@ -2760,7 +2760,13 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // for a few real seconds -- see that transition's comment. Doesn't
       // change this check's existing logic/timing for every other caller,
       // just adds a gate that's normally already 0.
-      if(shouldRevertInvestigateToChase(p.inv, hidden) && p.chargeRecoveryT <= 0){ p.state='chase'; }
+      // LUL-2611: p.approachEnteredHidden, stamped `hidden` at every
+      // `p.inv='approach'` assignment above, lets 'approach' revert too --
+      // but only when the player was hidden at entry and has since un-hidden,
+      // not on a same-tick fresh entry with `hidden` already false (that's
+      // the LUL-658 case this gate must still not touch). See
+      // shouldRevertInvestigateToChase()'s comment in lib/game/predator.ts.
+      if(shouldRevertInvestigateToChase(p.inv, hidden, p.approachEnteredHidden) && p.chargeRecoveryT <= 0){ p.state='chase'; }
       else if(p.inv === 'approach'){
         // LUL-658: always report this tick's movement, even when it's also the
         // tick that reaches sniff range -- see stepApproach()'s comment in
@@ -2827,7 +2833,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
+        if(bd < 2){ p.inv='approach'; p.approachEnteredHidden=hidden; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       } else if(p.inv === 'leave'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
@@ -4295,6 +4301,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
         if(blockedR(px + (qx-px)*u, pz + (qz-pz)*u, p.rad)){ clear = false; break; }
       }
       if(!clear) continue;
+      // LUL-2611: park every *other* predator inert/off-map (same shape as
+      // qaBuildScene's own unclaimed-predator parking) before placing this
+      // one -- the covered/exposed scan below (`coveredNow`/`exposedNow`,
+      // tick()'s cover-state-feedback block) ORs in every non-inert predator
+      // within detect range, not just this hook's own placement, so an
+      // unrelated predator elsewhere on the map silently flipping
+      // `exposedNow=true` was reading as "not covered" even though the one
+      // predator this hook actually staged was correctly LOS-blocked. Fixes
+      // the cover-feedback.spec.ts timeout (root-caused on LUL-2611): this
+      // is an isolation gap, not a hang, and updatePredators() already skips
+      // `p.inert` predators outright so parking them also removes their
+      // per-tick cost.
+      for(const other of predators){ if(other !== p){ other.inert = true; other.g.visible = false; other.x = other.z = -9999; } }
       p.x = px; p.z = pz;
       p.vx = p.vz = 0; p.alert = 0; p.stuckT = 0; p.sightLock = null;
       // LUL-2457: two dead ends tried and measured live before this one --
