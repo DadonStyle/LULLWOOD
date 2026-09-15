@@ -62,6 +62,9 @@ export interface EngineHudState {
   // while locked, even if held.
   veilCharge: number;
   veilLocked: boolean;
+  // LUL-2331: true once the Stone Marker mist-charm is banked, false again the frame it
+  // fires (saves a would-be lock). Drives the HUD pip and the eased refill below.
+  veilReserve: boolean;
   // LUL-1904: cave detection-immunity countdown -- 0 while inactive.
   caveImmuneActive:   boolean;
   caveImmuneTimeLeft: number;
@@ -233,6 +236,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   lightDimmed: false,
   veilCharge: 1,
   veilLocked: false,
+  veilReserve: false,
   caveImmuneActive: false,
   caveImmuneTimeLeft: 0,
   coverPromptVisible: false,
@@ -636,6 +640,41 @@ function EmbersShop({ balance, tiers, actions }: { balance: number; tiers: Recor
   );
 }
 
+// LUL-2331: the engine snaps veilCharge instantly the frame the mist-charm reserve fires
+// (lib/game/veil.ts's stepVeilCharge, the `reserve` branch) -- this eases the HUD's own
+// *rendered* copy of that number up over 400ms instead, same "engine owns state, HUD owns
+// presentation" split the file already uses for captions. Outside that window, the display
+// tracks the raw engine value directly. `ramping` also drives the brief flash class.
+const VEIL_REFILL_RAMP_MS = 400;
+
+function useVeilMeterRamp(veilCharge: number, veilReserve: boolean, reducedMotion: boolean) {
+  // `ramp` is null whenever no refill is in flight -- displayVeilCharge then reads
+  // veilCharge directly instead of a mirrored copy (no separate synced state to drift).
+  const [ramp, setRamp] = useState<{ value: number } | null>(null);
+  const prevReserveRef = useRef(veilReserve);
+  const displayVeilCharge = ramp ? ramp.value : veilCharge;
+
+  useEffect(() => {
+    const fired = prevReserveRef.current && !veilReserve;
+    prevReserveRef.current = veilReserve;
+    if (!fired || reducedMotion) return;
+    const from = displayVeilCharge;
+    const to = veilCharge;
+    const start = performance.now();
+    let raf = 0;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / VEIL_REFILL_RAMP_MS);
+      if (t < 1) { setRamp({ value: from + (to - from) * t }); raf = requestAnimationFrame(step); }
+      else setRamp(null);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [veilReserve, reducedMotion]);
+
+  return { displayVeilCharge, ramping: ramp !== null };
+}
+
 export default function Hud({
   state,
   actions,
@@ -656,6 +695,7 @@ export default function Hud({
   // sticks/buttons don't render on top of the menu (see MobileControls.tsx).
   const [menuOpen, setMenuOpen] = useState(false);
   const captionVisible = useCaptionToast(state.captionsOn, state.captionId);
+  const { displayVeilCharge, ramping: veilRefillRamping } = useVeilMeterRamp(state.veilCharge, state.veilReserve, state.reducedMotion);
 
   // LUL-1194: the keyboard is otherwise dead on end screens (isPlaying() gates
   // every keydown branch in the engine on !won && !dead) -- focusing the
@@ -753,9 +793,13 @@ export default function Hud({
         <span id="lightState">Light: {state.lightDimmed ? 'dimmed' : 'normal'}</span>
         {/* LUL-382: veil charge meter -- the cost/limit on the mist veil (F). Empty
             means F does nothing until it regenerates; "recharging" means a full drain
-            locked it out until charge climbs back past the unlock threshold. */}
-        <span id="veilState">
-          Veil: {Math.round(state.veilCharge * 100)}%{state.veilLocked ? ' (recharging)' : ''}
+            locked it out until charge climbs back past the unlock threshold.
+            LUL-2331: `displayVeilCharge` eases up over 0.4s on the mist-charm reserve
+            firing (useVeilMeterRamp above); `veilRefillRamping` drives the same-window
+            flash class. `veilCharmPip` shows only while a charm is banked. */}
+        <span id="veilState" className={veilRefillRamping ? 'veilRefillFlash' : undefined}>
+          Veil: {Math.round(displayVeilCharge * 100)}%{state.veilLocked ? ' (recharging)' : ''}
+          {state.veilReserve && <span id="veilCharmPip"> ✦</span>}
         </span>
         {/* LUL-1113: stamina resource meter -- the cost on sprint. Decays while
             sprinting, regenerates while walking. */}
