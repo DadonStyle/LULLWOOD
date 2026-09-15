@@ -2,11 +2,15 @@
   "name": "lullwood",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.18.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "pretest": "node scripts/check-node-version.mjs",
     "test": "node --test --experimental-test-module-mocks",
     "prepare": "node scripts/setup-git-hooks.mjs"
   },

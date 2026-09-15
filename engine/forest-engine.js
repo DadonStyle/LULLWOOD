@@ -2111,7 +2111,7 @@ const HINT_TEXT = {
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
-  cover:      'hollow log — H to hide inside. predators lose sight of you',
+  cover:      'a bush — predators lose sight of you while you hold still',
   caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
   throwable:  'a stone — E to pick up, throw to break a chase',
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
@@ -4235,9 +4235,22 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
+    // LUL-2596: a caller that ran qaTriggerCharge()/qaForceHunt-style setup on
+    // another predator earlier in the same test can leave that predator's own
+    // charge/hunt state live -- an in-flight p.charge resolves purely on
+    // elapsed game time (stepCharge, above) independent of anything staged
+    // here, so it can catch the player before this freshly-placed lion closes
+    // the gap, reporting the wrong species on #deathKind. Neutralize every
+    // other predator so this hook is the only thing that can kill the player.
+    for(const p of predators){
+      if(p === lion) continue;
+      if(p.charge){ p.charge = null; endChargeHud(); }
+      p.hunt = false;
+    }
     lion.x = player.x + 4; lion.z = player.z;
     lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
     lion.state = 'chase'; lion.hunt = true;
+    lion.alertedBy = null; lion.charge = null;
     return idx;
   };
 
@@ -4542,6 +4555,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
+    // LUL-2596: same other-predator neutralization as qaOpenHideNearLion above --
+    // a stale charge/hunt on a different predator from earlier test setup can
+    // resolve on its own game-time clock before this lion closes the gap.
+    for(const p of predators){
+      if(p === lion) continue;
+      if(p.charge){ p.charge = null; endChargeHud(); }
+      p.hunt = false;
+    }
     // LUL-2457: LION_STANDOFF=14 was tuned against the full map's unscaled
     // detect range (species detect 48 -- comfortably more than 14). On the
     // micro world CONFIG.detectScaleMul shrinks effective detect to ~9.6, so

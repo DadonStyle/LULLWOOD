@@ -576,12 +576,28 @@ const OVERLAY_STYLE = `
        both side columns on every viewport this breakpoint covers, without a
        per-viewport branch (same one-global-constant approach LUL-2445 used for
        HINT_Y_MAX). --hint-left is the raw engine fraction (Hud.tsx); the base
-       rule above uses it directly outside this breakpoint. */
+       rule above uses it directly outside this breakpoint.
+       LUL-2594: the base #scentTrailCaption/#hintCaption rule's top clamp
+       (above) reserves an extra 24px of translate(-120%) lift headroom on top
+       of --action-slot-bottom + --action-slot-height -- fine at the taller
+       desktop/default action-slot-height (216px), but at this breakpoint's
+       compressed rows (176px) + raised --action-slot-bottom (190px), that
+       26px-taller reservation collapses the ceiling to ~3px on a 393px-tall
+       viewport (Pixel 5 landscape), pushing the whole pill's translate(-120%)
+       box fully above y=0 ("offscreen" per the local-qa layout audit,
+       LUL-2594/2631). #actionSlot's own top edge already sits at
+       100% - action-slot-bottom - action-slot-height (~27px here) with no
+       extra margin needed above it for this family (unlike the self-anchored
+       bottom-anchored rule above, this one floats above its anchor, not
+       flush against the slot) -- reclaim that 24px so the ceiling matches
+       #actionSlot's real top edge instead of a fixed value tuned for a
+       taller breakpoint. */
     #scentTrailCaption, #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
     #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
     #hintCaption[data-hint-key="throwable"] {
       max-width: 240px;
       left: clamp(276px, var(--hint-left, 50%), calc(100vw - 276px));
+      top: min(var(--hint-top, 50%), calc(100% - var(--action-slot-bottom) - var(--action-slot-height)));
     }
   }
 
