@@ -103,9 +103,15 @@ function hasActiveRecoveryAction(issue) {
 // founder) and the detector flagged it as a tombstone anyway -- a real
 // false positive. `continuationPolicy: "none"` wakes nobody and is
 // indistinguishable from `wake_assignee` at a glance, so check the field.
+// LUL-2638: "wake_assignee_on_accept" (resumes only once the interaction is
+// accepted, e.g. request_confirmation) is a third schema-valid enum value and
+// just as live as "wake_assignee" -- LUL-2634 hit the strict-literal miss and
+// got a false tombstone.
+const LIVE_CONTINUATION_POLICIES = new Set(['wake_assignee', 'wake_assignee_on_accept']);
+
 function hasLiveInteraction(interactions) {
   return (interactions ?? []).some(
-    (i) => i.status === 'pending' && i.continuationPolicy === 'wake_assignee',
+    (i) => i.status === 'pending' && LIVE_CONTINUATION_POLICIES.has(i.continuationPolicy),
   );
 }
 

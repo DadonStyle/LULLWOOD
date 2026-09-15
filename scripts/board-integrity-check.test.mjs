@@ -208,6 +208,14 @@ test('a resolved interaction (status not pending) does not count as live, even w
   assert.equal(hasLiveInteraction([resolved]), false);
 });
 
+// LUL-2638: continuationPolicy is a 3-value schema enum -- wake_assignee_on_accept
+// (resumes only once the interaction is accepted, e.g. request_confirmation) is just
+// as live as wake_assignee. LUL-2634 got a false tombstone from the strict-literal miss.
+test('hasLiveInteraction is true for a pending interaction with continuationPolicy wake_assignee_on_accept', () => {
+  const onAccept = { ...lul399Interaction(), continuationPolicy: 'wake_assignee_on_accept' };
+  assert.equal(hasLiveInteraction([onAccept]), true);
+});
+
 // continuationPolicy: "none" wakes nobody and looks identical to
 // wake_assignee at a glance in the raw payload -- the whole point of this
 // fix is that the two must not be treated the same.
