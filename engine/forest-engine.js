@@ -4254,6 +4254,39 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return idx;
   };
 
+  // LUL-2664: places a named predator 6 units out in the spawn clearing --
+  // no cover, not hiding, no charge, pinned in place (see docs/specs/
+  // lul-2664-veil-detection-e2e.md for the full derivation) -- so a test can
+  // isolate veilDetectMul()'s cut to canSee() from every other variable.
+  // Distinct from qaOpenHideNearLion's dist=4 (tuned so "even full stillness
+  // must still catch you", not a veil-flip margin) and qaTriggerCharge's
+  // dist=11.5 (mid-CHARGE_TRIGGER band, and it actually starts a charge
+  // sequence -- this hook must not, a charge resolving on its own game-time
+  // clock mid-hold would corrupt the test). `reroute` pins the predator the
+  // same way qaHideBehindCover does (see that hook's own comment,
+  // engine/forest-engine.js:4316): reroute>0 is checked before hunt/state in
+  // updatePredators(), so the predator never approaches and never rolls
+  // shouldTriggerCharge while it's set, but qaPredatorState()'s canSee(p,dist)
+  // stays a live computation off the real veilAmount -- only movement freezes,
+  // not the value under test. Returns the predator's `predators` index, or
+  // null if that species isn't spawned.
+  window.ForestEngine.qaOpenVeilTarget = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const target = predators[idx];
+    for(const p of predators){
+      if(p === target) continue;
+      if(p.charge){ p.charge = null; endChargeHud(); }
+      p.hunt = false;
+    }
+    player.x = 0; player.z = 0;
+    target.x = 6; target.z = 0;
+    target.vx = target.vz = 0; target.alert = 0; target.stuckT = 0; target.sightLock = null;
+    target.state = 'chase'; target.hunt = true; target.alertedBy = null; target.charge = null; target.scentLock = 0;
+    target.reroute = 10; target.rrX = target.x; target.rrZ = target.z;
+    return idx;
+  };
+
   // Case 2: "hide behind cover -> predator sniffs -> backs off". LUL-212:
   // narrowed from "any dedicated cover prop (log/rock/bramble)" to only
   // HIDE_KINDS (bramble, LUL-2311 dropped log) -- rock is still LOS-blocking
