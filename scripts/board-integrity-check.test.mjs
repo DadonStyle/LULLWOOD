@@ -21,6 +21,8 @@ import {
   extractPrNumbers,
   referencedPrNumbers,
   prTitleReferencesIssue,
+  prBranchReferencedByIssue,
+  prAttributedToIssue,
   classifyDisposition,
   classifyTombstones,
   sortTombstonesStrandedFirst,
@@ -615,6 +617,88 @@ test('prTitleReferencesIssue anchors on word boundaries: LUL-27 does not match i
 test('an issue with no identifier can never attribute a merged PR (avoids a false SHIPPED on missing data)', () => {
   const issue = { title: 'x', description: 'closed via #144' };
   const prByNumber = new Map([[144, { number: 144, title: 'LUL-677: fix', merged: true, state: 'closed' }]]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'STRANDED');
+});
+
+// ---- LUL-2641: attribution bug (SPEC-then-impl workflow) -------------------
+//
+// Real board state, 2026-09-12/15: LUL-2560 ("LUL-2558 impl: personal-best
+// time + tier streak counter (per spec, PR #618)") was flagged STRANDED and
+// redispatched as LUL-2640 even though PR #618 had already merged the work
+// (merge commit 855aabe). PR #618's title is "LUL-2558: SPEC for personal-best
+// time + tier streak counter" -- this repo's SPEC-then-impl workflow opens the
+// implementation PR under the SPEC ticket's own branch/number, so
+// prTitleReferencesIssue() never matches LUL-2560's own id. LUL-2560's
+// description explicitly self-cites the PR's branch: "(PR #618, branch
+// lul-2558-personal-best-tier-streak, off release/next)".
+
+test('LUL-2560 fixture: PR title names a sibling SPEC ticket, but the issue self-cites the PR branch -> SHIPPED', () => {
+  const issue = {
+    identifier: 'LUL-2560',
+    title: 'LUL-2558 impl: personal-best time + tier streak counter (per spec, PR #618)',
+    description:
+      'Implement per SPEC: docs/specs/lul-2558-personal-best-tier-streak.md (PR #618, branch ' +
+      'lul-2558-personal-best-tier-streak, off release/next).',
+  };
+  const prByNumber = new Map([
+    [
+      618,
+      {
+        number: 618,
+        title: 'LUL-2558: SPEC for personal-best time + tier streak counter',
+        merged: true,
+        state: 'closed',
+        merge_commit_sha: '855aabe',
+        head: { ref: 'lul-2558-personal-best-tier-streak' },
+      },
+    ],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
+  assert.equal(result.mergedPrs.length, 1);
+  assert.equal(result.mergedPrs[0].number, 618);
+});
+
+test('prBranchReferencedByIssue matches a branch name cited verbatim in the issue description', () => {
+  const pr = { head: { ref: 'lul-2558-personal-best-tier-streak' } };
+  const issue = { description: 'branch lul-2558-personal-best-tier-streak, off release/next' };
+  assert.equal(prBranchReferencedByIssue(pr, issue), true);
+});
+
+test('prBranchReferencedByIssue does not match a longer branch name containing this one as a substring', () => {
+  const pr = { head: { ref: 'lul-25' } };
+  const issue = { description: 'branch lul-2558-personal-best-tier-streak' };
+  assert.equal(prBranchReferencedByIssue(pr, issue), false);
+});
+
+test('prBranchReferencedByIssue is false when the PR has no head.ref (test fixtures, unresolved lookups)', () => {
+  assert.equal(prBranchReferencedByIssue({}, { description: 'anything' }), false);
+});
+
+test('prAttributedToIssue is true on title match alone, branch match alone, or both', () => {
+  const byTitle = { title: 'LUL-27: the real one' };
+  const byBranch = { head: { ref: 'lul-99-thing' } };
+  assert.equal(prAttributedToIssue(byTitle, { identifier: 'LUL-27', description: '' }), true);
+  assert.equal(prAttributedToIssue(byBranch, { identifier: 'LUL-1', description: 'branch lul-99-thing' }), true);
+  assert.equal(prAttributedToIssue({ title: 'LUL-5: x' }, { identifier: 'LUL-1', description: '' }), false);
+});
+
+// The LUL-934 regression must still hold: a bare "#179" mentioned only in
+// passing about a sibling ticket's PR does not attribute via branch either,
+// since the dispatch comment never quotes PR #179's branch name.
+test('LUL-27 fixture still holds with prAttributedToIssue in play (branch never cited, title mismatch)', () => {
+  const issue = {
+    identifier: 'LUL-27',
+    title: 'Event system + the first recurring event: the Fog Tide',
+    description: '',
+    comments: [
+      { body: 'note LUL-83 just landed resolveInitialSeed() / ?seed= in PR #179, use it rather than adding a second seed source' },
+    ],
+  };
+  const prByNumber = new Map([
+    [179, { number: 179, title: 'LUL-83: session-varied map seed, pinned via ?seed= for QA', merged: true, state: 'closed', head: { ref: 'lul-83-session-seed' } }],
+  ]);
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'STRANDED');
 });
