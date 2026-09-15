@@ -209,14 +209,42 @@ function prTitleReferencesIssue(pr, issue) {
   return re.test(pr.title ?? '');
 }
 
+// LUL-2641: this repo's SPEC-then-impl workflow opens the implementation PR
+// under the *SPEC* ticket's branch/number, not the implementation child
+// issue's own id -- LUL-2560 (a "LUL-2558 impl: ..." child) was flagged
+// STRANDED because PR #618's title is "LUL-2558: SPEC for ..." and
+// prTitleReferencesIssue() only matches the flagged issue's own id (LUL-2560
+// never appears in that title). LUL-2560's own description explicitly
+// self-cites its shipping PR: "(PR #618, branch
+// lul-2558-personal-best-tier-streak, off release/next)" -- quoting a PR's
+// own branch name verbatim in the issue's own text is a much stronger
+// self-attribution signal than a bare "#N" mention: unlike the LUL-934 false
+// positive (a bare number cited only in passing about a sibling ticket,
+// "use this seed helper... in PR #179"), nobody quotes another ticket's
+// branch name by coincidence.
+function prBranchReferencedByIssue(pr, issue) {
+  const branch = pr.head?.ref;
+  if (!branch) return false;
+  const texts = [issue.title, issue.description, ...(issue.comments ?? []).map((c) => c.body)];
+  const re = new RegExp(`(?:^|[^0-9A-Za-z_-])${escapeRegExp(branch)}(?:[^0-9A-Za-z_-]|$)`, 'i');
+  return texts.some((t) => t && re.test(t));
+}
+
+// A PR counts as attributed to this issue if either its own title names the
+// issue's ticket id (prTitleReferencesIssue, LUL-934) or the issue's own text
+// cites the PR's branch name verbatim (prBranchReferencedByIssue, LUL-2641).
+function prAttributedToIssue(pr, issue) {
+  return prTitleReferencesIssue(pr, issue) || prBranchReferencedByIssue(pr, issue);
+}
+
 // prByNumber: Map<number, pr> where pr is the shape of
 // GET /repos/{repo}/pulls/{number} (needs `merged`, `state`, `merge_commit_sha`,
-// `title`). A referenced number absent from the map (the lookup 404'd, or was
-// never attempted) resolves to neither merged nor open -- it can't manufacture
-// a SHIPPED verdict, but a genuinely merged, correctly-attributed sibling
-// reference still can. A referenced PR whose title does not name this issue's
-// own ticket id is dropped before either merged/open bucket -- see
-// prTitleReferencesIssue above.
+// `title`, `head.ref`). A referenced number absent from the map (the lookup
+// 404'd, or was never attempted) resolves to neither merged nor open -- it
+// can't manufacture a SHIPPED verdict, but a genuinely merged,
+// correctly-attributed sibling reference still can. A referenced PR that is
+// not attributed to this issue's own ticket id -- see prAttributedToIssue
+// above -- is dropped before either merged/open bucket.
 //
 // A mix of "one merged, one still open" (among the attributed set) stays
 // STRANDED: something referenced by this same ticket has not landed yet, so
@@ -225,7 +253,7 @@ function prTitleReferencesIssue(pr, issue) {
 function classifyDisposition(issue, prByNumber) {
   const referencedPrs = referencedPrNumbers(issue);
   const resolved = referencedPrs.map((n) => prByNumber.get(n)).filter(Boolean);
-  const attributed = resolved.filter((pr) => prTitleReferencesIssue(pr, issue));
+  const attributed = resolved.filter((pr) => prAttributedToIssue(pr, issue));
   const mergedPrs = attributed.filter((pr) => pr.merged);
   const stillOpenPrs = attributed.filter((pr) => pr.state === 'open');
   if (mergedPrs.length > 0 && stillOpenPrs.length === 0) {
@@ -1080,6 +1108,8 @@ export {
   extractPrNumbers,
   referencedPrNumbers,
   prTitleReferencesIssue,
+  prBranchReferencedByIssue,
+  prAttributedToIssue,
   classifyDisposition,
   classifyTombstones,
   sortTombstonesStrandedFirst,
