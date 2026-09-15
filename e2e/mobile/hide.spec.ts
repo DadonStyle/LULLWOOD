@@ -48,3 +48,50 @@ test('tapping the Hide button enters the same hold-still stance H enters on desk
     .poll(async () => (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.hidden, { timeout: 300 })
     .toBe(true);
 });
+
+// LUL-2613: the test above proves the touchHide button flips the `hidden`
+// flag -- it has no predator, so it cannot fail if hiding stops hiding. This
+// stages the missing antagonist (a lion with genuine clear LOS to the player,
+// via qaOpenHideNearLionAtHideSpot -- see the desktop counterpart in
+// ../hide.spec.ts) and proves tapping touchHide inside the hide spot's
+// footprint is what makes the lion lose sight, not just the flag flipping.
+test("tapping the Hide button inside a hide spot's footprint blocks a lion that could otherwise see the player", async ({ page }) => {
+  await boot(page, { qaHooks: true });
+
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error('mobile project must have a viewport size');
+  await page.mouse.click(viewport.width / 2, viewport.height / 2);
+  await page.waitForTimeout(1200); // gate fade settle (mobile has no pointer-lock to wait on)
+
+  const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
+  if (staged === null) {
+    throw new Error('qaOpenHideNearLionAtHideSpot returned null -- no clear-LOS hide spot + lion found for this seed');
+  }
+  const { idx } = staged;
+
+  const before = await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx);
+  expect(before?.canSee, 'staged lion must have a clear line of sight to the player before hiding').toBe(true);
+
+  // Teleport (not a drag/move) from the 0.5u-outside staging point into the
+  // footprint -- same offset math as the desktop test.
+  await page.evaluate((i) => {
+    const player = window.ForestEngine?.qaPlayerState?.();
+    const lion = window.ForestEngine?.qaPredatorState?.(i);
+    if (!player || !lion) throw new Error('qaPlayerState/qaPredatorState unavailable');
+    const dx = player.x - lion.x, dz = player.z - lion.z;
+    const len = Math.hypot(dx, dz) || 1;
+    window.ForestEngine?.qaTeleportTo?.(player.x + (dx / len), player.z + (dz / len));
+  }, idx);
+
+  const hideBtn = page.getByTestId('touchHide');
+  await expect(hideBtn).toBeVisible();
+  const pointerOpts = { pointerId: 1, pointerType: 'touch', isPrimary: true, bubbles: true };
+  await hideBtn.dispatchEvent('pointerdown', pointerOpts);
+
+  await expect
+    .poll(async () => (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.hidden, { timeout: 300 })
+    .toBe(true);
+
+  const after = await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx);
+  expect(after?.canSee, "lion must lose sight of the player once hidden inside the hide spot's footprint").toBe(false);
+});
