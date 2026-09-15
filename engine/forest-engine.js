@@ -2111,7 +2111,7 @@ const HINT_TEXT = {
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
-  cover:      'hollow log — H to hide inside. predators lose sight of you',
+  cover:      'a bush — predators lose sight of you while you hold still',
   caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
   throwable:  'a stone — E to pick up, throw to break a chase',
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
