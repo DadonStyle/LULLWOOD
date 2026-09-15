@@ -599,6 +599,37 @@ const OVERLAY_STYLE = `
       left: clamp(276px, var(--hint-left, 50%), calc(100vw - 276px));
       top: min(var(--hint-top, 50%), calc(100% - var(--action-slot-bottom) - var(--action-slot-height)));
     }
+    /* LUL-2694: #winText/#deathText's max-height: calc(100dvh - 48px) +
+       overflow-y: auto (below) already handles #runChronicle overrun
+       (LUL-1103), but on short-landscape phones (pixel5 393px, iphone-se
+       375px tall) the content above #embersShop -- h1/dialogue/subtitle/
+       RunRecap/restart button -- already consumes the whole ~327-345px
+       budget, so the shop's balance line + 3 stacked buy buttons (the last
+       child) render past the scroll container's content edge.
+       getBoundingClientRect() reports their true unclipped position
+       regardless of scroll, so local-qa's offscreen audit flags all 4 --
+       same "boxes must never intersect/offscreen, scroll-to-reveal doesn't
+       count" rule already enforced for #hint and the self-anchored
+       #hintCaption family at this breakpoint (LUL-2410/LUL-2414 above).
+       Row-laying the buttons out (an earlier version of this fix) did not
+       help: buyBtn's text is a full sentence ("Deeper Lungs — veil hold 5s
+       -> veil hold 6s — 120 embers"), so each button is nearly the full
+       container width regardless of flex-direction and flex-wrap puts them
+       back on separate rows anyway. The only lever that actually shrinks
+       total content height is font-size/spacing, measured empirically
+       against a live win screen (fresh save, 1-line chronicle) until
+       scrollHeight <= clientHeight on iphone-se-landscape-667x375 (the
+       tighter of the two reported viewports): 465px of content into a
+       327px budget needed ~140px trimmed across every child, not just the
+       shop. */
+    #winText, #deathText { padding: 8px 16px; gap: 2px; }
+    #winText h1, #deathText h1 { font-size: 20px; }
+    #winText p, #deathText p { margin: 0 0 2px; font-size: 11px; }
+    #runChronicle { font-size: 10px; margin-top: 2px; }
+    .restartBtn { margin-top: 2px; padding: 6px 16px; }
+    #embersShop { flex-direction: column; margin-top: 2px; gap: 2px; }
+    #embersShopBalance, #embersShopMaxed { font-size: 11px; }
+    .buyBtn { font-size: 10px; padding: 3px 8px; }
   }
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
