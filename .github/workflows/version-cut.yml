@@ -263,6 +263,24 @@ jobs:
         id: aggregate
         run: |
           set -euo pipefail
+
+          # LUL-2719: this workflow's `version-cut` concurrency group
+          # (cancel-in-progress: false) queues runs from a burst of
+          # release/next merges, and GitHub keeps only the latest queued run
+          # -- superseded ones (and, per the 2026-09-15 incident, a shard
+          # killed mid-test by a runner shutdown signal) report as
+          # 'cancelled', not 'failure'. Reporting that as a plain DO NOT
+          # MERGE was indistinguishable from a real regression and cost
+          # reviewer time opening shard logs to rule one out. Treat it as
+          # its own outcome instead of folding it into "failure", and don't
+          # fail this job over it -- a superseded run isn't a red run LUL-685
+          # should alert on.
+          if [ "${{ needs.combined-suite.result }}" = "cancelled" ]; then
+            echo "suite_result=cancelled" >> "$GITHUB_OUTPUT"
+            echo "::warning::combined-suite job result was cancelled (superseded by a newer version-cut run, or a runner-level shutdown) -- not a test failure. suite_result=cancelled"
+            exit 0
+          fi
+
           if [ "${{ needs.combined-suite.result }}" != "success" ]; then
             echo "suite_result=failure" >> "$GITHUB_OUTPUT"
             echo "::notice::combined-suite job result was ${{ needs.combined-suite.result }} (a non-advisory step failed) -- suite_result=failure"
@@ -336,14 +354,19 @@ jobs:
               '' \
               "Combined-suite run: $RUN_URL" \
               '' \
-              '**Auto-merge (founder directive, 2026-08-28):** if the combined-suite run' \
-              'above is green, this workflow arms native GitHub auto-merge with a' \
-              '**merge commit** (not squash, so individual PR history survives on `main`)' \
-              '-- it merges itself the moment the Code Reviewer'"'"'s required approval lands' \
-              'and every required check is green, no manual click needed. A red' \
-              'combined-suite never gets auto-merge armed, regardless of review state --' \
-              'see the DO NOT MERGE comment below if that'"'"'s the case here. See' \
-              '`systems/release-train` in the shared wiki.' \
+              '**Auto-merge (founder directive, 2026-08-28):** this workflow arms native' \
+              'GitHub auto-merge on this PR with a **merge commit** (not squash, so' \
+              'individual PR history survives on `main`) -- it merges itself the moment' \
+              'the Code Reviewer'"'"'s required approval lands and every required check is' \
+              'green, no manual click needed.' \
+              '' \
+              'The combined-suite result above is **advisory only** (issue #311,' \
+              '2026-09-05): auto-merge is armed regardless of whether it passed. A red' \
+              'result does not block the merge -- read the DO NOT MERGE comment below (if' \
+              'present) and the shard logs before approving. The Code Reviewer'"'"'s approval' \
+              'plus `main`'"'"'s required status checks (combined-suite is not one of them)' \
+              'are the only load-bearing gates. See `systems/release-train` in the shared' \
+              'wiki.' \
               > /tmp/cut-pr-body.md
 
             gh pr create --repo "$REPO" \
@@ -359,6 +382,8 @@ jobs:
 
           if [ "$SUITE_RESULT" = "success" ]; then
             comment="Combined-suite passed against the release/next+main merge tree: $RUN_URL"
+          elif [ "$SUITE_RESULT" = "cancelled" ]; then
+            comment="**INCONCLUSIVE** -- the combined-suite run was cancelled ($RUN_URL), most likely superseded by a newer version-cut run under this workflow's shared \`version-cut\` concurrency group (or a runner-level shutdown), not a real test failure. A later version-cut run against the current tree will produce a real result; no action needed unless every subsequent run keeps cancelling."
           else
             comment="**DO NOT MERGE** -- combined-suite result was \`$SUITE_RESULT\` against the release/next+main merge tree: $RUN_URL. Needs investigation before this cut can land."
           fi
