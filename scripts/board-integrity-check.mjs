@@ -398,6 +398,76 @@ function isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, now
   return daysSinceClose < reAlarmDays;
 }
 
+// LUL-2757: LUL-810's Alarm D asks the issue's own assignee to "re-check and
+// advance/cancel" a request_confirmation, but a `request_confirmation`
+// created by an agent can only be accepted/rejected by a board/user actor
+// (live-confirmed: `POST /api/issues/{id}/interactions/{id}/reject` -> 403
+// "Agent actors cannot resolve issue-thread interactions through this
+// board-only route"). If the founder never opens the card, re-filing the
+// identical routine ticket cycle after cycle cannot ever close the loop --
+// it fired 11 times on LUL-359 alone (2026-08-28 to 2026-09-16) with zero
+// net progress. Past this many routine re-flags of the SAME interaction,
+// stop asking an agent to do the impossible.
+const STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD = 3;
+
+// How long to stay quiet between escalation tickets to the CEO once the
+// threshold above has been crossed, so a CEO who re-checks and closes
+// without being able to resolve it (same structural gap) isn't re-paged
+// every sweep either. Reuses STALE_CONFIRMATION_DAYS: this is still "how
+// long is it reasonable to wait on a human", the same tradeoff Alarm D's
+// own cooldown already makes.
+const STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS = STALE_CONFIRMATION_DAYS;
+
+// closedWakeIssues: done/cancelled issues (title + description is all this needs).
+// marker: the ROUTINE marker (staleConfirmationWakeMarker(issue)), never the
+// escalation marker -- an escalation ticket's own close must not inflate
+// this count.
+// interactionId: interaction.id -- scopes the count to THIS confirmation, so
+// a fresh re-ask (a new interaction id on the same issue) starts back at 0,
+// the same per-confirmation scoping LUL-827 defect 1 already established.
+function countPriorStaleConfirmationWakes(closedWakeIssues, marker, interactionId) {
+  let count = 0;
+  for (const closed of closedWakeIssues ?? []) {
+    if (!(closed.title ?? '').startsWith(marker)) continue;
+    if (!(closed.description ?? '').includes(`id ${interactionId})`)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+function staleConfirmationEscalationMarker(issue) {
+  return `${WAKE_MARKER_PREFIX} ${issue.identifier ?? issue.id} has an agent-unresolvable request_confirmation`;
+}
+
+function staleConfirmationEscalationDescription({ issue, interaction, ageDays, priorFireCount }) {
+  return (
+    `Detected by scripts/board-integrity-check.mjs (LUL-2757): ${issue.identifier ?? issue.id} ` +
+    `("${issue.title}") has a \`request_confirmation\` (id ${interaction.id}) that has been ` +
+    `\`pending\` for ${Math.floor(ageDays)} days (since ${interaction.createdAt.slice(0, 10)}), ` +
+    `and the routine LUL-810 Alarm D ticket has already been re-filed ${priorFireCount} time(s) ` +
+    `on this exact interaction with zero net progress. An agent cannot accept or reject another ` +
+    `agent's request_confirmation (live 403: "Agent actors cannot resolve issue-thread ` +
+    `interactions through this board-only route") -- only a board/user actor can, so re-checking ` +
+    `and re-filing the same routine ticket cannot make further progress. This needs a founder ` +
+    `decision: either someone opens the card and answers it, or the issue is re-routed so the ` +
+    `confirmation is cancelled. See LUL-2757.`
+  );
+}
+
+// agentsById: Map<id, agent> (name, status), the same map callers already
+// build for the LUL-2066 paused-assignee guard. Matches by exact name (not
+// "CEO Board Assistant") and treats a paused CEO like no CEO at all, same
+// convention as nonPausedAssigneeId -- the caller's existing resolveSelfId()
+// fallback applies when this returns null.
+function resolveCeoAgentId(agentsById) {
+  for (const agent of agentsById.values()) {
+    if ((agent.name ?? '').trim().toLowerCase() === 'ceo' && isAvailableAgent(agent)) {
+      return agent.id;
+    }
+  }
+  return null;
+}
+
 // ---- Alarm E: assigned issue parked in backlog with no named gate ---------
 //
 // CEO ruling LUL-1125: "backlog must never contain an assigned, ungated
@@ -896,7 +966,24 @@ async function fileWakeTickets(
   for (const { issue, interaction, ageDays } of staleConfirmations ?? []) {
     const marker = staleConfirmationWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
+    const escalationMarker = staleConfirmationEscalationMarker(issue);
+    if (hasOpenWakeTicket(openIssues, escalationMarker)) continue;
     if (isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, nowMs)) continue;
+
+    const priorFireCount = countPriorStaleConfirmationWakes(closedWakeIssues, marker, interaction.id);
+    if (priorFireCount >= STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD) {
+      if (isRecentWakeTicketSuppressed(allKnownWakeIssues, escalationMarker, nowMs, STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS)) continue;
+      const assigneeAgentId = resolveCeoAgentId(agentsById) ?? (await resolveSelfId());
+      await createWakeIssue(apiBase, companyId, apiKey, {
+        title: `${escalationMarker} (LUL-2757 detector)`,
+        description: staleConfirmationEscalationDescription({ issue, interaction, ageDays, priorFireCount }),
+        assigneeAgentId,
+        priority: 'critical',
+      });
+      filed.push({ kind: 'stale-confirmation-escalation', identifier: issue.identifier ?? issue.id, ageDays: Math.floor(ageDays), priorFireCount, assigneeAgentId });
+      continue;
+    }
+
     const assigneeAgentId = nonPausedAssigneeId(issue.assigneeAgentId, agentsById) ?? (await resolveSelfId());
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-810 detector)`,
@@ -1122,6 +1209,12 @@ export {
   isRecentWakeTicketSuppressed,
   WAKE_REFILE_COOLDOWN_DAYS,
   STALE_CONFIRMATION_DAYS,
+  STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD,
+  STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS,
+  countPriorStaleConfirmationWakes,
+  staleConfirmationEscalationMarker,
+  staleConfirmationEscalationDescription,
+  resolveCeoAgentId,
   isAssignedBacklogNoGate,
   findAssignedBacklogNoGate,
   assignedBacklogNoGateWakeMarker,

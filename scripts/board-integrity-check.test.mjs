@@ -35,6 +35,10 @@ import {
   isRecentWakeTicketSuppressed,
   WAKE_REFILE_COOLDOWN_DAYS,
   STALE_CONFIRMATION_DAYS,
+  STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD,
+  countPriorStaleConfirmationWakes,
+  staleConfirmationEscalationMarker,
+  resolveCeoAgentId,
   isAssignedBacklogNoGate,
   findAssignedBacklogNoGate,
   assignedBacklogNoGateWakeMarker,
@@ -998,6 +1002,210 @@ test('isStaleConfirmationSuppressed: does not cross-match a different issue\'s m
     { title: 'Board-integrity: LUL-438 has a stale request_confirmation (LUL-810 detector)', updatedAt: '2026-08-26T00:00:00.000Z' },
   ];
   assert.equal(isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, NOW_MS), false);
+});
+
+// ---- LUL-2757: stale-confirmation escalation (fix for LUL-810 Alarm D churn) --
+//
+// Live case: LUL-359's request_confirmation is agent-unresolvable (403 on
+// the accept/reject route), so Alarm D's routine ticket re-fired 11 times
+// on the exact same interaction with zero net progress. Past a threshold
+// number of prior routine re-flags of the SAME interaction, escalate once
+// to the CEO instead of redispatching to the issue's own assignee again.
+
+test('countPriorStaleConfirmationWakes: counts closed routine tickets that name this interaction id', () => {
+  const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+  const closedWakeIssues = [
+    { title: `${marker} (LUL-810 detector)`, description: 'has a `request_confirmation` (id ix-1) that has been `pending`' },
+    { title: `${marker} (LUL-810 detector)`, description: 'has a `request_confirmation` (id ix-1) that has been `pending`' },
+    { title: `${marker} (LUL-810 detector)`, description: 'has a `request_confirmation` (id ix-2) that has been `pending`' },
+    { title: 'Board-integrity: LUL-438 has a stale request_confirmation (LUL-810 detector)', description: 'id ix-1)' },
+  ];
+  assert.equal(countPriorStaleConfirmationWakes(closedWakeIssues, marker, 'ix-1'), 2);
+});
+
+test('countPriorStaleConfirmationWakes: a fresh re-ask (new interaction id) starts back at 0', () => {
+  const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+  const closedWakeIssues = [
+    { title: `${marker} (LUL-810 detector)`, description: 'id ix-old)' },
+    { title: `${marker} (LUL-810 detector)`, description: 'id ix-old)' },
+    { title: `${marker} (LUL-810 detector)`, description: 'id ix-old)' },
+  ];
+  assert.equal(countPriorStaleConfirmationWakes(closedWakeIssues, marker, 'ix-new'), 0);
+});
+
+test('countPriorStaleConfirmationWakes: no closed tickets -> 0', () => {
+  assert.equal(countPriorStaleConfirmationWakes([], 'Board-integrity: LUL-359 has a stale request_confirmation', 'ix-1'), 0);
+});
+
+test('staleConfirmationEscalationMarker is stable and distinct from the routine marker', () => {
+  const issue = { identifier: 'LUL-359' };
+  assert.equal(
+    staleConfirmationEscalationMarker(issue),
+    'Board-integrity: LUL-359 has an agent-unresolvable request_confirmation',
+  );
+  assert.notEqual(staleConfirmationEscalationMarker(issue), staleConfirmationWakeMarker(issue));
+});
+
+test('resolveCeoAgentId: matches the agent named exactly "CEO", not "CEO Board Assistant"', () => {
+  const agentsById = new Map([
+    ['assistant-1', { id: 'assistant-1', name: 'CEO Board Assistant', status: 'idle' }],
+    ['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }],
+  ]);
+  assert.equal(resolveCeoAgentId(agentsById), 'ceo-1');
+});
+
+test('resolveCeoAgentId: a paused CEO counts as no CEO at all (LUL-2066 pattern)', () => {
+  const agentsById = new Map([['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'paused' }]]);
+  assert.equal(resolveCeoAgentId(agentsById), null);
+});
+
+test('resolveCeoAgentId: no CEO agent at all -> null', () => {
+  assert.equal(resolveCeoAgentId(new Map()), null);
+});
+
+test('fileWakeTickets: past the re-flag threshold, escalates to the CEO instead of redispatching to the issue assignee', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+    const closedWakeIssues = Array.from({ length: STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD }, (_, i) => ({
+      title: `${marker} (LUL-810 detector)`,
+      description: 'has a `request_confirmation` (id ix-1) that has been `pending`',
+      updatedAt: `2026-08-2${i}T00:00:00.000Z`,
+    }));
+    const agentsById = new Map([
+      ['founding-engineer', { id: 'founding-engineer', name: 'Founding Engineer', status: 'running' }],
+      ['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }],
+    ]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-359', identifier: 'LUL-359', title: 'Merge lane', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'ix-1', createdAt: '2026-08-28T13:13:58.566Z' },
+        ageDays: 19,
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      staleConfirmations,
+      closedWakeIssues,
+      NOW_MS,
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].kind, 'stale-confirmation-escalation');
+    assert.equal(filed[0].assigneeAgentId, 'ceo-1');
+    assert.equal(postedIssue.assigneeAgentId, 'ceo-1');
+    assert.equal(postedIssue.priority, 'critical');
+    assert.match(postedIssue.title, /agent-unresolvable request_confirmation/);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets: does not re-escalate within the escalation cooldown', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      throw new Error(`must not fetch when the escalation is on cooldown: ${url}`);
+    };
+
+    const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+    const escalationMarker = 'Board-integrity: LUL-359 has an agent-unresolvable request_confirmation';
+    const closedWakeIssues = [
+      ...Array.from({ length: STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD }, (_, i) => ({
+        title: `${marker} (LUL-810 detector)`,
+        description: 'id ix-1)',
+        updatedAt: `2026-08-2${i}T00:00:00.000Z`,
+      })),
+      { title: `${escalationMarker} (LUL-2757 detector)`, description: 'id ix-1)', createdAt: '2026-08-26T00:00:00.000Z' },
+    ];
+    const agentsById = new Map([['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }]]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-359', identifier: 'LUL-359', title: 'Merge lane', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'ix-1', createdAt: '2026-08-28T13:13:58.566Z' },
+        ageDays: 19,
+      },
+    ];
+
+    // NOW_MS (2026-08-27T07:00:00Z) is within STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS
+    // of the 08-26 escalation close.
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      staleConfirmations,
+      closedWakeIssues,
+      NOW_MS,
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets: an already-open escalation ticket suppresses the routine re-dispatch too', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      throw new Error(`must not fetch when the escalation ticket is already open: ${url}`);
+    };
+
+    const escalationMarker = 'Board-integrity: LUL-359 has an agent-unresolvable request_confirmation';
+    const openIssues = [{ title: `${escalationMarker} (LUL-2757 detector)`, status: 'todo' }];
+    const agentsById = new Map([['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }]]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-359', identifier: 'LUL-359', title: 'Merge lane', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'ix-1', createdAt: '2026-08-28T13:13:58.566Z' },
+        ageDays: 19,
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      openIssues,
+      { alarm: false },
+      staleConfirmations,
+      [],
+      NOW_MS,
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
 });
 
 // ---- Alarm E: assigned issue parked in backlog with no named gate ---------
