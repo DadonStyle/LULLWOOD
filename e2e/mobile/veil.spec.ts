@@ -4,7 +4,7 @@
 // down/up/cancel to match. This asserts the engine-visible effect
 // (qaPlayerState().veilHeld) goes true on press and back to false on
 // release, not just that the button renders.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, qaHook } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

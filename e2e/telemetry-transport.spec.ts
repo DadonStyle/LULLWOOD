@@ -15,7 +15,7 @@
 // deferred to LUL-481 (founder step, BLOB_READ_WRITE_TOKEN). The no-token path
 // returns 204 so the route answers even in CI; what we verify here is that a
 // blocked or slow route never stalls the game loop.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, readObjective } from './helpers';
 
 // How long we block the telemetry route — long enough to confirm the game

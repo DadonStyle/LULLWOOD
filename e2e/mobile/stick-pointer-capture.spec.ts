@@ -14,7 +14,7 @@
 // registers as a single low-movement pointer sequence).
 //
 // See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

@@ -8,7 +8,7 @@
 //
 // Landscape viewport, same as e2e/mobile/input-mode.spec.ts: this is about
 // the Jump button, not the rotate-prompt (that's orientation-gate.spec.ts).
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

@@ -7,7 +7,7 @@
 // 768px fallback threshold in lib/input-mode.ts so the second check is also
 // false. See e2e/mobile/orientation-gate.spec.ts for the mobile-portrait
 // case this is the negative counterpart of.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot } from './helpers';
 
 test.use({ viewport: { width: 900, height: 1400 } }); // portrait-shaped, desktop-wide

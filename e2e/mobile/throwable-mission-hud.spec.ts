@@ -2,7 +2,7 @@
 // ../throwable-mission-hud.spec.ts for the desktop half and the full "why".
 // Same engine-visible-effect discipline as the rest of e2e/mobile: assert
 // qaPlayerState()/#missionPanel content, not just that a button renders.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, qaHook, expectRowVisible } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

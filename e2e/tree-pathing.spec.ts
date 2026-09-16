@@ -40,7 +40,7 @@
 // direct line or a reasonable sidestep -- keeping the scenario to exactly
 // one obstacle, close enough that the total gap for every species stays
 // under 4 units.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter } from './helpers';
 // fullmap-reason: predator go-around measured against the pinned seed's real trunk clusters (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

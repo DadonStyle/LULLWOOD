@@ -35,7 +35,7 @@
 //     `log` from hide-spot eligibility specifically (HIDE_KINDS narrowed to
 //     bramble only) -- walkability and hide-eligibility are independent axes
 //     as of that ticket; this file's walkability coverage below is unaffected.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, readObjective, expectRowHidden } from './helpers';
 // fullmap-reason: the founder's walk-into-cover cases replay against the pinned full layout (two cases already run micro) (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

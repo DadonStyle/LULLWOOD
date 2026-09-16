@@ -8,7 +8,7 @@
 // land, so the noise-redirect path (checkThrowableNoise()/hearThrowableNoise()) runs for
 // real off a throw a test actually triggered, not a synthetic hearThrowableNoise() call.
 // See e2e/mobile/throwables.spec.ts for the touch half.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, VIEW_X, VIEW_Y, trackConsoleErrors, expectNoConsoleErrors, expectRowVisible, expectRowHidden } from './helpers';
 
 // Fixed step for the noise-redirect case, matching scent.spec.ts / positional-hiding.spec.ts

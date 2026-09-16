@@ -2,7 +2,7 @@
 // 160x160 minimap canvas with no clamp, so the player arrow and the pulsing
 // objective marker both silently vanished once either point crossed z=120.
 // Pins the fix: any point up to the bog's outer edge stays on-canvas.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot } from './helpers';
 // fullmap-reason: minimap w2m clamping past the forest/bog seam exists only at full map size (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

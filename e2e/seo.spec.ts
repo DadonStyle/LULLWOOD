@@ -2,7 +2,7 @@
 // tags are emitted with the initial HTML, before the game canvas mounts, so
 // this suite never needs to click into the game -- it is cheap and static,
 // unlike the rest of e2e/ which drives gameplay.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { SITE_NAME, SITE_TITLE, SITE_TAGLINE } from '../lib/site';
 
 // Mirrors the literal composition in app/layout.tsx's openGraph/twitter

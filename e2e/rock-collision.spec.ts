@@ -5,7 +5,7 @@
 // rock in the real seed needed it. qaBuildScene() places an exact rock with no
 // rng, so the search is replaced with a fixed placement. See
 // docs/specs/lul-2667-rock-collision-micro.md.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 test.describe('LUL-211: cover props are solid (rock, qaWorld=micro)', () => {

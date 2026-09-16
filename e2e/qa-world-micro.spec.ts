@@ -2,7 +2,7 @@
 // e2e boots under software GL were measured at 3.5-9 GB and repeatedly
 // OOM-killed the nightly QA host). Specs here are what child 2/2 (the e2e
 // suite migration) builds on -- see docs/specs/lul-2328-qa-world-micro-hooks.md.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 test.describe('qaWorld=micro boot preset', () => {

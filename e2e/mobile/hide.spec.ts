@@ -13,7 +13,7 @@
 // Also same as jump.spec.ts: enter via a viewport-relative click, not the
 // ../helpers `enter()` (hardcoded to the 1280x720 desktop centre), since this
 // viewport is overridden to a narrower mobile landscape size below.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

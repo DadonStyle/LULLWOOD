@@ -9,7 +9,7 @@
 // uses, so isMobile()'s (pointer: coarse) and (hover: none) match is the real
 // thing that decides which gate copy renders, not a desktop context with
 // hasTouch layered on.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test('mobile gate copy describes the touch controls, not keyboard shortcuts', async ({ page }) => {

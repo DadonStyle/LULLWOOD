@@ -9,7 +9,7 @@
 // never-persisted key must read as OFF, including before SettingsPanel's
 // effect has run on first paint (components/GameCanvas.tsx's
 // `body:not([data-show-minimap="1"])` selector covers that gap).
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 async function seedSettings(context: import('@playwright/test').BrowserContext, settings: Record<string, unknown>) {

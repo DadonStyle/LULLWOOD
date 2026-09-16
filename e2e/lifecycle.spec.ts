@@ -21,7 +21,7 @@
 // own port purely for this file, on the stale premise that it needed
 // StrictMode; the file's own header had said the opposite for just as long.
 // One webServer, one project, one prod build, same as the rest of the suite.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot } from './helpers';
 
 // Installed before any page script runs (Playwright guarantees addInitScript

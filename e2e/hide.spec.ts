@@ -21,7 +21,7 @@
 // (added for this ticket) places the player at the nearest one before the first
 // KeyH press, the same "place deterministically instead of hunting the procedural
 // map" pattern e2e/positional-hiding.spec.ts already uses.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
 test.describe('H hide toggle', () => {

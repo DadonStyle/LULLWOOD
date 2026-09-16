@@ -8,7 +8,7 @@
 // asserts the CSS declares the safe-area terms (falsifiable: reverting
 // either the wrapper style or the viewport export fails this) rather than
 // trying to measure pixels no headless run can actually produce.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

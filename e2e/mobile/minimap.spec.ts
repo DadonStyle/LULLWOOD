@@ -6,7 +6,7 @@
 // Landscape viewport, same as other mobile specs that aren't specifically
 // about the portrait rotate-prompt (e2e/mobile/orientation-gate.spec.ts owns
 // that).
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 // fullmap-reason: minimap w2m clamping past the forest/bog seam exists only at full map size (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

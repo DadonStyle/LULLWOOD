@@ -13,7 +13,7 @@
 // qaHideBehindCoverKind/qaPredatorState hooks and fixed-step clock as
 // positional-hiding.spec.ts, so a regression in the 8 call sites (not just
 // the pure predicate) fails here.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 const FIXED_DT = 0.02;

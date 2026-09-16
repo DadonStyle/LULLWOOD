@@ -18,7 +18,8 @@
 // already past every species' give-up threshold before it can close at all.
 // 2.5u matches e2e/sight-flicker.spec.ts's own micro-world staging distance
 // for the same reason.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot, enter, qaHook } from './helpers';
 
 const FIXED_DT = 1 / 30;

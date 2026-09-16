@@ -22,7 +22,7 @@
 // RAF loop -- that poll only worked because swiftshader's dt clamp saturated
 // to a de facto fixed step (wiki systems/e2e-post-gpu-nondeterminism), which
 // real GPU rendering (LUL-1910) no longer guarantees.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 // Fixed step, matching charge-dodge.spec.ts / positional-hiding.spec.ts.

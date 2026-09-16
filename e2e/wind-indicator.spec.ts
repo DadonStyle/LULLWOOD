@@ -3,7 +3,7 @@
 // shipped with zero coverage of the arrow itself (only the always-visible
 // #windIndicatorHint text is covered, e2e/wind-hint.spec.ts). See
 // docs/specs/lul-1724-wind-direction-awareness.md's ## e2e section.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 test('#windIndicator\'s rotation matches the engine\'s windX/windZ at the pinned seed', async ({ page }) => {
