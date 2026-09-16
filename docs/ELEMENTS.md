@@ -1116,7 +1116,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   LUL-2312 pulled every one of those bottom-centre prompts (`#objective`,
   `#actionPrompt`, `#throwPrompt`, `#chargePrompt`, `#status`) plus
   `#captionToast` into one component, `ActionPrompt` (`components/
-  ActionPrompt.tsx`), rendered as five always-mounted rows inside a single
+  ActionPrompt.tsx`), rendered as six always-mounted rows inside a single
   fixed CSS-grid column, `#actionSlot` (`components/GameCanvas.tsx`). Each
   `EngineHudState` field named below still means exactly what it did before
   -- this was a render-layer consolidation only, no engine change. The old
@@ -1129,11 +1129,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   | charge dodge | `chargeVisible`, `chargeToken` | `#chargePrompt` |
   | objective (E) | `objectiveVisible`, `objectiveText`, `objectiveReady` | `#objective` |
   | hide or veil | `coverPromptVisible/Urgent/Kind`, `veilPromptVisible/Urgent` | `#actionPrompt` |
-  | throwable | `heldThrowable` | `#throwPrompt` |
+  | throwable | `heldThrowable`, `throwablesReserve` | `#throwPrompt` |
+  | pickup | `canGrabThrowable` | `#pickupPrompt` |
   | status (hidden/hunted) | `statusVisible`, `statusText` | `#status` |
 
   `#captionToast` (predator-call captions) reuses the same component,
-  positioned as its own row just above `#actionSlot` rather than as a sixth
+  positioned as its own row just above `#actionSlot` rather than as a seventh
   slot row, since it isn't part of the E/H/F/SPACE priority stack. It moved
   off its old dedicated amber colour onto the shared `tone="status"` look
   (same as the hidden/hunted row) -- a declared visual change, not a silent
@@ -1143,22 +1144,24 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   **## e2e (LUL-2312).** `e2e/action-prompt.spec.ts` rewritten: every
   `.toHaveClass(/urgent/)` became `toHaveAttribute('data-tone', 'urgent')`,
   `#actionKey` became `.actionPromptKey` scoped under the row, and a new
-  `#actionSlot row order` describe block pins the five ids' DOM order
-  (`chargePrompt, objective, actionPrompt, throwPrompt, status`) independent
+  `#actionSlot row order` describe block pins the six ids' DOM order
+  (`chargePrompt, objective, actionPrompt, throwPrompt, pickupPrompt, status`
+  — `pickupPrompt` added by LUL-2614) independent
   of any gameplay staging. `e2e/helpers.ts` gained `expectRowVisible`/
   `expectRowHidden` (assert `data-visible` rather than mount/unmount) --
   every other spec that asserted `toHaveCount(0)` or `toBeVisible()`/
   `toBeHidden()` on `#objective`/`#status`/`#actionPrompt`/`#throwPrompt`/
-  `#chargePrompt` now uses one of those two instead, since none of the five
+  `#chargePrompt` now uses one of those two instead, since none of the six
   ever unmounts any more: `hide.spec.ts`, `death-persist.spec.ts`,
-  `smoke.spec.ts`, `throwable-mission-hud.spec.ts` (+ its `mobile/` half),
+  `smoke.spec.ts`, `throwable-mission-hud.spec.ts` (+ its `mobile/` half —
+  LUL-2614 added the first `#pickupPrompt` assertions to the desktop file),
   `throwables.spec.ts` (+ `mobile/`), `win-persist.spec.ts`,
   `lul211-founder-report.spec.ts`, `predator-memory.spec.ts`,
   `charge-dodge.spec.ts`, `mobile/charge-prompt-tap.spec.ts`. `scent-trail.
   spec.ts`'s `assertNoOverlap` helper also treats a zero-area box as nothing
   to overlap, since an empty row's content collapses to zero width rather
   than disappearing from the DOM. Not done in this PR (no existing QA hook
-  supports it): a single scenario with all five rows populated at once to
+  supports it): a single scenario with all six rows populated at once to
   assert pairwise non-overlap directly -- today's coverage exercises at most
   one populated row per test. Flagged as a `[QA-HOOK]` follow-up, not silently
   skipped.
@@ -1482,8 +1485,12 @@ design doc as turning horror into radar.
   - **Pocket Stones** (`pocketStones`, single tier, `POCKET_STONES_COSTS`):
     grants `POCKET_STONES_RESERVE` (2) free throwable stones per run, auto-armed
     into `heldThrowable` on `enter()` and re-armed from the reserve in
-    `throwThrowable()` — reuses the existing single-held-stone state machine
-    and HUD prompt verbatim, no new UI.
+    `throwThrowable()`. `throwablesReserve` is pushed to `EngineHudState`
+    (LUL-2614) and rendered as a `(+N)`/`(+N in reserve)` suffix on
+    `#throwPrompt` when non-zero; the shop's owned-tier copy
+    (`shopEffectCopy()`, `components/Hud.tsx`) derives from `tier` instead of
+    hardcoding "no reserve stones" once purchased. `canGrabThrowable` also
+    gained its first render site, a new `#pickupPrompt` row in `#actionSlot`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
   reset to 0 on `enter()` (L3813) and recomputed every frame (`stepFrame()`,
