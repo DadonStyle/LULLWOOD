@@ -87,7 +87,18 @@ test.describe('cover-state feedback (LUL-144)', () => {
   });
 
   test('a chasing predator blocked by real cover reads as covered, with no H press needed', async ({ page }) => {
-    test.setTimeout(30_000);
+    // 250 steps / ADVANCE_CHUNK(25) = 10 chunks, each individually allowed up
+    // to ADVANCE_CHUNK_TIMEOUT_MS(6000) before the per-chunk diagnostic trips
+    // -- worst-case healthy total is 10*6000=60000ms before qaPredatorState
+    // overhead/boot. A 30_000ms test-level timeout is under half that, so on
+    // a rig slow enough to need the diagnostic at all, Playwright's own test
+    // timeout won the race every time (nightly 2026-09-16 0745 run, HEAD
+    // 569bc47e: both retries died with the generic "Test timeout of 30000ms
+    // exceeded" pointing at qaHook's page.evaluate, never our chunk error --
+    // the per-chunk diagnostic added by LUL-2734/PR#672 never got a chance to
+    // fire). Matching this to the real worst case, with margin, actually lets
+    // the diagnostic do its job instead of being pre-empted by the outer cap.
+    test.setTimeout(75_000);
     // LUL-2611: `boot()` already defaults to `qaWorld: 'micro'` (LUL-2377) --
     // the LUL-2329 migration-spec comment this used to carry ("left on the
     // full map") was stale; this test has been running on the micro world
