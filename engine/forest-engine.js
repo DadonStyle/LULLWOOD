@@ -1321,6 +1321,9 @@ function generateMap(seed){
   // LUL-1258: draw this run's mission last, after every other rng() consumer
   // above, so it never shifts the stream any existing seed/replay depends on.
   mission = pickMission(rng, secondaryChoice);
+  if(CONFIG.missionScaleMul !== 1){
+    mission = { ...mission, target: { ...mission.target, x: mission.target.x * CONFIG.missionScaleMul, z: mission.target.z * CONFIG.missionScaleMul } };
+  }
   missionHumTimer = 2;
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
