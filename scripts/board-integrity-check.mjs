@@ -779,13 +779,38 @@ async function fetchAgents(apiBase, companyId, apiKey) {
   return pcFetch(`${apiBase}/api/companies/${companyId}/agents`, apiKey);
 }
 
+// LUL-2809: a flat `limit=200` (the API's own cap is 1000/request, reachable
+// via `offset`) silently truncated this to an arbitrarily-ordered 200-item
+// sample. Live-verified against this board (2403 done issues): none of the
+// 11 known-prior LUL-359 stale-request_confirmation wake tickets were in a
+// limit=200 fetch, so isStaleConfirmationSuppressed/countPriorStaleConfirmationWakes
+// never saw the history they need -- LUL-2757's escalate-after-3-fires fix
+// was wired but functionally dead, and Alarm D kept re-filing the same
+// agent-unresolvable ticket every cycle (LUL-2304..LUL-2808, 12 cycles).
+// Page through with offset until a page comes back short of the page size.
+async function fetchAllIssuesByStatus(apiBase, companyId, apiKey, status) {
+  const pageSize = 1000;
+  const all = [];
+  let offset = 0;
+  for (;;) {
+    const page = await pcFetch(
+      `${apiBase}/api/companies/${companyId}/issues?status=${status}&limit=${pageSize}&offset=${offset}`,
+      apiKey,
+    );
+    all.push(...page);
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
+  return all;
+}
+
 // LUL-827: closed (done/cancelled) issues, so Alarm D can tell "this wake
 // ticket was closed while the confirmation was still pending" (a human-gated
 // item, suppress for the re-alarm cooldown) from "never filed one" (file it).
 async function fetchClosedIssuesForSuppressionCheck(apiBase, companyId, apiKey) {
   const [done, cancelled] = await Promise.all([
-    pcFetch(`${apiBase}/api/companies/${companyId}/issues?status=done&limit=200`, apiKey),
-    pcFetch(`${apiBase}/api/companies/${companyId}/issues?status=cancelled&limit=200`, apiKey),
+    fetchAllIssuesByStatus(apiBase, companyId, apiKey, 'done'),
+    fetchAllIssuesByStatus(apiBase, companyId, apiKey, 'cancelled'),
   ]);
   return [...done, ...cancelled];
 }
