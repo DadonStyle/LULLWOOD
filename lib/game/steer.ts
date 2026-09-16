@@ -102,7 +102,7 @@ export function findLocalPath(
   const startKey = key(sx, sz);
   const visited = new Set<string>([startKey]);
   const cameFrom = new Map<string, string>();
-  let frontier: [number, number][] = [[sx, sz]];
+  const frontier: [number, number][] = [[sx, sz]];
   let reached: [number, number] | null = null;
   let expansions = 0;
 

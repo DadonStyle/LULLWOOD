@@ -221,6 +221,7 @@ declare global {
         dist: number;
         canSee: boolean;
         rad: number;
+        moveRad: number;
         x: number;
         z: number;
         gaveUpAt: number | null;

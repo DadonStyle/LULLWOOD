@@ -80,7 +80,9 @@ import {
   canSee as geoCanSee,
   COVER_URGENT_RANGE,
   COVER_PROBE_HZ,
+  PLAYER_COLLISION_RADIUS,
 } from '@/lib/game/cover';
+import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { spawnClearanceScale } from '@/lib/game/spawnClearance';
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS } from '@/lib/game/noise';
@@ -1915,11 +1917,12 @@ function makePredator(kind){
   if(s.mane){ const tuft=new THREE.Mesh(new THREE.SphereGeometry(0.09*Wd, 7, 6), furMat); tuft.position.y = -0.3*L; tail2.add(tuft); }
 
   scene.add(g);
-  return { g, kind, spec:s, legs, neck, head, torso, tail, tail2, rad:s.rad,
+  return { g, kind, spec:s, legs, neck, head, torso, tail, tail2, rad:s.rad, moveRad: PLAYER_COLLISION_RADIUS,
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:rng()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0, standX:0, standZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
+    commitDir: null, commitT: 0, lastSteerState: 'roam', searchPath: null,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0, sightFlicker:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
     charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, chargeRecoveryT:0, inert:false, sightLock:null,
@@ -2041,7 +2044,11 @@ function relocateParkedHunter(pcx, pcz){
 // (pickAvoidDirection, unit tested there) -- this stays a thin wrapper that
 // injects the engine's own tree/landmark `grid` closure state, same pattern
 // as blockedR/blocked/hasLOS/findHideSpot above.
-function avoidDir(p, dx, dz){ return pickAvoidDirection(p.x, p.z, p.rad, dx, dz, grid, coverGrid, CELL, undefined, undefined, WRAP_SPAN); }
+function avoidDir(p, dx, dz, dt){
+  const r = pickCommittedAvoidDirection(p.commitDir, p.commitT, dt, p.x, p.z, p.moveRad, dx, dz, grid, coverGrid, CELL, undefined, undefined, WRAP_SPAN);
+  p.commitDir = r.commitDir; p.commitT = r.commitT;
+  return r.dir;
+}
 // ---- Scent trail + wind (LUL-23) ------------------------------------------
 // The player leaves scent while moving (see the deposit call in tick()'s
 // movement block -- nothing is deposited while `hidden` or standing still, so
@@ -2525,6 +2532,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // pass against a stationary or scent-driven target, unaffected by this split.
     const pPursuitMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
+    if (p.state !== p.lastSteerState) { p.commitDir = null; p.commitT = 0; p.searchPath = null; p.lastSteerState = p.state; }
 
     // ticks in every state, so a lock set during `chase` has actually
     // expired by the time `roam` re-checks it (see lib/game/predator.ts)
@@ -2643,7 +2651,12 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       const bx=p.rrX-p.x, bz=p.rrZ-p.z, bd=Math.hypot(bx,bz);
       if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pLakeMul; }
       if(p.reroute <= 0) p.stuckT = 0;
-    } else if(p.hunt){                                // forced: comes straight for you while it can see you (no giving up otherwise)
+    } else if(p.searchPath && p.searchPath.length){
+      const [wx, wz] = p.searchPath[0];
+      const wdx = wx - p.x, wdz = wz - p.z, wd = Math.hypot(wdx, wdz);
+      if(wd < LOCAL_SEARCH_ARRIVE_R) p.searchPath = p.searchPath.slice(1);
+      else { desx = wdx/wd; desz = wdz/wd; speed = p.spec.speed*0.7*pLakeMul; }
+    } else if(p.hunt){                              // forced: comes straight for you while it can see you (no giving up otherwise)
       if(!canSee(p, dist)){
         // LUL-2246: a live force-hunt lock means this collapse is the 30s escalation
         // losing sight, not an ordinary hunt -- route into the existing scentLock blind-
@@ -2905,7 +2918,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       }
     }
 
-    if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz);
+    if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz, dt);
 
     // LUL-1483: wading, same as the player -- applied once here rather than
     // at each state branch above, since every one of them (hunt/chase/
@@ -2921,7 +2934,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     const px0 = p.x, pz0 = p.z;
     const nx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + p.vx*dt, WRAP_SPAN) : clamp(p.x + p.vx*dt, -half+2, half-2);
     const nz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + p.vz*dt, WRAP_SPAN) : clamp(p.z + p.vz*dt, -half+2, zMax-2);
-    const blockedX = predatorBlocked(nx, p.z, p.rad), blockedZ = predatorBlocked(p.x, nz, p.rad);
+    const blockedX = predatorBlocked(nx, p.z, p.moveRad), blockedZ = predatorBlocked(p.x, nz, p.moveRad);
     if(!blockedX) p.x = nx;
     if(!blockedZ) p.z = nz;
     if(blockedX || blockedZ) [p.vx, p.vz] = slideVelocity(p.vx, p.vz, blockedX, blockedZ);
@@ -2933,15 +2946,25 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     const moved = Math.hypot(p.x - px0, p.z - pz0);
     if(speed > 1 && p.reroute <= 0 && p.alert <= 0){
       if(moved < speed*dt*0.35) p.stuckT += dt; else p.stuckT = Math.max(0, p.stuckT - dt*2);
-      if(p.stuckT > 3){                              // go back along the trail, then a different way
+      if(p.stuckT > 1.0){                            // LUL-2306: 3 -> 1.0 (game-time; LUL-2283's qaSetFixedStep removed the wall-clock jitter LUL-1597 reverted this for)
         const back = p.trail[0] || [p.x - ux*6, p.z - uz*6];
         p.rrX = back[0]; p.rrZ = back[1]; p.reroute = 1.4; p.stuckT = 0;
-        // fresh, different waypoint (LUL-857: kept off the water same as the roam pick above)
-        const freshx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.x + (rng()-0.5)*40, -half+4, half-4);
-        const freshz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.z + (rng()-0.5)*40, -half+4, zMax-4);
-        const freshKept = keepWaypointOffLake(freshx, freshz, CONFIG.lake);
-        p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.x, WRAP_SPAN) : clamp(freshKept.x, -half+4, half-4);
-        p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.z, WRAP_SPAN) : clamp(freshKept.z, -half+4, zMax-4);
+        const pursuing = p.hunt || p.state === 'chase' || (p.state === 'investigate' && p.inv === 'approach');
+        if(pursuing){
+          const path = findLocalPath(p.x, p.z, player.x, player.z, p.moveRad, grid, coverGrid, WRAP_SPAN);
+          p.searchPath = path ? path.waypoints : null;
+        } else {
+          p.searchPath = null;
+        }
+        if(!pursuing || !p.searchPath){
+          // roam, or the bounded search itself found nothing -- same guaranteed
+          // unstick as before (LUL-857: kept off the water same as the roam pick above)
+          const freshx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.x + (rng()-0.5)*40, -half+4, half-4);
+          const freshz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.z + (rng()-0.5)*40, -half+4, zMax-4);
+          const freshKept = keepWaypointOffLake(freshx, freshz, CONFIG.lake);
+          p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.x, WRAP_SPAN) : clamp(freshKept.x, -half+4, half-4);
+          p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.z, WRAP_SPAN) : clamp(freshKept.z, -half+4, zMax-4);
+        }
       }
     }
 
@@ -3017,8 +3040,8 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     if(!pushX && !pushZ) continue;
     const nx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + pushX, WRAP_SPAN) : clamp(p.x + pushX, -half+2, half-2);
     const nz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + pushZ, WRAP_SPAN) : clamp(p.z + pushZ, -half+2, zMax-2);
-    if(!predatorBlocked(nx, p.z, p.rad)) p.x = nx;
-    if(!predatorBlocked(p.x, nz, p.rad)) p.z = nz;
+    if(!predatorBlocked(nx, p.z, p.moveRad)) p.x = nx;
+    if(!predatorBlocked(p.x, nz, p.moveRad)) p.z = nz;
     p.g.position.x = p.x; p.g.position.z = p.z;
   }
 }
@@ -4707,7 +4730,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // grace (lib/game/predator.ts shouldDowngradeChase) is actually set/decremented
     // at the real canSee(p,dist) call site, not just correct in isolation (unit
     // tests already cover the pure function -- see e2e/sight-flicker.spec.ts).
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible, sightFlicker: p.sightFlicker };
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, moveRad: p.moveRad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible, sightFlicker: p.sightFlicker };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
