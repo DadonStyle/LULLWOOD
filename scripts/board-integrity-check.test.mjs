@@ -466,6 +466,21 @@ test('formatReport sorts STRANDED tombstones before SHIPPED ones', () => {
   assert.ok(report.indexOf('LUL-B') < report.indexOf('LUL-A'), 'expected STRANDED (LUL-B) to be listed before SHIPPED (LUL-A)');
 });
 
+test('formatReport marks an EXTERNALLY_BLOCKED tombstone with the stated condition and no-wake note, sorted after SHIPPED', () => {
+  const shipped = { issue: { identifier: 'LUL-A' }, disposition: 'SHIPPED', mergedPrs: [{ number: 1, merged: true }] };
+  const externallyBlocked = {
+    issue: { identifier: 'LUL-2734' },
+    disposition: 'EXTERNALLY_BLOCKED',
+    mergedPrs: [{ number: 672, merged: true }],
+    unblock: { statement: '2 consecutive green nightly runs' },
+  };
+  const report = formatReport([externallyBlocked, shipped], [], 'DadonStyle/LULLWOOD');
+  assert.match(report, /EXTERNALLY_BLOCKED/);
+  assert.match(report, /2 consecutive green nightly runs/);
+  assert.match(report, /no wake ticket filed/);
+  assert.ok(report.indexOf('LUL-A') < report.indexOf('LUL-2734'), 'expected SHIPPED (LUL-A) before EXTERNALLY_BLOCKED (LUL-2734)');
+});
+
 // ---- extractPrNumbers / referencedPrNumbers --------------------------------
 
 test('extractPrNumbers pulls every #<n> token out of free text', () => {
@@ -623,6 +638,88 @@ test('an issue with no identifier can never attribute a merged PR (avoids a fals
   const prByNumber = new Map([[144, { number: 144, title: 'LUL-677: fix', merged: true, state: 'closed' }]]);
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'STRANDED');
+});
+
+// ---- LUL-2768: external unblock condition overrides SHIPPED ---------------
+//
+// Real board state, 2026-09-16: LUL-2734 cites two merged PRs (#662, #672)
+// over its lifetime, but its own text (posted by its own assignee) names the
+// real remaining condition as an external event -- 2 consecutive green
+// nightly runs, not code landing. The bare PR-merge heuristic tombstoned it
+// SHIPPED and re-fired a near-identical false-positive wake ticket 5 times
+// in one day (LUL-2741/2742/2744/2746/2747).
+
+test('LUL-2734 shape: merged+attributed PR, but the assignee posted an external-unblock statement after the merge -> EXTERNALLY_BLOCKED, not SHIPPED', () => {
+  const issue = {
+    identifier: 'LUL-2734',
+    title: 'cover-feedback + hide-alert specs still red after PR #662 merge',
+    description: 'fixed by #672',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      {
+        authorAgentId: 'fe-agent',
+        createdAt: '2026-09-16T05:08:05.499Z',
+        body: 'external-unblock: 2 consecutive green nightly runs of cover-feedback.spec.ts + hide-alert.spec.ts on a HEAD past 5e34bf8',
+      },
+    ],
+  };
+  const prByNumber = new Map([
+    [672, { number: 672, title: 'LUL-2734: cover-feedback diagnostic fix', merged: true, state: 'closed', merged_at: '2026-09-16T04:45:31.000Z', merge_commit_sha: '5e34bf8' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'EXTERNALLY_BLOCKED');
+  assert.match(result.unblock.statement, /2 consecutive green nightly runs/);
+});
+
+test('an external-unblock statement posted before the merge it would override does not count (already stale)', () => {
+  const issue = {
+    identifier: 'LUL-X',
+    title: 'x',
+    description: 'fixed by #50',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      { authorAgentId: 'fe-agent', createdAt: '2026-09-10T00:00:00.000Z', body: 'external-unblock: waiting on a rebase' },
+    ],
+  };
+  const prByNumber = new Map([
+    [50, { number: 50, title: 'LUL-X: fix', merged: true, state: 'closed', merged_at: '2026-09-15T00:00:00.000Z' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
+});
+
+test('an external-unblock statement posted by someone other than the issue assignee does not count', () => {
+  const issue = {
+    identifier: 'LUL-X',
+    title: 'x',
+    description: 'fixed by #50',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      { authorAgentId: 'code-reviewer', createdAt: '2026-09-17T00:00:00.000Z', body: 'external-unblock: I do not believe this is done' },
+    ],
+  };
+  const prByNumber = new Map([
+    [50, { number: 50, title: 'LUL-X: fix', merged: true, state: 'closed', merged_at: '2026-09-15T00:00:00.000Z' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
+});
+
+test('ordinary prose about being blocked, with no external-unblock marker, does not override SHIPPED', () => {
+  const issue = {
+    identifier: 'LUL-X',
+    title: 'x',
+    description: 'fixed by #50',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      { authorAgentId: 'fe-agent', createdAt: '2026-09-17T00:00:00.000Z', body: 'Still correctly blocked pending 2 consecutive green nightly runs.' },
+    ],
+  };
+  const prByNumber = new Map([
+    [50, { number: 50, title: 'LUL-X: fix', merged: true, state: 'closed', merged_at: '2026-09-15T00:00:00.000Z' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
 });
 
 // ---- LUL-2641: attribution bug (SPEC-then-impl workflow) -------------------
@@ -1666,6 +1763,59 @@ test('fileWakeTickets never assigns a tombstone wake ticket to the flagged issue
     assert.equal(filed.length, 1);
     assert.equal(filed[0].assigneeAgentId, 'cto-agent-id', 'must not inherit the paused Task Runner assignee');
     assert.equal(postedIssue.assigneeAgentId, 'cto-agent-id');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets never files a wake ticket for an EXTERNALLY_BLOCKED tombstone, but still files for a sibling STRANDED one (LUL-2768)', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    const postedIssues = [];
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) return { ok: true, json: async () => ({ id: 'cto-agent-id' }) };
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssues.push(JSON.parse(opts.body));
+        return { ok: true, json: async () => ({ id: `wake-issue-${postedIssues.length}` }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const classifiedTombstones = [
+      {
+        issue: { id: 'issue-1', identifier: 'LUL-2734', title: 'nightly gate', status: 'blocked', assigneeAgentId: 'fe-agent' },
+        disposition: 'EXTERNALLY_BLOCKED',
+        referencedPrs: [672],
+        mergedPrs: [{ number: 672, merged: true }],
+        unblock: { statement: '2 consecutive green nightly runs' },
+      },
+      {
+        issue: { id: 'issue-2', identifier: 'LUL-9', title: 'genuinely stranded', status: 'blocked', assigneeAgentId: 'fe-agent' },
+        disposition: 'STRANDED',
+        referencedPrs: [],
+        mergedPrs: [],
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      classifiedTombstones,
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      [],
+      new Map(),
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].identifier, 'LUL-9');
+    assert.equal(postedIssues.length, 1);
   } finally {
     globalThis.fetch = prevFetch;
   }

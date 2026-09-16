@@ -237,11 +237,47 @@ function prAttributedToIssue(pr, issue) {
   return prTitleReferencesIssue(pr, issue) || prBranchReferencedByIssue(pr, issue);
 }
 
+// LUL-2768: "all attributed PRs merged" answers is-the-code-done, not
+// is-the-ticket-done -- a ticket can name its own real remaining condition
+// as an external event (LUL-2734: 2 consecutive green nightly runs of two
+// e2e specs on a HEAD past a named commit) that no PR merge satisfies. A
+// SHIPPED tombstone re-fired a near-identical wake/redispatch ticket on
+// LUL-2734 five times in one day (LUL-2741/2742/2744/2746/2747), each
+// requiring a manual gh pr view + nightly-run-HEAD comparison to re-confirm
+// the same false positive. Convention: the issue's own assignee posts a
+// comment with a line starting "external-unblock:" naming the real
+// condition. Only that agent's own statement counts (nobody else can
+// override how the assignee reads their own ticket), and only one posted
+// after the most recently merged attributed PR counts -- an older statement
+// might already have been satisfied by a since-merged PR, so it cannot
+// override what the PR-merge heuristic now sees; a newer one is the
+// assignee re-affirming the ticket is not actually done despite the merge.
+const EXTERNAL_UNBLOCK_RE = /^\**external-unblock:\**\s*(.+)$/im;
+
+function mostRecentMergeMs(mergedPrs) {
+  const merges = mergedPrs.map((pr) => (pr.merged_at ? Date.parse(pr.merged_at) : NaN)).filter(Number.isFinite);
+  return merges.length > 0 ? Math.max(...merges) : -Infinity;
+}
+
+function findExternalUnblockStatement(issue, mergedPrs) {
+  if (!issue.assigneeAgentId) return null;
+  const cutoffMs = mostRecentMergeMs(mergedPrs);
+  for (const comment of issue.comments ?? []) {
+    if (comment.authorAgentId !== issue.assigneeAgentId) continue;
+    const match = EXTERNAL_UNBLOCK_RE.exec(comment.body ?? '');
+    if (!match) continue;
+    const postedMs = comment.createdAt ? Date.parse(comment.createdAt) : NaN;
+    if (!Number.isFinite(postedMs) || postedMs <= cutoffMs) continue;
+    return { statement: match[1].trim(), comment };
+  }
+  return null;
+}
+
 // prByNumber: Map<number, pr> where pr is the shape of
 // GET /repos/{repo}/pulls/{number} (needs `merged`, `state`, `merge_commit_sha`,
-// `title`, `head.ref`). A referenced number absent from the map (the lookup
-// 404'd, or was never attempted) resolves to neither merged nor open -- it
-// can't manufacture a SHIPPED verdict, but a genuinely merged,
+// `merged_at`, `title`, `head.ref`). A referenced number absent from the map
+// (the lookup 404'd, or was never attempted) resolves to neither merged nor
+// open -- it can't manufacture a SHIPPED verdict, but a genuinely merged,
 // correctly-attributed sibling reference still can. A referenced PR that is
 // not attributed to this issue's own ticket id -- see prAttributedToIssue
 // above -- is dropped before either merged/open bucket.
@@ -257,6 +293,10 @@ function classifyDisposition(issue, prByNumber) {
   const mergedPrs = attributed.filter((pr) => pr.merged);
   const stillOpenPrs = attributed.filter((pr) => pr.state === 'open');
   if (mergedPrs.length > 0 && stillOpenPrs.length === 0) {
+    const unblock = findExternalUnblockStatement(issue, mergedPrs);
+    if (unblock) {
+      return { issue, disposition: 'EXTERNALLY_BLOCKED', referencedPrs, mergedPrs, unblock };
+    }
     return { issue, disposition: 'SHIPPED', referencedPrs, mergedPrs };
   }
   return { issue, disposition: 'STRANDED', referencedPrs, mergedPrs };
@@ -268,8 +308,10 @@ function classifyTombstones(tombstones, prByNumber) {
 
 // STRANDED first: that is the half of the report that actually needs a human
 // or an agent to do work. SHIPPED entries are three-line PATCHes.
+// EXTERNALLY_BLOCKED needs no action at all (LUL-2768) -- the assignee has
+// already named the real remaining condition -- so it sorts last.
 function sortTombstonesStrandedFirst(classified) {
-  const rank = { STRANDED: 0, SHIPPED: 1 };
+  const rank = { STRANDED: 0, SHIPPED: 1, EXTERNALLY_BLOCKED: 2 };
   return [...classified].sort((a, b) => rank[a.disposition] - rank[b.disposition]);
 }
 
@@ -593,13 +635,17 @@ function formatReport(
       `${classifiedTombstones.length} tombstoned issue(s) -- blocked/in_review, no live blocker, no active ` +
         'recovery action, no pending wake_assignee interaction:',
     );
-    for (const { issue: t, disposition, mergedPrs } of sortTombstonesStrandedFirst(classifiedTombstones)) {
-      const suffix =
-        disposition === 'SHIPPED'
-          ? ` -- SHIPPED, PR #${mergedPrs[0].number} merged${
-              mergedPrs[0].merge_commit_sha ? ` (${mergedPrs[0].merge_commit_sha})` : ''
-            }, close the ticket`
-          : ' -- STRANDED, needs work';
+    for (const { issue: t, disposition, mergedPrs, unblock } of sortTombstonesStrandedFirst(classifiedTombstones)) {
+      let suffix;
+      if (disposition === 'SHIPPED') {
+        suffix = ` -- SHIPPED, PR #${mergedPrs[0].number} merged${
+          mergedPrs[0].merge_commit_sha ? ` (${mergedPrs[0].merge_commit_sha})` : ''
+        }, close the ticket`;
+      } else if (disposition === 'EXTERNALLY_BLOCKED') {
+        suffix = ` -- EXTERNALLY_BLOCKED (code merged, waiting on: ${unblock.statement}), no wake ticket filed`;
+      } else {
+        suffix = ' -- STRANDED, needs work';
+      }
       lines.push(`  - ${t.identifier ?? t.id}: "${t.title}" (assignee ${t.assigneeAgentId ?? 'none'})${suffix}`);
     }
   }
@@ -1001,6 +1047,10 @@ async function fileWakeTickets(
 
   for (const classified of classifiedTombstones) {
     const { issue, disposition } = classified;
+    // LUL-2768: the assignee already named the real remaining condition --
+    // firing a wake ticket here is exactly the false-positive redispatch
+    // this disposition exists to stop, not new information for anyone.
+    if (disposition === 'EXTERNALLY_BLOCKED') continue;
     const marker = tombstoneWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
     if (isRecentWakeTicketSuppressed(allKnownWakeIssues, marker, nowMs)) continue;
@@ -1199,6 +1249,7 @@ export {
   prAttributedToIssue,
   classifyDisposition,
   classifyTombstones,
+  findExternalUnblockStatement,
   sortTombstonesStrandedFirst,
   tombstoneWakeTitle,
   tombstoneWakeDescription,
