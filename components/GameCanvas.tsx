@@ -444,8 +444,12 @@ const OVERLAY_STYLE = `
   #runChronicle { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px;
     letter-spacing: 0.03em; color: #a99; text-align: left; max-width: 360px; }
   #runChronicle li { margin: 2px 0; }
-  .emberGain { color: #ffdca8; font-weight: 500; }
-  .emberLoss { color: #ff8a8a; font-weight: 500; }
+  /* LUL-2727: without nowrap, a narrow landscape phone can break these spans'
+     text across two lines, which balloons their inline bounding box to span
+     both lines and geometrically overlap the previous line's content even
+     though nothing is actually drawn on top of anything. */
+  .emberGain { color: #ffdca8; font-weight: 500; white-space: nowrap; }
+  .emberLoss { color: #ff8a8a; font-weight: 500; white-space: nowrap; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px;
     /* LUL-1088 CASCADE-ORDER BUG GUARD: the mobile-only .restartBtn override up
