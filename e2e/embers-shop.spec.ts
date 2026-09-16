@@ -60,6 +60,7 @@ test.describe('embers shop (LUL-2351)', () => {
     probe = await qaHook(page, 'qaProbeEmbersPurchase');
     expect(probe.purchaseCueCount).toBe(3);
     await expect(page.locator('#embersShopMaxed-pocketStones')).toContainText('maxed');
+    await expect(page.locator('#embersShopMaxed-pocketStones')).toContainText('2 throwables/run');
     await expect(page.locator('#buy-pocketStones')).toHaveCount(0);
 
     expectNoConsoleErrors(errs);
@@ -94,5 +95,19 @@ test.describe('embers shop (LUL-2351)', () => {
     // enter() auto-arms one stone from the reserve of POCKET_STONES_RESERVE (2), leaving 1.
     expect(probe.heldThrowable).toBe(true);
     expect(probe.throwablesReserve).toBe(1);
+    await expect(page.locator('#throwPrompt')).toContainText('(+1 in reserve)');
+  });
+
+  test('#throwPrompt shows no reserve suffix without Pocket Stones (base case unchanged)', async ({ page, context }) => {
+    await seedEmbers(context, { 'lullwood:embers': JSON.stringify({ balance: 0, tiers: {} }) });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+
+    const grabbed = await qaHook(page, 'qaGrabThrowable');
+    expect(grabbed, 'qaGrabThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+
+    const text = await page.locator('#throwPrompt').textContent();
+    expect(text).not.toContain('in reserve');
+    expect(text).not.toContain('(+');
   });
 });

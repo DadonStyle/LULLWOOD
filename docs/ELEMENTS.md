@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6826 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6027, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6894 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6095, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -431,14 +431,15 @@ one geometry builder (`makePredator()`), differentiated by the
   root cause as the Player/Child LUL-26 notes above.
 
 **What they CANNOT do**
-- Cannot physically collide with cover props (rock/log/bramble) at all —
-  predators call `blockedR()` directly for movement, never `blocked()`, so
-  `coverBlockedR()` (and player-only `canopyBlockedR()`) never run for them.
-  **Deliberate**, not a gap: the standing comment at `coverBlockedR()`
-  (`lib/game/cover.ts`, moved there by LUL-425) says folding this in
-  previously produced a stuck-predator
-  freeze (LUL-119). LOS is still blocked by the same props via `hasLOS()` —
-  only movement-collision is exempt.
+- Collides with rock/reed (solid) and passes through log/bramble (walkable),
+  identically to the player: predators call `predatorBlocked()` →
+  `blockedForPredator()` (`lib/game/cover.ts:512`), which runs
+  `coverBlockedR()`/`coverKindBlocksMovement()` the same way `blocked()` does
+  for the player — stale since LUL-1643 wired this in (this doc previously
+  said predators never collide with cover at all, which stopped being true
+  then). LUL-2306: movement collision now uses `moveRad =
+  PLAYER_COLLISION_RADIUS` (0.6, same as the player), not the species `rad`
+  — see "Collision & physics profile" below.
 - Cannot collide with each other, or with the child — no code path checks
   predator-vs-predator or predator-vs-child distance for collision.
   `UNDEFINED` — see matrix.
@@ -475,18 +476,32 @@ one geometry builder (`makePredator()`), differentiated by the
   the ordinary sniff-loop revert closed the gap again before the player got
   any reaction time.
 - Stuck detection: if a predator's actual movement falls under 35% of its
-  intended speed for >3s while trying to move, it backs up along its last 6
-  trail points then picks a fresh random waypoint (`p.stuckT`, L1511-1516).
-  LUL-1091 shipped this at 0.8s but LUL-1597 reverted it: the shorter window
-  is sensitive to per-frame wall-clock jitter, causing `predator-determinism`
-  e2e divergence across parallel runs with the same seed. The pathfinding
-  improvements (pickAvoidDirection near+far probe, slideVelocity) from
-  LUL-1091 are retained. `p.trail` samples every 0.4s and keeps 6 points.
+  intended speed for >1.0s (game-time) while trying to move, it backs up
+  along its last 6 trail points then either follows a bounded local search
+  toward its live target (hunt/chase/investigate-approach) or picks a fresh
+  random waypoint (roam/flank and any pursuing search that finds nothing),
+  `p.stuckT` (`engine/forest-engine.js`, updatePredators()). LUL-1091 shipped
+  this at 0.8s but LUL-1597 reverted it because the shorter window was
+  sensitive to per-frame wall-clock jitter, causing `predator-determinism`
+  e2e divergence across parallel runs with the same seed; LUL-2283's
+  `qaSetFixedStep()` removed that wall-clock jitter, which is what makes the
+  LUL-2306 1.0s threshold safe. LUL-2306 also added the bounded search itself
+  — `findLocalPath()` (`lib/game/steer.ts`), a deterministic best-first search
+  on a 2u sub-grid, up to 3 waypoints, replacing the random ±20u waypoint for
+  a pursuing predator only; roam's stuck recovery is unchanged. The
+  pathfinding improvements (pickAvoidDirection near+far probe, slideVelocity)
+  from LUL-1091 are retained. `p.trail` samples every 0.4s and keeps 6 points.
 
 **Collision & physics profile**
-- Movement collider: circular, radius `PSPEC[kind].rad` (0.8/1.5/1.0),
-  checked only against the tree-trunk grid (`blockedR`, never
-  `coverBlockedR`/`canopyBlockedR`) — see above.
+- Movement collider: circular, radius `moveRad = PLAYER_COLLISION_RADIUS`
+  (0.6, same as the player) for all three species, since LUL-2306 — checked
+  against both the tree-trunk grid and cover props via `predatorBlocked()` →
+  `blockedForPredator()` (see above), so a predator never passes a gap the
+  player cannot and is never blocked by a gap the player passes.
+  `PSPEC[kind].rad` (0.8/1.5/1.0, unchanged) still governs catch range
+  (`isCaught`/`canCatchInChase`), the sniff-margin `canSee()` call, and
+  predator-vs-predator separation (`predatorSeparationPush`) — those are
+  unaffected by this ticket.
 - LOS: same rotated-AABB raycast as the player's own (`hasLOS()`), applied
   symmetrically (`canSee()` calls it both directions along the same line).
   LUL-2320: a predator standing inside a log/bramble's own footprint is not
@@ -802,8 +817,12 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What it can do**
 - Visually mark the map's landmark body of water: a circular water mesh
-  (`CONFIG.lake.r`=15), an additive glow ring, wisp particles rising out of
-  it, and a point light (L476-505).
+  (`CONFIG.lake.r`=15, unlit `MeshLambertMaterial`) and an additive glow
+  ring; wisp particles rise out of it. LUL-2696 removed the dedicated
+  `lakeLight` point light that used to sit here (render-cost fix for the
+  swiftshader `qaAdvance` crash) — the glow ring alone now carries the
+  "landmark visible at night" read, and the water still darkens/lightens
+  with the scene's existing moon/hemisphere/rim lights.
 - Keep other elements clear of itself **at placement time only**: trees,
   cover props, and the child all reject spawn candidates inside
   `CONFIG.lake.clear` (22 units, `inLake()`, used for cover, tree, child,
@@ -1116,7 +1135,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   LUL-2312 pulled every one of those bottom-centre prompts (`#objective`,
   `#actionPrompt`, `#throwPrompt`, `#chargePrompt`, `#status`) plus
   `#captionToast` into one component, `ActionPrompt` (`components/
-  ActionPrompt.tsx`), rendered as five always-mounted rows inside a single
+  ActionPrompt.tsx`), rendered as six always-mounted rows inside a single
   fixed CSS-grid column, `#actionSlot` (`components/GameCanvas.tsx`). Each
   `EngineHudState` field named below still means exactly what it did before
   -- this was a render-layer consolidation only, no engine change. The old
@@ -1129,11 +1148,12 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   | charge dodge | `chargeVisible`, `chargeToken` | `#chargePrompt` |
   | objective (E) | `objectiveVisible`, `objectiveText`, `objectiveReady` | `#objective` |
   | hide or veil | `coverPromptVisible/Urgent/Kind`, `veilPromptVisible/Urgent` | `#actionPrompt` |
-  | throwable | `heldThrowable` | `#throwPrompt` |
+  | throwable | `heldThrowable`, `throwablesReserve` | `#throwPrompt` |
+  | pickup | `canGrabThrowable` | `#pickupPrompt` |
   | status (hidden/hunted) | `statusVisible`, `statusText` | `#status` |
 
   `#captionToast` (predator-call captions) reuses the same component,
-  positioned as its own row just above `#actionSlot` rather than as a sixth
+  positioned as its own row just above `#actionSlot` rather than as a seventh
   slot row, since it isn't part of the E/H/F/SPACE priority stack. It moved
   off its old dedicated amber colour onto the shared `tone="status"` look
   (same as the hidden/hunted row) -- a declared visual change, not a silent
@@ -1143,22 +1163,24 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   **## e2e (LUL-2312).** `e2e/action-prompt.spec.ts` rewritten: every
   `.toHaveClass(/urgent/)` became `toHaveAttribute('data-tone', 'urgent')`,
   `#actionKey` became `.actionPromptKey` scoped under the row, and a new
-  `#actionSlot row order` describe block pins the five ids' DOM order
-  (`chargePrompt, objective, actionPrompt, throwPrompt, status`) independent
+  `#actionSlot row order` describe block pins the six ids' DOM order
+  (`chargePrompt, objective, actionPrompt, throwPrompt, pickupPrompt, status`
+  — `pickupPrompt` added by LUL-2614) independent
   of any gameplay staging. `e2e/helpers.ts` gained `expectRowVisible`/
   `expectRowHidden` (assert `data-visible` rather than mount/unmount) --
   every other spec that asserted `toHaveCount(0)` or `toBeVisible()`/
   `toBeHidden()` on `#objective`/`#status`/`#actionPrompt`/`#throwPrompt`/
-  `#chargePrompt` now uses one of those two instead, since none of the five
+  `#chargePrompt` now uses one of those two instead, since none of the six
   ever unmounts any more: `hide.spec.ts`, `death-persist.spec.ts`,
-  `smoke.spec.ts`, `throwable-mission-hud.spec.ts` (+ its `mobile/` half),
+  `smoke.spec.ts`, `throwable-mission-hud.spec.ts` (+ its `mobile/` half —
+  LUL-2614 added the first `#pickupPrompt` assertions to the desktop file),
   `throwables.spec.ts` (+ `mobile/`), `win-persist.spec.ts`,
   `lul211-founder-report.spec.ts`, `predator-memory.spec.ts`,
   `charge-dodge.spec.ts`, `mobile/charge-prompt-tap.spec.ts`. `scent-trail.
   spec.ts`'s `assertNoOverlap` helper also treats a zero-area box as nothing
   to overlap, since an empty row's content collapses to zero width rather
   than disappearing from the DOM. Not done in this PR (no existing QA hook
-  supports it): a single scenario with all five rows populated at once to
+  supports it): a single scenario with all six rows populated at once to
   assert pairwise non-overlap directly -- today's coverage exercises at most
   one populated row per test. Flagged as a `[QA-HOOK]` follow-up, not silently
   skipped.
@@ -1429,17 +1451,17 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5430, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5581 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5635). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5498-5558, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5649-5702 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5703-5745). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5635) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L5638) rather than recomputed later, since `player.x/z` can move on
+  (L5703-5745) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L5704) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1482,11 +1504,15 @@ design doc as turning horror into radar.
   - **Pocket Stones** (`pocketStones`, single tier, `POCKET_STONES_COSTS`):
     grants `POCKET_STONES_RESERVE` (2) free throwable stones per run, auto-armed
     into `heldThrowable` on `enter()` and re-armed from the reserve in
-    `throwThrowable()` — reuses the existing single-held-stone state machine
-    and HUD prompt verbatim, no new UI.
+    `throwThrowable()`. `throwablesReserve` is pushed to `EngineHudState`
+    (LUL-2614) and rendered as a `(+N)`/`(+N in reserve)` suffix on
+    `#throwPrompt` when non-zero; the shop's owned-tier copy
+    (`shopEffectCopy()`, `components/Hud.tsx`) derives from `tier` instead of
+    hardcoding "no reserve stones" once purchased. `canGrabThrowable` also
+    gained its first render site, a new `#pickupPrompt` row in `#actionSlot`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3813) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3835) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1597,7 +1623,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L5999, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6056-6830, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2268,6 +2294,18 @@ toast it replaces) and are positioned by a fixed `[data-hint-key]` CSS rule inst
 `deepwater`/`caveImmune` sit below their own `#missionPanel`/`#caveImmunePanel`;
 `lake`/`bog`/`stamina`/`veil`/`landmark` share the bottom-center spot `#captionToast`
 (predator-call captions) already uses, above `#actionSlot`.
+
+**LUL-2743 (short-landscape breakpoint only)**: at `@media (max-height: 420px)` (short
+landscape phones, e.g. Pixel 5 851x393 / iPhone SE 667x375), the world-anchored keys stop
+world-anchoring and share the same fixed slot as `lake`/`bog`/`stamina`/`veil`/`landmark`
+instead (`components/GameCanvas.tsx`). Two earlier attempts (LUL-2532, LUL-2594) tuned the
+ceiling a world-anchored pill's `translate(-50%,-120%)` lift is clamped against, but that
+ceiling is `#actionSlot`'s own top edge — 9px above the viewport top on iPhone SE landscape
+— which is less room than any real pill (with padding and wrapped text) can fit inside; no
+ceiling constant fixes it. Safe to combine unconditionally with the self-anchored family:
+only one `HINT_PRIORITY` key is ever active at a time, so the two groups never render
+together. Same precedent as `#hint` (LUL-2410) and `deepwater` (LUL-2418): once there's no
+room left to reposition into, stop trying to float the caption above `#actionSlot`.
 
 **Settings**: `Show hints` checkbox (default on, next to `Show my scent trail`) and a `Reset
 hints` button (clears every `lullwood:hints:*` key) in `SettingsPanel.tsx`.

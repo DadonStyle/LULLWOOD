@@ -11,7 +11,7 @@
 // choice) rather than dragging the right stick, since the caption/frustum
 // check only cares about the resulting yaw, not how a real thumb would get there.
 import { test, expect, type Page } from '@playwright/test';
-import { boot, qaHook } from '../helpers';
+import { boot, qaHook, assertInViewport } from '../helpers';
 
 const FIXED_DT = 0.02;
 const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
@@ -94,16 +94,63 @@ for (const viewport of VIEWPORTS) {
       const caption = page.locator('#scentTrailCaption');
       await expect(caption).toBeVisible();
       await expect(caption).toContainText('this is your scent trail — predators follow it');
+      // LUL-2631/LUL-2594/LUL-2743: none of the checks below caught the caption
+      // rendering fully above y=0 at this breakpoint (touchHide/etc are all
+      // near the bottom, so an offscreen-at-the-top pill still clears them) --
+      // only the local-qa nightly's generic bounding-box audit did. Assert the
+      // viewport containment directly so a regression here is caught in CI.
+      await assertInViewport(caption, page, '#scentTrailCaption');
       await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=touchHide]');
       await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=touchVeil]');
       await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=touchJump]');
       await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=leftStick]');
       await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=rightStick]');
       await assertNoOverlap(page, '#scentTrailCaption', '#windIndicatorHint');
+      await assertNoOverlap(page, '#scentTrailCaption', '#objective');
+      await assertNoOverlap(page, '#scentTrailCaption', '#actionPrompt');
+      await assertNoOverlap(page, '#scentTrailCaption', '#status');
 
       await qaHook(page, 'qaAdvance', stepsFor(8.1));
       expect((await qaHook(page, 'qaProbeScentTrail')).captionVisible).toBe(false);
       await expect(caption).toHaveCount(0);
+    });
+
+    // LUL-2532/LUL-2594/LUL-2631/LUL-2743: a close, ground-level scent point
+    // pushes hintY to HINT_Y_MAX, clamping the caption's anchor against
+    // #actionSlot's raised top edge at this breakpoint -- exactly the geometry
+    // the nightly QA rig's real repro hit (see ../scent-trail.spec.ts's desktop
+    // version of this test for the full derivation). GameCanvas.tsx now shares
+    // the self-anchored family's fixed slot here instead of world-anchoring, so
+    // this must stay fully in-viewport and clear of #actionSlot regardless of
+    // where the anchor point would otherwise land.
+    test('the caption stays fully in-viewport and clear of #actionSlot when anchored near the y-clamp ceiling (LUL-2743)', async ({ page }) => {
+      await boot(page, { qaHooks: true });
+      await enterMobile(page);
+      await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+
+      const { yaw } = await qaHook(page, 'qaProbePlayer');
+      const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+      const wind = await qaHook(page, 'qaProbeWind');
+      const WIND_STRENGTH = 3.2, WIND_DRIFT_CAP = 9;
+      const FORWARD_DIST = 4;
+      const SEED_AGE = 1, ADVANCE_S = 0.1;
+      const drift = Math.min(WIND_DRIFT_CAP, WIND_STRENGTH * (SEED_AGE + ADVANCE_S));
+      await page.evaluate(([dx, dz]) => {
+        window.ForestEngine?.qaSeedScentPoint?.(dx, dz, 1);
+      }, [fx * FORWARD_DIST - wind.windX * drift, fz * FORWARD_DIST - wind.windZ * drift]);
+      await qaHook(page, 'qaAdvance', stepsFor(ADVANCE_S));
+
+      const probe = await qaHook(page, 'qaProbeScentTrail');
+      expect(probe.points.some((p: { inFrustum: boolean }) => p.inFrustum), 'the seeded close point must be in frustum').toBe(true);
+      expect(probe.captionVisible).toBe(true);
+      const caption = page.locator('#scentTrailCaption');
+      await expect(caption).toBeVisible();
+      await assertInViewport(caption, page, '#scentTrailCaption');
+      await assertNoOverlap(page, '#scentTrailCaption', '#objective');
+      await assertNoOverlap(page, '#scentTrailCaption', '#actionPrompt');
+      await assertNoOverlap(page, '#scentTrailCaption', '#status');
+      await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=leftStick]');
+      await assertNoOverlap(page, '#scentTrailCaption', '[data-testid=rightStick]');
     });
 
     test('the Settings checkbox is a tappable 44px target and toggles the trail', async ({ page }) => {

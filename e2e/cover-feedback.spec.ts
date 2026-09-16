@@ -19,10 +19,50 @@
 // cadence (wiki systems/e2e-post-gpu-nondeterminism); real GPU rendering
 // (LUL-1910) removed that accident. A fixed step advance is exact regardless
 // of rig speed.
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { boot, enter, qaHook } from './helpers';
 
 const FIXED_DT = 0.02;
+
+// LUL-2734: qaAdvance() drives the browser's `stepFrame()` loop synchronously
+// inside a single `page.evaluate()` call -- if the rig is contended enough
+// that 250 real ticks of predator AI/collision/hint-scan work takes long
+// enough to trip Playwright's 30s test timeout, the failure is a bare "Test
+// timeout of 30000ms exceeded" with no way to tell whether the predator was
+// ever actually staged, moving, or already unblocked at the point things
+// slowed down (LUL-2611 ask #2, still unmet before this). Splitting the
+// advance into chunks and racing each one against its own budget doesn't
+// change the simulation at all (same total fixed-dt steps, same order) --
+// it only gives a hang or a genuine miss a specific chunk and a real
+// `qaPredatorState()` snapshot to fail with, whether that miss is a slow
+// rig or an actual regression in the cover-block logic.
+const ADVANCE_CHUNK = 25;
+const ADVANCE_CHUNK_TIMEOUT_MS = 6000;
+
+async function advanceWithDiagnostics(page: Page, predatorIdx: number, totalSteps: number) {
+  let lastState: unknown = null;
+  for (let done = 0; done < totalSteps; done += ADVANCE_CHUNK) {
+    const steps = Math.min(ADVANCE_CHUNK, totalSteps - done);
+    await Promise.race([
+      qaHook(page, 'qaAdvance', steps),
+      new Promise((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `qaAdvance(${steps}) did not return within ${ADVANCE_CHUNK_TIMEOUT_MS}ms ` +
+                  `(${done}/${totalSteps} fixed-dt steps already advanced) -- last known ` +
+                  `predator state: ${JSON.stringify(lastState)}`,
+              ),
+            ),
+          ADVANCE_CHUNK_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+    lastState = await qaHook(page, 'qaPredatorState', predatorIdx);
+  }
+  return lastState;
+}
 
 test.describe('cover-state feedback (LUL-144)', () => {
   test('a predator with clear line of sight in the open reads as exposed, not covered', async ({ page }) => {
@@ -47,7 +87,18 @@ test.describe('cover-state feedback (LUL-144)', () => {
   });
 
   test('a chasing predator blocked by real cover reads as covered, with no H press needed', async ({ page }) => {
-    test.setTimeout(30_000);
+    // 250 steps / ADVANCE_CHUNK(25) = 10 chunks, each individually allowed up
+    // to ADVANCE_CHUNK_TIMEOUT_MS(6000) before the per-chunk diagnostic trips
+    // -- worst-case healthy total is 10*6000=60000ms before qaPredatorState
+    // overhead/boot. A 30_000ms test-level timeout is under half that, so on
+    // a rig slow enough to need the diagnostic at all, Playwright's own test
+    // timeout won the race every time (nightly 2026-09-16 0745 run, HEAD
+    // 569bc47e: both retries died with the generic "Test timeout of 30000ms
+    // exceeded" pointing at qaHook's page.evaluate, never our chunk error --
+    // the per-chunk diagnostic added by LUL-2734/PR#672 never got a chance to
+    // fire). Matching this to the real worst case, with margin, actually lets
+    // the diagnostic do its job instead of being pre-empted by the outer cap.
+    test.setTimeout(75_000);
     // LUL-2611: `boot()` already defaults to `qaWorld: 'micro'` (LUL-2377) --
     // the LUL-2329 migration-spec comment this used to carry ("left on the
     // full map") was stale; this test has been running on the micro world
@@ -73,9 +124,15 @@ test.describe('cover-state feedback (LUL-144)', () => {
     // the signal must flip purely off standing behind the prop the hook
     // placed the player at -- proving the ticket's actual premise, not just
     // that the signal exists. A generous step budget (250 fixed-dt steps =
-    // 5s game time) replaces the old 5s wall-clock poll timeout.
-    await qaHook(page, 'qaAdvance', 250);
+    // 5s game time) replaces the old 5s wall-clock poll timeout. Chunked via
+    // advanceWithDiagnostics (LUL-2734) so a hang or a genuine miss reports
+    // the predator's actual state instead of a bare Playwright timeout.
+    const finalState = await advanceWithDiagnostics(page, idx, 250);
     const covered = await page.evaluate(() => document.body.dataset.losCovered ?? null);
-    expect(covered, 'document.body.dataset.losCovered never flipped to "1" behind real cover').toBe('1');
+    expect(
+      covered,
+      `document.body.dataset.losCovered never flipped to "1" behind real cover -- ` +
+        `final predator state: ${JSON.stringify(finalState)}`,
+    ).toBe('1');
   });
 });

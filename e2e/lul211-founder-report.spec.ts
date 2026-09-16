@@ -30,8 +30,8 @@
 //     That is an intentional, scoped exception, not a regression of this bug:
 //     rock is still fully solid to the player. LUL-1642 (2026-09-06) extended
 //     the same walkable exemption from `log` alone to every WALKABLE_KINDS
-//     entry, so bramble now matches log exactly for movement -- see the
-//     second describe block below, which covers both. LUL-2311 later removed
+//     entry, so bramble now matches log exactly for movement -- migrated to
+//     e2e/log-collision.spec.ts (LUL-2685), which covers both. LUL-2311 later removed
 //     `log` from hide-spot eligibility specifically (HIDE_KINDS narrowed to
 //     bramble only) -- walkability and hide-eligibility are independent axes
 //     as of that ticket; this file's walkability coverage below is unaffected.
@@ -147,7 +147,12 @@ test.describe('LUL-211: cover props are solid @fullmap', () => {
   // past a face by extra frame slack, it was walking straight through a prop
   // that stopped blocking movement three days earlier and only halting at
   // whatever obstacle came next.
-  for (const kind of ['rock', 'tree'] as const) {
+  // LUL-2684 (LUL-2667 child 1/6): 'rock' migrated to e2e/rock-collision.spec.ts
+  // (qaWorld=micro, qaBuildScene places an exact rock with no rng) -- the
+  // @fullmap boot here was never a requirement of the mechanic, only of the
+  // old search-the-real-seed staging. 'tree' stays @fullmap for now (LUL-2667
+  // child 5 migrates it and then removes this file from FULLMAP_ALLOWLIST).
+  for (const kind of ['tree'] as const) {
     test(`walking straight into a ${kind} does not pass through it`, async ({ page }) => {
       test.setTimeout(45_000);
       await boot(page, { qaWorld: 'full',  qaHooks: true });
@@ -189,91 +194,8 @@ test.describe('LUL-211: cover props are solid @fullmap', () => {
   }
 });
 
-test.describe('LUL-384/LUL-1642: log and bramble are walkable @fullmap', () => {
-  // LUL-1642 (2026-09-06) extended LUL-384's log-only walkable exemption to
-  // every HIDE_KINDS entry (coverKindBlocksMovement(), lib/game/cover.ts), so
-  // bramble now gets the exact same treatment as log. Parametrized rather
-  // than a second copy-pasted test -- the two kinds share one predicate.
-  for (const kind of ['log', 'bramble'] as const) {
-  test(`walking straight into a ${kind} passes over it instead of stopping at its face`, async ({
-    page,
-  }) => {
-    test.setTimeout(45_000);
-    await boot(page, { qaWorld: 'full',  qaHooks: true });
-    await enter(page);
-
-    // Same staging hook as the solid-props test above -- it computes the
-    // standoff a *blocking* prop of this footprint would need, which still
-    // works fine as a starting point for a walkable kind: it just means the
-    // walk below starts at (and then crosses) where a wall would have been.
-    const staged = await page.evaluate((k) => window.ForestEngine?.qaStageWalkIntoCover?.(k), kind);
-    expect(staged, `no reachable ${kind} to stage against`).not.toBeNull();
-    const { prop, start } = staged!;
-    expect(start.x, 'staged start is already inside the prop').toBeLessThan(prop.x - prop.hx);
-
-    // Mirror of the solid-prop face-boundary math: the near face is at
-    // prop.x + faceDx (faceDx <= 0), so the far face is the same offset
-    // reflected through the centre.
-    const ry = prop.ry ?? 0;
-    const absCos = Math.max(Math.abs(Math.cos(ry)), 1e-6);
-    const absSin = Math.max(Math.abs(Math.sin(ry)), 1e-6);
-    const faceDx = Math.max(-(prop.hx + 0.6) / absCos, -(prop.hz + 0.6) / absSin);
-    const nearFaceX = prop.x + faceDx;
-    const farFaceX = prop.x - faceDx;
-
-    // A short real walk still proves actual keyboard-driven movement engages
-    // the approach (a genuinely wedged player would fail this weak bar too)
-    // -- see the solid-props loop above for the same 0.3-unit floor.
-    await page.keyboard.down('KeyW');
-    await page.waitForTimeout(1_000);
-    await page.keyboard.up('KeyW');
-    await page.waitForTimeout(200);
-    const midway = (await page.evaluate(() => window.ForestEngine?.qaProbePlayer?.()))!;
-    expect(midway.x, `the player never moved toward the ${kind}`).toBeGreaterThan(start.x + 0.3);
-
-    // The definitive "no collision bug on this prop" claim is checked by
-    // sampling blocked() -- the exact predicate real movement gates on --
-    // directly across the prop's full footprint, near face to far face and a
-    // margin past it. This is deterministic and independent of how many
-    // animation frames actually ran during the walk above, unlike asserting
-    // a specific end position reached within a fixed wall-clock window
-    // (LUL-384 found that this specific window undershoots under CI's
-    // rendering load -- same class of flake as LUL-421's charge-dodge
-    // wall-clock assertions, wiki: systems/dt-clamp-vs-walltime).
-    //
-    // LUL-554: this used to be N *sequential, awaited* page.evaluate() calls,
-    // one per 0.2-unit step. Each round-trip pays the full CDP cost of
-    // waiting for the page's main thread (mid-render of the WebGL scene) to
-    // go idle -- fine in isolation, but on the combined release/next+main
-    // merge tree, two new spec files from main (blind-chase-cover.spec.ts,
-    // charge-dodge.spec.ts) run alphabetically before this one in the same
-    // single-worker, non-parallel session (playwright.config.ts: workers: 1,
-    // fullyParallel: false) and load the renderer enough that N sequential
-    // round-trips blew this test's explicit 45s budget -- confirmed by
-    // reproducing the actual merge tree locally (identical log candidate,
-    // same near/far face values as the original CI failure) and observing
-    // the failure only manifests under that heavier combined-suite ordering,
-    // not against release/next alone. Sampling inside a single evaluate()
-    // pays the round-trip cost once, independent of step count or session
-    // load, without changing what's being asserted.
-    const sampleFromX = nearFaceX - 0.5;
-    const sampleToX = farFaceX + 0.5;
-    const step = 0.2;
-    const blockedSamples = await page.evaluate(
-      ({ fromX, toX, step, z }) => {
-        const samples: { x: number; blocked: boolean }[] = [];
-        for (let x = fromX; x <= toX; x += step) {
-          samples.push({ x, blocked: !!window.ForestEngine?.qaProbeBlocked?.(x, z) });
-        }
-        return samples;
-      },
-      { fromX: sampleFromX, toX: sampleToX, step, z: prop.z },
-    );
-    const firstBlocked = blockedSamples.find((s) => s.blocked);
-    expect(
-      firstBlocked,
-      `blocked(x=${firstBlocked?.x.toFixed(2)}, z=${prop.z.toFixed(2)}) is true somewhere across the ${kind}'s span (near face x=${nearFaceX.toFixed(2)}, far face x=${farFaceX.toFixed(2)}) -- LUL-384/LUL-1642 require the whole ${kind} to be collision-free for the player`,
-    ).toBeUndefined();
-  });
-  }
-});
+// LUL-2685 (LUL-2667 child 2/6): the 'LUL-384/LUL-1642: log and bramble are
+// walkable' describe block that used to live here (both the 'log' and
+// 'bramble' iterations) migrated to e2e/log-collision.spec.ts
+// (qaWorld=micro) -- see docs/specs/lul-2667-log-collision-micro.md for why
+// bramble moved too instead of leaving a one-item @fullmap loop behind.

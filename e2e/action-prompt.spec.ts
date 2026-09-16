@@ -18,19 +18,25 @@
 // 6. #actionSlot's five rows are always mounted, in the founder's stated
 //    priority order (charge > objective > hide/veil > throwable > status),
 //    regardless of which currently have content.
-import { test, expect } from '@playwright/test';
+// 7. LUL-2336: qaForceAllActionRows() puts all five rows live with real
+//    content at once (no real playthrough state does) -- none of their
+//    bounding boxes intersect, at 1280x720 and at a narrow mobile landscape
+//    width.
+import { test, expect, type Page } from '@playwright/test';
 import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
-// LUL-2107: the 3 cases below that stage a chasing predator (urgent
+// LUL-2107: the cases below that stage a chasing predator (urgent
 // cover-prompt class, the 390px nowrap/mobile-collision check, and reduced
 // motion) drive the throttled cover probe (COVER_PROBE_HZ, engine/forest-
 // engine.js ~4710) via qaSetFixedStep/qaAdvance instead of a real-wall-clock
 // page.waitForTimeout -- that wait only reliably crossed the probe's 1/6s
 // hand-accumulated `coverProbeAccum += dt` threshold (dilated at low FPS, see
 // wiki systems/dt-clamp-vs-walltime) under swiftshader's incidental frame
-// cadence, which real GPU rendering (LUL-1910) no longer guarantees. The
-// calm-cover-prompt and cover-wins-over-veil cases above are not in this
-// ticket's listed scope and stay on the real RAF loop.
+// cadence, which real GPU rendering (LUL-1910) no longer guarantees.
+// LUL-2804: "cover wins over veil" below joined that group (it also stages a
+// chase) -- migrated off its 350ms page.waitForTimeout, same reasons. The
+// calm-cover-prompt case does not stage a predator at all, so it stays on the
+// real RAF loop with its own plain page.waitForTimeout.
 const FIXED_DT = 0.02;
 const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 
@@ -111,13 +117,29 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     // fired before data-tone could ever read "urgent". Use the hook built for
     // "cover + chasing, sighted lion at once, standoff far enough to not
     // catch" instead -- the same one "cover wins over veil" below relies on.
+    //
+    // LUL-2804: qaSetFixedStep() must be called *before* this hook, not after
+    // -- same hazard LUL-2283 already fixed for predator-determinism.spec.ts/
+    // map-seed.spec.ts. qaOpenHideNearLionAtHideSpot() flips the lion into
+    // 'chase'+hunt=true synchronously; as long as the real RAF loop is still
+    // running (it only parks once qaSetFixedStep() cancels the pending
+    // frame), every real-wall-clock frame between this call and that one
+    // moves the lion at its real tuning.js speed, off LION_STANDOFF's
+    // closing-time budget entirely. Locally negligible under fast GPU
+    // rendering, but under CI's swiftshader path (slower frames, slower CDP
+    // round trips) enough real frames land in that gap to close most of the
+    // 14-unit standoff before the "controlled" 0.5s window even starts --
+    // confirmed live (CI=1): pre-qaSetFixedStep distance already down to
+    // ~5-7 units, ending the test's 0.5s qaAdvance with the player caught
+    // and #deathScreen up, never reading data-tone="urgent". Parking first
+    // makes staging itself deterministic, same as the two precedents above.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
     expect(staged, 'qaOpenHideNearLionAtHideSpot returned null — no hide spot or lion at this seed').not.toBeNull();
 
-    // LUL-2107: park the real RAF loop and advance enough game time
-    // (well over the probe's 1/6s threshold) to force the throttled cover
-    // probe to fire and pushState to propagate, deterministically.
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    // LUL-2107: advance enough game time (well over the probe's 1/6s
+    // threshold) to force the throttled cover probe to fire and pushState to
+    // propagate, deterministically.
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     await expectRowVisible(page, 'actionPrompt');
@@ -136,6 +158,18 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     // -- both cover and veil conditions true at once, hasLOS() is unblocked by
     // the prop itself, and the lion is far enough out it can't close to catch
     // range before this test's own assertions run (LUL-2358).
+    //
+    // LUL-2804: this test was deliberately left on the real RAF loop by
+    // LUL-2107 (see the top-of-file note) with a 350ms page.waitForTimeout --
+    // the same wall-clock-vs-game-time gap the "urgent cover prompt" test
+    // above was just fixed for (LUL-2283 pattern: qaSetFixedStep() before any
+    // hook that starts a chase, not after). Under CI's swiftshader path that
+    // wait is both too short (dt-clamp dilation, wiki systems/dt-clamp-vs-
+    // walltime) to reliably cross the cover probe's 1/6s threshold *and*
+    // exposed to the same uncontrolled real-time chase progress between
+    // staging and the wait actually starting -- migrate to qaSetFixedStep/
+    // qaAdvance like every neighboring case this file already uses.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
     expect(staged, 'qaOpenHideNearLionAtHideSpot returned null — no hide spot or lion at this seed').not.toBeNull();
 
@@ -148,7 +182,7 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     );
     expect(lionState?.canSee, 'Staged lion must have line of sight to player (both conditions must hold)').toBe(true);
 
-    await page.waitForTimeout(350);
+    await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     await expectRowVisible(page, 'actionPrompt');
     const text = await page.locator('#actionPrompt').textContent() ?? '';
@@ -179,8 +213,12 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     // sighted lion together -- see the comment on the "urgent cover prompt"
     // test above for why qaTeleportToHideSpot()+qaOpenHideNearLion() (used
     // here previously) never reaches data-tone="urgent".
-    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
+    //
+    // LUL-2804: qaSetFixedStep() before the staging hook, not after -- same
+    // LUL-2283 ordering fix as the "urgent cover prompt" test above; this
+    // test carries the identical live CI=1 failure otherwise.
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     await expectRowVisible(page, 'actionPrompt');
@@ -255,8 +293,12 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     // LUL-2358: see the comment on the "urgent cover prompt" test above for
     // why qaTeleportToHideSpot()+qaOpenHideNearLion() (used here previously)
     // never reaches data-tone="urgent".
-    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
+    //
+    // LUL-2804: qaSetFixedStep() before the staging hook, not after -- same
+    // LUL-2283 ordering fix as the "urgent cover prompt" test above; this
+    // test carries the identical live CI=1 failure otherwise.
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     await expectRowVisible(page, 'actionPrompt');
@@ -273,17 +315,105 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
   });
 });
 
+// LUL-2336: the five rows this hook forces -- deliberately excludes
+// pickupPrompt/winVisible/deathVisible, which qaForceAllActionRows doesn't
+// touch (pickupPrompt is mutually exclusive with throwPrompt by
+// construction, per Hud.tsx's own comment on that row).
+const FORCED_ROW_IDS = ['chargePrompt', 'objective', 'actionPrompt', 'throwPrompt', 'status'] as const;
+
+/** One evaluate() round-trip: each forced row's data-visible flag, trimmed
+ * text content and viewport-relative bounding box, read together so the
+ * layout can't shift between reads. */
+async function readActionRows(page: Page) {
+  return page.evaluate((ids: readonly string[]) => {
+    return ids.map((id) => {
+      const el = document.getElementById(id);
+      const rect = el?.getBoundingClientRect() ?? null;
+      return {
+        id,
+        visible: el?.getAttribute('data-visible') ?? null,
+        text: (el?.textContent ?? '').trim(),
+        rect: rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : null,
+      };
+    });
+  }, FORCED_ROW_IDS);
+}
+
+function rectsOverlap(a: { left: number; right: number; top: number; bottom: number },
+                       b: { left: number; right: number; top: number; bottom: number }) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+/** Shared body for both viewport sizes below: force all five rows, assert
+ * each is visible with real (non-empty) content, then assert no two of
+ * their boxes intersect. */
+async function assertAllFiveRowsNonOverlapping(page: Page) {
+  await qaHook(page, 'qaForceAllActionRows');
+
+  const rows = await readActionRows(page);
+  for (const row of rows) {
+    expect(row.visible, `#${row.id} must be forced visible`).toBe('1');
+    expect(row.rect, `#${row.id} must be mounted with a real box`).not.toBeNull();
+    expect(row.text.length, `#${row.id} must render real (non-empty) content, not an empty pill`).toBeGreaterThan(0);
+  }
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = i + 1; j < rows.length; j++) {
+      const a = rows[i], b = rows[j];
+      expect(rectsOverlap(a.rect!, b.rect!), `#${a.id} and #${b.id} must not overlap when all five rows are live`).toBe(false);
+    }
+  }
+}
+
+test.describe('#actionSlot — all five rows forced live at once (LUL-2336)', () => {
+  test('1280x720 desktop: no two rows overlap with real content in every row', async ({ page }) => {
+    const errs = trackConsoleErrors(page);
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+
+    // LUL-2107: freeze the real RAF loop first -- qaForceAllActionRows's own
+    // doc comment requires this so the next real stepFrame() tick doesn't
+    // immediately recompute the five flags back from live game state
+    // (coverPromptVisible/heldThrowable/statusVisible would all revert to
+    // false at this empty patch of the micro world).
+    await qaHook(page, 'qaSetFixedStep', 0.02);
+    await qaHook(page, 'qaAdvance', 1); // one real frame so objectiveText is the live computed string, not the boot default
+
+    await assertAllFiveRowsNonOverlapping(page);
+    expectNoConsoleErrors(errs);
+  });
+
+  test('narrow mobile landscape (844x390): no two rows overlap with real content in every row', async ({ page }) => {
+    // LUL-2410/LUL-2379 precedent in this file: OrientationGate
+    // (components/OrientationGate.tsx) blocks all portrait viewports at or
+    // under the isMobile() max-width:768px breakpoint, so "390px" here means
+    // the standard iPhone 12/13 mini *portrait* width (390) rotated into its
+    // landscape shape (844x390) -- same convention as this file's existing
+    // "Pixel 5 landscape, 851x393" / "iPhone SE landscape, 667x375" cases.
+    await page.setViewportSize({ width: 844, height: 390 });
+    const errs = trackConsoleErrors(page);
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await page.mouse.click(844 / 2, 390 / 2);
+    await page.waitForTimeout(1200); // gate fade settle (mobile has no pointer-lock to wait on)
+
+    await qaHook(page, 'qaSetFixedStep', 0.02);
+    await qaHook(page, 'qaAdvance', 1);
+
+    await assertAllFiveRowsNonOverlapping(page);
+    expectNoConsoleErrors(errs);
+  });
+});
+
 // LUL-2312: the founder's explicit requirement -- "stacked in a fixed
 // priority order" -- pinned as a DOM-order check independent of any gameplay
 // staging, so it can never silently drift if a future edit reorders the JSX
 // inside #actionSlot (components/Hud.tsx).
 test.describe('#actionSlot row order', () => {
-  test('five rows are always mounted, top to bottom in priority order', async ({ page }) => {
+  test('six rows are always mounted, top to bottom in priority order', async ({ page }) => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     const ids = await page.evaluate(() => Array.from(document.querySelectorAll('#actionSlot > *')).map((el) => el.id));
-    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'throwPrompt', 'status']);
+    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'throwPrompt', 'pickupPrompt', 'status']);
 
     // Every row exists (not conditionally mounted) even with nothing to show.
     for (const id of ids) {

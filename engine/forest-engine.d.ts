@@ -221,6 +221,7 @@ declare global {
         dist: number;
         canSee: boolean;
         rad: number;
+        moveRad: number;
         x: number;
         z: number;
         gaveUpAt: number | null;
@@ -534,6 +535,14 @@ declare global {
        * generic version of qaTeleportNearBaby/qaTeleportHome, for staging a
        * position (e.g. the bog center) that isn't a fixed named landmark. */
       qaTeleportTo?: (x: number, z: number) => void;
+      /** LUL-2336: force-sets chargeVisible/objectiveVisible/coverPromptVisible/
+       * heldThrowable/statusVisible all true on the real EngineHudState via
+       * pushState() (not fake DOM), so a spec can assert none of #actionSlot's
+       * five rows' bounding boxes intersect with real content in every row at
+       * once -- no real playthrough state has more than two of these true
+       * simultaneously. Call qaSetFixedStep() first so the next real
+       * stepFrame() tick doesn't immediately recompute them back. */
+      qaForceAllActionRows?: () => void;
     };
   }
 }

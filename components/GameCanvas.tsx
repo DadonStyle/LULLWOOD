@@ -50,7 +50,7 @@ const OVERLAY_STYLE = `
     --action-slot-row-charge: 48px;
     --action-slot-gap: 6px;
     --action-slot-bottom: 24px;
-    --action-slot-height: calc(var(--action-slot-row-charge) + (4 * var(--action-slot-row)) + (4 * var(--action-slot-gap))); }
+    --action-slot-height: calc(var(--action-slot-row-charge) + (5 * var(--action-slot-row)) + (5 * var(--action-slot-gap))); }
   canvas { display: block; }
 
   #vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none;
@@ -375,7 +375,7 @@ const OVERLAY_STYLE = `
      0.78, but that's a fixed viewport-height fraction while #actionSlot's reserved
      region (bottom: var(--action-slot-bottom), height: var(--action-slot-height),
      same vars #captionToast above keys off) is a fixed pixel band that differs per
-     breakpoint (24px/216px desktop vs. 190px/176px narrow) -- at a 720px-tall
+     breakpoint (24px/258px desktop vs. 190px/176px narrow) -- at a 720px-tall
      viewport, 0.78 already lands inside that band (562px vs. the band's 480px top
      edge), so translate(-50%,-120%)'s lift (which only clears ~20% of the pill's
      own height above the anchor) isn't enough on its own (LUL-2532: QA caught
@@ -444,8 +444,12 @@ const OVERLAY_STYLE = `
   #runChronicle { list-style: none; margin: 4px 0 0; padding: 0; font-size: 12px;
     letter-spacing: 0.03em; color: #a99; text-align: left; max-width: 360px; }
   #runChronicle li { margin: 2px 0; }
-  .emberGain { color: #ffdca8; font-weight: 500; }
-  .emberLoss { color: #ff8a8a; font-weight: 500; }
+  /* LUL-2727: without nowrap, a narrow landscape phone can break these spans'
+     text across two lines, which balloons their inline bounding box to span
+     both lines and geometrically overlap the previous line's content even
+     though nothing is actually drawn on top of anything. */
+  .emberGain { color: #ffdca8; font-weight: 500; white-space: nowrap; }
+  .emberLoss { color: #ff8a8a; font-weight: 500; white-space: nowrap; }
   .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px;
     /* LUL-1088 CASCADE-ORDER BUG GUARD: the mobile-only .restartBtn override up
@@ -486,7 +490,8 @@ const OVERLAY_STYLE = `
        2. objective (E)  (lift the child / mist-charm / drowned car / distance)
        3. hide or veil   (H/Hide or F/Veil -- cover always wins over veil)
        4. throwable      (holding a stone -- click / tap Throw)
-       5. status         (hidden / hunted)
+       5. pickup (E)     (LUL-2614: grab a stone -- mutually exclusive with row 4)
+       6. status         (hidden / hunted)
      --action-pill-* custom properties are the "same tokens" requirement --
      the exact values #objective's pill used to hardcode, now named once and
      shared by every row via components/ActionPrompt.tsx's .actionPromptLine.
@@ -495,13 +500,19 @@ const OVERLAY_STYLE = `
      html, body rule above); --action-slot-height derives the slot's total
      footprint from them so #captionToast (below) can sit just above it
      without restating the arithmetic. */
-  /* LUL-1088 precedent: a landscape phone is short, not narrow -- five stacked
+  /* LUL-1088 precedent: a landscape phone is short, not narrow -- six stacked
      rows plus the mobile control-row clearance below them does not fit a
      ~390px-tall viewport (e.g. Pixel 5 landscape, 851x393) at the desktop row
      sizes above. Tighten rows/gap and (combined with the mobile query below)
      the slot's own clearance specifically, without touching #panel's. */
   @media (max-height: 420px) {
-    html, body { --action-slot-row: 30px; --action-slot-row-charge: 40px; --action-slot-gap: 4px; }
+    /* LUL-2614: row/gap shrunk from 30px/4px so the new 6th row (#pickupPrompt)
+       still sums to the same 176px --action-slot-height as before (40 + 5*24 +
+       5*3.2 = 176, was 40 + 4*30 + 4*4 = 176) -- every downstream pixel-math
+       comment below (LUL-2410/2418/2459/2594) was tuned against that 176px
+       figure with as little as 1px of margin, so preserving the total instead
+       of letting it grow with the row count avoids re-deriving all of it blind. */
+    html, body { --action-slot-row: 24px; --action-slot-row-charge: 40px; --action-slot-gap: 3.2px; }
   }
   @media (max-height: 420px) and (pointer: coarse) and (hover: none),
          (max-height: 420px) and (max-width: 768px) {
@@ -552,52 +563,37 @@ const OVERLAY_STYLE = `
        bottom edge, 100vh - action-slot-bottom, plus a small gap) instead of
        bottom, and narrow max-width so it can't reach either stick column on the
        narrowest supported width (iPhone SE landscape, 667px). */
+    /* LUL-2743: the world-anchored keys (scent/wolf/bear/lion/cover/throwable,
+       WORLD_HINT_KEYS in Hud.tsx) used to get their own rule here (LUL-2459/
+       LUL-2594, tuning a ceiling formula so the pill would float clear above
+       #actionSlot). That ceiling IS #actionSlot's own top edge -- 100% -
+       action-slot-bottom - action-slot-height, 27px on Pixel 5 landscape
+       (851x393), 9px on iPhone SE landscape (667x375) -- and the base rule's
+       translate(-50%,-120%) needs ~1.2x the pill's own rendered height of
+       clearance above that edge to avoid drawing over #actionSlot. A real
+       two-line pill (this family's text routinely wraps at the 240px
+       max-width below) is ~40-57px tall, so iPhone SE landscape would need
+       the ceiling to sit >=1.2x that above y=0 -- no ceiling tuning gets
+       there since the ceiling is already capped at 9px; LUL-2594's fix
+       narrowed the gap but the viewport is structurally too short to float
+       a pill of this height above #actionSlot at all (confirmed offscreen
+       again on LUL-2631/LUL-2743). Per the LUL-2410/LUL-2418 precedent above
+       -- stop repositioning once there's nowhere left to reposition to --
+       these keys now share the self-anchored family's one proven-safe slot
+       instead of world-anchoring at this breakpoint. Safe to combine
+       unconditionally: HINT_PRIORITY (forest-engine.js) shows only one hint
+       key at a time, and #scentTrailCaption/#hintCaption are mutually
+       exclusive by key (Hud.tsx), so this family and the self-anchored one
+       below never render at the same time. */
     #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
     #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
-    #hintCaption[data-hint-key="landmark"] {
-      top: calc(100vh - var(--action-slot-bottom) + 12px); bottom: auto;
-      max-width: min(60vw, 300px);
-    }
-    /* LUL-2459: the world-anchored keys (scent + WORLD_HINT_KEYS' still-unshipped
-       wolf/bear/lion/cover/throwable, Hud.tsx) track a real 3D point via the
-       engine's projectToScreen (forest-engine.js) and can land anywhere across
-       [8%,92%] of the viewport width -- unlike the self-anchored family above,
-       there's no fixed safe spot to re-home them to, so HINT_Y_MAX (LUL-2445)
-       alone doesn't help here: MobileControls.tsx's side control column (a
-       48px-radius stick + the row above it, 128px wide, plus the wrapper's 20px
-       edge padding = 148px) sits at a height that tracks viewport *height*, not
-       just the very bottom, so it can fall inside this caption's y-range on a
-       short viewport regardless of its own x-position. Confirmed on iPhone SE
-       landscape (667x375): the up-to-60vw/400px pill reached touchHide 7px past
-       its left edge even though its anchor (58.7% of 667px) wasn't near either
-       screen edge. Capping the pill at 240px (half 120px) and clamping its
-       centre to stay >=156px (148px control-column margin + 8px buffer) from
-       each edge -- minus that half-width -- keeps the rendered box clear of
-       both side columns on every viewport this breakpoint covers, without a
-       per-viewport branch (same one-global-constant approach LUL-2445 used for
-       HINT_Y_MAX). --hint-left is the raw engine fraction (Hud.tsx); the base
-       rule above uses it directly outside this breakpoint.
-       LUL-2594: the base #scentTrailCaption/#hintCaption rule's top clamp
-       (above) reserves an extra 24px of translate(-120%) lift headroom on top
-       of --action-slot-bottom + --action-slot-height -- fine at the taller
-       desktop/default action-slot-height (216px), but at this breakpoint's
-       compressed rows (176px) + raised --action-slot-bottom (190px), that
-       26px-taller reservation collapses the ceiling to ~3px on a 393px-tall
-       viewport (Pixel 5 landscape), pushing the whole pill's translate(-120%)
-       box fully above y=0 ("offscreen" per the local-qa layout audit,
-       LUL-2594/2631). #actionSlot's own top edge already sits at
-       100% - action-slot-bottom - action-slot-height (~27px here) with no
-       extra margin needed above it for this family (unlike the self-anchored
-       bottom-anchored rule above, this one floats above its anchor, not
-       flush against the slot) -- reclaim that 24px so the ceiling matches
-       #actionSlot's real top edge instead of a fixed value tuned for a
-       taller breakpoint. */
-    #scentTrailCaption, #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
+    #hintCaption[data-hint-key="landmark"], #scentTrailCaption,
+    #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
     #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
     #hintCaption[data-hint-key="throwable"] {
-      max-width: 240px;
-      left: clamp(276px, var(--hint-left, 50%), calc(100vw - 276px));
-      top: min(var(--hint-top, 50%), calc(100% - var(--action-slot-bottom) - var(--action-slot-height)));
+      left: 50%; top: calc(100vh - var(--action-slot-bottom) + 12px); bottom: auto;
+      transform: translateX(-50%);
+      max-width: min(60vw, 300px);
     }
     /* LUL-2694: #winText/#deathText's max-height: calc(100dvh - 48px) +
        overflow-y: auto (below) already handles #runChronicle overrun
@@ -634,7 +630,7 @@ const OVERLAY_STYLE = `
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
     z-index: 12; display: grid;
-    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
+    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
     row-gap: var(--action-slot-gap); justify-items: center; pointer-events: none; }
 
   .actionPromptRow { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; }

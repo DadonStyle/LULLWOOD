@@ -237,11 +237,51 @@ function prAttributedToIssue(pr, issue) {
   return prTitleReferencesIssue(pr, issue) || prBranchReferencedByIssue(pr, issue);
 }
 
+// LUL-2768: "all attributed PRs merged" answers is-the-code-done, not
+// is-the-ticket-done -- a ticket can name its own real remaining condition
+// as an external event (LUL-2734: 2 consecutive green nightly runs of two
+// e2e specs on a HEAD past a named commit) that no PR merge satisfies. A
+// SHIPPED tombstone re-fired a near-identical wake/redispatch ticket on
+// LUL-2734 five times in one day (LUL-2741/2742/2744/2746/2747), each
+// requiring a manual gh pr view + nightly-run-HEAD comparison to re-confirm
+// the same false positive. Convention: the issue's own assignee posts a
+// comment with a line starting "external-unblock:" naming the real
+// condition. Only that agent's own statement counts (nobody else can
+// override how the assignee reads their own ticket), and only one posted
+// after the most recently merged attributed PR counts -- an older statement
+// might already have been satisfied by a since-merged PR, so it cannot
+// override what the PR-merge heuristic now sees; a newer one is the
+// assignee re-affirming the ticket is not actually done despite the merge.
+const EXTERNAL_UNBLOCK_RE = /^\**external-unblock:\**\s*(.+)$/im;
+
+function mostRecentMergeMs(mergedPrs) {
+  const merges = mergedPrs.map((pr) => (pr.merged_at ? Date.parse(pr.merged_at) : NaN)).filter(Number.isFinite);
+  return merges.length > 0 ? Math.max(...merges) : -Infinity;
+}
+
+function findExternalUnblockStatement(issue, mergedPrs) {
+  if (!issue.assigneeAgentId) return null;
+  const cutoffMs = mostRecentMergeMs(mergedPrs);
+  let latest = null;
+  let latestMs = -Infinity;
+  for (const comment of issue.comments ?? []) {
+    if (comment.authorAgentId !== issue.assigneeAgentId) continue;
+    const match = EXTERNAL_UNBLOCK_RE.exec(comment.body ?? '');
+    if (!match) continue;
+    const postedMs = comment.createdAt ? Date.parse(comment.createdAt) : NaN;
+    if (!Number.isFinite(postedMs) || postedMs <= cutoffMs) continue;
+    if (postedMs <= latestMs) continue;
+    latestMs = postedMs;
+    latest = { statement: match[1].trim(), comment };
+  }
+  return latest;
+}
+
 // prByNumber: Map<number, pr> where pr is the shape of
 // GET /repos/{repo}/pulls/{number} (needs `merged`, `state`, `merge_commit_sha`,
-// `title`, `head.ref`). A referenced number absent from the map (the lookup
-// 404'd, or was never attempted) resolves to neither merged nor open -- it
-// can't manufacture a SHIPPED verdict, but a genuinely merged,
+// `merged_at`, `title`, `head.ref`). A referenced number absent from the map
+// (the lookup 404'd, or was never attempted) resolves to neither merged nor
+// open -- it can't manufacture a SHIPPED verdict, but a genuinely merged,
 // correctly-attributed sibling reference still can. A referenced PR that is
 // not attributed to this issue's own ticket id -- see prAttributedToIssue
 // above -- is dropped before either merged/open bucket.
@@ -257,6 +297,10 @@ function classifyDisposition(issue, prByNumber) {
   const mergedPrs = attributed.filter((pr) => pr.merged);
   const stillOpenPrs = attributed.filter((pr) => pr.state === 'open');
   if (mergedPrs.length > 0 && stillOpenPrs.length === 0) {
+    const unblock = findExternalUnblockStatement(issue, mergedPrs);
+    if (unblock) {
+      return { issue, disposition: 'EXTERNALLY_BLOCKED', referencedPrs, mergedPrs, unblock };
+    }
     return { issue, disposition: 'SHIPPED', referencedPrs, mergedPrs };
   }
   return { issue, disposition: 'STRANDED', referencedPrs, mergedPrs };
@@ -268,8 +312,10 @@ function classifyTombstones(tombstones, prByNumber) {
 
 // STRANDED first: that is the half of the report that actually needs a human
 // or an agent to do work. SHIPPED entries are three-line PATCHes.
+// EXTERNALLY_BLOCKED needs no action at all (LUL-2768) -- the assignee has
+// already named the real remaining condition -- so it sorts last.
 function sortTombstonesStrandedFirst(classified) {
-  const rank = { STRANDED: 0, SHIPPED: 1 };
+  const rank = { STRANDED: 0, SHIPPED: 1, EXTERNALLY_BLOCKED: 2 };
   return [...classified].sort((a, b) => rank[a.disposition] - rank[b.disposition]);
 }
 
@@ -398,6 +444,76 @@ function isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, now
   return daysSinceClose < reAlarmDays;
 }
 
+// LUL-2757: LUL-810's Alarm D asks the issue's own assignee to "re-check and
+// advance/cancel" a request_confirmation, but a `request_confirmation`
+// created by an agent can only be accepted/rejected by a board/user actor
+// (live-confirmed: `POST /api/issues/{id}/interactions/{id}/reject` -> 403
+// "Agent actors cannot resolve issue-thread interactions through this
+// board-only route"). If the founder never opens the card, re-filing the
+// identical routine ticket cycle after cycle cannot ever close the loop --
+// it fired 11 times on LUL-359 alone (2026-08-28 to 2026-09-16) with zero
+// net progress. Past this many routine re-flags of the SAME interaction,
+// stop asking an agent to do the impossible.
+const STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD = 3;
+
+// How long to stay quiet between escalation tickets to the CEO once the
+// threshold above has been crossed, so a CEO who re-checks and closes
+// without being able to resolve it (same structural gap) isn't re-paged
+// every sweep either. Reuses STALE_CONFIRMATION_DAYS: this is still "how
+// long is it reasonable to wait on a human", the same tradeoff Alarm D's
+// own cooldown already makes.
+const STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS = STALE_CONFIRMATION_DAYS;
+
+// closedWakeIssues: done/cancelled issues (title + description is all this needs).
+// marker: the ROUTINE marker (staleConfirmationWakeMarker(issue)), never the
+// escalation marker -- an escalation ticket's own close must not inflate
+// this count.
+// interactionId: interaction.id -- scopes the count to THIS confirmation, so
+// a fresh re-ask (a new interaction id on the same issue) starts back at 0,
+// the same per-confirmation scoping LUL-827 defect 1 already established.
+function countPriorStaleConfirmationWakes(closedWakeIssues, marker, interactionId) {
+  let count = 0;
+  for (const closed of closedWakeIssues ?? []) {
+    if (!(closed.title ?? '').startsWith(marker)) continue;
+    if (!(closed.description ?? '').includes(`id ${interactionId})`)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+function staleConfirmationEscalationMarker(issue) {
+  return `${WAKE_MARKER_PREFIX} ${issue.identifier ?? issue.id} has an agent-unresolvable request_confirmation`;
+}
+
+function staleConfirmationEscalationDescription({ issue, interaction, ageDays, priorFireCount }) {
+  return (
+    `Detected by scripts/board-integrity-check.mjs (LUL-2757): ${issue.identifier ?? issue.id} ` +
+    `("${issue.title}") has a \`request_confirmation\` (id ${interaction.id}) that has been ` +
+    `\`pending\` for ${Math.floor(ageDays)} days (since ${interaction.createdAt.slice(0, 10)}), ` +
+    `and the routine LUL-810 Alarm D ticket has already been re-filed ${priorFireCount} time(s) ` +
+    `on this exact interaction with zero net progress. An agent cannot accept or reject another ` +
+    `agent's request_confirmation (live 403: "Agent actors cannot resolve issue-thread ` +
+    `interactions through this board-only route") -- only a board/user actor can, so re-checking ` +
+    `and re-filing the same routine ticket cannot make further progress. This needs a founder ` +
+    `decision: either someone opens the card and answers it, or the issue is re-routed so the ` +
+    `confirmation is cancelled. See LUL-2757.`
+  );
+}
+
+// agentsById: Map<id, agent> (name, status), the same map callers already
+// build for the LUL-2066 paused-assignee guard. Matches by exact name (not
+// "CEO Board Assistant") and treats a paused CEO like no CEO at all, same
+// convention as nonPausedAssigneeId -- the caller's existing resolveSelfId()
+// fallback applies when this returns null.
+function resolveCeoAgentId(agentsById) {
+  for (const agent of agentsById.values()) {
+    if ((agent.name ?? '').trim().toLowerCase() === 'ceo' && isAvailableAgent(agent)) {
+      return agent.id;
+    }
+  }
+  return null;
+}
+
 // ---- Alarm E: assigned issue parked in backlog with no named gate ---------
 //
 // CEO ruling LUL-1125: "backlog must never contain an assigned, ungated
@@ -503,8 +619,13 @@ function formatReport(
   staleConfirmations = [],
   assignedBacklogNoGate = [],
 ) {
+  // EXTERNALLY_BLOCKED tombstones need no recovery action (LUL-2768's whole
+  // point), so they don't count toward the alarm or the header -- only
+  // STRANDED/SHIPPED entries do. They still get listed when the section
+  // renders for those actionable entries (test coverage above).
+  const actionableTombstoneCount = classifiedTombstones.filter((t) => t.disposition !== 'EXTERNALLY_BLOCKED').length;
   const hasAlarms =
-    classifiedTombstones.length > 0 ||
+    actionableTombstoneCount > 0 ||
     unownedPrs.length > 0 ||
     assignedBacklogNoGate.length > 0 ||
     zeroPullable?.alarm ||
@@ -517,19 +638,23 @@ function formatReport(
       `ALARM C: board has 0 todo/in_progress issues with ${zeroPullable.availableAgentCount} available agent(s) -- studio is stopped`,
     );
   }
-  if (classifiedTombstones.length > 0) {
+  if (actionableTombstoneCount > 0) {
     lines.push(
       '',
-      `${classifiedTombstones.length} tombstoned issue(s) -- blocked/in_review, no live blocker, no active ` +
+      `${actionableTombstoneCount} tombstoned issue(s) -- blocked/in_review, no live blocker, no active ` +
         'recovery action, no pending wake_assignee interaction:',
     );
-    for (const { issue: t, disposition, mergedPrs } of sortTombstonesStrandedFirst(classifiedTombstones)) {
-      const suffix =
-        disposition === 'SHIPPED'
-          ? ` -- SHIPPED, PR #${mergedPrs[0].number} merged${
-              mergedPrs[0].merge_commit_sha ? ` (${mergedPrs[0].merge_commit_sha})` : ''
-            }, close the ticket`
-          : ' -- STRANDED, needs work';
+    for (const { issue: t, disposition, mergedPrs, unblock } of sortTombstonesStrandedFirst(classifiedTombstones)) {
+      let suffix;
+      if (disposition === 'SHIPPED') {
+        suffix = ` -- SHIPPED, PR #${mergedPrs[0].number} merged${
+          mergedPrs[0].merge_commit_sha ? ` (${mergedPrs[0].merge_commit_sha})` : ''
+        }, close the ticket`;
+      } else if (disposition === 'EXTERNALLY_BLOCKED') {
+        suffix = ` -- EXTERNALLY_BLOCKED (code merged, waiting on: ${unblock.statement}), no wake ticket filed`;
+      } else {
+        suffix = ' -- STRANDED, needs work';
+      }
       lines.push(`  - ${t.identifier ?? t.id}: "${t.title}" (assignee ${t.assigneeAgentId ?? 'none'})${suffix}`);
     }
   }
@@ -654,13 +779,38 @@ async function fetchAgents(apiBase, companyId, apiKey) {
   return pcFetch(`${apiBase}/api/companies/${companyId}/agents`, apiKey);
 }
 
+// LUL-2809: a flat `limit=200` (the API's own cap is 1000/request, reachable
+// via `offset`) silently truncated this to an arbitrarily-ordered 200-item
+// sample. Live-verified against this board (2403 done issues): none of the
+// 11 known-prior LUL-359 stale-request_confirmation wake tickets were in a
+// limit=200 fetch, so isStaleConfirmationSuppressed/countPriorStaleConfirmationWakes
+// never saw the history they need -- LUL-2757's escalate-after-3-fires fix
+// was wired but functionally dead, and Alarm D kept re-filing the same
+// agent-unresolvable ticket every cycle (LUL-2304..LUL-2808, 12 cycles).
+// Page through with offset until a page comes back short of the page size.
+async function fetchAllIssuesByStatus(apiBase, companyId, apiKey, status) {
+  const pageSize = 1000;
+  const all = [];
+  let offset = 0;
+  for (;;) {
+    const page = await pcFetch(
+      `${apiBase}/api/companies/${companyId}/issues?status=${status}&limit=${pageSize}&offset=${offset}`,
+      apiKey,
+    );
+    all.push(...page);
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
+  return all;
+}
+
 // LUL-827: closed (done/cancelled) issues, so Alarm D can tell "this wake
 // ticket was closed while the confirmation was still pending" (a human-gated
 // item, suppress for the re-alarm cooldown) from "never filed one" (file it).
 async function fetchClosedIssuesForSuppressionCheck(apiBase, companyId, apiKey) {
   const [done, cancelled] = await Promise.all([
-    pcFetch(`${apiBase}/api/companies/${companyId}/issues?status=done&limit=200`, apiKey),
-    pcFetch(`${apiBase}/api/companies/${companyId}/issues?status=cancelled&limit=200`, apiKey),
+    fetchAllIssuesByStatus(apiBase, companyId, apiKey, 'done'),
+    fetchAllIssuesByStatus(apiBase, companyId, apiKey, 'cancelled'),
   ]);
   return [...done, ...cancelled];
 }
@@ -896,7 +1046,24 @@ async function fileWakeTickets(
   for (const { issue, interaction, ageDays } of staleConfirmations ?? []) {
     const marker = staleConfirmationWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
+    const escalationMarker = staleConfirmationEscalationMarker(issue);
+    if (hasOpenWakeTicket(openIssues, escalationMarker)) continue;
     if (isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, nowMs)) continue;
+
+    const priorFireCount = countPriorStaleConfirmationWakes(closedWakeIssues, marker, interaction.id);
+    if (priorFireCount >= STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD) {
+      if (isRecentWakeTicketSuppressed(allKnownWakeIssues, escalationMarker, nowMs, STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS)) continue;
+      const assigneeAgentId = resolveCeoAgentId(agentsById) ?? (await resolveSelfId());
+      await createWakeIssue(apiBase, companyId, apiKey, {
+        title: `${escalationMarker} (LUL-2757 detector)`,
+        description: staleConfirmationEscalationDescription({ issue, interaction, ageDays, priorFireCount }),
+        assigneeAgentId,
+        priority: 'critical',
+      });
+      filed.push({ kind: 'stale-confirmation-escalation', identifier: issue.identifier ?? issue.id, ageDays: Math.floor(ageDays), priorFireCount, assigneeAgentId });
+      continue;
+    }
+
     const assigneeAgentId = nonPausedAssigneeId(issue.assigneeAgentId, agentsById) ?? (await resolveSelfId());
     await createWakeIssue(apiBase, companyId, apiKey, {
       title: `${marker} (LUL-810 detector)`,
@@ -914,6 +1081,10 @@ async function fileWakeTickets(
 
   for (const classified of classifiedTombstones) {
     const { issue, disposition } = classified;
+    // LUL-2768: the assignee already named the real remaining condition --
+    // firing a wake ticket here is exactly the false-positive redispatch
+    // this disposition exists to stop, not new information for anyone.
+    if (disposition === 'EXTERNALLY_BLOCKED') continue;
     const marker = tombstoneWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
     if (isRecentWakeTicketSuppressed(allKnownWakeIssues, marker, nowMs)) continue;
@@ -1112,6 +1283,7 @@ export {
   prAttributedToIssue,
   classifyDisposition,
   classifyTombstones,
+  findExternalUnblockStatement,
   sortTombstonesStrandedFirst,
   tombstoneWakeTitle,
   tombstoneWakeDescription,
@@ -1122,6 +1294,12 @@ export {
   isRecentWakeTicketSuppressed,
   WAKE_REFILE_COOLDOWN_DAYS,
   STALE_CONFIRMATION_DAYS,
+  STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD,
+  STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS,
+  countPriorStaleConfirmationWakes,
+  staleConfirmationEscalationMarker,
+  staleConfirmationEscalationDescription,
+  resolveCeoAgentId,
   isAssignedBacklogNoGate,
   findAssignedBacklogNoGate,
   assignedBacklogNoGateWakeMarker,

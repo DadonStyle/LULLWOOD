@@ -24,6 +24,10 @@ export const CONFIG = {
                           // enough -- a full-speed predator can still wander/chase into a scripted
                           // QA teleport target well within a scenario's ~8s window on the shrunk
                           // map. applyQaWorldMicroPreset() scales this down too. 1 = full-map default.
+  missionScaleMul: 1,     // LUL-2578: mission target position multiplier; applyQaWorldMicroPreset()
+                          // scales this down so the deepwater mission's fixed MISSION_POOL
+                          // coordinates land inside the shrunk map's movement-clamp bounds.
+                          // 1 = full-map, no-op default.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
@@ -218,6 +222,9 @@ export function applyQaWorldMicroPreset(){
   CONFIG.speedScaleMul = 0.2;    // LUL-2422: same 96/480 ratio -- keeps a predator's crossing time
                                   // across the shrunk map proportional to the full map, so scripted
                                   // qaTeleportNear*/staged scenarios keep the same safety window.
+  CONFIG.missionScaleMul = 0.2;  // LUL-2578: same 96/480 ratio -- keeps the deepwater mission's
+                                  // target inside the shrunk map's movement-clamp bounds so it
+                                  // stays completable (and qaTeleportNearMission() lands legally).
 }
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two

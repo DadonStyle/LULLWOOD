@@ -114,6 +114,9 @@ export interface EngineHudState {
   // a stone" prompt, mirroring objectiveReady's role for the child.
   heldThrowable: boolean;
   canGrabThrowable: boolean;
+  // LUL-2614: free re-arms of heldThrowable left this run (Pocket Stones),
+  // rendered as the #throwPrompt suffix.
+  throwablesReserve: number;
   // LUL-1258: M2 Deepwater's minimal HUD panel. Both null whenever no mission
   // exists or the player is carrying (the engine never sends non-null values
   // in that case) -- Hud never has to know about `carrying` itself.
@@ -265,6 +268,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   newRecord: false,
   heldThrowable: false,
   canGrabThrowable: false,
+  throwablesReserve: 0,
   missionKind: null,
   missionStatus: null,
   missionUnlocks: { deepwater: false },
@@ -604,8 +608,11 @@ function shopEffectCopy(id: string, tier: number): { current: string; next: stri
       next: `scent fades in ${effectiveScentLifetime(tier + 1).toFixed(1)}s`,
     };
   }
-  // pocketStones: single tier, tier is always 0 here (cost==null branch handles tier 1)
-  return { current: 'no reserve stones', next: `+${POCKET_STONES_RESERVE} throwables/run` };
+  // pocketStones: single tier. Owned (tier > 0) must not say "no reserve stones" -- that
+  // branch is reached by the maxed UI (:619-622) exactly when the player owns it (LUL-2614).
+  return tier > 0
+    ? { current: `+${POCKET_STONES_RESERVE} throwables/run`, next: `+${POCKET_STONES_RESERVE} throwables/run` }
+    : { current: 'no reserve stones', next: `+${POCKET_STONES_RESERVE} throwables/run` };
 }
 
 function EmbersShop({ balance, tiers, actions }: { balance: number; tiers: Record<string, number>; actions: EngineActions | null }) {
@@ -1079,8 +1086,22 @@ export default function Hud({
           id="throwPrompt"
           visible={state.heldThrowable && !state.winVisible && !state.deathVisible}
           tone="ready"
-          text={mobile ? 'Holding a stone — tap  ' : 'Holding a stone — click to throw'}
+          text={
+            mobile
+              ? `Holding a stone${state.throwablesReserve > 0 ? ` (+${state.throwablesReserve})` : ''} — tap  `
+              : `Holding a stone${state.throwablesReserve > 0 ? ` (+${state.throwablesReserve} in reserve)` : ''} — click to throw`
+          }
           keycap={mobile ? 'Throw' : undefined}
+        />
+        {/* LUL-2614: canGrabThrowable has been computed every frame since LUL-1623
+            (forest-engine.js) with no render site until this row -- Q10 of the
+            LUL-2612 checklist. Mutually exclusive with #throwPrompt by construction
+            (lib/game/outcome.ts's canGrabThrowable already excludes heldThrowable). */}
+        <ActionPrompt
+          id="pickupPrompt"
+          visible={state.canGrabThrowable && !state.winVisible && !state.deathVisible}
+          tone="calm"
+          text="Press  E  to pick up the stone"
         />
         {/* `hiding` is not a second flag: status only ever appears while hidden
             (LUL-35 pass 2 removed the `statusHiding` field, which the engine

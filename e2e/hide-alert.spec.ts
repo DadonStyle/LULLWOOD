@@ -32,6 +32,19 @@ async function enableCaptions(page: Page) {
   // identical workaround).
   await page.getByLabel('Captions for predator calls').evaluate((el) => (el as HTMLInputElement).click());
   await page.getByRole('button', { name: 'Close settings' }).evaluate((el) => (el as HTMLElement).click());
+  // LUL-2734: root-caused live (error-context.md captured #captionToast stuck
+  // on "something metal, underwater · far · left" mid-test) -- the mission's
+  // periodic nav-cue hum (missionWaypointHum(), engine/forest-engine.js:2370,
+  // fired every 2-5.5s by the always-active default mission via :6420) shares
+  // this exact #captionToast/captionId system and fires throughout this
+  // test's multi-second real-time waits, independent of anything hide-related.
+  // `#sound` (in the admin-gated `#panel`, hence the same el.click() bypass
+  // used above) toggles `soundOn`, which gates missionWaypointHum's caption
+  // push (and every other ambient audio-caption source in the file) at its
+  // very first line -- unlike the hideAlert caption itself (forest-engine.js:3434),
+  // which is gated only on `captionsOn` and fires regardless of `soundOn`. This
+  // isolates the signal under test without touching it.
+  await page.locator('#sound').evaluate((el) => (el as HTMLElement).click());
 }
 
 test.describe('cover alert feedback (LUL-2547)', () => {

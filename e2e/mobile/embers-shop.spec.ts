@@ -58,6 +58,7 @@ test('buying each catalog item updates balance/tier text and fires the purchase 
   probe = await qaHook(page, 'qaProbeEmbersPurchase');
   expect(probe.purchaseCueCount).toBe(3);
   await expect(page.locator('#embersShopMaxed-pocketStones')).toContainText('maxed');
+  await expect(page.locator('#embersShopMaxed-pocketStones')).toContainText('2 throwables/run');
 
   expectNoConsoleErrors(errs);
 });
@@ -77,4 +78,5 @@ test('Pocket Stones grants a throwablesReserve and auto-arms heldThrowable on en
   const probe = await qaHook(page, 'qaProbeEmbersPurchase');
   expect(probe.heldThrowable).toBe(true);
   expect(probe.throwablesReserve).toBe(1);
+  await expect(page.locator('#throwPrompt')).toContainText('(+1)');
 });

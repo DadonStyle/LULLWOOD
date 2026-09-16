@@ -35,6 +35,10 @@ import {
   isRecentWakeTicketSuppressed,
   WAKE_REFILE_COOLDOWN_DAYS,
   STALE_CONFIRMATION_DAYS,
+  STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD,
+  countPriorStaleConfirmationWakes,
+  staleConfirmationEscalationMarker,
+  resolveCeoAgentId,
   isAssignedBacklogNoGate,
   findAssignedBacklogNoGate,
   assignedBacklogNoGateWakeMarker,
@@ -462,6 +466,43 @@ test('formatReport sorts STRANDED tombstones before SHIPPED ones', () => {
   assert.ok(report.indexOf('LUL-B') < report.indexOf('LUL-A'), 'expected STRANDED (LUL-B) to be listed before SHIPPED (LUL-A)');
 });
 
+test('formatReport marks an EXTERNALLY_BLOCKED tombstone with the stated condition and no-wake note, sorted after SHIPPED', () => {
+  const shipped = { issue: { identifier: 'LUL-A' }, disposition: 'SHIPPED', mergedPrs: [{ number: 1, merged: true }] };
+  const externallyBlocked = {
+    issue: { identifier: 'LUL-2734' },
+    disposition: 'EXTERNALLY_BLOCKED',
+    mergedPrs: [{ number: 672, merged: true }],
+    unblock: { statement: '2 consecutive green nightly runs' },
+  };
+  const report = formatReport([externallyBlocked, shipped], [], 'DadonStyle/LULLWOOD');
+  assert.match(report, /EXTERNALLY_BLOCKED/);
+  assert.match(report, /2 consecutive green nightly runs/);
+  assert.match(report, /no wake ticket filed/);
+  assert.ok(report.indexOf('LUL-A') < report.indexOf('LUL-2734'), 'expected SHIPPED (LUL-A) before EXTERNALLY_BLOCKED (LUL-2734)');
+});
+
+test('LUL-2772: formatReport does not alarm when every tombstone is EXTERNALLY_BLOCKED (no action needed)', () => {
+  const externallyBlocked = {
+    issue: { identifier: 'LUL-2734' },
+    disposition: 'EXTERNALLY_BLOCKED',
+    mergedPrs: [{ number: 672, merged: true }],
+    unblock: { statement: '2 consecutive green nightly runs' },
+  };
+  assert.equal(formatReport([externallyBlocked], [], 'DadonStyle/LULLWOOD'), null);
+});
+
+test('LUL-2772: formatReport header count excludes EXTERNALLY_BLOCKED entries when another alarm keeps the report alive', () => {
+  const stranded = { issue: { identifier: 'LUL-B' }, disposition: 'STRANDED', mergedPrs: [] };
+  const externallyBlocked = {
+    issue: { identifier: 'LUL-2734' },
+    disposition: 'EXTERNALLY_BLOCKED',
+    mergedPrs: [{ number: 672, merged: true }],
+    unblock: { statement: '2 consecutive green nightly runs' },
+  };
+  const report = formatReport([stranded, externallyBlocked], [], 'DadonStyle/LULLWOOD');
+  assert.match(report, /^1 tombstoned issue\(s\)/m);
+});
+
 // ---- extractPrNumbers / referencedPrNumbers --------------------------------
 
 test('extractPrNumbers pulls every #<n> token out of free text', () => {
@@ -619,6 +660,107 @@ test('an issue with no identifier can never attribute a merged PR (avoids a fals
   const prByNumber = new Map([[144, { number: 144, title: 'LUL-677: fix', merged: true, state: 'closed' }]]);
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'STRANDED');
+});
+
+// ---- LUL-2768: external unblock condition overrides SHIPPED ---------------
+//
+// Real board state, 2026-09-16: LUL-2734 cites two merged PRs (#662, #672)
+// over its lifetime, but its own text (posted by its own assignee) names the
+// real remaining condition as an external event -- 2 consecutive green
+// nightly runs, not code landing. The bare PR-merge heuristic tombstoned it
+// SHIPPED and re-fired a near-identical false-positive wake ticket 5 times
+// in one day (LUL-2741/2742/2744/2746/2747).
+
+test('LUL-2734 shape: merged+attributed PR, but the assignee posted an external-unblock statement after the merge -> EXTERNALLY_BLOCKED, not SHIPPED', () => {
+  const issue = {
+    identifier: 'LUL-2734',
+    title: 'cover-feedback + hide-alert specs still red after PR #662 merge',
+    description: 'fixed by #672',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      {
+        authorAgentId: 'fe-agent',
+        createdAt: '2026-09-16T05:08:05.499Z',
+        body: 'external-unblock: 2 consecutive green nightly runs of cover-feedback.spec.ts + hide-alert.spec.ts on a HEAD past 5e34bf8',
+      },
+    ],
+  };
+  const prByNumber = new Map([
+    [672, { number: 672, title: 'LUL-2734: cover-feedback diagnostic fix', merged: true, state: 'closed', merged_at: '2026-09-16T04:45:31.000Z', merge_commit_sha: '5e34bf8' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'EXTERNALLY_BLOCKED');
+  assert.match(result.unblock.statement, /2 consecutive green nightly runs/);
+});
+
+test('LUL-2772: two post-cutoff external-unblock comments in array order (not date order) -> picks the most recent by postedMs, not the first', () => {
+  const issue = {
+    identifier: 'LUL-2734',
+    title: 'x',
+    description: 'fixed by #672',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      { authorAgentId: 'fe-agent', createdAt: '2026-09-16T10:00:00.000Z', body: 'external-unblock: waiting on nightly runs' },
+      { authorAgentId: 'fe-agent', createdAt: '2026-09-16T06:00:00.000Z', body: 'external-unblock: waiting on a rebase' },
+    ],
+  };
+  const prByNumber = new Map([
+    [672, { number: 672, title: 'LUL-2734: fix', merged: true, state: 'closed', merged_at: '2026-09-16T04:45:31.000Z' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'EXTERNALLY_BLOCKED');
+  assert.match(result.unblock.statement, /waiting on nightly runs/);
+});
+
+test('an external-unblock statement posted before the merge it would override does not count (already stale)', () => {
+  const issue = {
+    identifier: 'LUL-X',
+    title: 'x',
+    description: 'fixed by #50',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      { authorAgentId: 'fe-agent', createdAt: '2026-09-10T00:00:00.000Z', body: 'external-unblock: waiting on a rebase' },
+    ],
+  };
+  const prByNumber = new Map([
+    [50, { number: 50, title: 'LUL-X: fix', merged: true, state: 'closed', merged_at: '2026-09-15T00:00:00.000Z' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
+});
+
+test('an external-unblock statement posted by someone other than the issue assignee does not count', () => {
+  const issue = {
+    identifier: 'LUL-X',
+    title: 'x',
+    description: 'fixed by #50',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      { authorAgentId: 'code-reviewer', createdAt: '2026-09-17T00:00:00.000Z', body: 'external-unblock: I do not believe this is done' },
+    ],
+  };
+  const prByNumber = new Map([
+    [50, { number: 50, title: 'LUL-X: fix', merged: true, state: 'closed', merged_at: '2026-09-15T00:00:00.000Z' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
+});
+
+test('ordinary prose about being blocked, with no external-unblock marker, does not override SHIPPED', () => {
+  const issue = {
+    identifier: 'LUL-X',
+    title: 'x',
+    description: 'fixed by #50',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      { authorAgentId: 'fe-agent', createdAt: '2026-09-17T00:00:00.000Z', body: 'Still correctly blocked pending 2 consecutive green nightly runs.' },
+    ],
+  };
+  const prByNumber = new Map([
+    [50, { number: 50, title: 'LUL-X: fix', merged: true, state: 'closed', merged_at: '2026-09-15T00:00:00.000Z' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'SHIPPED');
 });
 
 // ---- LUL-2641: attribution bug (SPEC-then-impl workflow) -------------------
@@ -998,6 +1140,210 @@ test('isStaleConfirmationSuppressed: does not cross-match a different issue\'s m
     { title: 'Board-integrity: LUL-438 has a stale request_confirmation (LUL-810 detector)', updatedAt: '2026-08-26T00:00:00.000Z' },
   ];
   assert.equal(isStaleConfirmationSuppressed(closedWakeIssues, issue, interaction, NOW_MS), false);
+});
+
+// ---- LUL-2757: stale-confirmation escalation (fix for LUL-810 Alarm D churn) --
+//
+// Live case: LUL-359's request_confirmation is agent-unresolvable (403 on
+// the accept/reject route), so Alarm D's routine ticket re-fired 11 times
+// on the exact same interaction with zero net progress. Past a threshold
+// number of prior routine re-flags of the SAME interaction, escalate once
+// to the CEO instead of redispatching to the issue's own assignee again.
+
+test('countPriorStaleConfirmationWakes: counts closed routine tickets that name this interaction id', () => {
+  const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+  const closedWakeIssues = [
+    { title: `${marker} (LUL-810 detector)`, description: 'has a `request_confirmation` (id ix-1) that has been `pending`' },
+    { title: `${marker} (LUL-810 detector)`, description: 'has a `request_confirmation` (id ix-1) that has been `pending`' },
+    { title: `${marker} (LUL-810 detector)`, description: 'has a `request_confirmation` (id ix-2) that has been `pending`' },
+    { title: 'Board-integrity: LUL-438 has a stale request_confirmation (LUL-810 detector)', description: 'id ix-1)' },
+  ];
+  assert.equal(countPriorStaleConfirmationWakes(closedWakeIssues, marker, 'ix-1'), 2);
+});
+
+test('countPriorStaleConfirmationWakes: a fresh re-ask (new interaction id) starts back at 0', () => {
+  const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+  const closedWakeIssues = [
+    { title: `${marker} (LUL-810 detector)`, description: 'id ix-old)' },
+    { title: `${marker} (LUL-810 detector)`, description: 'id ix-old)' },
+    { title: `${marker} (LUL-810 detector)`, description: 'id ix-old)' },
+  ];
+  assert.equal(countPriorStaleConfirmationWakes(closedWakeIssues, marker, 'ix-new'), 0);
+});
+
+test('countPriorStaleConfirmationWakes: no closed tickets -> 0', () => {
+  assert.equal(countPriorStaleConfirmationWakes([], 'Board-integrity: LUL-359 has a stale request_confirmation', 'ix-1'), 0);
+});
+
+test('staleConfirmationEscalationMarker is stable and distinct from the routine marker', () => {
+  const issue = { identifier: 'LUL-359' };
+  assert.equal(
+    staleConfirmationEscalationMarker(issue),
+    'Board-integrity: LUL-359 has an agent-unresolvable request_confirmation',
+  );
+  assert.notEqual(staleConfirmationEscalationMarker(issue), staleConfirmationWakeMarker(issue));
+});
+
+test('resolveCeoAgentId: matches the agent named exactly "CEO", not "CEO Board Assistant"', () => {
+  const agentsById = new Map([
+    ['assistant-1', { id: 'assistant-1', name: 'CEO Board Assistant', status: 'idle' }],
+    ['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }],
+  ]);
+  assert.equal(resolveCeoAgentId(agentsById), 'ceo-1');
+});
+
+test('resolveCeoAgentId: a paused CEO counts as no CEO at all (LUL-2066 pattern)', () => {
+  const agentsById = new Map([['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'paused' }]]);
+  assert.equal(resolveCeoAgentId(agentsById), null);
+});
+
+test('resolveCeoAgentId: no CEO agent at all -> null', () => {
+  assert.equal(resolveCeoAgentId(new Map()), null);
+});
+
+test('fileWakeTickets: past the re-flag threshold, escalates to the CEO instead of redispatching to the issue assignee', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+    const closedWakeIssues = Array.from({ length: STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD }, (_, i) => ({
+      title: `${marker} (LUL-810 detector)`,
+      description: 'has a `request_confirmation` (id ix-1) that has been `pending`',
+      updatedAt: `2026-08-2${i}T00:00:00.000Z`,
+    }));
+    const agentsById = new Map([
+      ['founding-engineer', { id: 'founding-engineer', name: 'Founding Engineer', status: 'running' }],
+      ['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }],
+    ]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-359', identifier: 'LUL-359', title: 'Merge lane', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'ix-1', createdAt: '2026-08-28T13:13:58.566Z' },
+        ageDays: 19,
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      staleConfirmations,
+      closedWakeIssues,
+      NOW_MS,
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].kind, 'stale-confirmation-escalation');
+    assert.equal(filed[0].assigneeAgentId, 'ceo-1');
+    assert.equal(postedIssue.assigneeAgentId, 'ceo-1');
+    assert.equal(postedIssue.priority, 'critical');
+    assert.match(postedIssue.title, /agent-unresolvable request_confirmation/);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets: does not re-escalate within the escalation cooldown', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      throw new Error(`must not fetch when the escalation is on cooldown: ${url}`);
+    };
+
+    const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+    const escalationMarker = 'Board-integrity: LUL-359 has an agent-unresolvable request_confirmation';
+    const closedWakeIssues = [
+      ...Array.from({ length: STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD }, (_, i) => ({
+        title: `${marker} (LUL-810 detector)`,
+        description: 'id ix-1)',
+        updatedAt: `2026-08-2${i}T00:00:00.000Z`,
+      })),
+      { title: `${escalationMarker} (LUL-2757 detector)`, description: 'id ix-1)', createdAt: '2026-08-26T00:00:00.000Z' },
+    ];
+    const agentsById = new Map([['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }]]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-359', identifier: 'LUL-359', title: 'Merge lane', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'ix-1', createdAt: '2026-08-28T13:13:58.566Z' },
+        ageDays: 19,
+      },
+    ];
+
+    // NOW_MS (2026-08-27T07:00:00Z) is within STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS
+    // of the 08-26 escalation close.
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      staleConfirmations,
+      closedWakeIssues,
+      NOW_MS,
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets: an already-open escalation ticket suppresses the routine re-dispatch too', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      throw new Error(`must not fetch when the escalation ticket is already open: ${url}`);
+    };
+
+    const escalationMarker = 'Board-integrity: LUL-359 has an agent-unresolvable request_confirmation';
+    const openIssues = [{ title: `${escalationMarker} (LUL-2757 detector)`, status: 'todo' }];
+    const agentsById = new Map([['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }]]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-359', identifier: 'LUL-359', title: 'Merge lane', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'ix-1', createdAt: '2026-08-28T13:13:58.566Z' },
+        ageDays: 19,
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      openIssues,
+      { alarm: false },
+      staleConfirmations,
+      [],
+      NOW_MS,
+      [],
+      agentsById,
+    );
+
+    assert.equal(filed.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
 });
 
 // ---- Alarm E: assigned issue parked in backlog with no named gate ---------
@@ -1458,6 +1804,59 @@ test('fileWakeTickets never assigns a tombstone wake ticket to the flagged issue
     assert.equal(filed.length, 1);
     assert.equal(filed[0].assigneeAgentId, 'cto-agent-id', 'must not inherit the paused Task Runner assignee');
     assert.equal(postedIssue.assigneeAgentId, 'cto-agent-id');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets never files a wake ticket for an EXTERNALLY_BLOCKED tombstone, but still files for a sibling STRANDED one (LUL-2768)', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    const postedIssues = [];
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) return { ok: true, json: async () => ({ id: 'cto-agent-id' }) };
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssues.push(JSON.parse(opts.body));
+        return { ok: true, json: async () => ({ id: `wake-issue-${postedIssues.length}` }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const classifiedTombstones = [
+      {
+        issue: { id: 'issue-1', identifier: 'LUL-2734', title: 'nightly gate', status: 'blocked', assigneeAgentId: 'fe-agent' },
+        disposition: 'EXTERNALLY_BLOCKED',
+        referencedPrs: [672],
+        mergedPrs: [{ number: 672, merged: true }],
+        unblock: { statement: '2 consecutive green nightly runs' },
+      },
+      {
+        issue: { id: 'issue-2', identifier: 'LUL-9', title: 'genuinely stranded', status: 'blocked', assigneeAgentId: 'fe-agent' },
+        disposition: 'STRANDED',
+        referencedPrs: [],
+        mergedPrs: [],
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      classifiedTombstones,
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      [],
+      new Map(),
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].identifier, 'LUL-9');
+    assert.equal(postedIssues.length, 1);
   } finally {
     globalThis.fetch = prevFetch;
   }

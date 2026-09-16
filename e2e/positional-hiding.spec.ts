@@ -251,7 +251,7 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     page,
   }) => {
     test.setTimeout(60_000);
-    await assertCoverHidesFromSpecies(page, 'lion');
+    await assertCoverHidesFromSpecies(page, 'lion', { fixedClock: true });
   });
 
   test('hold-still alone does not save you when a predator is on top of you (catch path still works)', async ({
