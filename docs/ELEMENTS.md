@@ -2276,6 +2276,18 @@ toast it replaces) and are positioned by a fixed `[data-hint-key]` CSS rule inst
 `lake`/`bog`/`stamina`/`veil`/`landmark` share the bottom-center spot `#captionToast`
 (predator-call captions) already uses, above `#actionSlot`.
 
+**LUL-2743 (short-landscape breakpoint only)**: at `@media (max-height: 420px)` (short
+landscape phones, e.g. Pixel 5 851x393 / iPhone SE 667x375), the world-anchored keys stop
+world-anchoring and share the same fixed slot as `lake`/`bog`/`stamina`/`veil`/`landmark`
+instead (`components/GameCanvas.tsx`). Two earlier attempts (LUL-2532, LUL-2594) tuned the
+ceiling a world-anchored pill's `translate(-50%,-120%)` lift is clamped against, but that
+ceiling is `#actionSlot`'s own top edge — 9px above the viewport top on iPhone SE landscape
+— which is less room than any real pill (with padding and wrapped text) can fit inside; no
+ceiling constant fixes it. Safe to combine unconditionally with the self-anchored family:
+only one `HINT_PRIORITY` key is ever active at a time, so the two groups never render
+together. Same precedent as `#hint` (LUL-2410) and `deepwater` (LUL-2418): once there's no
+room left to reposition into, stop trying to float the caption above `#actionSlot`.
+
 **Settings**: `Show hints` checkbox (default on, next to `Show my scent trail`) and a `Reset
 hints` button (clears every `lullwood:hints:*` key) in `SettingsPanel.tsx`.
 
