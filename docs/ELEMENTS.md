@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6871 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6072, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6894 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6095, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -431,14 +431,15 @@ one geometry builder (`makePredator()`), differentiated by the
   root cause as the Player/Child LUL-26 notes above.
 
 **What they CANNOT do**
-- Cannot physically collide with cover props (rock/log/bramble) at all —
-  predators call `blockedR()` directly for movement, never `blocked()`, so
-  `coverBlockedR()` (and player-only `canopyBlockedR()`) never run for them.
-  **Deliberate**, not a gap: the standing comment at `coverBlockedR()`
-  (`lib/game/cover.ts`, moved there by LUL-425) says folding this in
-  previously produced a stuck-predator
-  freeze (LUL-119). LOS is still blocked by the same props via `hasLOS()` —
-  only movement-collision is exempt.
+- Collides with rock/reed (solid) and passes through log/bramble (walkable),
+  identically to the player: predators call `predatorBlocked()` →
+  `blockedForPredator()` (`lib/game/cover.ts:512`), which runs
+  `coverBlockedR()`/`coverKindBlocksMovement()` the same way `blocked()` does
+  for the player — stale since LUL-1643 wired this in (this doc previously
+  said predators never collide with cover at all, which stopped being true
+  then). LUL-2306: movement collision now uses `moveRad =
+  PLAYER_COLLISION_RADIUS` (0.6, same as the player), not the species `rad`
+  — see "Collision & physics profile" below.
 - Cannot collide with each other, or with the child — no code path checks
   predator-vs-predator or predator-vs-child distance for collision.
   `UNDEFINED` — see matrix.
@@ -475,18 +476,32 @@ one geometry builder (`makePredator()`), differentiated by the
   the ordinary sniff-loop revert closed the gap again before the player got
   any reaction time.
 - Stuck detection: if a predator's actual movement falls under 35% of its
-  intended speed for >3s while trying to move, it backs up along its last 6
-  trail points then picks a fresh random waypoint (`p.stuckT`, L1511-1516).
-  LUL-1091 shipped this at 0.8s but LUL-1597 reverted it: the shorter window
-  is sensitive to per-frame wall-clock jitter, causing `predator-determinism`
-  e2e divergence across parallel runs with the same seed. The pathfinding
-  improvements (pickAvoidDirection near+far probe, slideVelocity) from
-  LUL-1091 are retained. `p.trail` samples every 0.4s and keeps 6 points.
+  intended speed for >1.0s (game-time) while trying to move, it backs up
+  along its last 6 trail points then either follows a bounded local search
+  toward its live target (hunt/chase/investigate-approach) or picks a fresh
+  random waypoint (roam/flank and any pursuing search that finds nothing),
+  `p.stuckT` (`engine/forest-engine.js`, updatePredators()). LUL-1091 shipped
+  this at 0.8s but LUL-1597 reverted it because the shorter window was
+  sensitive to per-frame wall-clock jitter, causing `predator-determinism`
+  e2e divergence across parallel runs with the same seed; LUL-2283's
+  `qaSetFixedStep()` removed that wall-clock jitter, which is what makes the
+  LUL-2306 1.0s threshold safe. LUL-2306 also added the bounded search itself
+  — `findLocalPath()` (`lib/game/steer.ts`), a deterministic best-first search
+  on a 2u sub-grid, up to 3 waypoints, replacing the random ±20u waypoint for
+  a pursuing predator only; roam's stuck recovery is unchanged. The
+  pathfinding improvements (pickAvoidDirection near+far probe, slideVelocity)
+  from LUL-1091 are retained. `p.trail` samples every 0.4s and keeps 6 points.
 
 **Collision & physics profile**
-- Movement collider: circular, radius `PSPEC[kind].rad` (0.8/1.5/1.0),
-  checked only against the tree-trunk grid (`blockedR`, never
-  `coverBlockedR`/`canopyBlockedR`) — see above.
+- Movement collider: circular, radius `moveRad = PLAYER_COLLISION_RADIUS`
+  (0.6, same as the player) for all three species, since LUL-2306 — checked
+  against both the tree-trunk grid and cover props via `predatorBlocked()` →
+  `blockedForPredator()` (see above), so a predator never passes a gap the
+  player cannot and is never blocked by a gap the player passes.
+  `PSPEC[kind].rad` (0.8/1.5/1.0, unchanged) still governs catch range
+  (`isCaught`/`canCatchInChase`), the sniff-margin `canSee()` call, and
+  predator-vs-predator separation (`predatorSeparationPush`) — those are
+  unaffected by this ticket.
 - LOS: same rotated-AABB raycast as the player's own (`hasLOS()`), applied
   symmetrically (`canSee()` calls it both directions along the same line).
   LUL-2320: a predator standing inside a log/bramble's own footprint is not
@@ -1436,17 +1451,17 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5475-5535, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5626-5679 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5680-5722). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5498-5558, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5649-5702 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5703-5745). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5680-5722) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L5674-5716) rather than recomputed later, since `player.x/z` can move on
+  (L5703-5745) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L5704) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1497,7 +1512,7 @@ design doc as turning horror into radar.
     gained its first render site, a new `#pickupPrompt` row in `#actionSlot`.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3813) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3835) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1608,7 +1623,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6033-6807, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6056-6830, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
