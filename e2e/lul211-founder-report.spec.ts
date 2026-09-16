@@ -147,7 +147,12 @@ test.describe('LUL-211: cover props are solid @fullmap', () => {
   // past a face by extra frame slack, it was walking straight through a prop
   // that stopped blocking movement three days earlier and only halting at
   // whatever obstacle came next.
-  for (const kind of ['rock', 'tree'] as const) {
+  // LUL-2684 (LUL-2667 child 1/6): 'rock' migrated to e2e/rock-collision.spec.ts
+  // (qaWorld=micro, qaBuildScene places an exact rock with no rng) -- the
+  // @fullmap boot here was never a requirement of the mechanic, only of the
+  // old search-the-real-seed staging. 'tree' stays @fullmap for now (LUL-2667
+  // child 5 migrates it and then removes this file from FULLMAP_ALLOWLIST).
+  for (const kind of ['tree'] as const) {
     test(`walking straight into a ${kind} does not pass through it`, async ({ page }) => {
       test.setTimeout(45_000);
       await boot(page, { qaWorld: 'full',  qaHooks: true });
