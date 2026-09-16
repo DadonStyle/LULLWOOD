@@ -576,13 +576,60 @@ const OVERLAY_STYLE = `
        both side columns on every viewport this breakpoint covers, without a
        per-viewport branch (same one-global-constant approach LUL-2445 used for
        HINT_Y_MAX). --hint-left is the raw engine fraction (Hud.tsx); the base
-       rule above uses it directly outside this breakpoint. */
+       rule above uses it directly outside this breakpoint.
+       LUL-2594: the base #scentTrailCaption/#hintCaption rule's top clamp
+       (above) reserves an extra 24px of translate(-120%) lift headroom on top
+       of --action-slot-bottom + --action-slot-height -- fine at the taller
+       desktop/default action-slot-height (216px), but at this breakpoint's
+       compressed rows (176px) + raised --action-slot-bottom (190px), that
+       26px-taller reservation collapses the ceiling to ~3px on a 393px-tall
+       viewport (Pixel 5 landscape), pushing the whole pill's translate(-120%)
+       box fully above y=0 ("offscreen" per the local-qa layout audit,
+       LUL-2594/2631). #actionSlot's own top edge already sits at
+       100% - action-slot-bottom - action-slot-height (~27px here) with no
+       extra margin needed above it for this family (unlike the self-anchored
+       bottom-anchored rule above, this one floats above its anchor, not
+       flush against the slot) -- reclaim that 24px so the ceiling matches
+       #actionSlot's real top edge instead of a fixed value tuned for a
+       taller breakpoint. */
     #scentTrailCaption, #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
     #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
     #hintCaption[data-hint-key="throwable"] {
       max-width: 240px;
       left: clamp(276px, var(--hint-left, 50%), calc(100vw - 276px));
+      top: min(var(--hint-top, 50%), calc(100% - var(--action-slot-bottom) - var(--action-slot-height)));
     }
+    /* LUL-2694: #winText/#deathText's max-height: calc(100dvh - 48px) +
+       overflow-y: auto (below) already handles #runChronicle overrun
+       (LUL-1103), but on short-landscape phones (pixel5 393px, iphone-se
+       375px tall) the content above #embersShop -- h1/dialogue/subtitle/
+       RunRecap/restart button -- already consumes the whole ~327-345px
+       budget, so the shop's balance line + 3 stacked buy buttons (the last
+       child) render past the scroll container's content edge.
+       getBoundingClientRect() reports their true unclipped position
+       regardless of scroll, so local-qa's offscreen audit flags all 4 --
+       same "boxes must never intersect/offscreen, scroll-to-reveal doesn't
+       count" rule already enforced for #hint and the self-anchored
+       #hintCaption family at this breakpoint (LUL-2410/LUL-2414 above).
+       Row-laying the buttons out (an earlier version of this fix) did not
+       help: buyBtn's text is a full sentence ("Deeper Lungs — veil hold 5s
+       -> veil hold 6s — 120 embers"), so each button is nearly the full
+       container width regardless of flex-direction and flex-wrap puts them
+       back on separate rows anyway. The only lever that actually shrinks
+       total content height is font-size/spacing, measured empirically
+       against a live win screen (fresh save, 1-line chronicle) until
+       scrollHeight <= clientHeight on iphone-se-landscape-667x375 (the
+       tighter of the two reported viewports): 465px of content into a
+       327px budget needed ~140px trimmed across every child, not just the
+       shop. */
+    #winText, #deathText { padding: 8px 16px; gap: 2px; }
+    #winText h1, #deathText h1 { font-size: 20px; }
+    #winText p, #deathText p { margin: 0 0 2px; font-size: 11px; }
+    #runChronicle { font-size: 10px; margin-top: 2px; }
+    .restartBtn { margin-top: 2px; padding: 6px 16px; }
+    #embersShop { flex-direction: column; margin-top: 2px; gap: 2px; }
+    #embersShopBalance, #embersShopMaxed { font-size: 11px; }
+    .buyBtn { font-size: 10px; padding: 3px 8px; }
   }
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);

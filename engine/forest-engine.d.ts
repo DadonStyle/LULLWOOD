@@ -141,6 +141,11 @@ declare global {
       // must check for null rather than assume the index is always valid.
       /** Teleports the player to the spawn clearing and a lion 4 units out, hunting. Returns the lion's `predators` index, or null if no lion spawned. */
       qaOpenHideNearLion?: () => number | null;
+      /** LUL-2664: places predator `kind` 6 units out in the spawn clearing, in the open,
+       * pinned via `reroute` so it cannot close the gap mid-veil-hold -- isolates
+       * veilDetectMul()'s canSee() cut from cover/stillness/chase-drift. Returns the
+       * predator's `predators` index, or null if that species isn't spawned. */
+      qaOpenVeilTarget?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       /** LUL-1089: teleports the player to the first hide-spot prop (bramble; LUL-2311 dropped log) and places a lion 4 units away in chase state. Returns { idx, kind } on success, or null if no hide spot or no lion spawned. */
       qaOpenHideNearLionAtHideSpot?: () => { idx: number; kind: string } | null;
       /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble; LUL-212 narrowed this from any non-tree cover prop, LUL-2311 narrowed it again to bramble only). Returns 0, or null if no hiding-spot prop exists. */
@@ -202,7 +207,11 @@ declare global {
        * LUL-659: `x`/`z` are the predator's raw world position, for tracing
        * lateral movement (e.g. avoidDir() steering around cover) over time.
        * LUL-2320: `rad` (`PSPEC[kind].rad`) lets a test compute the live contact-catch
-       * threshold (`rad + CATCH_MARGIN`) without hardcoding species constants. */
+       * threshold (`rad + CATCH_MARGIN`) without hardcoding species constants.
+       * LUL-2712: `sightFlicker` is the live `p.sightFlicker` value the chase LOS-flicker
+       * grace (lib/game/predator.ts shouldDowngradeChase) reads/decrements every tick --
+       * lets a test assert it is actually wired at the real canSee(p,dist) call site,
+       * not just correct in isolation. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
         state: string;
@@ -217,6 +226,7 @@ declare global {
         gaveUpAt: number | null;
         parked: boolean;
         visible: boolean;
+        sightFlicker: number;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a

@@ -108,8 +108,10 @@ import {
   pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
+  shouldDowngradeChase,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
+  SIGHT_FLICKER_TIME,
   SNIFF_IMMUNITY_TIME,
   SNIFF_STATUS_RANGE,
   sniffStandoffPoint,
@@ -1914,7 +1916,7 @@ function makePredator(kind){
     phase:rng()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0, standX:0, standZ:0,
     stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
-    packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0,
+    packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0, sightFlicker:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
     charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, chargeRecoveryT:0, inert:false, sightLock:null,
     noiseTarget:null, noiseTargetT:0, parked:false };
@@ -1964,7 +1966,7 @@ function placePredators(){
     if(p.parked) p.g.visible = false;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
     p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
-    p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0;
+    p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0; p.sightFlicker=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
     p.gaveUpAt=null;
@@ -2111,7 +2113,7 @@ const HINT_TEXT = {
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
-  cover:      'hollow log — H to hide inside. predators lose sight of you',
+  cover:      'a bush — predators lose sight of you while you hold still',
   caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
   throwable:  'a stone — E to pick up, throw to break a chase',
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
@@ -2287,7 +2289,7 @@ function checkNoise(p, dist, noiseRadius, dt){ return isNoiseHeard(dist, noiseRa
 // approach behavior for free.
 function hearNoise(p){
   p.alertedBy = null;   // LUL-1857: footstep-driven, not the carried cry -- see triggerDeath(:1879)'s cause override
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
   leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
   if(captionsOn){
@@ -2302,7 +2304,7 @@ function hearNoise(p){
 // branch below. No new p.state/p.inv value; see spec §4.6 for the correctness
 // fix this makes to the CTO plan's literal "reuse hearNoise() unchanged."
 function hearThrowableNoise(p, tx, tz){
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: tx, z: tz };
   p.noiseTargetT = rnd(THROWABLE_INVESTIGATE_TIME[0], THROWABLE_INVESTIGATE_TIME[1]);
@@ -2318,7 +2320,7 @@ function hearThrowableNoise(p, tx, tz){
 // this section exists to fix (see S3a of the wayfinding spec).
 function hearCry(p){
   p.alertedBy = 'cry';   // LUL-1857 mitigation 4: lets triggerDeath(:1879) name "heard the child"
-  p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+  p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: baby.x, z: baby.z };
   p.noiseTargetT = Infinity;
@@ -2497,6 +2499,19 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // here so every `*pLakeMul` speed site below is scaled together -- mirrors detectScaleMul's
     // fold-in at effectiveDetect() (LUL-2407).
     const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake)) * (CONFIG.speedScaleMul || 1);
+    // LUL-2611: speedScaleMul's own comment (engine/tuning.js) says its job is crossing-time
+    // parity for roam wander and the staged qaTeleportNear*/qaStageChaseAtContact-style safety
+    // window -- not pursuit-speed parity against a live, moving player. Folding it into every
+    // `*pLakeMul` site (LUL-2422) missed that distinction: at the micro world's 0.2 factor, a
+    // lion's full chase speed (9.2*0.2=1.84u/s) can never close on or even keep pace with the
+    // player's own (unscaled) walk speed (6u/s), so the `chase`/`hunt` full-species-speed lines
+    // below -- the two states whose whole job is "catch a player that may be moving" -- use this
+    // water-only multiplier instead of pLakeMul. Every other state (roam/investigate/flank/
+    // reroute/standoff) is untouched: those don't need to out-pace a moving player (investigate/
+    // approach is deliberately 0.45x even on the full map) and existing specs
+    // (qaStageChaseAtContact's wolf-glue test, force-hunt-closes, scent/scent-trail) already
+    // pass against a stationary or scent-driven target, unaffected by this split.
+    const pPursuitMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
 
     // ticks in every state, so a lock set during `chase` has actually
@@ -2512,6 +2527,9 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // see p.chargeRecoveryT's own comment at the 'cleared' branch below for
     // why this exists.
     if(p.chargeRecoveryT > 0) p.chargeRecoveryT -= dt;
+    // LUL-2611: same unconditional-every-state decay as sniffImmuneT above -- see
+    // shouldDowngradeChase's comment in lib/game/predator.ts for why this exists.
+    if(p.sightFlicker > 0) p.sightFlicker -= dt;
 
     // LUL-213: an active charge owns movement outright until it resolves --
     // skips the roam/chase/investigate/flank chain below entirely, same as
@@ -2564,7 +2582,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // existing investigate/approach loop (LUL-22, not to be retuned)
         // rather than snapping straight back into a full chase mid-overshoot
         // -- it just sprinted past you and has to notice you again.
-        p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 3);
+        p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 3);
         endChargeHud();
       } else {
         p.charge = cs;
@@ -2622,11 +2640,11 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // (non-escalated) hunts, e.g. LUL-26 preset `startHunting`, still fall through to
         // the pre-existing investigate/approach collapse below, unchanged.
         if(p.scentLock > 0){ p.state='chase'; p.hunt=false; }
-        else { p.state='investigate'; p.inv='approach'; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
+        else { p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
-        else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pPursuitMul; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -2690,7 +2708,13 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // chase since the player isn't hidden -- zero-speed forever. Keep
       // chasing blind while scentLock holds; once it expires, gate on sight
       // the same way a spotted chase always has.
-      if(p.scentLock <= 0 && !canSee(p, dist)){ p.state='investigate'; p.inv='approach'; p.sniffsLeft = rollSniffs(rng, 4); }
+      // LUL-2611: spotOnto() (a sight-triggered chase) sets no scentLock, unlike
+      // scentOnto() -- see shouldDowngradeChase's comment in lib/game/predator.ts for why
+      // that leaves a sight chase zero tolerance for a single blind tick at a cover edge.
+      // p.sightFlicker is a short, separate grace for exactly that: refreshed here while
+      // sight actually holds, consulted only at this gate.
+      if(canSee(p, dist)) p.sightFlicker = SIGHT_FLICKER_TIME;
+      if(shouldDowngradeChase(p.scentLock, p.sightFlicker, canSee(p, dist))){ p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -2730,9 +2754,9 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // into the sniff loop's approach->standoff hand-off (LUL-1090) instead of waiting for
         // shouldGiveUpChase()'s distance/timer give-up below to eventually fire.
         else if(hidden && isCaught(dist, p.rad)){
-          p.state = 'investigate'; p.inv = 'approach'; p.sniffsLeft = rollSniffs(rng, 4);
+          p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
         }
-        else { desx=ux; desz=uz; speed=p.spec.speed*pLakeMul; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pPursuitMul; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -2760,7 +2784,13 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // for a few real seconds -- see that transition's comment. Doesn't
       // change this check's existing logic/timing for every other caller,
       // just adds a gate that's normally already 0.
-      if(shouldRevertInvestigateToChase(p.inv, hidden) && p.chargeRecoveryT <= 0){ p.state='chase'; }
+      // LUL-2611: p.approachEnteredHidden, stamped `hidden` at every
+      // `p.inv='approach'` assignment above, lets 'approach' revert too --
+      // but only when the player was hidden at entry and has since un-hidden,
+      // not on a same-tick fresh entry with `hidden` already false (that's
+      // the LUL-658 case this gate must still not touch). See
+      // shouldRevertInvestigateToChase()'s comment in lib/game/predator.ts.
+      if(shouldRevertInvestigateToChase(p.inv, hidden, p.approachEnteredHidden) && p.chargeRecoveryT <= 0){ p.state='chase'; }
       else if(p.inv === 'approach'){
         // LUL-658: always report this tick's movement, even when it's also the
         // tick that reaches sniff range -- see stepApproach()'s comment in
@@ -2827,7 +2857,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ p.inv='approach'; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
+        if(bd < 2){ p.inv='approach'; p.approachEnteredHidden=hidden; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       } else if(p.inv === 'leave'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
@@ -4235,9 +4265,55 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
+    // LUL-2596: a caller that ran qaTriggerCharge()/qaForceHunt-style setup on
+    // another predator earlier in the same test can leave that predator's own
+    // charge/hunt state live -- an in-flight p.charge resolves purely on
+    // elapsed game time (stepCharge, above) independent of anything staged
+    // here, so it can catch the player before this freshly-placed lion closes
+    // the gap, reporting the wrong species on #deathKind. Neutralize every
+    // other predator so this hook is the only thing that can kill the player.
+    for(const p of predators){
+      if(p === lion) continue;
+      if(p.charge){ p.charge = null; endChargeHud(); }
+      p.hunt = false;
+    }
     lion.x = player.x + 4; lion.z = player.z;
     lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
     lion.state = 'chase'; lion.hunt = true;
+    lion.alertedBy = null; lion.charge = null;
+    return idx;
+  };
+
+  // LUL-2664: places a named predator 6 units out in the spawn clearing --
+  // no cover, not hiding, no charge, pinned in place (see docs/specs/
+  // lul-2664-veil-detection-e2e.md for the full derivation) -- so a test can
+  // isolate veilDetectMul()'s cut to canSee() from every other variable.
+  // Distinct from qaOpenHideNearLion's dist=4 (tuned so "even full stillness
+  // must still catch you", not a veil-flip margin) and qaTriggerCharge's
+  // dist=11.5 (mid-CHARGE_TRIGGER band, and it actually starts a charge
+  // sequence -- this hook must not, a charge resolving on its own game-time
+  // clock mid-hold would corrupt the test). `reroute` pins the predator the
+  // same way qaHideBehindCover does (see that hook's own comment,
+  // engine/forest-engine.js:4316): reroute>0 is checked before hunt/state in
+  // updatePredators(), so the predator never approaches and never rolls
+  // shouldTriggerCharge while it's set, but qaPredatorState()'s canSee(p,dist)
+  // stays a live computation off the real veilAmount -- only movement freezes,
+  // not the value under test. Returns the predator's `predators` index, or
+  // null if that species isn't spawned.
+  window.ForestEngine.qaOpenVeilTarget = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const target = predators[idx];
+    for(const p of predators){
+      if(p === target) continue;
+      if(p.charge){ p.charge = null; endChargeHud(); }
+      p.hunt = false;
+    }
+    player.x = 0; player.z = 0;
+    target.x = 6; target.z = 0;
+    target.vx = target.vz = 0; target.alert = 0; target.stuckT = 0; target.sightLock = null;
+    target.state = 'chase'; target.hunt = true; target.alertedBy = null; target.charge = null; target.scentLock = 0;
+    target.reroute = 10; target.rrX = target.x; target.rrZ = target.z;
     return idx;
   };
 
@@ -4282,6 +4358,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
         if(blockedR(px + (qx-px)*u, pz + (qz-pz)*u, p.rad)){ clear = false; break; }
       }
       if(!clear) continue;
+      // LUL-2611: park every *other* predator inert/off-map (same shape as
+      // qaBuildScene's own unclaimed-predator parking) before placing this
+      // one -- the covered/exposed scan below (`coveredNow`/`exposedNow`,
+      // tick()'s cover-state-feedback block) ORs in every non-inert predator
+      // within detect range, not just this hook's own placement, so an
+      // unrelated predator elsewhere on the map silently flipping
+      // `exposedNow=true` was reading as "not covered" even though the one
+      // predator this hook actually staged was correctly LOS-blocked. Fixes
+      // the cover-feedback.spec.ts timeout (root-caused on LUL-2611): this
+      // is an isolation gap, not a hang, and updatePredators() already skips
+      // `p.inert` predators outright so parking them also removes their
+      // per-tick cost.
+      for(const other of predators){ if(other !== p){ other.inert = true; other.g.visible = false; other.x = other.z = -9999; } }
       p.x = px; p.z = pz;
       p.vx = p.vz = 0; p.alert = 0; p.stuckT = 0; p.sightLock = null;
       // LUL-2457: two dead ends tried and measured live before this one --
@@ -4542,6 +4631,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
+    // LUL-2596: same other-predator neutralization as qaOpenHideNearLion above --
+    // a stale charge/hunt on a different predator from earlier test setup can
+    // resolve on its own game-time clock before this lion closes the gap.
+    for(const p of predators){
+      if(p === lion) continue;
+      if(p.charge){ p.charge = null; endChargeHud(); }
+      p.hunt = false;
+    }
     // LUL-2457: LION_STANDOFF=14 was tuned against the full map's unscaled
     // detect range (species detect 48 -- comfortably more than 14). On the
     // micro world CONFIG.detectScaleMul shrinks effective detect to ~9.6, so
@@ -4594,7 +4691,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const dist = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
     // LUL-659: x/z added so a caller can trace lateral movement around a cover
     // prop (e.g. avoidDir() steering), not just closing distance.
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible };
+    // LUL-2712: sightFlicker exposed so a test can assert the chase LOS-flicker
+    // grace (lib/game/predator.ts shouldDowngradeChase) is actually set/decremented
+    // at the real canSee(p,dist) call site, not just correct in isolation (unit
+    // tests already cover the pure function -- see e2e/sight-flicker.spec.ts).
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, canSee: canSee(p, dist), rad: p.rad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible, sightFlicker: p.sightFlicker };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
@@ -5196,7 +5297,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.x = spec.x; p.z = spec.z; p.wpx = spec.x; p.wpz = spec.z; p.vx = 0; p.vz = 0; p.yaw = 0;
       p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
       p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.scentLock = 0; p.scentCalls = 0;
-      p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0;
+      p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0; p.sightFlicker = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
       p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;
       p.g.position.set(spec.x, 0, spec.z); p.g.rotation.set(0, 0, 0);

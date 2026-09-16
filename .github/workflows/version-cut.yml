@@ -266,7 +266,7 @@ jobs:
           if [ "${{ needs.combined-suite.result }}" != "success" ]; then
             echo "suite_result=failure" >> "$GITHUB_OUTPUT"
             echo "::notice::combined-suite job result was ${{ needs.combined-suite.result }} (a non-advisory step failed) -- suite_result=failure"
-            exit 0
+            exit 1
           fi
 
           result=success
@@ -284,6 +284,9 @@ jobs:
             fi
           done
           echo "suite_result=$result" >> "$GITHUB_OUTPUT"
+          if [ "$result" = "failure" ]; then
+            exit 1
+          fi
 
   open-or-refresh-cut-pr:
     name: open or refresh the cut PR

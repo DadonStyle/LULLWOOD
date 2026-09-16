@@ -48,16 +48,21 @@ test.describe('cover-state feedback (LUL-144)', () => {
 
   test('a chasing predator blocked by real cover reads as covered, with no H press needed', async ({ page }) => {
     test.setTimeout(30_000);
-    // LUL-2329: left on the full map -- qaHideBehindCover needs a real,
-    // naturally-generated non-tree cover prop and has no isolation against
-    // unrelated predators over its 250-fixed-step window; see
-    // docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
+    // LUL-2611: `boot()` already defaults to `qaWorld: 'micro'` (LUL-2377) --
+    // the LUL-2329 migration-spec comment this used to carry ("left on the
+    // full map") was stale; this test has been running on the micro world
+    // since that default landed. The real, root-caused-live failure was an
+    // isolation gap in `qaHideBehindCover()` itself (it only ever placed
+    // `predators[0]`, leaving every other predator live to wander into LOS
+    // and flip `exposedNow=true`), not a map-size issue -- fixed by parking
+    // every other predator inert in the hook.
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     // qaHideBehindCover puts predators[0] (already in 'chase') and the
-    // player on opposite sides of a real, non-tree cover prop.
+    // player on opposite sides of a real, non-tree cover prop, and parks
+    // every other predator inert so it can't contribute a false "exposed".
     const idx = await page.evaluate(() => window.ForestEngine?.qaHideBehindCover?.() ?? null);
     if (idx === null) {
       throw new Error('qaHideBehindCover returned null -- no non-tree cover prop was found for this seed');
