@@ -3976,11 +3976,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     qaFixedDt = dtSeconds;
     if(rafId !== null){ cancelAnimationFrame(rafId); rafId = null; }
   };
+  // LUL-2838: qaAdvance is a QA-only simulation-time fast-forward, not a
+  // visual regression check -- the intermediate frames of a multi-step
+  // advance are never observed, so skip their renderer.render()/renderPost()
+  // call (the expensive part under CI's software rasterizer, worse still at
+  // mobile devices' higher deviceScaleFactor) and only render the final
+  // frame, so the canvas still reflects the post-advance state for any
+  // screenshot/DOM check that follows.
   window.ForestEngine.qaAdvance = function(steps = 1){
     if(qaFixedDt === null) throw new Error('qaAdvance: call qaSetFixedStep(dt) first');
     for(let i = 0; i < steps; i++){
       clock.elapsedTime += qaFixedDt;
-      stepFrame(qaFixedDt, clock.elapsedTime);
+      stepFrame(qaFixedDt, clock.elapsedTime, i < steps - 1);
     }
   };
 
@@ -6053,7 +6060,7 @@ let qaFixedDt = null;   // LUL-2071: non-null while a test has parked the RAF lo
 let bobPhase = 0;
 let rafId = null;
 
-function stepFrame(dt, t){
+function stepFrame(dt, t, skipRender){
   // LUL-68: right stick look rate applied each frame before movement.
   // LUL-276: mobile-only -- in desktop mode this whole block is dead, not
   // merely fed zeroes, because setTouchLook is a no-op there (see below) and
@@ -6825,7 +6832,7 @@ function stepFrame(dt, t){
   moonGroup.quaternion.copy(camera.quaternion);
 
   updateBoom(dt);
-  if(!dead){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
+  if(!dead && !skipRender){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
   adaptResolution(dt, t);
 }
 function tick(){
