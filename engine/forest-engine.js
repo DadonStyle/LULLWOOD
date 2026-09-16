@@ -82,6 +82,7 @@ import {
   COVER_PROBE_HZ,
 } from '@/lib/game/cover';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
+import { spawnClearanceScale } from '@/lib/game/spawnClearance';
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
@@ -1940,6 +1941,10 @@ function placePredators(){
   // has -- the preset system is a no-op at the default. Lower presets only
   // diverge the stream when a player actually picks them.
   const preset = DIFFICULTY_PRESETS[difficulty];
+  // LUL-2725: scale===1 on every real map (half>=240) -- see
+  // lib/game/spawnClearance.ts and its full-map identity test. Only
+  // qaWorld=micro's half=48 changes the threshold.
+  const clearScale = spawnClearanceScale(half);
   for(const p of predators){
     p.inert = p.speciesIdx >= preset.activePerSpecies;
     p.g.visible = !p.inert;
@@ -1958,10 +1963,14 @@ function placePredators(){
     // is byte-for-byte the pre-LUL-791 loop (same conditions, same rng()
     // call count on every seed); the lake is handled entirely after it, by
     // the deterministic, non-rng pushOutOfLakeClearance() -- unconditionally,
-    // not just when the retry budget exhausts.
+    // not just when the retry budget exhausts. LUL-2725: the 2500/34
+    // constants below are scaled by clearScale (lib/game/spawnClearance.ts),
+    // which is exactly 1 on every real map, so this remains byte-for-byte
+    // the pre-LUL-2725 loop there -- only qaWorld=micro's half=48 changes
+    // the threshold.
     let x, z, tries = 0;
     do { x=rnd(-half+margin, half-margin); z=rnd(-half+margin, half-margin); tries++; }
-    while((x*x+z*z < 2500 || Math.hypot(x-baby.x, z-baby.z) < 34 || blockedR(x, z, p.rad+0.5)) && tries < 60);
+    while((x*x+z*z < 2500*clearScale*clearScale || Math.hypot(x-baby.x, z-baby.z) < 34*clearScale || blockedR(x, z, p.rad+0.5)) && tries < 60);
     if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     const [ccx, ccz] = chunkXZ(x, z), [pcx, pcz] = chunkXZ(player.x, player.z);
