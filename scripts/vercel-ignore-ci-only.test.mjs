@@ -38,8 +38,8 @@ function commit(repo, files, message) {
   execFileSync('git', ['-C', repo, 'commit', '-q', '-m', message]);
 }
 
-function runScript(repo) {
-  return spawnSync('bash', [SCRIPT_PATH], { cwd: repo, encoding: 'utf8' });
+function runScript(repo, env = {}) {
+  return spawnSync('bash', [SCRIPT_PATH], { cwd: repo, encoding: 'utf8', env: { ...process.env, ...env } });
 }
 
 // ---- the four real post-LUL-789 previews that should now skip (LUL-848) ---
@@ -207,6 +207,69 @@ test('nested *.md (not root-level) still builds (exit 1) -- root-only, not recur
     commit(repo, { 'components/README.md': '# component notes\n' }, 'nested md');
     const result = runScript(repo);
     assert.equal(result.status, 1, `stderr: ${result.stderr}`);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ---- LUL-2847: feature-branch preview throttle ----------------------------
+
+test('lul-* branch, real app-code change -> skip anyway (exit 0) -- the throttle', () => {
+  const repo = makeRepo();
+  try {
+    commit(repo, { 'engine/forest-engine.js': 'export const x = 1;\n' }, 'engine change');
+    const result = runScript(repo, { VERCEL_GIT_COMMIT_REF: 'lul-2847-throttle' });
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('lul-* branch with [force-preview] on its own line -> build (exit 1)', () => {
+  const repo = makeRepo();
+  try {
+    commit(repo, { 'engine/forest-engine.js': 'export const x = 1;\n' }, 'engine change');
+    const result = runScript(repo, {
+      VERCEL_GIT_COMMIT_REF: 'lul-2847-throttle',
+      VERCEL_GIT_COMMIT_MESSAGE: 'engine change\n\n[force-preview]\n',
+    });
+    assert.equal(result.status, 1, `stderr: ${result.stderr}`);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('[force-preview] as a substring of another line does not count (exit 0, still skipped)', () => {
+  const repo = makeRepo();
+  try {
+    commit(repo, { 'engine/forest-engine.js': 'export const x = 1;\n' }, 'engine change');
+    const result = runScript(repo, {
+      VERCEL_GIT_COMMIT_REF: 'lul-2847-throttle',
+      VERCEL_GIT_COMMIT_MESSAGE: 'please [force-preview] this one\n',
+    });
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('release/next branch, real app-code change -> still builds (exit 1) -- throttle is lul-*-only', () => {
+  const repo = makeRepo();
+  try {
+    commit(repo, { 'engine/forest-engine.js': 'export const x = 1;\n' }, 'engine change');
+    const result = runScript(repo, { VERCEL_GIT_COMMIT_REF: 'release/next' });
+    assert.equal(result.status, 1, `stderr: ${result.stderr}`);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('lul-* branch, CI-only change -> still skips (exit 0) via the branch throttle', () => {
+  const repo = makeRepo();
+  try {
+    commit(repo, { 'NOAM_MDS/scratch.txt': 'note\n' }, 'scratch note');
+    const result = runScript(repo, { VERCEL_GIT_COMMIT_REF: 'lul-9-scratch' });
+    assert.equal(result.status, 0, `stderr: ${result.stderr}`);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
