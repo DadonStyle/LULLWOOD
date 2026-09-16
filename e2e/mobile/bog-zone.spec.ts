@@ -4,7 +4,8 @@
 // depend on input mode at all (they read engine state directly), so this
 // only re-drives the one input-dependent check (the slow-walk effect)
 // through the real left stick, same pattern as ../mobile/scent-trail.spec.ts.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '../fixtures';
+import type { Page } from '@playwright/test';
 import { boot, qaHook, QA_PINNED_SEED } from '../helpers';
 import { LANDMARKS, CAVE, CONFIG } from '../../engine/tuning';
 import { BOG_CENTER, BOG_INNER_RADIUS, BOG_OUTER_RADIUS, BOG_SPEED_MULTIPLIER } from '../../lib/game/bog';

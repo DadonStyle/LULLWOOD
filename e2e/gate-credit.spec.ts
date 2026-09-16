@@ -5,7 +5,7 @@
 // easily drop or fold the line into #gateSub without anyone noticing since
 // it renders for well under a second before a player clicks past it; this
 // spec pins the contract down on both desktop and mobile.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot } from './helpers';
 
 test.describe('start gate credits the studio', () => {

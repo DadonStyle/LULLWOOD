@@ -11,7 +11,7 @@
 // uses) purely so the HUD-panel assertions have something to read; the audio cues, the
 // beacon pulse, and the reworded prompt text below are all asserted with admin mode OFF
 // (the real default), since none of those three live inside #panel.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, readObjective } from './helpers';
 
 const FIXED_DT = 0.02;

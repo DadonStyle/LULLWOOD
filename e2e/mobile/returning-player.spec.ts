@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, trackConsoleErrors, expectNoConsoleErrors } from '../helpers';
 import { freshProgression } from '../../lib/game/progression';
 

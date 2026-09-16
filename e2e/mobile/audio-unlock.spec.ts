@@ -2,7 +2,7 @@
 // This test is a regression floor for the *desktop* path (headless Chromium
 // constructs the context running anyway), but the fix is required for iOS sound
 // to work at all. The real proof is on a real iPhone with ?audiodebug=1.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

@@ -22,7 +22,8 @@
 //    content at once (no real playthrough state does) -- none of their
 //    bounding boxes intersect, at 1280x720 and at a narrow mobile landscape
 //    width.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
 // LUL-2107: the cases below that stage a chasing predator (urgent

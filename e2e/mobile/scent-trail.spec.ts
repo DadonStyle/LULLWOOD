@@ -10,7 +10,8 @@
 // does on desktop. Look direction uses qaSetLookYaw directly (the ticket's own
 // choice) rather than dragging the right stick, since the caption/frustum
 // check only cares about the resulting yaw, not how a real thumb would get there.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '../fixtures';
+import type { Page } from '@playwright/test';
 import { boot, qaHook, assertInViewport } from '../helpers';
 
 const FIXED_DT = 0.02;

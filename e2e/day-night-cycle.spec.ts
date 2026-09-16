@@ -8,7 +8,7 @@
 // qaProbeTimeOfRun() (the engine-visible effect: timeOfRun, fogDensity,
 // hemiIntensity, detectMul, clock) rather than only the #timeOfRunClock DOM
 // text, per e2e/README.md's "assert the effect, not the DOM node" rule.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, advanceChunked, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
 
 test.describe('day/night cycle (timeOfRun)', () => {

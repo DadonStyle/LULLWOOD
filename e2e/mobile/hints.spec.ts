@@ -5,7 +5,8 @@
 // Settings-row touch-target/overlap checks are mobile-specific, mirroring
 // ../mobile/scent-trail.spec.ts's own split between shared engine assertions and
 // mobile-only presentation ones.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '../fixtures';
+import type { Page } from '@playwright/test';
 import { boot, qaHook } from '../helpers';
 import { CONFIG } from '../../engine/tuning';
 

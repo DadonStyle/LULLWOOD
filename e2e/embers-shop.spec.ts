@@ -6,7 +6,7 @@
 // balance via context.addInitScript (same pattern as e2e/returning-player.spec.ts) so every
 // item is affordable without a real run's payout; the game never boots to gameplay before
 // the assertions that don't need it, so qaWorld: 'micro' (LUL-2377) applies throughout.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
 
 const HIGH_BALANCE_EMBERS = { 'lullwood:embers': JSON.stringify({ balance: 2000, tiers: {} }) };

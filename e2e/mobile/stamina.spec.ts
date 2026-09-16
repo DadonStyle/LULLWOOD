@@ -5,7 +5,7 @@
 // deterministic tap/drag equivalent in this rig, so this drives `running` via
 // the toggle-run accessibility path instead, same as
 // ../mobile/toggle-run.spec.ts proves flips qaPlayerState().toggleRunOn.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, qaHook } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)

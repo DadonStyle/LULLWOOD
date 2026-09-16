@@ -3,7 +3,7 @@
 // deterministically (see e2e/win-persist.spec.ts) -- this spec drives two consecutive
 // wins then a death in one session and reads the recap text (`#runRecap`), matching how
 // e2e/win-persist.spec.ts already reads recap text. No new probe hook needed.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter } from './helpers';
 
 test('win-then-win increments streak and sets a faster-time record; a death resets it', async ({ page }) => {

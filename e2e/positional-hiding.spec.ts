@@ -59,7 +59,7 @@
 // get there" intent with no wall-clock component. The lion cover case and
 // the two death-race cases (open-lion, hold-still-wolf) are out of this
 // ticket's listed scope and are left on the real RAF loop.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { assertInViewport, boot, enter, qaHook } from './helpers';
 
 // Fixed step for the deterministic cases, matching charge-dodge.spec.ts /

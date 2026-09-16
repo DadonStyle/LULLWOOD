@@ -11,7 +11,7 @@
 // rather than waiting for a real predator to spot the player -- same
 // engine-visible-effect discipline as the rest of e2e/mobile: assert
 // qaPlayerState().jumping, not DOM presence of the pill.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, expectRowVisible } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

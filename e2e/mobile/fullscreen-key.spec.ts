@@ -7,7 +7,7 @@
 // unsupported (unchanged from LUL-124, now routed through
 // lib/game/fullscreen.ts's fullscreenSupported()), and the key path still
 // working unchanged if a touch device happens to have a keyboard attached.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)

@@ -2,7 +2,7 @@
 // windHighSpeed is a per-run 50/50 boolean (generateWind(), engine/forest-engine.js)
 // rolled from an independent seeded generator, not the shared rng stream. qaSetWindHighSpeed
 // forces it directly so these assertions don't depend on the coin flip landing either way.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 test.describe('high-wind scent persistence (LUL-2539)', () => {

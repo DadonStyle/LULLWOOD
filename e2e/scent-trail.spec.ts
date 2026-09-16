@@ -10,7 +10,8 @@
 // clock.md), same as e2e/scent.spec.ts, so "2.5s of walking" and "15s
 // standing still" are game-time budgets, not wall-clock waits subject to
 // this rig's dt-clamp-vs-walltime hazard (wiki: systems/dt-clamp-vs-walltime).
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot, enter, qaHook, assertInViewport } from './helpers';
 
 const FIXED_DT = 0.02;

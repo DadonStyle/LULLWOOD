@@ -14,7 +14,7 @@
 // e2e/helpers.ts (LUL-35 pass 2) -- each file used to carry its own copy.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { SITE_TITLE } from '../lib/site';
 import {
   assertInViewport,

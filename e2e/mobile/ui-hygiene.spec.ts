@@ -6,7 +6,8 @@
 // Runs under the mobile project (Pixel 5) and is deliberately checked in
 // LANDSCAPE, because components/OrientationGate.tsx blocks portrait play: the
 // screen a mobile player actually sees is 851x393-ish, not 393x851.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '../fixtures';
+import type { Page } from '@playwright/test';
 import { audit, checkReachability, type Defect } from '@/lib/ui/hygiene';
 import { collectElems, tapDepth } from '../ui-hygiene-collect';
 

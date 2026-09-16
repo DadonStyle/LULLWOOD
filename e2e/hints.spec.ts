@@ -14,7 +14,8 @@
 // gets a turn. clearPreemptiveHints() drains whichever of those is currently active,
 // repeatedly, until nothing is -- so a test staging a specific key isn't just watching
 // an unrelated hint play out first.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot, enter, qaHook } from './helpers';
 import { CONFIG } from '../engine/tuning';
 

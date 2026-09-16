@@ -13,7 +13,7 @@
 // tick otherwise. isSniffImmune (lib/game/predator.ts) is `hidden &&
 // sniffImmuneT > 0` -- staying hidden past SNIFF_IMMUNITY_TIME (1.5s) is what
 // lets checkScent() run again.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, expectRowVisible } from './helpers';
 
 // Matches the fixed-step convention e2e/action-prompt.spec.ts and

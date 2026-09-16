@@ -8,7 +8,7 @@
 // finished map actually respects both, at the pinned seed and three more, so
 // a regression that reintroduces dense clustering for some seed but not
 // others doesn't slip through. See docs/specs/lul-2247-prop-density.md.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, QA_PINNED_SEED, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
 // fullmap-reason: measures per-chunk prop caps over the full 8x8 chunk grid (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

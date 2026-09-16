@@ -4,7 +4,7 @@
 // circular button to GameMenu.tsx. This asserts the engine-visible effect
 // (qaPlayerState().paused) of tapping the "Pause" menu row, both directions --
 // pause and resume -- since triggerTouchPause is the only way back in too.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

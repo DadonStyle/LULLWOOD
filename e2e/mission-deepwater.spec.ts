@@ -20,7 +20,7 @@
 // and tick()'s `else` HUD branch nulls missionKind/missionStatus
 // unconditionally at that point, independent of `carrying` -- and never
 // comes back once the cinematic completes into the win screen.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 test('#missionPanel is absent before entering and disappears for good once the pickup cinematic starts', async ({ page }) => {

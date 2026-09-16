@@ -25,7 +25,7 @@
 // lul-2071-deterministic-qa-clock.md), same shape as e2e/scent.spec.ts, so
 // distance-closed-per-game-second assertions aren't at the mercy of this
 // rig's software-rendering dt clamp (wiki: systems/dt-clamp-vs-walltime).
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, advanceChunked } from './helpers';
 
 const FIXED_DT = 0.02;
