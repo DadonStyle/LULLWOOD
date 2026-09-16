@@ -1365,17 +1365,23 @@ function generateMap(seed){
 }
 
 // ---- Lake landmark (the thing to find) -----------------------------------
+// LUL-2696: was MeshStandardMaterial + a dedicated PointLight. The water mesh sits
+// close enough to the camera at the "chest-deep" teleport point to near-fill the
+// view, and PBR's per-fragment lighting math there (plus lakeLight adding another
+// point light every other lit mesh in the frame has to loop over) is what backed up
+// swiftshader's software render pipeline into the qaAdvance(410) crash -- see this
+// ticket for the live measurements. Lambert is unlit-cheap but still reacts to the
+// scene's existing moon/hemi/rim lights, so the water still darkens/lightens with
+// the day-night cycle; the glow ring below (unlit already) carries the "landmark
+// visible at night" cue that lakeLight used to help with.
 const water = new THREE.Mesh(new THREE.CircleGeometry(CONFIG.lake.r, 48),
-  new THREE.MeshStandardMaterial({ color: 0x0a1a2c, roughness: 0.35, metalness: 0.15 }));
+  new THREE.MeshLambertMaterial({ color: 0x0a1a2c }));
 water.rotation.x = -Math.PI/2; water.position.set(CONFIG.lake.x, 0.02, CONFIG.lake.z); scene.add(water);
 
 const ring = new THREE.Mesh(new THREE.RingGeometry(CONFIG.lake.r*0.72, CONFIG.lake.r*1.05, 48),
   new THREE.MeshBasicMaterial({ color: CONFIG.lake.glow, transparent: true, opacity: 0.16,
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
 ring.rotation.x = -Math.PI/2; ring.position.set(CONFIG.lake.x, 0.06, CONFIG.lake.z); scene.add(ring);
-
-const lakeLight = new THREE.PointLight(CONFIG.lake.glow, 1.3 * LEGACY_LIGHT_SCALE, 75, 2);
-lakeLight.position.set(CONFIG.lake.x, 7, CONFIG.lake.z); scene.add(lakeLight);
 
 // ---- Bog patch ground (LUL-2225) ------------------------------------------
 // The single flat `ground` plane above gave the bog no visible boundary at

@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6888 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6089, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6894 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6095, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -817,8 +817,12 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What it can do**
 - Visually mark the map's landmark body of water: a circular water mesh
-  (`CONFIG.lake.r`=15), an additive glow ring, wisp particles rising out of
-  it, and a point light (L476-505).
+  (`CONFIG.lake.r`=15, unlit `MeshLambertMaterial`) and an additive glow
+  ring; wisp particles rise out of it. LUL-2696 removed the dedicated
+  `lakeLight` point light that used to sit here (render-cost fix for the
+  swiftshader `qaAdvance` crash) — the glow ring alone now carries the
+  "landmark visible at night" read, and the water still darkens/lightens
+  with the scene's existing moon/hemisphere/rim lights.
 - Keep other elements clear of itself **at placement time only**: trees,
   cover props, and the child all reject spawn candidates inside
   `CONFIG.lake.clear` (22 units, `inLake()`, used for cover, tree, child,
@@ -1447,16 +1451,16 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5492-5552, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5643-5696 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5697-5739). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5498-5558, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5649-5702 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5703-5745). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5697-5739) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L5703-5745) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L5704) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1619,7 +1623,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6050-6824, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6056-6830, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
