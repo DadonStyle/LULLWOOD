@@ -50,7 +50,7 @@ const OVERLAY_STYLE = `
     --action-slot-row-charge: 48px;
     --action-slot-gap: 6px;
     --action-slot-bottom: 24px;
-    --action-slot-height: calc(var(--action-slot-row-charge) + (4 * var(--action-slot-row)) + (4 * var(--action-slot-gap))); }
+    --action-slot-height: calc(var(--action-slot-row-charge) + (5 * var(--action-slot-row)) + (5 * var(--action-slot-gap))); }
   canvas { display: block; }
 
   #vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none;
@@ -375,7 +375,7 @@ const OVERLAY_STYLE = `
      0.78, but that's a fixed viewport-height fraction while #actionSlot's reserved
      region (bottom: var(--action-slot-bottom), height: var(--action-slot-height),
      same vars #captionToast above keys off) is a fixed pixel band that differs per
-     breakpoint (24px/216px desktop vs. 190px/176px narrow) -- at a 720px-tall
+     breakpoint (24px/258px desktop vs. 190px/176px narrow) -- at a 720px-tall
      viewport, 0.78 already lands inside that band (562px vs. the band's 480px top
      edge), so translate(-50%,-120%)'s lift (which only clears ~20% of the pill's
      own height above the anchor) isn't enough on its own (LUL-2532: QA caught
@@ -486,7 +486,8 @@ const OVERLAY_STYLE = `
        2. objective (E)  (lift the child / mist-charm / drowned car / distance)
        3. hide or veil   (H/Hide or F/Veil -- cover always wins over veil)
        4. throwable      (holding a stone -- click / tap Throw)
-       5. status         (hidden / hunted)
+       5. pickup (E)     (LUL-2614: grab a stone -- mutually exclusive with row 4)
+       6. status         (hidden / hunted)
      --action-pill-* custom properties are the "same tokens" requirement --
      the exact values #objective's pill used to hardcode, now named once and
      shared by every row via components/ActionPrompt.tsx's .actionPromptLine.
@@ -495,13 +496,19 @@ const OVERLAY_STYLE = `
      html, body rule above); --action-slot-height derives the slot's total
      footprint from them so #captionToast (below) can sit just above it
      without restating the arithmetic. */
-  /* LUL-1088 precedent: a landscape phone is short, not narrow -- five stacked
+  /* LUL-1088 precedent: a landscape phone is short, not narrow -- six stacked
      rows plus the mobile control-row clearance below them does not fit a
      ~390px-tall viewport (e.g. Pixel 5 landscape, 851x393) at the desktop row
      sizes above. Tighten rows/gap and (combined with the mobile query below)
      the slot's own clearance specifically, without touching #panel's. */
   @media (max-height: 420px) {
-    html, body { --action-slot-row: 30px; --action-slot-row-charge: 40px; --action-slot-gap: 4px; }
+    /* LUL-2614: row/gap shrunk from 30px/4px so the new 6th row (#pickupPrompt)
+       still sums to the same 176px --action-slot-height as before (40 + 5*24 +
+       5*3.2 = 176, was 40 + 4*30 + 4*4 = 176) -- every downstream pixel-math
+       comment below (LUL-2410/2418/2459/2594) was tuned against that 176px
+       figure with as little as 1px of margin, so preserving the total instead
+       of letting it grow with the row count avoids re-deriving all of it blind. */
+    html, body { --action-slot-row: 24px; --action-slot-row-charge: 40px; --action-slot-gap: 3.2px; }
   }
   @media (max-height: 420px) and (pointer: coarse) and (hover: none),
          (max-height: 420px) and (max-width: 768px) {
@@ -580,7 +587,7 @@ const OVERLAY_STYLE = `
        LUL-2594: the base #scentTrailCaption/#hintCaption rule's top clamp
        (above) reserves an extra 24px of translate(-120%) lift headroom on top
        of --action-slot-bottom + --action-slot-height -- fine at the taller
-       desktop/default action-slot-height (216px), but at this breakpoint's
+       desktop/default action-slot-height (258px), but at this breakpoint's
        compressed rows (176px) + raised --action-slot-bottom (190px), that
        26px-taller reservation collapses the ceiling to ~3px on a 393px-tall
        viewport (Pixel 5 landscape), pushing the whole pill's translate(-120%)
@@ -634,7 +641,7 @@ const OVERLAY_STYLE = `
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
     z-index: 12; display: grid;
-    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
+    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
     row-gap: var(--action-slot-gap); justify-items: center; pointer-events: none; }
 
   .actionPromptRow { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; }

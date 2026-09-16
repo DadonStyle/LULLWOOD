@@ -114,3 +114,26 @@ test.describe('#missionPanel via qaTeleportNearMission()', () => {
     expectNoConsoleErrors(errs);
   });
 });
+
+test.describe('#pickupPrompt via qaTeleportNearThrowable()', () => {
+  test('nearing an un-grabbed stone shows #pickupPrompt; grabbing it swaps to #throwPrompt', async ({ page }) => {
+    const errs = trackConsoleErrors(page);
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+
+    await expectRowHidden(page, 'pickupPrompt');
+
+    const near = await qaHook(page, 'qaTeleportNearThrowable');
+    expect(near, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+
+    await expectRowVisible(page, 'pickupPrompt');
+    await expect(page.locator('#pickupPrompt')).toContainText('pick up the stone');
+
+    await qaHook(page, 'qaGrabThrowable');
+
+    await expectRowHidden(page, 'pickupPrompt');
+    await expectRowVisible(page, 'throwPrompt');
+
+    expectNoConsoleErrors(errs);
+  });
+});

@@ -278,12 +278,12 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
 // staging, so it can never silently drift if a future edit reorders the JSX
 // inside #actionSlot (components/Hud.tsx).
 test.describe('#actionSlot row order', () => {
-  test('five rows are always mounted, top to bottom in priority order', async ({ page }) => {
+  test('six rows are always mounted, top to bottom in priority order', async ({ page }) => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     const ids = await page.evaluate(() => Array.from(document.querySelectorAll('#actionSlot > *')).map((el) => el.id));
-    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'throwPrompt', 'status']);
+    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'throwPrompt', 'pickupPrompt', 'status']);
 
     // Every row exists (not conditionally mounted) even with nothing to show.
     for (const id of ids) {
