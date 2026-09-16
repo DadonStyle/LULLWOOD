@@ -5349,6 +5349,33 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       renderer: { geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures },
     };
   };
+
+  // [QA-HOOK] LUL-2336: no real playthrough state has more than two of
+  // chargePrompt/objective/actionPrompt(cover)/throwPrompt/status live at
+  // once (charge-dodge only fires mid-hunt-charge, cover and veil are
+  // mutually exclusive, status only shows while hidden), so
+  // e2e/action-prompt.spec.ts could previously only assert pairwise
+  // non-overlap. This forces the five underlying EngineHudState flags true
+  // directly on the real state object via pushState() -- not fake DOM -- so
+  // a spec can assert none of #actionSlot's five rows' bounding boxes
+  // intersect with real content in every row at once. statusText is forced
+  // to a representative string since the real one is only ever non-empty
+  // while `hidden` (stepFrame's own pushState above); the other four rows'
+  // text is left to whatever the real per-frame state already computed
+  // (objectiveText, the cover/veil copy in Hud.tsx's hideVeilPromptContent,
+  // and throwPrompt's template string are all unconditionally non-empty
+  // once `playing`). Call qaSetFixedStep() first so the next real
+  // stepFrame() tick doesn't immediately recompute these five back from
+  // live game state.
+  window.ForestEngine.qaForceAllActionRows = function(){
+    pushState({
+      chargeVisible: true,
+      objectiveVisible: true,
+      coverPromptVisible: true,
+      heldThrowable: true,
+      statusVisible: true, statusText: 'Hidden · 0.0s   (moving breaks cover)',
+    });
+  };
 }
 
 // ---- Audio debug readout (LUL-1112, founder-reachable on real iPhone) ------

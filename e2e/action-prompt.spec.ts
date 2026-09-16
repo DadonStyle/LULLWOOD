@@ -18,7 +18,11 @@
 // 6. #actionSlot's five rows are always mounted, in the founder's stated
 //    priority order (charge > objective > hide/veil > throwable > status),
 //    regardless of which currently have content.
-import { test, expect } from '@playwright/test';
+// 7. LUL-2336: qaForceAllActionRows() puts all five rows live with real
+//    content at once (no real playthrough state does) -- none of their
+//    bounding boxes intersect, at 1280x720 and at a narrow mobile landscape
+//    width.
+import { test, expect, type Page } from '@playwright/test';
 import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
 // LUL-2107: the 3 cases below that stage a chasing predator (urgent
@@ -269,6 +273,94 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     });
     expect(animName, 'urgentFlash animation must be suppressed under reduced motion').toBe('none');
 
+    expectNoConsoleErrors(errs);
+  });
+});
+
+// LUL-2336: the five rows this hook forces -- deliberately excludes
+// pickupPrompt/winVisible/deathVisible, which qaForceAllActionRows doesn't
+// touch (pickupPrompt is mutually exclusive with throwPrompt by
+// construction, per Hud.tsx's own comment on that row).
+const FORCED_ROW_IDS = ['chargePrompt', 'objective', 'actionPrompt', 'throwPrompt', 'status'] as const;
+
+/** One evaluate() round-trip: each forced row's data-visible flag, trimmed
+ * text content and viewport-relative bounding box, read together so the
+ * layout can't shift between reads. */
+async function readActionRows(page: Page) {
+  return page.evaluate((ids: readonly string[]) => {
+    return ids.map((id) => {
+      const el = document.getElementById(id);
+      const rect = el?.getBoundingClientRect() ?? null;
+      return {
+        id,
+        visible: el?.getAttribute('data-visible') ?? null,
+        text: (el?.textContent ?? '').trim(),
+        rect: rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : null,
+      };
+    });
+  }, FORCED_ROW_IDS);
+}
+
+function rectsOverlap(a: { left: number; right: number; top: number; bottom: number },
+                       b: { left: number; right: number; top: number; bottom: number }) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+/** Shared body for both viewport sizes below: force all five rows, assert
+ * each is visible with real (non-empty) content, then assert no two of
+ * their boxes intersect. */
+async function assertAllFiveRowsNonOverlapping(page: Page) {
+  await qaHook(page, 'qaForceAllActionRows');
+
+  const rows = await readActionRows(page);
+  for (const row of rows) {
+    expect(row.visible, `#${row.id} must be forced visible`).toBe('1');
+    expect(row.rect, `#${row.id} must be mounted with a real box`).not.toBeNull();
+    expect(row.text.length, `#${row.id} must render real (non-empty) content, not an empty pill`).toBeGreaterThan(0);
+  }
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = i + 1; j < rows.length; j++) {
+      const a = rows[i], b = rows[j];
+      expect(rectsOverlap(a.rect!, b.rect!), `#${a.id} and #${b.id} must not overlap when all five rows are live`).toBe(false);
+    }
+  }
+}
+
+test.describe('#actionSlot — all five rows forced live at once (LUL-2336)', () => {
+  test('1280x720 desktop: no two rows overlap with real content in every row', async ({ page }) => {
+    const errs = trackConsoleErrors(page);
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+
+    // LUL-2107: freeze the real RAF loop first -- qaForceAllActionRows's own
+    // doc comment requires this so the next real stepFrame() tick doesn't
+    // immediately recompute the five flags back from live game state
+    // (coverPromptVisible/heldThrowable/statusVisible would all revert to
+    // false at this empty patch of the micro world).
+    await qaHook(page, 'qaSetFixedStep', 0.02);
+    await qaHook(page, 'qaAdvance', 1); // one real frame so objectiveText is the live computed string, not the boot default
+
+    await assertAllFiveRowsNonOverlapping(page);
+    expectNoConsoleErrors(errs);
+  });
+
+  test('narrow mobile landscape (844x390): no two rows overlap with real content in every row', async ({ page }) => {
+    // LUL-2410/LUL-2379 precedent in this file: OrientationGate
+    // (components/OrientationGate.tsx) blocks all portrait viewports at or
+    // under the isMobile() max-width:768px breakpoint, so "390px" here means
+    // the standard iPhone 12/13 mini *portrait* width (390) rotated into its
+    // landscape shape (844x390) -- same convention as this file's existing
+    // "Pixel 5 landscape, 851x393" / "iPhone SE landscape, 667x375" cases.
+    await page.setViewportSize({ width: 844, height: 390 });
+    const errs = trackConsoleErrors(page);
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await page.mouse.click(844 / 2, 390 / 2);
+    await page.waitForTimeout(1200); // gate fade settle (mobile has no pointer-lock to wait on)
+
+    await qaHook(page, 'qaSetFixedStep', 0.02);
+    await qaHook(page, 'qaAdvance', 1);
+
+    await assertAllFiveRowsNonOverlapping(page);
     expectNoConsoleErrors(errs);
   });
 });
