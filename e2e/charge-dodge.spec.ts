@@ -81,7 +81,16 @@
 // mechanic; it is a rendering/telegraph-reading concern, not a dodge-outcome
 // one. Not asserted on here for that reason -- see LUL-302 for its own fix.
 import { test, expect } from '@playwright/test';
-import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors, expectRowVisible, expectRowHidden } from './helpers';
+import {
+  boot,
+  enter,
+  qaHook,
+  advanceChunked,
+  trackConsoleErrors,
+  expectNoConsoleErrors,
+  expectRowVisible,
+  expectRowHidden,
+} from './helpers';
 import { CHARGE_TELL_TIME, CHARGE_RUN_TIME, CHARGE_WINDOW } from '../lib/game/charge';
 
 // "Well into" the charging sub-phase. ChargeState.t is cumulative since the
@@ -108,14 +117,21 @@ const RESOLVE_STEPS = stepsFor((CHARGE_WINDOW + CHARGE_RUN_TIME) * 2);
 test.describe('LUL-323 charge-dodge overshoot (independent re-verification)', () => {
   for (const kind of ['wolf', 'lion'] as const) {
     test(`${kind}: dodge timing controls overshoot, missing still kills`, async ({ page }) => {
-      test.setTimeout(90_000);
+      // LUL-2802: 180s, not 90s -- three RESOLVE_STEPS (~165-step) advances per
+      // test, each now chunked (advanceChunked, helpers.ts) at a 6s/25-step
+      // worst case (7 chunks ~= 42s). CI showed this test's bare `#chargePrompt`
+      // advance as a "Test timeout of 90000ms exceeded" (shard 1, run
+      // 35086869286) while passing cleanly every time in isolation locally --
+      // rig contention, same shape as LUL-2734's cover-feedback fix, not a
+      // logic regression in the LUL-323 overshoot fix this spec verifies.
+      test.setTimeout(180_000);
       const errors = trackConsoleErrors(page);
       await boot(page, { qaHooks: true });
       await enter(page);
       // LUL-2107: park the real RAF loop for the rest of the test -- from
       // here on, only advanceGameTime() moves simulation time.
       await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-      const advanceGameTime = (steps: number) => qaHook(page, 'qaAdvance', steps);
+      const advanceGameTime = (steps: number) => advanceChunked(page, steps);
 
       const deathScreen = page.locator('#deathScreen');
 
