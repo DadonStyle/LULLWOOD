@@ -411,6 +411,15 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
       throw new Error('qaLurePredatorKind("lion") returned null -- no lion in predators');
     }
 
+    // LUL-2841: this test runs on the real RAF loop with no qaBuildScene
+    // (which would wipe the natural bramble qaTeleportToHideSpot just found),
+    // so the 5s wait below is real wall time an independently-hunting
+    // ambient predator elsewhere on the full map can use to reach and kill
+    // the player before the lured lion does -- live-repro'd 30/30 as a wrong-
+    // species death ("bear" instead of "lion"). qaIsolatePredatorKind parks
+    // every other predator `inert` without touching cover/terrain state.
+    await page.evaluate(() => window.ForestEngine?.qaIsolatePredatorKind?.('lion'));
+
     await page.waitForTimeout(5_000);
     await expect(
       page.locator('#deathScreen'),
