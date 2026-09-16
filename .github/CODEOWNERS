@@ -1,0 +1,52 @@
+# LUL-1664 / LUL-1772 -- entries mirror scripts/pr-tier.mjs's Tier C rules
+# exactly (checked against pr-tier.mjs 2026-09-17, current after LUL-1880's
+# named-list narrowing) so the two never drift silently apart.
+#
+# Inert today: GitHub only enforces this once `require_code_owner_review:
+# true` is set on rulesets 21050378 (release/next) and 20886790 (main), and
+# `@lullwood-code-reviewer` (a GitHub App, per the 2026-09-16 founder
+# decision on LUL-1772) has to exist and be installed on this repo before it
+# can own anything. Both are founder-only actions, tracked on LUL-1772.
+# Until then, this file changes nothing about how PRs merge.
+#
+# Paths not listed here (app/, components/, lib/ minus the lib/game files
+# below, docs/, e2e/, public/, ...) are Tier A/B and intentionally have no
+# code owner -- the existing required_approving_review_count: 1 (any
+# identity) keeps governing them exactly as it does today.
+#
+# Known gap: pr-tier.mjs also classifies C by CONTENT, not just path --
+# `/(auth|secret|token|credential)/i` matched anywhere in the filename.
+# CODEOWNERS only matches paths, so e.g. a new `lib/foo-token-helper.ts`
+# would be Tier C to pr-tier.mjs but ownerless here. No CODEOWNERS-side fix
+# exists; flagged on LUL-1772, not blocking the rest of this file.
+
+/.github/              @lullwood-code-reviewer
+/scripts/              @lullwood-code-reviewer
+/engine/               @lullwood-code-reviewer
+/app/api/              @lullwood-code-reviewer
+/package.json          @lullwood-code-reviewer
+/package-lock.json     @lullwood-code-reviewer
+/next.config.*         @lullwood-code-reviewer
+/tsconfig*.json        @lullwood-code-reviewer
+/eslint.config.*       @lullwood-code-reviewer
+/playwright.config.ts  @lullwood-code-reviewer
+/vercel.json           @lullwood-code-reviewer
+/**/.env*              @lullwood-code-reviewer
+
+# lib/game/**/*.ts simulation files pr-tier.mjs pulled out of generic
+# Tier B lib/** (LUL-1664 / PR #354, narrowed to this named list by LUL-1880
+# / PR #440 -- keep this list in sync with the regex at scripts/pr-tier.mjs).
+/lib/game/predator.ts    @lullwood-code-reviewer
+/lib/game/scent.ts       @lullwood-code-reviewer
+/lib/game/cover.ts       @lullwood-code-reviewer
+/lib/game/outcome.ts     @lullwood-code-reviewer
+/lib/game/pack.ts        @lullwood-code-reviewer
+/lib/game/charge.ts      @lullwood-code-reviewer
+/lib/game/sightLock.ts   @lullwood-code-reviewer
+/lib/game/dayNight.ts    @lullwood-code-reviewer
+/lib/game/veil.ts        @lullwood-code-reviewer
+/lib/game/fogTide.ts     @lullwood-code-reviewer
+/lib/game/noise.ts       @lullwood-code-reviewer
+/lib/game/bog.ts         @lullwood-code-reviewer
+/lib/game/lake.ts        @lullwood-code-reviewer
+/lib/game/stamina.ts     @lullwood-code-reviewer
