@@ -14,8 +14,10 @@ import {
   pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
+  shouldDowngradeChase,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
+  SIGHT_FLICKER_TIME,
   SNIFF_APPROACH_MARGIN,
   SNIFF_IMMUNITY_TIME,
   SNIFF_STANDOFF,
@@ -127,6 +129,35 @@ test('shouldGiveUpChase gives up a hair past the leash', () => {
 
 test('shouldGiveUpChase is false when close, even with scentLock expired', () => {
   assert.equal(shouldGiveUpChase(0, 1, 10), false);
+});
+
+// ---- shouldDowngradeChase (LUL-2611) ---------------------------------------------------
+
+test('shouldDowngradeChase holds through a single blind tick while sightFlicker has not expired', () => {
+  assert.equal(shouldDowngradeChase(0, SIGHT_FLICKER_TIME, false), false);
+});
+
+test('shouldDowngradeChase downgrades normally once the flicker grace has expired', () => {
+  assert.equal(shouldDowngradeChase(0, 0, false), true);
+});
+
+test('shouldDowngradeChase treats a negative sightFlicker as expired, same as scentLock', () => {
+  assert.equal(shouldDowngradeChase(0, -0.01, false), true);
+});
+
+test('shouldDowngradeChase never downgrades while sight actually holds, regardless of either timer', () => {
+  assert.equal(shouldDowngradeChase(0, 0, true), false);
+});
+
+test('shouldDowngradeChase: scentLock alone still blocks the downgrade, sightFlicker untouched', () => {
+  // The pre-existing scentLock branch (LUL-23, blind scent chase) is unmodified by this fix:
+  // a live scentLock holds off the downgrade on its own even with no sightFlicker grace left.
+  assert.equal(shouldDowngradeChase(0.001, 0, false), false);
+});
+
+test('shouldDowngradeChase: both timers expired and no sight is the only downgrade case', () => {
+  assert.equal(shouldDowngradeChase(0.001, SIGHT_FLICKER_TIME, false), false);
+  assert.equal(shouldDowngradeChase(-1, -1, false), true);
 });
 
 // ---- tickTimers -----------------------------------------------------------------
@@ -242,6 +273,28 @@ test('shouldRevertInvestigateToChase is false for a freshly-entered "approach" p
 
 test('shouldRevertInvestigateToChase is false for "approach" while hidden too', () => {
   assert.equal(shouldRevertInvestigateToChase('approach', true), false);
+});
+
+// ---- LUL-2611: the founder's "hiding doesn't hold near a predator" report -----------
+
+test('shouldRevertInvestigateToChase is true for "approach" when the player un-hides after entering approach while hidden', () => {
+  // approachEnteredHidden=true means the player was hidden the moment this
+  // predator collapsed into investigate/approach (e.g. the lured-hunt
+  // collapse) -- un-hiding afterward, while still mid-approach, must revert
+  // to chase. This is the exact gap the founder reported.
+  assert.equal(shouldRevertInvestigateToChase('approach', false, true), true);
+});
+
+test('shouldRevertInvestigateToChase stays false for a same-tick fresh "approach" entry with hidden already false -- LUL-658 preserved', () => {
+  // approachEnteredHidden=false is the livelock case this exclusion exists
+  // for: 'approach' just entered this tick with the player already unhidden
+  // (a fresh chase collapse, never hidden at all). Must not revert, or the
+  // chase<->investigate volley from LUL-658 reappears.
+  assert.equal(shouldRevertInvestigateToChase('approach', false, false), false);
+});
+
+test('shouldRevertInvestigateToChase is false for "approach" while still hidden, regardless of approachEnteredHidden', () => {
+  assert.equal(shouldRevertInvestigateToChase('approach', true, true), false);
 });
 
 test('shouldRevertInvestigateToChase is true for "sniff" when not hidden -- the close-range case the original gate is for', () => {

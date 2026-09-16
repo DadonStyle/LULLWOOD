@@ -207,7 +207,11 @@ declare global {
        * LUL-659: `x`/`z` are the predator's raw world position, for tracing
        * lateral movement (e.g. avoidDir() steering around cover) over time.
        * LUL-2320: `rad` (`PSPEC[kind].rad`) lets a test compute the live contact-catch
-       * threshold (`rad + CATCH_MARGIN`) without hardcoding species constants. */
+       * threshold (`rad + CATCH_MARGIN`) without hardcoding species constants.
+       * LUL-2712: `sightFlicker` is the live `p.sightFlicker` value the chase LOS-flicker
+       * grace (lib/game/predator.ts shouldDowngradeChase) reads/decrements every tick --
+       * lets a test assert it is actually wired at the real canSee(p,dist) call site,
+       * not just correct in isolation. */
       qaPredatorState?: (idx: number) => {
         kind: 'wolf' | 'bear' | 'lion';
         state: string;
@@ -222,6 +226,7 @@ declare global {
         gaveUpAt: number | null;
         parked: boolean;
         visible: boolean;
+        sightFlicker: number;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
