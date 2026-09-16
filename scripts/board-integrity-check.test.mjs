@@ -481,6 +481,28 @@ test('formatReport marks an EXTERNALLY_BLOCKED tombstone with the stated conditi
   assert.ok(report.indexOf('LUL-A') < report.indexOf('LUL-2734'), 'expected SHIPPED (LUL-A) before EXTERNALLY_BLOCKED (LUL-2734)');
 });
 
+test('LUL-2772: formatReport does not alarm when every tombstone is EXTERNALLY_BLOCKED (no action needed)', () => {
+  const externallyBlocked = {
+    issue: { identifier: 'LUL-2734' },
+    disposition: 'EXTERNALLY_BLOCKED',
+    mergedPrs: [{ number: 672, merged: true }],
+    unblock: { statement: '2 consecutive green nightly runs' },
+  };
+  assert.equal(formatReport([externallyBlocked], [], 'DadonStyle/LULLWOOD'), null);
+});
+
+test('LUL-2772: formatReport header count excludes EXTERNALLY_BLOCKED entries when another alarm keeps the report alive', () => {
+  const stranded = { issue: { identifier: 'LUL-B' }, disposition: 'STRANDED', mergedPrs: [] };
+  const externallyBlocked = {
+    issue: { identifier: 'LUL-2734' },
+    disposition: 'EXTERNALLY_BLOCKED',
+    mergedPrs: [{ number: 672, merged: true }],
+    unblock: { statement: '2 consecutive green nightly runs' },
+  };
+  const report = formatReport([stranded, externallyBlocked], [], 'DadonStyle/LULLWOOD');
+  assert.match(report, /^1 tombstoned issue\(s\)/m);
+});
+
 // ---- extractPrNumbers / referencedPrNumbers --------------------------------
 
 test('extractPrNumbers pulls every #<n> token out of free text', () => {
@@ -669,6 +691,25 @@ test('LUL-2734 shape: merged+attributed PR, but the assignee posted an external-
   const result = classifyDisposition(issue, prByNumber);
   assert.equal(result.disposition, 'EXTERNALLY_BLOCKED');
   assert.match(result.unblock.statement, /2 consecutive green nightly runs/);
+});
+
+test('LUL-2772: two post-cutoff external-unblock comments in array order (not date order) -> picks the most recent by postedMs, not the first', () => {
+  const issue = {
+    identifier: 'LUL-2734',
+    title: 'x',
+    description: 'fixed by #672',
+    assigneeAgentId: 'fe-agent',
+    comments: [
+      { authorAgentId: 'fe-agent', createdAt: '2026-09-16T10:00:00.000Z', body: 'external-unblock: waiting on nightly runs' },
+      { authorAgentId: 'fe-agent', createdAt: '2026-09-16T06:00:00.000Z', body: 'external-unblock: waiting on a rebase' },
+    ],
+  };
+  const prByNumber = new Map([
+    [672, { number: 672, title: 'LUL-2734: fix', merged: true, state: 'closed', merged_at: '2026-09-16T04:45:31.000Z' }],
+  ]);
+  const result = classifyDisposition(issue, prByNumber);
+  assert.equal(result.disposition, 'EXTERNALLY_BLOCKED');
+  assert.match(result.unblock.statement, /waiting on nightly runs/);
 });
 
 test('an external-unblock statement posted before the merge it would override does not count (already stale)', () => {

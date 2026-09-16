@@ -262,15 +262,19 @@ function mostRecentMergeMs(mergedPrs) {
 function findExternalUnblockStatement(issue, mergedPrs) {
   if (!issue.assigneeAgentId) return null;
   const cutoffMs = mostRecentMergeMs(mergedPrs);
+  let latest = null;
+  let latestMs = -Infinity;
   for (const comment of issue.comments ?? []) {
     if (comment.authorAgentId !== issue.assigneeAgentId) continue;
     const match = EXTERNAL_UNBLOCK_RE.exec(comment.body ?? '');
     if (!match) continue;
     const postedMs = comment.createdAt ? Date.parse(comment.createdAt) : NaN;
     if (!Number.isFinite(postedMs) || postedMs <= cutoffMs) continue;
-    return { statement: match[1].trim(), comment };
+    if (postedMs <= latestMs) continue;
+    latestMs = postedMs;
+    latest = { statement: match[1].trim(), comment };
   }
-  return null;
+  return latest;
 }
 
 // prByNumber: Map<number, pr> where pr is the shape of
@@ -615,8 +619,13 @@ function formatReport(
   staleConfirmations = [],
   assignedBacklogNoGate = [],
 ) {
+  // EXTERNALLY_BLOCKED tombstones need no recovery action (LUL-2768's whole
+  // point), so they don't count toward the alarm or the header -- only
+  // STRANDED/SHIPPED entries do. They still get listed when the section
+  // renders for those actionable entries (test coverage above).
+  const actionableTombstoneCount = classifiedTombstones.filter((t) => t.disposition !== 'EXTERNALLY_BLOCKED').length;
   const hasAlarms =
-    classifiedTombstones.length > 0 ||
+    actionableTombstoneCount > 0 ||
     unownedPrs.length > 0 ||
     assignedBacklogNoGate.length > 0 ||
     zeroPullable?.alarm ||
@@ -629,10 +638,10 @@ function formatReport(
       `ALARM C: board has 0 todo/in_progress issues with ${zeroPullable.availableAgentCount} available agent(s) -- studio is stopped`,
     );
   }
-  if (classifiedTombstones.length > 0) {
+  if (actionableTombstoneCount > 0) {
     lines.push(
       '',
-      `${classifiedTombstones.length} tombstoned issue(s) -- blocked/in_review, no live blocker, no active ` +
+      `${actionableTombstoneCount} tombstoned issue(s) -- blocked/in_review, no live blocker, no active ` +
         'recovery action, no pending wake_assignee interaction:',
     );
     for (const { issue: t, disposition, mergedPrs, unblock } of sortTombstonesStrandedFirst(classifiedTombstones)) {
