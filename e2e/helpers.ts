@@ -131,6 +131,45 @@ export function qaHook<K extends QaHookName>(page: Page, name: K, ...args: any[]
   );
 }
 
+// LUL-2734 established the pattern this generalizes: `qaAdvance()` drives
+// `stepFrame()` synchronously inside a single `page.evaluate()` call -- a
+// large step count run as one call has to complete inside one Playwright
+// command round-trip, so on a contended rig the whole thing fails as a bare
+// "Test timeout of Xms exceeded" pointing at qaHook, with no way to tell how
+// much of the advance actually landed (root-caused live at
+// e2e/cover-feedback.spec.ts's `advanceWithDiagnostics`, proved by 2
+// consecutive green nightlies post-fix, LUL-2734 comment 2026-09-16T08:57Z).
+// LUL-2802: `e2e/day-night-cycle.spec.ts` and `e2e/charge-dodge.spec.ts`
+// each drive a single 120-165-step `qaAdvance()` the same unchunked way and
+// showed the identical bare-timeout signature in CI (run 35086869286, shard
+// 1/6) while passing cleanly every time run in isolation locally -- the same
+// rig-contention shape, not a logic regression. Chunking doesn't change the
+// simulation (same total fixed-dt steps, same order), only what a slow rig
+// fails with.
+const ADVANCE_CHUNK = 25;
+const ADVANCE_CHUNK_TIMEOUT_MS = 6_000;
+
+export async function advanceChunked(page: Page, totalSteps: number, chunkSize = ADVANCE_CHUNK): Promise<void> {
+  for (let done = 0; done < totalSteps; done += chunkSize) {
+    const steps = Math.min(chunkSize, totalSteps - done);
+    await Promise.race([
+      qaHook(page, 'qaAdvance', steps),
+      new Promise((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `qaAdvance(${steps}) did not return within ${ADVANCE_CHUNK_TIMEOUT_MS}ms ` +
+                  `(${done}/${totalSteps} fixed-dt steps already advanced)`,
+              ),
+            ),
+          ADVANCE_CHUNK_TIMEOUT_MS,
+        ),
+      ),
+    ]);
+  }
+}
+
 /**
  * LUL-2312: #objective/#actionPrompt/#throwPrompt/#chargePrompt/#status are
  * five always-mounted rows inside #actionSlot now (components/Hud.tsx),
