@@ -4319,12 +4319,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // charge/hunt state live -- an in-flight p.charge resolves purely on
     // elapsed game time (stepCharge, above) independent of anything staged
     // here, so it can catch the player before this freshly-placed lion closes
-    // the gap, reporting the wrong species on #deathKind. Neutralize every
-    // other predator so this hook is the only thing that can kill the player.
+    // the gap, reporting the wrong species on #deathKind. LUL-2876: clearing
+    // hunt/charge alone isn't enough either -- a predator left in 'roam' can
+    // independently re-detect and chase the player over the real game time a
+    // late-scenario caller advances before this lion's gap closes (live-repro'd
+    // on the mobile death-cutscene step: #deathKind read 'bear' instead of the
+    // staged 'lion'). `inert` removes a predator from updatePredators()'s loop
+    // entirely (:2516), same flag qaIsolatePredatorKind (:4635) and
+    // qaStageWalkIntoCover use for this exact failure mode.
     for(const p of predators){
       if(p === lion) continue;
       if(p.charge){ p.charge = null; endChargeHud(); }
       p.hunt = false;
+      p.inert = true;
     }
     lion.x = player.x + 4; lion.z = player.z;
     lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
