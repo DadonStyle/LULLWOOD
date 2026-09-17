@@ -86,6 +86,13 @@ for (const viewport of VIEWPORTS) {
 
       const { yaw } = await qaHook(page, 'qaProbePlayer');
       await qaHook(page, 'qaSetLookYaw', yaw + Math.PI);
+      // LUL-2875/LUL-2878: this is a real 180-degree turn from the walking
+      // heading (unlike a test that sets yaw back to its already-current
+      // value), and the camera's own facing lags player.yaw by about one
+      // 0.1s batch before projectToScreen() re-admits a point to frustum --
+      // same settle-lag class e2e/hints.spec.ts hit for the wolf hint.
+      // Advance twice so the probe below runs after it settles.
+      await qaHook(page, 'qaAdvance', stepsFor(0.1));
       await qaHook(page, 'qaAdvance', stepsFor(0.1));
 
       const turned = await qaHook(page, 'qaProbeScentTrail');
