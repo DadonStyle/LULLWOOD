@@ -52,7 +52,7 @@ test('valid event with token → 204 and puts to blob', async () => {
   delete process.env.BLOB_READ_WRITE_TOKEN;
 });
 
-test('all 7 valid event names are accepted', async () => {
+test('all 9 valid event names are accepted', async () => {
   process.env.BLOB_READ_WRITE_TOKEN = 'test-token';
   const events = [
     validPayload('page_view'),
@@ -62,6 +62,8 @@ test('all 7 valid event names are accepted', async () => {
     validPayload('loss', { predator_kind: 'wolf', time_survived_ms: 500, seed: 42 }),
     validPayload('session_length', { duration_ms: 10000, reached_gameplay: true }),
     validPayload('feature_engagement', { feature: 'hide', action: 'used' }),
+    validPayload('engine_contract_violation', { missing_keys: ['setMissionUnlocks'] }),
+    validPayload('chase_gap', { duration_ms: 2500, difficulty: 'normal' }),
   ];
   for (const payload of events) {
     resetPuts();
