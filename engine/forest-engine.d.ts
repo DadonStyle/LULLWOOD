@@ -359,6 +359,9 @@ declare global {
        * pixel -- confirms the composited on-screen color at the burst's peak,
        * not just mesh color/scale math. */
       qaProbeBoomPixel?: () => { r: number; g: number; b: number };
+      /** LUL-2985: boomFlash's own live material opacity -- pins the mesh's
+       * fade curve directly, independent of the composited pixel probe above. */
+      qaProbeBoomOpacity?: () => number;
       /** LUL-1112: the live audio context state, whether it's started, soundOn flag,
        * and master gain value -- used to verify the audio context is running on mobile. */
       qaProbeAudio?: () => {
