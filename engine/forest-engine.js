@@ -3859,6 +3859,11 @@ let hudState = {
   // hint is on screen -- same per-frame-push pattern as veilCharge above.
   hintsEnabled: true,
   hintVisible: false, hintKey: null, hintText: '', hintX: 0.5, hintY: 0.5,
+  // LUL-3009: Threat Beacon -- true while the player's live per-frame heading
+  // is moving against windX/windZ (isMovingAgainstWind(), lib/game/scent.ts),
+  // pushed every frame unlike windX/windZ above (map-constant, pushed once).
+  // Drives #windIndicator's pulse class; not itself persisted or rationed.
+  movingAgainstWind: false,
 };
 function pushState(patch){
   let changed = false;
@@ -4233,7 +4238,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // generateMap() by generateWind(), engine/forest-engine.js:1810/1812) so a test
   // can derive #windIndicator's expected rotation instead of hardcoding an angle.
   window.ForestEngine.qaProbeWind = function(){
-    return { windX: windX, windZ: windZ, windHighSpeed: windHighSpeed };
+    return { windX: windX, windZ: windZ, windHighSpeed: windHighSpeed, movingAgainstWind: hudState.movingAgainstWind };
   };
 
   // Drops the player `standoff` units on the -x side of the first reachable
@@ -5425,6 +5430,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // [QA-HOOK] LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
   // generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion.
   window.ForestEngine.qaSetWindHighSpeed = function(v){ windHighSpeed = !!v; };
+  // [QA-HOOK] LUL-3009: forces windX/windZ directly (normalized), same "bypass the roll"
+  // rationale as qaSetWindHighSpeed above -- a movingAgainstWind test needs a known wind
+  // vector to pick a heading that's provably against it, not whatever generateWind() rolled.
+  // Pushes the pair to HUD state too, same as generateMap()'s one-time push, so #windIndicator
+  // stays in sync with the forced value for the rest of the test.
+  window.ForestEngine.qaSetWindDirection = function(x, z){
+    const m = Math.hypot(x, z) || 1;
+    windX = x / m; windZ = z / m;
+    pushState({ windX, windZ });
+  };
   // [QA-HOOK] LUL-2547: places predator[kind] dx/dz from the *player's current position* (not a
   // throw-landing point like qaStagePredatorNearThrowLanding) so a test can stage "predator within
   // hide-alert radius" after qaTeleportToHideSpot() without qaBuildScene() wiping the natural cover
@@ -6436,7 +6451,7 @@ function stepFrame(dt, t, skipRender){
     logChronicle('fog_tide_end');
   }
 
-  let spd = 0, dist = 0, running = false, noiseRadius = 0;
+  let spd = 0, dist = 0, running = false, noiseRadius = 0, movingAgainstWind = false;
   const playerBogginess = biomeAt(player.x, player.z);   // LUL-1483: continuous 0..1, was a boolean z-band test
   playerBogMask = bogMaskLevel(playerBogginess, playerBogMask, dt);   // LUL-1902: decaying wolf-scent-mask, see checkScent()
   // LUL-791/LUL-392: the lake used to be pure render -- no collision, no slow,
@@ -6468,6 +6483,10 @@ function stepFrame(dt, t, skipRender){
     if(mag > 0){
       mvx /= mag; mvz /= mag; spd = maxSpd;
       escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
+      // LUL-3009: every frame while moving, not throttled by scentEmitT below (that gate is
+      // sized for scent deposit density, not for a HUD readout the player expects to track
+      // their heading in real time).
+      movingAgainstWind = isMovingAgainstWind(mvx, mvz, windX, windZ);
       const step = maxSpd*dt, lim = half - margin, zLim = zMax - margin;
       const nx = Number.isFinite(WRAP_SPAN)
         ? wrapCoord(player.x + mvx*step, WRAP_SPAN)
@@ -6488,6 +6507,11 @@ function stepFrame(dt, t, skipRender){
       noiseRadius = (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK) * bogNoiseMultiplier(playerBogginess);
     }
   }
+  // LUL-3009: pushed unconditionally every frame (not nested in the movement block above),
+  // same reasoning as the LUL-2249 comment just below -- `movingAgainstWind` is redeclared
+  // `false` at the top of this stepFrame() call, so hidden/paused/stationary frames clear it
+  // here without a separate reset site.
+  pushState({ movingAgainstWind });
 
   // LUL-2249: once per stepFrame(), after every player.x/player.z write this
   // function makes (confirmed by grepping every `player.x =`/`player.z =`
