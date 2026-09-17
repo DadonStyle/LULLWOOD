@@ -713,6 +713,14 @@ const OVERLAY_STYLE = `
   /* death: video cutscene + loss text */
   #spotFlash { position: fixed; inset: 0; z-index: 12; pointer-events: none; opacity: 0;
     background: radial-gradient(circle at 50% 45%, rgba(255,20,20,0) 40%, rgba(200,0,0,0.5) 100%); }
+  /* LUL-2856: cover-rustle vignette. Same edge-vignette shape as #spotFlash, brush-green tint
+     instead of alert-red, z-index one below spotFlash (a real spot event is the more urgent
+     signal and must read on top if both are ever active the same frame -- same ordering
+     rationale #bearingPulse already uses relative to #spotFlash, :716-718). Sibling of #panel,
+     NOT a descendant -- visible with adminMode off (Q3, GameCanvas.tsx:324's selector only
+     matches #panel). */
+  #rustleFlash { position: fixed; inset: 0; z-index: 11; pointer-events: none; opacity: 0;
+    background: radial-gradient(circle at 50% 45%, rgba(120,140,40,0) 40%, rgba(90,110,30,0.5) 100%); }
   /* LUL-1308: off-screen predator bearing. z-index one below spotFlash so a
      real spot event (the more urgent, full-screen signal) reads on top if both
      are active at once. Class name ('left'/'right'/'behind') set by the engine
@@ -749,6 +757,7 @@ function overlayMarkup(mobile: boolean) {
   return `
 <div id="vignette"></div>
 <div id="spotFlash"></div>
+<div id="rustleFlash"></div><!-- LUL-2856 -->
 <div id="bearingPulse"></div>
 <div id="flash"></div>
 <canvas id="minimap" width="160" height="160"></canvas>
