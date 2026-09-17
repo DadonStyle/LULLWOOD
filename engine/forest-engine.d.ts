@@ -250,6 +250,12 @@ declare global {
         t: number;
         overshootDuration: number;
       } | null;
+      /** LUL-2853: `predators` index of whichever instance actually won
+       * triggerDeath()'s once-only guard, or null if no death has happened yet
+       * this run. Lets a test confirm a specific tracked predator (e.g. the one
+       * returned by qaTriggerCharge) is the one that actually killed the player,
+       * not a same-species pack-mate that independently won the race the same tick. */
+      qaLastDeathPredatorIndex?: () => number | null;
       /** LUL-275: snapshot of the player's transform and detected input mode --
        * this init() actually bound -- proves which input branch bound at runtime,
        * not just which the test requested. See wiki: game/lul274-input-mode-separation. */
