@@ -4748,22 +4748,35 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // this one, so the plain distance search silently re-selects (and keeps
   // live) an idle roamer while marking the actually-hunting, just-lured
   // predator `inert` (LUL-2975: rare flake, positional-hiding.spec.ts lion
-  // bramble-at-range case). Prefer any predator of `kind` already hunting
-  // (`p.hunt === true`, set by qaLurePredatorKind/qaStageForceHuntApproach
-  // etc.) over plain nearest-distance; only fall back to nearest-of-kind if
-  // none are hunting. Marks every other predator `inert` (same flag
-  // qaIsolatePredator uses -- touches no cover/terrain state). Returns
-  // {kind,x,z}, or null if the species isn't spawned.
+  // bramble-at-range case). First attempt (this ticket) preferred any
+  // predator of `kind` with `p.hunt===true` over plain nearest-distance --
+  // LUL-2979 review caught that this is dead code for the exact scenario it
+  // targets: a lured predator placed outside contact range against a hidden
+  // player loses `p.hunt` to the LOS-loss branch (updatePredators()
+  // canSee()===false, :2700-2709) on the very first predator-update tick,
+  // before isolate() ever runs, and the ambient force-hunt escalation that
+  // could otherwise re-set another same-kind predator's `hunt` is itself
+  // gated on `!hidden` (:6624) -- so with the player hidden, no predator of
+  // `kind` ever has `hunt===true` at isolate-time. Use the broader `pursuing`
+  // definition already used elsewhere (:2993/:2520) --
+  // `hunt || state==='chase' || (state==='investigate' && inv==='approach')`
+  // -- so a lured predator that has downgraded to investigate/approach while
+  // still closing on the last-known position still wins the tie-break over
+  // an idle roamer. Only fall back to nearest-of-kind if none are pursuing.
+  // Marks every other predator `inert` (same flag qaIsolatePredator uses --
+  // touches no cover/terrain state). Returns {kind,x,z}, or null if the
+  // species isn't spawned.
   window.ForestEngine.qaIsolatePredatorKind = function(kind){
-    let nearestHunting = null, bestHunting = 1e9;
+    let nearestPursuing = null, bestPursuing = 1e9;
     let nearestAny = null, bestAny = 1e9;
     for(const p of predators){
       if(p.kind !== kind) continue;
       const d = Math.hypot(player.x - p.x, player.z - p.z);
       if(d < bestAny){ bestAny = d; nearestAny = p; }
-      if(p.hunt && d < bestHunting){ bestHunting = d; nearestHunting = p; }
+      const pursuing = p.hunt || p.state === 'chase' || (p.state === 'investigate' && p.inv === 'approach');
+      if(pursuing && d < bestPursuing){ bestPursuing = d; nearestPursuing = p; }
     }
-    const chosen = nearestHunting || nearestAny;
+    const chosen = nearestPursuing || nearestAny;
     if(!chosen) return null;
     for(const other of predators){ if(other !== chosen){ other.inert = true; } }
     return { kind: chosen.kind, x: chosen.x, z: chosen.z };
