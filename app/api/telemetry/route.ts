@@ -16,6 +16,8 @@ const VALID_EVENTS = new Set([
   'loss',
   'session_length',
   'feature_engagement',
+  'engine_contract_violation',
+  'chase_gap',
 ]);
 
 const MAX_BODY_BYTES = 2048;

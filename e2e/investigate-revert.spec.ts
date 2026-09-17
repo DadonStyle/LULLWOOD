@@ -57,10 +57,21 @@ test.describe('investigate -> chase revert on un-hide (LUL-2611)', () => {
 
     const readPredator = () => page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx);
 
-    const reachedInvestigate = await advanceUntil(page, async () => (await readPredator())?.state === 'investigate');
+    // LUL-2957: poll in fine (0.2s) chunks while waiting to reach 'approach', not
+    // the 1s default -- a coarse chunk lets the wolf wander well past the moment
+    // it first enters 'approach' before this ever checks, and by the time it's
+    // observed the predator may already be cycling into a *fresh* approach/sniff
+    // entry stamped with hidden=false (a legitimate, differently-timed entry, not
+    // a bug -- see shouldRevertInvestigateToChase()'s LUL-658 same-tick-false
+    // exclusion). That drops the un-hide below onto the wrong entry and makes it
+    // take the slow natural-approach path back to 'chase' instead of the fast
+    // approachEnteredHidden revert this spec exists to exercise, occasionally
+    // overrunning the 5s cap below. Fine polling here catches the entry this
+    // spec is actually testing, right as it happens.
+    const reachedInvestigate = await advanceUntil(page, async () => (await readPredator())?.state === 'investigate', { chunkSeconds: 0.2 });
     expect(reachedInvestigate, 'wolf never left "chase" for "investigate" after LOS was blocked by cover').toBe(true);
 
-    const reachedApproach = await advanceUntil(page, async () => (await readPredator())?.inv === 'approach');
+    const reachedApproach = await advanceUntil(page, async () => (await readPredator())?.inv === 'approach', { chunkSeconds: 0.2 });
     expect(reachedApproach, 'wolf reached "investigate" but never in the "approach" sub-phase').toBe(true);
 
     // Un-hide on the same spot -- no LOS change, nothing else moved. Before

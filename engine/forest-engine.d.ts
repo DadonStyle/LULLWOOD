@@ -351,6 +351,10 @@ declare global {
       /** LUL-69: the live camera vertical FOV (degrees) -- confirms the
        * mobile/desktop CAMERA_FOV split in init() actually took effect. */
       qaCameraFov?: () => number;
+      /** LUL-2953: the sky burst's live FOV compensation scale and its resulting
+       * mesh scales -- confirms BOOM_FOV_SCALE reaches boomFlash/boomRing at
+       * runtime instead of just existing as an unused constant. */
+      qaProbeBoom?: () => { visible: boolean; elapsed: number; fovScale: number; ringScale: number; flashScale: number };
       /** LUL-1112: the live audio context state, whether it's started, soundOn flag,
        * and master gain value -- used to verify the audio context is running on mobile. */
       qaProbeAudio?: () => {
@@ -443,6 +447,11 @@ declare global {
        * are all on screen together. Returns the target, or null if no mission
        * is active. */
       qaTeleportNearMission?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
+      /** LUL-2884: sibling of qaTeleportNearMission, but places the player
+       * already inside the mission target's interactRadius -- no wall-clock
+       * movement needed to close the gap. Returns the target, or null if no
+       * mission is active. */
+      qaTeleportAtMissionTarget?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
       /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
        * fields qaTeleportNearMission returns as a side effect, for a test that
        * only needs to read, not teleport. */

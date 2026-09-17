@@ -86,9 +86,20 @@ for (const viewport of VIEWPORTS) {
 
       const { yaw } = await qaHook(page, 'qaProbePlayer');
       await qaHook(page, 'qaSetLookYaw', yaw + Math.PI);
-      await qaHook(page, 'qaAdvance', stepsFor(0.1));
-
-      const turned = await qaHook(page, 'qaProbeScentTrail');
+      // LUL-2875/LUL-2878: this is a real 180-degree turn from the walking
+      // heading (unlike a test that sets yaw back to its already-current
+      // value), and the camera's own facing lags player.yaw by about one
+      // 0.1s batch before projectToScreen() re-admits a point to frustum --
+      // same settle-lag class e2e/hints.spec.ts hit for the wolf hint.
+      // LUL-2957: a fixed two-batch wait still went unlucky on the nightly
+      // rig (captionVisible read back false), so poll a few more fixed-step
+      // batches instead of trusting a hardcoded count -- still driven
+      // entirely by qaAdvance's deterministic clock, never a wall-clock wait.
+      let turned = await qaHook(page, 'qaProbeScentTrail');
+      for (let attempt = 0; attempt < 5 && !turned.captionVisible; attempt++) {
+        await qaHook(page, 'qaAdvance', stepsFor(0.1));
+        turned = await qaHook(page, 'qaProbeScentTrail');
+      }
       expect(turned.points.some((p: { inFrustum: boolean }) => p.inFrustum)).toBe(true);
       expect(turned.captionVisible).toBe(true);
 

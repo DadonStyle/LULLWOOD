@@ -39,6 +39,7 @@ export const FULLMAP_ALLOWLIST: Record<string, string> = {
   'e2e/mobile/bog-zone.spec.ts': 'bog is zeroed in the micro preset (phone viewport)',
   'e2e/mobile/prop-density.spec.ts': 'per-chunk caps over the full grid (phone viewport)',
   'e2e/mobile/minimap.spec.ts': 'w2m clamping past the forest/bog seam (phone viewport)',
+  'e2e/mission-landmark-sync.spec.ts': 'full-map-only mission/landmark sync path -- the micro world\'s mission target is a different, intentionally-decoupled synthetic position (LUL-2578)',
 };
 
 function specFiles(dir: string): string[] {
@@ -101,7 +102,12 @@ test('the allowlist only shrinks: no stale entries, nothing added without a reas
     assert.ok(present.has(rel), `allowlist names a spec that no longer exists: ${rel}`);
     assert.ok(reason.trim().length > 10, `allowlist entry needs a real reason: ${rel}`);
   }
-  assert.ok(Object.keys(FULLMAP_ALLOWLIST).length <= 13, 'the @fullmap allowlist may only shrink (13 on 2026-09-11)');
+  // LUL-2740 (2026-09-17): +1 for e2e/mission-landmark-sync.spec.ts, the one
+  // case this ticket's own CTO fix-direction requires -- promotes a manual
+  // request file that was timing out (shared/local-qa/requests/lul-2187-
+  // mission-panel-overlap.md) into real CI coverage of a full-map-only code
+  // path (mission target must sync to the landmark's real, unscaled placement).
+  assert.ok(Object.keys(FULLMAP_ALLOWLIST).length <= 14, 'the @fullmap allowlist may only shrink (14 on 2026-09-17, was 13 on 2026-09-11)');
 });
 
 test('boot() defaults to the micro world', () => {

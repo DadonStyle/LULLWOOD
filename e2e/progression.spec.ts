@@ -23,7 +23,16 @@ test('win-then-win increments streak and sets a faster-time record; a death rese
   expect(recap).toContain('Streak 1');
 
   // Restart (same convention as e2e/win-persist.spec.ts -- el.click() to
-  // dodge CI actionability-polling flakiness on this button).
+  // dodge CI actionability-polling flakiness on this button). `.restartBtn`
+  // is `disabled={!state.winRevealed}` (components/Hud.tsx) and winRevealed
+  // flips true measurably after winVisible (opacity-transition delay --
+  // see Hud.tsx's RESTART_FOCUS_DELAY_MS comment). Under CI's slower
+  // swiftshader rendering that gap can outlast the moment #winScreen's own
+  // toBeVisible() resolves, so clicking immediately lands on a still-
+  // disabled button and silently no-ops (30s hang on toBeHidden below,
+  // reproduced live under CPU-throttled swiftshader). Wait for enabled
+  // first, same pattern as e2e/suggestion-box.spec.ts's submit button.
+  await expect(page.locator('.restartBtn')).toBeEnabled();
   await page.locator('.restartBtn').evaluate((el) => (el as HTMLElement).click());
   await expect(page.locator('#winScreen')).toBeHidden();
 
@@ -41,6 +50,7 @@ test('win-then-win increments streak and sets a faster-time record; a death rese
   expect(recap).toContain('Wins 2');
   expect(recap).toContain('Streak 2');
 
+  await expect(page.locator('.restartBtn')).toBeEnabled();
   await page.locator('.restartBtn').evaluate((el) => (el as HTMLElement).click());
   await expect(page.locator('#winScreen')).toBeHidden();
 
