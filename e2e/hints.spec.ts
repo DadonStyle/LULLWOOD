@@ -229,14 +229,19 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     // "shows its caption once" test (which sets yaw to 0, its already-default
     // value -- no real turn, no lag), this is a real yaw change from the
     // default heading, and the camera's own facing lags player.yaw by about
-    // one 0.1s batch before projectToScreen() puts the wolf back in frustum
-    // (live-repro'd: 'wolf' never wins the scan in the first batch, always
-    // does by the second) -- advance twice so the scan runs after it settles.
+    // one 0.1s batch before projectToScreen() puts the wolf back in frustum.
+    // LUL-2957: a fixed two-batch wait still went unlucky on the nightly rig
+    // (activeKey read back null -- neither 'wolf' nor 'cover' had settled into
+    // frustum yet), so poll a few more fixed-step batches instead of trusting
+    // a hardcoded count -- same "advance until it settles" idiom as the
+    // re-pin loop below, still driven entirely by qaAdvance's deterministic
+    // clock, never a wall-clock wait.
     await qaHook(page, 'qaSetLookYaw', Math.PI / 2);
-    await qaHook(page, 'qaAdvance', stepsFor(0.1));
-    await qaHook(page, 'qaAdvance', stepsFor(0.1));
-
     let probe = await qaHook(page, 'qaProbeHints');
+    for (let attempt = 0; attempt < 5 && probe.activeKey !== 'wolf'; attempt++) {
+      await qaHook(page, 'qaAdvance', stepsFor(0.1));
+      probe = await qaHook(page, 'qaProbeHints');
+    }
     expect(probe.activeKey, "'wolf' should win the priority race over 'cover', also eligible here").toBe('wolf');
 
     await page.keyboard.press('KeyH');
