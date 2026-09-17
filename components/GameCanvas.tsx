@@ -377,6 +377,17 @@ const OVERLAY_STYLE = `
     font-size: 28px; color: #ddd; text-shadow: 0 0 4px rgba(0,0,0,0.6);
     transform-origin: 50% 50%; pointer-events: none; }
 
+  /* LUL-3009: Threat Beacon -- active per-moment pulse on top of the arrow's always-on
+     direction (Hud.tsx toggles the class while state.movingAgainstWind, skipped entirely
+     under reducedMotion, same precedent as .veilRefillFlash above it). Pulses filter, not
+     transform -- #windIndicator's own inline style.transform does the rotation (Hud.tsx),
+     and a CSS animation on transform would replace that inline value outright instead of
+     composing with it. */
+  #windIndicator.windIndicatorActive { animation: windIndicatorPulse 900ms ease-in-out infinite; }
+  @keyframes windIndicatorPulse {
+    0%, 100% { filter: brightness(1) drop-shadow(0 0 0 rgba(168,240,224,0)); }
+    50% { filter: brightness(1.6) drop-shadow(0 0 8px rgba(168,240,224,0.9)); } }
+
   #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
     font-size: 12px; line-height: 1.3; text-align: center; color: #9fb2cd;
     text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none; opacity: 1; }
@@ -692,7 +703,10 @@ const OVERLAY_STYLE = `
   @keyframes actionPromptFadeIn { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) {
     .actionPromptLine { animation: none; }
-    .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: none; background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); } }
+    .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: none; background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); }
+    /* LUL-3009: Hud.tsx already skips the class under reducedMotion -- this is the same
+       belt-and-suspenders fallback #actionPromptLine gets above, not the primary gate. */
+    #windIndicator.windIndicatorActive { animation: none; } }
 
   /* LUL-2331: mist-charm activation tell -- Hud.tsx toggles this class for the same
      400ms window it eases #veilState's displayed number up in (useVeilMeterRamp),
