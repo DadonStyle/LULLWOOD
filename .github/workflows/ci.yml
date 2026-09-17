@@ -207,6 +207,16 @@ jobs:
       - name: build
         run: npx next build
 
+      # LUL-2864: founder directive to keep all per-request compute in the
+      # browser. Fails on middleware.ts / a proxy.ts matcher reaching a
+      # public route, a public page forcing dynamic/nodejs rendering or
+      # reading cookies()/headers()/connection()/noStore(), or any of the 9
+      # allowlisted public routes falling off .next/prerender-manifest.json's
+      # static set. Must run after `next build` -- it reads that manifest.
+      # See wiki decisions/lul-2864-client-first-auth-adr. No `|| true`.
+      - name: SSR-boundary guard
+        run: node scripts/check-ssr-boundary.mjs
+
 # The Playwright suite ("smoke"/full regression) no longer runs per-push here.
 # Founder directive (2026-08-28): per-PR QA cost was too high relative to the
 # pace of shipping; the full e2e suite now runs once a day instead

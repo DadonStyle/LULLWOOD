@@ -9,7 +9,7 @@
 // map 100 times (the ticket's own live-evidence method, scaled up for margin)
 // and asserts every predator lands outside the scaled clearance radius on
 // every trial. See docs/specs/lul-2725-spawn-clearance-micro-world-scale.md.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, qaHook } from './helpers';
 
 // LUL-2225/tuning.js:59: CONFIG.lake is left at its full-map absolute

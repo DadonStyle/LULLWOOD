@@ -4,7 +4,7 @@
 // asserts #throwPrompt's engine-visible effect (not just that the buttons render),
 // via the touchInteract/touchThrow testIds this ticket also adds to
 // components/MobileControls.tsx (the only two action buttons that lacked one).
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, qaHook, expectRowVisible, expectRowHidden } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

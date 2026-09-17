@@ -6,7 +6,8 @@
 // Runs under the mobile project (Pixel 5) and is deliberately checked in
 // LANDSCAPE, because components/OrientationGate.tsx blocks portrait play: the
 // screen a mobile player actually sees is 851x393-ish, not 393x851.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '../fixtures';
+import type { Page } from '@playwright/test';
 import { audit, checkReachability, type Defect } from '@/lib/ui/hygiene';
 import { collectElems, tapDepth } from '../ui-hygiene-collect';
 
@@ -22,6 +23,12 @@ function report(defects: Defect[]) {
 test.use({ viewport: LANDSCAPE });
 
 async function boot(page: Page) {
+  // LUL-2612: this file boots the game itself rather than importing
+  // ../helpers's `boot()`, so it needs its own copy of the same
+  // welcomeSeen seed -- otherwise every hygiene/reachability check below
+  // hits the first-visit marketing splash sitting on top of #gate instead
+  // of the gate itself.
+  await page.addInitScript(() => window.localStorage.setItem('lullwood:welcomeSeen', '1'));
   await page.goto('/?qaWorld=micro', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(
     () => (window as any).ForestEngine && document.querySelectorAll('canvas').length === 2,

@@ -14,7 +14,8 @@
 // gets a turn. clearPreemptiveHints() drains whichever of those is currently active,
 // repeatedly, until nothing is -- so a test staging a specific key isn't just watching
 // an unrelated hint play out first.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot, enter, qaHook } from './helpers';
 import { CONFIG } from '../engine/tuning';
 
@@ -166,10 +167,18 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     const wolf = (map.predators as { kind: string; x: number; z: number }[]).find((p) => p.kind === 'wolf');
     expect(wolf, 'the pinned seed must spawn a wolf').toBeTruthy();
 
-    // Stand 10 units south of the wolf (well inside its detect radius, tuning.js
-    // wolf.detect=42) facing due north (yaw=0 -> fx=0,fz=-1, engine/forest-engine.js's
+    // LUL-2878: a fixed 10-unit offset assumed tuning.js's unscaled wolf.detect=42,
+    // but effectiveDetect() scales that down (veil/fog/time-of-run/difficulty/
+    // CONFIG.detectScaleMul) and can land under 10u on the micro QA world --
+    // read the real scaled gate and stand well inside it instead.
+    const detect = await qaHook(page, 'qaProbeEffectiveDetect', 'wolf');
+    expect(detect, 'wolf must be spawned for its effectiveDetect() to resolve').not.toBeNull();
+    const standoff = Math.min(10, detect! * 0.5);
+
+    // Stand `standoff` units south of the wolf, well inside its scaled detect
+    // radius, facing due north (yaw=0 -> fx=0,fz=-1, engine/forest-engine.js's
     // playerCanSee()) so it's dead-center in the camera frustum, not just in range.
-    await qaHook(page, 'qaTeleportTo', wolf!.x, wolf!.z + 10);
+    await qaHook(page, 'qaTeleportTo', wolf!.x, wolf!.z + standoff);
     await qaHook(page, 'qaSetLookYaw', 0);
     await qaHook(page, 'qaAdvance', stepsFor(0.1));
 
@@ -202,8 +211,15 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     // qaHideBehindCoverKind places the player on the +side of a cover prop and
     // the wolf further out on the -side, both along the same axis -- face -x
     // (yaw=PI/2, forward = (-sin(yaw),-cos(yaw))) so the wolf's anchor is in
-    // the camera frustum this frame and the 'wolf' hint can become active.
+    // the camera frustum once the turn settles. LUL-2878: unlike the sibling
+    // "shows its caption once" test (which sets yaw to 0, its already-default
+    // value -- no real turn, no lag), this is a real yaw change from the
+    // default heading, and the camera's own facing lags player.yaw by about
+    // one 0.1s batch before projectToScreen() puts the wolf back in frustum
+    // (live-repro'd: 'wolf' never wins the scan in the first batch, always
+    // does by the second) -- advance twice so the scan runs after it settles.
     await qaHook(page, 'qaSetLookYaw', Math.PI / 2);
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
     await qaHook(page, 'qaAdvance', stepsFor(0.1));
 
     let probe = await qaHook(page, 'qaProbeHints');

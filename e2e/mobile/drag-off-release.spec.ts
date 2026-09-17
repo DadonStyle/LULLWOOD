@@ -17,7 +17,8 @@
 //
 // See wiki: game/lul730-verification-results (the ad hoc, uncommitted spec
 // this ports the Stick half from).
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '../fixtures';
+import type { Page } from '@playwright/test';
 import { boot } from '../helpers';
 import { CdpTouch } from './touch-cdp';
 

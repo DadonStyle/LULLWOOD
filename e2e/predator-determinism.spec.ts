@@ -8,7 +8,7 @@
 // forward by the same game-time elapsed, then compares predator positions
 // and state. A failure means a predator is drawing from Math.random() somewhere
 // instead of the seeded rng(), breaking replay-ability.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, QA_PINNED_SEED } from './helpers';
 // fullmap-reason: byte-identical predator traces across two full-map boots of the same seed (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

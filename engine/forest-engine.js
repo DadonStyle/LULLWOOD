@@ -2569,7 +2569,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         p.lastCharge = { result: 'caught', overshootDuration: 0 };
         p.charge = null;
         endChargeHud();
-        triggerDeath(p.kind, 'charge');   // LUL-1194: telegraphed charge, missed the dodge window
+        triggerDeath(p.kind, 'charge', predators.indexOf(p));   // LUL-1194: telegraphed charge, missed the dodge window
       } else if(cs.phase === 'cleared'){
         // stepCharge() (lib/game/charge.ts) zeroes overshootDuration on the
         // 'cleared' state it returns, so read it off the *old* p.charge
@@ -2674,7 +2674,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         else { p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       }
       else {
-        if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
+        if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt', predators.indexOf(p));   // LUL-1194: the 30s force-hunt escalation caught up
         else { desx=ux; desz=uz; speed=p.spec.speed*pPursuitMul; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
@@ -2771,7 +2771,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // it heard the carried child's cry gets a distinguishable death cause -- see
         // hearCry()/the carriedCryPulse branch below for where p.alertedBy is set, and
         // hearNoise()/scentOnto()/spotOnto() for where it's cleared by every other channel.
-        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase'); }   // LUL-1194: run down mid-chase, in the open
+        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase', predators.indexOf(p)); }   // LUL-1194: run down mid-chase, in the open
         // LUL-2320 (D): contact was reached (isCaught) but the kill was refused because the
         // player is hidden and canSee() still reads false at that exact range -- e.g. (B)'s
         // contact-range exception only fires while the target point is inside a HIDE_KINDS
@@ -3093,6 +3093,7 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     deathDistanceFromHomeM = null,   // LUL-2461: set by triggerDeath(), read by qaProbeDeath() + the loss telemetry event
+    lastDeathKillerIdx = null,   // LUL-2853: predators-array index of the instance that actually won triggerDeath()'s once-only guard
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
@@ -3976,11 +3977,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     qaFixedDt = dtSeconds;
     if(rafId !== null){ cancelAnimationFrame(rafId); rafId = null; }
   };
+  // LUL-2838: qaAdvance is a QA-only simulation-time fast-forward, not a
+  // visual regression check -- the intermediate frames of a multi-step
+  // advance are never observed, so skip their renderer.render()/renderPost()
+  // call (the expensive part under CI's software rasterizer, worse still at
+  // mobile devices' higher deviceScaleFactor) and only render the final
+  // frame, so the canvas still reflects the post-advance state for any
+  // screenshot/DOM check that follows.
   window.ForestEngine.qaAdvance = function(steps = 1){
     if(qaFixedDt === null) throw new Error('qaAdvance: call qaSetFixedStep(dt) first');
     for(let i = 0; i < steps; i++){
       clock.elapsedTime += qaFixedDt;
-      stepFrame(qaFixedDt, clock.elapsedTime);
+      stepFrame(qaFixedDt, clock.elapsedTime, i < steps - 1);
     }
   };
 
@@ -4289,6 +4297,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!p) return null;
     return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, t: clock.elapsedTime };
   };
+  // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
+  // stage a "first sighted" scenario -- effectiveDetect() applies
+  // veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul (LUL-2407) on top
+  // of it, and on the micro QA world that scaled figure can sit well under
+  // the tuning constant. Exposes the real per-tick gate so a test can place
+  // the player within it instead of assuming the unscaled spec value.
+  window.ForestEngine.qaProbeEffectiveDetect = function(kind){
+    const p = predators.find(pp => pp.kind === kind);
+    if(!p) return null;
+    return effectiveDetect(p);
+  };
   // LUL-43 positional-hiding scaffolding. Both hooks place a specific predator
   // deterministically -- never "wherever the seed happened to spawn one" -- so
   // e2e/hide.spec.ts doesn't have to search the procedural map for a matching
@@ -4311,12 +4330,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // charge/hunt state live -- an in-flight p.charge resolves purely on
     // elapsed game time (stepCharge, above) independent of anything staged
     // here, so it can catch the player before this freshly-placed lion closes
-    // the gap, reporting the wrong species on #deathKind. Neutralize every
-    // other predator so this hook is the only thing that can kill the player.
+    // the gap, reporting the wrong species on #deathKind. LUL-2876: clearing
+    // hunt/charge alone isn't enough either -- a predator left in 'roam' can
+    // independently re-detect and chase the player over the real game time a
+    // late-scenario caller advances before this lion's gap closes (live-repro'd
+    // on the mobile death-cutscene step: #deathKind read 'bear' instead of the
+    // staged 'lion'). `inert` removes a predator from updatePredators()'s loop
+    // entirely (:2516), same flag qaIsolatePredatorKind (:4635) and
+    // qaStageWalkIntoCover use for this exact failure mode.
     for(const p of predators){
       if(p === lion) continue;
       if(p.charge){ p.charge = null; endChargeHud(); }
       p.hunt = false;
+      p.inert = true;
     }
     lion.x = player.x + 4; lion.z = player.z;
     lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
@@ -4472,11 +4498,23 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
         if(blockedR(px + (qx-px)*u, pz + (qz-pz)*u, p.rad)){ clear = false; break; }
       }
       if(!clear) continue;
+      // LUL-2878: cover geometry alone (2*edge+4 apart) says nothing about
+      // whether that separation sits inside this predator's *scaled*
+      // effectiveDetect() -- veil/fog/time-of-run/difficulty/detectScaleMul
+      // (LUL-2407) can put it as low as ~8.76u on the micro QA world, well
+      // under a full-map wolf's unscaled detect=42. A caller staging "first
+      // sighted" hint eligibility needs canSee()'s own distance gate to
+      // actually pass, not just LOS-clear geometry, so place p.x/p.z here
+      // (effectiveDetect reads p.x/p.z for fogTideAmountAt) before checking,
+      // and skip to the next cover candidate rather than returning a spot
+      // that can never make the predator eligible.
       p.x = px; p.z = pz;
+      const detect = effectiveDetect(p);
+      if(Math.hypot(qx - px, qz - pz) >= detect) continue;
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
-      return { idx, kind, playerX: qx, playerZ: qz };
+      return { idx, kind, playerX: qx, playerZ: qz, detect };
     }
     return null;
   };
@@ -4602,6 +4640,30 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!keep) return null;
     for(const other of predators){ if(other !== keep){ other.inert = true; } }
     return { idx, x: keep.x, z: keep.z };
+  };
+
+  // LUL-2841: qaLurePredatorKind only relocates/hunts the nearest predator of
+  // `kind` -- every other spawned predator keeps roaming independently, so on
+  // a full-map boot (no qaBuildScene, which would wipe the natural cover a
+  // test built on qaTeleportToHideSpot depends on, same reason
+  // qaIsolatePredator above exists) an unrelated species can reach and kill
+  // the player before the lured one does (confirmed live: positional-
+  // hiding.spec.ts's lion bramble-at-range case died to an ambient bear,
+  // 30/30 repro). Re-runs qaLurePredatorKind's own nearest-of-`kind` search,
+  // so calling this right after luring the same kind unambiguously re-selects
+  // the predator just placed, and marks every other predator `inert` (same
+  // flag qaIsolatePredator uses -- touches no cover/terrain state). Returns
+  // {kind,x,z}, or null if the species isn't spawned.
+  window.ForestEngine.qaIsolatePredatorKind = function(kind){
+    let nearest = null, best = 1e9;
+    for(const p of predators){
+      if(p.kind !== kind) continue;
+      const d = Math.hypot(player.x - p.x, player.z - p.z);
+      if(d < best){ best = d; nearest = p; }
+    }
+    if(!nearest) return null;
+    for(const other of predators){ if(other !== nearest){ other.inert = true; } }
+    return { kind: nearest.kind, x: nearest.x, z: nearest.z };
   };
 
   // LUL-2457: same `inert` flag as qaIsolatePredator above, applied to every
@@ -4785,6 +4847,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(p.charge) return { phase: p.charge.phase, t: p.charge.t, overshootDuration: p.charge.overshootDuration };
     if(p.lastCharge) return { phase: p.lastCharge.result, t: 0, overshootDuration: p.lastCharge.overshootDuration };
     return null;
+  };
+
+  // LUL-2853: predators-array index of whichever predator instance actually won
+  // triggerDeath()'s once-only guard, or null if no death has happened yet this run.
+  // Exists so a test tracking one predator (e.g. via qaTriggerCharge's returned idx)
+  // can confirm THAT instance is the one that killed the player, not a same-species
+  // pack-mate that independently won the race the same tick -- see
+  // wiki decisions/lul-2549-scenario-audit-charge-death-approved-2026-09-16.
+  window.ForestEngine.qaLastDeathPredatorIndex = function(){
+    return lastDeathKillerIdx;
   };
 
   // LUL-275: snapshot of the player's transform and detected input mode -- proves
@@ -5700,10 +5772,11 @@ function arriveHome(){
     newRecord: progressionResult.newRecord });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
-function triggerDeath(kind, cause){
+function triggerDeath(kind, cause, killerIdx){
   const next = outcomeTriggerDeath(runState());
   if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
   dead = next.dead; hidden = false; lastHideSpot = null; coverProbeAccum = 0; deathStart = clock.elapsedTime; deathShown = false;
+  lastDeathKillerIdx = killerIdx ?? null;   // LUL-2853: only stamped on the call that actually wins the guard above
   // LUL-2461: distance from home at the moment of death, not maxDistFromHome
   // (the run's furthest point) -- the Economist's blackout-pricing model
   // (LUL-1413) wants where the run actually ended.
@@ -6053,7 +6126,7 @@ let qaFixedDt = null;   // LUL-2071: non-null while a test has parked the RAF lo
 let bobPhase = 0;
 let rafId = null;
 
-function stepFrame(dt, t){
+function stepFrame(dt, t, skipRender){
   // LUL-68: right stick look rate applied each frame before movement.
   // LUL-276: mobile-only -- in desktop mode this whole block is dead, not
   // merely fed zeroes, because setTouchLook is a no-op there (see below) and
@@ -6825,7 +6898,7 @@ function stepFrame(dt, t){
   moonGroup.quaternion.copy(camera.quaternion);
 
   updateBoom(dt);
-  if(!dead){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
+  if(!dead && !skipRender){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
   adaptResolution(dt, t);
 }
 function tick(){

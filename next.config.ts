@@ -17,6 +17,27 @@ const nextConfig: NextConfig = {
   // (pass 2) moved the whole suite onto the production build, so it now serves
   // only humans running `npm run dev` against 127.0.0.1. Kept for them.
   allowedDevOrigins: ["127.0.0.1"],
+
+  // LUL-2852: lullwood.vercel.app is a legacy alias on the same Vercel
+  // project/deployment as www.lullwoodgame.com -- both served identical,
+  // fully-indexable content (200, robots "index, follow"), splitting link
+  // equity and search-ranking signal across two URLs for the same page.
+  // Next.js's `has: [{ type: 'host' }]` redirect is compiled into
+  // routes-manifest.json and applied by Vercel's edge routing layer before
+  // any page renders, so every path on the vercel.app host 308s (permanent:
+  // true) to the canonical domain with the path preserved. No DNS, domain,
+  // or Vercel project-settings change -- both hostnames stay attached to
+  // this same project exactly as already provisioned.
+  async redirects() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: "lullwood.vercel.app" }],
+        destination: "https://www.lullwoodgame.com/:path*",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

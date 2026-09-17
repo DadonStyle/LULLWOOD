@@ -22,7 +22,7 @@
 // into a landscape viewport (dimensions swapped) the same way a real player
 // rotating their phone would -- e2e/mobile/orientation-gate.spec.ts is what
 // actually exercises the portrait-blocks/landscape-clears behavior.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

@@ -3,7 +3,7 @@
 // Pins that every landmark actually got a beacon sprite, and that the sprite
 // is fog-exempt (fog: false) so it stays visible past the fog line as a
 // bearing -- not just that the tuning object grew six entries.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot } from './helpers';
 
 test('all six landmark kinds have a fog:false beacon sprite visible after enter()', async ({ page }) => {

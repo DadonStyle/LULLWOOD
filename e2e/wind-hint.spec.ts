@@ -4,7 +4,8 @@
 // the rest of the run. The fade is removed; this asserts it stays visible and
 // that removing it didn't reopen the LUL-1933/LUL-2057 overlap this corner has
 // a history of.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot, enter, assertInViewport } from './helpers';
 
 test('wind hint text stays visible for the whole run, in default and admin mode', async ({ page }) => {

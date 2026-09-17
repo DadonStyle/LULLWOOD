@@ -80,7 +80,7 @@
 // enter it. So the yaw bug is real (tracked, unfixed) but inert for this
 // mechanic; it is a rendering/telegraph-reading concern, not a dodge-outcome
 // one. Not asserted on here for that reason -- see LUL-302 for its own fix.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   boot,
   enter,

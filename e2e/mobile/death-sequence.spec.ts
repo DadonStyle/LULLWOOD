@@ -4,7 +4,7 @@
 // the entry flow (no pointer lock to wait on, see ../mobile/win-persist.spec.ts)
 // and running under devices['Pixel 5'] real touch/coarse-pointer emulation.
 // Runs under the `mobile` Playwright project (playwright.config.ts).
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, qaHook } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)

@@ -5,7 +5,7 @@
 // see QA_REGRESSION/README.md, one death clip is enough to show the mechanic
 // and looping would triple the recorded (and committed) video for no new
 // signal this clip is meant to carry.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, enter } from '../helpers';
 
 test('death path: a hunting wolf closes the distance and kills you', async ({ page }) => {

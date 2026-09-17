@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L6894 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6095, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L6967 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6168, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1431,6 +1431,47 @@ design doc as turning horror into radar.
 
 ---
 
+### Welcome splash (first-visit marketing, LUL-2612)
+
+**What it is**
+- A third, independent React-owned overlay (`components/WelcomeSplash.tsx`),
+  outside the `hudState`/`EngineHudState` pipeline entirely — no engine touch,
+  no `pushState()` field. It reads/writes exactly one localStorage key,
+  `lullwood:welcomeSeen`, and is otherwise self-contained: mounted first
+  inside `components/GameCanvas.tsx`'s returned fragment, before the
+  engine-owned overlay markup and `<Hud>`.
+- Shown once per browser (`window.localStorage.getItem('lullwood:welcomeSeen')
+  !== '1'`, checked in the `useState` initializer — safe because `GameCanvas`
+  only ever mounts client-side via `GameLoader`'s `dynamic(..., { ssr: false
+  })`, so there is no SSR/hydration mismatch to guard against). Dismissing it
+  (`#welcomeSplashDismiss`) sets the key to `'1'` and unmounts the component;
+  it never reappears for that browser.
+- `#welcomeSplash` is `position: fixed`, centered via `top/left/transform`,
+  `z-index: 60` — the highest of any overlay in `OVERLAY_STYLE`
+  (`components/GameCanvas.tsx`), above `#orientationGate` (50) and
+  `#settingsPanel` (40), since a first-time visitor should see it before
+  either. Content: "Welcome to Lullwood" heading, a short horror-game
+  description, a bold `.welcomeSplashStudio strong` studio-credit line
+  ("Built by Independence AI Studio!"), a paragraph on the studio/stack/goal,
+  and the dismiss button.
+
+**Behaviours & logic**
+- No hold-to-act, no new keybinding, no `SettingsPanel` entry — a single
+  click/tap dismiss, matching Q16 of `docs/FEATURE_CHECKLIST.md`'s "does this
+  add a new input" question with "no, it's a plain button".
+- `e2e/helpers.ts`'s `boot()` seeds `lullwood:welcomeSeen` before every other
+  spec's `page.goto()` (new `seedWelcomeSplashSeen` option, default `true`) so
+  the rest of the suite keeps booting straight to `#gate` — only
+  `e2e/welcome-splash.spec.ts` / `e2e/mobile/welcome-splash.spec.ts` opt out
+  to exercise the real first-visit path. `e2e/mobile/ui-hygiene.spec.ts` has
+  its own local `boot()` (doesn't import `../helpers`) and got the same seed
+  added directly.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
 ### Embers (run currency)
 
 **What it is**
@@ -1451,17 +1492,17 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5498-5558, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5649-5702 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5703-5745). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5570-5630, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5721-5774 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5775-5818). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5703-5745) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L5704) rather than recomputed later, since `player.x/z` can move on
+  (L5775-5818) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L5760) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1623,7 +1664,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6056-6830, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6129-6903, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**

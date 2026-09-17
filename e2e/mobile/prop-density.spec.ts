@@ -2,7 +2,7 @@
 // parity proof (founder rule: every logic change ships desktop AND mobile),
 // not a distinct behaviour -- identical assertions to e2e/prop-density.spec.ts.
 // Landscape viewport, same shape as e2e/mobile/jump.spec.ts.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, QA_PINNED_SEED, qaHook } from '../helpers';
 // fullmap-reason: measures per-chunk prop caps over the full chunk grid on a phone viewport (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

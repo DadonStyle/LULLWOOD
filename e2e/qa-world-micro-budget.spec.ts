@@ -7,7 +7,7 @@
 // weakened, split, or renamed -- see docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
 // Both budgets are LUL-1768/LUL-2249's boot-cost investigation and streamed-
 // chunks fix respectively; this spec only guards the numbers, not the fix.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, qaHook, QA_PINNED_SEED } from './helpers';
 // fullmap-reason: the full-map memory budget (LUL-1768/LUL-2249 regression guard) has to load the full map to measure it (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

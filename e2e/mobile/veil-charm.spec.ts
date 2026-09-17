@@ -3,7 +3,7 @@
 // testIds e2e/mobile/interact.spec.ts and e2e/mobile/veil.spec.ts already exercise,
 // asserting the same engine-visible effects (qaProbeVeil/qaProbeEmbersPurchase), one
 // viewport, both scenarios from the SPEC's e2e section in a single describe block.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, qaHook, readObjective } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

@@ -60,6 +60,14 @@ export function expectNoConsoleErrors({
  * written against. Pass `seed: null` to get the real fresh-per-load default.
  * `qaWorld`/`qaNoRender` (LUL-2328) opt into the small-map boot preset and the
  * mesh-construction skip, respectively -- see docs/specs/lul-2328-qa-world-micro-hooks.md.
+ * `seedWelcomeSplashSeen` (LUL-2612) pre-seeds `lullwood:welcomeSeen` in
+ * localStorage before the first byte loads, same technique as the
+ * `RETURNING_PLAYER` init script in returning-player.spec.ts -- every
+ * Playwright test gets a brand-new browser context, so without this every
+ * spec in the suite would hit the first-visit marketing splash
+ * (WelcomeSplash.tsx) instead of `#gate`. Only
+ * e2e/welcome-splash.spec.ts passes `false` to exercise the real first-visit
+ * path.
  */
 export async function boot(
   page: Page,
@@ -74,8 +82,18 @@ export async function boot(
     // only under E2E_FULLMAP=1 (playwright.config.ts).
     qaWorld = 'micro',
     qaNoRender = false,
-  }: { qaHooks?: boolean; seed?: number | null; qaWorld?: 'micro' | 'full'; qaNoRender?: boolean } = {},
+    seedWelcomeSplashSeen = true,
+  }: {
+    qaHooks?: boolean;
+    seed?: number | null;
+    qaWorld?: 'micro' | 'full';
+    qaNoRender?: boolean;
+    seedWelcomeSplashSeen?: boolean;
+  } = {},
 ) {
+  if (seedWelcomeSplashSeen) {
+    await page.addInitScript(() => window.localStorage.setItem('lullwood:welcomeSeen', '1'));
+  }
   const params = new URLSearchParams();
   if (qaHooks) params.set('qaHooks', '1');
   if (seed !== null) params.set('seed', String(seed));

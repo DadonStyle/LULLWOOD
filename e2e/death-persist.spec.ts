@@ -7,7 +7,7 @@
 // covered by symmetry-by-inspection. qaTriggerDeath() (engine/forest-engine.js,
 // declared in engine/forest-engine.d.ts) closes that gap by routing through
 // the real triggerDeath(), the same function every in-game catch calls.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
 test('a Space press right after the death reveal must not restart the run, but one after the grace window still does', async ({ page }) => {

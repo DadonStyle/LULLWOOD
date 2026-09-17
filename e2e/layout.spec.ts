@@ -10,7 +10,8 @@
 // content at all. This spec pins that contract down: the canvas must cover
 // the full viewport, at (0,0), regardless of what else is in the document,
 // on both a desktop and a mobile viewport.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot } from './helpers';
 // fullmap-reason: canvas-fills-viewport check on the shipped default boot (no query params) (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

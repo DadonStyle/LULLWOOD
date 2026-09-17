@@ -9,7 +9,7 @@
 // *call path* -- was it invoked, was the key's browser default prevented --
 // rather than a real visual fullscreen transition. Safari/Firefox stay
 // manual: playwright.config.ts is chromium-only.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 async function stubFullscreenAPI(page: import('@playwright/test').Page) {

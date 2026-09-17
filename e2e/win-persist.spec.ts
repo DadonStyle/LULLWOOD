@@ -17,7 +17,7 @@
 // pushState(), and restart() only ever runs from the button's onClick. No
 // engine change landed for item 1; this spec is the regression guard the
 // ticket asked for regardless.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, readObjective, expectRowVisible, expectRowHidden } from './helpers';
 
 test('win screen is mandatory and persists until the player restarts', async ({ page }) => {

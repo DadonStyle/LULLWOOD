@@ -6,7 +6,7 @@
 // components/MobileControls.tsx -- rendered only when runMode === 'toggle'
 // -- flips the same qaPlayerState().toggleRunOn flag the keyboard edge
 // flips, not just that a button appears.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } });

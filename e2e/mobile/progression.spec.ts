@@ -11,7 +11,7 @@
 // too, engine/forest-engine.js's keydown listener isn't mode-gated), and this
 // is the desktop-AND-mobile call-site coverage the engine/React contract rule
 // requires for setProgression.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)

@@ -59,7 +59,7 @@
 // get there" intent with no wall-clock component. The lion cover case and
 // the two death-race cases (open-lion, hold-still-wolf) are out of this
 // ticket's listed scope and are left on the real RAF loop.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { assertInViewport, boot, enter, qaHook } from './helpers';
 
 // Fixed step for the deterministic cases, matching charge-dodge.spec.ts /
@@ -410,6 +410,15 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     if (kind === null) {
       throw new Error('qaLurePredatorKind("lion") returned null -- no lion in predators');
     }
+
+    // LUL-2841: this test runs on the real RAF loop with no qaBuildScene
+    // (which would wipe the natural bramble qaTeleportToHideSpot just found),
+    // so the 5s wait below is real wall time an independently-hunting
+    // ambient predator elsewhere on the full map can use to reach and kill
+    // the player before the lured lion does -- live-repro'd 30/30 as a wrong-
+    // species death ("bear" instead of "lion"). qaIsolatePredatorKind parks
+    // every other predator `inert` without touching cover/terrain state.
+    await page.evaluate(() => window.ForestEngine?.qaIsolatePredatorKind?.('lion'));
 
     await page.waitForTimeout(5_000);
     await expect(

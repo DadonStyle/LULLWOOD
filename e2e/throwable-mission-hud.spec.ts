@@ -7,7 +7,7 @@
 // for the touch-emulated half (repo convention: mobile-emulated specs live
 // under e2e/mobile/, picked up by the `mobile` Playwright project's own
 // testDir; see playwright.config.ts LUL-275).
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors, expectRowVisible, expectRowHidden } from './helpers';
 
 test.describe('#throwPrompt via qaGrabThrowable()', () => {

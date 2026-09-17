@@ -5,7 +5,7 @@
 // follow-up per docs/specs/lul-2071-deterministic-qa-clock.md); it only
 // proves the hook works. qaProbeElapsedTime is untyped in forest-engine.d.ts
 // (see map-seed.spec.ts), hence the `as any` reads, same as that spec.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot } from './helpers';
 
 async function readElapsedTime(page: import('@playwright/test').Page) {
