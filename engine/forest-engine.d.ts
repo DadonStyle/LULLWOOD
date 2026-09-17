@@ -351,6 +351,10 @@ declare global {
       /** LUL-69: the live camera vertical FOV (degrees) -- confirms the
        * mobile/desktop CAMERA_FOV split in init() actually took effect. */
       qaCameraFov?: () => number;
+      /** LUL-2953: the sky burst's live FOV compensation scale and its resulting
+       * mesh scales -- confirms BOOM_FOV_SCALE reaches boomFlash/boomRing at
+       * runtime instead of just existing as an unused constant. */
+      qaProbeBoom?: () => { visible: boolean; elapsed: number; fovScale: number; ringScale: number; flashScale: number };
       /** LUL-1112: the live audio context state, whether it's started, soundOn flag,
        * and master gain value -- used to verify the audio context is running on mobile. */
       qaProbeAudio?: () => {
