@@ -40,6 +40,11 @@ test('win-then-win increments streak and sets a faster-time record; a death rese
   expect(recap).toContain('Streak 1');
 
   // el.click(), not a real Playwright click -- see ../win-persist.spec.ts.
+  // `.restartBtn` is disabled until state.winRevealed flips true, which lags
+  // winVisible by an opacity-transition delay (components/Hud.tsx) -- wait
+  // for enabled first or a click under slow/CI rendering can land on a still-
+  // disabled button and no-op (see ../progression.spec.ts for the full note).
+  await expect(page.locator('.restartBtn')).toBeEnabled();
   await page.locator('.restartBtn').evaluate((el) => (el as HTMLElement).click());
   await expect(page.locator('#winScreen')).toBeHidden();
 
@@ -53,6 +58,7 @@ test('win-then-win increments streak and sets a faster-time record; a death rese
   expect(recap).toContain('Wins 2');
   expect(recap).toContain('Streak 2');
 
+  await expect(page.locator('.restartBtn')).toBeEnabled();
   await page.locator('.restartBtn').evaluate((el) => (el as HTMLElement).click());
   await expect(page.locator('#winScreen')).toBeHidden();
 
