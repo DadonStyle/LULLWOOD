@@ -6075,7 +6075,7 @@ function setEmbers(balance, tiers){
 // the cue-triple's audio cue on a real purchase.
 function purchase(id){
   const before = embers;
-  embers = economyPurchase(embers, id);
+  embers = economyPurchase(embers, id, difficulty);
   pushState({ embersBalance: embers.balance, embersTiers: { ...embers.tiers } });
   if(embers !== before) embersPurchaseCue();
 }

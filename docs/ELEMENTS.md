@@ -1578,6 +1578,12 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
     (`shopEffectCopy()`, `components/Hud.tsx`) derives from `tier` instead of
     hardcoding "no reserve stones" once purchased. `canGrabThrowable` also
     gained its first render site, a new `#pickupPrompt` row in `#actionSlot`.
+    Price is difficulty-scaled (LUL-2983): 80/120/140 embers for
+    lantern/night/blackout, via `POCKET_STONES_COST_BY_DIFFICULTY` — the
+    `POCKET_STONES_COSTS` array itself is unchanged (still length 1, a
+    placeholder whose only load-bearing property is its `.length` for the
+    max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
+    take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
   reset to 0 on `enter()` (L3906) and recomputed every frame (`stepFrame()`,

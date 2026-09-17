@@ -615,13 +615,13 @@ function shopEffectCopy(id: string, tier: number): { current: string; next: stri
     : { current: 'no reserve stones', next: `+${POCKET_STONES_RESERVE} throwables/run` };
 }
 
-function EmbersShop({ balance, tiers, actions }: { balance: number; tiers: Record<string, number>; actions: EngineActions | null }) {
+function EmbersShop({ balance, tiers, actions, difficulty }: { balance: number; tiers: Record<string, number>; actions: EngineActions | null; difficulty: 'lantern' | 'night' | 'blackout' }) {
   return (
     <div id="embersShop">
       <div id="embersShopBalance">Embers: {balance}</div>
       {SHOP_CATALOG.map((item) => {
         const tier = tiers[item.id] ?? 0;
-        const cost = nextCost(item.id, tier);
+        const cost = nextCost(item.id, tier, difficulty);
         const copy = shopEffectCopy(item.id, tier);
         return cost == null ? (
           <div key={item.id} id={`embersShopMaxed-${item.id}`}>
@@ -903,7 +903,7 @@ export default function Hud({
               </>
             )}
           </div>
-          <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} />
+          <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} difficulty={state.difficulty} />
         </div>
       )}
 
@@ -1129,7 +1129,7 @@ export default function Hud({
             >
               Play again
             </button>
-            <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} />
+            <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} difficulty={state.difficulty} />
           </div>
         </div>
       )}
@@ -1156,7 +1156,7 @@ export default function Hud({
             >
               Try again
             </button>
-            <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} />
+            <EmbersShop balance={state.embersBalance} tiers={state.embersTiers} actions={actions} difficulty={state.difficulty} />
           </div>
         </div>
       )}
