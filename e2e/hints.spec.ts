@@ -256,13 +256,27 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await clearPreemptiveHints(page);
+    // wolf/bear/lion sit ahead of 'throwable' in HINT_PRIORITY, and the micro
+    // world routinely spawns a wolf already in 'investigate' a few units from
+    // where qaTeleportNearThrowable lands the player -- whether it's within
+    // effectiveDetect() at the exact probe frame is a coin flip (observed:
+    // 'wolf' wins the slot instead of 'throwable' on about 1 in 4 runs at this
+    // seed). This test isolates the throwable/hint path, not predator
+    // proximity, so park every predator first (qaClearAllPredators precedent:
+    // e2e/day-night-cycle.spec.ts) to remove the race entirely.
+    await qaHook(page, 'qaClearAllPredators');
 
     const stone = await qaHook(page, 'qaTeleportNearThrowable');
     expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
 
     // qaTeleportNearThrowable places the player +2 along x from the stone --
-    // face -x (yaw=PI/2) so the stone's anchor is in the camera frustum.
+    // face -x (yaw=PI/2) so the stone's anchor is in the camera frustum. Real
+    // yaw change from the default heading, so the camera's own facing lags
+    // player.yaw by about one 0.1s batch before projectToScreen() puts the
+    // stone back in frustum -- same LUL-2878 lag as the wolf hint test above,
+    // advance twice so the scan runs after it settles.
     await qaHook(page, 'qaSetLookYaw', Math.PI / 2);
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
     await qaHook(page, 'qaAdvance', stepsFor(0.1));
 
     let probe = await qaHook(page, 'qaProbeHints');
