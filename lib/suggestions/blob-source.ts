@@ -5,8 +5,13 @@
 // Suggestion volume is capped at 200/day (route.ts's GLOBAL_LIMIT), so unlike
 // the telemetry dashboard this does not need a date-range window: it always
 // returns the whole queue.
+//
+// Unlike the telemetry dashboard (public blobs, read with a plain `fetch` of
+// the object's public URL), suggestions are written with `access: 'private'`
+// (route.ts, LUL-2993 founder review) so a reader must go through `get()`,
+// which is authenticated with the same BLOB_READ_WRITE_TOKEN the write used.
 
-import { list } from '@vercel/blob';
+import { get, list } from '@vercel/blob';
 
 export interface StoredSuggestion {
   submitted_at: string;
@@ -15,7 +20,7 @@ export interface StoredSuggestion {
 }
 
 interface BlobRef {
-  url: string;
+  pathname: string;
 }
 
 function parseSuggestion(json: unknown): StoredSuggestion | null {
@@ -40,9 +45,9 @@ async function listAllBlobs(): Promise<BlobRef[]> {
 
 async function fetchAndParse(blob: BlobRef): Promise<StoredSuggestion | null> {
   try {
-    const res = await fetch(blob.url);
-    if (!res.ok) return null;
-    const json = await res.json();
+    const result = await get(blob.pathname, { access: 'private' });
+    if (!result || !result.stream) return null;
+    const json = await new Response(result.stream).json();
     return parseSuggestion(json);
   } catch {
     // One unreadable object must not fail the whole read.

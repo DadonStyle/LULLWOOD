@@ -2,8 +2,10 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-type ListedBlob = { url: string };
+type ListedBlob = { pathname: string };
 let blobsByPrefix: Record<string, ListedBlob[]> = {};
+let bodyByPathname: Record<string, unknown> = {};
+let getShouldThrowFor: Set<string> = new Set();
 
 mock.module('@vercel/blob', {
   namedExports: {
@@ -11,37 +13,32 @@ mock.module('@vercel/blob', {
       const blobs = blobsByPrefix[opts.prefix ?? ''] ?? [];
       return { blobs, hasMore: false };
     },
+    get: async (pathname: string) => {
+      if (getShouldThrowFor.has(pathname)) throw new Error('network blip');
+      if (!(pathname in bodyByPathname)) return null;
+      return { stream: new Response(JSON.stringify(bodyByPathname[pathname])).body, blob: {} };
+    },
   },
 } as Parameters<typeof mock.module>[1]);
 
 const { listSuggestions } = await import('./blob-source.ts');
 
-function jsonResponse(body: unknown, ok = true): Response {
-  return {
-    ok,
-    json: async () => body,
-  } as Response;
-}
-
 test('no BLOB_READ_WRITE_TOKEN -> [] without ever calling list()', async () => {
   delete process.env.BLOB_READ_WRITE_TOKEN;
-  blobsByPrefix = { 'suggestions/': [{ url: 'https://blob.example/should-not-be-fetched.json' }] };
+  blobsByPrefix = { 'suggestions/': [{ pathname: 'suggestions/should-not-be-fetched.json' }] };
   const suggestions = await listSuggestions();
   assert.deepEqual(suggestions, []);
 });
 
-test('lists the suggestions/ prefix, fetches each blob, drops malformed ones', async (t) => {
+test('lists the suggestions/ prefix, fetches each blob, drops malformed ones', async () => {
   process.env.BLOB_READ_WRITE_TOKEN = 'test-token';
   blobsByPrefix = {
-    'suggestions/': [{ url: 'https://blob.example/a.json' }, { url: 'https://blob.example/b.json' }],
+    'suggestions/': [{ pathname: 'suggestions/a.json' }, { pathname: 'suggestions/b.json' }],
   };
-
-  t.mock.method(globalThis, 'fetch', async (url: string) => {
-    if (url.endsWith('a.json')) {
-      return jsonResponse({ submitted_at: '2026-09-17T10:00:00.000Z', ip_hash: 'hasha', text: 'add a map' });
-    }
-    return jsonResponse({ garbage: true }); // malformed -- must be dropped, not thrown
-  });
+  bodyByPathname = {
+    'suggestions/a.json': { submitted_at: '2026-09-17T10:00:00.000Z', ip_hash: 'hasha', text: 'add a map' },
+    'suggestions/b.json': { garbage: true }, // malformed -- must be dropped, not thrown
+  };
 
   const suggestions = await listSuggestions();
   assert.equal(suggestions.length, 1);
@@ -49,18 +46,15 @@ test('lists the suggestions/ prefix, fetches each blob, drops malformed ones', a
   delete process.env.BLOB_READ_WRITE_TOKEN;
 });
 
-test('sorts by submitted_at ascending regardless of listing order', async (t) => {
+test('sorts by submitted_at ascending regardless of listing order', async () => {
   process.env.BLOB_READ_WRITE_TOKEN = 'test-token';
   blobsByPrefix = {
-    'suggestions/': [{ url: 'https://blob.example/later.json' }, { url: 'https://blob.example/earlier.json' }],
+    'suggestions/': [{ pathname: 'suggestions/later.json' }, { pathname: 'suggestions/earlier.json' }],
   };
-
-  t.mock.method(globalThis, 'fetch', async (url: string) => {
-    if (url.endsWith('later.json')) {
-      return jsonResponse({ submitted_at: '2026-09-17T12:00:00.000Z', ip_hash: 'h1', text: 'second' });
-    }
-    return jsonResponse({ submitted_at: '2026-09-17T10:00:00.000Z', ip_hash: 'h2', text: 'first' });
-  });
+  bodyByPathname = {
+    'suggestions/later.json': { submitted_at: '2026-09-17T12:00:00.000Z', ip_hash: 'h1', text: 'second' },
+    'suggestions/earlier.json': { submitted_at: '2026-09-17T10:00:00.000Z', ip_hash: 'h2', text: 'first' },
+  };
 
   const suggestions = await listSuggestions();
   assert.deepEqual(
@@ -70,19 +64,19 @@ test('sorts by submitted_at ascending regardless of listing order', async (t) =>
   delete process.env.BLOB_READ_WRITE_TOKEN;
 });
 
-test('a fetch rejection for one blob does not fail the whole read', async (t) => {
+test('a get() rejection for one blob does not fail the whole read', async () => {
   process.env.BLOB_READ_WRITE_TOKEN = 'test-token';
   blobsByPrefix = {
-    'suggestions/': [{ url: 'https://blob.example/ok.json' }, { url: 'https://blob.example/bad.json' }],
+    'suggestions/': [{ pathname: 'suggestions/ok.json' }, { pathname: 'suggestions/bad.json' }],
   };
-
-  t.mock.method(globalThis, 'fetch', async (url: string) => {
-    if (url.endsWith('bad.json')) throw new Error('network blip');
-    return jsonResponse({ submitted_at: '2026-09-17T10:00:00.000Z', ip_hash: 'h', text: 'ok one' });
-  });
+  bodyByPathname = {
+    'suggestions/ok.json': { submitted_at: '2026-09-17T10:00:00.000Z', ip_hash: 'h', text: 'ok one' },
+  };
+  getShouldThrowFor = new Set(['suggestions/bad.json']);
 
   const suggestions = await listSuggestions();
   assert.equal(suggestions.length, 1);
   assert.equal(suggestions[0].text, 'ok one');
   delete process.env.BLOB_READ_WRITE_TOKEN;
+  getShouldThrowFor = new Set();
 });
