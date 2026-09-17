@@ -4585,6 +4585,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === kind);
     if(idx < 0) return null;
     const p = predators[idx];
+    const origX = p.x, origZ = p.z;
     for(const c of coverData){
       if(!HIDE_KINDS[c.kind]) continue;
       const edge = Math.max(c.hx, c.hz), predReach = edge + 3, hideReach = edge + 1;
@@ -4609,7 +4610,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // that can never make the predator eligible.
       p.x = px; p.z = pz;
       const detect = effectiveDetect(p);
-      if(Math.hypot(qx - px, qz - pz) >= detect) continue;
+      if(Math.hypot(qx - px, qz - pz) >= detect){ p.x = origX; p.z = origZ; continue; }
       // LUL-2910: this hook runs after real RAF frames (page load, enter())
       // already let this predator roam/react on its own -- a bear that heard
       // the player's entry footsteps before staging carries a stale
