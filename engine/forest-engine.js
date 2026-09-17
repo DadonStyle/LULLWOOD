@@ -1769,7 +1769,14 @@ function updateBoom(dt){
   for(let i=0;i<BSP;i++){ bp[i*3]+=bspVel[i][0]*dt; bp[i*3+1]+=bspVel[i][1]*dt - 4*dt*e; bp[i*3+2]+=bspVel[i][2]*dt; }
   bspPts.geometry.attributes.position.needsUpdate = true;
   bspPts.material.opacity = Math.max(0, 1 - e/1.6);
-  if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*0.6));
+  // LUL-2605: hold #flash at full peak through a plateau instead of decaying from e=0 --
+  // a linear decay (LUL-2520) keeps shrinking the window a slow capture round trip (poll
+  // tick -> render -> screenshot under software WebGL) has to land in before opacity drops
+  // below a visible threshold; this run measured a 1.36s delay against the 0.64s the LUL-2520
+  // constant was sized for. Plateau covers any capture up to 1.5s late, then fades out over
+  // the last 0.3s to land at 0 exactly when boomGroup retires (e>1.8), so #flash still stops
+  // overlapping the 3D burst by about as much as before.
+  if(flashEl) flashEl.style.opacity = String(e <= 1.5 ? 0.9 : Math.max(0, 0.9 - (e - 1.5)*3));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
 }
 // LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
