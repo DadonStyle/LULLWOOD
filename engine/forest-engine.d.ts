@@ -134,6 +134,8 @@ declare global {
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
       ) => { state: string; dist: number; scentCalls: number; t: number } | null;
+      /** LUL-2878: `kind`'s scaled effectiveDetect() this tick (veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul applied on top of tuning.js's unscaled spec.detect), or null if not spawned. Use this, not the tuning constant, to stage a distance that will actually pass canSee()'s detect gate. */
+      qaProbeEffectiveDetect?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
       // inside init() in forest-engine.js). Both placement hooks return the
       // predator's index into `predators`, or null if the scenario couldn't
@@ -150,10 +152,10 @@ declare global {
       qaOpenHideNearLionAtHideSpot?: () => { idx: number; kind: string } | null;
       /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble; LUL-212 narrowed this from any non-tree cover prop, LUL-2311 narrowed it again to bramble only). Returns 0, or null if no hiding-spot prop exists. */
       qaHideBehindCover?: () => number | null;
-      /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind, playerX, playerZ } on success (playerX/playerZ per LUL-242, the player's placed position -- needed to compute an exact offset back to the predator, since cover-clearance separation and scent-pickup radius are different quantities), null if no clear hiding-spot placement exists. */
+      /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind, playerX, playerZ, detect } on success (playerX/playerZ per LUL-242, the player's placed position -- needed to compute an exact offset back to the predator, since cover-clearance separation and scent-pickup radius are different quantities; `detect` per LUL-2878 is that predator's own effectiveDetect() at the placed position -- a candidate whose player/predator separation falls outside it is skipped rather than returned), null if no clear hiding-spot placement within detect range exists. */
       qaHideBehindCoverKind?: (
         kind: 'wolf' | 'bear' | 'lion',
-      ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; playerX: number; playerZ: number } | null;
+      ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; playerX: number; playerZ: number; detect: number } | null;
       /** LUL-196: reset predator[idx] to roam without relocating it; returns {x,z} so callers can verify position unchanged, or null if idx doesn't resolve. */
       qaSetPredatorRoam?: (idx: number) => { x: number; z: number } | null;
       /** LUL-1620: read predator[idx]'s last-known-position return-sweep memory, or null if idx doesn't resolve. */

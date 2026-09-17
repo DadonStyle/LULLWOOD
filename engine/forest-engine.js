@@ -1769,7 +1769,14 @@ function updateBoom(dt){
   for(let i=0;i<BSP;i++){ bp[i*3]+=bspVel[i][0]*dt; bp[i*3+1]+=bspVel[i][1]*dt - 4*dt*e; bp[i*3+2]+=bspVel[i][2]*dt; }
   bspPts.geometry.attributes.position.needsUpdate = true;
   bspPts.material.opacity = Math.max(0, 1 - e/1.6);
-  if(flashEl) flashEl.style.opacity = String(Math.max(0, 0.9 - e*0.6));
+  // LUL-2605: hold #flash at full peak through a plateau instead of decaying from e=0 --
+  // a linear decay (LUL-2520) keeps shrinking the window a slow capture round trip (poll
+  // tick -> render -> screenshot under software WebGL) has to land in before opacity drops
+  // below a visible threshold; this run measured a 1.36s delay against the 0.64s the LUL-2520
+  // constant was sized for. Plateau covers any capture up to 1.5s late, then fades out over
+  // the last 0.3s to land at 0 exactly when boomGroup retires (e>1.8), so #flash still stops
+  // overlapping the 3D burst by about as much as before.
+  if(flashEl) flashEl.style.opacity = String(e <= 1.5 ? 0.9 : Math.max(0, 0.9 - (e - 1.5)*3));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
 }
 // LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
@@ -4297,6 +4304,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!p) return null;
     return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, t: clock.elapsedTime };
   };
+  // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
+  // stage a "first sighted" scenario -- effectiveDetect() applies
+  // veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul (LUL-2407) on top
+  // of it, and on the micro QA world that scaled figure can sit well under
+  // the tuning constant. Exposes the real per-tick gate so a test can place
+  // the player within it instead of assuming the unscaled spec value.
+  window.ForestEngine.qaProbeEffectiveDetect = function(kind){
+    const p = predators.find(pp => pp.kind === kind);
+    if(!p) return null;
+    return effectiveDetect(p);
+  };
   // LUL-43 positional-hiding scaffolding. Both hooks place a specific predator
   // deterministically -- never "wherever the seed happened to spawn one" -- so
   // e2e/hide.spec.ts doesn't have to search the procedural map for a matching
@@ -4487,11 +4505,23 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
         if(blockedR(px + (qx-px)*u, pz + (qz-pz)*u, p.rad)){ clear = false; break; }
       }
       if(!clear) continue;
+      // LUL-2878: cover geometry alone (2*edge+4 apart) says nothing about
+      // whether that separation sits inside this predator's *scaled*
+      // effectiveDetect() -- veil/fog/time-of-run/difficulty/detectScaleMul
+      // (LUL-2407) can put it as low as ~8.76u on the micro QA world, well
+      // under a full-map wolf's unscaled detect=42. A caller staging "first
+      // sighted" hint eligibility needs canSee()'s own distance gate to
+      // actually pass, not just LOS-clear geometry, so place p.x/p.z here
+      // (effectiveDetect reads p.x/p.z for fogTideAmountAt) before checking,
+      // and skip to the next cover candidate rather than returning a spot
+      // that can never make the predator eligible.
       p.x = px; p.z = pz;
+      const detect = effectiveDetect(p);
+      if(Math.hypot(qx - px, qz - pz) >= detect) continue;
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
-      return { idx, kind, playerX: qx, playerZ: qz };
+      return { idx, kind, playerX: qx, playerZ: qz, detect };
     }
     return null;
   };
@@ -4754,6 +4784,24 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       lion.x = lx; lion.z = lz;
       lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
       lion.state = 'chase'; lion.hunt = true;
+      // LUL-2897: unlike qaOpenHideNearLion's callers (which drive time via
+      // qaSetFixedStep/qaAdvance), hide.spec.ts's footprint test steps the
+      // player with real keyboard/page.evaluate calls and polls -- real wall
+      // time, not game time under test control. LUL-2457 already shrank
+      // `standoff` below LION_STANDOFF=14 to stay inside the micro world's
+      // effective detect range, which also shrank LUL-2358's "~1.3s margin
+      // before contact range" derivation to well under 0.6s here -- easily
+      // eaten by ordinary page.evaluate/keyboard round-trips (let alone host
+      // contention), so the chasing lion could close to contact range (or
+      // even catch the player) before the test's own `after.canSee` read,
+      // making the assertion racy against wall-clock scheduling instead of
+      // proving the footprint LOS-block geometrically. `inert` skips this
+      // predator's steering in updatePredators() (:2516) without touching
+      // its position/visibility, so it stays exactly where it was placed
+      // through the rest of the real-time-driven test -- canSee() itself
+      // doesn't read `inert` at all, so the antagonist's LOS is still live
+      // and genuine, just not actively closing the gap in real time.
+      lion.inert = true;
       return { idx, kind: spot.kind };
     }
     return null;
