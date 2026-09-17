@@ -20,6 +20,15 @@ test('tapping E grabs a throwable, the Throw button appears and clears it on tap
   test.setTimeout(45_000);
   await boot(page, { qaHooks: true });
   await enterMobile(page);
+  // LUL-2962: the micro world routinely spawns a predator already close to
+  // where qaTeleportNearThrowable lands the player (same race documented at
+  // e2e/hints.spec.ts's qaClearAllPredators call). This test's touch-driven
+  // interact/throw flow takes longer real wall-clock time than the desktop
+  // KeyE press, so the coin-flip proximity race reliably lands as an actual
+  // kill instead of just losing a hint-priority race -- park every predator
+  // first (qaClearAllPredators precedent: e2e/day-night-cycle.spec.ts,
+  // e2e/hints.spec.ts) since this test isolates the throw UI, not combat.
+  await qaHook(page, 'qaClearAllPredators');
 
   const stone = await qaHook(page, 'qaTeleportNearThrowable');
   expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
