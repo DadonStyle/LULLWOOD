@@ -4777,6 +4777,24 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       lion.x = lx; lion.z = lz;
       lion.vx = lion.vz = 0; lion.alert = 0; lion.reroute = 0; lion.stuckT = 0;
       lion.state = 'chase'; lion.hunt = true;
+      // LUL-2897: unlike qaOpenHideNearLion's callers (which drive time via
+      // qaSetFixedStep/qaAdvance), hide.spec.ts's footprint test steps the
+      // player with real keyboard/page.evaluate calls and polls -- real wall
+      // time, not game time under test control. LUL-2457 already shrank
+      // `standoff` below LION_STANDOFF=14 to stay inside the micro world's
+      // effective detect range, which also shrank LUL-2358's "~1.3s margin
+      // before contact range" derivation to well under 0.6s here -- easily
+      // eaten by ordinary page.evaluate/keyboard round-trips (let alone host
+      // contention), so the chasing lion could close to contact range (or
+      // even catch the player) before the test's own `after.canSee` read,
+      // making the assertion racy against wall-clock scheduling instead of
+      // proving the footprint LOS-block geometrically. `inert` skips this
+      // predator's steering in updatePredators() (:2516) without touching
+      // its position/visibility, so it stays exactly where it was placed
+      // through the rest of the real-time-driven test -- canSee() itself
+      // doesn't read `inert` at all, so the antagonist's LOS is still live
+      // and genuine, just not actively closing the gap in real time.
+      lion.inert = true;
       return { idx, kind: spot.kind };
     }
     return null;
