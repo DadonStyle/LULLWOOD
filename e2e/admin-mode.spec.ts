@@ -16,7 +16,7 @@
 // LUL-1085: #settingsBtn moved into GameMenu's hamburger panel (components/GameMenu.tsx)
 // and only renders once that menu is opened -- not visible on boot the way it was
 // pre-LUL-1085. Open it via the menuToggle testid first, same as e2e/mobile/admin-mode.spec.ts.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter } from './helpers';
 
 test.describe('admin mode', () => {

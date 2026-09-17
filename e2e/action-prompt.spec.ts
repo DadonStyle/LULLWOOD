@@ -22,19 +22,22 @@
 //    content at once (no real playthrough state does) -- none of their
 //    bounding boxes intersect, at 1280x720 and at a narrow mobile landscape
 //    width.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
-// LUL-2107: the 3 cases below that stage a chasing predator (urgent
+// LUL-2107: the cases below that stage a chasing predator (urgent
 // cover-prompt class, the 390px nowrap/mobile-collision check, and reduced
 // motion) drive the throttled cover probe (COVER_PROBE_HZ, engine/forest-
 // engine.js ~4710) via qaSetFixedStep/qaAdvance instead of a real-wall-clock
 // page.waitForTimeout -- that wait only reliably crossed the probe's 1/6s
 // hand-accumulated `coverProbeAccum += dt` threshold (dilated at low FPS, see
 // wiki systems/dt-clamp-vs-walltime) under swiftshader's incidental frame
-// cadence, which real GPU rendering (LUL-1910) no longer guarantees. The
-// calm-cover-prompt and cover-wins-over-veil cases above are not in this
-// ticket's listed scope and stay on the real RAF loop.
+// cadence, which real GPU rendering (LUL-1910) no longer guarantees.
+// LUL-2804: "cover wins over veil" below joined that group (it also stages a
+// chase) -- migrated off its 350ms page.waitForTimeout, same reasons. The
+// calm-cover-prompt case does not stage a predator at all, so it stays on the
+// real RAF loop with its own plain page.waitForTimeout.
 const FIXED_DT = 0.02;
 const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 
@@ -115,13 +118,29 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     // fired before data-tone could ever read "urgent". Use the hook built for
     // "cover + chasing, sighted lion at once, standoff far enough to not
     // catch" instead -- the same one "cover wins over veil" below relies on.
+    //
+    // LUL-2804: qaSetFixedStep() must be called *before* this hook, not after
+    // -- same hazard LUL-2283 already fixed for predator-determinism.spec.ts/
+    // map-seed.spec.ts. qaOpenHideNearLionAtHideSpot() flips the lion into
+    // 'chase'+hunt=true synchronously; as long as the real RAF loop is still
+    // running (it only parks once qaSetFixedStep() cancels the pending
+    // frame), every real-wall-clock frame between this call and that one
+    // moves the lion at its real tuning.js speed, off LION_STANDOFF's
+    // closing-time budget entirely. Locally negligible under fast GPU
+    // rendering, but under CI's swiftshader path (slower frames, slower CDP
+    // round trips) enough real frames land in that gap to close most of the
+    // 14-unit standoff before the "controlled" 0.5s window even starts --
+    // confirmed live (CI=1): pre-qaSetFixedStep distance already down to
+    // ~5-7 units, ending the test's 0.5s qaAdvance with the player caught
+    // and #deathScreen up, never reading data-tone="urgent". Parking first
+    // makes staging itself deterministic, same as the two precedents above.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
     expect(staged, 'qaOpenHideNearLionAtHideSpot returned null — no hide spot or lion at this seed').not.toBeNull();
 
-    // LUL-2107: park the real RAF loop and advance enough game time
-    // (well over the probe's 1/6s threshold) to force the throttled cover
-    // probe to fire and pushState to propagate, deterministically.
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    // LUL-2107: advance enough game time (well over the probe's 1/6s
+    // threshold) to force the throttled cover probe to fire and pushState to
+    // propagate, deterministically.
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     await expectRowVisible(page, 'actionPrompt');
@@ -140,6 +159,18 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     // -- both cover and veil conditions true at once, hasLOS() is unblocked by
     // the prop itself, and the lion is far enough out it can't close to catch
     // range before this test's own assertions run (LUL-2358).
+    //
+    // LUL-2804: this test was deliberately left on the real RAF loop by
+    // LUL-2107 (see the top-of-file note) with a 350ms page.waitForTimeout --
+    // the same wall-clock-vs-game-time gap the "urgent cover prompt" test
+    // above was just fixed for (LUL-2283 pattern: qaSetFixedStep() before any
+    // hook that starts a chase, not after). Under CI's swiftshader path that
+    // wait is both too short (dt-clamp dilation, wiki systems/dt-clamp-vs-
+    // walltime) to reliably cross the cover probe's 1/6s threshold *and*
+    // exposed to the same uncontrolled real-time chase progress between
+    // staging and the wait actually starting -- migrate to qaSetFixedStep/
+    // qaAdvance like every neighboring case this file already uses.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
     expect(staged, 'qaOpenHideNearLionAtHideSpot returned null — no hide spot or lion at this seed').not.toBeNull();
 
@@ -152,7 +183,7 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     );
     expect(lionState?.canSee, 'Staged lion must have line of sight to player (both conditions must hold)').toBe(true);
 
-    await page.waitForTimeout(350);
+    await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     await expectRowVisible(page, 'actionPrompt');
     const text = await page.locator('#actionPrompt').textContent() ?? '';
@@ -183,8 +214,12 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     // sighted lion together -- see the comment on the "urgent cover prompt"
     // test above for why qaTeleportToHideSpot()+qaOpenHideNearLion() (used
     // here previously) never reaches data-tone="urgent".
-    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
+    //
+    // LUL-2804: qaSetFixedStep() before the staging hook, not after -- same
+    // LUL-2283 ordering fix as the "urgent cover prompt" test above; this
+    // test carries the identical live CI=1 failure otherwise.
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     await expectRowVisible(page, 'actionPrompt');
@@ -259,8 +294,12 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     // LUL-2358: see the comment on the "urgent cover prompt" test above for
     // why qaTeleportToHideSpot()+qaOpenHideNearLion() (used here previously)
     // never reaches data-tone="urgent".
-    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
+    //
+    // LUL-2804: qaSetFixedStep() before the staging hook, not after -- same
+    // LUL-2283 ordering fix as the "urgent cover prompt" test above; this
+    // test carries the identical live CI=1 failure otherwise.
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.());
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
 
     await expectRowVisible(page, 'actionPrompt');

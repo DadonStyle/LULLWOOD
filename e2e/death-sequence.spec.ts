@@ -10,7 +10,7 @@
 // illustrative `triggerDeath(kind,cause); return dead;` snippet -- see the
 // comment on qaForceDeath in engine/forest-engine.js for why a plain `dead`
 // read can't distinguish "already dead, rejected" from "this call worked".
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 const CAUSE_TEXT: Record<'charge' | 'hunt' | 'chase', string> = {

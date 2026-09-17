@@ -3,7 +3,7 @@
 // regular `.click()` exercises the same purchase(id) path under touch emulation. Landscape
 // viewport override (LUL-69) clears OrientationGate, same convention as the other mobile
 // specs that don't test orientation itself.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, qaHook, trackConsoleErrors, expectNoConsoleErrors } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)

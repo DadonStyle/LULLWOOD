@@ -11,7 +11,7 @@
 // there actually is a large scene behind the number qaProbePerf() reports.
 // qaProbePerf/qaProbeTreeChunks are untyped in forest-engine.d.ts (same as
 // qaProbeElapsedTime, see e2e/qa-fixed-clock.spec.ts), hence the `as any` reads.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot } from './helpers';
 // fullmap-reason: boot-cost probe of the real map (LUL-1768) (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

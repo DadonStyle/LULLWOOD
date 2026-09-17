@@ -25,8 +25,8 @@
 // lul-2071-deterministic-qa-clock.md), same shape as e2e/scent.spec.ts, so
 // distance-closed-per-game-second assertions aren't at the mercy of this
 // rig's software-rendering dt clamp (wiki: systems/dt-clamp-vs-walltime).
-import { test, expect } from '@playwright/test';
-import { boot, enter, qaHook } from './helpers';
+import { test, expect } from './fixtures';
+import { boot, enter, qaHook, advanceChunked } from './helpers';
 
 const FIXED_DT = 0.02;
 const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
@@ -53,7 +53,14 @@ const WOLF_FULL_SPEED = (10.8 + 28 / 6) * QA_WORLD_MICRO_SPEED_SCALE;
 
 test.describe('force-hunt escalation blind-chases at full species speed instead of collapsing to slow approach (LUL-2246)', () => {
   test('escalated hunt losing sight lands in chase, not investigate, and keeps closing distance', async ({ page }) => {
-    test.setTimeout(30_000);
+    // LUL-2802: 60s, not 30s -- CI showed this test failing with "Target page,
+    // context or browser has been closed" mid-run (shard 1, run 35086869286),
+    // a symptom of the same rig-contention class LUL-2734 root-caused for
+    // cover-feedback.spec.ts's identically-shaped bare qaAdvance() calls; not
+    // reproducible locally (passes cleanly in isolation every time). Chunking
+    // the 3s advance below (advanceChunked, helpers.ts) doesn't change the
+    // simulation, only what a slow rig fails with.
+    test.setTimeout(60_000);
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
@@ -76,7 +83,7 @@ test.describe('force-hunt escalation blind-chases at full species speed instead 
     // freeze spotOnto() arms (SIGHT_TELL_TIME-independent 0.55s rear-up,
     // frozen at speed=0), and runs several ticks of whatever the hunt
     // branch's collapse routes into.
-    await qaHook(page, 'qaAdvance', stepsFor(1.0));
+    await advanceChunked(page, stepsFor(1.0));
 
     const first = await qaHook(page, 'qaProbePredatorState', 'wolf');
     expect(first).not.toBeNull();
@@ -86,7 +93,7 @@ test.describe('force-hunt escalation blind-chases at full species speed instead 
     ).toBe('chase');
 
     const GAME_SECONDS = 3;
-    await qaHook(page, 'qaAdvance', stepsFor(GAME_SECONDS));
+    await advanceChunked(page, stepsFor(GAME_SECONDS));
 
     const second = await qaHook(page, 'qaProbePredatorState', 'wolf');
     expect(second).not.toBeNull();
@@ -108,7 +115,13 @@ test.describe('force-hunt escalation blind-chases at full species speed instead 
   });
 
   test('the scentLock leash holds off give-up for its full window (open ground, no LOS-blocking prop)', async ({ page }) => {
-    test.setTimeout(30_000);
+    // LUL-2802: 60s, not 30s -- this test already makes 20 separate qaAdvance()
+    // round-trips (one per sampled game-second) rather than one giant call, but
+    // CI still showed it landing right at the 30s wall (44.7s reported runtime
+    // against a 30000ms test timeout, shard 1, run 35086869286) while passing
+    // cleanly in isolation locally every time -- the same rig-contention class
+    // as the other force-hunt-closes test above, not a logic regression.
+    test.setTimeout(60_000);
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);

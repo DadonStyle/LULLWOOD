@@ -134,6 +134,8 @@ declare global {
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
       ) => { state: string; dist: number; scentCalls: number; t: number } | null;
+      /** LUL-2878: `kind`'s scaled effectiveDetect() this tick (veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul applied on top of tuning.js's unscaled spec.detect), or null if not spawned. Use this, not the tuning constant, to stage a distance that will actually pass canSee()'s detect gate. */
+      qaProbeEffectiveDetect?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
       // inside init() in forest-engine.js). Both placement hooks return the
       // predator's index into `predators`, or null if the scenario couldn't
@@ -150,10 +152,10 @@ declare global {
       qaOpenHideNearLionAtHideSpot?: () => { idx: number; kind: string } | null;
       /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble; LUL-212 narrowed this from any non-tree cover prop, LUL-2311 narrowed it again to bramble only). Returns 0, or null if no hiding-spot prop exists. */
       qaHideBehindCover?: () => number | null;
-      /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind, playerX, playerZ } on success (playerX/playerZ per LUL-242, the player's placed position -- needed to compute an exact offset back to the predator, since cover-clearance separation and scent-pickup radius are different quantities), null if no clear hiding-spot placement exists. */
+      /** LUL-121: same as qaHideBehindCover but picks the first predator of the given species. Returns { idx, kind, playerX, playerZ, detect } on success (playerX/playerZ per LUL-242, the player's placed position -- needed to compute an exact offset back to the predator, since cover-clearance separation and scent-pickup radius are different quantities; `detect` per LUL-2878 is that predator's own effectiveDetect() at the placed position -- a candidate whose player/predator separation falls outside it is skipped rather than returned), null if no clear hiding-spot placement within detect range exists. */
       qaHideBehindCoverKind?: (
         kind: 'wolf' | 'bear' | 'lion',
-      ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; playerX: number; playerZ: number } | null;
+      ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; playerX: number; playerZ: number; detect: number } | null;
       /** LUL-196: reset predator[idx] to roam without relocating it; returns {x,z} so callers can verify position unchanged, or null if idx doesn't resolve. */
       qaSetPredatorRoam?: (idx: number) => { x: number; z: number } | null;
       /** LUL-1620: read predator[idx]'s last-known-position return-sweep memory, or null if idx doesn't resolve. */
@@ -170,6 +172,8 @@ declare global {
       qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
       /** LUL-2505: marks every predator except idx `inert` (the same flag qaBuildScene's own parking uses) so a multi-second poll on the full map only ever sees idx's own contribution to the approach/piano threat scan, which skips inert predators entirely. Returns {idx,x,z}, or null if idx doesn't resolve. */
       qaIsolatePredator?: (idx: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-2841: re-runs qaLurePredatorKind's own nearest-of-`kind` search and marks every other predator `inert` (same flag as qaIsolatePredator) -- for a test built on qaTeleportToHideSpot's natural cover (so qaBuildScene isn't an option) that lures by kind rather than holding an idx. Returns {kind,x,z}, or null if the species isn't spawned. */
+      qaIsolatePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number } | null;
       /** LUL-2457: marks every predator `inert` (same flag as qaIsolatePredator), parking them off-map so a long `qaAdvance` window (e.g. the day/night ramp) can't be ended early by an ambient kill. Returns the count parked. */
       qaClearAllPredators?: () => number;
       /** LUL-212: teleports the player to the first generated hiding spot (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of `kind` if given (LUL-2320). No predator involved. Returns the spot's kind, or null if none were generated / no prop of `kind` exists on this map. */
@@ -221,6 +225,7 @@ declare global {
         dist: number;
         canSee: boolean;
         rad: number;
+        moveRad: number;
         x: number;
         z: number;
         gaveUpAt: number | null;
@@ -247,6 +252,12 @@ declare global {
         t: number;
         overshootDuration: number;
       } | null;
+      /** LUL-2853: `predators` index of whichever instance actually won
+       * triggerDeath()'s once-only guard, or null if no death has happened yet
+       * this run. Lets a test confirm a specific tracked predator (e.g. the one
+       * returned by qaTriggerCharge) is the one that actually killed the player,
+       * not a same-species pack-mate that independently won the race the same tick. */
+      qaLastDeathPredatorIndex?: () => number | null;
       /** LUL-275: snapshot of the player's transform and detected input mode --
        * this init() actually bound -- proves which input branch bound at runtime,
        * not just which the test requested. See wiki: game/lul274-input-mode-separation. */

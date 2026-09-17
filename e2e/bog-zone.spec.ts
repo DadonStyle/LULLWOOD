@@ -4,7 +4,7 @@
 // e2e/ matched only the LUL-1093 minimap clamp test before this spec).
 // See docs/specs/lul-2225-small-bog.md's '## e2e' section for the full
 // rationale behind each assertion below.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook, QA_PINNED_SEED } from './helpers';
 import { LANDMARKS, CAVE, CONFIG } from '../engine/tuning';
 import { BOG_CENTER, BOG_INNER_RADIUS, BOG_OUTER_RADIUS, BOG_SPEED_MULTIPLIER } from '../lib/game/bog';

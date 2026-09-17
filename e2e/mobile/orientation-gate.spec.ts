@@ -8,7 +8,7 @@
 // devices['Pixel 5'] -- portrait by default (393x727), which is exactly the
 // case this spec needs. See e2e/mobile/input-mode.spec.ts for why the
 // *other* mobile specs override to landscape instead.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test('portrait blocks input behind a rotate prompt; landscape clears it and gameplay is reachable', async ({

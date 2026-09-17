@@ -5,7 +5,8 @@
 // phones, in both default and admin mode -- the geometry the ticket flagged
 // as the one worth measuring (admin mode pushes the hint to top:228px, close
 // to the control column on a 375px-tall screen).
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '../fixtures';
+import type { Page } from '@playwright/test';
 import { boot, assertInViewport } from '../helpers';
 
 const VIEWPORTS = [

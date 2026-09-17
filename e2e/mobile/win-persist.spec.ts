@@ -18,7 +18,7 @@
 // independent ways. That is tracked on its own ticket -- see the LUL-650
 // ticket comment -- and driving pickup through it here would make this spec
 // red for a reason that has nothing to do with what it's supposed to prove.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)

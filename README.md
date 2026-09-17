@@ -81,7 +81,9 @@ Feature branches are named `lul-<ticket>-<slug>` and target **`release/next`**, 
 ## Deploys
 
 `main` auto-deploys to [www.lullwoodgame.com](https://www.lullwoodgame.com) via the Vercel
-GitHub App. `lullwoodgame.com` and the legacy `lullwood.vercel.app` both resolve to it.
+GitHub App. `lullwoodgame.com` resolves directly to it; the legacy `lullwood.vercel.app`
+alias 308-redirects there (`next.config.ts`, LUL-2852) so it stops competing with the
+canonical domain in search results.
 
 Vercel builds independently of CI and does not run Playwright, so a green PR is not a
 working deploy — the Game Tester verifies gameplay against the live production URL.

@@ -137,6 +137,41 @@ distinct identity from the studio PAT — only when every required check is gree
 approval exists, and it did not author the PR. Wiring it to fire automatically for
 Tier-B-only diffs is open work; until then Tier B still waits on the Code Reviewer.
 
+### Deployment cadence throttle (founder directive, LUL-1786/LUL-2847, 2026-09-16)
+
+Faster ship-on-green cadence pushed the studio over Vercel's 100/24h deployment cap
+(LUL-1783: 92 deploys/24h, 88 Preview mapping to 35 distinct PRs, 25 of them with 2+
+pushes before merge, max 5). The founder chose **throttle cadence, not a plan/spend
+increase** (wiki `decisions/lul-1786-vercel-throttle-accepted-2026-09-16`) — this is
+the recorded mechanism, not a one-off manual slowdown.
+
+**Mechanism:** `scripts/vercel-ignore-ci-only.sh` (the Vercel `ignoreCommand`) now
+skips the Preview deploy for **every push to a `lul-*` feature branch**, before the
+existing CI-only-paths check even runs. `release/next` and `main` are unaffected —
+the one Preview a PR's squash-merge produces on `release/next` still happens, which
+is the ~35/24h the studio actually needs to watch, not the ~88 it was burning on
+every intermediate push to an open PR.
+
+**Why this is close to free, not a real throughput cut:** audited every consumer of
+a feature-branch Preview URL in this repo (wiki `systems/vercel-cd`,
+`systems/vercel-ignorecommand-branch-scope`) and found none — Preview URLs sit
+behind Vercel Deployment Protection (anonymous curl gets 302), Code Reviewer and
+`tier-approve.yml` both work off the diff, not a live link, and the local-qa tester
+builds its own vendored checkout rather than hitting a Vercel URL. The founder's
+decision explicitly accepted a throughput tradeoff; the honest accounting is that
+almost none of it is real — this removes byproduct nobody was consuming, not a
+capability engineers were using.
+
+**Escape hatch:** `[force-preview]` alone on its own line in the commit being
+deployed builds anyway — one-way, author-settable, same marker convention as
+`[ship]` / `[no-auto-merge]` (decisions/0016). Use it for the rare case of a
+feature-branch link someone genuinely needs before the PR reaches `release/next`.
+
+**If the count creeps back over `fail_at` (`deployment-budget.sh`, still 90) despite
+this**, that means either `[force-preview]` is being overused or `release/next`
+merge volume itself grew past the ~35/24h baseline — check both before reopening the
+plan-bump-vs-throttle question on LUL-1786.
+
 ## The release train
 
 Feature branches target `release/next`. The **only** path to `main` is a version cut

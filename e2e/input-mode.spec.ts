@@ -41,7 +41,7 @@
 // see that file for why it needs a real mobile-emulated project.
 //
 // See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter } from './helpers';
 
 test.describe('ordinary desktop, no touch signal (LUL-274 FACT 1 / FACT 2 regression)', () => {

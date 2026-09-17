@@ -43,7 +43,7 @@
 // failed, with `dead: true` on the trace's very first frame while `canSee`
 // was still `false`. Restored before committing -- see the PR description
 // for the transcript.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter } from './helpers';
 
 test.describe('blind scent-chase cannot kill through cover (LUL-387 regression)', () => {

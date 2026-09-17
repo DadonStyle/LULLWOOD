@@ -6,7 +6,8 @@
 // Scope, per the ticket: only the client-side keystroke restriction and the
 // 300-char cap. Server-side regex/rate-limit/honeypot behavior is covered by
 // app/api/suggestions/route.test.ts (unit tests), not here.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 
 async function typeInto(page: Page, text: string) {
   const textarea = page.locator('#suggestion-text');

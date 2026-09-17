@@ -6,7 +6,7 @@
 // procedural terrain is out of scope, and is not what this clip is trying to
 // show. LUL-2281 (reverts LUL-1307): no carry-home leg anymore, so no
 // qaTeleportHome step either -- the ascend/explode cinematic wins outright.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, enter, readObjective } from '../helpers';
 
 test('win path: reach the child and lift her into the light', async ({ page }) => {

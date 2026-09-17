@@ -1,7 +1,7 @@
 // LUL-2309: mobile half of the minimap's own `showMinimap` setting (see
 // ../minimap-setting.spec.ts for the desktop spec and the full writeup).
 // Same landscape-viewport / manual-tap pattern as ../mobile/admin-mode.spec.ts.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)

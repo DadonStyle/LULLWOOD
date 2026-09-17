@@ -15,7 +15,8 @@
 //
 // See wiki: game/lul730-verification-results (the ad hoc, uncommitted spec
 // this ports from), game/lul702-stick-pointer-capture-fix.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '../fixtures';
+import type { Page } from '@playwright/test';
 import { boot } from '../helpers';
 import { CdpTouch } from './touch-cdp';
 

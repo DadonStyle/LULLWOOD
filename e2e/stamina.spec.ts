@@ -2,7 +2,7 @@
 // '## e2e' section): the stamina meter shipped with zero automated coverage.
 // Drives the deterministic QA clock (see qa-fixed-clock.spec.ts) so drain/regen
 // assertions don't depend on wall-clock timing under swiftshader.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 // STAMINA_DRAIN_TIME (lib/game/stamina.ts) -- full drain from full charge.

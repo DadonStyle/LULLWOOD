@@ -6,7 +6,8 @@
 // Deliberately its own file: e2e/hide.spec.ts is explicitly predator-free per its
 // own header comment, and e2e/cover-feedback.spec.ts asserts the unrelated
 // LOS-covered signal, not this noise broadcast.
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot, enter, qaHook } from './helpers';
 
 const HIDE_SCENE = {

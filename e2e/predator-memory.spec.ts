@@ -41,7 +41,7 @@
 // tight for a contended run rather than a deterministic logic bug. Widened to
 // 20_000ms to match sibling precedent; the assertions themselves are
 // unchanged.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, expectRowVisible } from './helpers';
 
 // Bounded loop margin: LKP_MAX_SWEEPS (3) repicks are needed to exhaust the

@@ -4,7 +4,7 @@
 // engine/forest-engine.js) and `?seed=` pins an exact one for QA/repro. This
 // spec proves both halves: the override reproduces a layout exactly, and the
 // default does not reproduce anything.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, QA_PINNED_SEED, qaHook, enter } from './helpers';
 // fullmap-reason: asserts the seeded generator reproduces the real 480u layout (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 

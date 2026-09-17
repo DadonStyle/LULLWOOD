@@ -13,7 +13,7 @@
 // measured VEIL_RAMP=1.6s exponential (engine/tuning.js:152), ~3.68s
 // continuous hold to cross veilAmount=0.9; a real-time wait races swiftshader
 // frame-time variance for no reason once F is held and dt is fixed.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 const FIXED_DT = 0.02;

@@ -9,7 +9,7 @@
 // coverKindBlocksMovement() -- lib/game/cover.ts:215), leaving nothing
 // behind for the old describe block. See
 // docs/specs/lul-2667-log-collision-micro.md.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 test.describe('LUL-384/LUL-1642: log and bramble are walkable (qaWorld=micro)', () => {

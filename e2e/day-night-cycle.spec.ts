@@ -8,12 +8,16 @@
 // qaProbeTimeOfRun() (the engine-visible effect: timeOfRun, fogDensity,
 // hemiIntensity, detectMul, clock) rather than only the #timeOfRunClock DOM
 // text, per e2e/README.md's "assert the effect, not the DOM node" rule.
-import { test, expect } from '@playwright/test';
-import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
+import { test, expect } from './fixtures';
+import { boot, enter, qaHook, advanceChunked, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
 
 test.describe('day/night cycle (timeOfRun)', () => {
   test('timeOfRun ramps 0 -> 1 over TIME_OF_RUN_DURATION_S and resets to 0 on restart', async ({ page }) => {
-    test.setTimeout(45_000);
+    // LUL-2802: 75s, not 45s -- see advanceChunked's comment in helpers.ts.
+    // Worst case is one 120-step advanceChunked call (5 chunks * 6s = 30s)
+    // plus boot/enter/death-restart overhead; 45s left no margin and this
+    // test showed the bare-timeout signature in CI (shard 1, run 35086869286).
+    test.setTimeout(75_000);
     const errs = trackConsoleErrors(page);
     await boot(page, { qaHooks: true });
     // Park the RAF loop before entering: enter()'s gate-fade/pointer-lock
@@ -32,7 +36,7 @@ test.describe('day/night cycle (timeOfRun)', () => {
     const atStart = await qaHook(page, 'qaProbeTimeOfRun');
     expect(atStart.timeOfRun).toBe(0);
 
-    await qaHook(page, 'qaAdvance', 120); // 120 x 1s == TIME_OF_RUN_DURATION_S
+    await advanceChunked(page, 120); // 120 x 1s == TIME_OF_RUN_DURATION_S
 
     const atFullNight = await qaHook(page, 'qaProbeTimeOfRun');
     expect(atFullNight.timeOfRun).toBeCloseTo(1, 5);
@@ -60,7 +64,7 @@ test.describe('day/night cycle (timeOfRun)', () => {
   });
 
   test('fog density, ambient light, and predator detect radius all ramp with timeOfRun', async ({ page }) => {
-    test.setTimeout(45_000);
+    test.setTimeout(75_000); // LUL-2802: see the first test's comment
     const errs = trackConsoleErrors(page);
     await boot(page, { qaHooks: true });
     // Park before entering -- see the previous test's comment: enter()'s
@@ -73,7 +77,7 @@ test.describe('day/night cycle (timeOfRun)', () => {
     // Made to fail once on purpose: at dawn the detect multiplier must be a no-op (1x).
     expect(dawn.detectMul).toBe(1);
 
-    await qaHook(page, 'qaAdvance', 120);
+    await advanceChunked(page, 120);
 
     const night = await qaHook(page, 'qaProbeTimeOfRun');
     expect(night.timeOfRun).toBeCloseTo(1, 5);
@@ -89,7 +93,7 @@ test.describe('day/night cycle (timeOfRun)', () => {
   });
 
   test('HUD clock reads 6:00 AM at dawn and 9:00 PM at full night', async ({ page }) => {
-    test.setTimeout(45_000);
+    test.setTimeout(75_000); // LUL-2802: see the first test's comment
     const errs = trackConsoleErrors(page);
     await boot(page, { qaHooks: true });
     // Park before entering -- see the ramp test's comment: enter()'s ~1.2s
@@ -104,7 +108,7 @@ test.describe('day/night cycle (timeOfRun)', () => {
     // engine value, not just render some placeholder text.
     await expect(page.locator('#timeOfRunClock')).toContainText('6:00 AM');
 
-    await qaHook(page, 'qaAdvance', 120);
+    await advanceChunked(page, 120);
 
     const night = await qaHook(page, 'qaProbeTimeOfRun');
     expect(night.clock).toBe('9:00 PM');

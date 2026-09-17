@@ -5,7 +5,7 @@
 // both `Stick`s rendered unconditionally (only the button rows were gated on
 // `entered`), so they also sat over the pre-entry gate screen's instructions.
 // This mirrors LUL-2131's end-screen fix: unmount rather than hide.
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../fixtures';
 import { boot, qaHook } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)

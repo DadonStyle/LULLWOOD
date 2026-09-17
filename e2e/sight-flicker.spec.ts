@@ -38,7 +38,7 @@
 // throughout -- the rock keeps the wolf from closing distance at all), then
 // hits <=0 and downgrades to investigate/approach on tick 20 (0.4s blind),
 // exactly SIGHT_FLICKER_TIME.
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 const FIXED_DT = 0.02;
