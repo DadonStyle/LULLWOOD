@@ -188,7 +188,21 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     await expect(caption).toBeVisible();
     await expect(caption).toContainText("a wolf — faster than you. hide (H) or veil (F), don't outrun");
 
-    await qaHook(page, 'qaAdvance', stepsFor(8.1));
+    // LUL-2891: standoff is deliberately inside the wolf's real effectiveDetect()
+    // radius, so a wolf already hunting (from before this test even teleported the
+    // player in) can close that gap and kill the player well before the hint's own
+    // 8s timeout -- a real chase/death, not a hint-system bug, but it reads as one
+    // (eligibility loss from hudState.deathVisible clears the hint without ever
+    // reaching the elapsed>=8 branch, so seen.wolf never gets marked). Re-pin the
+    // wolf to the same standoff every 0.2s (well under the ~1s it took to close
+    // and kill in a live repro) so it never reaches contact range while we wait
+    // out the real 8s timeout -- qaStagePredatorNearPlayer also resets hunt/alert,
+    // which is fine here since hintCandidate('wolf') only reads live distance,
+    // never predator state.
+    for (let waited = 0; waited < 8.1; waited += 0.2) {
+      await qaHook(page, 'qaStagePredatorNearPlayer', 'wolf', 0, -standoff);
+      await qaHook(page, 'qaAdvance', stepsFor(Math.min(0.2, 8.1 - waited)));
+    }
     const after = await qaHook(page, 'qaProbeHints');
     expect(after.activeKey).not.toBe('wolf');
     expect(after.seen.wolf).toBe(true);
