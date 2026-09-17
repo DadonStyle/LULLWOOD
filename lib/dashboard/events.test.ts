@@ -20,6 +20,7 @@ test('parseRawEvent: accepts every event name the emitter can send', () => {
     'feature_engagement',
     'engine_contract_violation',
     'chase_gap',
+    'started_tiers',
   ];
   for (const event of EMITTED_EVENTS) {
     assert.ok(KNOWN_EVENTS.includes(event as (typeof KNOWN_EVENTS)[number]), `${event} missing from KNOWN_EVENTS`);

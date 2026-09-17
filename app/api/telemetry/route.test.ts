@@ -52,7 +52,7 @@ test('valid event with token → 204 and puts to blob', async () => {
   delete process.env.BLOB_READ_WRITE_TOKEN;
 });
 
-test('all 9 valid event names are accepted', async () => {
+test('all 10 valid event names are accepted', async () => {
   process.env.BLOB_READ_WRITE_TOKEN = 'test-token';
   const events = [
     validPayload('page_view'),
@@ -64,6 +64,10 @@ test('all 9 valid event names are accepted', async () => {
     validPayload('feature_engagement', { feature: 'hide', action: 'used' }),
     validPayload('engine_contract_violation', { missing_keys: ['setMissionUnlocks'] }),
     validPayload('chase_gap', { duration_ms: 2500, difficulty: 'normal' }),
+    // LUL-2998
+    validPayload('started_tiers', { tiers: { quietStep: 1, pocketStones: 0 } }),
+    // LUL-2998: win still valid with the new optional purchases_made field
+    validPayload('win', { time_survived_ms: 1000, seed: 42, purchases_made: [{ id: 'quietStep', tier: 1, cost: 150 }] }),
   ];
   for (const payload of events) {
     resetPuts();

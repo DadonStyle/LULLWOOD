@@ -133,6 +133,7 @@ import {
   computeDeathPayout,
   applyPayout,
   purchase as economyPurchase,
+  nextCost,
   veilMaxHoldForTier,
   effectiveScentLifetime,
   SHOP_CATALOG,
@@ -3174,6 +3175,11 @@ let cutsceneSkippable = false;   // set fresh on every triggerDeath(), read by t
 // pattern as setDifficulty/setRunMode/etc. -- see SettingsPanel.tsx) and
 // mutated in place by arriveHome/triggerDeath/purchase.
 let maxDistFromHome = 0, embers = freshEmbersState(), embersSpent = 0;
+// LUL-3003: shop purchases made during the CURRENT run (win/loss's `purchases_made`
+// telemetry field, lib/analytics.ts's PurchaseRecord) -- reset in enter() so a purchase
+// from a prior run never leaks into this run's payload. `embers.tiers` itself is
+// cross-run (see comment above); this is the per-run diff of it.
+let purchasesMade = [];
 // LUL-2558: personal-best time + tier streak counter, keyed per DifficultyTier. Synced
 // from components/Hud.tsx's localStorage read via setProgression() once on mount (same
 // pattern as embers/missionUnlocks above), mutated in place by recordRun() at each of the
@@ -3921,12 +3927,18 @@ function enter(){
   throwablesReserve = tierOf(embers, 'pocketStones') > 0 ? POCKET_STONES_RESERVE : 0;
   if(!heldThrowable && throwablesReserve > 0){ heldThrowable = true; throwablesReserve--; }
   chronicle = [];   // LUL-1103: fresh run, fresh chronicle
+  purchasesMade = [];   // LUL-3003: fresh run, no purchases attributed to it yet
   pushState({ entered: true, livePileEmbers: 0 });
   // LUL-1425: the real "a run begins" moment on both input modes -- enter() is
   // called by the gate click (Hud.tsx) and by restart(). Fires once per RUN, not
   // once per page load; see docs/specs. Previously lived in the desktop-only
   // pointerlockchange handler, so it never fired on mobile at all.
   track({ event: 'game_start', seed: currentSeed });
+  // LUL-3003: snapshot of embers.tiers as loaded from persistence at boot, taken in the
+  // same tick as game_start -- purchasesMade was just cleared above and no purchase()
+  // call can land between that reset and this read, so this is provably before any
+  // purchase this run applies.
+  track({ event: 'started_tiers', tiers: { ...embers.tiers } });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
   if(audio){ audio.ctx.resume(); }
@@ -5438,6 +5450,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeEmbersPurchase = function(){
     return { throwablesReserve, heldThrowable, purchaseCueCount: qaEmbersPurchaseCueCount };
   };
+  // [QA-HOOK] LUL-3003: the accumulated purchases_made array for the CURRENT run, plus
+  // embers.tiers as it stands right now -- lets a spec assert a purchase() call landed in
+  // the accumulator (id/tier/cost) without waiting for a win/loss track() call to read it.
+  window.ForestEngine.qaProbePurchasesMade = function(){
+    return { purchasesMade: purchasesMade.slice(), tiers: { ...embers.tiers } };
+  };
   // [QA-HOOK] LUL-2331: places the player 2 units off the Stone Marker's live position --
   // mirrors qaTeleportNearThrowable, since applyQaWorldMicroPreset() (engine/tuning.js)
   // deliberately leaves LANDMARKS untouched, so the marker keeps its full-map position even
@@ -5808,7 +5826,7 @@ function finishPickup(){
     progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
     newRecord: progressionResult.newRecord });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty, purchases_made: purchasesMade.slice() });
 }
 // LUL-1258: M2 Deepwater's completion sting -- a noise-burst + oscillator
 // chain (same procedural building blocks used elsewhere, no new audio
@@ -5952,7 +5970,7 @@ function arriveHome(){
     progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
     newRecord: progressionResult.newRecord });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty, purchases_made: purchasesMade.slice() });
 }
 function triggerDeath(kind, cause, killerIdx){
   const next = outcomeTriggerDeath(runState());
@@ -5994,7 +6012,7 @@ function triggerDeath(kind, cause, killerIdx){
     progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
     newRecord: progressionResult.newRecord });
-  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty, distance_from_home_m: deathDistanceFromHomeM });
+  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty, distance_from_home_m: deathDistanceFromHomeM, purchases_made: purchasesMade.slice() });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -6090,9 +6108,16 @@ function setEmbers(balance, tiers){
 // the cue-triple's audio cue on a real purchase.
 function purchase(id){
   const before = embers;
+  const tierBefore = tierOf(before, id);
+  const cost = nextCost(id, tierBefore, difficulty);
   embers = economyPurchase(embers, id, difficulty);
   pushState({ embersBalance: embers.balance, embersTiers: { ...embers.tiers } });
-  if(embers !== before) embersPurchaseCue();
+  if(embers !== before){
+    embersPurchaseCue();
+    // LUL-3003: `cost` can't be null here -- economyPurchase() only returns a
+    // changed reference when nextCost() was non-null (see economy.ts's purchase()).
+    purchasesMade.push({ id, tier: tierBefore + 1, cost });
+  }
 }
 // LUL-1666: sync from components/Hud.tsx's localStorage read, once on mount
 // -- identical split to setEmbers() above (engine owns the state, React

@@ -14,6 +14,16 @@ export type PredatorKind = 'wolf' | 'bear' | 'lion';
 
 export type Difficulty = 'lantern' | 'night' | 'blackout';
 
+// LUL-2998: one shop purchase made during the run these fields ride on (`win`/`loss`).
+// `id` is a `lib/game/economy.ts` SHOP_CATALOG id ('deeperLungs' | 'quietStep' |
+// 'pocketStones'), `tier` is the tier reached by this purchase (matches EmbersTiers),
+// `cost` is the Embers price paid (economy.ts's nextCost() at purchase time).
+export interface PurchaseRecord {
+  id: string;
+  tier: number;
+  cost: number;
+}
+
 export type AnalyticsEventInput =
   | { event: 'page_view' }
   | { event: 'cta_start_clicked' }
@@ -22,11 +32,16 @@ export type AnalyticsEventInput =
   // game/economy/embers can be checked against real players -- `payout` is
   // this run's Embers total (RunPayout.total from lib/game/economy.ts),
   // `balance` is the running total after it's applied.
-  | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number; difficulty: Difficulty }
+  // LUL-2998/LUL-3003: `purchases_made` is optional -- events emitted before LUL-3003
+  // shipped legitimately lack it, and forest-engine.js's own accumulator is legitimately
+  // `[]` on every event today (EmbersShop never renders mid-run, see docs/TELEMETRY_SCHEMA.md
+  // "Known gaps"). Downstream readers must treat a missing/undefined array the same as an
+  // empty one, never throw on absence.
+  | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number; difficulty: Difficulty; purchases_made?: PurchaseRecord[] }
   // LUL-2461: `distance_from_home_m` is the player's distance from CONFIG.home at the
   // moment triggerDeath() fired (engine/forest-engine.js) -- for the Economist's
   // blackout-pricing model (LUL-1413), which needs where a run actually ended.
-  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; carrying: boolean; difficulty: Difficulty; distance_from_home_m: number }
+  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; carrying: boolean; difficulty: Difficulty; distance_from_home_m: number; purchases_made?: PurchaseRecord[] }
   | { event: 'session_length'; duration_ms: number; reached_gameplay: boolean; session_id: string }
   | { event: 'feature_engagement'; feature: string; action: string; carrying?: boolean }
   // LUL-2239: production-only signal from lib/engine-contract.ts's assertEngineContract()
@@ -42,7 +57,13 @@ export type AnalyticsEventInput =
   // sight/noise instead) never emits this event for that gap -- undercounting toward the
   // *longer* gaps is the correct direction for a "how much quiet does a hidden player get"
   // measurement, not a bug to fix here.
-  | { event: 'chase_gap'; duration_ms: number; difficulty: Difficulty };
+  | { event: 'chase_gap'; duration_ms: number; difficulty: Difficulty }
+  // LUL-2998/LUL-3003: player's permanent-upgrade tier state (lib/game/economy.ts's
+  // EmbersState.tiers, keyed by SHOP_CATALOG id) at game boot, BEFORE this run's own
+  // purchases apply -- emitted from engine/forest-engine.js's enter(). Lets the Economist
+  // reconstruct a run's purchases from before/after `tiers` snapshots even where per-run
+  // `purchases_made` tracking has gaps, see docs/TELEMETRY_SCHEMA.md "Known gaps".
+  | { event: 'started_tiers'; tiers: Record<string, number> };
 
 export type AnalyticsEvent = AnalyticsEventInput & {
   ts: number;
