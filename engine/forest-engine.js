@@ -85,7 +85,7 @@ import {
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { spawnClearanceScale } from '@/lib/game/spawnClearance';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -429,7 +429,7 @@ let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, stami
 let stoneMarkerPulseT = 0;
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
 // last result between probes; coverProbeAccum counts elapsed seconds.
-let lastHideSpot = null, coverProbeAccum = 0;
+let lastHideSpot = null, coverProbeAccum = 0, coverRustleAccum = 0;   // LUL-2856
 let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
 
 // LUL-27: Fog Tide, the first recurring world event (lib/game/eventScheduler.ts
@@ -1963,7 +1963,7 @@ const predators = [];
 // preset compares against -- fixed at creation so placePredators() doesn't
 // need to re-derive array position every restart.
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
-let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
+let sinceClose = 0, huntTime = 0, spotFlash = 0, rustleFlash = 0, pianoTimer = 0;   // threat timers, spot flash, cover-rustle flash (LUL-2856), approach-note timer
 let sinceBelowMinHunters = 0;   // LUL-2250: seconds the active-hunter count has been below MIN_ACTIVE_HUNTERS
 let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
 let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
@@ -2018,7 +2018,7 @@ function placePredators(){
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   mm.style.display = preset.minimap ? '' : 'none';
-  sinceClose = 0; huntTime = 0; spotFlash = 0; bearingPulseT = 0; bearingPulseSide = null;
+  sinceClose = 0; huntTime = 0; spotFlash = 0; rustleFlash = 0; bearingPulseT = 0; bearingPulseSide = null;
   sinceBelowMinHunters = 0;
   activeCharges = 0; pushState({ chargeVisible: false });
 }
@@ -3498,6 +3498,25 @@ function enterHide(spot){
   }
 }
 function exitHide(){ if(!hidden) return; leafRustle(false); hidden = false; hideKind = null; }
+// LUL-2856: cover-degradation cheap slice. Fires every COVER_RUSTLE_INTERVAL_S once hideTime
+// clears COVER_RUSTLE_THRESHOLD_S (driven by the tick()-loop check added in step 6, not called
+// from anywhere else). Same alerted-predator loop as enterHide()'s one-shot entry noise
+// (:3490-3492 in the pre-change file) -- only newly-alerts roam-state predators, never
+// downgrades an already-chasing/hunting one, for the same reason enterHide() doesn't.
+function rollCoverRustle(){
+  let alerted = 0;
+  for(const p of predators){
+    if(p.inert || p.state !== 'roam') continue;
+    if(checkThrowableNoise(Math.hypot(p.x - player.x, p.z - player.z), HIDE_ALERT_RADIUS)){ hearNoise(p); alerted++; }
+  }
+  logChronicle('cover_rustle', { alerted });
+  rustleFlash = 1;
+  rustleSting();
+  if(!hintSeen('coverRustle')){
+    markHintSeen('coverRustle');
+    if(captionsOn) pushState({ caption: 'Sitting still too long stirs the brush — a lingering hide risks a fresh noise burst. Move on before something notices.', captionId: ++captionSeq });
+  }
+}
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
   const spot = findHideSpot(player.x, player.z);
@@ -3688,6 +3707,27 @@ function spotSting(){
   const lo=ctx.createOscillator(); lo.type='sine'; lo.frequency.setValueAtTime(190,t); lo.frequency.exponentialRampToValueAtTime(48,t+0.3);
   const lg=ctx.createGain(); lg.gain.setValueAtTime(0.0001,t); lg.gain.exponentialRampToValueAtTime(0.42,t+0.01); lg.gain.exponentialRampToValueAtTime(0.0001,t+0.4);
   lo.connect(lg); lg.connect(master); lo.start(t); lo.stop(t+0.45);
+}
+// short escalating rustle/twig-snap sting for the cover-rustle roll (LUL-2856) -- distinct
+// from the continuous leafRustle(true) ambience already looping while hidden (:3422), and
+// from spotSting()'s sharper full "you were just spotted" stinger above. Same noise-burst
+// shape as leafRustle() (buffer noise through a bandpass), but the bandpass frequency rises
+// across the 3 bursts instead of leafRustle's flat/random band -- that rising pitch is the
+// "escalating" cue the proposal specifies.
+function rustleSting(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  for(let i=0; i<3; i++){
+    const d = i*0.09;
+    const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.1, false);
+    const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = 1400 + i*700; bp.Q.value = 1.1;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t+d);
+    g.gain.exponentialRampToValueAtTime(0.16 + i*0.03, t+d+0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+d+0.09);
+    src.connect(bp); bp.connect(g); g.connect(master); g.connect(conv);
+    src.start(t+d); src.stop(t+d+0.12);
+  }
 }
 // a dissonant piano note; caller raises pitch/volume as the animal gets nearer
 // LUL-1308: `pan` (defaults to 0, center) feeds a single shared StereoPannerNode --
@@ -5556,6 +5596,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
 const spotFlashEl = document.getElementById('spotFlash');
+const rustleFlashEl = document.getElementById('rustleFlash');   // LUL-2856
 const bearingPulseEl = document.getElementById('bearingPulse');
 const deathVideo = document.getElementById('deathVideo');
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
@@ -6205,6 +6246,14 @@ function stepFrame(dt, t, skipRender){
   const moveKey = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
   if(hidden && (moveKey || hasTouchMove)) exitHide();
   hideTime = hidden ? hideTime + dt : 0;
+  // LUL-2856: self-healing off hideTime the same way hideTime is self-healing off `hidden` --
+  // zero the instant hideTime drops below threshold (covers exitHide, movement-break, death,
+  // pickup, restart -- every path that already zeroes hideTime -- with no extra reset call site).
+  coverRustleAccum = hideTime > COVER_RUSTLE_THRESHOLD_S ? coverRustleAccum + dt : 0;
+  if(coverRustleAccum >= COVER_RUSTLE_INTERVAL_S){
+    coverRustleAccum = 0;
+    rollCoverRustle();
+  }
   eyeH += ((hidden ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
 
   // LUL-213: advance in game time (dt is already clamped above -- see wiki
@@ -6552,6 +6601,12 @@ function stepFrame(dt, t, skipRender){
 
   spotFlash = Math.max(0, spotFlash - dt*1.6);
   spotFlashEl.style.opacity = (spotFlash*0.55).toFixed(3);
+  // LUL-2856: subtler peak (0.4 vs spotFlash's 0.55) -- "you were just spotted" is more urgent
+  // than "the brush just rustled". Reduced motion clamps to a fixed low bump instead of the
+  // animated decay ramp (same clamp-not-remove shape stoneMarkerPulseT already uses, :6744),
+  // so the vignette still fires as a positive tell without the motion.
+  rustleFlash = Math.max(0, rustleFlash - dt*1.6);
+  rustleFlashEl.style.opacity = motionReduced() ? (rustleFlash > 0 ? '0.15' : '0') : (rustleFlash*0.4).toFixed(3);
   // LUL-1308: decays slower than spotFlash (1.6) -- spotFlash is a one-shot
   // "you were just spotted" event; this is a repeating ambient cue and should
   // linger a beat between piano notes rather than fully blink out.
