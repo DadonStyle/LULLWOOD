@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   MISSION_POOL,
   pickMission,
+  syncMissionTargetToLandmark,
   distToMissionTarget,
   canCompleteMission,
   completeMission,
@@ -38,6 +39,40 @@ test('pickMission is deterministic -- the same rng draw always picks the same mi
 test('pickMission clamps a near-1 rng draw to the last pool member, not past it', () => {
   const m = pickMission(fixedRng(0.999999));
   assert.equal(m.target, MISSION_POOL[MISSION_POOL.length - 1]);
+});
+
+// ---- syncMissionTargetToLandmark (LUL-2740) ------------------------------
+
+test('syncMissionTargetToLandmark overwrites x/z when landmarkKind matches', () => {
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
+  const landmarks = [{ kind: 'drownedCar', x: -91.95, z: 46.03 }];
+  const synced = syncMissionTargetToLandmark(m, landmarks);
+  assert.equal(synced.target.x, -91.95);
+  assert.equal(synced.target.z, 46.03);
+});
+
+test('syncMissionTargetToLandmark no-ops when landmarkKind is unset', () => {
+  const target = { ...MISSION_POOL[0], landmarkKind: undefined };
+  const m: MissionState = { target, status: 'active', secondary: null };
+  const landmarks = [{ kind: 'drownedCar', x: -91.95, z: 46.03 }];
+  const synced = syncMissionTargetToLandmark(m, landmarks);
+  assert.equal(synced, m);
+});
+
+test('syncMissionTargetToLandmark no-ops when no landmark in the list matches', () => {
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
+  const landmarks = [{ kind: 'radioMast', x: 30, z: 175 }];
+  const synced = syncMissionTargetToLandmark(m, landmarks);
+  assert.equal(synced, m);
+});
+
+test('syncMissionTargetToLandmark never mutates the input mission or landmarks objects', () => {
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
+  const landmarks = [{ kind: 'drownedCar', x: -91.95, z: 46.03 }];
+  syncMissionTargetToLandmark(m, landmarks);
+  assert.equal(m.target, MISSION_POOL[0]);
+  assert.equal(landmarks[0].x, -91.95);
+  assert.equal(landmarks[0].z, 46.03);
 });
 
 // ---- distToMissionTarget ------------------------------------------------

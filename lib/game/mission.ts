@@ -13,18 +13,23 @@ export interface MissionTarget {
   zoneRadius: number;
   /** Radius at which the interact prompt appears and completion can trigger -- mirrors canPickUp's role for the child. */
   interactRadius: number;
+  /** LUL-2740: engine/tuning.js LANDMARKS `kind` this mission's target is tied to, if any --
+   * lets generateMap() sync x/z to the landmark's actual post-placement position instead of
+   * this pool entry's nominal (pre-clearLandmarkSpot) constant. Undefined for a mission with
+   * no fixed-landmark target. */
+  landmarkKind?: string;
 }
 
 export const MISSION_POOL: readonly MissionTarget[] = [
-  // LUL-1483: coordinates match LANDMARKS' relocated drownedCar entry
-  // (engine/tuning.ts) -- the old (55, 205) sat outside the new
-  // [-120,120] square. Still a hand-copy, not an import (see the
-  // pre-existing TODO above this line) -- fixing that structurally is out
-  // of scope for this ticket; if it drifts again, the "lake and other
-  // landmarks are not accidentally boggy" style test in bog.test.ts is not
-  // where you'd catch it. Consider a follow-up ticket to make mission.ts
-  // import LANDMARKS directly instead of re-stating its coordinates.
-  { kind: 'deepwater', x: -95, z: 46, zoneRadius: 20, interactRadius: 4 },
+  // LUL-1483/LUL-2740: (x,z) here is the LANDMARKS `drownedCar` entry's *nominal*
+  // (pre-clearLandmarkSpot) position (engine/tuning.js:81) -- used only as the fallback
+  // for CONFIG.missionScaleMul !== 1 (the micro QA world's intentionally-decoupled synthetic
+  // target, docs/specs/lul-2578-mission-scale-micro-world.md) and as pickMission()'s return
+  // value before generateMap() calls syncMissionTargetToLandmark(). On the full map
+  // (missionScaleMul === 1) generateMap() always overwrites x/z with the landmark's real
+  // post-placement position via `landmarkKind` below, so drift between this constant and
+  // LANDMARKS can no longer produce an unreachable target -- see LUL-2740.
+  { kind: 'deepwater', x: -95, z: 46, zoneRadius: 20, interactRadius: 4, landmarkKind: 'drownedCar' },
 ];
 
 export interface MissionState {
@@ -44,6 +49,25 @@ export function pickMission(rng: () => number, secondaryChoice: SecondaryKind | 
     ? freshSecondary(secondaryChoice)
     : null;
   return { target, status: 'active', secondary };
+}
+
+/** LUL-2740: overwrites `mission.target.x/z` with `landmark`'s position when the target is
+ * tied to a LANDMARKS entry (`target.landmarkKind` set) and that landmark is present in
+ * `landmarks` -- a plain read of already-placed coordinates, draws no rng(). No-op (returns
+ * `mission` unchanged) if the target has no `landmarkKind`, or no landmark in the list
+ * matches it (never expected in practice: LANDMARKS is placed unconditionally every round,
+ * before this can run -- see call site in generateMap()). Never mutates `landmarks` or the
+ * shared MISSION_POOL entry `mission.target` may still reference -- always rebuilds fresh
+ * objects, same rule LUL-2578 already established for this exact field. */
+export function syncMissionTargetToLandmark(
+  mission: MissionState,
+  landmarks: readonly { kind?: string; x: number; z: number }[],
+): MissionState {
+  const kind = mission.target.landmarkKind;
+  if (!kind) return mission;
+  const landmark = landmarks.find((l) => l.kind === kind);
+  if (!landmark) return mission;
+  return { ...mission, target: { ...mission.target, x: landmark.x, z: landmark.z } };
 }
 
 export function distToMissionTarget(mission: MissionState, x: number, z: number): number {

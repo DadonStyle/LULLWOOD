@@ -153,6 +153,7 @@ import { freshProgression, recordRun } from '@/lib/game/progression';
 // how lib/game/outcome.ts's transitions are imported above.
 import {
   pickMission,
+  syncMissionTargetToLandmark,
   distToMissionTarget,
   canCompleteMission,
   completeMission,
@@ -161,6 +162,9 @@ import {
   secondaryComplete,
   RETRIEVAL_ITEM,
 } from '@/lib/game/mission';
+// LUL-2740: pure spiral clearance search, extracted from clearLandmarkSpot()
+// below so it is unit-testable without a Three.js scene.
+import { findClearLandmarkSpot } from '@/lib/game/landmarkClearance';
 import {
   inLakeWater,
   inLakeClearance,
@@ -1326,6 +1330,10 @@ function generateMap(seed){
   mission = pickMission(rng, secondaryChoice);
   if(CONFIG.missionScaleMul !== 1){
     mission = { ...mission, target: { ...mission.target, x: mission.target.x * CONFIG.missionScaleMul, z: mission.target.z * CONFIG.missionScaleMul } };
+  } else {
+    // LUL-2740: full map only -- sync the target to wherever placeLandmarks() (already run,
+    // above) actually put its landmark, instead of trusting MISSION_POOL's nominal constant.
+    mission = syncMissionTargetToLandmark(mission, landmarkData);
   }
   missionHumTimer = 2;
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
@@ -1566,17 +1574,16 @@ const landmarkGroups = {
 Object.values(landmarkGroups).forEach(g => scene.add(g));
 // Nudges (x,z) away from any tree/cover prop this seed actually generated
 // nearby -- pure geometry, no rng, so it can't shift the seeded stream.
+// LUL-2740: delegates to lib/game/landmarkClearance's unit-tested spiral
+// search (previously an inline 8-try loop that could silently return a
+// still-colliding position -- see that ticket for the bug this caused).
 function clearLandmarkSpot(x, z, clear){
-  for(let i=0; i<8; i++){
-    let hit = false;
-    for(const t of treeData){ if(Math.hypot(x-t.x, z-t.z) < clear + t.cr) { hit = true; break; } }
-    if(!hit) for(const t of bogTreeData){ if(Math.hypot(x-t.x, z-t.z) < clear + t.cr) { hit = true; break; } }
-    if(!hit) for(const c of coverData){ if(Math.hypot(x-c.x, z-c.z) < clear + Math.max(c.hx, c.hz)) { hit = true; break; } }
-    if(!hit) return [x, z];
-    const a = i * 0.9;
-    x += Math.cos(a) * 3; z += Math.sin(a) * 3;
-  }
-  return [x, z];
+  const obstacles = [
+    ...treeData.map(t => ({ x: t.x, z: t.z, radius: t.cr })),
+    ...bogTreeData.map(t => ({ x: t.x, z: t.z, radius: t.cr })),
+    ...coverData.map(c => ({ x: c.x, z: c.z, radius: Math.max(c.hx, c.hz) })),
+  ];
+  return findClearLandmarkSpot(x, z, clear, obstacles);
 }
 function placeLandmarks(){
   landmarkData = [];
