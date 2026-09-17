@@ -74,6 +74,16 @@ declare global {
        * LANDMARKS kind, so a test can assert the sprite exists and reads past the fog line
        * without a screenshot. */
       qaProbeLandmarkBeacons?: () => Array<{ kind: string; x: number; z: number; visible: boolean; fog: boolean | null }>;
+      /** LUL-2667: the resolved timeOfDay state plus the exact TOD_VISUAL/TOD_AUDIO
+       * values init() applied, so a test can assert against the six documented
+       * states without scraping renderer internals. Read-only snapshot -- see
+       * `?qaHour=` (docs/specs/lul-2667-time-of-day-coverage.md) for how a test
+       * pins which state this reflects. */
+      qaProbeTimeOfDay?: () => {
+        state: 'night' | 'early-morning' | 'morning' | 'noon' | 'afternoon' | 'evening';
+        visual: import('../lib/game/timeOfDay').TimeOfDaySkyConfig;
+        audio: import('../lib/game/timeOfDay').TimeOfDayAudioConfig;
+      };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */

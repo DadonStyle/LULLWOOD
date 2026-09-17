@@ -324,7 +324,17 @@ const clamp = (v,a,b) => v<a ? a : v>b ? b : v;
 // wall-clock hour at load, not a live clock during play -- see
 // docs/specs/time-of-day.md for why. Consumed by the sky/lighting block
 // below and by startAudio().
-const timeOfDay = timeOfDayFromHour(new Date().getHours());
+// LUL-2667: ?qaHour=<0-23> pins the hour timeOfDayFromHour() sees, for
+// deterministic e2e coverage of a system that otherwise reads the real
+// wall-clock hour once at module load (LUL-1644, see docs/specs/time-of-day.md).
+// Falls back to the real clock when absent/invalid, so real players are
+// unaffected. Read here rather than added to the qaParams block above
+// (:244) because that block runs after CONFIG mutation for qaWorld/
+// qaNoRender, and this line already has its own qaParams-shaped read --
+// same window.location.search source, no second URLSearchParams parse.
+const qaHourParam = qaParams ? qaParams.get('qaHour') : null;
+const qaHourNum = qaHourParam === null ? NaN : Number(qaHourParam);
+const timeOfDay = timeOfDayFromHour(Number.isFinite(qaHourNum) ? qaHourNum : new Date().getHours());
 const TOD_VISUAL = TIME_OF_DAY_VISUALS[timeOfDay];
 const TOD_AUDIO = TIME_OF_DAY_AUDIO[timeOfDay];
 
@@ -4017,6 +4027,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       visible: landmarkGroups[l.kind].children.some(c => c.isSprite),
       fog: landmarkGroups[l.kind].children.find(c => c.isSprite)?.material.fog ?? null,
     }));
+  };
+  // LUL-2667: exposes the resolved timeOfDay state plus the exact TOD_VISUAL/
+  // TOD_AUDIO values init() applied, so a test can assert against the six
+  // documented states (lib/game/timeOfDay.ts) without scraping renderer
+  // internals (scene.fog.color, hemiLight.color, etc. are Three.js instances,
+  // not plain values a test can diff cleanly).
+  window.ForestEngine.qaProbeTimeOfDay = function(){
+    return { state: timeOfDay, visual: TOD_VISUAL, audio: TOD_AUDIO };
   };
   // LUL-2225: bogginess and its two derived multipliers at an arbitrary
   // point, so a test can sample the patch's shape/edge directly (centre,
