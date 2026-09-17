@@ -1723,6 +1723,16 @@ const armL = makeArm(), armR = makeArm(); armsGroup.add(armL, armR);
 
 // ---- Sky burst for the win (fires after the child ascends) ----------------
 const flashEl = document.getElementById('flash');
+// LUL-2953: the vision QA check found the 3D burst reading as a faint wash on
+// mobile instead of desktop's sharp ring+sparkles, even though #flash (the DOM
+// overlay) is identical on both. Root cause confirmed by live repro screenshot
+// comparison -- CAMERA_FOV is deliberately wider on mobile (LUL-69, above), so
+// the burst's fixed world-space size subtends a smaller fraction of the wider
+// frame and reads as small/low-contrast against the #flash wash. Scale the
+// burst's world-space size by the same ratio the wider FOV shrank it by, so it
+// occupies the same fraction of the screen regardless of platform. 1 on
+// desktop (CAMERA_FOV===70, the value this effect was originally tuned at).
+const BOOM_FOV_SCALE = Math.tan(CAMERA_FOV * Math.PI/360) / Math.tan(70 * Math.PI/360);
 const boomGroup = new THREE.Group(); boomGroup.visible = false; scene.add(boomGroup);
 const boomFlash = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12),
   new THREE.MeshBasicMaterial({ color: 0xfff4d6, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
@@ -1731,7 +1741,7 @@ const boomRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 8, 44),
 boomRing.rotation.x = Math.PI/2;
 const bspArr = new Float32Array(BSP*3), bspVel = [];
 const bspPts = new THREE.Points(new THREE.BufferGeometry(),
-  new THREE.PointsMaterial({ color: 0xffe6b0, size: 0.7, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.PointsMaterial({ color: 0xffe6b0, size: 0.7 * BOOM_FOV_SCALE, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 bspPts.geometry.setAttribute('position', new THREE.BufferAttribute(bspArr, 3));
 boomGroup.add(boomFlash, boomRing, bspPts);
 let boomStart = -1;
@@ -1760,7 +1770,7 @@ const roostGroups = ROOSTS.map(r => {
 });
 function fireBoom(x, y, z){
   boomGroup.position.set(x, y, z); boomGroup.visible = true; boomStart = 0;
-  for(let i=0;i<BSP;i++){ const a=Math.random()*Math.PI*2, e=Math.acos(2*Math.random()-1), sp=8+Math.random()*24;
+  for(let i=0;i<BSP;i++){ const a=Math.random()*Math.PI*2, e=Math.acos(2*Math.random()-1), sp=(8+Math.random()*24)*BOOM_FOV_SCALE;
     bspVel[i]=[Math.sin(e)*Math.cos(a)*sp, Math.cos(e)*sp, Math.sin(e)*Math.sin(a)*sp];
     bspArr[i*3]=bspArr[i*3+1]=bspArr[i*3+2]=0; }
   bspPts.geometry.attributes.position.needsUpdate = true;
@@ -1770,8 +1780,8 @@ function fireBoom(x, y, z){
 function updateBoom(dt){
   if(boomStart < 0) return;
   boomStart += dt; const e = boomStart;
-  boomFlash.scale.setScalar(1 + e*11); boomFlash.material.opacity = Math.max(0, 1 - e/0.4);
-  const rs = 1 + e*42; boomRing.scale.set(rs, rs, rs); boomRing.material.opacity = Math.max(0, 1 - e/1.4);
+  boomFlash.scale.setScalar((1 + e*11) * BOOM_FOV_SCALE); boomFlash.material.opacity = Math.max(0, 1 - e/0.4);
+  const rs = (1 + e*42) * BOOM_FOV_SCALE; boomRing.scale.set(rs, rs, rs); boomRing.material.opacity = Math.max(0, 1 - e/1.4);
   const bp = bspPts.geometry.attributes.position.array;
   for(let i=0;i<BSP;i++){ bp[i*3]+=bspVel[i][0]*dt; bp[i*3+1]+=bspVel[i][1]*dt - 4*dt*e; bp[i*3+2]+=bspVel[i][2]*dt; }
   bspPts.geometry.attributes.position.needsUpdate = true;
@@ -5181,6 +5191,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // mobile/desktop FOV split actually took effect.
   window.ForestEngine.qaCameraFov = function(){ return camera.fov; };
 
+  // LUL-2953: boomFlash/boomRing/bspPts are closure-local -- nothing outside
+  // init() could otherwise confirm BOOM_FOV_SCALE actually reached the sky
+  // burst's runtime scale (as opposed to just existing as an unused constant).
+  window.ForestEngine.qaProbeBoom = function(){
+    return { visible: boomGroup.visible, elapsed: boomStart, fovScale: BOOM_FOV_SCALE, ringScale: boomRing.scale.x, flashScale: boomFlash.scale.x };
+  };
+
   window.ForestEngine.qaProbeAudio = function(){
     return audio
       ? { state: audio.ctx.state, started: started, soundOn: soundOn, masterGain: audio.master.gain.value }
@@ -5316,6 +5333,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaTeleportNearMission = function(){
     if(!mission) return null;
     player.x = mission.target.x + mission.target.interactRadius + 1; player.z = mission.target.z;
+    return { kind: mission.target.kind, x: mission.target.x, z: mission.target.z, status: mission.status };
+  };
+  // [QA-HOOK] LUL-2884: sibling of qaTeleportNearMission, but places the player
+  // already inside the mission target's interactRadius (no wall-clock movement
+  // needed to close the gap on the headless QA rig). Returns the target or null.
+  window.ForestEngine.qaTeleportAtMissionTarget = function(){
+    if(!mission) return null;
+    player.x = mission.target.x + mission.target.interactRadius - 1; player.z = mission.target.z;
     return { kind: mission.target.kind, x: mission.target.x, z: mission.target.z, status: mission.status };
   };
 

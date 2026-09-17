@@ -109,10 +109,58 @@ export default defineConfig({
       // e2e/mobile/** needs a real mobile-emulated context (see the `mobile`
       // project below), which this desktop project can't give it -- excluded
       // the same way, not doubled up.
-      testIgnore: ['**/replay/**', '**/mobile/**'],
+      // LUL-2826: hints.spec.ts/positional-hiding.spec.ts/scent-trail.spec.ts run
+      // in the dedicated `chromium-slow` project below instead -- see that
+      // project's comment for why.
+      testIgnore: [
+        '**/replay/**',
+        '**/mobile/**',
+        '**/hints.spec.ts',
+        '**/positional-hiding.spec.ts',
+        '**/scent-trail.spec.ts',
+      ],
       // LUL-2329: `@fullmap`-tagged tests (full 480-wide procedural map, the
       // dominant memory cost -- see docs/specs/lul-2329-e2e-migrate-qaworld-micro.md)
       // run in the dedicated `fullmap` project below instead, never here.
+      grepInvert: /@fullmap/,
+    },
+    // LUL-2826: hints.spec.ts (10 tests), positional-hiding.spec.ts (8) and
+    // scent-trail.spec.ts (8) each run several qaAdvance()-driven real-frame
+    // waits under CI's swiftshader software rendering, at 3-4.3min/test --
+    // confirmed via raw job logs (runs 35086869286, 35104049567) as the sole
+    // cause of version-cut.yml's shard 2 (these three plus alphabetical
+    // neighbors) and shard 3 (positional-hiding + scent-trail) running
+    // 37-60min against every other shard's 14-17min, because
+    // `--shard=N/6` splits the flattened test list by equal COUNT, not
+    // duration, and file order is stable so the same files always land in
+    // the same shard. Isolating them into their own project/CI job (mirrors
+    // the `fullmap`/`replay`/`mobile` project-isolation pattern already in
+    // this file) makes their cost predictable and stops it from randomly
+    // inflating whichever numbered shard they alphabetize into.
+    {
+      name: 'chromium-slow',
+      testDir: './e2e',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 720 } },
+      // testMatch alone isn't anchored to testDir's root -- 'hints.spec.ts'
+      // also matches e2e/mobile/hints.spec.ts, which belongs in `mobile-slow`
+      // below, so exclude the mobile subtree explicitly.
+      testMatch: ['hints.spec.ts', 'positional-hiding.spec.ts', 'scent-trail.spec.ts'],
+      testIgnore: ['**/mobile/**'],
+      // LUL-2933: same LUL-2377 guard as `chromium`/`mobile` below -- none of
+      // these three files carry an @fullmap tag today, but without this a
+      // future @fullmap-tagged test landing in one of them would run on the
+      // QA rig instead of only under E2E_FULLMAP=1.
+      grepInvert: /@fullmap/,
+    },
+    // LUL-2826: mobile counterparts of the three files above -- same
+    // render-cost shape, isolated out of the `mobile` project below for the
+    // same reason.
+    {
+      name: 'mobile-slow',
+      testDir: './e2e/mobile',
+      use: { ...devices['Pixel 5'] },
+      testMatch: ['hints.spec.ts', 'scent-trail.spec.ts'],
+      // LUL-2933: same LUL-2377 guard as `chromium-slow` above and `mobile` below.
       grepInvert: /@fullmap/,
     },
     // LUL-2329: every `@fullmap`-tagged test (real-geometry specs that boot the
@@ -196,7 +244,11 @@ export default defineConfig({
       // defects. A gate that is red on arrival gets bypassed, not fixed.
       // Run it on demand with `UI_HYGIENE=1 npx playwright test --project=mobile`;
       // delete this line once the fixes land, which is the whole switch-on.
-      testIgnore: process.env.UI_HYGIENE ? [] : ['**/ui-hygiene.spec.ts'],
+      // LUL-2826: hints.spec.ts/scent-trail.spec.ts run in `mobile-slow` above.
+      testIgnore: (process.env.UI_HYGIENE ? [] : ['**/ui-hygiene.spec.ts']).concat([
+        'hints.spec.ts',
+        'scent-trail.spec.ts',
+      ]),
       use: { ...devices['Pixel 5'] },
     },
   ],

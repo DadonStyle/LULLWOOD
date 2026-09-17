@@ -115,6 +115,43 @@ test.describe('#missionPanel via qaTeleportNearMission()', () => {
   });
 });
 
+test.describe('#missionPanel via qaTeleportAtMissionTarget()', () => {
+  test('teleporting inside the interactRadius completes the mission with no movement', async ({ page }) => {
+    const errs = trackConsoleErrors(page);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    const target = await qaHook(page, 'qaTeleportAtMissionTarget');
+    expect(target, 'qaTeleportAtMissionTarget returned null -- no active mission').not.toBeNull();
+    expect(target.kind).toBe('deepwater');
+    expect(target.status).toBe('active');
+
+    await page.waitForTimeout(250);
+    await expect(page.locator('#missionPanel')).toBeVisible({ timeout: 3_000 });
+
+    // The hook's whole point (LUL-2884) is landing inside interactRadius
+    // already, so unlike qaTeleportNearMission()'s test above this needs no
+    // KeyW hold to close the gap -- #objective must read complete-ready
+    // immediately off the teleport.
+    await expect(page.locator('#objective')).toContainText('drowned car', { timeout: 1_000 });
+
+    const before = await page.evaluate(() => window.ForestEngine!.qaPlayerState!());
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(300);
+    const after = await page.evaluate(() => window.ForestEngine!.qaPlayerState!());
+
+    // No movement input was ever sent -- pin that qaTeleportAtMissionTarget()
+    // itself did the work, not some incidental drift.
+    expect(after.x).toBeCloseTo(before.x, 5);
+    expect(after.z).toBeCloseTo(before.z, 5);
+
+    const status = await page.evaluate(() => window.ForestEngine?.qaTeleportAtMissionTarget?.());
+    expect(status?.status).toBe('complete');
+
+    expectNoConsoleErrors(errs);
+  });
+});
+
 test.describe('#pickupPrompt via qaTeleportNearThrowable()', () => {
   test('nearing an un-grabbed stone shows #pickupPrompt; grabbing it swaps to #throwPrompt', async ({ page }) => {
     const errs = trackConsoleErrors(page);
