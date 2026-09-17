@@ -1431,6 +1431,47 @@ design doc as turning horror into radar.
 
 ---
 
+### Welcome splash (first-visit marketing, LUL-2612)
+
+**What it is**
+- A third, independent React-owned overlay (`components/WelcomeSplash.tsx`),
+  outside the `hudState`/`EngineHudState` pipeline entirely — no engine touch,
+  no `pushState()` field. It reads/writes exactly one localStorage key,
+  `lullwood:welcomeSeen`, and is otherwise self-contained: mounted first
+  inside `components/GameCanvas.tsx`'s returned fragment, before the
+  engine-owned overlay markup and `<Hud>`.
+- Shown once per browser (`window.localStorage.getItem('lullwood:welcomeSeen')
+  !== '1'`, checked in the `useState` initializer — safe because `GameCanvas`
+  only ever mounts client-side via `GameLoader`'s `dynamic(..., { ssr: false
+  })`, so there is no SSR/hydration mismatch to guard against). Dismissing it
+  (`#welcomeSplashDismiss`) sets the key to `'1'` and unmounts the component;
+  it never reappears for that browser.
+- `#welcomeSplash` is `position: fixed`, centered via `top/left/transform`,
+  `z-index: 60` — the highest of any overlay in `OVERLAY_STYLE`
+  (`components/GameCanvas.tsx`), above `#orientationGate` (50) and
+  `#settingsPanel` (40), since a first-time visitor should see it before
+  either. Content: "Welcome to Lullwood" heading, a short horror-game
+  description, a bold `.welcomeSplashStudio strong` studio-credit line
+  ("Built by Independence AI Studio!"), a paragraph on the studio/stack/goal,
+  and the dismiss button.
+
+**Behaviours & logic**
+- No hold-to-act, no new keybinding, no `SettingsPanel` entry — a single
+  click/tap dismiss, matching Q16 of `docs/FEATURE_CHECKLIST.md`'s "does this
+  add a new input" question with "no, it's a plain button".
+- `e2e/helpers.ts`'s `boot()` seeds `lullwood:welcomeSeen` before every other
+  spec's `page.goto()` (new `seedWelcomeSplashSeen` option, default `true`) so
+  the rest of the suite keeps booting straight to `#gate` — only
+  `e2e/welcome-splash.spec.ts` / `e2e/mobile/welcome-splash.spec.ts` opt out
+  to exercise the real first-visit path. `e2e/mobile/ui-hygiene.spec.ts` has
+  its own local `boot()` (doesn't import `../helpers`) and got the same seed
+  added directly.
+
+**Collision & physics profile**
+- N/A — not a spatial/world object.
+
+---
+
 ### Embers (run currency)
 
 **What it is**

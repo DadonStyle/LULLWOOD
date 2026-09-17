@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
+import WelcomeSplash from './WelcomeSplash';
 import { track, startSessionTracking } from '@/lib/analytics';
 import { initTelemetryTransport } from '@/lib/telemetry-transport';
 import { isMobile } from '@/lib/input-mode';
@@ -180,11 +181,38 @@ const OVERLAY_STYLE = `
     #missionPanel { top: calc(76px + env(safe-area-inset-top)); }
   }
 
+  /* LUL-2612: first-visit marketing splash, WelcomeSplash.tsx. z-index 60 is
+     the highest of any overlay -- it has to sit above #orientationGate (50)
+     too, since a first-time visitor should see the studio credit before
+     "rotate your phone", not after. Card + 9999px-spread backdrop, same
+     trick as #settingsPanel below. */
+  #welcomeSplash { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 60;
+    width: min(560px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); overflow-y: auto;
+    padding: 28px 26px; border-radius: 14px; text-align: left;
+    background: rgba(14,19,29,0.97); border: 1px solid rgba(150,175,215,0.22);
+    box-shadow: 0 0 0 9999px rgba(6,9,15,0.88), 0 20px 60px rgba(0,0,0,0.5);
+    font-size: 14px; line-height: 1.6; color: #b9c8dd; }
+  #welcomeSplash h1 { margin: 0 0 12px; font-size: 26px; font-weight: 400;
+    letter-spacing: 0.08em; color: #d7e4f6; }
+  #welcomeSplash p { margin: 0 0 12px; }
+  #welcomeSplash .welcomeSplashStudio { font-size: 16px; letter-spacing: 0.02em; color: #ffdca8; }
+  #welcomeSplash .welcomeSplashStudio strong { font-weight: 700; }
+  #welcomeSplashDismiss { display: block; margin: 18px auto 0; font: inherit; font-size: 14px;
+    letter-spacing: 0.05em; color: #1a1006; background: #f0c79a; border: none;
+    border-radius: 8px; padding: 12px 22px; cursor: pointer; min-height: 44px; }
+  #welcomeSplashDismiss:hover { filter: brightness(1.08); }
+  #welcomeSplashDismiss:focus-visible { outline: 2px solid #7fa6dd; outline-offset: 2px; }
+  @media (max-width: 480px) {
+    #welcomeSplash { font-size: 13px; padding: 22px 20px; }
+    #welcomeSplash h1 { font-size: 22px; }
+  }
+
   /* LUL-69: mobile-only, portrait-only -- see components/OrientationGate.tsx.
-     z-index 50 sits above every other overlay (#settingsPanel is the next
-     highest at 40) so it blocks input to the canvas, the gate, and
-     MobileControls' sticks/buttons underneath, without needing to unmount
-     any of them. */
+     z-index 50 sits above every other overlay besides #welcomeSplash (60,
+     LUL-2612 -- the marketing splash outranks even the rotate prompt since
+     it's a first-time visitor's very first screen) so it blocks input to the
+     canvas, the gate, and MobileControls' sticks/buttons underneath, without
+     needing to unmount any of them. */
   #orientationGate { position: fixed; inset: 0; z-index: 50; display: flex;
     flex-direction: column; align-items: center; justify-content: center; gap: 16px;
     background: rgba(6,9,15,0.94); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
@@ -800,6 +828,7 @@ export default function GameCanvas() {
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: OVERLAY_STYLE }} />
+      <WelcomeSplash />
       <div dangerouslySetInnerHTML={{ __html: overlayMarkup(mobile) }} />
       <Hud state={hud} actions={actions} />
     </>
