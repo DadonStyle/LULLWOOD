@@ -4740,21 +4740,33 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // qaIsolatePredator above exists) an unrelated species can reach and kill
   // the player before the lured one does (confirmed live: positional-
   // hiding.spec.ts's lion bramble-at-range case died to an ambient bear,
-  // 30/30 repro). Re-runs qaLurePredatorKind's own nearest-of-`kind` search,
-  // so calling this right after luring the same kind unambiguously re-selects
-  // the predator just placed, and marks every other predator `inert` (same
-  // flag qaIsolatePredator uses -- touches no cover/terrain state). Returns
+  // 30/30 repro). Originally re-ran qaLurePredatorKind's own nearest-of-`kind`
+  // search, on the assumption that calling this right after luring the same
+  // kind unambiguously re-selects the predator just placed -- but with
+  // activePerSpecies:3, a 2nd/3rd predator of the same species can roam
+  // closer to the player than the just-lured one between the lure call and
+  // this one, so the plain distance search silently re-selects (and keeps
+  // live) an idle roamer while marking the actually-hunting, just-lured
+  // predator `inert` (LUL-2975: rare flake, positional-hiding.spec.ts lion
+  // bramble-at-range case). Prefer any predator of `kind` already hunting
+  // (`p.hunt === true`, set by qaLurePredatorKind/qaStageForceHuntApproach
+  // etc.) over plain nearest-distance; only fall back to nearest-of-kind if
+  // none are hunting. Marks every other predator `inert` (same flag
+  // qaIsolatePredator uses -- touches no cover/terrain state). Returns
   // {kind,x,z}, or null if the species isn't spawned.
   window.ForestEngine.qaIsolatePredatorKind = function(kind){
-    let nearest = null, best = 1e9;
+    let nearestHunting = null, bestHunting = 1e9;
+    let nearestAny = null, bestAny = 1e9;
     for(const p of predators){
       if(p.kind !== kind) continue;
       const d = Math.hypot(player.x - p.x, player.z - p.z);
-      if(d < best){ best = d; nearest = p; }
+      if(d < bestAny){ bestAny = d; nearestAny = p; }
+      if(p.hunt && d < bestHunting){ bestHunting = d; nearestHunting = p; }
     }
-    if(!nearest) return null;
-    for(const other of predators){ if(other !== nearest){ other.inert = true; } }
-    return { kind: nearest.kind, x: nearest.x, z: nearest.z };
+    const chosen = nearestHunting || nearestAny;
+    if(!chosen) return null;
+    for(const other of predators){ if(other !== chosen){ other.inert = true; } }
+    return { kind: chosen.kind, x: chosen.x, z: chosen.z };
   };
 
   // LUL-2457: same `inert` flag as qaIsolatePredator above, applied to every
