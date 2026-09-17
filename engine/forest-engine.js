@@ -4297,6 +4297,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!p) return null;
     return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, t: clock.elapsedTime };
   };
+  // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
+  // stage a "first sighted" scenario -- effectiveDetect() applies
+  // veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul (LUL-2407) on top
+  // of it, and on the micro QA world that scaled figure can sit well under
+  // the tuning constant. Exposes the real per-tick gate so a test can place
+  // the player within it instead of assuming the unscaled spec value.
+  window.ForestEngine.qaProbeEffectiveDetect = function(kind){
+    const p = predators.find(pp => pp.kind === kind);
+    if(!p) return null;
+    return effectiveDetect(p);
+  };
   // LUL-43 positional-hiding scaffolding. Both hooks place a specific predator
   // deterministically -- never "wherever the seed happened to spawn one" -- so
   // e2e/hide.spec.ts doesn't have to search the procedural map for a matching
@@ -4487,11 +4498,23 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
         if(blockedR(px + (qx-px)*u, pz + (qz-pz)*u, p.rad)){ clear = false; break; }
       }
       if(!clear) continue;
+      // LUL-2878: cover geometry alone (2*edge+4 apart) says nothing about
+      // whether that separation sits inside this predator's *scaled*
+      // effectiveDetect() -- veil/fog/time-of-run/difficulty/detectScaleMul
+      // (LUL-2407) can put it as low as ~8.76u on the micro QA world, well
+      // under a full-map wolf's unscaled detect=42. A caller staging "first
+      // sighted" hint eligibility needs canSee()'s own distance gate to
+      // actually pass, not just LOS-clear geometry, so place p.x/p.z here
+      // (effectiveDetect reads p.x/p.z for fogTideAmountAt) before checking,
+      // and skip to the next cover candidate rather than returning a spot
+      // that can never make the predator eligible.
       p.x = px; p.z = pz;
+      const detect = effectiveDetect(p);
+      if(Math.hypot(qx - px, qz - pz) >= detect) continue;
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
-      return { idx, kind, playerX: qx, playerZ: qz };
+      return { idx, kind, playerX: qx, playerZ: qz, detect };
     }
     return null;
   };
