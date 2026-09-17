@@ -97,10 +97,16 @@ test.describe('scent-triggered chase (LUL-23 / LUL-65)', () => {
 
     const second = await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('bear') ?? null);
     expect(second).not.toBeNull();
+    // LUL-2891: `t` accumulates dt across 150 float additions -- exact in real
+    // math (150 * 0.02 = 3) but IEEE754 summation lands a hair under GAME_SECONDS
+    // (observed 2.9999999999999454), so an exact >= check is a coin flip on
+    // rounding rather than a real "did time advance" sanity check. Same epsilon
+    // tolerance this suite already uses for accumulated-clock float drift (see
+    // toBeCloseTo(..., 5) elsewhere in e2e/).
     expect(
       second!.t - first!.t,
       'game clock did not advance far enough to sample distance closed',
-    ).toBeGreaterThanOrEqual(GAME_SECONDS);
+    ).toBeGreaterThanOrEqual(GAME_SECONDS - 1e-6);
 
     // The headline assertion: it actually tracks. Pre-fix this closed ~0.7 units/s
     // (the leash-vs-scent-range fight); post-fix it should close close to its real

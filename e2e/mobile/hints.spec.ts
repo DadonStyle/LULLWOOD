@@ -154,7 +154,16 @@ for (const viewport of VIEWPORTS) {
       const wolf = (map.predators as { kind: string; x: number; z: number }[]).find((p) => p.kind === 'wolf');
       expect(wolf, 'the pinned seed must spawn a wolf').toBeTruthy();
 
-      await qaHook(page, 'qaTeleportTo', wolf!.x, wolf!.z + 10);
+      // LUL-2891: same fixed-10-unit/unscaled-detect=42 assumption LUL-2878/PR#705
+      // removed from the desktop version of this test -- effectiveDetect() scales
+      // the raw tuning.js detect radius down (veil/fog/time-of-run/difficulty/
+      // CONFIG.detectScaleMul) and can land under 10u on the micro QA world, so
+      // read the real scaled gate and stand well inside it instead.
+      const detect = await qaHook(page, 'qaProbeEffectiveDetect', 'wolf');
+      expect(detect, 'wolf must be spawned for its effectiveDetect() to resolve').not.toBeNull();
+      const standoff = Math.min(10, detect! * 0.5);
+
+      await qaHook(page, 'qaTeleportTo', wolf!.x, wolf!.z + standoff);
       await qaHook(page, 'qaSetLookYaw', 0);
       await qaHook(page, 'qaAdvance', stepsFor(0.1));
 
