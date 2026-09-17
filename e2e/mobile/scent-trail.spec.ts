@@ -91,11 +91,15 @@ for (const viewport of VIEWPORTS) {
       // value), and the camera's own facing lags player.yaw by about one
       // 0.1s batch before projectToScreen() re-admits a point to frustum --
       // same settle-lag class e2e/hints.spec.ts hit for the wolf hint.
-      // Advance twice so the probe below runs after it settles.
-      await qaHook(page, 'qaAdvance', stepsFor(0.1));
-      await qaHook(page, 'qaAdvance', stepsFor(0.1));
-
-      const turned = await qaHook(page, 'qaProbeScentTrail');
+      // LUL-2957: a fixed two-batch wait still went unlucky on the nightly
+      // rig (captionVisible read back false), so poll a few more fixed-step
+      // batches instead of trusting a hardcoded count -- still driven
+      // entirely by qaAdvance's deterministic clock, never a wall-clock wait.
+      let turned = await qaHook(page, 'qaProbeScentTrail');
+      for (let attempt = 0; attempt < 5 && !turned.captionVisible; attempt++) {
+        await qaHook(page, 'qaAdvance', stepsFor(0.1));
+        turned = await qaHook(page, 'qaProbeScentTrail');
+      }
       expect(turned.points.some((p: { inFrustum: boolean }) => p.inFrustum)).toBe(true);
       expect(turned.captionVisible).toBe(true);
 
