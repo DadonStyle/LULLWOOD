@@ -427,6 +427,16 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     ).toHaveCount(0);
 
     await page.keyboard.down('KeyW');
+    // LUL-2978: this test runs on the real RAF loop (see the LUL-2841 comment
+    // above), so the very next macrotask after dispatching KeyW is not
+    // guaranteed to have run a single game frame yet -- under host load,
+    // reading qaPlayerState() here raced the engine and caught `hidden`
+    // still true because nothing had processed the keydown at all (not the
+    // exitHide() path, not triggerDeath(), which also clears `hidden`).
+    // Poll for the frame to land instead of asserting on an un-ticked state.
+    await page.waitForFunction(() => window.ForestEngine?.qaPlayerState?.()?.hidden === false, {
+      timeout: 2_000,
+    });
     const afterMove = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
     expect(afterMove?.hidden, 'KeyW should have exited `hidden`').toBe(false);
 
