@@ -146,6 +146,11 @@ export default defineConfig({
       // below, so exclude the mobile subtree explicitly.
       testMatch: ['hints.spec.ts', 'positional-hiding.spec.ts', 'scent-trail.spec.ts'],
       testIgnore: ['**/mobile/**'],
+      // LUL-2933: same LUL-2377 guard as `chromium`/`mobile` below -- none of
+      // these three files carry an @fullmap tag today, but without this a
+      // future @fullmap-tagged test landing in one of them would run on the
+      // QA rig instead of only under E2E_FULLMAP=1.
+      grepInvert: /@fullmap/,
     },
     // LUL-2826: mobile counterparts of the three files above -- same
     // render-cost shape, isolated out of the `mobile` project below for the
@@ -155,6 +160,8 @@ export default defineConfig({
       testDir: './e2e/mobile',
       use: { ...devices['Pixel 5'] },
       testMatch: ['hints.spec.ts', 'scent-trail.spec.ts'],
+      // LUL-2933: same LUL-2377 guard as `chromium-slow` above and `mobile` below.
+      grepInvert: /@fullmap/,
     },
     // LUL-2329: every `@fullmap`-tagged test (real-geometry specs that boot the
     // full procedural map on purpose -- map-seed/minimap/predator-determinism/
