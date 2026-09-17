@@ -6,7 +6,8 @@
 // from e=0 keeps shrinking the safe capture window as rig load varies -- any
 // fixed slope eventually gets outrun by a slow enough round trip. The fix
 // (this file's target) replaces the slope with a plateau-then-fade curve:
-// full peak (0.9) held through e<=1.5, then a fast fade to 0 by e=1.8 in sync
+// full peak (FLASH_PEAK_OPACITY, 0.65 as of LUL-2971) held through e<=1.5,
+// then a fast fade to 0 by e=1.8 in sync
 // with boomGroup's own retirement (`if(e > 1.8){ boomGroup.visible = false;
 // boomStart = -1; }`). This spec pins that curve at the two delays this bug
 // has now been filed against twice, plus the eventual fade-out, so a future
@@ -41,7 +42,7 @@ test('#flash holds full opacity through both LUL-2520 (0.64s) and LUL-2605 (1.36
 
   // Padded 0.02s past the LUL-2281 e>=9.3 fireBoom trigger keyframe to clear float rounding.
   await advance(page, 9.32);
-  expect(await flashOpacity(page)).toBeCloseTo(0.9, 1);
+  expect(await flashOpacity(page)).toBeCloseTo(0.65, 1);
 
   await advance(page, 0.64); // LUL-2520's originally-measured capture delay
   expect(await flashOpacity(page)).toBeGreaterThanOrEqual(0.5);
