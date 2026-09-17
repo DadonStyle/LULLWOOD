@@ -137,8 +137,14 @@ async function writeSuggestion(text: string, ipHash: string): Promise<boolean> {
   };
 
   try {
+    // access: 'private' (not telemetry's 'public') -- deliberate, per LUL-2993
+    // founder review: telemetry's public blobs are anonymous event counters,
+    // but a suggestion is free-form human text a player typed, so its URL
+    // must not be guessable/fetchable by anyone holding it. Reading a
+    // private blob back (lib/suggestions/blob-source.ts) requires the same
+    // BLOB_READ_WRITE_TOKEN this write already needs.
     await put(blobPath(now), JSON.stringify(record), {
-      access: 'public',
+      access: 'private',
       contentType: 'application/json',
     });
     return true;

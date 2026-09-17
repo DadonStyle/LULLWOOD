@@ -12,9 +12,11 @@ function freshIp(): string {
   return `203.0.113.${ipCounter % 255}`;
 }
 
-// One in-memory store shared by the mocked put()/list()/fetch() so a test
-// can prove a POSTed suggestion is actually readable back out, the way it
-// would be in production -- not just that put() was called.
+// One in-memory store shared by the mocked put()/list()/get() so a test can
+// prove a POSTed suggestion is actually readable back out, the way it would
+// be in production -- not just that put() was called. Suggestions are
+// written with access: 'private' (LUL-2993), so the read side is get(), not
+// a plain fetch() of a public URL.
 let blobStore: Map<string, string>;
 let putShouldFail = false;
 
@@ -27,10 +29,13 @@ mock.module('@vercel/blob', {
     },
     list: async (opts: { prefix?: string }) => {
       const prefix = opts.prefix ?? '';
-      const blobs = [...blobStore.keys()]
-        .filter((k) => k.startsWith(prefix))
-        .map((k) => ({ url: `https://blob.example/${k}` }));
+      const blobs = [...blobStore.keys()].filter((k) => k.startsWith(prefix)).map((k) => ({ pathname: k }));
       return { blobs, hasMore: false };
+    },
+    get: async (pathname: string) => {
+      const body = blobStore.get(pathname);
+      if (body === undefined) return null;
+      return { stream: new Response(body).body, blob: {} };
     },
   },
 } as Parameters<typeof mock.module>[1]);
@@ -77,25 +82,13 @@ function noCooldown<T>(fn: () => Promise<T>): Promise<T> {
   });
 }
 
-// Mocks globalThis.fetch the way listSuggestions() expects: resolving each
-// blob URL back to the JSON body stored under it, exactly as it would run
-// against the real Blob CDN. Environment has no local disk at any point.
-function withFetchOverBlobStore<T>(t: { mock: { method: typeof mock.method } }, fn: () => Promise<T>): Promise<T> {
-  t.mock.method(globalThis, 'fetch', async (url: string) => {
-    const key = url.replace('https://blob.example/', '');
-    const body = blobStore.get(key);
-    return { ok: body !== undefined, json: async () => (body ? JSON.parse(body) : null) } as Response;
-  });
-  return fn();
-}
-
-test('valid text -> 204 and the suggestion is readable back through the Blob store', async (t) => {
+test('valid text -> 204 and the suggestion is readable back through the Blob store', async () => {
   await withToken(async () => {
     const { POST } = await importFreshRoute();
     const res = await POST(makeReq({ text: 'add a second forest map' }, freshIp()));
     assert.equal(res.status, 204);
 
-    const suggestions = await withFetchOverBlobStore(t, () => listSuggestions());
+    const suggestions = await listSuggestions();
     assert.equal(suggestions.length, 1);
     assert.equal(suggestions[0].text, 'add a second forest map');
     assert.match(suggestions[0].submitted_at, /^\d{4}-\d{2}-\d{2}T/);
