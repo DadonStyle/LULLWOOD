@@ -5263,6 +5263,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     player.x = mission.target.x + mission.target.interactRadius + 1; player.z = mission.target.z;
     return { kind: mission.target.kind, x: mission.target.x, z: mission.target.z, status: mission.status };
   };
+  // [QA-HOOK] LUL-2884: sibling of qaTeleportNearMission, but places the player
+  // already inside the mission target's interactRadius (no wall-clock movement
+  // needed to close the gap on the headless QA rig). Returns the target or null.
+  window.ForestEngine.qaTeleportAtMissionTarget = function(){
+    if(!mission) return null;
+    player.x = mission.target.x + mission.target.interactRadius - 1; player.z = mission.target.z;
+    return { kind: mission.target.kind, x: mission.target.x, z: mission.target.z, status: mission.status };
+  };
 
   // [QA-HOOK] LUL-2230: exactly what the last frame drew for the scent trail
   // visual, so a test can assert the picture without depending on Vector3
