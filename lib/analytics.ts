@@ -32,10 +32,11 @@ export type AnalyticsEventInput =
   // game/economy/embers can be checked against real players -- `payout` is
   // this run's Embers total (RunPayout.total from lib/game/economy.ts),
   // `balance` is the running total after it's applied.
-  // LUL-2998: `purchases_made` is optional -- forest-engine.js does not populate it yet
-  // (schema-only ticket; see docs/TELEMETRY_SCHEMA.md "Known gaps"), so every event
-  // emitted before that follow-up ships legitimately lacks it. Downstream readers must
-  // treat a missing/undefined array the same as an empty one, never throw on absence.
+  // LUL-2998/LUL-3003: `purchases_made` is optional -- events emitted before LUL-3003
+  // shipped legitimately lack it, and forest-engine.js's own accumulator is legitimately
+  // `[]` on every event today (EmbersShop never renders mid-run, see docs/TELEMETRY_SCHEMA.md
+  // "Known gaps"). Downstream readers must treat a missing/undefined array the same as an
+  // empty one, never throw on absence.
   | { event: 'win'; time_survived_ms: number; seed: number; payout: number; balance: number; difficulty: Difficulty; purchases_made?: PurchaseRecord[] }
   // LUL-2461: `distance_from_home_m` is the player's distance from CONFIG.home at the
   // moment triggerDeath() fired (engine/forest-engine.js) -- for the Economist's
@@ -57,12 +58,11 @@ export type AnalyticsEventInput =
   // *longer* gaps is the correct direction for a "how much quiet does a hidden player get"
   // measurement, not a bug to fix here.
   | { event: 'chase_gap'; duration_ms: number; difficulty: Difficulty }
-  // LUL-2998: player's permanent-upgrade tier state (lib/game/economy.ts's
+  // LUL-2998/LUL-3003: player's permanent-upgrade tier state (lib/game/economy.ts's
   // EmbersState.tiers, keyed by SHOP_CATALOG id) at game boot, BEFORE this run's own
-  // purchases apply. Lets the Economist reconstruct a run's purchases from
-  // before/after `tiers` snapshots even where per-run `purchases_made` tracking has
-  // gaps. Schema-only for now -- forest-engine.js does not emit this yet, see
-  // docs/TELEMETRY_SCHEMA.md "Known gaps".
+  // purchases apply -- emitted from engine/forest-engine.js's enter(). Lets the Economist
+  // reconstruct a run's purchases from before/after `tiers` snapshots even where per-run
+  // `purchases_made` tracking has gaps, see docs/TELEMETRY_SCHEMA.md "Known gaps".
   | { event: 'started_tiers'; tiers: Record<string, number> };
 
 export type AnalyticsEvent = AnalyticsEventInput & {

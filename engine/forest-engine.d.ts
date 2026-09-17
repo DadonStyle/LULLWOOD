@@ -441,6 +441,11 @@ declare global {
        * a test can assert Pocket Stones granted +2 throws and a purchase played its
        * audio cue, without decoding actual WebAudio output. */
       qaProbeEmbersPurchase?: () => { throwablesReserve: number; heldThrowable: boolean; purchaseCueCount: number };
+      /** LUL-3003: the accumulated purchases_made array for the CURRENT run (id/tier/cost,
+       * matches lib/analytics.ts's PurchaseRecord), plus embers.tiers as it stands right now --
+       * lets a test assert a purchase() call landed in the accumulator without waiting for a
+       * win/loss track() call to read it. */
+      qaProbePurchasesMade?: () => { purchasesMade: { id: string; tier: number; cost: number }[]; tiers: Record<string, number> };
       /** LUL-2331: places the player 2 units off the Stone Marker's live position -- mirrors
        * qaTeleportNearThrowable, works regardless of where the landmark actually sits (the
        * micro QA world leaves LANDMARKS untouched). Returns the marker's position. */

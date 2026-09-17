@@ -68,7 +68,7 @@ is the source of truth for the exact shape -- this table is a summary, not a cop
 | 2 | Median run length (win vs loss) | Yes | `win/loss.time_survived_ms` | `computeOutcomesByTier` (`runLengthMs`) |
 | 3 | Median distance-from-home at death | Yes | `loss.distance_from_home_m` | `computeOutcomesByTier` (`distanceFromHomeAtDeathM`) |
 | 4 | Build attribution | Yes | envelope `build_sha` | filter before calling any aggregate function |
-| 5 | Store-expansion purchases (LUL-2308) | **No -- this is the gap LUL-2998 addresses** | `win/loss.purchases_made`, `started_tiers.tiers` | none written yet, see below |
+| 5 | Store-expansion purchases (LUL-2308) | **Fields emit as of LUL-3003; no aggregate function reads them yet** | `win/loss.purchases_made`, `started_tiers.tiers` | none written yet, see below |
 
 ## `purchases_made` (LUL-2998)
 
@@ -92,17 +92,17 @@ a second, independent signal rather than relying on `purchases_made` alone.
 
 ## Known gaps
 
-- **Neither field is populated yet.** This ticket (LUL-2998) is schema-only,
-  per the founder's explicit scope: the type (`lib/analytics.ts`), the event
-  allowlists (`app/api/telemetry/route.ts`'s `VALID_EVENTS`,
-  `lib/dashboard/events.ts`'s `KNOWN_EVENTS`) and the degraded-mode contract
-  (`parseRawEvent` never throws on a missing field) are in place, but no
-  `track()` call site in `engine/forest-engine.js` emits `started_tiers` or
-  sets `purchases_made` yet. That is real engine instrumentation work (find
-  every purchase call site, e.g. `applySpend`/`setEmbers`/`nextCost` call
-  sites in `engine/forest-engine.js`, and accumulate a per-run array; emit
-  `started_tiers` once at `game_start`) and needs its own ticket -- see the
-  child ticket filed alongside this doc.
+- **Both fields are now populated (LUL-3003).** `engine/forest-engine.js`'s `enter()`
+  emits `started_tiers` with a snapshot of `embers.tiers` taken before that run's own
+  purchases apply, and `purchase(id)` accumulates `{id, tier, cost}` onto a per-run
+  array (reset in `enter()`) that the `win`/`loss` `track()` calls attach as
+  `purchases_made`. One caveat: `EmbersShop` (`components/Hud.tsx`) only renders
+  pre-entry (the gate) or on the win/death screens, never while a run is actually in
+  progress, so every purchase lands either before the accumulator resets or after that
+  run's own outcome event already fired -- `purchases_made` is therefore legitimately
+  `[]` on every event today. That is not a bug: it is exactly the gap `started_tiers`'s
+  before/after tiers diff across consecutive runs exists to cover (see above). See
+  `docs/ELEMENTS.md`'s Embers/shop section and `e2e/purchases-telemetry.spec.ts`.
 - **`computeOutcomesByTier`/`computeEconomy` do not consume either field yet.**
   Per the ticket's explicit instruction ("Do NOT compute any player-derived
   statistic — the store is empty"), no aggregate function was added or changed
