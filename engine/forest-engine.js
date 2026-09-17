@@ -4612,6 +4612,30 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { idx, x: keep.x, z: keep.z };
   };
 
+  // LUL-2841: qaLurePredatorKind only relocates/hunts the nearest predator of
+  // `kind` -- every other spawned predator keeps roaming independently, so on
+  // a full-map boot (no qaBuildScene, which would wipe the natural cover a
+  // test built on qaTeleportToHideSpot depends on, same reason
+  // qaIsolatePredator above exists) an unrelated species can reach and kill
+  // the player before the lured one does (confirmed live: positional-
+  // hiding.spec.ts's lion bramble-at-range case died to an ambient bear,
+  // 30/30 repro). Re-runs qaLurePredatorKind's own nearest-of-`kind` search,
+  // so calling this right after luring the same kind unambiguously re-selects
+  // the predator just placed, and marks every other predator `inert` (same
+  // flag qaIsolatePredator uses -- touches no cover/terrain state). Returns
+  // {kind,x,z}, or null if the species isn't spawned.
+  window.ForestEngine.qaIsolatePredatorKind = function(kind){
+    let nearest = null, best = 1e9;
+    for(const p of predators){
+      if(p.kind !== kind) continue;
+      const d = Math.hypot(player.x - p.x, player.z - p.z);
+      if(d < best){ best = d; nearest = p; }
+    }
+    if(!nearest) return null;
+    for(const other of predators){ if(other !== nearest){ other.inert = true; } }
+    return { kind: nearest.kind, x: nearest.x, z: nearest.z };
+  };
+
   // LUL-2457: same `inert` flag as qaIsolatePredator above, applied to every
   // predator with none kept -- for specs like e2e/day-night-cycle.spec.ts
   // that hold `qaAdvance` open for two-plus minutes of game time to observe

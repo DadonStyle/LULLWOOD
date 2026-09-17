@@ -170,6 +170,8 @@ declare global {
       qaFastForwardPredatorToWaypoint?: (idx: number) => { x: number; z: number } | null;
       /** LUL-2505: marks every predator except idx `inert` (the same flag qaBuildScene's own parking uses) so a multi-second poll on the full map only ever sees idx's own contribution to the approach/piano threat scan, which skips inert predators entirely. Returns {idx,x,z}, or null if idx doesn't resolve. */
       qaIsolatePredator?: (idx: number) => { idx: number; x: number; z: number } | null;
+      /** LUL-2841: re-runs qaLurePredatorKind's own nearest-of-`kind` search and marks every other predator `inert` (same flag as qaIsolatePredator) -- for a test built on qaTeleportToHideSpot's natural cover (so qaBuildScene isn't an option) that lures by kind rather than holding an idx. Returns {kind,x,z}, or null if the species isn't spawned. */
+      qaIsolatePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number } | null;
       /** LUL-2457: marks every predator `inert` (same flag as qaIsolatePredator), parking them off-map so a long `qaAdvance` window (e.g. the day/night ramp) can't be ended early by an ambient kill. Returns the count parked. */
       qaClearAllPredators?: () => number;
       /** LUL-212: teleports the player to the first generated hiding spot (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of `kind` if given (LUL-2320). No predator involved. Returns the spot's kind, or null if none were generated / no prop of `kind` exists on this map. */
