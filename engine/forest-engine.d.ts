@@ -355,6 +355,10 @@ declare global {
        * mesh scales -- confirms BOOM_FOV_SCALE reaches boomFlash/boomRing at
        * runtime instead of just existing as an unused constant. */
       qaProbeBoom?: () => { visible: boolean; elapsed: number; fovScale: number; ringScale: number; flashScale: number };
+      /** LUL-2971: forces a render and reads back the WebGL canvas's center
+       * pixel -- confirms the composited on-screen color at the burst's peak,
+       * not just mesh color/scale math. */
+      qaProbeBoomPixel?: () => { r: number; g: number; b: number };
       /** LUL-1112: the live audio context state, whether it's started, soundOn flag,
        * and master gain value -- used to verify the audio context is running on mobile. */
       qaProbeAudio?: () => {

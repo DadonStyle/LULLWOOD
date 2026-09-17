@@ -1733,15 +1733,23 @@ const flashEl = document.getElementById('flash');
 // occupies the same fraction of the screen regardless of platform. 1 on
 // desktop (CAMERA_FOV===70, the value this effect was originally tuned at).
 const BOOM_FOV_SCALE = Math.tan(CAMERA_FOV * Math.PI/360) / Math.tan(70 * Math.PI/360);
+// LUL-2971: #flash (components/GameCanvas.tsx:734) is a full-viewport
+// background:#fff DOM overlay composited on TOP of this WebGL canvas via
+// plain CSS opacity -- the visible pixel is `flashOpacity*white +
+// (1-flashOpacity)*meshColor`. At the old 0.9 peak (10% scene weight), no
+// hue choice reads through; see this spec's Background section for the
+// arithmetic. FLASH_PEAK_OPACITY replaces the two `0.9` literals below and
+// in updateBoom() so the two stay in lockstep.
+const FLASH_PEAK_OPACITY = 0.65;
 const boomGroup = new THREE.Group(); boomGroup.visible = false; scene.add(boomGroup);
 const boomFlash = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12),
-  new THREE.MeshBasicMaterial({ color: 0xfff4d6, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 const boomRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 8, 44),
-  new THREE.MeshBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.MeshBasicMaterial({ color: 0xff8c1a, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 boomRing.rotation.x = Math.PI/2;
 const bspArr = new Float32Array(BSP*3), bspVel = [];
 const bspPts = new THREE.Points(new THREE.BufferGeometry(),
-  new THREE.PointsMaterial({ color: 0xffe6b0, size: 0.7 * BOOM_FOV_SCALE, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.PointsMaterial({ color: 0xffa940, size: 0.7 * BOOM_FOV_SCALE, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 bspPts.geometry.setAttribute('position', new THREE.BufferAttribute(bspArr, 3));
 boomGroup.add(boomFlash, boomRing, bspPts);
 let boomStart = -1;
@@ -1775,7 +1783,7 @@ function fireBoom(x, y, z){
     bspArr[i*3]=bspArr[i*3+1]=bspArr[i*3+2]=0; }
   bspPts.geometry.attributes.position.needsUpdate = true;
   if(audio) boom(audio.ctx.currentTime);
-  if(flashEl) flashEl.style.opacity = '0.9';
+  if(flashEl) flashEl.style.opacity = String(FLASH_PEAK_OPACITY);
 }
 function updateBoom(dt){
   if(boomStart < 0) return;
@@ -1793,7 +1801,10 @@ function updateBoom(dt){
   // constant was sized for. Plateau covers any capture up to 1.5s late, then fades out over
   // the last 0.3s to land at 0 exactly when boomGroup retires (e>1.8), so #flash still stops
   // overlapping the 3D burst by about as much as before.
-  if(flashEl) flashEl.style.opacity = String(e <= 1.5 ? 0.9 : Math.max(0, 0.9 - (e - 1.5)*3));
+  // LUL-2971: decay rate recomputed so the fade still lands on exactly 0 at
+  // e=1.8 (unchanged, in sync with boomGroup's own e>1.8 retirement below) --
+  // FLASH_PEAK_OPACITY / 0.3, the same 0.3s fade window LUL-2605 used at 0.9.
+  if(flashEl) flashEl.style.opacity = String(e <= 1.5 ? FLASH_PEAK_OPACITY : Math.max(0, FLASH_PEAK_OPACITY - (e - 1.5)*(FLASH_PEAK_OPACITY/0.3)));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
 }
 // LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
@@ -5252,6 +5263,23 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // burst's runtime scale (as opposed to just existing as an unused constant).
   window.ForestEngine.qaProbeBoom = function(){
     return { visible: boomGroup.visible, elapsed: boomStart, fovScale: BOOM_FOV_SCALE, ringScale: boomRing.scale.x, flashScale: boomFlash.scale.x };
+  };
+
+  // LUL-2971: renders composite #flash (a DOM overlay) over this WebGL canvas
+  // via plain CSS opacity -- nothing outside a live render can confirm what
+  // color actually reaches the screen at the burst's peak, so this hook forces
+  // a render and reads back the framebuffer directly.
+  window.ForestEngine.qaProbeBoomPixel = function(){
+    // Force a render so the WebGL back buffer reflects the exact simulated
+    // instant this is called at, independent of the rAF/fixed-step loop's
+    // own timing -- readPixels with no preserveDrawingBuffer is only
+    // reliable read-immediately-after-render.
+    renderer.render(scene, camera);
+    const gl = renderer.getContext();
+    const w = renderer.domElement.width, h = renderer.domElement.height;
+    const px = new Uint8Array(4);
+    gl.readPixels(Math.floor(w/2), Math.floor(h/2) - 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    return { r: px[0], g: px[1], b: px[2] };
   };
 
   window.ForestEngine.qaProbeAudio = function(){
