@@ -269,6 +269,11 @@ main.suggest-page .suggest-page__intro {
   color: #5c7090;
   align-self: flex-end;
 }
+.suggestion-box__hint {
+  font-size: 12px;
+  color: #5c7090;
+  margin: 0;
+}
 .suggestion-box__honeypot {
   position: absolute;
   left: -9999px;
