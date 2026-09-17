@@ -2569,7 +2569,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         p.lastCharge = { result: 'caught', overshootDuration: 0 };
         p.charge = null;
         endChargeHud();
-        triggerDeath(p.kind, 'charge');   // LUL-1194: telegraphed charge, missed the dodge window
+        triggerDeath(p.kind, 'charge', predators.indexOf(p));   // LUL-1194: telegraphed charge, missed the dodge window
       } else if(cs.phase === 'cleared'){
         // stepCharge() (lib/game/charge.ts) zeroes overshootDuration on the
         // 'cleared' state it returns, so read it off the *old* p.charge
@@ -2674,7 +2674,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         else { p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
       }
       else {
-        if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt');   // LUL-1194: the 30s force-hunt escalation caught up
+        if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt', predators.indexOf(p));   // LUL-1194: the 30s force-hunt escalation caught up
         else { desx=ux; desz=uz; speed=p.spec.speed*pPursuitMul; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
@@ -2771,7 +2771,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // it heard the carried child's cry gets a distinguishable death cause -- see
         // hearCry()/the carriedCryPulse branch below for where p.alertedBy is set, and
         // hearNoise()/scentOnto()/spotOnto() for where it's cleared by every other channel.
-        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase'); }   // LUL-1194: run down mid-chase, in the open
+        if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase', predators.indexOf(p)); }   // LUL-1194: run down mid-chase, in the open
         // LUL-2320 (D): contact was reached (isCaught) but the kill was refused because the
         // player is hidden and canSee() still reads false at that exact range -- e.g. (B)'s
         // contact-range exception only fires while the target point is inside a HIDE_KINDS
@@ -3093,6 +3093,7 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     deathDistanceFromHomeM = null,   // LUL-2461: set by triggerDeath(), read by qaProbeDeath() + the loss telemetry event
+    lastDeathKillerIdx = null,   // LUL-2853: predators-array index of the instance that actually won triggerDeath()'s once-only guard
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble'), for the exit sound
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
@@ -4825,6 +4826,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return null;
   };
 
+  // LUL-2853: predators-array index of whichever predator instance actually won
+  // triggerDeath()'s once-only guard, or null if no death has happened yet this run.
+  // Exists so a test tracking one predator (e.g. via qaTriggerCharge's returned idx)
+  // can confirm THAT instance is the one that killed the player, not a same-species
+  // pack-mate that independently won the race the same tick -- see
+  // wiki decisions/lul-2549-scenario-audit-charge-death-approved-2026-09-16.
+  window.ForestEngine.qaLastDeathPredatorIndex = function(){
+    return lastDeathKillerIdx;
+  };
+
   // LUL-275: snapshot of the player's transform and detected input mode -- proves
   // which input branch init() actually bound at runtime, not just which the test
   // requested. See wiki: game/lul274-input-mode-separation, game/lul275-spec-design.
@@ -5738,10 +5749,11 @@ function arriveHome(){
     newRecord: progressionResult.newRecord });
   track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
 }
-function triggerDeath(kind, cause){
+function triggerDeath(kind, cause, killerIdx){
   const next = outcomeTriggerDeath(runState());
   if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
   dead = next.dead; hidden = false; lastHideSpot = null; coverProbeAccum = 0; deathStart = clock.elapsedTime; deathShown = false;
+  lastDeathKillerIdx = killerIdx ?? null;   // LUL-2853: only stamped on the call that actually wins the guard above
   // LUL-2461: distance from home at the moment of death, not maxDistFromHome
   // (the run's furthest point) -- the Economist's blackout-pricing model
   // (LUL-1413) wants where the run actually ended.
