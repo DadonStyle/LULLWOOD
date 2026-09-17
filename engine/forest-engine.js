@@ -1788,12 +1788,19 @@ function fireBoom(x, y, z){
 function updateBoom(dt){
   if(boomStart < 0) return;
   boomStart += dt; const e = boomStart;
-  boomFlash.scale.setScalar((1 + e*11) * BOOM_FOV_SCALE); boomFlash.material.opacity = Math.max(0, 1 - e/0.4);
-  const rs = (1 + e*42) * BOOM_FOV_SCALE; boomRing.scale.set(rs, rs, rs); boomRing.material.opacity = Math.max(0, 1 - e/1.4);
+  // LUL-2985: all three burst-mesh layers now share #flash's own plateau
+  // shape (held through e<=1.5, faded out over the last 0.3s to land on 0 at
+  // e=1.8) instead of three independent faster fade rates (was 0.4/1.4/1.6s)
+  // that left the mesh -- the layer that actually carries LUL-2971's color
+  // fix -- fully transparent long before a late vision-QA capture could
+  // land in the window #flash's own plateau exists to tolerate.
+  const boomMeshOpacity = e <= 1.5 ? 1 : Math.max(0, 1 - (e - 1.5)/0.3);
+  boomFlash.scale.setScalar((1 + e*11) * BOOM_FOV_SCALE); boomFlash.material.opacity = boomMeshOpacity;
+  const rs = (1 + e*42) * BOOM_FOV_SCALE; boomRing.scale.set(rs, rs, rs); boomRing.material.opacity = boomMeshOpacity;
   const bp = bspPts.geometry.attributes.position.array;
   for(let i=0;i<BSP;i++){ bp[i*3]+=bspVel[i][0]*dt; bp[i*3+1]+=bspVel[i][1]*dt - 4*dt*e; bp[i*3+2]+=bspVel[i][2]*dt; }
   bspPts.geometry.attributes.position.needsUpdate = true;
-  bspPts.material.opacity = Math.max(0, 1 - e/1.6);
+  bspPts.material.opacity = boomMeshOpacity;
   // LUL-2605: hold #flash at full peak through a plateau instead of decaying from e=0 --
   // a linear decay (LUL-2520) keeps shrinking the window a slow capture round trip (poll
   // tick -> render -> screenshot under software WebGL) has to land in before opacity drops
@@ -5305,6 +5312,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const px = new Uint8Array(4);
     gl.readPixels(Math.floor(w/2), Math.floor(h/2) - 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
     return { r: px[0], g: px[1], b: px[2] };
+  };
+
+  // LUL-2985: exposes boomFlash's own material opacity so a spec can pin
+  // the mesh's fade curve directly, independent of the composite-pixel
+  // probe above (which can't distinguish boomFlash from boomRing/bspPts).
+  window.ForestEngine.qaProbeBoomOpacity = function(){
+    return boomFlash.material.opacity;
   };
 
   window.ForestEngine.qaProbeAudio = function(){

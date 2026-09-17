@@ -44,6 +44,10 @@ async function flashOpacity(page: Page) {
   return parseFloat(await page.locator('#flash').evaluate((el: HTMLElement) => el.style.opacity));
 }
 
+async function boomFlashOpacity(page: Page) {
+  return qaHook(page, 'qaProbeBoomOpacity');
+}
+
 // #flash's peak-opacity blend is plain browser CSS compositing, invisible to
 // qaProbeBoomPixel's GL readback (that only sees the WebGL canvas, one layer
 // below #flash in the DOM). Reproduce the browser's own blend analytically:
@@ -68,17 +72,20 @@ function assertVisibleTint(composited: { r: number; g: number; b: number }, labe
   ).toBeGreaterThan(20);
 }
 
-// Three points in the burst's lifetime, in cinematic-elapsed game-seconds
+// Four points in the burst's lifetime, in cinematic-elapsed game-seconds
 // since fireBoom()'s e>=9.3 trigger keyframe (engine/forest-engine.js:6454):
 // ~0.43s is this ticket's own measured vision-QA capture offset
 // (gameSinceE=9.73 in the LUL-2971 evidence block minus the 9.3 keyframe),
-// ~0.9s is mid-plateau, and ~1.36s is LUL-2605's worst-case measured capture
+// ~0.9s is mid-plateau, ~1.36s is LUL-2605's worst-case measured capture
 // delay (e2e/win-burst-flash-decay.spec.ts pins the same two delays for
-// #flash's own opacity curve).
+// #flash's own opacity curve), and ~1.49s (LUL-2985) is the last instant
+// inside #flash's plateau, one frame before it starts fading at e=1.5 --
+// the point that caught the mesh fading out long before the plateau ended.
 const CAPTURES: { totalElapsed: number; label: string }[] = [
   { totalElapsed: 9.3 + 0.43, label: 'e~0.43s (measured LUL-2971 capture offset)' },
   { totalElapsed: 9.3 + 0.9, label: 'e~0.9s (mid-plateau)' },
   { totalElapsed: 9.3 + 1.36, label: 'e~1.36s (LUL-2605 worst-case capture delay)' },
+  { totalElapsed: 9.3 + 1.49, label: 'e~1.49s (LUL-2985: last instant inside the plateau)' },
 ];
 
 async function assertBurstContrastAcrossLifetime(page: Page) {
@@ -98,6 +105,14 @@ async function assertBurstContrastAcrossLifetime(page: Page) {
     const mesh = await qaHook(page, 'qaProbeBoomPixel');
     const flashOp = await flashOpacity(page);
     assertVisibleTint(compositeWithFlash(mesh, flashOp), label);
+
+    if (totalElapsed - 9.3 <= 1.5) {
+      const meshOpacity = await boomFlashOpacity(page);
+      expect(
+        meshOpacity,
+        `${label}: boomFlash opacity decayed before #flash's own plateau ended`,
+      ).toBeGreaterThan(0.5);
+    }
   }
 }
 
