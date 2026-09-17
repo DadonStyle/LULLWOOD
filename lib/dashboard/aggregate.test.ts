@@ -393,6 +393,27 @@ test('computeOutcomesByTier: a tier with zero events yields nulls, not NaN', () 
   assert.equal(Number.isNaN(byTier.blackout.runLengthMs.win.p50), false);
 });
 
+test('computeOutcomesByTier: LUL-2998 purchases_made on win/loss and started_tiers events do not break outcomes', () => {
+  const events: RawEvent[] = [
+    ev('win', BASE_TS, 'a', {
+      time_survived_ms: 100000,
+      difficulty: 'blackout',
+      purchases_made: [{ id: 'quietStep', tier: 1, cost: 150 }],
+    }),
+    ev('loss', BASE_TS, 'b', {
+      time_survived_ms: 40000,
+      distance_from_home_m: 20,
+      predator_kind: 'wolf',
+      difficulty: 'blackout',
+      // no purchases_made -- degraded-mode contract: absence must not throw
+    }),
+    ev('started_tiers', BASE_TS, 'a', { tiers: { quietStep: 0 } }),
+  ];
+  const byTier = computeOutcomesByTier(events);
+  assert.equal(byTier.blackout.winCount, 1);
+  assert.equal(byTier.blackout.lossCount, 1);
+});
+
 test('computeChaseGapByTier: median and p25 gap, split per tier', () => {
   const events: RawEvent[] = [
     ev('chase_gap', BASE_TS, 'a', { duration_ms: 4000, difficulty: 'blackout' }),

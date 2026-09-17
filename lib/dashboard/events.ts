@@ -16,6 +16,7 @@ export const KNOWN_EVENTS = [
   // aggregate.ts, is what a dashboard read actually gates on).
   'engine_contract_violation',
   'chase_gap',
+  'started_tiers', // LUL-2998
 ] as const;
 
 export type EventName = (typeof KNOWN_EVENTS)[number];
