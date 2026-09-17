@@ -46,6 +46,17 @@ export const CARRIED_NOISE_FLOOR = 0.4 * NOISE_RADIUS_WALK; // 5.6
  * (the `alerted` count below) gives a signal to tune against. */
 export const HIDE_ALERT_RADIUS = 20;
 
+/** LUL-2856: past this many seconds continuously hidden in the same spot, the brush
+ * itself starts periodically rustling -- turtling in one bramble stops being free.
+ * Cheap-slice default: fixed for all difficulties (Economist owns a difficulty/cover-
+ * density retune as a separate follow-up proposal, per the wiki decision). */
+export const COVER_RUSTLE_THRESHOLD_S = 12;
+
+/** LUL-2856: once past COVER_RUSTLE_THRESHOLD_S, a rustle-noise roll fires every this
+ * many seconds, reusing HIDE_ALERT_RADIUS/checkThrowableNoise the same way enterHide()'s
+ * one-shot entry noise already does. */
+export const COVER_RUSTLE_INTERVAL_S = 5;
+
 /**
  * Whether a predator at `dist` from a throwable's landing point notices it. Pure
  * distance check, deliberately not probabilistic like isNoiseHeard() -- a thrown

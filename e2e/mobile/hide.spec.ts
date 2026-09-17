@@ -44,8 +44,14 @@ test('tapping the Hide button enters the same hold-still stance H enters on desk
   const pointerOpts = { pointerId: 1, pointerType: 'touch', isPrimary: true, bubbles: true };
   await hideBtn.dispatchEvent('pointerdown', pointerOpts);
 
+  // No timeout override -- inherit the project's expect.timeout (30s in CI,
+  // 10s locally, see playwright.config.ts), same as the desktop equivalent
+  // (../hide.spec.ts) below. LUL-2981: this poll previously overrode it down
+  // to 300ms, far too tight for a real pointerdown -> React handler -> engine
+  // tick round-trip under CI/software-WebGL load, and timed out even though
+  // the touchHide -> toggleHidden -> enterHide path was working correctly.
   await expect
-    .poll(async () => (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.hidden, { timeout: 300 })
+    .poll(async () => (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.hidden)
     .toBe(true);
 });
 
@@ -88,8 +94,9 @@ test("tapping the Hide button inside a hide spot's footprint blocks a lion that 
   const pointerOpts = { pointerId: 1, pointerType: 'touch', isPrimary: true, bubbles: true };
   await hideBtn.dispatchEvent('pointerdown', pointerOpts);
 
+  // No timeout override -- see the LUL-2981 comment on the first test above.
   await expect
-    .poll(async () => (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.hidden, { timeout: 300 })
+    .poll(async () => (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.hidden)
     .toBe(true);
 
   const after = await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx);

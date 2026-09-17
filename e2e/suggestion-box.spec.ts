@@ -72,5 +72,18 @@ test.describe('suggestion box input restriction', () => {
       await typeInto(page, ' idea');
       await expect(submit).toBeEnabled();
     });
+
+    test(`${name}: English-only restriction is stated to the player, not just enforced silently`, async ({
+      page,
+    }) => {
+      // LUL-2963 (founder direction): a rejected keystroke on its own is not
+      // a tell -- the field must say in words what it accepts.
+      await page.setViewportSize(viewport);
+      await page.goto('/suggest', { waitUntil: 'domcontentloaded' });
+
+      await expect(page.locator('#suggestion-hint')).toHaveText(
+        /only english letters and spaces.*no numbers or symbols/i,
+      );
+    });
   }
 });

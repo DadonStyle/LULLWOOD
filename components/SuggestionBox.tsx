@@ -68,11 +68,14 @@ export default function SuggestionBox() {
         maxLength={MAX_LEN}
         rows={4}
         placeholder="lowercase letters and spaces only"
-        aria-describedby="suggestion-remaining"
+        aria-describedby="suggestion-remaining suggestion-hint"
       />
       <div id="suggestion-remaining" className="suggestion-box__remaining">
         {remaining} characters left
       </div>
+      <p id="suggestion-hint" className="suggestion-box__hint">
+        Only English letters and spaces are allowed — no numbers or symbols.
+      </p>
       {/* Honeypot: invisible to a real player via CSS (off-screen, not
           display:none -- some bots skip display:none fields specifically).
           A filled-in value means it was auto-filled by a bot, not typed by a

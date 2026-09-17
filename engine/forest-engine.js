@@ -85,7 +85,7 @@ import {
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { spawnClearanceScale } from '@/lib/game/spawnClearance';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -429,7 +429,7 @@ let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, stami
 let stoneMarkerPulseT = 0;
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
 // last result between probes; coverProbeAccum counts elapsed seconds.
-let lastHideSpot = null, coverProbeAccum = 0;
+let lastHideSpot = null, coverProbeAccum = 0, coverRustleAccum = 0;   // LUL-2856
 let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
 
 // LUL-27: Fog Tide, the first recurring world event (lib/game/eventScheduler.ts
@@ -1733,15 +1733,23 @@ const flashEl = document.getElementById('flash');
 // occupies the same fraction of the screen regardless of platform. 1 on
 // desktop (CAMERA_FOV===70, the value this effect was originally tuned at).
 const BOOM_FOV_SCALE = Math.tan(CAMERA_FOV * Math.PI/360) / Math.tan(70 * Math.PI/360);
+// LUL-2971: #flash (components/GameCanvas.tsx:734) is a full-viewport
+// background:#fff DOM overlay composited on TOP of this WebGL canvas via
+// plain CSS opacity -- the visible pixel is `flashOpacity*white +
+// (1-flashOpacity)*meshColor`. At the old 0.9 peak (10% scene weight), no
+// hue choice reads through; see this spec's Background section for the
+// arithmetic. FLASH_PEAK_OPACITY replaces the two `0.9` literals below and
+// in updateBoom() so the two stay in lockstep.
+const FLASH_PEAK_OPACITY = 0.65;
 const boomGroup = new THREE.Group(); boomGroup.visible = false; scene.add(boomGroup);
 const boomFlash = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12),
-  new THREE.MeshBasicMaterial({ color: 0xfff4d6, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 const boomRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 8, 44),
-  new THREE.MeshBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.MeshBasicMaterial({ color: 0xff8c1a, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 boomRing.rotation.x = Math.PI/2;
 const bspArr = new Float32Array(BSP*3), bspVel = [];
 const bspPts = new THREE.Points(new THREE.BufferGeometry(),
-  new THREE.PointsMaterial({ color: 0xffe6b0, size: 0.7 * BOOM_FOV_SCALE, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.PointsMaterial({ color: 0xffa940, size: 0.7 * BOOM_FOV_SCALE, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 bspPts.geometry.setAttribute('position', new THREE.BufferAttribute(bspArr, 3));
 boomGroup.add(boomFlash, boomRing, bspPts);
 let boomStart = -1;
@@ -1775,17 +1783,24 @@ function fireBoom(x, y, z){
     bspArr[i*3]=bspArr[i*3+1]=bspArr[i*3+2]=0; }
   bspPts.geometry.attributes.position.needsUpdate = true;
   if(audio) boom(audio.ctx.currentTime);
-  if(flashEl) flashEl.style.opacity = '0.9';
+  if(flashEl) flashEl.style.opacity = String(FLASH_PEAK_OPACITY);
 }
 function updateBoom(dt){
   if(boomStart < 0) return;
   boomStart += dt; const e = boomStart;
-  boomFlash.scale.setScalar((1 + e*11) * BOOM_FOV_SCALE); boomFlash.material.opacity = Math.max(0, 1 - e/0.4);
-  const rs = (1 + e*42) * BOOM_FOV_SCALE; boomRing.scale.set(rs, rs, rs); boomRing.material.opacity = Math.max(0, 1 - e/1.4);
+  // LUL-2985: all three burst-mesh layers now share #flash's own plateau
+  // shape (held through e<=1.5, faded out over the last 0.3s to land on 0 at
+  // e=1.8) instead of three independent faster fade rates (was 0.4/1.4/1.6s)
+  // that left the mesh -- the layer that actually carries LUL-2971's color
+  // fix -- fully transparent long before a late vision-QA capture could
+  // land in the window #flash's own plateau exists to tolerate.
+  const boomMeshOpacity = e <= 1.5 ? 1 : Math.max(0, 1 - (e - 1.5)/0.3);
+  boomFlash.scale.setScalar((1 + e*11) * BOOM_FOV_SCALE); boomFlash.material.opacity = boomMeshOpacity;
+  const rs = (1 + e*42) * BOOM_FOV_SCALE; boomRing.scale.set(rs, rs, rs); boomRing.material.opacity = boomMeshOpacity;
   const bp = bspPts.geometry.attributes.position.array;
   for(let i=0;i<BSP;i++){ bp[i*3]+=bspVel[i][0]*dt; bp[i*3+1]+=bspVel[i][1]*dt - 4*dt*e; bp[i*3+2]+=bspVel[i][2]*dt; }
   bspPts.geometry.attributes.position.needsUpdate = true;
-  bspPts.material.opacity = Math.max(0, 1 - e/1.6);
+  bspPts.material.opacity = boomMeshOpacity;
   // LUL-2605: hold #flash at full peak through a plateau instead of decaying from e=0 --
   // a linear decay (LUL-2520) keeps shrinking the window a slow capture round trip (poll
   // tick -> render -> screenshot under software WebGL) has to land in before opacity drops
@@ -1793,7 +1808,10 @@ function updateBoom(dt){
   // constant was sized for. Plateau covers any capture up to 1.5s late, then fades out over
   // the last 0.3s to land at 0 exactly when boomGroup retires (e>1.8), so #flash still stops
   // overlapping the 3D burst by about as much as before.
-  if(flashEl) flashEl.style.opacity = String(e <= 1.5 ? 0.9 : Math.max(0, 0.9 - (e - 1.5)*3));
+  // LUL-2971: decay rate recomputed so the fade still lands on exactly 0 at
+  // e=1.8 (unchanged, in sync with boomGroup's own e>1.8 retirement below) --
+  // FLASH_PEAK_OPACITY / 0.3, the same 0.3s fade window LUL-2605 used at 0.9.
+  if(flashEl) flashEl.style.opacity = String(e <= 1.5 ? FLASH_PEAK_OPACITY : Math.max(0, FLASH_PEAK_OPACITY - (e - 1.5)*(FLASH_PEAK_OPACITY/0.3)));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
 }
 // LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
@@ -1963,7 +1981,7 @@ const predators = [];
 // preset compares against -- fixed at creation so placePredators() doesn't
 // need to re-derive array position every restart.
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
-let sinceClose = 0, huntTime = 0, spotFlash = 0, pianoTimer = 0;   // threat timers, spot flash, approach-note timer
+let sinceClose = 0, huntTime = 0, spotFlash = 0, rustleFlash = 0, pianoTimer = 0;   // threat timers, spot flash, cover-rustle flash (LUL-2856), approach-note timer
 let sinceBelowMinHunters = 0;   // LUL-2250: seconds the active-hunter count has been below MIN_ACTIVE_HUNTERS
 let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
 let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
@@ -2018,7 +2036,7 @@ function placePredators(){
     p.g.position.set(x, 0, z); p.g.rotation.set(0, p.yaw, 0);
   }
   mm.style.display = preset.minimap ? '' : 'none';
-  sinceClose = 0; huntTime = 0; spotFlash = 0; bearingPulseT = 0; bearingPulseSide = null;
+  sinceClose = 0; huntTime = 0; spotFlash = 0; rustleFlash = 0; bearingPulseT = 0; bearingPulseSide = null;
   sinceBelowMinHunters = 0;
   activeCharges = 0; pushState({ chargeVisible: false });
 }
@@ -3498,6 +3516,25 @@ function enterHide(spot){
   }
 }
 function exitHide(){ if(!hidden) return; leafRustle(false); hidden = false; hideKind = null; }
+// LUL-2856: cover-degradation cheap slice. Fires every COVER_RUSTLE_INTERVAL_S once hideTime
+// clears COVER_RUSTLE_THRESHOLD_S (driven by the tick()-loop check added in step 6, not called
+// from anywhere else). Same alerted-predator loop as enterHide()'s one-shot entry noise
+// (:3490-3492 in the pre-change file) -- only newly-alerts roam-state predators, never
+// downgrades an already-chasing/hunting one, for the same reason enterHide() doesn't.
+function rollCoverRustle(){
+  let alerted = 0;
+  for(const p of predators){
+    if(p.inert || p.state !== 'roam') continue;
+    if(checkThrowableNoise(Math.hypot(p.x - player.x, p.z - player.z), HIDE_ALERT_RADIUS)){ hearNoise(p); alerted++; }
+  }
+  logChronicle('cover_rustle', { alerted });
+  rustleFlash = 1;
+  rustleSting();
+  if(!hintSeen('coverRustle')){
+    markHintSeen('coverRustle');
+    if(captionsOn) pushState({ caption: 'Sitting still too long stirs the brush — a lingering hide risks a fresh noise burst. Move on before something notices.', captionId: ++captionSeq });
+  }
+}
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
   const spot = findHideSpot(player.x, player.z);
@@ -3688,6 +3725,27 @@ function spotSting(){
   const lo=ctx.createOscillator(); lo.type='sine'; lo.frequency.setValueAtTime(190,t); lo.frequency.exponentialRampToValueAtTime(48,t+0.3);
   const lg=ctx.createGain(); lg.gain.setValueAtTime(0.0001,t); lg.gain.exponentialRampToValueAtTime(0.42,t+0.01); lg.gain.exponentialRampToValueAtTime(0.0001,t+0.4);
   lo.connect(lg); lg.connect(master); lo.start(t); lo.stop(t+0.45);
+}
+// short escalating rustle/twig-snap sting for the cover-rustle roll (LUL-2856) -- distinct
+// from the continuous leafRustle(true) ambience already looping while hidden (:3422), and
+// from spotSting()'s sharper full "you were just spotted" stinger above. Same noise-burst
+// shape as leafRustle() (buffer noise through a bandpass), but the bandpass frequency rises
+// across the 3 bursts instead of leafRustle's flat/random band -- that rising pitch is the
+// "escalating" cue the proposal specifies.
+function rustleSting(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  for(let i=0; i<3; i++){
+    const d = i*0.09;
+    const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.1, false);
+    const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = 1400 + i*700; bp.Q.value = 1.1;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t+d);
+    g.gain.exponentialRampToValueAtTime(0.16 + i*0.03, t+d+0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+d+0.09);
+    src.connect(bp); bp.connect(g); g.connect(master); g.connect(conv);
+    src.start(t+d); src.stop(t+d+0.12);
+  }
 }
 // a dissonant piano note; caller raises pitch/volume as the animal gets nearer
 // LUL-1308: `pan` (defaults to 0, center) feeds a single shared StereoPannerNode --
@@ -4463,6 +4521,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // per-tick cost.
       for(const other of predators){ if(other !== p){ other.inert = true; other.g.visible = false; other.x = other.z = -9999; } }
       p.x = px; p.z = pz;
+      // LUL-2910: same stale-noiseTarget hazard as qaHideBehindCoverKind --
+      // this predator may have heard something during the real RAF frames
+      // before staging (page load, enter()); clear it so 'approach' chases
+      // the live player this hook just placed, not a leftover decoy point.
+      p.noiseTarget = null; p.noiseTargetT = 0;
       p.vx = p.vz = 0; p.alert = 0; p.stuckT = 0; p.sightLock = null;
       // LUL-2457: two dead ends tried and measured live before this one --
       // (1) leaving p.reroute/scentLock at 0: the 'chase' branch's own
@@ -4535,6 +4598,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.x = px; p.z = pz;
       const detect = effectiveDetect(p);
       if(Math.hypot(qx - px, qz - pz) >= detect) continue;
+      // LUL-2910: this hook runs after real RAF frames (page load, enter())
+      // already let this predator roam/react on its own -- a bear that heard
+      // the player's entry footsteps before staging carries a stale
+      // p.noiseTarget (set by hearNoise()/checkThrowLanding()) into the
+      // freshly-teleported position. The 'approach' sub-phase then chases
+      // that stale point instead of the live player it was just placed next
+      // to (engine/forest-engine.js's noiseTarget override, ~line 2862),
+      // sending it off in whatever direction that stale target happened to
+      // be and starving the sniff cycle this hook exists to set up. Clear it
+      // with the rest of the staged-fresh reset below.
+      p.noiseTarget = null; p.noiseTargetT = 0;
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
@@ -4673,21 +4747,46 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // qaIsolatePredator above exists) an unrelated species can reach and kill
   // the player before the lured one does (confirmed live: positional-
   // hiding.spec.ts's lion bramble-at-range case died to an ambient bear,
-  // 30/30 repro). Re-runs qaLurePredatorKind's own nearest-of-`kind` search,
-  // so calling this right after luring the same kind unambiguously re-selects
-  // the predator just placed, and marks every other predator `inert` (same
-  // flag qaIsolatePredator uses -- touches no cover/terrain state). Returns
-  // {kind,x,z}, or null if the species isn't spawned.
+  // 30/30 repro). Originally re-ran qaLurePredatorKind's own nearest-of-`kind`
+  // search, on the assumption that calling this right after luring the same
+  // kind unambiguously re-selects the predator just placed -- but with
+  // activePerSpecies:3, a 2nd/3rd predator of the same species can roam
+  // closer to the player than the just-lured one between the lure call and
+  // this one, so the plain distance search silently re-selects (and keeps
+  // live) an idle roamer while marking the actually-hunting, just-lured
+  // predator `inert` (LUL-2975: rare flake, positional-hiding.spec.ts lion
+  // bramble-at-range case). First attempt (this ticket) preferred any
+  // predator of `kind` with `p.hunt===true` over plain nearest-distance --
+  // LUL-2979 review caught that this is dead code for the exact scenario it
+  // targets: a lured predator placed outside contact range against a hidden
+  // player loses `p.hunt` to the LOS-loss branch (updatePredators()
+  // canSee()===false, :2700-2709) on the very first predator-update tick,
+  // before isolate() ever runs, and the ambient force-hunt escalation that
+  // could otherwise re-set another same-kind predator's `hunt` is itself
+  // gated on `!hidden` (:6624) -- so with the player hidden, no predator of
+  // `kind` ever has `hunt===true` at isolate-time. Use the broader `pursuing`
+  // definition already used elsewhere (:2993/:2520) --
+  // `hunt || state==='chase' || (state==='investigate' && inv==='approach')`
+  // -- so a lured predator that has downgraded to investigate/approach while
+  // still closing on the last-known position still wins the tie-break over
+  // an idle roamer. Only fall back to nearest-of-kind if none are pursuing.
+  // Marks every other predator `inert` (same flag qaIsolatePredator uses --
+  // touches no cover/terrain state). Returns {kind,x,z}, or null if the
+  // species isn't spawned.
   window.ForestEngine.qaIsolatePredatorKind = function(kind){
-    let nearest = null, best = 1e9;
+    let nearestPursuing = null, bestPursuing = 1e9;
+    let nearestAny = null, bestAny = 1e9;
     for(const p of predators){
       if(p.kind !== kind) continue;
       const d = Math.hypot(player.x - p.x, player.z - p.z);
-      if(d < best){ best = d; nearest = p; }
+      if(d < bestAny){ bestAny = d; nearestAny = p; }
+      const pursuing = p.hunt || p.state === 'chase' || (p.state === 'investigate' && p.inv === 'approach');
+      if(pursuing && d < bestPursuing){ bestPursuing = d; nearestPursuing = p; }
     }
-    if(!nearest) return null;
-    for(const other of predators){ if(other !== nearest){ other.inert = true; } }
-    return { kind: nearest.kind, x: nearest.x, z: nearest.z };
+    const chosen = nearestPursuing || nearestAny;
+    if(!chosen) return null;
+    for(const other of predators){ if(other !== chosen){ other.inert = true; } }
+    return { kind: chosen.kind, x: chosen.x, z: chosen.z };
   };
 
   // LUL-2457: same `inert` flag as qaIsolatePredator above, applied to every
@@ -5198,6 +5297,30 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { visible: boomGroup.visible, elapsed: boomStart, fovScale: BOOM_FOV_SCALE, ringScale: boomRing.scale.x, flashScale: boomFlash.scale.x };
   };
 
+  // LUL-2971: renders composite #flash (a DOM overlay) over this WebGL canvas
+  // via plain CSS opacity -- nothing outside a live render can confirm what
+  // color actually reaches the screen at the burst's peak, so this hook forces
+  // a render and reads back the framebuffer directly.
+  window.ForestEngine.qaProbeBoomPixel = function(){
+    // Force a render so the WebGL back buffer reflects the exact simulated
+    // instant this is called at, independent of the rAF/fixed-step loop's
+    // own timing -- readPixels with no preserveDrawingBuffer is only
+    // reliable read-immediately-after-render.
+    renderer.render(scene, camera);
+    const gl = renderer.getContext();
+    const w = renderer.domElement.width, h = renderer.domElement.height;
+    const px = new Uint8Array(4);
+    gl.readPixels(Math.floor(w/2), Math.floor(h/2) - 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    return { r: px[0], g: px[1], b: px[2] };
+  };
+
+  // LUL-2985: exposes boomFlash's own material opacity so a spec can pin
+  // the mesh's fade curve directly, independent of the composite-pixel
+  // probe above (which can't distinguish boomFlash from boomRing/bspPts).
+  window.ForestEngine.qaProbeBoomOpacity = function(){
+    return boomFlash.material.opacity;
+  };
+
   window.ForestEngine.qaProbeAudio = function(){
     return audio
       ? { state: audio.ctx.state, started: started, soundOn: soundOn, masterGain: audio.master.gain.value }
@@ -5556,6 +5679,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 
 // ---- Objective, pickup cinematic, win / death ----------------------------
 const spotFlashEl = document.getElementById('spotFlash');
+const rustleFlashEl = document.getElementById('rustleFlash');   // LUL-2856
 const bearingPulseEl = document.getElementById('bearingPulse');
 const deathVideo = document.getElementById('deathVideo');
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
@@ -5965,7 +6089,7 @@ function setEmbers(balance, tiers){
 // the cue-triple's audio cue on a real purchase.
 function purchase(id){
   const before = embers;
-  embers = economyPurchase(embers, id);
+  embers = economyPurchase(embers, id, difficulty);
   pushState({ embersBalance: embers.balance, embersTiers: { ...embers.tiers } });
   if(embers !== before) embersPurchaseCue();
 }
@@ -6205,6 +6329,14 @@ function stepFrame(dt, t, skipRender){
   const moveKey = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
   if(hidden && (moveKey || hasTouchMove)) exitHide();
   hideTime = hidden ? hideTime + dt : 0;
+  // LUL-2856: self-healing off hideTime the same way hideTime is self-healing off `hidden` --
+  // zero the instant hideTime drops below threshold (covers exitHide, movement-break, death,
+  // pickup, restart -- every path that already zeroes hideTime -- with no extra reset call site).
+  coverRustleAccum = hideTime > COVER_RUSTLE_THRESHOLD_S ? coverRustleAccum + dt : 0;
+  if(coverRustleAccum >= COVER_RUSTLE_INTERVAL_S){
+    coverRustleAccum = 0;
+    rollCoverRustle();
+  }
   eyeH += ((hidden ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
 
   // LUL-213: advance in game time (dt is already clamped above -- see wiki
@@ -6552,6 +6684,12 @@ function stepFrame(dt, t, skipRender){
 
   spotFlash = Math.max(0, spotFlash - dt*1.6);
   spotFlashEl.style.opacity = (spotFlash*0.55).toFixed(3);
+  // LUL-2856: subtler peak (0.4 vs spotFlash's 0.55) -- "you were just spotted" is more urgent
+  // than "the brush just rustled". Reduced motion clamps to a fixed low bump instead of the
+  // animated decay ramp (same clamp-not-remove shape stoneMarkerPulseT already uses, :6744),
+  // so the vignette still fires as a positive tell without the motion.
+  rustleFlash = Math.max(0, rustleFlash - dt*1.6);
+  rustleFlashEl.style.opacity = motionReduced() ? (rustleFlash > 0 ? '0.15' : '0') : (rustleFlash*0.4).toFixed(3);
   // LUL-1308: decays slower than spotFlash (1.6) -- spotFlash is a one-shot
   // "you were just spotted" event; this is a repeating ambient cue and should
   // linger a beat between piano notes rather than fully blink out.

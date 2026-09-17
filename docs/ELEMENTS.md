@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7024 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6225, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7162 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6357, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -225,7 +225,19 @@ Cue-triple audit: see `docs/CUES.md`.
   ratio between mobile's wider `CAMERA_FOV` (LUL-69) and the desktop 70°
   baseline the effect was tuned at — so it reads at the same apparent size on
   both platforms instead of shrinking on mobile's wider frame
-  (`qaProbeBoom()`).
+  (`qaProbeBoom()`). **As of `LUL-2971`**, the burst materials are a
+  saturated gold/orange (was near-white/cream) and the `#flash` DOM overlay's
+  peak opacity is `FLASH_PEAK_OPACITY` (0.65, was 0.9) — the overlay
+  composites on top of the WebGL canvas via plain CSS opacity, so a same-hue
+  mesh under a 90%-white peak read as a white wash regardless of its scale;
+  lowering the peak raises the mesh color's compositing weight enough for the
+  new hue to read through (`qaProbeBoomPixel()`). **As of `LUL-2985`**, all
+  three burst mesh layers (`boomFlash`/`boomRing`/`bspPts`) share `#flash`'s
+  own plateau-then-fade timing (held through `e<=1.5`, fading out over the
+  final `0.3s`) instead of three independent, faster per-mesh rates — the
+  previous rates left `boomFlash` fully transparent by `e=0.4`, a quarter of
+  the window a late vision-QA capture is tolerated to land in
+  (`qaProbeBoomOpacity()`).
 - Ride along at the player's position while carried, small and glowing
   (`carrying` branch, `tick()`), until the player crosses
   `CONFIG.home.r` (3.6u) of the home landmark, which wins the run
@@ -1126,7 +1138,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 - **Engine-owned DOM** (`document.getElementById(...)`, created by
   `components/GameCanvas.tsx`, mutated directly by the engine): `#vignette`,
-  `#spotFlash`, `#bearingPulse`, `#flash`, `#minimap` (canvas, drawn every frame by
+  `#spotFlash`, `#rustleFlash`, `#bearingPulse`, `#flash`, `#minimap` (canvas, drawn every frame by
   `drawMinimap()`/`drawMinimapStatic()`), `#hint`, `#pausePrompt`,
   `#deathVideo`.
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
@@ -1399,6 +1411,22 @@ folded in per the CEO's LUL-1282 addendum) instead of the old binary `big ? 1.0 
 Not present: any compass, minimap dot, or degrees readout — deliberately rejected in the
 design doc as turning horror into radar.
 
+LUL-2856 adds `#rustleFlash`, a brush-green edge vignette answering "the cover you're sitting
+in just made noise" — the cheap slice of LUL-2570 cover degradation. Once `hideTime` clears
+`COVER_RUSTLE_THRESHOLD_S` (12s, `lib/game/noise.ts`), `rollCoverRustle()` fires every
+`COVER_RUSTLE_INTERVAL_S` (5s) via the tick-loop check next to the existing `hideTime` line
+(`engine/forest-engine.js`): it re-runs `enterHide()`'s own roam-only alerted-predator loop
+(`checkThrowableNoise`/`hearNoise`, gated `HIDE_ALERT_RADIUS`, never downgrading an
+already-chasing/hunting predator), logs a `cover_rustle` chronicle event (`{ alerted }`, QA-only,
+mirrors `hide_alert`), sets `rustleFlash` (same edge-vignette shape as `#spotFlash`, subtler peak
+and one z-index lower), and plays `rustleSting()` — an escalating 3-burst bandpass sting distinct
+from the continuous `leafRustle(true)` ambience already looping while hidden. A one-time
+`captionsOn`-gated hint caption fires via `hintSeen`/`markHintSeen('coverRustle')`. Reduced motion
+clamps `#rustleFlash`'s opacity to a fixed `0.15` while active instead of animating the decay ramp
+(same clamp-not-remove shape `stoneMarkerPulseT` already uses). Fixed threshold + fixed interval
+only in this slice — no difficulty/cover-density scaling and no reposition-to-reset action (both
+deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
+
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
   a patch when a value actually changed).
@@ -1497,16 +1525,16 @@ design doc as turning horror into radar.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5627-5687, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5778-5831 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5832-5875). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5751-5811, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5902-5955 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5956-5999). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5832-5875) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L5956-5999) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L5760) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1556,9 +1584,15 @@ design doc as turning horror into radar.
     (`shopEffectCopy()`, `components/Hud.tsx`) derives from `tier` instead of
     hardcoding "no reserve stones" once purchased. `canGrabThrowable` also
     gained its first render site, a new `#pickupPrompt` row in `#actionSlot`.
+    Price is difficulty-scaled (LUL-2983): 80/120/140 embers for
+    lantern/night/blackout, via `POCKET_STONES_COST_BY_DIFFICULTY` — the
+    `POCKET_STONES_COSTS` array itself is unchanged (still length 1, a
+    placeholder whose only load-bearing property is its `.length` for the
+    max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
+    take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3866) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3913) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1669,7 +1703,7 @@ design doc as turning horror into radar.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6186-6960, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6310-7098, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
