@@ -1,12 +1,11 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir } from 'node:fs/promises';
-import path from 'node:path';
+import { put } from '@vercel/blob';
 
-// LUL-1918/LUL-2963: POST /api/suggestions -- player suggestion intake for
-// the suggestion box (parent LUL-1917). Re-validates the UI's lowercase-a-z-
-// and-space restriction server-side, independently, byte for byte --
-// duplication with components/SuggestionBox.tsx is intentional (LUL-1917
-// guard 2).
+// LUL-1918/LUL-2963/LUL-2993: POST /api/suggestions -- player suggestion
+// intake for the suggestion box (parent LUL-1917). Re-validates the UI's
+// lowercase-a-z-and-space restriction server-side, independently, byte for
+// byte -- duplication with components/SuggestionBox.tsx is intentional
+// (LUL-1917 guard 2).
 //
 // Uses web-standard Request/Response (no next/server import), same reasoning
 // as app/api/telemetry/route.ts: directly testable with node --test, no
@@ -20,14 +19,18 @@ import path from 'node:path';
 // - IP addresses are never stored raw -- only a salted SHA-256 hash, used
 //   both for rate-limit bucketing and as an audit trail on the stored record.
 //
-// LUL-2963 (founder direction, 2026-09-16): the Paperclip-API-backed storage
-// this route used before required a credential (SUGGESTIONS_PAPERCLIP_TOKEN/
-// _API_URL/_COMPANY_ID) that sat unprovisioned for 9+ days (LUL-1918
-// interaction 529e8562). The founder asked to write suggestions to local
-// storage instead, "for now". See writeSuggestionLocally() below for why
-// that only actually persists anything when this process runs somewhere
-// with real, writable disk -- which the current production deployment
-// (Vercel) is not.
+// LUL-2993 (founder review, 2026-09-17): LUL-2963's local-disk storage
+// (`/mnt/hdd/lullwood-suggestions`) never persisted a single suggestion in
+// production -- the Vercel serverless runtime for www.lullwoodgame.com gets a
+// fresh, isolated, non-persistent filesystem per invocation with no route to
+// any physical disk on this box, so every write failed and every submit
+// degraded to a silent 503. This route now writes to the same Vercel Blob
+// store app/api/telemetry/route.ts already uses (BLOB_READ_WRITE_TOKEN is
+// live there), under a `suggestions/` prefix instead of `events/`. Unlike
+// telemetry's degrade-to-204-on-missing-token contract (acceptable there --
+// analytics loss is not urgent), a missing token or a failed `put()` here is
+// treated as an incident: logged loudly with `console.error` so it surfaces
+// in Vercel's function logs, not merely `console.warn`'d once and forgotten.
 
 const TEXT_PATTERN = /^[a-z ]{3,300}$/;
 const MAX_BODY_BYTES = 2048;
@@ -98,50 +101,49 @@ function isGlobalRateLimited(): boolean {
   return globalCount > GLOBAL_LIMIT;
 }
 
-// LUL-2963: local-disk storage, no external credential.
-//
-// Default directory is the box's large HDD mount (`/mnt/hdd`), not the SSD
-// system disk -- founder direction 2026-09-16. Override with
-// SUGGESTIONS_STORAGE_DIR for a different host layout.
-//
-// IMPORTANT -- this only persists anything on a host where the Next.js
-// server process has real, writable disk. The production deployment for
-// www.lullwoodgame.com runs on Vercel: Node.js serverless functions there
-// get a fresh, isolated, non-persistent filesystem per invocation with no
-// route to this (or any) machine's physical disks, so a write to
-// `/mnt/hdd` or any other path fails there every time (see LUL-2963 comment
-// thread for the full tradeoff and the durability options still open).
-// mkdir/appendFile failures are caught and degrade to the same 503 this
-// route already used for a missing Paperclip credential -- never a 500.
-const DEFAULT_STORAGE_DIR = '/mnt/hdd/lullwood-suggestions';
-let warnedAboutStorage = false;
-
-function storageFile(): string {
-  const dir = process.env.SUGGESTIONS_STORAGE_DIR || DEFAULT_STORAGE_DIR;
-  return path.join(dir, 'suggestions.ndjson');
+// Blob path: suggestions/{yyyy}/{mm}/{dd}/{uuid}.json -- same date-prefix
+// layout as app/api/telemetry/route.ts (see lib/dashboard/blob-source.ts for
+// why: Blob has no query engine, so a reader lists date folders and fetches
+// each object).
+function blobPath(now: Date): string {
+  const yyyy = now.getUTCFullYear();
+  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(now.getUTCDate()).padStart(2, '0');
+  const uuid =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `suggestions/${yyyy}/${mm}/${dd}/${uuid}.json`;
 }
 
-async function writeSuggestionLocally(text: string, ipHash: string): Promise<boolean> {
-  const file = storageFile();
-  // One JSON-encoded record per line. JSON.stringify does the escaping --
-  // `text` is already restricted by TEXT_PATTERN to `[a-z ]`, so there is no
-  // control character, quote, backslash or newline for it to escape, but the
-  // encoding step stays in place as defense in depth rather than trusting
-  // the regex alone.
+/**
+ * Writes one suggestion to the Blob store. Returns false (never throws) on
+ * any failure -- a missing token or a failed `put()` is logged loudly with
+ * `console.error` on every occurrence (not throttled the way the telemetry
+ * route throttles its warning) because a dropped suggestion is the kind of
+ * silent data loss LUL-2993 was filed over; the caller degrades to 503.
+ */
+async function writeSuggestion(text: string, ipHash: string): Promise<boolean> {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error('[suggestions] CRITICAL: BLOB_READ_WRITE_TOKEN is not set -- suggestion intake is completely down');
+    return false;
+  }
+
+  const now = new Date();
   const record = {
-    submitted_at: new Date().toISOString(),
+    submitted_at: now.toISOString(),
     ip_hash: ipHash,
     text,
   };
+
   try {
-    await mkdir(path.dirname(file), { recursive: true });
-    await appendFile(file, JSON.stringify(record) + '\n', 'utf8');
+    await put(blobPath(now), JSON.stringify(record), {
+      access: 'public',
+      contentType: 'application/json',
+    });
     return true;
   } catch (err) {
-    if (!warnedAboutStorage) {
-      console.warn(`suggestion storage write failed for ${file} -- suggestion intake is degraded`, err);
-      warnedAboutStorage = true;
-    }
+    console.error('[suggestions] CRITICAL: Blob store write failed -- suggestion intake is degraded', err);
     return false;
   }
 }
@@ -189,7 +191,7 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: 'rate limited' }, { status: 429 });
   }
 
-  const created = await writeSuggestionLocally(text, ipHash);
+  const created = await writeSuggestion(text, ipHash);
   if (!created) {
     return Response.json({ error: 'suggestion intake unavailable' }, { status: 503 });
   }
