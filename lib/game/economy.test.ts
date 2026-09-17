@@ -370,6 +370,13 @@ test('POCKET_STONES_COSTS/RESERVE are the accepted single-tier price and grant',
   assert.equal(POCKET_STONES_RESERVE, 2);
 });
 
+test('pocketStones price is difficulty-scaled, still single-tier regardless of difficulty', () => {
+  assert.equal(nextCost('pocketStones', 0, 'lantern'), 80);
+  assert.equal(nextCost('pocketStones', 0, 'night'), 120);
+  assert.equal(nextCost('pocketStones', 0, 'blackout'), 140);
+  assert.equal(nextCost('pocketStones', 1, 'blackout'), null);
+});
+
 // ---- effectiveScentLifetime ------------------------------------------------
 
 test('effectiveScentLifetime compounds 20% faster decay per Quiet Step tier', () => {

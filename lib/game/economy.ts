@@ -176,8 +176,17 @@ export function effectiveScentLifetime(tier: number): number {
 // ---- Spend: Pocket Stones -- +2 free throwables per run ----------------
 // Single tier. Effect wiring lives in engine/forest-engine.js (enter()) -- this module
 // only owns the price and the reserve size, same split as VEIL_CHARM_PRICE above.
+// POCKET_STONES_COSTS' only load-bearing property is its .length (used for the max-tier
+// gate in nextCost/purchase/setEmbers's clamp) -- it must stay length 1, a single-tier
+// item. The actual difficulty-scaled price lives in POCKET_STONES_COST_BY_DIFFICULTY
+// below; the array's value itself is an unused placeholder (LUL-2983).
 export const POCKET_STONES_COSTS = [80] as const;
 export const POCKET_STONES_RESERVE = 2;
+export const POCKET_STONES_COST_BY_DIFFICULTY: Record<DifficultyTier, number> = {
+  lantern: 80,
+  night: 120,
+  blackout: 140,
+};
 
 // ---- Shop catalog -------------------------------------------------------
 // Single source of truth for what's for sale, driving both EmbersShop's render
@@ -205,20 +214,23 @@ export function tierOf(state: EmbersState, id: string): number {
   return state.tiers[id] ?? 0;
 }
 
-/** Cost to go from `tier` to `tier + 1` for `id`, or null once maxed / for an unknown id. */
-export function nextCost(id: string, tier: number): number | null {
+/** Cost to go from `tier` to `tier + 1` for `id`, or null once maxed / for an unknown id.
+ * `difficulty` only affects pocketStones (see POCKET_STONES_COST_BY_DIFFICULTY above) --
+ * every other item's price is difficulty-independent, unchanged from `item.costs[tier]`. */
+export function nextCost(id: string, tier: number, difficulty: DifficultyTier = 'night'): number | null {
   const item = catalogItem(id);
   if (!item) return null;
-  return tier >= item.costs.length ? null : item.costs[tier];
+  if (tier >= item.costs.length) return null;
+  return id === 'pocketStones' ? POCKET_STONES_COST_BY_DIFFICULTY[difficulty] : item.costs[tier];
 }
 
 /** No-op (returns `state` unchanged, same reference) if already maxed, unaffordable, or
  * `id` isn't in the catalog -- callers don't need to pre-check. Replaces
  * purchaseDeeperLungs(); callers that need "did this actually purchase" (the engine's
  * cue-triple gate, see forest-engine.js) compare the returned reference to the input. */
-export function purchase(state: EmbersState, id: string): EmbersState {
+export function purchase(state: EmbersState, id: string, difficulty: DifficultyTier = 'night'): EmbersState {
   const tier = tierOf(state, id);
-  const cost = nextCost(id, tier);
+  const cost = nextCost(id, tier, difficulty);
   if (cost === null || state.balance < cost) return state;
   return { balance: state.balance - cost, tiers: { ...state.tiers, [id]: tier + 1 } };
 }

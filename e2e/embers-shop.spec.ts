@@ -54,9 +54,10 @@ test.describe('embers shop (LUL-2351)', () => {
     expect(probe.purchaseCueCount).toBe(2);
     expect(await qaHook(page, 'qaProbeScentLifetime')).toBeCloseTo(14 * 0.8, 5);
 
-    // Pocket Stones single tier: 80 embers, 1730 -> 1650, then maxed.
+    // Pocket Stones single tier: default engine difficulty is 'night' (LUL-2983), so
+    // 120 embers, 1730 -> 1610, then maxed.
     await clickBuyButton(page, 'buy-pocketStones');
-    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1650');
+    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1610');
     probe = await qaHook(page, 'qaProbeEmbersPurchase');
     expect(probe.purchaseCueCount).toBe(3);
     await expect(page.locator('#embersShopMaxed-pocketStones')).toContainText('maxed');
@@ -64,6 +65,24 @@ test.describe('embers shop (LUL-2351)', () => {
     await expect(page.locator('#buy-pocketStones')).toHaveCount(0);
 
     expectNoConsoleErrors(errs);
+  });
+
+  // LUL-2983: falsification-relevant coverage -- Pocket Stones' price is difficulty-scaled
+  // (POCKET_STONES_COST_BY_DIFFICULTY, lib/game/economy.ts), so a test at only the default
+  // 'night' price above would pass even if the blackout/lantern branches were wrong or
+  // unwired. Seeds 'lullwood:settings' with difficulty:'blackout' -- the real applied-settings
+  // path (SettingsPanel.tsx's mount effect calls actions.setDifficulty() from this same key),
+  // not a fake/direct engine write.
+  test('Pocket Stones costs 140 embers on blackout difficulty', async ({ page, context }) => {
+    await seedEmbers(context, HIGH_BALANCE_EMBERS);
+    await context.addInitScript(() => {
+      window.localStorage.setItem('lullwood:settings', JSON.stringify({ difficulty: 'blackout' }));
+    });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await expect(page.locator('#gate')).toBeVisible();
+
+    await clickBuyButton(page, 'buy-pocketStones');
+    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1860');
   });
 
   test('a catalog button is disabled below its cost', async ({ page, context }) => {
