@@ -4503,6 +4503,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // per-tick cost.
       for(const other of predators){ if(other !== p){ other.inert = true; other.g.visible = false; other.x = other.z = -9999; } }
       p.x = px; p.z = pz;
+      // LUL-2910: same stale-noiseTarget hazard as qaHideBehindCoverKind --
+      // this predator may have heard something during the real RAF frames
+      // before staging (page load, enter()); clear it so 'approach' chases
+      // the live player this hook just placed, not a leftover decoy point.
+      p.noiseTarget = null; p.noiseTargetT = 0;
       p.vx = p.vz = 0; p.alert = 0; p.stuckT = 0; p.sightLock = null;
       // LUL-2457: two dead ends tried and measured live before this one --
       // (1) leaving p.reroute/scentLock at 0: the 'chase' branch's own
@@ -4575,6 +4580,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.x = px; p.z = pz;
       const detect = effectiveDetect(p);
       if(Math.hypot(qx - px, qz - pz) >= detect) continue;
+      // LUL-2910: this hook runs after real RAF frames (page load, enter())
+      // already let this predator roam/react on its own -- a bear that heard
+      // the player's entry footsteps before staging carries a stale
+      // p.noiseTarget (set by hearNoise()/checkThrowLanding()) into the
+      // freshly-teleported position. The 'approach' sub-phase then chases
+      // that stale point instead of the live player it was just placed next
+      // to (engine/forest-engine.js's noiseTarget override, ~line 2862),
+      // sending it off in whatever direction that stale target happened to
+      // be and starving the sniff cycle this hook exists to set up. Clear it
+      // with the rest of the staged-fresh reset below.
+      p.noiseTarget = null; p.noiseTargetT = 0;
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       p.state = 'chase'; p.hunt = false;
       player.x = qx; player.z = qz;
