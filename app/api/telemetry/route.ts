@@ -18,6 +18,7 @@ const VALID_EVENTS = new Set([
   'feature_engagement',
   'engine_contract_violation',
   'chase_gap',
+  'started_tiers', // LUL-2998
 ]);
 
 const MAX_BODY_BYTES = 2048;

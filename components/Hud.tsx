@@ -136,6 +136,10 @@ export interface EngineHudState {
   // generateMap(), pushed once -- not a per-frame value like veilCharge).
   windX: number;
   windZ: number;
+  // LUL-3009: Threat Beacon -- true while the player's live per-frame heading is
+  // moving against windX/windZ (isMovingAgainstWind()), pushed every frame unlike
+  // windX/windZ above. Drives #windIndicator's pulse class, no new element.
+  movingAgainstWind: boolean;
   // LUL-1103: The Run Chronicle. Engine-owned {t, code, args} buffer, handed
   // over once in the same pushState() call as winVisible/deathVisible (never
   // streamed per-frame -- see engine/forest-engine.js's logChronicle()
@@ -276,6 +280,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   secondaryKind: null, secondaryStatus: null, secondaryProgress: null,
   windX: 1,
   windZ: 0,
+  movingAgainstWind: false,
   chronicle: [],
   scentTrailVisible: true,
   hintsEnabled: true,
@@ -971,6 +976,12 @@ export default function Hud({
       {state.entered && !state.winVisible && !state.deathVisible && (
         <div
           id="windIndicator"
+          // LUL-3009: pulse class while the player is currently benefiting from the wind
+          // (scent masked) -- an active per-moment read on top of the arrow's always-on
+          // direction, same element, no new one (Q7/Q8 duplicate-proof, docs/ELEMENTS.md).
+          // Skipped outright under reducedMotion, same precedent as veilRefillFlash
+          // (useVeilMeterRamp above) -- not just left to the CSS media query fallback.
+          className={state.movingAgainstWind && !state.reducedMotion ? 'windIndicatorActive' : undefined}
           title="Wind direction -- move into the arrow to reduce your scent trail"
           style={{ transform: `rotate(${Math.atan2(state.windZ, state.windX)}rad)` }}
         >

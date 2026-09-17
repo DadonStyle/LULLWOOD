@@ -185,8 +185,10 @@ declare global {
       qaProbePlayer?: () => { x: number; z: number; yaw: number };
       /** LUL-2189/LUL-2207: the module-scope wind unit vector (windX/windZ), set once per
        * generateMap() by generateWind() -- map-constant, not per-frame. windHighSpeed
-       * (LUL-2539) is the independently-rolled high-wind flag from the same call. */
-      qaProbeWind?: () => { windX: number; windZ: number; windHighSpeed: boolean };
+       * (LUL-2539) is the independently-rolled high-wind flag from the same call.
+       * LUL-3009 adds movingAgainstWind, the current per-frame EngineHudState value
+       * (true while the player's live heading is moving against windX/windZ). */
+      qaProbeWind?: () => { windX: number; windZ: number; windHighSpeed: boolean; movingAgainstWind: boolean };
       /** LUL-211/LUL-288: places the player off the -x face of the first reachable
        * cover prop of `kind`, facing it, so a held KeyW walks straight into it. The
        * standoff distance is rotation-aware (props render at prop.ry), so it clears
@@ -430,6 +432,11 @@ declare global {
       /** LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
        * generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion. */
       qaSetWindHighSpeed?: (v: boolean) => void;
+      /** LUL-3009: forces windX/windZ directly (normalized), same "bypass the roll" rationale
+       * as qaSetWindHighSpeed above -- a movingAgainstWind test needs a known wind vector to
+       * pick a heading that's provably against it. Also pushes the pair to HUD state, same as
+       * generateMap()'s one-time push, so #windIndicator's rotation stays in sync. */
+      qaSetWindDirection?: (x: number, z: number) => void;
       /** LUL-2547: places predator[kind] dx/dz from the player's current position, reset to a
        * plain roaming state. Returns its predators index and placed position, or null if that
        * species didn't spawn this seed. */
@@ -441,6 +448,11 @@ declare global {
        * a test can assert Pocket Stones granted +2 throws and a purchase played its
        * audio cue, without decoding actual WebAudio output. */
       qaProbeEmbersPurchase?: () => { throwablesReserve: number; heldThrowable: boolean; purchaseCueCount: number };
+      /** LUL-3003: the accumulated purchases_made array for the CURRENT run (id/tier/cost,
+       * matches lib/analytics.ts's PurchaseRecord), plus embers.tiers as it stands right now --
+       * lets a test assert a purchase() call landed in the accumulator without waiting for a
+       * win/loss track() call to read it. */
+      qaProbePurchasesMade?: () => { purchasesMade: { id: string; tier: number; cost: number }[]; tiers: Record<string, number> };
       /** LUL-2331: places the player 2 units off the Stone Marker's live position -- mirrors
        * qaTeleportNearThrowable, works regardless of where the landmark actually sits (the
        * micro QA world leaves LANDMARKS untouched). Returns the marker's position. */

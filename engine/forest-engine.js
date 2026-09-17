@@ -133,6 +133,7 @@ import {
   computeDeathPayout,
   applyPayout,
   purchase as economyPurchase,
+  nextCost,
   veilMaxHoldForTier,
   effectiveScentLifetime,
   SHOP_CATALOG,
@@ -3174,6 +3175,11 @@ let cutsceneSkippable = false;   // set fresh on every triggerDeath(), read by t
 // pattern as setDifficulty/setRunMode/etc. -- see SettingsPanel.tsx) and
 // mutated in place by arriveHome/triggerDeath/purchase.
 let maxDistFromHome = 0, embers = freshEmbersState(), embersSpent = 0;
+// LUL-3003: shop purchases made during the CURRENT run (win/loss's `purchases_made`
+// telemetry field, lib/analytics.ts's PurchaseRecord) -- reset in enter() so a purchase
+// from a prior run never leaks into this run's payload. `embers.tiers` itself is
+// cross-run (see comment above); this is the per-run diff of it.
+let purchasesMade = [];
 // LUL-2558: personal-best time + tier streak counter, keyed per DifficultyTier. Synced
 // from components/Hud.tsx's localStorage read via setProgression() once on mount (same
 // pattern as embers/missionUnlocks above), mutated in place by recordRun() at each of the
@@ -3853,6 +3859,11 @@ let hudState = {
   // hint is on screen -- same per-frame-push pattern as veilCharge above.
   hintsEnabled: true,
   hintVisible: false, hintKey: null, hintText: '', hintX: 0.5, hintY: 0.5,
+  // LUL-3009: Threat Beacon -- true while the player's live per-frame heading
+  // is moving against windX/windZ (isMovingAgainstWind(), lib/game/scent.ts),
+  // pushed every frame unlike windX/windZ above (map-constant, pushed once).
+  // Drives #windIndicator's pulse class; not itself persisted or rationed.
+  movingAgainstWind: false,
 };
 function pushState(patch){
   let changed = false;
@@ -3921,12 +3932,18 @@ function enter(){
   throwablesReserve = tierOf(embers, 'pocketStones') > 0 ? POCKET_STONES_RESERVE : 0;
   if(!heldThrowable && throwablesReserve > 0){ heldThrowable = true; throwablesReserve--; }
   chronicle = [];   // LUL-1103: fresh run, fresh chronicle
+  purchasesMade = [];   // LUL-3003: fresh run, no purchases attributed to it yet
   pushState({ entered: true, livePileEmbers: 0 });
   // LUL-1425: the real "a run begins" moment on both input modes -- enter() is
   // called by the gate click (Hud.tsx) and by restart(). Fires once per RUN, not
   // once per page load; see docs/specs. Previously lived in the desktop-only
   // pointerlockchange handler, so it never fired on mobile at all.
   track({ event: 'game_start', seed: currentSeed });
+  // LUL-3003: snapshot of embers.tiers as loaded from persistence at boot, taken in the
+  // same tick as game_start -- purchasesMade was just cleared above and no purchase()
+  // call can land between that reset and this read, so this is provably before any
+  // purchase this run applies.
+  track({ event: 'started_tiers', tiers: { ...embers.tiers } });
   setPaused(false);
   if(!started){ startAudio(); started = true; }
   if(audio){ audio.ctx.resume(); }
@@ -4221,7 +4238,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // generateMap() by generateWind(), engine/forest-engine.js:1810/1812) so a test
   // can derive #windIndicator's expected rotation instead of hardcoding an angle.
   window.ForestEngine.qaProbeWind = function(){
-    return { windX: windX, windZ: windZ, windHighSpeed: windHighSpeed };
+    return { windX: windX, windZ: windZ, windHighSpeed: windHighSpeed, movingAgainstWind: hudState.movingAgainstWind };
   };
 
   // Drops the player `standoff` units on the -x side of the first reachable
@@ -4573,6 +4590,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === kind);
     if(idx < 0) return null;
     const p = predators[idx];
+    const origX = p.x, origZ = p.z;
     for(const c of coverData){
       if(!HIDE_KINDS[c.kind]) continue;
       const edge = Math.max(c.hx, c.hz), predReach = edge + 3, hideReach = edge + 1;
@@ -4597,7 +4615,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // that can never make the predator eligible.
       p.x = px; p.z = pz;
       const detect = effectiveDetect(p);
-      if(Math.hypot(qx - px, qz - pz) >= detect) continue;
+      if(Math.hypot(qx - px, qz - pz) >= detect){ p.x = origX; p.z = origZ; continue; }
       // LUL-2910: this hook runs after real RAF frames (page load, enter())
       // already let this predator roam/react on its own -- a bear that heard
       // the player's entry footsteps before staging carries a stale
@@ -5412,6 +5430,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // [QA-HOOK] LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
   // generateWind() draw -- a test can't rely on a coin flip for a deterministic assertion.
   window.ForestEngine.qaSetWindHighSpeed = function(v){ windHighSpeed = !!v; };
+  // [QA-HOOK] LUL-3009: forces windX/windZ directly (normalized), same "bypass the roll"
+  // rationale as qaSetWindHighSpeed above -- a movingAgainstWind test needs a known wind
+  // vector to pick a heading that's provably against it, not whatever generateWind() rolled.
+  // Pushes the pair to HUD state too, same as generateMap()'s one-time push, so #windIndicator
+  // stays in sync with the forced value for the rest of the test.
+  window.ForestEngine.qaSetWindDirection = function(x, z){
+    const m = Math.hypot(x, z) || 1;
+    windX = x / m; windZ = z / m;
+    pushState({ windX, windZ });
+  };
   // [QA-HOOK] LUL-2547: places predator[kind] dx/dz from the *player's current position* (not a
   // throw-landing point like qaStagePredatorNearThrowLanding) so a test can stage "predator within
   // hide-alert radius" after qaTeleportToHideSpot() without qaBuildScene() wiping the natural cover
@@ -5436,6 +5464,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // the cue-triple's audio leg, without decoding actual WebAudio output.
   window.ForestEngine.qaProbeEmbersPurchase = function(){
     return { throwablesReserve, heldThrowable, purchaseCueCount: qaEmbersPurchaseCueCount };
+  };
+  // [QA-HOOK] LUL-3003: the accumulated purchases_made array for the CURRENT run, plus
+  // embers.tiers as it stands right now -- lets a spec assert a purchase() call landed in
+  // the accumulator (id/tier/cost) without waiting for a win/loss track() call to read it.
+  window.ForestEngine.qaProbePurchasesMade = function(){
+    return { purchasesMade: purchasesMade.slice(), tiers: { ...embers.tiers } };
   };
   // [QA-HOOK] LUL-2331: places the player 2 units off the Stone Marker's live position --
   // mirrors qaTeleportNearThrowable, since applyQaWorldMicroPreset() (engine/tuning.js)
@@ -5807,7 +5841,7 @@ function finishPickup(){
     progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
     newRecord: progressionResult.newRecord });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty, purchases_made: purchasesMade.slice() });
 }
 // LUL-1258: M2 Deepwater's completion sting -- a noise-burst + oscillator
 // chain (same procedural building blocks used elsewhere, no new audio
@@ -5951,7 +5985,7 @@ function arriveHome(){
     progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
     newRecord: progressionResult.newRecord });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty });
+  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty, purchases_made: purchasesMade.slice() });
 }
 function triggerDeath(kind, cause, killerIdx){
   const next = outcomeTriggerDeath(runState());
@@ -5993,7 +6027,7 @@ function triggerDeath(kind, cause, killerIdx){
     progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
     newRecord: progressionResult.newRecord });
-  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty, distance_from_home_m: deathDistanceFromHomeM });
+  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty, distance_from_home_m: deathDistanceFromHomeM, purchases_made: purchasesMade.slice() });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -6089,9 +6123,16 @@ function setEmbers(balance, tiers){
 // the cue-triple's audio cue on a real purchase.
 function purchase(id){
   const before = embers;
+  const tierBefore = tierOf(before, id);
+  const cost = nextCost(id, tierBefore, difficulty);
   embers = economyPurchase(embers, id, difficulty);
   pushState({ embersBalance: embers.balance, embersTiers: { ...embers.tiers } });
-  if(embers !== before) embersPurchaseCue();
+  if(embers !== before){
+    embersPurchaseCue();
+    // LUL-3003: `cost` can't be null here -- economyPurchase() only returns a
+    // changed reference when nextCost() was non-null (see economy.ts's purchase()).
+    purchasesMade.push({ id, tier: tierBefore + 1, cost });
+  }
 }
 // LUL-1666: sync from components/Hud.tsx's localStorage read, once on mount
 // -- identical split to setEmbers() above (engine owns the state, React
@@ -6410,7 +6451,7 @@ function stepFrame(dt, t, skipRender){
     logChronicle('fog_tide_end');
   }
 
-  let spd = 0, dist = 0, running = false, noiseRadius = 0;
+  let spd = 0, dist = 0, running = false, noiseRadius = 0, movingAgainstWind = false;
   const playerBogginess = biomeAt(player.x, player.z);   // LUL-1483: continuous 0..1, was a boolean z-band test
   playerBogMask = bogMaskLevel(playerBogginess, playerBogMask, dt);   // LUL-1902: decaying wolf-scent-mask, see checkScent()
   // LUL-791/LUL-392: the lake used to be pure render -- no collision, no slow,
@@ -6442,6 +6483,10 @@ function stepFrame(dt, t, skipRender){
     if(mag > 0){
       mvx /= mag; mvz /= mag; spd = maxSpd;
       escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
+      // LUL-3009: every frame while moving, not throttled by scentEmitT below (that gate is
+      // sized for scent deposit density, not for a HUD readout the player expects to track
+      // their heading in real time).
+      movingAgainstWind = isMovingAgainstWind(mvx, mvz, windX, windZ);
       const step = maxSpd*dt, lim = half - margin, zLim = zMax - margin;
       const nx = Number.isFinite(WRAP_SPAN)
         ? wrapCoord(player.x + mvx*step, WRAP_SPAN)
@@ -6462,6 +6507,11 @@ function stepFrame(dt, t, skipRender){
       noiseRadius = (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK) * bogNoiseMultiplier(playerBogginess);
     }
   }
+  // LUL-3009: pushed unconditionally every frame (not nested in the movement block above),
+  // same reasoning as the LUL-2249 comment just below -- `movingAgainstWind` is redeclared
+  // `false` at the top of this stepFrame() call, so hidden/paused/stationary frames clear it
+  // here without a separate reset site.
+  pushState({ movingAgainstWind });
 
   // LUL-2249: once per stepFrame(), after every player.x/player.z write this
   // function makes (confirmed by grepping every `player.x =`/`player.z =`

@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7162 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6357, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7212 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6398, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1525,16 +1525,16 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5751-5811, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5902-5955 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5956-5999). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5785-5845, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L5936-5989 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L5990-6033). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5956-5999) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L5990-6033) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L5760) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1592,7 +1592,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3913) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3936) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1618,6 +1618,19 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
   catalog. A real purchase plays `embersPurchaseCue()` (decisions/0015-cue-triple's audio
   leg, all three items including Deeper Lungs). Purchases are final, persisted to
   localStorage and synced to `hudState` via the `embersTiers` property.
+- Telemetry (LUL-3003): a real purchase also pushes `{id, tier, cost}` (the tier reached,
+  the price paid) onto the module-level `purchasesMade` accumulator, which `enter()`
+  resets to `[]` at the start of every run and the `win`/`loss` `track()` calls read
+  (`.slice()`) into the `purchases_made` field (`lib/analytics.ts`'s `PurchaseRecord`,
+  schema added by LUL-2998). `enter()` also emits a `started_tiers` event with a snapshot
+  of `embers.tiers` taken the same tick, before that run's own purchases apply. Because
+  `EmbersShop` only renders pre-entry (the gate) or on the win/death screens -- never
+  while a run is actually in progress -- a purchase always lands either before `enter()`
+  resets the accumulator or after that run's own `win`/`loss` already fired, so
+  `purchases_made` is legitimately `[]` on every event today; `started_tiers`'s
+  before/after tiers diff across consecutive runs is the documented fallback for exactly
+  that gap (`docs/TELEMETRY_SCHEMA.md`). `qaProbePurchasesMade()` exposes both live for
+  e2e (`e2e/purchases-telemetry.spec.ts`).
 
 **What it CANNOT do**
 - Spend on anything outside `SHOP_CATALOG`.
@@ -1703,7 +1716,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6310-7098, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6351-7148, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2396,3 +2409,37 @@ key). `qaResetScentCaption()` (LUL-2230) is kept as a thin `scent`-only alias.
 See `docs/specs/lul-2307-first-encounter-hints.md` for the full per-key trigger table and the
 declared simplifications (no per-cover-kind copy branching, constant CSS position instead of
 a DOM-measured one for the six fixed-anchor keys).
+
+### LUL-3009: Threat Beacon (active pulse on `#windIndicator`)
+
+Scout proposal (LUL-3007), CEO-accepted cheap slice. Adds one new read-only `EngineHudState`
+field, `movingAgainstWind` (`components/Hud.tsx`), pushed every frame (unlike LUL-1724's
+`windX`/`windZ` above, pushed once per map) from `isMovingAgainstWind(mvx, mvz, windX, windZ)`
+(`lib/game/scent.ts`) -- already computed on every throttled `scentEmitT` tick for
+`depositScent()`'s own use (`engine/forest-engine.js`), now also evaluated unthrottled,
+every frame, inside the movement block, and reset to `false` at the top of every `stepFrame()`
+call so a stationary/hidden/paused frame clears it without a separate reset site.
+
+No new element. Q7/Q8 duplicate-proof against the shipped LUL-1724 arrow: the arrow's rotation
+reads `windX`/`windZ` (map-constant, same value all run); the beacon reads the player's live
+per-frame heading against that same map-constant vector, flipping many times a second as the
+player turns -- different question, not the same frame's state. Ships as a CSS class,
+`windIndicatorActive`, toggled on `#windIndicator` itself (`components/Hud.tsx`) rather than a
+second element: a 900ms `filter: brightness()`/`drop-shadow()` loop (`components/GameCanvas.tsx`)
+-- `filter`, not `transform`, since `#windIndicator`'s own inline `style.transform` already does
+the arrow's rotation and a CSS `animation` on `transform` would replace that value outright
+instead of composing with it. Skipped entirely (class never applied) under `state.reducedMotion`,
+same precedent as `veilRefillFlash` (LUL-2331) -- not left to the `prefers-reduced-motion` media
+query alone, though that query also disables the keyframe as a defense-in-depth fallback.
+
+**QA hooks**: `qaProbeWind()` (LUL-2189/LUL-2207) extended with `movingAgainstWind`.
+`qaSetWindDirection(x, z)` forces `windX`/`windZ` directly (normalized, also pushed to HUD
+state), same "bypass the roll" rationale as `qaSetWindHighSpeed` (LUL-2539) -- a
+`movingAgainstWind` test needs a known wind vector to pick a heading provably against it,
+rather than depending on which way the pinned seed's own `generateWind()` roll landed.
+
+Covered by `e2e/wind-indicator.spec.ts` (extended, not a new file -- this element already had
+dedicated LUL-2189/LUL-2207 coverage there): class presence tracks `qaProbeWind().
+movingAgainstWind` exactly and clears the instant movement stops, class absence while moving
+with the wind, and the class is never applied under `reducedMotion` even while the underlying
+engine flag is genuinely true.
