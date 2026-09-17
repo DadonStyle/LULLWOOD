@@ -236,23 +236,101 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  # LUL-2826: hints.spec.ts/positional-hiding.spec.ts/scent-trail.spec.ts (and
+  # their mobile counterparts) are isolated into their own `chromium-slow`/
+  # `mobile-slow` playwright.config.ts projects -- see that file's comment.
+  # Un-sharded and un-matrixed on purpose: these tests' cost is what was
+  # distorting whichever numbered shard they alphabetized into above, so
+  # giving them one dedicated, always-the-same-size job makes their wall-clock
+  # predictable instead of folding them back into a count-based split.
+  combined-suite-slow:
+    name: build the merge tree and run the render-heavy specs
+    needs: decide
+    if: needs.decide.outputs.should_cut == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/next
+          fetch-depth: 0
+
+      - name: build the combined tree (release/next merged with main)
+        run: |
+          set -euo pipefail
+          git config user.name  "lullwood-version-cut"
+          git config user.email "version-cut@lullwood.invalid"
+          git fetch --no-tags origin main
+          if ! git merge --no-ff --no-edit FETCH_HEAD; then
+            git merge --abort
+            echo "::error::release/next conflicts with main -- needs a manual backmerge before this cut can be tested."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: typegen
+        run: npx next typegen
+
+      - name: build
+        run: npx next build
+
+      - name: install playwright browsers + system deps
+        run: npx playwright install --with-deps chromium
+
+      # Same advisory-only decoupling as the sharded job's playwright step --
+      # see its comment above.
+      - name: playwright render-heavy specs
+        id: playwright
+        continue-on-error: true
+        run: npx playwright test --project=chromium-slow --project=mobile-slow
+
+      - name: record playwright outcome
+        if: always()
+        run: |
+          mkdir -p shard-outcome
+          echo "${{ steps.playwright.outcome }}" > shard-outcome/slow.txt
+
+      - name: upload playwright outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-cut-shard-outcome-slow
+          path: shard-outcome/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: upload playwright test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: version-cut-playwright-results-slow
+          path: test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
   aggregate-suite-result:
     name: aggregate real playwright result across shards
-    needs: [decide, combined-suite]
+    needs: [decide, combined-suite, combined-suite-slow]
     if: always() && needs.decide.outputs.should_cut == 'true'
     runs-on: ubuntu-latest
     outputs:
       suite_result: ${{ steps.aggregate.outputs.suite_result }}
     steps:
-      # `needs.combined-suite.result` is now 'success' even when a shard's
-      # playwright step failed (that's the point of continue-on-error above)
-      # -- but it still correctly reports 'failure' if a *non-advisory* step
-      # (unit tests/lint/typecheck/build, or a hard crash before the outcome
-      # file could be written) broke a shard job. Trust that first; only fall
-      # back to reading the real per-shard playwright outcomes when the job
-      # result alone says everything was fine.
+      # `needs.combined-suite.result`/`needs.combined-suite-slow.result` are
+      # 'success' even when a shard's playwright step failed (that's the
+      # point of continue-on-error above) -- but they still correctly report
+      # 'failure' if a *non-advisory* step (unit tests/lint/typecheck/build,
+      # or a hard crash before the outcome file could be written) broke a
+      # job. Trust that first; only fall back to reading the real per-shard
+      # playwright outcomes when both job results alone say everything was
+      # fine.
       - name: download per-shard playwright outcomes
-        if: needs.combined-suite.result == 'success'
+        if: needs.combined-suite.result == 'success' && needs.combined-suite-slow.result == 'success'
         uses: actions/download-artifact@v4
         with:
           pattern: version-cut-shard-outcome-*
@@ -275,15 +353,15 @@ jobs:
           # its own outcome instead of folding it into "failure", and don't
           # fail this job over it -- a superseded run isn't a red run LUL-685
           # should alert on.
-          if [ "${{ needs.combined-suite.result }}" = "cancelled" ]; then
+          if [ "${{ needs.combined-suite.result }}" = "cancelled" ] || [ "${{ needs.combined-suite-slow.result }}" = "cancelled" ]; then
             echo "suite_result=cancelled" >> "$GITHUB_OUTPUT"
-            echo "::warning::combined-suite job result was cancelled (superseded by a newer version-cut run, or a runner-level shutdown) -- not a test failure. suite_result=cancelled"
+            echo "::warning::combined-suite/combined-suite-slow job result was cancelled (superseded by a newer version-cut run, or a runner-level shutdown) -- not a test failure. suite_result=cancelled"
             exit 0
           fi
 
-          if [ "${{ needs.combined-suite.result }}" != "success" ]; then
+          if [ "${{ needs.combined-suite.result }}" != "success" ] || [ "${{ needs.combined-suite-slow.result }}" != "success" ]; then
             echo "suite_result=failure" >> "$GITHUB_OUTPUT"
-            echo "::notice::combined-suite job result was ${{ needs.combined-suite.result }} (a non-advisory step failed) -- suite_result=failure"
+            echo "::notice::combined-suite job result was ${{ needs.combined-suite.result }}, combined-suite-slow was ${{ needs.combined-suite-slow.result }} (a non-advisory step failed in one of them) -- suite_result=failure"
             exit 1
           fi
 
@@ -308,10 +386,10 @@ jobs:
 
   open-or-refresh-cut-pr:
     name: open or refresh the cut PR
-    needs: [decide, combined-suite, aggregate-suite-result]
-    # Runs even if combined-suite/aggregate-suite-result failed -- a silent
-    # red run nobody looks at is worse than a PR that says DO NOT MERGE in
-    # plain sight.
+    needs: [decide, combined-suite, combined-suite-slow, aggregate-suite-result]
+    # Runs even if combined-suite/combined-suite-slow/aggregate-suite-result
+    # failed -- a silent red run nobody looks at is worse than a PR that says
+    # DO NOT MERGE in plain sight.
     if: always() && needs.decide.outputs.should_cut == 'true'
     runs-on: ubuntu-latest
     steps:
