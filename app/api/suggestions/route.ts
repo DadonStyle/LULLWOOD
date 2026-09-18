@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { put } from '@vercel/blob';
+import { put, get } from '@vercel/blob';
 
 // LUL-1918/LUL-2963/LUL-2993: POST /api/suggestions -- player suggestion
 // intake for the suggestion box (parent LUL-1917). Re-validates the UI's
@@ -19,6 +19,33 @@ import { put } from '@vercel/blob';
 // - IP addresses are never stored raw -- only a salted SHA-256 hash, used
 //   both for rate-limit bucketing and as an audit trail on the stored record.
 //
+// LUL-3288 (founder security review, 2026-09-18): three defects fixed here,
+// confirmed live and inherited by nothing yet (the leaderboard write path
+// this route's guards were slated to seed does not exist in the repo as of
+// this fix):
+// - A1: `getClientIp` used to trust the client-supplied FIRST hop of
+//   `x-forwarded-for`, which a client can set to anything and rotate per
+//   request -- a complete, curl-only bypass of the cooldown/rate limit. Now
+//   uses Vercel's platform-appended `x-vercel-forwarded-for`, falling back
+//   to the LAST `x-forwarded-for` hop (the one appended by the nearest
+//   trusted proxy, not the client-controlled first one).
+// - A2: `hashIp` used to default the salt to `''` when
+//   `SUGGESTIONS_IP_HASH_SALT` was unset, making every stored "hash" a
+//   plain `sha256(ip)` -- reversible via a precomputed IPv4 rainbow table in
+//   minutes. The route now fails closed (503, loud `console.error`) instead
+//   of ever hashing with an empty salt.
+// - A3: the cooldown/per-IP/global counters used to be plain in-process
+//   `Map`s -- reset on every cold start, and each concurrent Lambda instance
+//   kept its own, so the effective limit was "per instance, until it
+//   recycles". They now live in the same Blob store the suggestions
+//   themselves are written to, under a `suggestions/_ratelimit/` prefix, so
+//   the limits are shared across instances and survive cold starts. This is
+//   still best-effort (a plain read-then-write, no compare-and-swap --
+//   concurrent requests can race and both see themselves as "first"), which
+//   is an acceptable tradeoff for a low-traffic suggestion form; it is NOT
+//   an acceptable pattern to copy forward for the leaderboard's
+//   record-write path, which needs real atomicity (see the leaderboard
+//   threat-model doc this ticket also produced).
 // LUL-2993 (founder review, 2026-09-17): LUL-2963's local-disk storage
 // (`/mnt/hdd/lullwood-suggestions`) never persisted a single suggestion in
 // production -- the Vercel serverless runtime for www.lullwoodgame.com gets a
@@ -35,11 +62,8 @@ import { put } from '@vercel/blob';
 const TEXT_PATTERN = /^[a-z ]{3,300}$/;
 const MAX_BODY_BYTES = 2048;
 
-// Abuse guards: in-memory, reset on cold start. Best-effort only, same
-// tradeoff as app/api/telemetry/route.ts's isRateLimited -- a new Lambda
-// instance starts fresh. Vercel KV would survive across instances; not worth
-// the added dependency for a form nobody expects to be hammered.
-const lastSubmitAtByIp = new Map<string, number>();
+// Abuse guards: state lives in the Blob store (see A3 note above) so it is
+// shared across Lambda instances and survives cold starts.
 const DEFAULT_COOLDOWN_MS = 10 * 1000; // founder direction 2026-09-16: 1 suggestion per 10s per IP
 
 function cooldownMs(): number {
@@ -50,55 +74,118 @@ function cooldownMs(): number {
   return Number.isFinite(override) && override >= 0 ? override : DEFAULT_COOLDOWN_MS;
 }
 
-const ipCounts = new Map<string, { count: number; resetAt: number }>();
 const IP_LIMIT = 5;
 const IP_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const GLOBAL_LIMIT = 200;
-let globalCount = 0;
-let globalResetAt = Date.now() + DAY_MS;
 
-function hashIp(ip: string): string {
-  const salt = process.env.SUGGESTIONS_IP_HASH_SALT ?? '';
+const RATE_LIMIT_PREFIX = 'suggestions/_ratelimit';
+
+interface RateWindow {
+  count: number;
+  resetAt: number;
+}
+
+interface CooldownRecord {
+  lastSubmitAt: number;
+}
+
+/** Reads one rate-limit record back. Never throws -- a missing object, a
+ * missing token, or a transient Blob error all just mean "no record yet",
+ * which fails a single request open. That is the same best-effort tradeoff
+ * the old in-memory Maps made on every cold start, just rarer now. */
+async function readRateRecord<T>(path: string): Promise<T | null> {
+  try {
+    const result = await get(path, { access: 'private' });
+    if (!result || !result.stream) return null;
+    return (await new Response(result.stream).json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function writeRateRecord(path: string, data: RateWindow | CooldownRecord): Promise<void> {
+  try {
+    await put(path, JSON.stringify(data), {
+      access: 'private',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+    });
+  } catch (err) {
+    console.error('[suggestions] rate-limit state write failed -- this request fails open', err);
+  }
+}
+
+function hashIp(ip: string, salt: string): string {
   return createHash('sha256').update(salt + ip).digest('hex');
 }
 
+/** Returns null (never `''`) if the salt is unset or empty -- the caller
+ * must fail closed rather than hash with an empty salt (A2). */
+function getIpHashSalt(): string | null {
+  const salt = process.env.SUGGESTIONS_IP_HASH_SALT;
+  return salt && salt.length > 0 ? salt : null;
+}
+
 function getClientIp(req: Request): string {
+  // Vercel's edge sets/overwrites this header with the real client IP on
+  // every request that reaches the deployment -- a client-supplied copy is
+  // replaced before the function sees it, unlike `x-forwarded-for` where
+  // the client fully controls the first hop (A1).
+  const vercelIp = req.headers.get('x-vercel-forwarded-for');
+  if (vercelIp) return vercelIp.split(',')[0].trim();
+
+  // Fallback for environments without that header: the LAST hop of
+  // `x-forwarded-for` is the one appended by the proxy closest to the
+  // server, not the client-controlled first hop the client can spoof and
+  // rotate at will.
   const fwd = req.headers.get('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0].trim();
+  if (fwd) {
+    const hops = fwd
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1];
+  }
+
   return req.headers.get('x-real-ip') ?? 'unknown';
 }
 
-function isInCooldown(ipHash: string): boolean {
+async function isInCooldown(ipHash: string): Promise<boolean> {
+  const path = `${RATE_LIMIT_PREFIX}/cooldown/${ipHash}.json`;
   const now = Date.now();
-  const last = lastSubmitAtByIp.get(ipHash);
-  if (last !== undefined && now - last < cooldownMs()) {
+  const record = await readRateRecord<CooldownRecord>(path);
+  if (record && now - record.lastSubmitAt < cooldownMs()) {
     return true;
   }
-  lastSubmitAtByIp.set(ipHash, now);
+  await writeRateRecord(path, { lastSubmitAt: now });
   return false;
 }
 
-function isIpRateLimited(ipHash: string): boolean {
+async function isIpRateLimited(ipHash: string): Promise<boolean> {
+  const path = `${RATE_LIMIT_PREFIX}/ipcount/${ipHash}.json`;
   const now = Date.now();
-  const entry = ipCounts.get(ipHash);
-  if (!entry || now >= entry.resetAt) {
-    ipCounts.set(ipHash, { count: 1, resetAt: now + IP_WINDOW_MS });
+  const record = await readRateRecord<RateWindow>(path);
+  if (!record || now >= record.resetAt) {
+    await writeRateRecord(path, { count: 1, resetAt: now + IP_WINDOW_MS });
     return false;
   }
-  entry.count++;
-  return entry.count > IP_LIMIT;
+  const count = record.count + 1;
+  await writeRateRecord(path, { count, resetAt: record.resetAt });
+  return count > IP_LIMIT;
 }
 
-function isGlobalRateLimited(): boolean {
+async function isGlobalRateLimited(): Promise<boolean> {
+  const path = `${RATE_LIMIT_PREFIX}/global.json`;
   const now = Date.now();
-  if (now >= globalResetAt) {
-    globalCount = 0;
-    globalResetAt = now + DAY_MS;
-  }
-  globalCount++;
-  return globalCount > GLOBAL_LIMIT;
+  const record = await readRateRecord<RateWindow>(path);
+  const stale = !record || now >= record.resetAt;
+  const count = stale ? 1 : record.count + 1;
+  const resetAt = stale ? now + DAY_MS : record.resetAt;
+  await writeRateRecord(path, { count, resetAt });
+  return count > GLOBAL_LIMIT;
 }
 
 // Blob path: suggestions/{yyyy}/{mm}/{dd}/{uuid}.json -- same date-prefix
@@ -117,18 +204,14 @@ function blobPath(now: Date): string {
 }
 
 /**
- * Writes one suggestion to the Blob store. Returns false (never throws) on
- * any failure -- a missing token or a failed `put()` is logged loudly with
- * `console.error` on every occurrence (not throttled the way the telemetry
- * route throttles its warning) because a dropped suggestion is the kind of
- * silent data loss LUL-2993 was filed over; the caller degrades to 503.
+ * Writes one suggestion to the Blob store. Assumes the caller already
+ * checked `BLOB_READ_WRITE_TOKEN` is set. Returns false (never throws) on a
+ * failed `put()`, logged loudly with `console.error` on every occurrence
+ * (not throttled the way the telemetry route throttles its warning) because
+ * a dropped suggestion is the kind of silent data loss LUL-2993 was filed
+ * over; the caller degrades to 503.
  */
 async function writeSuggestion(text: string, ipHash: string): Promise<boolean> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.error('[suggestions] CRITICAL: BLOB_READ_WRITE_TOKEN is not set -- suggestion intake is completely down');
-    return false;
-  }
-
   const now = new Date();
   const record = {
     submitted_at: now.toISOString(),
@@ -187,13 +270,30 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: 'text must match ^[a-z ]{3,300}$' }, { status: 400 });
   }
 
-  const ipHash = hashIp(getClientIp(req));
+  // Both checks below are service-configuration gates, not per-request
+  // quota -- fail fast before spending a Blob round-trip on rate-limit
+  // state that can never lead anywhere but a 503 anyway.
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error('[suggestions] CRITICAL: BLOB_READ_WRITE_TOKEN is not set -- suggestion intake is completely down');
+    return Response.json({ error: 'suggestion intake unavailable' }, { status: 503 });
+  }
 
-  if (isInCooldown(ipHash)) {
+  const salt = getIpHashSalt();
+  if (!salt) {
+    // A2: never hash with an empty/missing salt -- that turns the "hash"
+    // into a reversible sha256(ip), precomputable across the whole IPv4
+    // space in minutes.
+    console.error('[suggestions] CRITICAL: SUGGESTIONS_IP_HASH_SALT is not set -- refusing to hash IPs with an empty salt');
+    return Response.json({ error: 'suggestion intake unavailable' }, { status: 503 });
+  }
+
+  const ipHash = hashIp(getClientIp(req), salt);
+
+  if (await isInCooldown(ipHash)) {
     return Response.json({ error: 'please wait a few seconds before sending another suggestion' }, { status: 429 });
   }
 
-  if (isIpRateLimited(ipHash) || isGlobalRateLimited()) {
+  if ((await isIpRateLimited(ipHash)) || (await isGlobalRateLimited())) {
     return Response.json({ error: 'rate limited' }, { status: 429 });
   }
 
