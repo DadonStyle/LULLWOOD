@@ -12,6 +12,8 @@ import {
   DEEPER_LUNGS_COSTS,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
+  MISSION_OAKHOLLOW_REWARD,
+  MISSION_REWARDS,
   DEEPWATER_RETRIEVAL_BONUS,
   DEEPWATER_SPEEDRUN_BONUS,
   purchase,
@@ -153,6 +155,14 @@ test('completing M2 Deepwater and reaching home adds MISSION_DEEPWATER_REWARD on
   const base = computeWinPayout(212, 50);
   const withMission = computeWinPayout(212, 50, 'lantern', MISSION_DEEPWATER_REWARD);
   assert.equal(withMission.total, base.total + MISSION_DEEPWATER_REWARD);
+});
+
+// ---- MISSION_REWARDS (LUL-3010) ------------------------------------------
+
+test('MISSION_REWARDS has exactly one entry per MissionKind, keyed correctly', () => {
+  assert.deepEqual(Object.keys(MISSION_REWARDS).sort(), ['deepwater', 'oakHollow']);
+  assert.equal(MISSION_REWARDS.deepwater, MISSION_DEEPWATER_REWARD);
+  assert.equal(MISSION_REWARDS.oakHollow, MISSION_OAKHOLLOW_REWARD);
 });
 
 test('the mission bonus is not payable on death -- computeDeathPayout has no missionBonus argument', () => {

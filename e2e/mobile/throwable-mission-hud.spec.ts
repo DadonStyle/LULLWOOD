@@ -33,7 +33,8 @@ test('qaGrabThrowable() shows #throwPrompt (mobile copy) and mounts the Throw bu
 });
 
 test('qaTeleportNearMission() shows #missionPanel', async ({ page }) => {
-  await boot(page, { qaHooks: true });
+  // LUL-3010: this test asserts deepwater-specific behaviour; force it past the new eligibility gate.
+  await boot(page, { qaHooks: true, qaMissionKind: 'deepwater' });
 
   const viewport = page.viewportSize();
   if (!viewport) throw new Error('mobile project must have a viewport size');

@@ -62,6 +62,10 @@ export function expectNoConsoleErrors({
  * mesh-construction skip, respectively -- see docs/specs/lul-2328-qa-world-micro-hooks.md.
  * `qaHour` (LUL-2667) pins the hour `timeOfDayFromHour()` sees instead of the
  * real wall-clock hour, for deterministic time-of-day coverage.
+ * `qaMissionKind` (LUL-3010) forces generateMap()'s mission draw to a single
+ * kind, bypassing both the eligibility gate (MISSION_FAR_UNLOCK_WINS) and the
+ * rng draw -- for a test that needs a specific variant (e.g. 'deepwater')
+ * deterministically, on a fresh boot where progression has no wins yet.
  * `seedWelcomeSplashSeen` (LUL-2612) pre-seeds `lullwood:welcomeSeen` in
  * localStorage before the first byte loads, same technique as the
  * `RETURNING_PLAYER` init script in returning-player.spec.ts -- every
@@ -85,6 +89,7 @@ export async function boot(
     qaWorld = 'micro',
     qaNoRender = false,
     qaHour = null,
+    qaMissionKind = null,
     seedWelcomeSplashSeen = true,
   }: {
     qaHooks?: boolean;
@@ -92,6 +97,7 @@ export async function boot(
     qaWorld?: 'micro' | 'full';
     qaNoRender?: boolean;
     qaHour?: number | null;
+    qaMissionKind?: 'deepwater' | 'oakHollow' | null;
     seedWelcomeSplashSeen?: boolean;
   } = {},
 ) {
@@ -104,6 +110,7 @@ export async function boot(
   if (qaWorld === 'micro') params.set('qaWorld', 'micro');
   if (qaNoRender) params.set('qaNoRender', '1');
   if (qaHour !== null) params.set('qaHour', String(qaHour));
+  if (qaMissionKind !== null) params.set('qaMissionKind', qaMissionKind);
   const query = params.toString();
   await page.goto(query ? `/?${query}` : '/', { waitUntil: 'networkidle', timeout: 120_000 });
   // Both canvases exist = the engine's WebGL canvas joined the minimap canvas

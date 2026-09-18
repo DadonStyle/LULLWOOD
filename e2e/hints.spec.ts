@@ -7,13 +7,15 @@
 // wall-clock one.
 //
 // 'landmark' (fires unconditionally the instant entered() is true, no anchor needed)
-// and 'deepwater' (the only mission kind that exists today, active as soon as a run
-// starts) are both eligible from frame one regardless of where the player stands, and
-// both sit ahead of most other keys in HINT_PRIORITY -- so on a fresh boot they win the
-// "become active" race before a scenario further down the list (lake/wolf/...) ever
-// gets a turn. clearPreemptiveHints() drains whichever of those is currently active,
-// repeatedly, until nothing is -- so a test staging a specific key isn't just watching
-// an unrelated hint play out first.
+// and whichever mission kind was drawn this run (LUL-3010: 'deepwater' or 'oakHollow',
+// active as soon as a run starts -- a fresh boot's progression has no wins yet, so the
+// eligibility gate means a plain `boot()` always draws 'oakHollow'; tests below that need
+// 'deepwater' specifically pass `qaMissionKind: 'deepwater'`) are both eligible from frame
+// one regardless of where the player stands, and both sit ahead of most other keys in
+// HINT_PRIORITY -- so on a fresh boot they win the "become active" race before a scenario
+// further down the list (lake/wolf/...) ever gets a turn. clearPreemptiveHints() drains
+// whichever of those is currently active, repeatedly, until nothing is -- so a test
+// staging a specific key isn't just watching an unrelated hint play out first.
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import { boot, enter, qaHook } from './helpers';
@@ -133,7 +135,9 @@ test.describe('first-encounter hints (LUL-2307)', () => {
   });
 
   test('the deepwater hint appears once the mission is active', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    // LUL-3010: this test asserts deepwater-specific behaviour; force it past the new
+    // eligibility gate (fresh progression would otherwise only draw oakHollow).
+    await boot(page, { qaHooks: true, qaMissionKind: 'deepwater' });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     // LUL-2422: see the landmark test's comment above -- this test idles at spawn
@@ -154,7 +158,7 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     expect(probe.activeKey).toBe('deepwater');
     const caption = page.locator('#hintCaption');
     await expect(caption).toBeVisible();
-    await expect(caption).toContainText('deepwater — reach the drowned car for a bonus payout on a run you survive');
+    await expect(caption).toContainText('the drowned car — a bonus payout, but only if you reach it within the time limit');
   });
 
   test('a first-sighted wolf shows its caption once', async ({ page }) => {
