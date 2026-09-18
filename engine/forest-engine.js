@@ -4471,6 +4471,24 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // put a lion a few units out with hunt=true. Even at full stillness this
   // must still catch you (STILL_DETECT_CUT never reaches 1).
   window.ForestEngine.qaOpenHideNearLion = function(){
+    // LUL-3126: live-repro'd that an in-flight charge staged by an earlier
+    // qaTriggerCharge() call can resolve to 'caught' (stepCharge, CHARGE_WINDOW
+    // 1s game time) in the render loop between the caller's two separate
+    // page.evaluate() round-trips -- i.e. entirely before this hook's own body
+    // ever runs, not just before it finishes. No amount of clearing state
+    // below can undo a kill that already landed: `dead` is a once-only guard
+    // (triggerDeath), and the below loop's `p.inert = true` skip in
+    // updatePredators() only prevents *future* catches. Returning the lion's
+    // index anyway told the caller "the lion is now the one hunting you" while
+    // the kill credit already belonged to whatever caught the player first --
+    // the 3rd recurrence of this shape (LUL-2596, LUL-2876), same symptom
+    // (#deathKind names the wrong species), different predator each time,
+    // because each prior fix cleared more staged-state races instead of
+    // checking whether the race had already been lost. Returning null here
+    // reuses the hook's existing "no lion spawned" contract so the caller's
+    // own fallback path names the real killer instead of asserting a lion
+    // that can no longer exist.
+    if(dead) return null;
     player.x = 0; player.z = 0;
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
@@ -4487,7 +4505,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // on the mobile death-cutscene step: #deathKind read 'bear' instead of the
     // staged 'lion'). `inert` removes a predator from updatePredators()'s loop
     // entirely (:2516), same flag qaIsolatePredatorKind (:4635) and
-    // qaStageWalkIntoCover use for this exact failure mode.
+    // qaStageWalkIntoCover use for this exact failure mode. LUL-3126: none of
+    // this runs at all if `dead` is already true (see the guard above) -- it
+    // only protects the window between this hook starting and a *later*
+    // in-flight charge/re-detect resolving, not a race already lost before
+    // the hook was even called.
     for(const p of predators){
       if(p === lion) continue;
       if(p.charge){ p.charge = null; endChargeHud(); }
@@ -4923,6 +4945,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // wait window.
   const LION_STANDOFF = 14;
   window.ForestEngine.qaOpenHideNearLionAtHideSpot = function(){
+    // LUL-3126: same already-lost-the-race guard as qaOpenHideNearLion above --
+    // a kill from an earlier-staged predator can land before this hook's body
+    // ever runs, and nothing below can undo it.
+    if(dead) return null;
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
