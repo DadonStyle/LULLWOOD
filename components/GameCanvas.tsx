@@ -661,9 +661,20 @@ const OVERLAY_STYLE = `
        tighter of the two reported viewports): 465px of content into a
        327px budget needed ~140px trimmed across every child, not just the
        shop. */
+    /* LUL-3282: #deathText's own base padding/gap/h1/p rules (below, "death:
+       video cutscene + loss text" section) are declared *after* this block,
+       so at equal specificity they'd normally win by source order and silently
+       cancel this squeeze on #deathText -- same class of bug as the documented
+       LUL-1088 .restartBtn/.buyBtn cascade-order issue above. #winText's
+       equivalent base rules sit *before* this block (no #deathText-style risk),
+       so only the #deathText side of each declaration needs !important here,
+       matching the LUL-2410/LUL-2158 precedent for guaranteed-win overrides. */
     #winText, #deathText { padding: 8px 16px; gap: 2px; }
+    #deathText { padding: 8px 16px !important; gap: 2px !important; }
     #winText h1, #deathText h1 { font-size: 20px; }
+    #deathText h1 { font-size: 20px !important; }
     #winText p, #deathText p { margin: 0 0 2px; font-size: 11px; }
+    #deathText p { margin: 0 0 2px !important; font-size: 11px !important; }
     #runChronicle { font-size: 10px; margin-top: 2px; }
     .restartBtn { margin-top: 2px; padding: 6px 16px; }
     #embersShop { flex-direction: column; margin-top: 2px; gap: 1px; }
