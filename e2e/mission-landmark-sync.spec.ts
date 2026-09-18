@@ -19,7 +19,9 @@ test.describe('mission target stays synced to the landmark @fullmap', () => {
   test('walking straight at the synced mission target from qaTeleportNearMission() completes the deepwater mission', async ({ page }) => {
     test.setTimeout(45_000);
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true, qaWorld: 'full' });
+    // LUL-3010: this test asserts deepwater-specific behaviour (drownedCar sync); force
+    // it past the new eligibility gate.
+    await boot(page, { qaHooks: true, qaWorld: 'full', qaMissionKind: 'deepwater' });
     await enter(page);
 
     const target = await qaHook(page, 'qaTeleportNearMission');

@@ -121,7 +121,10 @@ export interface EngineHudState {
   // exists or the player is carrying (the engine never sends non-null values
   // in that case) -- Hud never has to know about `carrying` itself.
   missionKind: MissionKind | null;
-  missionStatus: 'active' | 'complete' | null;
+  missionStatus: 'active' | 'complete' | 'expired' | null;
+  // LUL-3010: seconds remaining for the far/timed variant; null for the
+  // near/untimed variant or whenever missionKind/missionStatus is null.
+  missionTimerSeconds: number | null;
   // LUL-1666: secondary objectives (deepwater only, Phase 1). See
   // engine/forest-engine.js's hudState defaults for field semantics.
   missionUnlocks: { deepwater: boolean };
@@ -275,6 +278,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   throwablesReserve: 0,
   missionKind: null,
   missionStatus: null,
+  missionTimerSeconds: null,
   missionUnlocks: { deepwater: false },
   secondaryChoice: null,
   secondaryKind: null, secondaryStatus: null, secondaryProgress: null,
@@ -295,6 +299,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
 // M1/M3/M4/M5 extends this map, not the render logic below.
 const MISSION_NAMES: Record<MissionKind, string> = {
   deepwater: 'Deepwater',
+  oakHollow: 'Oak Hollow',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the
@@ -926,7 +931,12 @@ export default function Hud({
       {state.missionKind && state.missionStatus && !menuOpen && (
         <div id="missionPanel">
           {MISSION_NAMES[state.missionKind]}
-          <span id="missionGlyph">{state.missionStatus === 'complete' ? '●' : '○'}</span>
+          <span id="missionGlyph">
+            {state.missionStatus === 'complete' ? '●' : state.missionStatus === 'expired' ? '✕' : '○'}
+          </span>
+          {state.missionTimerSeconds !== null && (
+            <span id="missionTimer">{formatDuration(state.missionTimerSeconds)}</span>
+          )}
         </div>
       )}
 

@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7249 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6435, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7307 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6476, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1532,16 +1532,16 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5822-5882, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5973-6026 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L6027-6070). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5852-5912, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L6014-6067 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L6068-6111). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6027-6070) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6068-6111) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L5760) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1599,7 +1599,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3955) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3968) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1723,7 +1723,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6388-7185, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6429-7243, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1744,25 +1744,45 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 ### Missions (detour objectives)
 
 **What it is**
-- **Implemented (LUL-1259).** `MISSION_POOL` (`lib/game/mission.ts`): a pool of optional detour
-  objectives, one active per run, drawn from the run's own seeded RNG (never player-selected).
-  Today the pool has exactly one member, `deepwater` — a fixed waypoint at the drowned car
-  landmark (`x: 55, z: 205`, matching `LANDMARKS`' `drownedCar` entry, `engine/tuning.js:44`).
+- **Implemented (LUL-1259, widened LUL-3010).** `MISSION_POOL` (`lib/game/mission.ts`): a pool of
+  optional detour objectives, one active per run, drawn from the run's own seeded RNG (never
+  player-selected). Two members: `deepwater` — a fixed waypoint at the drowned car landmark
+  (`x: -95, z: 46`, matching `LANDMARKS`' `drownedCar` entry, `engine/tuning.js:81`) — and
+  `oakHollow` — a near waypoint at the `oak` landmark (`x: 22, z: 4`, `engine/tuning.js:80`).
   Per-run state (`mission: MissionState | null`) lives alongside `baby` at
   `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every other rng()
   consumer, so it never shifts the stream any existing seed/replay depends on.
+
+**Two variants (LUL-3010)**
+- `oakHollow` — near (≈22.4m from spawn), untimed, `MISSION_OAKHOLLOW_REWARD` = 6 Embers.
+  Always eligible.
+- `deepwater` — far (≈105.5m from spawn), `timeLimitSeconds: 60`, `MISSION_DEEPWATER_REWARD` = 12
+  Embers. Only eligible once `eligibleMissionPool()` (`lib/game/mission.ts`) sees
+  `progression[difficulty].wins >= MISSION_FAR_UNLOCK_WINS` (3) — below that, `pickMission()` only
+  ever draws `oakHollow`. A returning player with existing win history keeps seeing `deepwater`
+  immediately; a fresh/reset progression starts gated to the safe variant.
+- `MissionState.status` widens to `'active' | 'complete' | 'expired'` — `checkMissionExpiry()`
+  flips `deepwater`'s status to `'expired'` the instant survived time passes its `timeLimitSeconds`
+  (checked every tick), forfeiting the bonus without failing the run. `oakHollow` has no
+  `timeLimitSeconds` and can never expire. `#missionPanel`'s glyph is `●` complete / `✕` expired /
+  `○` active; `#missionTimer` renders the countdown only while a `timeLimitSeconds` is set.
+  `?qaMissionKind=<kind>` (under `?qaHooks=1`) forces the draw to a single kind for deterministic
+  test coverage; `qaShrinkMissionTimer(seconds)` stages an imminent expiry.
 - No verbs of its own — completion rides the existing interact action (`KeyE`
   (`engine/forest-engine.js:1689`) / `triggerTouchInteract()` (`:3635`), the same key/button
   that already lifts the child), gated on a `missionCanComplete` check computed alongside
   `canPickup` (`:3430`).
 
 **What it can do**
-- Add a completion bonus to the win payout only: `MISSION_DEEPWATER_REWARD = 12` Embers
-  (`lib/game/economy.ts`), passed as `computeWinPayout()`'s new optional fourth argument at the
-  `arriveHome()` call site. **Forfeited on death** — `computeDeathPayout()` is unmodified, so
-  reaching the mission target but dying before reaching home banks none of the +12 (the detour's
-  real payout is the `depth` term, already uncapped on win / capped on death; the mission bonus
-  is a small addition on top, not the source of the risk/reward).
+- Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
+  (`lib/game/economy.ts`, `deepwater: MISSION_DEEPWATER_REWARD = 12`, `oakHollow:
+  MISSION_OAKHOLLOW_REWARD = 6`), passed as `computeWinPayout()`'s optional fourth argument at
+  the `arriveHome()` call site. **Forfeited on death or expiry** — `computeDeathPayout()` is
+  unmodified, so reaching the mission target but dying before reaching home banks no bonus; a
+  `deepwater` mission that times out (`status: 'expired'`) also forfeits the bonus even on a
+  win, since the payout site only pays `status === 'complete'` (the detour's real payout is the
+  `depth` term, already uncapped on win / capped on death; the mission bonus is a small addition
+  on top, not the source of the risk/reward).
 - Emit a repeating, non-predator-audible navigational audio cue (tempo-shortens with proximity,
   same shape as Ship 1's `childCry` wayfinding pattern) while the mission is active and the
   player is not carrying the child; silent once carrying.
