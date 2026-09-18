@@ -165,7 +165,7 @@ export const QUIET_STEP_LIFETIME_SECONDS = [
   SCENT_LIFETIME * 0.8,
   SCENT_LIFETIME * 0.8 * 0.8,
 ] as const;
-export const QUIET_STEP_COSTS = [150, 250] as const;
+export const QUIET_STEP_COSTS = [80, 250] as const;
 export const QUIET_STEP_MAX_TIER = QUIET_STEP_COSTS.length;
 
 export function effectiveScentLifetime(tier: number): number {
