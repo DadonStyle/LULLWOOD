@@ -5,6 +5,7 @@ import {
   inLakeClearance,
   lakeSpeedMultiplier,
   pushOutOfLakeClearance,
+  pushOutOfLakeClearanceAvoiding,
   keepWaypointOffLake,
   LAKE_SPEED_MULTIPLIER,
   type LakeConfig,
@@ -85,6 +86,46 @@ test('a spawn draw that always lands in the lake exhausts its retry budget, and 
 test('a spawn draw outside the lake is accepted on the first try, unaffected by the lake check', () => {
   const clearCandidate = { x: -100, z: -100 };
   assert.equal(inLakeClearance(clearCandidate.x, clearCandidate.z, lake), false);
+});
+
+// ---- LUL-2735: pushOutOfLakeClearanceAvoiding() -----------------------------
+
+test('pushOutOfLakeClearanceAvoiding is a no-op when the plain push already clears the avoid list', () => {
+  const candidate = { x: lake.x + 5, z: lake.z };
+  const avoid = [{ x: lake.x - 100, z: lake.z - 100, r: 5 }]; // far away, no conflict
+  const plain = pushOutOfLakeClearance(candidate.x, candidate.z, lake);
+  const avoiding = pushOutOfLakeClearanceAvoiding(candidate.x, candidate.z, lake, avoid);
+  assert.deepEqual(avoiding, plain);
+});
+
+test('pushOutOfLakeClearanceAvoiding searches the clearance ring for an angle that also clears a conflicting avoid circle', () => {
+  const candidate = { x: lake.x + 5, z: lake.z };
+  const plain = pushOutOfLakeClearance(candidate.x, candidate.z, lake);
+  // avoid circle centered exactly on the plain push's landing spot, forcing a conflict
+  const avoid = [{ x: plain.x, z: plain.z, r: 3 }];
+  const pushed = pushOutOfLakeClearanceAvoiding(candidate.x, candidate.z, lake, avoid);
+  const dist = Math.hypot(pushed.x - lake.x, pushed.z - lake.z);
+  assert.ok(Math.abs(dist - (lake.clear + 0.5)) < 1e-9, `dist=${dist}, must stay on the same ring`);
+  const clearsAvoid = Math.hypot(pushed.x - avoid[0].x, pushed.z - avoid[0].z) >= avoid[0].r;
+  assert.ok(clearsAvoid, 'result must clear the avoid circle');
+});
+
+test('pushOutOfLakeClearanceAvoiding falls back to the plain push when the entire ring is blocked', () => {
+  const candidate = { x: lake.x + 5, z: lake.z };
+  const plain = pushOutOfLakeClearance(candidate.x, candidate.z, lake);
+  // avoid circle centered on the lake, radius covering the whole ring
+  const avoid = [{ x: lake.x, z: lake.z, r: lake.clear + 0.5 + 1 }];
+  const pushed = pushOutOfLakeClearanceAvoiding(candidate.x, candidate.z, lake, avoid);
+  assert.deepEqual(pushed, plain, 'every angle fails -- must fall back to the plain push result unchanged');
+});
+
+test('pushOutOfLakeClearanceAvoiding is deterministic', () => {
+  const candidate = { x: lake.x + 5, z: lake.z };
+  const plain = pushOutOfLakeClearance(candidate.x, candidate.z, lake);
+  const avoid = [{ x: plain.x, z: plain.z, r: 3 }];
+  const a = pushOutOfLakeClearanceAvoiding(candidate.x, candidate.z, lake, avoid);
+  const b = pushOutOfLakeClearanceAvoiding(candidate.x, candidate.z, lake, avoid);
+  assert.deepEqual(a, b);
 });
 
 // ---- LUL-873: keepWaypointOffLake(), extracted from engine/forest-engine.js -----
