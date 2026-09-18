@@ -171,6 +171,7 @@ import {
   inLakeClearance,
   lakeSpeedMultiplier,
   pushOutOfLakeClearance,
+  pushOutOfLakeClearanceAvoiding,
   keepWaypointOffLake,
 } from '@/lib/game/lake';
 import {
@@ -2033,7 +2034,25 @@ function placePredators(){
     let x, z, tries = 0;
     do { x=rnd(-half+margin, half-margin); z=rnd(-half+margin, half-margin); tries++; }
     while((x*x+z*z < 2500*clearScale*clearScale || Math.hypot(x-baby.x, z-baby.z) < 34*clearScale || blockedR(x, z, p.rad+0.5)) && tries < 60);
-    if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
+    if(inLake(x,z)){
+      // LUL-2735: the plain push only guarantees clear-of-lake, not
+      // clear-of-origin/baby (see the wrapper's own comment in lib/game/lake.ts).
+      // Re-check both circles this loop already enforced above and, if the
+      // push still violates one, search the same clearance ring for an angle
+      // that clears it too. If even that also collides with a tree/prop
+      // (blockedR), fall back to the pre-push candidate -- it already passed
+      // this loop's own blockedR check on exit (or, on the rare 60-try
+      // exhaustion path, is no worse than what shipped before this fix).
+      const pushed = pushOutOfLakeClearanceAvoiding(x, z, CONFIG.lake, [
+        { x: 0, z: 0, r: 50 * clearScale },
+        { x: baby.x, z: baby.z, r: 34 * clearScale },
+      ]);
+      if(blockedR(pushed.x, pushed.z, p.rad+0.5) && !blockedR(x, z, p.rad+0.5)){
+        // pushed candidate now collides with a prop the pre-push spot didn't -- keep the pre-push spot (still inside the lake, same as today's unfixed behavior for this one rare corner).
+      } else {
+        x = pushed.x; z = pushed.z;
+      }
+    }
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     const [ccx, ccz] = chunkXZ(x, z), [pcx, pcz] = chunkXZ(player.x, player.z);
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
