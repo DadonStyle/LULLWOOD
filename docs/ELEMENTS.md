@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7275 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6461, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7293 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6479, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -237,7 +237,21 @@ Cue-triple audit: see `docs/CUES.md`.
   final `0.3s`) instead of three independent, faster per-mesh rates — the
   previous rates left `boomFlash` fully transparent by `e=0.4`, a quarter of
   the window a late vision-QA capture is tolerated to land in
-  (`qaProbeBoomOpacity()`).
+  (`qaProbeBoomOpacity()`). **As of `LUL-3130`**, `boomFlash` (the only one
+  of the three layers that ever covers the screen centre — `boomRing`'s own
+  centre is a hole and `bspPts`'s scattered points rarely land on one pixel)
+  blends `NormalBlending` instead of `AdditiveBlending`: during the pickup
+  cinematic the camera looks into a bright sky, and an additive gold layer on
+  top of an already-bright background pushed every channel to within a few
+  percent of 255 — ACES/bloom's compression at that saturation then
+  flattens any remaining per-channel gap into a white wash regardless of the
+  mesh's own hue. `NormalBlending` replaces the background pixel with the
+  mesh's own color instead of stacking onto it, so the read stays gold/orange
+  no matter how bright the sky behind it is. The same fix also corrected
+  `qaProbeBoomPixel()`, which had been calling `renderer.render(scene,
+  camera)` directly — skipping the bloom+ACES composite pass (`renderPost()`)
+  real frames use whenever post-processing is active, so the probe measured
+  an uncomposited frame no player ever sees.
 - Ride along at the player's position while carried, small and glowing
   (`carrying` branch, `tick()`), until the player crosses
   `CONFIG.home.r` (3.6u) of the home landmark, which wins the run
@@ -1532,17 +1546,15 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5848-5908, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5999-6052 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L6053-6096). The `difficulty` module-level variable is in scope
-  at both sites. The economy
+  both `track()` call sites, now in `finishPickup()` (L5866-5926, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L6017-6070 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L6071-6114). The `difficulty` module-level variable is in scope  at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6053-6096) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L5760) rather than recomputed later, since `player.x/z` can move on
+  (L6071-6114) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L5760) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1599,7 +1611,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3955) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3979) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1723,8 +1735,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6414-7211, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
-- Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
+- Gate the player's sprint speed (`stepFrame()` at L6432-7229, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.- Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.

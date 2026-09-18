@@ -1753,9 +1753,23 @@ const BOOM_FOV_SCALE = Math.tan(CAMERA_FOV * Math.PI/360) / Math.tan(70 * Math.P
 // arithmetic. FLASH_PEAK_OPACITY replaces the two `0.9` literals below and
 // in updateBoom() so the two stay in lockstep.
 const FLASH_PEAK_OPACITY = 0.65;
+// LUL-3130: boomFlash is the only one of the three burst layers that ever
+// covers the screen centre (boomRing is a torus -- its own centre is a hole
+// -- and bspPts's scattered points rarely land on one exact pixel; live
+// per-layer probing with qaProbeBoomPixel() confirmed this). At
+// AdditiveBlending, boomFlash *adds* its gold onto whatever is already
+// behind it instead of replacing it -- during the pickup cinematic the
+// camera looks up into a bright sky (background alone read ~(188,210,224)),
+// so the additive gold pushed every channel to within a few percent of 255,
+// and ACES/bloom's compression at that saturation flattens the remaining
+// per-channel gap into a wash regardless of the mesh's own hue (verified:
+// AdditiveBlending measured deficit ~4.5, needs >20). NormalBlending
+// replaces the background pixel with the mesh's own color instead of
+// stacking onto it, so the readout stays gold/orange no matter how bright
+// the sky behind it is (measured (240,231,143), deficit 112).
 const boomGroup = new THREE.Group(); boomGroup.visible = false; scene.add(boomGroup);
 const boomFlash = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12),
-  new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 1, blending: THREE.NormalBlending, depthWrite: false, fog: false }));
 const boomRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 8, 44),
   new THREE.MeshBasicMaterial({ color: 0xff8c1a, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 boomRing.rotation.x = Math.PI/2;
@@ -5386,8 +5400,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // Force a render so the WebGL back buffer reflects the exact simulated
     // instant this is called at, independent of the rAF/fixed-step loop's
     // own timing -- readPixels with no preserveDrawingBuffer is only
-    // reliable read-immediately-after-render.
-    renderer.render(scene, camera);
+    // reliable read-immediately-after-render. LUL-3130: must go through the
+    // same path the real frame loop uses (line ~7183) -- a raw
+    // renderer.render(scene,camera) skips the bloom+ACES composite
+    // (renderPost) whenever usePost is true, reading back an uncomposited,
+    // untonemapped frame a real player never sees.
+    if(usePost) renderPost(0); else renderer.render(scene, camera);
     const gl = renderer.getContext();
     const w = renderer.domElement.width, h = renderer.domElement.height;
     const px = new Uint8Array(4);
