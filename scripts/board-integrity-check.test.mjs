@@ -44,6 +44,7 @@ import {
   assignedBacklogNoGateWakeMarker,
   isBlockedNoBlockers,
   findBlockedNoBlockers,
+  isOwnWakeTicket,
   blockedNoBlockersWakeMarker,
   authJsonPath,
   durableToken,
@@ -1600,6 +1601,54 @@ test('findBlockedNoBlockers excludes anything isTombstone() already flags -- Ala
   const agentsById = new Map([['agent-1', { id: 'agent-1', status: 'running', lastHeartbeatAt: '2026-09-17T11:59:50.000Z' }]]);
   const hits = findBlockedNoBlockers([alsoTombstone, notATombstone], agentsById, nowMs);
   assert.deepEqual(hits.map((i) => i.identifier), ['LUL-2570']);
+});
+
+test('findBlockedNoBlockers never fires on the detector own wake tickets -- LUL-3311 runaway', () => {
+  const nowMs = new Date('2026-09-18T12:00:00.000Z').getTime();
+  const agentsById = new Map([
+    ['agent-1', { id: 'agent-1', status: 'running', lastHeartbeatAt: '2026-09-18T11:59:50.000Z' }],
+  ]);
+  // A real stranded ticket. This one must still be reported.
+  const realIssue = {
+    identifier: 'LUL-2570',
+    title: 'Feature Scout proposal needs routing',
+    status: 'blocked',
+    blockedBy: [],
+    assigneeAgentId: 'agent-1',
+  };
+  // Alarm F own output, stranded the same way by quota suppression. Filing a
+  // second wake ticket about this one is what produced ~1000 tickets in a day.
+  const ownOutput = {
+    identifier: 'LUL-3091',
+    title: 'Board-integrity: LUL-3086 is blocked with zero blockers (LUL-3018 detector)',
+    status: 'blocked',
+    blockedBy: [],
+    assigneeAgentId: 'agent-1',
+  };
+  // Every other alarm output shares the prefix and must be excluded too.
+  const tombstoneOutput = {
+    identifier: 'LUL-3174',
+    title: 'Board-integrity: LUL-3130 is a tombstone (LUL-672 detector)',
+    status: 'blocked',
+    blockedBy: [],
+    assigneeAgentId: 'agent-1',
+  };
+  const hits = findBlockedNoBlockers([realIssue, ownOutput, tombstoneOutput], agentsById, nowMs);
+  assert.deepEqual(
+    hits.map((i) => i.identifier),
+    ['LUL-2570'],
+  );
+});
+
+test('isOwnWakeTicket matches every alarm marker and nothing else', () => {
+  assert.equal(isOwnWakeTicket({ title: 'Board-integrity: LUL-1 is blocked with zero blockers' }), true);
+  assert.equal(isOwnWakeTicket({ title: 'Board-integrity: LUL-1 is a tombstone' }), true);
+  assert.equal(isOwnWakeTicket({ title: 'Board-integrity: PR #12 has no owning ticket' }), true);
+  assert.equal(isOwnWakeTicket({ title: 'Board-integrity: board has zero pullable work' }), true);
+  // A ticket a human wrote that merely mentions the detector is not our output.
+  assert.equal(isOwnWakeTicket({ title: 'Fix the Board-integrity: detector loop' }), false);
+  assert.equal(isOwnWakeTicket({ title: 'LUL-3311 detector runaway' }), false);
+  assert.equal(isOwnWakeTicket({}), false);
 });
 
 test('blockedNoBlockersWakeMarker is stable and starts with Board-integrity:', () => {
