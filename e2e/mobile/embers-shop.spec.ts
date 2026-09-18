@@ -50,12 +50,12 @@ test('buying each catalog item updates balance/tier text and fires the purchase 
   expect(probe.purchaseCueCount).toBe(1);
 
   await clickBuyButton(page, 'buy-quietStep');
-  await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1730');
+  await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1800');
   expect(await qaHook(page, 'qaProbeScentLifetime')).toBeCloseTo(14 * 0.8, 5);
 
-  // Default engine difficulty is 'night' (LUL-2983): 120 embers, 1730 -> 1610.
+  // Default engine difficulty is 'night' (LUL-2983): 120 embers, 1800 -> 1680.
   await clickBuyButton(page, 'buy-pocketStones');
-  await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1610');
+  await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1680');
   probe = await qaHook(page, 'qaProbeEmbersPurchase');
   expect(probe.purchaseCueCount).toBe(3);
   await expect(page.locator('#embersShopMaxed-pocketStones')).toContainText('maxed');

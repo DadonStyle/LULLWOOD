@@ -95,11 +95,11 @@ test.describe('embers shop (LUL-2351)', () => {
     await seedEmbers(context, HIGH_BALANCE_EMBERS);
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await clickBuyButton(page, 'buy-quietStep');
-    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1850');
+    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1920');
 
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForFunction(() => Boolean(window.ForestEngine));
-    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1850');
+    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1920');
     const stored = await page.evaluate(() => JSON.parse(window.localStorage.getItem('lullwood:embers') ?? '{}'));
     expect(stored.tiers.quietStep).toBe(1);
   });
