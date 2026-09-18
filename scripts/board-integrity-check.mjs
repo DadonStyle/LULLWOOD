@@ -48,7 +48,9 @@
 // Alarms, in the order the report shows them: C (zero pullable work), B
 // (tombstoned blocked/in_review issue), A (approved+green PR with no owning
 // ticket), E (an assigned issue parked in `backlog` with no named gate --
-// CEO ruling LUL-1125, LUL-1934), D (stale request_confirmation).
+// CEO ruling LUL-1125, LUL-1934), F (blocked issue with an empty
+// blockedByIssueIds, unconditional -- founder directive LUL-3018), D (stale
+// request_confirmation).
 //
 // --post files a new `todo` wake ticket per alarm, NOT a comment on a shared
 // "standing" issue. Paperclip's write boundary follows the assignee: an
@@ -550,6 +552,24 @@ function findAssignedBacklogNoGate(backlogIssues) {
   return backlogIssues.filter(isAssignedBacklogNoGate);
 }
 
+// ---- Alarm F: blocked issue with zero blockers -----------------------------
+// Founder directive LUL-3018, observed 6x (LUL-2570/2998/3009/2831/2818/2813).
+// Deliberately does NOT reuse isTombstone's suppressions -- a fresh heartbeat,
+// an active recovery action, or a pending interaction are reasons a *tombstone*
+// might still be about to move; none of them make `blocked` with an empty
+// blockedByIssueIds any less structurally wrong (nothing is waiting on it
+// either way). Excludes anything isTombstone() already flags, so Alarm B's
+// own STRANDED/SHIPPED wake ticket is the one that fires for that overlap --
+// this alarm only earns its keep on the cases Alarm B's suppressions hide.
+function isBlockedNoBlockers(issue) {
+  if (issue.status !== 'blocked') return false;
+  return (issue.blockedBy ?? []).length === 0;
+}
+
+function findBlockedNoBlockers(blockedIssues, agentsById = new Map(), nowMs = Date.now()) {
+  return blockedIssues.filter((issue) => isBlockedNoBlockers(issue) && !isTombstone(issue, agentsById, nowMs));
+}
+
 // LUL-2048 (synthesis B-1): the tombstone/unowned-PR/zero-pullable alarms
 // dedup only against `hasOpenWakeTicket`, which scans todo/in_progress. A
 // freshly-filed wake ticket can die almost immediately (observed:
@@ -611,6 +631,7 @@ function isRecentWakeTicketSuppressed(allKnownWakeIssues, marker, nowMs, cooldow
 // zeroPullable: the result of zeroPullableWorkAlarm(), or null to skip Alarm C.
 // staleConfirmations: the result of findStaleConfirmations(), or [] to skip Alarm D.
 // assignedBacklogNoGate: the result of findAssignedBacklogNoGate(), or [] to skip Alarm E.
+// blockedNoBlockers: the result of findBlockedNoBlockers(), or [] to skip Alarm F.
 function formatReport(
   classifiedTombstones,
   unownedPrs,
@@ -618,6 +639,7 @@ function formatReport(
   zeroPullable = null,
   staleConfirmations = [],
   assignedBacklogNoGate = [],
+  blockedNoBlockers = [],
 ) {
   // EXTERNALLY_BLOCKED tombstones need no recovery action (LUL-2768's whole
   // point), so they don't count toward the alarm or the header -- only
@@ -628,6 +650,7 @@ function formatReport(
     actionableTombstoneCount > 0 ||
     unownedPrs.length > 0 ||
     assignedBacklogNoGate.length > 0 ||
+    blockedNoBlockers.length > 0 ||
     zeroPullable?.alarm ||
     staleConfirmations.length > 0;
   if (!hasAlarms) return null;
@@ -674,6 +697,16 @@ function formatReport(
       lines.push(`  - ${issue.identifier ?? issue.id}: "${issue.title}" (assignee ${issue.assigneeAgentId})`);
     }
   }
+  if (blockedNoBlockers.length > 0) {
+    lines.push(
+      '',
+      `${blockedNoBlockers.length} issue(s) status \`blocked\` with an empty blockedByIssueIds ` +
+        '(founder directive LUL-3018: nothing is waiting on this, do not leave it silently stuck):',
+    );
+    for (const issue of blockedNoBlockers) {
+      lines.push(`  - ${issue.identifier ?? issue.id}: "${issue.title}" (assignee ${issue.assigneeAgentId ?? 'none'})`);
+    }
+  }
   if (staleConfirmations.length > 0) {
     lines.push(
       '',
@@ -712,6 +745,10 @@ function staleConfirmationWakeMarker(issue) {
 
 function assignedBacklogNoGateWakeMarker(issue) {
   return `${WAKE_MARKER_PREFIX} ${issue.identifier ?? issue.id} is assigned and parked in backlog with no gate`;
+}
+
+function blockedNoBlockersWakeMarker(issue) {
+  return `${WAKE_MARKER_PREFIX} ${issue.identifier ?? issue.id} is blocked with zero blockers`;
 }
 
 function hasOpenWakeTicket(openIssues, marker) {
@@ -990,6 +1027,7 @@ function nonPausedAssigneeId(assigneeAgentId, agentsById) {
 // zero-pullable wake tickets a prior sweep filed can land here (auto-recovery flips a
 // failed run's ticket to `blocked`), so isRecentWakeTicketSuppressed needs this set
 // too or it only ever sees the todo/in_progress and done/cancelled slices.
+// blockedNoBlockers: result of findBlockedNoBlockers() (LUL-3018), or [] to skip Alarm F.
 async function fileWakeTickets(
   apiBase,
   companyId,
@@ -1004,6 +1042,7 @@ async function fileWakeTickets(
   assignedBacklogNoGate = [],
   agentsById = new Map(),
   otherStatusIssues = [],
+  blockedNoBlockers = [],
 ) {
   // Resolve lazily and cache -- a quiet run (no alarms) should never touch
   // /api/agents/me at all, and a run with several alarms should only resolve
@@ -1144,6 +1183,27 @@ async function fileWakeTickets(
     filed.push({ kind: 'assigned-backlog-no-gate', identifier: issue.identifier ?? issue.id, assigneeAgentId });
   }
 
+  for (const issue of blockedNoBlockers) {
+    const marker = blockedNoBlockersWakeMarker(issue);
+    if (hasOpenWakeTicket(openIssues, marker)) continue;
+    if (isRecentWakeTicketSuppressed(allKnownWakeIssues, marker, nowMs)) continue;
+    // LUL-2570 was unassigned, so this must not assume a real assignee exists.
+    const assigneeAgentId = nonPausedAssigneeId(issue.assigneeAgentId, agentsById) ?? (await resolveSelfId());
+    await createWakeIssue(apiBase, companyId, apiKey, {
+      title: `${marker} (LUL-3018 detector)`,
+      description:
+        `Detected by scripts/board-integrity-check.mjs: ${issue.identifier ?? issue.id} ` +
+        `("${issue.title}") is status \`blocked\` with an empty \`blockedByIssueIds\` -- ` +
+        `nothing is waiting on it either way, and nothing will wake it automatically. Do not ` +
+        `silently flip its status: post a comment on the ticket naming this defect, then either ` +
+        `move it back to \`todo\` if it is ready to work, or give it a real \`blockedByIssueIds\` ` +
+        `gate. See the LUL-3018 ticket thread for the founder directive behind this alarm.`,
+      assigneeAgentId,
+      priority: 'high',
+    });
+    filed.push({ kind: 'blocked-no-blockers', identifier: issue.identifier ?? issue.id, assigneeAgentId });
+  }
+
   return filed;
 }
 
@@ -1210,6 +1270,10 @@ async function main() {
   const zeroPullable = zeroPullableWorkAlarm(openIssuesForOwnership, agents);
   const staleConfirmations = findStaleConfirmations(allCandidates, nowMs);
   const assignedBacklogNoGate = findAssignedBacklogNoGate(backlogIssues);
+  // LUL-3018: tombstoneCandidates already contains full `blocked` issues with
+  // `blockedBy` attached (fetchIssuesFullByStatus above), so this needs no new API call.
+  const blockedIssues = tombstoneCandidates.filter((i) => i.status === 'blocked');
+  const blockedNoBlockers = findBlockedNoBlockers(blockedIssues, agentsById, nowMs);
   const report = formatReport(
     classifiedTombstones,
     unownedPrs,
@@ -1217,6 +1281,7 @@ async function main() {
     zeroPullable,
     staleConfirmations,
     assignedBacklogNoGate,
+    blockedNoBlockers,
   );
 
   if (!report) {
@@ -1243,6 +1308,7 @@ async function main() {
       assignedBacklogNoGate,
       agentsById,
       tombstoneCandidates,
+      blockedNoBlockers,
     );
     if (filed.length === 0) {
       console.error('--post: every alarm already has an open wake ticket, filed nothing new.');
@@ -1303,6 +1369,9 @@ export {
   isAssignedBacklogNoGate,
   findAssignedBacklogNoGate,
   assignedBacklogNoGateWakeMarker,
+  isBlockedNoBlockers,
+  findBlockedNoBlockers,
+  blockedNoBlockersWakeMarker,
   authJsonPath,
   durableToken,
   resolveSelfAgentId,
