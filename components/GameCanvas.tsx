@@ -160,8 +160,12 @@ const OVERLAY_STYLE = `
     .buyBtn { padding: 13px 18px; font-size: 14px; }
     #gateTitle { font-size: 26px; }
     #gateSub { font-size: 12px; }
-    #gateCredit { font-size: 11px; }
-    #gateKeys { font-size: 11px; line-height: 1.7; max-width: 34rem; margin-inline: auto; }
+    /* LUL-3255: was 11px, under lib/ui/hygiene.ts's 12px MIN_FONT_PX floor --
+       flagged every prod QA run on both landscape mobile viewports. Plenty of
+       vertical slack on #gate (see the ticket's screenshot), so no compensating
+       trim needed here. */
+    #gateCredit { font-size: 12px; }
+    #gateKeys { font-size: 12px; line-height: 1.7; max-width: 34rem; margin-inline: auto; }
     /* Minimap stays legible at the same physical size rather than shrinking
        further -- on a ~390px-wide phone it's already a larger fraction of
        the screen than on desktop, which is the point (small map = useless
@@ -657,14 +661,33 @@ const OVERLAY_STYLE = `
        tighter of the two reported viewports): 465px of content into a
        327px budget needed ~140px trimmed across every child, not just the
        shop. */
+    /* LUL-3282: #deathText's own base padding/gap/h1/p rules (below, "death:
+       video cutscene + loss text" section) are declared *after* this block,
+       so at equal specificity they'd normally win by source order and silently
+       cancel this squeeze on #deathText -- same class of bug as the documented
+       LUL-1088 .restartBtn/.buyBtn cascade-order issue above. #winText's
+       equivalent base rules sit *before* this block (no #deathText-style risk),
+       so only the #deathText side of each declaration needs !important here,
+       matching the LUL-2410/LUL-2158 precedent for guaranteed-win overrides. */
     #winText, #deathText { padding: 8px 16px; gap: 2px; }
+    #deathText { padding: 8px 16px !important; gap: 2px !important; }
     #winText h1, #deathText h1 { font-size: 20px; }
+    #deathText h1 { font-size: 20px !important; }
     #winText p, #deathText p { margin: 0 0 2px; font-size: 11px; }
+    #deathText p { margin: 0 0 2px !important; font-size: 11px !important; }
     #runChronicle { font-size: 10px; margin-top: 2px; }
     .restartBtn { margin-top: 2px; padding: 6px 16px; }
-    #embersShop { flex-direction: column; margin-top: 2px; gap: 2px; }
-    #embersShopBalance, #embersShopMaxed { font-size: 11px; }
-    .buyBtn { font-size: 10px; padding: 3px 8px; }
+    #embersShop { flex-direction: column; margin-top: 2px; gap: 1px; }
+    /* LUL-3255: #embersShopBalance/.buyBtn were 11px/10px, under the 12px
+       MIN_FONT_PX floor -- flagged every prod QA run (also reproduces on the
+       win/death shop, shared markup, see the LUL-2694 comment above this
+       block). Bumping both by 1-2px reopens the exact overflow LUL-2694 fixed,
+       so the gap/padding trims here (2px->1px, 3px->2px vertical) claw back
+       slightly more height than the font bump adds -- verified against a live
+       win screen on iphone-se-landscape (375px tall, the tighter viewport)
+       that #winText's scrollHeight still fits its clientHeight. */
+    #embersShopBalance, #embersShopMaxed { font-size: 12px; }
+    .buyBtn { font-size: 12px; padding: 2px 6px; }
   }
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
