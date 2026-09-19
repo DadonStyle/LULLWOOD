@@ -3,6 +3,8 @@ import { put } from '@vercel/blob';
 // LUL-482: POST /api/telemetry — Vercel Blob sink for analytics events.
 // If BLOB_READ_WRITE_TOKEN is absent, logs once per cold start and returns 204.
 // That is a degraded state, not an error — see LUL-482 and game/m4-analytics-plan.
+// A failed Blob write is treated the same way: logged, then 204. This route never
+// answers 5xx to a browser beacon (LUL-4342).
 //
 // Uses web-standard Request/Response (no next/server import) so the handler
 // is directly testable with node --test without mocking Next.js internals.
@@ -103,10 +105,25 @@ export async function POST(req: Request): Promise<Response> {
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const blobPath = `events/${yyyy}/${mm}/${dd}/${uuid}.json`;
 
-  await put(blobPath, JSON.stringify(payload), {
-    access: 'public',
-    contentType: 'application/json',
-  });
+  // LUL-4342: `access: 'public'` made every telemetry event world-readable at a
+  // Blob URL, and the store rejects it outright, so this `put()` threw on every
+  // single request once the token was finally set. The throw was unguarded, so
+  // the route answered 500 instead of persisting anything. The suggestions route
+  // already writes `access: 'private'` (PR #743/#744); telemetry never got the
+  // same change.
+  //
+  // The try/catch matters independently of the access mode. Telemetry is
+  // fire-and-forget from the browser: a failed write must never surface to the
+  // player as a 500, and it must never be silent either. Log loudly, return 204,
+  // same contract as the missing-token branch above.
+  try {
+    await put(blobPath, JSON.stringify(payload), {
+      access: 'private',
+      contentType: 'application/json',
+    });
+  } catch (err) {
+    console.error('[telemetry] blob write failed -- event dropped', blobPath, err);
+  }
 
   return new Response(null, { status: 204 });
 }
