@@ -566,8 +566,32 @@ function isBlockedNoBlockers(issue) {
   return (issue.blockedBy ?? []).length === 0;
 }
 
+// LUL-3311 (founder 2026-09-18): Alarm F must never fire on this detector's OWN
+// output, or it self-perpetuates without bound. The chain observed in production:
+// Alarm F files "Board-integrity: LUL-X is blocked with zero blockers" and assigns
+// it to an agent; that agent is quota-suppressed, so recovery flips the NEW ticket
+// to `blocked` with an empty blockedByIssueIds; 15 minutes later the next sweep
+// sees it as a brand-new subject (a different identifier, so the marker cooldown
+// in isRecentWakeTicketSuppressed never matches) and files another one about it.
+// Every sweep compounds, because each sweep re-processes everything it already
+// filed. Measured 2026-09-18: about 1000 tickets in a single day, the board
+// carried from LUL-3325 to LUL-4324, and 60% of the CTO's entire shipped output
+// went to closing them. The per-subject cooldown cannot stop this, because each
+// generated ticket is a genuinely new subject, so the fix has to be structural.
+//
+// Excluding our own wake tickets loses nothing real. If a detector wake ticket is
+// itself stranded, filing a SECOND detector ticket about it does not unstick the
+// first. That case is an operational fault in the detector, and it belongs in the
+// run summary, not on the board.
+function isOwnWakeTicket(issue) {
+  return (issue.title ?? '').startsWith(WAKE_MARKER_PREFIX);
+}
+
 function findBlockedNoBlockers(blockedIssues, agentsById = new Map(), nowMs = Date.now()) {
-  return blockedIssues.filter((issue) => isBlockedNoBlockers(issue) && !isTombstone(issue, agentsById, nowMs));
+  return blockedIssues.filter(
+    (issue) =>
+      isBlockedNoBlockers(issue) && !isTombstone(issue, agentsById, nowMs) && !isOwnWakeTicket(issue),
+  );
 }
 
 // LUL-2048 (synthesis B-1): the tombstone/unowned-PR/zero-pullable alarms
@@ -746,6 +770,11 @@ function staleConfirmationWakeMarker(issue) {
 function assignedBacklogNoGateWakeMarker(issue) {
   return `${WAKE_MARKER_PREFIX} ${issue.identifier ?? issue.id} is assigned and parked in backlog with no gate`;
 }
+
+// LUL-3311 (founder 2026-09-18): the most wake tickets Alarm F may file in one
+// sweep. Chosen so a genuine cluster of stranded tickets still gets reported,
+// while a runaway stops within one sweep instead of running for a day.
+const MAX_ALARM_F_FILES_PER_SWEEP = 10;
 
 function blockedNoBlockersWakeMarker(issue) {
   return `${WAKE_MARKER_PREFIX} ${issue.identifier ?? issue.id} is blocked with zero blockers`;
@@ -1183,7 +1212,20 @@ async function fileWakeTickets(
     filed.push({ kind: 'assigned-backlog-no-gate', identifier: issue.identifier ?? issue.id, assigneeAgentId });
   }
 
+  let filedAlarmF = 0;
+  let alarmFCapHit = false;
   for (const issue of blockedNoBlockers) {
+    // LUL-3311 backstop. Patch 1 removes the known feedback loop, but any future
+    // alarm that files a ticket which can itself trip the same alarm recreates it.
+    // A sweep that wants to file more than MAX_ALARM_F_FILES_PER_SWEEP tickets is
+    // reporting a systemic board fault, not that many independent faults, and
+    // filing hundreds of wake tickets is never the right response to it. Stop and
+    // say so in the summary instead. Without this cap the 2026-09-18 runaway filed
+    // dozens per sweep, every 15 minutes, unattended, for a full day.
+    if (filedAlarmF >= MAX_ALARM_F_FILES_PER_SWEEP) {
+      alarmFCapHit = true;
+      break;
+    }
     const marker = blockedNoBlockersWakeMarker(issue);
     if (hasOpenWakeTicket(openIssues, marker)) continue;
     if (isRecentWakeTicketSuppressed(allKnownWakeIssues, marker, nowMs)) continue;
@@ -1202,6 +1244,16 @@ async function fileWakeTickets(
       priority: 'high',
     });
     filed.push({ kind: 'blocked-no-blockers', identifier: issue.identifier ?? issue.id, assigneeAgentId });
+    filedAlarmF += 1;
+  }
+
+  if (alarmFCapHit) {
+    console.error(
+      `ALARM F CAP HIT: stopped after filing ${MAX_ALARM_F_FILES_PER_SWEEP} blocked-no-blockers wake ` +
+        `tickets in one sweep (${blockedNoBlockers.length} candidates matched). This means the board has a ` +
+        `systemic fault, not ${blockedNoBlockers.length} independent ones. Investigate before re-enabling; ` +
+        `see LUL-3311.`,
+    );
   }
 
   return filed;
@@ -1371,6 +1423,7 @@ export {
   assignedBacklogNoGateWakeMarker,
   isBlockedNoBlockers,
   findBlockedNoBlockers,
+  isOwnWakeTicket,
   blockedNoBlockersWakeMarker,
   authJsonPath,
   durableToken,
