@@ -1770,9 +1770,23 @@ const BOOM_FOV_SCALE = Math.tan(CAMERA_FOV * Math.PI/360) / Math.tan(70 * Math.P
 // arithmetic. FLASH_PEAK_OPACITY replaces the two `0.9` literals below and
 // in updateBoom() so the two stay in lockstep.
 const FLASH_PEAK_OPACITY = 0.65;
+// LUL-3130: boomFlash is the only one of the three burst layers that ever
+// covers the screen centre (boomRing is a torus -- its own centre is a hole
+// -- and bspPts's scattered points rarely land on one exact pixel; live
+// per-layer probing with qaProbeBoomPixel() confirmed this). At
+// AdditiveBlending, boomFlash *adds* its gold onto whatever is already
+// behind it instead of replacing it -- during the pickup cinematic the
+// camera looks up into a bright sky (background alone read ~(188,210,224)),
+// so the additive gold pushed every channel to within a few percent of 255,
+// and ACES/bloom's compression at that saturation flattens the remaining
+// per-channel gap into a wash regardless of the mesh's own hue (verified:
+// AdditiveBlending measured deficit ~4.5, needs >20). NormalBlending
+// replaces the background pixel with the mesh's own color instead of
+// stacking onto it, so the readout stays gold/orange no matter how bright
+// the sky behind it is (measured (240,231,143), deficit 112).
 const boomGroup = new THREE.Group(); boomGroup.visible = false; scene.add(boomGroup);
 const boomFlash = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12),
-  new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 1, blending: THREE.NormalBlending, depthWrite: false, fog: false }));
 const boomRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 8, 44),
   new THREE.MeshBasicMaterial({ color: 0xff8c1a, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 boomRing.rotation.x = Math.PI/2;
@@ -4478,6 +4492,24 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // put a lion a few units out with hunt=true. Even at full stillness this
   // must still catch you (STILL_DETECT_CUT never reaches 1).
   window.ForestEngine.qaOpenHideNearLion = function(){
+    // LUL-3126: live-repro'd that an in-flight charge staged by an earlier
+    // qaTriggerCharge() call can resolve to 'caught' (stepCharge, CHARGE_WINDOW
+    // 1s game time) in the render loop between the caller's two separate
+    // page.evaluate() round-trips -- i.e. entirely before this hook's own body
+    // ever runs, not just before it finishes. No amount of clearing state
+    // below can undo a kill that already landed: `dead` is a once-only guard
+    // (triggerDeath), and the below loop's `p.inert = true` skip in
+    // updatePredators() only prevents *future* catches. Returning the lion's
+    // index anyway told the caller "the lion is now the one hunting you" while
+    // the kill credit already belonged to whatever caught the player first --
+    // the 3rd recurrence of this shape (LUL-2596, LUL-2876), same symptom
+    // (#deathKind names the wrong species), different predator each time,
+    // because each prior fix cleared more staged-state races instead of
+    // checking whether the race had already been lost. Returning null here
+    // reuses the hook's existing "no lion spawned" contract so the caller's
+    // own fallback path names the real killer instead of asserting a lion
+    // that can no longer exist.
+    if(dead) return null;
     player.x = 0; player.z = 0;
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
@@ -4494,7 +4526,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // on the mobile death-cutscene step: #deathKind read 'bear' instead of the
     // staged 'lion'). `inert` removes a predator from updatePredators()'s loop
     // entirely (:2516), same flag qaIsolatePredatorKind (:4635) and
-    // qaStageWalkIntoCover use for this exact failure mode.
+    // qaStageWalkIntoCover use for this exact failure mode. LUL-3126: none of
+    // this runs at all if `dead` is already true (see the guard above) -- it
+    // only protects the window between this hook starting and a *later*
+    // in-flight charge/re-detect resolving, not a race already lost before
+    // the hook was even called.
     for(const p of predators){
       if(p === lion) continue;
       if(p.charge){ p.charge = null; endChargeHud(); }
@@ -4930,6 +4966,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // wait window.
   const LION_STANDOFF = 14;
   window.ForestEngine.qaOpenHideNearLionAtHideSpot = function(){
+    // LUL-3126: same already-lost-the-race guard as qaOpenHideNearLion above --
+    // a kill from an earlier-staged predator can land before this hook's body
+    // ever runs, and nothing below can undo it.
+    if(dead) return null;
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
@@ -5381,8 +5421,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // Force a render so the WebGL back buffer reflects the exact simulated
     // instant this is called at, independent of the rAF/fixed-step loop's
     // own timing -- readPixels with no preserveDrawingBuffer is only
-    // reliable read-immediately-after-render.
-    renderer.render(scene, camera);
+    // reliable read-immediately-after-render. LUL-3130: must go through the
+    // same path the real frame loop uses (line ~7183) -- a raw
+    // renderer.render(scene,camera) skips the bloom+ACES composite
+    // (renderPost) whenever usePost is true, reading back an uncomposited,
+    // untonemapped frame a real player never sees.
+    if(usePost) renderPost(0); else renderer.render(scene, camera);
     const gl = renderer.getContext();
     const w = renderer.domElement.width, h = renderer.domElement.height;
     const px = new Uint8Array(4);
