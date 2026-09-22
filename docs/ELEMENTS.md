@@ -1268,11 +1268,17 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   overlapped the hint's first line at that 30px gap; `#windIndicatorHint`'s
   `top` moved to `64px` (default) / `228px` (minimap visible), a 14px
   increase in both, to clear it. LUL-2309 gave the minimap its own
-  `showMinimap` setting, decoupled from admin mode (`#minimap` is now
-  `display:none` under `body:not([data-show-minimap="1"])`, default OFF) --
-  the clearance push moved from keying off `data-admin-mode="1"` to keying
-  off `data-show-minimap="1"`, since it tracks the minimap's own visibility,
-  not admin mode's.
+  `showMinimap` setting, decoupled from admin mode -- the clearance push
+  moved from keying off `data-admin-mode="1"` to keying off
+  `data-show-minimap="1"`, since it tracked the minimap's own visibility,
+  not admin mode's. LUL-4341 reverted this: the leaderboard record
+  (LUL-3264) is Blackout-only, no minimap, no admin mode, so a speed record
+  isn't meaningful if half the field ran with a map on screen. The
+  `showMinimap` setting and `data-show-minimap` flag are gone; `#minimap` is
+  `display:none` under `body[data-admin-mode="0"]` again (same rule shape as
+  `#panel`), and the clearance push keys back off `data-admin-mode="1"`. A
+  stored `showMinimap: true` from before LUL-4341 is dead and does not
+  resurrect the minimap.
   LUL-2310: fullscreen has a second entry point besides `GameMenu.tsx`'s
   `menuFullscreen` button -- **F11** and **Alt+Enter** (`engine/
   forest-engine.js`'s `keydown` handler), both routed through one shared

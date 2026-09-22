@@ -8,9 +8,8 @@
 // Not device-verified; this is a headless-Chromium touch emulation repro,
 // see the Game Tester's confirmation pass.
 //
-// LUL-2309: minimap visibility moved to its own `showMinimap` setting,
-// decoupled from admin mode -- see ../minimap-setting.spec.ts and
-// ./minimap-setting.spec.ts for its mobile coverage.
+// LUL-4341: minimap is admin-gated again -- see ./minimap-setting.spec.ts
+// for the blackout-preset and stale-key regression coverage.
 import { test, expect } from '../fixtures';
 import { boot } from '../helpers';
 
@@ -30,6 +29,7 @@ test('admin mode defaults off and is reachable/toggleable on mobile', async ({ p
   // same as desktop, see ../admin-mode.spec.ts.
   await expect(page.locator('#lightState')).toBeHidden();
   await expect(page.locator('#veilState')).toBeHidden();
+  await expect(page.locator('#minimap')).toBeHidden();
 
   // LUL-1085: Settings button moved to GameMenu, open it via the hamburger
   const menuToggle = page.getByTestId('menuToggle');
@@ -49,4 +49,5 @@ test('admin mode defaults off and is reachable/toggleable on mobile', async ({ p
   await toggle.evaluate((el) => (el as HTMLInputElement).click());
 
   await expect(page.locator('#pace')).toBeVisible();
+  await expect(page.locator('#minimap')).toBeVisible();
 });
