@@ -365,12 +365,24 @@ jobs:
             exit 1
           fi
 
+          # LUL-3582: a shard-outcome result of 'failure' here means a
+          # playwright outcome file (advisory, continue-on-error: true per
+          # the LUL-1702 step above) was non-success -- the same signal
+          # LUL-1702 already decoupled from this workflow's run conclusion
+          # at the step level. Failing this job on it re-couples them one
+          # job downstream and re-creates the daily LUL-685 watchdog red
+          # the studio already decided not to gate on (every scheduled run
+          # 2026-09-18 through 2026-09-22 failed for exactly this reason).
+          # Missing shard-outcome artifacts is a different, non-advisory
+          # signal -- a real infra problem -- and still fails the job.
           result=success
+          infra_problem=false
           shopt -s nullglob
           files=(shard-outcomes/*.txt)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "::warning::no shard-outcome artifacts found despite a successful combined-suite job -- treating as failure rather than trusting an absence of data."
             result=failure
+            infra_problem=true
           fi
           for f in "${files[@]}"; do
             outcome="$(cat "$f")"
@@ -380,9 +392,13 @@ jobs:
             fi
           done
           echo "suite_result=$result" >> "$GITHUB_OUTPUT"
-          if [ "$result" = "failure" ]; then
+          if [ "$infra_problem" = "true" ]; then
+            echo "::error::no shard-outcome artifacts -- an infra problem, not an advisory playwright failure, failing the job."
             exit 1
           fi
+          # A playwright-only failure (result=failure, infra_problem=false)
+          # is advisory -- suite_result is already written for
+          # open-or-refresh-cut-pr to read -- so don't fail this job over it.
 
   open-or-refresh-cut-pr:
     name: open or refresh the cut PR
