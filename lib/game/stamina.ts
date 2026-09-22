@@ -13,6 +13,12 @@ export const STAMINA_REGEN_MUL = 0.4;
 // engine/forest-engine.js:2996 (walk*1.8). This module becomes the single source
 // of truth for it; the engine call site below stops hardcoding 1.8.
 export const STAMINA_SPRINT_MUL = 1.8;
+// Wind-Assisted Evasion (LUL-3149): flat bonus on top of sprintSpeedMul() while sprinting
+// directly against the wind (isMovingAgainstWind(), lib/game/scent.ts:121) -- stacks
+// multiplicatively with the stamina-charge-scaled sprint multiplier, same shape
+// bogSpeedMultiplier/lakeSpeedMultiplier already stack at the call site
+// (engine/forest-engine.js:6593). CEO-accepted magnitude (LUL-3034 proposal): +20%.
+export const WIND_ASSIST_SPEED_MUL = 1.2;
 
 /** Advances the charge by one frame. `sprinting` is the engine's existing
  * `running` flag (true whenever the sprint control is held/toggled-on),

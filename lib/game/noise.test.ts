@@ -5,6 +5,7 @@ import {
   checkThrowableNoise,
   NOISE_RADIUS_WALK,
   NOISE_RADIUS_RUN,
+  NOISE_RADIUS_RUN_WIND,
   HEAR_CHANCE_PER_SEC,
   CARRIED_NOISE_FLOOR,
 } from './noise.ts';
@@ -15,6 +16,12 @@ test('noise radius constants: run carries further than walk', () => {
   assert.ok(NOISE_RADIUS_RUN > NOISE_RADIUS_WALK);
   assert.equal(NOISE_RADIUS_WALK, 14);
   assert.equal(NOISE_RADIUS_RUN, 24);
+});
+
+test('NOISE_RADIUS_RUN_WIND is a -30% quieter sprint radius than NOISE_RADIUS_RUN', () => {
+  assert.ok(NOISE_RADIUS_RUN_WIND < NOISE_RADIUS_RUN);
+  assert.equal(NOISE_RADIUS_RUN_WIND, NOISE_RADIUS_RUN * 0.7);
+  assert.ok(Math.abs(NOISE_RADIUS_RUN_WIND - 16.8) < 1e-9);
 });
 
 // ---- isNoiseHeard: range gate ------------------------------------------------
