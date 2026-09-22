@@ -814,7 +814,7 @@ Four localStorage hooks all use the same two-effect split — **the engine owns 
 | `useEmbers` | `lullwood:embers` | `setEmbers(balance, tiers)` | validates `balance` is a number (else the whole read returns `null`), drops non-numeric tiers |
 | `useMissionUnlocks` | `lullwood:mission-unlocks` | `setMissionUnlocks?.()` | optional-call guard so a contract mismatch can't blank the page; coerces `deepwater` with `!!` |
 | `useProgression` | `lullwood:progression` | `setProgression?.()` | deliberately does *not* validate shape — the engine re-validates |
-| `SettingsPanel`'s effect | `lullwood:settings` | 8 setters | `setDifficulty`/`setRunMode`/`setSensitivity`/`setInvertY`/`setReducedMotion`/`setCaptions`/`setScentTrailVisible`/`setHintsEnabled`. `scentTrailVisible`/`hintsEnabled` use `!== false` (default ON); `highContrast`/`adminMode`/`showMinimap` use `!!` (default OFF) and have no engine action at all — they are body dataset flags |
+| `SettingsPanel`'s effect | `lullwood:settings` | 8 setters | `setDifficulty`/`setRunMode`/`setSensitivity`/`setInvertY`/`setReducedMotion`/`setCaptions`/`setScentTrailVisible`/`setHintsEnabled`. `scentTrailVisible`/`hintsEnabled` use `!== false` (default ON); `highContrast`/`adminMode` use `!!` (default OFF) and have no engine action at all — they are body dataset flags. LUL-4341 removed `showMinimap` (minimap is admin-gated again); a stored key from before that ticket is dead |
 
 Every write is wrapped in `try/catch` — private mode / quota just means the value applies for the session.
 

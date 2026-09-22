@@ -327,18 +327,15 @@ const OVERLAY_STYLE = `
      for veil/light is the in-world vignette dim + fog billow, not this HUD. */
   body[data-admin-mode="0"] #panel { display: none !important; }
 
-  /* LUL-2309: the minimap got its own player-facing setting, decoupled from
-     admin mode (LUL-2248 turned it into a navigation aid -- home ring + beacon
-     colours -- not a dev tool). Default OFF, same as adminMode/highContrast.
-     Selects on the attribute being ABSENT or "0", not just "0": before
-     SettingsPanel's effect runs on first paint there is no data-show-minimap
-     attribute at all, and an absent attribute must still hide, not show by
-     falling through to no matching rule.
-     !important still needed: the engine writes its own inline mm.style.display
-     (blackout difficulty preset, forest-engine.js) -- when this rule doesn't
-     apply (setting is on), that inline style is what correctly still hides the
-     minimap under blackout. */
-  body:not([data-show-minimap="1"]) #minimap { display: none !important; }
+  /* LUL-4341: reverts LUL-2309's standalone player-facing minimap toggle --
+     the leaderboard record (LUL-3264) is Blackout-only, no minimap, no admin
+     mode, and a speed record isn't meaningful if half the field ran with a
+     map on screen. Minimap is admin-gated again, same rule shape as #panel
+     above. !important still needed: the engine writes its own inline
+     mm.style.display (blackout difficulty preset, forest-engine.js) -- when
+     this rule doesn't apply (admin mode is on), that inline style is what
+     correctly still hides the minimap under blackout. */
+  body[data-admin-mode="0"] #minimap { display: none !important; }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
   #pausePrompt { position: fixed; inset: 0; z-index: 15; display: none;
@@ -397,13 +394,11 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none; opacity: 1; }
 
   /* LUL-1912's minimap-clearance push only matters while the minimap is actually
-     visible -- top:20/right:20 above is what a player with the minimap off (still
-     the default, LUL-2309) and the QA tester actually see. Keyed off
-     data-show-minimap now that visibility is decoupled from admin mode; used to
-     key off data-admin-mode="1" back when the minimap only ever showed under
-     admin mode. */
-  body[data-show-minimap="1"] #windIndicator { top: 184px; }
-  body[data-show-minimap="1"] #windIndicatorHint { top: 228px; }
+     visible -- top:20/right:20 above is what a player with admin mode off (the
+     default) and the QA tester actually see. LUL-4341: keyed back off
+     data-admin-mode="1" now that minimap visibility is admin-gated again. */
+  body[data-admin-mode="1"] #windIndicator { top: 184px; }
+  body[data-admin-mode="1"] #windIndicatorHint { top: 228px; }
 
   /* LUL-2307: generic first-encounter hint caption, generalizing LUL-2230's
      scent-only #scentTrailCaption -- scent is now just one entry in the engine's

@@ -1,14 +1,9 @@
-// LUL-2309: the minimap got its own `showMinimap` setting, decoupled from
-// admin mode -- LUL-2248 turned it into a player-facing navigation aid (home
-// ring + beacon colours), not a dev tool, so it needs a player-visible toggle
-// rather than riding along with admin mode's dev HUD. See
+// LUL-4341: reverts LUL-2309's standalone `showMinimap` setting -- the
+// leaderboard record (LUL-3264) is Blackout-only, no minimap, no admin mode,
+// so the minimap is admin-gated again (its pre-LUL-2309 rule). See
 // components/SettingsPanel.tsx / components/GameCanvas.tsx's stylesheet and
-// ../e2e/admin-mode.spec.ts (which used to own this coverage).
-//
-// Default is OFF, same falsy idiom as adminMode/highContrast -- a
-// never-persisted key must read as OFF, including before SettingsPanel's
-// effect has run on first paint (components/GameCanvas.tsx's
-// `body:not([data-show-minimap="1"])` selector covers that gap).
+// ./admin-mode.spec.ts (which now owns the on/off toggle coverage; this file
+// keeps the blackout-preset and stale-key regression coverage).
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
@@ -25,24 +20,24 @@ test.describe('minimap setting', () => {
     await expect(page.locator('#minimap')).toBeHidden();
   });
 
-  test('hidden with adminMode:true alone (admin mode no longer shows it)', async ({ page, context }) => {
+  test('shown with adminMode:true', async ({ page, context }) => {
     await seedSettings(context, { adminMode: true });
     await boot(page);
     await enter(page);
-    await expect(page.locator('#minimap')).toBeHidden();
+    await expect(page.locator('#minimap')).toBeVisible();
     // confirms admin mode itself is genuinely on, not just a no-op seed
     await expect(page.locator('#pace')).toBeVisible();
   });
 
-  test('shown with showMinimap:true', async ({ page, context }) => {
+  test('a stale showMinimap:true from before LUL-4341 does not resurrect it', async ({ page, context }) => {
     await seedSettings(context, { showMinimap: true });
     await boot(page);
     await enter(page);
-    await expect(page.locator('#minimap')).toBeVisible();
+    await expect(page.locator('#minimap')).toBeHidden();
   });
 
-  test('hidden on blackout regardless of the setting', async ({ page, context }) => {
-    await seedSettings(context, { showMinimap: true });
+  test('hidden on blackout regardless of admin mode', async ({ page, context }) => {
+    await seedSettings(context, { adminMode: true });
     await boot(page, { qaHooks: true });
     await enter(page);
     await expect(page.locator('#minimap')).toBeVisible();
@@ -63,7 +58,7 @@ test.describe('minimap setting', () => {
   });
 
   test('persists across reload', async ({ page, context }) => {
-    await seedSettings(context, { showMinimap: true });
+    await seedSettings(context, { adminMode: true });
     await boot(page);
     await enter(page);
     await expect(page.locator('#minimap')).toBeVisible();
