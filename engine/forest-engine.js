@@ -125,6 +125,7 @@ import {
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { CAVE_IMMUNITY_TIME, isCaveImmune } from '@/lib/game/cave';
+import { VEIL_OVERLOAD_DURATION, isVeilOverloadActive } from '@/lib/game/veilOverload';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL, WIND_ASSIST_SPEED_MUL } from '@/lib/game/stamina';
 import { carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity } from '@/lib/game/childGlow';
 import {
@@ -618,6 +619,7 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 // gate; caveImmuneT is the live countdown (0 = inactive), decremented in
 // tick() alongside the other per-frame timers.
 let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
+let veilOverloadChargeT = 0, veilOverloadUsedThisCarry = false;
 let windAssistActive = false;   // LUL-3149: previous frame's (running && movingAgainstWind), for edge-triggered start/end cues
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
@@ -2235,7 +2237,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','lake','bog','deepwater','oakHollow',
-  'wolf','bear','lion','stamina','windAssist','cover','caveImmune','throwable','veil'];
+  'wolf','bear','lion','stamina','windAssist','cover','caveImmune','veilOverload','throwable','veil'];
 // 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
 // projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2258,6 +2260,7 @@ const HINT_TEXT = {
   windAssist: 'sprinting into the wind moves you faster and quieter',
   cover:      'a bush — predators lose sight of you while you hold still',
   caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
+  veilOverload: 'burn all veil charge (Q) for a detection-proof escape',
   throwable:  'a stone — E to pick up, throw to break a chase',
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
 };
@@ -2345,7 +2348,7 @@ function pruneScentPoints(){
   while(scentPoints.length && isScentPastPruneCutoff(clock.elapsedTime - scentPoints[0].t0, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed))) scentPoints.shift();
 }
 function checkScent(p){
-  if(isCaveImmune(caveImmuneT)) return false;
+  if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return false;
   // LUL-1902: wolf-only nose reduction while the player's bog-mask is active.
   // Bears/lions and all sight-based detect() are untouched.
   const nose = p.kind === 'wolf' ? p.spec.nose * (1 - WOLF_BOG_MASK_STRENGTH * playerBogMask) : p.spec.nose;
@@ -2377,6 +2380,20 @@ function activateCavePower(){
   activeCharges = 0;
   pushState({ chargeVisible: false, caveImmuneActive: true, caveImmuneTimeLeft: CAVE_IMMUNITY_TIME });
   caveImmuneStartCue();
+}
+function activateVeilOverload(){
+  veilCharge = 0;   // burn the whole resource -- deliberately does NOT touch veilLocked:
+                     // stepVeilCharge() (lib/game/veil.ts:41, called every frame at
+                     // engine/forest-engine.js:6522) reads charge=0 next frame and takes
+                     // its existing regen branch (active = held && !locked && charge>0 is
+                     // false once charge is 0 regardless of held) -- exactly the same path
+                     // a natural hold-to-drain takes AFTER a lock clears, not the "just
+                     // hit 0" path that sets locked=true. Setting locked here too would be
+                     // a second, undocumented penalty on top of the burn itself.
+  veilOverloadChargeT = VEIL_OVERLOAD_DURATION;
+  veilOverloadUsedThisCarry = true;
+  pushState({ veilOverloadActive: true, veilOverloadTimeLeft: VEIL_OVERLOAD_DURATION });
+  veilOverloadActivateCue();
 }
 // Like spotOnto, but scent isn't "being watched": no roar / screen flash / rear-up
 // freeze. Just a growl and a straight line toward you -- the tell is behavioural
@@ -2575,11 +2592,11 @@ function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN)
 // compound). LUL-1486: the tide amount is now sampled at the predator's own
 // position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
 function effectiveDetect(p){
-  if(isCaveImmune(caveImmuneT)) return 0;
+  if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return 0;
   return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime, carrying });
 }
 function canSee(p, dist){
-  if(isCaveImmune(caveImmuneT)) return false;
+  if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return false;
   return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
@@ -3336,6 +3353,16 @@ on(window, 'keydown', e => {
     else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
   }
+  // LUL-3150: carry-leg emergency panic button -- burns all veil charge for a
+  // detection-immunity window, once per carry leg. Gated the same three ways
+  // veilOverloadVisible is (carrying/charge/not-yet-used) so the key only ever
+  // does something when the HUD prompt agrees it should; the denied branch is
+  // the Q5 refusal-feedback gap the CEO's acceptance flagged as in-scope, not
+  // deferred -- pressing Q while carrying but ineligible always gets a cue.
+  if(e.code === 'KeyQ' && playing && !paused && carrying){
+    if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisCarry) activateVeilOverload();
+    else veilOverloadDeniedCue();
+  }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
   // LUL-213: jumping stands you up first (same as any movement key already
   // does via the moveKey-breaks-hide check in tick()) -- a charge can still
@@ -3891,6 +3918,7 @@ let hudState = {
   veilCharge: 1, veilLocked: false, veilReserve: false,
   chargeVisible: false, chargeToken: 0,
   caveImmuneActive: false, caveImmuneTimeLeft: 0,
+  veilOverloadActive: false, veilOverloadTimeLeft: 0, veilOverloadVisible: false,
   // LUL-1089: contextual action prompts
   coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null,
   veilPromptVisible: false, veilPromptUrgent: false,
@@ -4596,6 +4624,29 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     target.vx = target.vz = 0; target.alert = 0; target.stuckT = 0; target.sightLock = null;
     target.state = 'chase'; target.hunt = true; target.alertedBy = null; target.charge = null; target.scentLock = 0;
     target.reroute = 10; target.rrX = target.x; target.rrZ = target.z;
+    return idx;
+  };
+  window.ForestEngine.qaOpenVeilOverloadTarget = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const target = predators[idx];
+    for(const p of predators){
+      if(p === target) continue;
+      if(p.charge){ p.charge = null; endChargeHud(); }
+      p.hunt = false;
+    }
+    // Spec drift fix: qaOpenVeilTarget's own player.x=0,z=0 placement sits exactly at
+    // CONFIG.home (engine/tuning.js:60) -- harmless there since carrying stays false,
+    // but this hook sets carrying=true, and arriveHome()'s per-frame distance check
+    // (tick()) fires the instant a carrying player is within interactRadius of home,
+    // completing the run and flipping `won` true before the test can ever press KeyQ.
+    // Staged away from home instead, same 6-unit gap.
+    player.x = 40; player.z = 0;
+    target.x = 46; target.z = 0;
+    target.vx = target.vz = 0; target.alert = 0; target.stuckT = 0; target.sightLock = null;
+    target.state = 'chase'; target.hunt = true; target.alertedBy = null; target.charge = null; target.scentLock = 0;
+    target.reroute = 10; target.rrX = target.x; target.rrZ = target.z;
+    carrying = true; veilCharge = 1; veilLocked = false; veilOverloadUsedThisCarry = false; veilOverloadChargeT = 0;
     return idx;
   };
 
@@ -5609,6 +5660,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeVeil = function(){
     return { charge: veilCharge, locked: veilLocked, reserve: veilReserve, releaseCueCount: qaVeilCharmReleaseCueCount };
   };
+  window.ForestEngine.qaProbeVeilOverload = function(){
+    return { chargeT: veilOverloadChargeT, usedThisCarry: veilOverloadUsedThisCarry, deniedCueCount: qaVeilOverloadDeniedCueCount };
+  };
   // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
   // mission prompt and the objective are all on screen at once. Returns the target or null.
   window.ForestEngine.qaTeleportNearMission = function(){
@@ -5875,6 +5929,7 @@ function setDown(){
   const next = beginSetDown(runState());
   if(next.carrying === carrying) return;   // rejected -- see setDownAllowed() in lib/game/outcome.ts
   carrying = next.carrying; babySetDown = next.setDown;
+  veilOverloadUsedThisCarry = false;
   baby.x = player.x; baby.z = player.z;
   babyGroup.position.set(baby.x, 0, baby.z);
   babyGroup.visible = true; babyGroup.scale.setScalar(1);
@@ -6058,6 +6113,39 @@ function caveImmuneEndCue(){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.6);
+}
+// LUL-3150: veil-overload cues -- distinct register from caveImmuneStartCue/EndCue (which
+// sweep low<->high sine) so the two immunity sources stay audibly distinguishable. Denied
+// cue mirrors veilCharmReleaseCue()'s counter-before-audio-gate idiom so the e2e spec can
+// assert a refusal fired even with soundOn:false.
+let qaVeilOverloadDeniedCueCount = 0;
+function veilOverloadActivateCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sawtooth';
+  o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(560, t + 0.3);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.22, t + 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.5);
+}
+function veilOverloadEndCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sawtooth';
+  o.frequency.setValueAtTime(560, t); o.frequency.exponentialRampToValueAtTime(140, t + 0.35);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.18, t + 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.55);
+}
+function veilOverloadDeniedCue(){
+  qaVeilOverloadDeniedCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(110, t);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.2);
 }
 // LUL-3149: Wind-Assisted Evasion cues -- same rising-start/falling-end shape as
 // caveImmuneStartCue/EndCue above, but a shorter, quieter pair: this is a continuous
@@ -7011,6 +7099,12 @@ function stepFrame(dt, t, skipRender){
       if(caveImmuneT === 0) caveImmuneJustEnded = true;
     }
     if(caveImmuneJustEnded) caveImmuneEndCue();
+    let veilOverloadJustEnded = false;
+    if(veilOverloadChargeT > 0){
+      veilOverloadChargeT = Math.max(0, veilOverloadChargeT - dt);
+      if(veilOverloadChargeT === 0) veilOverloadJustEnded = true;
+    }
+    if(veilOverloadJustEnded) veilOverloadEndCue();
     pushState({
       objectiveVisible: true, objectiveReady: canPickup || canBuyVeilCharm,
       // LUL-2281: collapsed to the single pre-carry prompt -- completePickup()
@@ -7048,9 +7142,12 @@ function stepFrame(dt, t, skipRender){
         : null,
       caveImmuneActive: caveImmuneT > 0,
       caveImmuneTimeLeft: caveImmuneT,
+      veilOverloadActive: veilOverloadChargeT > 0,
+      veilOverloadTimeLeft: veilOverloadChargeT,
+      veilOverloadVisible: carrying && veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisCarry,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false });
   }
   // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
   // baby.taken stays true forever once first picked up, so babySetDown is the only signal
@@ -7232,6 +7329,7 @@ function stepFrame(dt, t, skipRender){
         case 'windAssist': return [running && movingAgainstWind, null];
         case 'cover': return [coverHintVisible, lastHideSpot ? { x: lastHideSpot.x, y: 1, z: lastHideSpot.z } : null];
         case 'caveImmune': return [caveImmuneT > 0, null];
+        case 'veilOverload': return [veilOverloadChargeT > 0, null];
         case 'throwable': return [throwableHintEligible, throwableHintAnchor];
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
         default: return [false, null];
@@ -7243,6 +7341,7 @@ function stepFrame(dt, t, skipRender){
         case 'wolf': case 'bear': case 'lion': case 'cover': return hideEventCount > baseline;
         case 'throwable': return throwableGrabCount > baseline;
         case 'caveImmune': return caveImmuneT <= 0;
+        case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
         case 'stamina': return staminaCharge > 0.6;
@@ -7437,6 +7536,14 @@ tick();
     beginJump();
     jumpPressed = true;
   }
+  // LUL-3150: mobile has no physical KeyQ to synthesize -- same guard/branch shape
+  // as the KeyQ keydown handler (§2), just without the e.code/keydown-event wrapper.
+  function triggerTouchVeilOverload() {
+    const playing = entered && !won && !dead && !pickingUp;
+    if(!playing || paused || !carrying) return;
+    if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisCarry) activateVeilOverload();
+    else veilOverloadDeniedCue();
+  }
   // LUL-529: touch analogue of Escape. Desktop's Escape only ever pauses --
   // resuming happens by re-acquiring pointer lock (a mousedown handler that's
   // desktop-only, see the `mode === 'desktop'` block above), which has no
@@ -7462,7 +7569,7 @@ tick();
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchInteract,
            triggerTouchThrow,
-           triggerTouchJump, triggerTouchPause, triggerTouchToggleRun,
+           triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
            setEmbers, purchase,
            // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.

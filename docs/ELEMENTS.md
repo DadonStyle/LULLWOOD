@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7409 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6564, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7508 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6652, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1552,17 +1552,17 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5918-5978, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L6102-6155 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L6156-6199). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5973-6033, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L6190-6243 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L6244-6287). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6156-6199) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6145) rather than recomputed later, since `player.x/z` can move on
+  (L6244-6287) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6252) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1618,8 +1618,8 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L4000) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3941),
+  reset to 0 on `enter()` (L4031) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1743,7 +1743,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6517-7345, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6605-7444, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2457,6 +2457,45 @@ See `docs/specs/lul-2307-first-encounter-hints.md` for the full per-key trigger 
 declared simplifications (no per-cover-kind copy branching, constant CSS position instead of
 a DOM-measured one for the six fixed-anchor keys).
 
+### Veil Overload (LUL-3150)
+
+**What it is**
+- A carry-leg emergency panic button: pressing `KeyQ` (desktop) or tapping `#veilOverloadPrompt`
+  (mobile, `triggerTouchVeilOverload()`) while carrying with veil charge above
+  `VEIL_PROMPT_MIN_CHARGE` and not yet used this carry leg burns the entire `veilCharge` to 0
+  and grants `VEIL_OVERLOAD_DURATION` (7s) of full sight+scent detection immunity, once per
+  carry leg (`veilOverloadUsedThisCarry`, reset in `setDown()`, `engine/forest-engine.js`).
+- Gate expression (`activateVeilOverload()`/`triggerTouchVeilOverload()`,
+  `engine/forest-engine.js`): `veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisCarry`.
+  A refused press (carrying but ineligible) always fires `veilOverloadDeniedCue()` — no silent
+  no-op.
+- Detection suppression is an OR with cave immunity at the same three real call sites —
+  `checkScent(p)`, `effectiveDetect(p)`, `canSee(p, dist)` (`engine/forest-engine.js`) — same
+  scope as `isCaveImmune`, no new immunity-kind enum. The two sources stack (orthogonal:
+  a spent resource vs. cave-power state).
+- Burning the resource does not touch `stepVeilCharge()` (`lib/game/veil.ts`) or set
+  `veilLocked` — `veilCharge` is written directly from outside the state machine, same as
+  every other module-level engine var; the natural regen path picks it back up next frame.
+
+**Cue triple**
+- Visual: `#veilOverloadPanel` ("Overload · Xs" countdown, `components/Hud.tsx`), visible with
+  `adminMode` off (sibling of `#caveImmunePanel`, not inside `#panel`). `#actionSlot`'s
+  `veilOverloadPrompt` row (`tone="urgent"`, keycap `Q`) is the pre-activation offer.
+- Audio: `veilOverloadActivateCue()` on activation, `veilOverloadEndCue()` on the cooldown's
+  `>0 -> 0` edge, `veilOverloadDeniedCue()` on a refused press — all gated
+  `if(!audio || !soundOn) return`, distinct register (sawtooth sweep) from
+  `caveImmuneStartCue()`/`caveImmuneEndCue()`'s sine sweep so the two immunity sources stay
+  audibly distinguishable.
+- Explanation: `HINT_PRIORITY`'s `veilOverload` entry shows the one-shot `#hintCaption` pill
+  ("burn all veil charge (Q) for a detection-proof escape") the first time
+  `veilOverloadChargeT > 0`, dismissed once it returns to 0 — same `caveImmune` precedent.
+
+**QA hooks**: `qaOpenVeilOverloadTarget(kind)` (stages a predator + carrying/full-charge state,
+mirrors `qaOpenVeilTarget`), `qaProbeVeilOverload()` (`{ chargeT, usedThisCarry,
+deniedCueCount }`).
+
+See `docs/specs/lul-3150-veil-overload.md`.
+
 ### LUL-3009: Threat Beacon (active pulse on `#windIndicator`)
 
 Scout proposal (LUL-3007), CEO-accepted cheap slice. Adds one new read-only `EngineHudState`
@@ -2503,9 +2542,9 @@ it already fires correctly for the sprint-bonus window; both the `title` and the
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L7213 for the eligibility case), positioned below the danger hints
+(`engine/forest-engine.js` L7321 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'`. A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6066) and `windAssistEndCue()` (L6075), edge-triggers on the combined
+`windAssistStartCue()` (L6154) and `windAssistEndCue()` (L6163), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
