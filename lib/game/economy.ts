@@ -9,6 +9,7 @@
 
 import { VEIL_MAX_HOLD } from './veil.ts';
 import { SCENT_LIFETIME } from './scent.ts';
+import type { MissionKind } from './mission.ts';
 
 // CEO ruling 2026-09-03: corrected table (wiki game/economy/tier-reward-multipliers §11).
 // Each pair is { win, loss } — win scales computeWinPayout total, loss scales
@@ -70,6 +71,16 @@ export function computeSurvival(survivedSeconds: number): number {
 // death already); this is a flat bonus on top, priced deliberately low per
 // game/economy/mission-rewards §2 ("the greed comes from the depth").
 export const MISSION_DEEPWATER_REWARD = 12;
+
+// LUL-3010: oakHollow's completion bonus -- priced below MISSION_DEEPWATER_REWARD (12) since
+// the detour itself is far cheaper (≈22m vs ≈106m round trip, no timer risk). Half, same
+// "greed comes from depth, not the flat bonus" pricing rule as the original.
+export const MISSION_OAKHOLLOW_REWARD = 6;
+
+export const MISSION_REWARDS: Record<MissionKind, number> = {
+  deepwater: MISSION_DEEPWATER_REWARD,
+  oakHollow: MISSION_OAKHOLLOW_REWARD,
+};
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
 // MISSION_DEEPWATER_REWARD (never a replacement) -- CEO-accepted reward

@@ -140,6 +140,7 @@ import {
   tierOf,
   POCKET_STONES_RESERVE,
   MISSION_DEEPWATER_REWARD,
+  MISSION_REWARDS,
   DEEPWATER_RETRIEVAL_BONUS,
   DEEPWATER_SPEEDRUN_BONUS,
   computeDepth,
@@ -162,6 +163,9 @@ import {
   completeRetrieval,
   secondaryComplete,
   RETRIEVAL_ITEM,
+  eligibleMissionPool,
+  checkMissionExpiry,
+  MISSION_POOL,
 } from '@/lib/game/mission';
 // LUL-2740: pure spiral clearance search, extracted from clearLandmarkSpot()
 // below so it is unit-testable without a Three.js scene.
@@ -338,6 +342,12 @@ const qaHourNum = qaHourParam === null ? NaN : Number(qaHourParam);
 const timeOfDay = timeOfDayFromHour(Number.isFinite(qaHourNum) ? qaHourNum : new Date().getHours());
 const TOD_VISUAL = TIME_OF_DAY_VISUALS[timeOfDay];
 const TOD_AUDIO = TIME_OF_DAY_AUDIO[timeOfDay];
+
+// LUL-3010: ?qaMissionKind=<kind> forces generateMap()'s mission draw to a single-kind
+// pool so a test doesn't have to fight the progression gate + rng draw to land on a
+// specific variant -- same read pattern as ?qaHour= above. Read once at module init,
+// same lifetime as the other ?qa*= boot overrides.
+const qaForcedMissionKind = qaParams ? qaParams.get('qaMissionKind') : null;
 
 // ---- Scene / camera / renderer -------------------------------------------
 const scene = new THREE.Scene();
@@ -1339,7 +1349,14 @@ function generateMap(seed){
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
   // LUL-1258: draw this run's mission last, after every other rng() consumer
   // above, so it never shifts the stream any existing seed/replay depends on.
-  mission = pickMission(rng, secondaryChoice);
+  // LUL-3010: ?qaMissionKind= (only meaningful under ?qaHooks=1, same gating style as
+  // ?qaHour=) forces a single-kind pool so a test doesn't have to fight the progression
+  // gate + rng draw to land on a specific variant -- mirrors qaWorld picking a real map,
+  // not a faked one.
+  const missionPool = qaForcedMissionKind
+    ? MISSION_POOL.filter((m) => m.kind === qaForcedMissionKind)
+    : eligibleMissionPool(progression, difficulty);
+  mission = pickMission(rng, secondaryChoice, missionPool);
   if(CONFIG.missionScaleMul !== 1){
     mission = { ...mission, target: { ...mission.target, x: mission.target.x * CONFIG.missionScaleMul, z: mission.target.z * CONFIG.missionScaleMul } };
   } else {
@@ -2204,7 +2221,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // a fresh install), and a higher-priority key preempts a lower-priority one
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
-const HINT_PRIORITY = ['scent','landmark','lake','bog','deepwater',
+const HINT_PRIORITY = ['scent','landmark','lake','bog','deepwater','oakHollow',
   'wolf','bear','lion','stamina','cover','caveImmune','throwable','veil'];
 // 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
 // projected to a viewport fraction via projectToScreen() below, same math the
@@ -2219,7 +2236,8 @@ const HINT_TEXT = {
   landmark:   'landmarks in the fog are safe to navigate by',
   lake:       'chest-deep water — half pace. predators wade too',
   bog:        'bog — half pace, but it masks your scent from wolves',
-  deepwater:  'deepwater — reach the drowned car for a bonus payout on a run you survive',
+  deepwater:  'the drowned car — a bonus payout, but only if you reach it within the time limit',
+  oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
@@ -3865,6 +3883,9 @@ let hudState = {
   // LUL-1258: M2 Deepwater's minimal HUD panel -- null/null whenever no
   // mission is active or the player is carrying (see the tick() pushState).
   missionKind: null, missionStatus: null,
+  // LUL-3010: seconds remaining for the far/timed variant; null for the
+  // near/untimed variant or whenever missionKind/missionStatus is null.
+  missionTimerSeconds: null,
   // LUL-1666: secondary objectives (deepwater only, Phase 1). `missionUnlocks`
   // is cross-session like embersBalance above (Hud.tsx persists it).
   // `secondaryChoice` is the player's pre-run pick, reset only by
@@ -5581,6 +5602,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     player.x = mission.target.x + mission.target.interactRadius - 1; player.z = mission.target.z;
     return { kind: mission.target.kind, x: mission.target.x, z: mission.target.z, status: mission.status };
   };
+  // [QA-HOOK] LUL-3010: shrinks the *current* mission's own timeLimitSeconds so the real
+  // per-tick checkMissionExpiry() trips on the next frame -- stages the scenario, does not
+  // set status directly (status is still flipped by the real expiry path, cue included).
+  // No-op (returns null) if the mission has no timer (near variant / already resolved).
+  window.ForestEngine.qaShrinkMissionTimer = function(seconds){
+    if(!mission || mission.target.timeLimitSeconds == null) return null;
+    mission = { ...mission, target: { ...mission.target, timeLimitSeconds: seconds } };
+    return { kind: mission.target.kind, timeLimitSeconds: mission.target.timeLimitSeconds };
+  };
 
   // [QA-HOOK] LUL-2230: exactly what the last frame drew for the scent trail
   // visual, so a test can assert the picture without depending on Vector3
@@ -5894,7 +5924,7 @@ function finishPickup(){
   // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
   // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
   // like carried/home, since computeDeathPayout's signature is untouched.
-  const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
+  const missionBonus = mission?.status === 'complete' ? MISSION_REWARDS[mission.target.kind] : 0;
   // LUL-1666: secondary bonus is independent of missionBonus -- a player can
   // win the secondary without ever completing the deepwater baseline this
   // run (already unlocked from a prior run), or complete the baseline and
@@ -5941,6 +5971,17 @@ function missionCompleteSting(){
   const og = ctx.createGain();
   og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(0.18, t+0.03); og.gain.exponentialRampToValueAtTime(0.0001, t+0.4);
   o.connect(og); og.connect(master); og.connect(conv); o.start(t); o.stop(t+0.42);
+}
+// LUL-3010: the far/timed variant's expiry cue -- descending register, the inverse of
+// missionCompleteSting()'s rising sweep above, same "audibly distinguishable opposites"
+// precedent as caveImmuneStartCue()/caveImmuneEndCue() below.
+function missionExpiredSting(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(560, t); o.frequency.exponentialRampToValueAtTime(220, t+0.3);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t+0.03); g.gain.exponentialRampToValueAtTime(0.0001, t+0.45);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+0.5);
 }
 // LUL-2351: decisions/0015-cue-triple's audio leg for every SHOP_CATALOG purchase
 // (Deeper Lungs included -- it had no purchase sound before this ticket; making
@@ -6037,7 +6078,7 @@ function arriveHome(){
   // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
   // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
   // like carried/home, since computeDeathPayout's signature is untouched.
-  const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
+  const missionBonus = mission?.status === 'complete' ? MISSION_REWARDS[mission.target.kind] : 0;
   // LUL-1666: secondary bonus is independent of missionBonus -- a player can
   // win the secondary without ever completing the deepwater baseline this
   // run (already unlocked from a prior run), or complete the baseline and
@@ -6846,6 +6887,16 @@ function stepFrame(dt, t, skipRender){
     const d = Math.hypot(t.x - player.x, t.z - player.z);
     if(d < nearestThrowableD) nearestThrowableD = d;
   }
+  // LUL-3010: per-tick expiry check for the far/timed variant -- edge-triggered so the
+  // fail cue/caption fires exactly once, the instant checkMissionExpiry flips the status.
+  if(mission){
+    const wasActive = mission.status === 'active';
+    mission = checkMissionExpiry(mission, clock.elapsedTime - enteredAt);
+    if(wasActive && mission.status === 'expired'){
+      pushState({ caption: 'the mission window has closed -- no bonus this run', captionId: ++captionSeq });
+      missionExpiredSting();
+    }
+  }
   // LUL-1258: M2 Deepwater -- distance/completion gate for the mission target,
   // computed the same way canPickup is above.
   const distMission = mission ? distToMissionTarget(mission, player.x, player.z) : Infinity;
@@ -6921,6 +6972,11 @@ function stepFrame(dt, t, skipRender){
       // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
       missionKind: mission && !carrying ? mission.target.kind : null,
       missionStatus: mission && !carrying ? mission.status : null,
+      // LUL-3010: only the far/timed variant carries a timer; null for
+      // oakHollow (untimed) same as missionKind/missionStatus while carrying.
+      missionTimerSeconds: mission && !carrying && mission.target.timeLimitSeconds != null
+        ? Math.max(0, Math.round(mission.target.timeLimitSeconds - (clock.elapsedTime - enteredAt)))
+        : null,
       secondaryKind: mission && !carrying && mission.secondary ? mission.secondary.data.kind : null,
       secondaryStatus: mission && !carrying && mission.secondary
         ? (secondaryComplete(mission, clock.elapsedTime - enteredAt) ? 'complete' : 'active')
@@ -6937,7 +6993,7 @@ function stepFrame(dt, t, skipRender){
       caveImmuneTimeLeft: caveImmuneT,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false });
   }
   // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
   // baby.taken stays true forever once first picked up, so babySetDown is the only signal
@@ -7097,8 +7153,8 @@ function stepFrame(dt, t, skipRender){
     const coverHintVisible = !hidden && lastHideSpot !== null;
 
     // key -> [eligible this frame, world anchor {x,y,z} | null]. Self/panel-anchored
-    // keys (lake/bog/deepwater/stamina/caveImmune/veil) never need an anchor -- they're
-    // positioned by fixed CSS in GameCanvas.tsx, not a per-frame world point.
+    // keys (lake/bog/deepwater/oakHollow/stamina/caveImmune/veil) never need an anchor --
+    // they're positioned by fixed CSS in GameCanvas.tsx, not a per-frame world point.
     function hintCandidate(key){
       switch(key){
         case 'scent': return [scentTrailVisible, null];   // anchor handled separately below (firstFrustum)
@@ -7106,6 +7162,7 @@ function stepFrame(dt, t, skipRender){
         case 'lake': return [playerInLake, null];
         case 'bog': return [playerBogginess > 0.05, null];
         case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active' && !carrying, null];
+        case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active' && !carrying, null];
         case 'wolf': case 'bear': case 'lion': {
           for(const p of predators){
             if(p.inert || p.kind !== key) continue;
@@ -7129,6 +7186,7 @@ function stepFrame(dt, t, skipRender){
         case 'throwable': return throwableGrabCount > baseline;
         case 'caveImmune': return caveImmuneT <= 0;
         case 'deepwater': return missionCanComplete;
+        case 'oakHollow': return missionCanComplete;
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
         default: return false;   // landmark, lake, bog: time-only
