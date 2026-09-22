@@ -440,7 +440,7 @@ const OVERLAY_STYLE = `
      for these (Hud.tsx), so the position rule lives entirely here. */
   #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
   #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
-  #hintCaption[data-hint-key="landmark"] {
+  #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"] {
     left: 50%; top: auto; transform: translateX(-50%);
     bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px);
   }
@@ -625,7 +625,8 @@ const OVERLAY_STYLE = `
        below never render at the same time. */
     #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
     #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
-    #hintCaption[data-hint-key="landmark"], #scentTrailCaption,
+    #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
+    #scentTrailCaption,
     #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
     #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
     #hintCaption[data-hint-key="throwable"] {
@@ -683,6 +684,24 @@ const OVERLAY_STYLE = `
        that #winText's scrollHeight still fits its clientHeight. */
     #embersShopBalance, #embersShopMaxed { font-size: 12px; }
     .buyBtn { font-size: 12px; padding: 2px 6px; }
+    /* LUL-4577: #windIndicatorHint's default rule (top:64px, width:76px, outside
+       this block) wraps its full sentence ("wind — move into the arrow to mask
+       your scent; sprint into it for extra speed and quiet") into 8 lines at
+       ~15.6px each (~125px tall) -- that's true regardless of admin mode. The
+       LUL-4506 fix below only re-anchors the admin-mode-only 228px override back
+       down to this same top:64px; it never touched the width/line-count, so the
+       admin-off default (every real player, and this ticket's repro) still
+       overflows the identical way: the box's last two lines ("extra speed" /
+       "and quiet") land on top of MobileControls.tsx's touch column (y=157
+       iPhone SE landscape / y=175 Pixel 5 landscape at this breakpoint's fixed
+       bottom anchor, per the LUL-4506 comment below) -- caught as the
+       touchVeil-vs-windIndicatorHint overlap in local-qa's deterministic
+       bounding-box audit (layout-8b9d025457). Widening the box and dropping
+       font-size a touch cuts the wrap to ~4-5 lines (~55-70px), which fits
+       inside the 64px-to-157px gap on the tightest matching viewport (iPhone SE
+       landscape) with room to spare, and only shrinks further -- never wraps
+       more -- on every wider/taller viewport this media query also matches. */
+    #windIndicatorHint { width: 160px; right: 4px; font-size: 11px; line-height: 1.25; }
     /* LUL-4506: the LUL-1912 admin-mode minimap-clearance push (top:228px, see the
        rule above outside this block) puts #windIndicatorHint's bottom edge at
        y=306 -- below MobileControls.tsx's touch column top (y=157 iPhone SE

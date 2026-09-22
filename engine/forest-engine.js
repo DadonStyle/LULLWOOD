@@ -4197,11 +4197,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // mobile devices' higher deviceScaleFactor) and only render the final
   // frame, so the canvas still reflects the post-advance state for any
   // screenshot/DOM check that follows.
-  window.ForestEngine.qaAdvance = function(steps = 1){
+  // skipFinalRender (added investigating LUL-4600): a caller that interleaves its own
+  // per-tick state (e.g. re-pinning a predator every tick) has to call qaAdvance(1)
+  // hundreds of times in a loop instead of one qaAdvance(steps) -- the "only render the
+  // last step" heuristic above then renders on *every* one of those calls, since each is
+  // its own steps=1 sequence. That's what turned e2e/wind-assisted-evasion.spec.ts's
+  // 400-tick probing loop into a 240s+ timeout under CI's software rasterizer, the same
+  // failure mode LUL-2346 already named. A caller with no screenshot/DOM check pending
+  // (probing engine state via qaProbe*, not the canvas) can pass true to skip every render.
+  window.ForestEngine.qaAdvance = function(steps = 1, skipFinalRender = false){
     if(qaFixedDt === null) throw new Error('qaAdvance: call qaSetFixedStep(dt) first');
     for(let i = 0; i < steps; i++){
       clock.elapsedTime += qaFixedDt;
-      stepFrame(qaFixedDt, clock.elapsedTime, i < steps - 1);
+      stepFrame(qaFixedDt, clock.elapsedTime, skipFinalRender || i < steps - 1);
     }
   };
 

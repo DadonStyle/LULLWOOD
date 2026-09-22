@@ -429,8 +429,13 @@ declare global {
       qaSetFixedStep?: (dtSeconds: number) => void;
       /** LUL-2071: advances simulation time by exactly dtSeconds * steps,
        * driving the same stepFrame() the real RAF loop calls. Throws if
-       * qaSetFixedStep() hasn't been called first. */
-      qaAdvance?: (steps?: number) => void;
+       * qaSetFixedStep() hasn't been called first. Only the final step
+       * renders, unless skipFinalRender (LUL-4600) is true, which skips
+       * every render in this call -- for callers that only read engine
+       * state (qaProbe*) and interleave repeated qaAdvance(1) calls, where
+       * the "render on the last step" heuristic would otherwise render on
+       * every single call. */
+      qaAdvance?: (steps?: number, skipFinalRender?: boolean) => void;
       /** LUL-2123: teleports next to the nearest untaken throwable stone and
        * calls the real grabThrowable(), so #throwPrompt (desktop) / the Throw
        * button (mobile) render. Returns the stone's position, or null if no
