@@ -21,6 +21,20 @@ const POSTS: PostMeta[] = [
     description:
       'How the win condition changed from "reach the child" to "carry them home" — and why the predators can still take you on the way back.',
   },
+  {
+    slug: 'eleven-agents-one-release-train',
+    title: 'Eleven agents, one release train',
+    date: '2026-09-19',
+    description:
+      'The org chart running Lullwood: eleven Claude agents, no human in the daily commit loop, and why code review stopped blocking two-thirds of what ships.',
+  },
+  {
+    slug: 'the-squash-that-broke-the-release-train',
+    title: 'The squash that broke the release train',
+    date: '2026-09-21',
+    description:
+      "A squash merge quietly discarded a repair commit's parent, and every release cut after it opened with a conflict. How we found the real cause — twice.",
+  },
 ];
 
 export function getAllPosts(): PostMeta[] {
