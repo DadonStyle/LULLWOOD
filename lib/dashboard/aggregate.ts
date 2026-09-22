@@ -59,6 +59,25 @@ function stringProp(e: RawEvent, key: string): string | null {
   return typeof v === 'string' ? v : null;
 }
 
+interface PurchaseMade {
+  id: string;
+  tier: number;
+  cost: number;
+}
+
+function purchasesMadeArray(e: RawEvent): PurchaseMade[] {
+  const v = e.purchases_made;
+  if (!Array.isArray(v)) return [];
+  return v.filter(
+    (p): p is PurchaseMade =>
+      typeof p === 'object' &&
+      p !== null &&
+      typeof p.id === 'string' &&
+      typeof p.tier === 'number' &&
+      typeof p.cost === 'number',
+  );
+}
+
 export function computeOutcomes(events: RawEvent[]): OutcomesResult {
   const wins = events.filter((e) => e.event === 'win');
   const losses = events.filter((e) => e.event === 'loss');
@@ -383,29 +402,53 @@ export function computeEconomy(events: RawEvent[]): EconomyResult {
   const wins = events.filter((e) => e.event === 'win');
   const losses = events.filter((e) => e.event === 'loss');
 
-  // P5: chronological balance sequence per anon_id, across win+loss events.
+  // P5: count purchases from purchases_made arrays (LUL-3003 emission). For backwards
+  // compatibility with events pre-LUL-3003: if no purchases_made anywhere, fall back to
+  // balance-delta heuristic (crossed 120, drop within 3 runs). If purchases_made exists
+  // anywhere, use real purchase counts.
   const runsByAnon = new Map<string, number[]>();
+  const purchasersByAnon = new Set<string>();
   const chronological = [...wins, ...losses].sort((a, b) => a.ts - b.ts);
+
+  let hasAnyPurchasesMade = false;
   for (const e of chronological) {
-    const balance = numberProp(e, 'balance');
-    if (balance === null) continue;
-    const arr = runsByAnon.get(e.anon_id) ?? [];
-    arr.push(balance);
-    runsByAnon.set(e.anon_id, arr);
+    const purchases = purchasesMadeArray(e);
+    if (purchases.length > 0) {
+      hasAnyPurchasesMade = true;
+      purchasersByAnon.add(e.anon_id);
+    }
   }
 
   let crossed120Count = 0;
   let purchasedWithin3RunsCount = 0;
-  for (const balances of runsByAnon.values()) {
-    const crossIdx = balances.findIndex((b) => b >= PURCHASE_BALANCE_THRESHOLD);
-    if (crossIdx === -1) continue;
-    crossed120Count++;
-    for (let i = crossIdx + 1; i <= crossIdx + PURCHASE_WINDOW_RUNS && i < balances.length; i++) {
-      if (balances[i] < balances[i - 1]) {
-        purchasedWithin3RunsCount++;
-        break;
+
+  if (!hasAnyPurchasesMade) {
+    // Fallback: balance-delta heuristic (pre-LUL-3003 events)
+    for (const e of chronological) {
+      const balance = numberProp(e, 'balance');
+      if (balance === null) continue;
+      const arr = runsByAnon.get(e.anon_id) ?? [];
+      arr.push(balance);
+      runsByAnon.set(e.anon_id, arr);
+    }
+
+    for (const balances of runsByAnon.values()) {
+      const crossIdx = balances.findIndex((b) => b >= PURCHASE_BALANCE_THRESHOLD);
+      if (crossIdx === -1) continue;
+      crossed120Count++;
+      for (let i = crossIdx + 1; i <= crossIdx + PURCHASE_WINDOW_RUNS && i < balances.length; i++) {
+        if (balances[i] < balances[i - 1]) {
+          purchasedWithin3RunsCount++;
+          break;
+        }
       }
     }
+  } else {
+    // Real telemetry (LUL-3003 +): purchases_made counts directly
+    // For compatibility: crossed120Count = unique purchasers, purchasedWithin3Runs = same
+    // (since we only care that they made >= 1 purchase within the event window)
+    crossed120Count = purchasersByAnon.size;
+    purchasedWithin3RunsCount = purchasersByAnon.size;
   }
 
   const winsByTier = new Map<EconomyTierKey, RawEvent[]>();
