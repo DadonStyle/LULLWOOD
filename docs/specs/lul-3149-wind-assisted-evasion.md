@@ -50,7 +50,9 @@ consequences:
 - `docs/ELEMENTS.md` — edited: extend the existing `### LUL-3009: Threat Beacon` section
   (`:2460`) rather than adding a new heading — same trigger, same element, additive effects.
 - `e2e/wind-assisted-evasion.spec.ts` — created.
-- `shared/local-qa/requests/lul-3149-wind-assisted-evasion.md` — created.
+- `shared/local-qa/requests/lul-3149-wind-assisted-evasion.md` — created by the
+  implementation PR, not this SPEC PR (needs a real merged commit sha per every other
+  request file's front matter — see `## e2e` below).
 
 ## The change
 
@@ -302,7 +304,8 @@ staged predator.
 - `qaProbeWind()` (`:201`) — `movingAgainstWind` for the walking-vs-running regression guard.
 
 **Tester scenario.** New request file `shared/local-qa/requests/lul-3149-wind-assisted-evasion.md`
-(written with this spec) — nightly confirmation that a full-map run with a real predator
+(written by the implementation PR, once a real branch/commit sha exists to cite — this SPEC PR
+carries no code change) — nightly confirmation that a full-map run with a real predator
 chase shows the speed/noise delta outside the micro-world's controlled conditions. Not one of
 the existing named nightly checks (`shared/local-qa/QA_TESTER.md`), since this is a new
 mechanic with no prior nightly coverage to extend.
