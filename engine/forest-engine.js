@@ -2041,7 +2041,18 @@ function placePredators(){
   // lib/game/spawnClearance.ts and its full-map identity test. Only
   // qaWorld=micro's half=48 changes the threshold.
   const clearScale = spawnClearanceScale(half);
+  // LUL-1575: independent one-shot generator, NOT the shared `rng` stream --
+  // same reasoning as generateWind()'s LUL-2539 fix below. `phase` only
+  // offsets leg/tail swing animation (see its 3 consumers starting :3095),
+  // so drawing it from the shared stream would (a) shift every later
+  // map-gen roll for the same seed and (b) still never have been seeded by
+  // it anyway, since `predators` is built once at module load (:2028),
+  // before any generateMap(seed) call. Drawing the same number of times
+  // (once per predator, unconditionally, before the `inert` continue) keeps
+  // this reproducible per-seed without touching map layout at all.
+  const phaseRng = mulberry32(currentSeed ^ 0x50484153);
   for(const p of predators){
+    p.phase = phaseRng()*6;
     p.inert = p.speciesIdx >= preset.activePerSpecies;
     p.g.visible = !p.inert;
     if(p.inert){ p.x = p.z = -9999; continue; }   // parked off-map; both scan loops also skip on p.inert
