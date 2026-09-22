@@ -440,7 +440,7 @@ const OVERLAY_STYLE = `
      for these (Hud.tsx), so the position rule lives entirely here. */
   #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
   #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
-  #hintCaption[data-hint-key="landmark"] {
+  #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"] {
     left: 50%; top: auto; transform: translateX(-50%);
     bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px);
   }
@@ -625,7 +625,8 @@ const OVERLAY_STYLE = `
        below never render at the same time. */
     #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
     #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
-    #hintCaption[data-hint-key="landmark"], #scentTrailCaption,
+    #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
+    #scentTrailCaption,
     #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
     #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
     #hintCaption[data-hint-key="throwable"] {
