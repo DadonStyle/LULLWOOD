@@ -683,6 +683,19 @@ const OVERLAY_STYLE = `
        that #winText's scrollHeight still fits its clientHeight. */
     #embersShopBalance, #embersShopMaxed { font-size: 12px; }
     .buyBtn { font-size: 12px; padding: 2px 6px; }
+    /* LUL-4506: the LUL-1912 admin-mode minimap-clearance push (top:228px, see the
+       rule above outside this block) puts #windIndicatorHint's bottom edge at
+       y=306 -- below MobileControls.tsx's touch column top (y=157 iPhone SE
+       landscape / y=175 Pixel 5 landscape at this breakpoint's fixed bottom
+       anchor). There is no vertical gap between the minimap-clearance zone and
+       the touch controls on a viewport this short (same conclusion as the
+       LUL-2410/2418/2459/2594/2743 comments above for this exact breakpoint).
+       Falling back to the default top:64px here overlaps the admin-only minimap
+       instead -- untested and accepted, since this is a dev-only combination
+       (admin mode is off for every real player, body[data-admin-mode="0"]
+       #minimap{display:none}, GameCanvas.tsx:338) and no spec asserts
+       windIndicatorHint-vs-minimap clearance. */
+    body[data-admin-mode="1"] #windIndicatorHint { top: 64px; }
   }
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
