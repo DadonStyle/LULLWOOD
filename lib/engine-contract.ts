@@ -16,6 +16,7 @@ export const ENGINE_ACTION_KEYS = [
   'setTouchMove', 'setTouchLook', 'setTouchSprint',
   'triggerTouchHide', 'triggerTouchInteract', 'triggerTouchThrow',
   'triggerTouchJump', 'triggerTouchPause', 'triggerTouchToggleRun', 'setTouchVeil',
+  'triggerTouchVeilOverload',
   'setDifficulty', 'setRunMode', 'setSensitivity', 'setInvertY', 'setReducedMotion', 'setCaptions',
   'setEmbers', 'purchase',
   'setMissionUnlocks', 'setSecondaryChoice',

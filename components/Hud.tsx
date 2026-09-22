@@ -68,6 +68,10 @@ export interface EngineHudState {
   // LUL-1904: cave detection-immunity countdown -- 0 while inactive.
   caveImmuneActive:   boolean;
   caveImmuneTimeLeft: number;
+  // LUL-3150: carry-leg panic button -- burns all veil charge for a detection-proof window.
+  veilOverloadActive:  boolean;
+  veilOverloadTimeLeft: number;
+  veilOverloadVisible: boolean;
   // LUL-1089: contextual action prompts for hide and veil mechanics.
   coverPromptVisible: boolean;
   coverPromptUrgent:  boolean;
@@ -192,6 +196,7 @@ export interface EngineActions {
   // MobileControls.tsx and forest-engine.js's triggerTouchJump/Pause/ToggleRun
   // and setTouchVeil.
   triggerTouchJump: () => void;
+  triggerTouchVeilOverload: () => void;
   triggerTouchPause: () => void;
   triggerTouchToggleRun: () => void;
   setTouchVeil: (v: boolean) => void;
@@ -249,6 +254,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   veilReserve: false,
   caveImmuneActive: false,
   caveImmuneTimeLeft: 0,
+  veilOverloadActive: false,
+  veilOverloadTimeLeft: 0,
+  veilOverloadVisible: false,
   coverPromptVisible: false,
   coverPromptUrgent: false,
   coverPromptKind: null,
@@ -978,6 +986,14 @@ export default function Hud({
         </div>
       )}
 
+      {/* LUL-3150: veil-overload countdown -- sibling of #caveImmunePanel, same
+          always-visible-while-active treatment. */}
+      {state.veilOverloadActive && (
+        <div id="veilOverloadPanel">
+          Overload · {Math.ceil(state.veilOverloadTimeLeft)}s
+        </div>
+      )}
+
       {/* LUL-2131: gate on !winVisible/!deathVisible too -- entered stays true
           through the end screens (restart() never clears it), so this used to
           keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
@@ -1097,6 +1113,17 @@ export default function Hud({
           visible={(state.coverPromptVisible || state.veilPromptVisible) && !state.winVisible && !state.deathVisible}
           reducedMotion={state.reducedMotion}
           {...hideVeilPromptContent(state, mobile)}
+        />
+        {/* LUL-3150: carry-leg panic button -- next to actionPrompt since it's read
+            the same way ("something to do about being hunted"); carrying is mutually
+            exclusive with the hide/cover prompt so the two rows never compete. */}
+        <ActionPrompt
+          id="veilOverloadPrompt"
+          visible={state.veilOverloadVisible && !state.winVisible && !state.deathVisible}
+          tone="urgent"
+          keycap="Q"
+          text="Burn veil for a detection-proof escape"
+          onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchVeilOverload(); } : undefined}
         />
         {/* LUL-1623: holding-a-throwable affordance -- there's no held-item
             mesh in first person, so this is the only way the player knows

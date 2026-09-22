@@ -158,6 +158,10 @@ declare global {
        * veilDetectMul()'s canSee() cut from cover/stillness/chase-drift. Returns the
        * predator's `predators` index, or null if that species isn't spawned. */
       qaOpenVeilTarget?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
+      /** LUL-3150: stages a predator + player carrying/charge state for Veil Overload
+       * testing, same body as qaOpenVeilTarget plus carrying=true/full veil charge. Returns
+       * the predator's `predators` index, or null if that species isn't spawned. */
+      qaOpenVeilOverloadTarget?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       /** LUL-1089: teleports the player to the first hide-spot prop (bramble; LUL-2311 dropped log) and places a lion 4 units away in chase state. Returns { idx, kind } on success, or null if no hide spot or no lion spawned. */
       qaOpenHideNearLionAtHideSpot?: () => { idx: number; kind: string } | null;
       /** Places predator[0] and the player on opposite sides of a real hiding-spot prop (bramble; LUL-212 narrowed this from any non-tree cover prop, LUL-2311 narrowed it again to bramble only). Returns 0, or null if no hiding-spot prop exists. */
@@ -474,6 +478,8 @@ declare global {
        * the mist-charm activation cue's fire count, so a test can assert it fired without
        * decoding actual WebAudio output. */
       qaProbeVeil?: () => { charge: number; locked: boolean; reserve: boolean; releaseCueCount: number };
+      /** Read-only: veil-overload countdown, per-carry-leg use flag, and denied-cue count. */
+      qaProbeVeilOverload?: () => { chargeT: number; usedThisCarry: boolean; deniedCueCount: number };
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
