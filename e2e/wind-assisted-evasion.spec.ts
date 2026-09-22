@@ -35,6 +35,15 @@ async function preSeenHintsAheadOfWindAssist(page: Page) {
  * from 'roam' is captured and returned immediately. Combined into one page.evaluate
  * (not one qaHook() round-trip per tick) purely for speed; every call inside is an
  * existing hook (qaStagePredatorNearPlayer, qaAdvance, qaProbePredatorState).
+ *
+ * qaAdvance(1, true) (LUL-4600): this loop calls qaAdvance once per tick (up to 400
+ * times for an 8s window) instead of once with steps=ticks, because it needs to
+ * re-pin the predator and probe state between every tick. qaAdvance's own "only
+ * render the last step" heuristic (LUL-2838) doesn't help a steps=1 call -- every
+ * one of those 400 calls rendered, which is what turned this test into a 240s+
+ * timeout under CI's software rasterizer. Nothing in this loop reads the canvas
+ * (qaProbePredatorState reads engine state, not the DOM), so every render is
+ * skippable here.
  */
 async function sprintAtFixedDistanceUntilHeard(page: Page, kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number, ticks: number) {
   return page.evaluate(
@@ -42,7 +51,7 @@ async function sprintAtFixedDistanceUntilHeard(page: Page, kind: 'wolf' | 'bear'
       const fe = window.ForestEngine!;
       for (let i = 0; i < ticks; i++) {
         fe.qaStagePredatorNearPlayer!(kind, dx, dz);
-        fe.qaAdvance!(1);
+        fe.qaAdvance!(1, true);
         const st = fe.qaProbePredatorState!(kind);
         if (st && st.state !== 'roam') return st.state;
       }
