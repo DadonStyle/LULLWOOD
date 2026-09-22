@@ -197,7 +197,10 @@ declare global {
        * generateMap() by generateWind() -- map-constant, not per-frame. windHighSpeed
        * (LUL-2539) is the independently-rolled high-wind flag from the same call.
        * LUL-3009 adds movingAgainstWind, the current per-frame EngineHudState value
-       * (true while the player's live heading is moving against windX/windZ). */
+       * (true while the player's live heading is moving against windX/windZ).
+       * LUL-3149 adds two new consumers of movingAgainstWind: a sprint speed bonus
+       * (WIND_ASSIST_SPEED_MUL) and a quieter footstep radius (NOISE_RADIUS_RUN_WIND),
+       * both gated on running && movingAgainstWind. */
       qaProbeWind?: () => { windX: number; windZ: number; windHighSpeed: boolean; movingAgainstWind: boolean };
       /** LUL-211/LUL-288: places the player off the -x face of the first reachable
        * cover prop of `kind`, facing it, so a held KeyW walks straight into it. The
@@ -422,8 +425,13 @@ declare global {
       qaSetFixedStep?: (dtSeconds: number) => void;
       /** LUL-2071: advances simulation time by exactly dtSeconds * steps,
        * driving the same stepFrame() the real RAF loop calls. Throws if
-       * qaSetFixedStep() hasn't been called first. */
-      qaAdvance?: (steps?: number) => void;
+       * qaSetFixedStep() hasn't been called first. Only the final step
+       * renders, unless skipFinalRender (LUL-4600) is true, which skips
+       * every render in this call -- for callers that only read engine
+       * state (qaProbe*) and interleave repeated qaAdvance(1) calls, where
+       * the "render on the last step" heuristic would otherwise render on
+       * every single call. */
+      qaAdvance?: (steps?: number, skipFinalRender?: boolean) => void;
       /** LUL-2123: teleports next to the nearest untaken throwable stone and
        * calls the real grabThrowable(), so #throwPrompt (desktop) / the Throw
        * button (mobile) render. Returns the stone's position, or null if no

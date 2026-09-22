@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7351 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6520, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7409 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6564, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1552,17 +1552,17 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5896-5956, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L6058-6111 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L6112-6155). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5918-5978, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L6102-6155 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L6156-6199). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6112-6155) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L5760) rather than recomputed later, since `player.x/z` can move on
+  (L6156-6199) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6145) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1743,7 +1743,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6473-7287, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6517-7345, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2490,3 +2490,32 @@ dedicated LUL-2189/LUL-2207 coverage there): class presence tracks `qaProbeWind(
 movingAgainstWind` exactly and clears the instant movement stops, class absence while moving
 with the wind, and the class is never applied under `reducedMotion` even while the underlying
 engine flag is genuinely true.
+
+**LUL-3149 (Wind-Assisted Evasion)** adds two new, always-on effects to this same trigger --
+`running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
+re-deriving it (`engine/forest-engine.js` L6641-6642) -- stacking on top of the LUL-3009 scent
+effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
+speed bonus applied to `spd` inside `stepFrame()` (L6642), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+footstep-radius reduction applied to `noiseRadius` (L6660), replacing the plain sprint radius
+only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
+is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
+it already fires correctly for the sprint-bonus window; both the `title` and the always-visible
+`#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
+
+First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
+(`engine/forest-engine.js` L7213 for the eligibility case), positioned below the danger hints
+and `'stamina'`, above `'cover'`/`'caveImmune'`. A rising/falling sine-sweep audio cue pair,
+`windAssistStartCue()` (L6066) and `windAssistEndCue()` (L6075), edge-triggers on the combined
+`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
+the wind stays silent on this cue, keeping only the existing scent effect).
+
+**QA hooks**: none new -- `qaProbeWind().movingAgainstWind` (existing) is sufficient for the
+walking-vs-running regression guard; the speed/noise effect is verified via displacement delta
+(`qaProbePlayer()`) and a real staged predator's noise-detection outcome, not a dedicated probe.
+
+Covered by `e2e/wind-assisted-evasion.spec.ts` (new): sprinting against the wind covers more
+ground than sprinting with it over a fixed window; a wolf at a distance inside
+`NOISE_RADIUS_RUN` but outside `NOISE_RADIUS_RUN_WIND` hears an unassisted sprint but not a
+wind-assisted one; walking against the wind triggers neither the speed nor the noise bonus
+(scent-only, per LUL-3009); both updated copy strings; the `windAssist` hint caption appears
+once and not again after being marked seen.

@@ -14,7 +14,10 @@ test('wind hint text stays visible for the whole run, in default and admin mode'
 
   const hint = page.locator('#windIndicatorHint');
   await expect(hint).toContainText(/wind/i);
-  await expect(hint).toContainText(/scent trail/i);
+  // LUL-3149: copy widened from "lower your scent trail" to name all three
+  // wind-against-you effects (scent/speed/noise) -- assert the still-present
+  // scent mention rather than the removed "scent trail" phrase.
+  await expect(hint).toContainText(/scent/i);
 
   // The old fade completed at 7s (0-60% opacity 1, then to 0 by 100%/7s) --
   // wait past that and confirm the text is still fully opaque with no

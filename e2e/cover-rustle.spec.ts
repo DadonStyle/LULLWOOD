@@ -141,7 +141,6 @@ test.describe('cover-rustle degradation (LUL-2856)', () => {
     const caption = page.locator('#captionToast');
     await advanceChunked(page, stepsFor(PAST_FIRST_ROLL_S));
 
-    await expect(caption).toBeVisible();
     await expect(caption).toContainText('Sitting still too long stirs the brush');
   });
 

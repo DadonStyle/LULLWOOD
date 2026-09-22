@@ -113,6 +113,38 @@ for (const viewport of VIEWPORTS) {
       await expect(page.locator('#hintCaption[data-hint-key="deepwater"]')).toBeHidden();
     });
 
+    // LUL-4581: oakHollow had no entry in either GameCanvas.tsx selector list that
+    // positions the self-anchored hint family (lake/bog/stamina/veil/landmark), so it
+    // fell through to the generic #hintCaption rule and rendered above the top edge of
+    // the viewport at this breakpoint (y:-47px on Pixel 5 landscape). PR #790 added it
+    // to both lists; this pins the fix so a future selector-list edit that drops it
+    // again fails here instead of only showing up in a nightly local-qa screenshot.
+    test('the oakHollow hint stays on-screen at this breakpoint (LUL-4581)', async ({ page }) => {
+      await boot(page, { qaHooks: true, qaMissionKind: 'oakHollow' });
+      await enterMobile(page);
+      await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+      await qaHook(page, 'qaBuildScene', { predators: [] });
+
+      await qaHook(page, 'qaAdvance', stepsFor(0.1));
+      expect((await qaHook(page, 'qaProbeHints')).activeKey).toBe('landmark');
+      await qaHook(page, 'qaAdvance', stepsFor(8.1));
+      expect((await qaHook(page, 'qaProbeHints')).activeKey).toBe('oakHollow');
+
+      const caption = page.locator('#hintCaption[data-hint-key="oakHollow"]');
+      await expect(caption).toBeVisible();
+      await expect(caption).toContainText('a hollow oak nearby — a small bonus payout, no time limit');
+      const box = await caption.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.y).toBeGreaterThanOrEqual(0);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+      await assertNoOverlap(page, '#hintCaption', '[data-testid=touchHide]');
+      await assertNoOverlap(page, '#hintCaption', '[data-testid=touchVeil]');
+      await assertNoOverlap(page, '#hintCaption', '[data-testid=leftStick]');
+      await assertNoOverlap(page, '#hintCaption', '[data-testid=rightStick]');
+    });
+
     test('the lake hint appears on first entry into the water, not on a second visit', async ({ page }) => {
       await boot(page, { qaHooks: true });
       await enterMobile(page);

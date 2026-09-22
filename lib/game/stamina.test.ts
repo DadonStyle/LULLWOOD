@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stepStamina, sprintSpeedMul, STAMINA_DRAIN_TIME, STAMINA_REGEN_MUL, STAMINA_SPRINT_MUL } from './stamina.ts';
+import { stepStamina, sprintSpeedMul, STAMINA_DRAIN_TIME, STAMINA_REGEN_MUL, STAMINA_SPRINT_MUL, WIND_ASSIST_SPEED_MUL } from './stamina.ts';
 
 test('stamina drains charge when sprinting', () => {
   const dt = 1; // 1 second
@@ -42,4 +42,15 @@ test('sprintSpeedMul is linear midpoint at 0.5 charge', () => {
   const result = sprintSpeedMul(0.5);
   const expected = 1 + (STAMINA_SPRINT_MUL - 1) * 0.5;
   assert.equal(result, expected);
+});
+
+test('WIND_ASSIST_SPEED_MUL is a +20% bonus', () => {
+  assert.equal(WIND_ASSIST_SPEED_MUL, 1.2);
+});
+
+test('WIND_ASSIST_SPEED_MUL stacks multiplicatively on top of sprintSpeedMul', () => {
+  const maxSpd = 5 * sprintSpeedMul(1);
+  const windAssistedSpd = maxSpd * WIND_ASSIST_SPEED_MUL;
+  assert.equal(windAssistedSpd, 5 * STAMINA_SPRINT_MUL * WIND_ASSIST_SPEED_MUL);
+  assert.ok(windAssistedSpd > maxSpd);
 });

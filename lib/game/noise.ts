@@ -16,6 +16,12 @@
 export const NOISE_RADIUS_WALK = 14;
 /** Shift is louder -- same louder-but-riskier trade SCENT_RADIUS_RUN charges. */
 export const NOISE_RADIUS_RUN = 24;
+/** Wind-Assisted Evasion (LUL-3149): footstep radius while sprinting directly against the
+ * wind -- quieter than a normal sprint because the wind carries the sound away from
+ * whatever's behind you, same "against the wind" trigger Threat Beacon's scent multiplier
+ * (WIND_AGAINST_RADIUS_MULTIPLIER, lib/game/scent.ts:116) uses. CEO-accepted magnitude
+ * (LUL-3051 proposal): -30%, i.e. 0.7 * NOISE_RADIUS_RUN = 16.8. */
+export const NOISE_RADIUS_RUN_WIND = NOISE_RADIUS_RUN * 0.7;
 /** dt-scaled roll: being in radius is a chance to notice per second, not an instant catch. */
 export const HEAR_CHANCE_PER_SEC = 0.5;
 
