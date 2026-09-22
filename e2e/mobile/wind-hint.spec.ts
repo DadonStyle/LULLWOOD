@@ -28,7 +28,12 @@ for (const viewport of VIEWPORTS) {
 
       const hint = page.locator('#windIndicatorHint');
       await expect(hint).toContainText(/wind/i);
-      await expect(hint).toContainText(/scent trail/i);
+      // LUL-3149 widened the copy from "lower your scent trail" to name all
+      // three wind-against-you effects (scent/speed/noise) -- the desktop
+      // spec (../wind-hint.spec.ts) was updated to assert the still-present
+      // "scent" mention instead of the removed "scent trail" phrase at the
+      // time, this mobile half was missed. Match it here.
+      await expect(hint).toContainText(/scent/i);
       await expect(hint).toHaveCSS('opacity', '1');
 
       await assertInViewport(hint, page, `${viewport.name}: #windIndicatorHint`);
