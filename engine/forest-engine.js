@@ -85,7 +85,7 @@ import {
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { spawnClearanceScale } from '@/lib/game/spawnClearance';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, NOISE_RADIUS_RUN_WIND, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -125,7 +125,7 @@ import {
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { CAVE_IMMUNITY_TIME, isCaveImmune } from '@/lib/game/cave';
-import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL } from '@/lib/game/stamina';
+import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL, WIND_ASSIST_SPEED_MUL } from '@/lib/game/stamina';
 import { carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity } from '@/lib/game/childGlow';
 import {
   freshEmbersState,
@@ -618,6 +618,7 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 // gate; caveImmuneT is the live countdown (0 = inactive), decremented in
 // tick() alongside the other per-frame timers.
 let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
+let windAssistActive = false;   // LUL-3149: previous frame's (running && movingAgainstWind), for edge-triggered start/end cues
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
 let coverGrid = new Map();     // same CELL keying as `grid`, built from coverData
@@ -1634,6 +1635,7 @@ function placeCave(){
   caveSpawned = rng() < 0.5;
   caveConsumed = false;
   caveImmuneT = 0;
+  windAssistActive = false;   // LUL-3149: per-run reset, same site as the other detection-state timers
   if(caveSpawned){
     const [x, z] = clearLandmarkSpot(CAVE.x, CAVE.z, CAVE.clear);
     caveData = { x, z };
@@ -2222,7 +2224,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','lake','bog','deepwater','oakHollow',
-  'wolf','bear','lion','stamina','cover','caveImmune','throwable','veil'];
+  'wolf','bear','lion','stamina','windAssist','cover','caveImmune','throwable','veil'];
 // 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
 // projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2242,6 +2244,7 @@ const HINT_TEXT = {
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
+  windAssist: 'sprinting into the wind moves you faster and quieter',
   cover:      'a bush — predators lose sight of you while you hold still',
   caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
   throwable:  'a stone — E to pick up, throw to break a chase',
@@ -6037,6 +6040,28 @@ function caveImmuneEndCue(){
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.6);
 }
+// LUL-3149: Wind-Assisted Evasion cues -- same rising-start/falling-end shape as
+// caveImmuneStartCue/EndCue above, but a shorter, quieter pair: this is a continuous
+// per-sprint bonus the player will trigger often, not a rare pickup event, so a
+// loud/long cue would be fatiguing.
+function windAssistStartCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(440, t); o.frequency.exponentialRampToValueAtTime(660, t + 0.12);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.2);
+}
+function windAssistEndCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(660, t); o.frequency.exponentialRampToValueAtTime(440, t + 0.12);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.2);
+}
 // LUL-1258: no cinematic lock (unlike pickup's ~2.5s gather) -- this is a
 // detour bonus, not the core objective, and stopping the player's clock here
 // would undercut the risk this mission is supposed to cost.
@@ -6603,13 +6628,19 @@ function stepFrame(dt, t, skipRender){
     let mvx = fx*iz + rx*ix, mvz = fz*iz + rz*ix;
     const mag = Math.hypot(mvx, mvz);
     if(mag > 0){
-      mvx /= mag; mvz /= mag; spd = maxSpd;
+      mvx /= mag; mvz /= mag;
       escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
       // LUL-3009: every frame while moving, not throttled by scentEmitT below (that gate is
       // sized for scent deposit density, not for a HUD readout the player expects to track
       // their heading in real time).
       movingAgainstWind = isMovingAgainstWind(mvx, mvz, windX, windZ);
-      const step = maxSpd*dt, lim = half - margin, zLim = zMax - margin;
+      // LUL-3149: Wind-Assisted Evasion -- +20%/-30% speed+noise while sprinting directly
+      // against the wind, stacks on top of Threat Beacon's always-on scent reduction
+      // (depositScent() below, unconditional on `running`). movingAgainstWind is already
+      // known by this point in the frame (line above) -- reuse it, don't re-derive.
+      const windAssist = (running && movingAgainstWind);
+      spd = maxSpd * (windAssist ? WIND_ASSIST_SPEED_MUL : 1);
+      const step = spd*dt, lim = half - margin, zLim = zMax - margin;
       const nx = Number.isFinite(WRAP_SPAN)
         ? wrapCoord(player.x + mvx*step, WRAP_SPAN)
         : Math.max(-lim, Math.min(lim, player.x + mvx*step));
@@ -6621,12 +6652,12 @@ function stepFrame(dt, t, skipRender){
       // LUL-23: lay scent while actually moving -- holding still (or being hidden,
       // which already implies not moving) never adds to the trail.
       scentEmitT -= dt;
-      if(scentEmitT <= 0){ depositScent(running, isMovingAgainstWind(mvx, mvz, windX, windZ)); scentEmitT = SCENT_DEPOSIT_INTERVAL; }
+      if(scentEmitT <= 0){ depositScent(running, movingAgainstWind); scentEmitT = SCENT_DEPOSIT_INTERVAL; }   // dedup: was a second isMovingAgainstWind() call, no behavior change
       // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
       // shape as scent, sized off the same running flag rather than a new one.
       // LUL-25: splashing through the bog carries further than a dry footstep --
       // the sight-cover reeds give you costs you on the sound channel instead.
-      noiseRadius = (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK) * bogNoiseMultiplier(playerBogginess);
+      noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK)) * bogNoiseMultiplier(playerBogginess);
     }
   }
   // LUL-3009: pushed unconditionally every frame (not nested in the movement block above),
@@ -6634,6 +6665,13 @@ function stepFrame(dt, t, skipRender){
   // `false` at the top of this stepFrame() call, so hidden/paused/stationary frames clear it
   // here without a separate reset site.
   pushState({ movingAgainstWind });
+  // LUL-3149: edge-detect on the *combined* running && movingAgainstWind, not
+  // movingAgainstWind alone -- walking against the wind stays silent on this cue, only the
+  // sprint bonus gets one.
+  const windAssistNowActive = running && movingAgainstWind;
+  if(windAssistNowActive && !windAssistActive) windAssistStartCue();
+  else if(!windAssistNowActive && windAssistActive) windAssistEndCue();
+  windAssistActive = windAssistNowActive;
 
   // LUL-2249: once per stepFrame(), after every player.x/player.z write this
   // function makes (confirmed by grepping every `player.x =`/`player.z =`
@@ -7172,6 +7210,7 @@ function stepFrame(dt, t, skipRender){
           return [false, null];
         }
         case 'stamina': return [staminaCharge <= 0, null];
+        case 'windAssist': return [running && movingAgainstWind, null];
         case 'cover': return [coverHintVisible, lastHideSpot ? { x: lastHideSpot.x, y: 1, z: lastHideSpot.z } : null];
         case 'caveImmune': return [caveImmuneT > 0, null];
         case 'throwable': return [throwableHintEligible, throwableHintAnchor];

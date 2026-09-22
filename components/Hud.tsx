@@ -992,7 +992,7 @@ export default function Hud({
           // Skipped outright under reducedMotion, same precedent as veilRefillFlash
           // (useVeilMeterRamp above) -- not just left to the CSS media query fallback.
           className={state.movingAgainstWind && !state.reducedMotion ? 'windIndicatorActive' : undefined}
-          title="Wind direction -- move into the arrow to reduce your scent trail"
+          title="Wind direction -- move into the arrow to mask your scent; sprint into it for extra speed and quiet"
           style={{ transform: `rotate(${Math.atan2(state.windZ, state.windX)}rad)` }}
         >
           {'→'}
@@ -1000,7 +1000,7 @@ export default function Hud({
       )}
 
       {state.entered && !state.winVisible && !state.deathVisible && (
-        <div id="windIndicatorHint">wind — move into the arrow to lower your scent trail</div>
+        <div id="windIndicatorHint">wind — move into the arrow to mask your scent; sprint into it for extra speed and quiet</div>
       )}
 
       {/* LUL-2307: generic first-encounter hint caption, generalizing LUL-2230's
