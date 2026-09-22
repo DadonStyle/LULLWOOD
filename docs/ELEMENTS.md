@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7212 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6398, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7351 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6520, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -237,7 +237,21 @@ Cue-triple audit: see `docs/CUES.md`.
   final `0.3s`) instead of three independent, faster per-mesh rates — the
   previous rates left `boomFlash` fully transparent by `e=0.4`, a quarter of
   the window a late vision-QA capture is tolerated to land in
-  (`qaProbeBoomOpacity()`).
+  (`qaProbeBoomOpacity()`). **As of `LUL-3130`**, `boomFlash` (the only one
+  of the three layers that ever covers the screen centre — `boomRing`'s own
+  centre is a hole and `bspPts`'s scattered points rarely land on one pixel)
+  blends `NormalBlending` instead of `AdditiveBlending`: during the pickup
+  cinematic the camera looks into a bright sky, and an additive gold layer on
+  top of an already-bright background pushed every channel to within a few
+  percent of 255 — ACES/bloom's compression at that saturation then
+  flattens any remaining per-channel gap into a white wash regardless of the
+  mesh's own hue. `NormalBlending` replaces the background pixel with the
+  mesh's own color instead of stacking onto it, so the read stays gold/orange
+  no matter how bright the sky behind it is. The same fix also corrected
+  `qaProbeBoomPixel()`, which had been calling `renderer.render(scene,
+  camera)` directly — skipping the bloom+ACES composite pass (`renderPost()`)
+  real frames use whenever post-processing is active, so the probe measured
+  an uncomposited frame no player ever sees.
 - Ride along at the player's position while carried, small and glowing
   (`carrying` branch, `tick()`), until the player crosses
   `CONFIG.home.r` (3.6u) of the home landmark, which wins the run
@@ -1029,6 +1043,13 @@ one geometry builder (`makePredator()`), differentiated by the
   (unit tested, `lib/game/timeOfDay.test.ts`) with no wall-clock read inside
   that module — the engine reads `new Date().getHours()` at exactly one call
   site and passes the result in.
+- LUL-2667: `?qaHour=<0-23>` overrides the hour `timeOfDayFromHour()` sees at
+  that same call site (`engine/forest-engine.js:327`), for deterministic e2e
+  coverage of the six states/boundaries. Absent or non-finite falls back to
+  the real clock — zero behavior change for real players. Read-only
+  `qaProbeTimeOfDay()` hook (inside `?qaHooks=1`) returns the resolved
+  `{ state, visual, audio }` so a test can assert without scraping Three.js
+  renderer internals. See `docs/specs/lul-2667-time-of-day-coverage.md`.
 
 **Collision & physics profile**
 - N/A — not a spatial object, has no position or collider.
@@ -1247,11 +1268,17 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   overlapped the hint's first line at that 30px gap; `#windIndicatorHint`'s
   `top` moved to `64px` (default) / `228px` (minimap visible), a 14px
   increase in both, to clear it. LUL-2309 gave the minimap its own
-  `showMinimap` setting, decoupled from admin mode (`#minimap` is now
-  `display:none` under `body:not([data-show-minimap="1"])`, default OFF) --
-  the clearance push moved from keying off `data-admin-mode="1"` to keying
-  off `data-show-minimap="1"`, since it tracks the minimap's own visibility,
-  not admin mode's.
+  `showMinimap` setting, decoupled from admin mode -- the clearance push
+  moved from keying off `data-admin-mode="1"` to keying off
+  `data-show-minimap="1"`, since it tracked the minimap's own visibility,
+  not admin mode's. LUL-4341 reverted this: the leaderboard record
+  (LUL-3264) is Blackout-only, no minimap, no admin mode, so a speed record
+  isn't meaningful if half the field ran with a map on screen. The
+  `showMinimap` setting and `data-show-minimap` flag are gone; `#minimap` is
+  `display:none` under `body[data-admin-mode="0"]` again (same rule shape as
+  `#panel`), and the clearance push keys back off `data-admin-mode="1"`. A
+  stored `showMinimap: true` from before LUL-4341 is dead and does not
+  resurrect the minimap.
   LUL-2310: fullscreen has a second entry point besides `GameMenu.tsx`'s
   `menuFullscreen` button -- **F11** and **Alt+Enter** (`engine/
   forest-engine.js`'s `keydown` handler), both routed through one shared
@@ -1525,16 +1552,16 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5785-5845, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L5936-5989 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L5990-6033). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5896-5956, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L6058-6111 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L6112-6155). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5990-6033) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6112-6155) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L5760) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1592,7 +1619,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3612),
-  reset to 0 on `enter()` (L3936) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4000) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1716,7 +1743,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6351-7148, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6473-7287, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1737,25 +1764,45 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 ### Missions (detour objectives)
 
 **What it is**
-- **Implemented (LUL-1259).** `MISSION_POOL` (`lib/game/mission.ts`): a pool of optional detour
-  objectives, one active per run, drawn from the run's own seeded RNG (never player-selected).
-  Today the pool has exactly one member, `deepwater` — a fixed waypoint at the drowned car
-  landmark (`x: 55, z: 205`, matching `LANDMARKS`' `drownedCar` entry, `engine/tuning.js:44`).
+- **Implemented (LUL-1259, widened LUL-3010).** `MISSION_POOL` (`lib/game/mission.ts`): a pool of
+  optional detour objectives, one active per run, drawn from the run's own seeded RNG (never
+  player-selected). Two members: `deepwater` — a fixed waypoint at the drowned car landmark
+  (`x: -95, z: 46`, matching `LANDMARKS`' `drownedCar` entry, `engine/tuning.js:81`) — and
+  `oakHollow` — a near waypoint at the `oak` landmark (`x: 22, z: 4`, `engine/tuning.js:80`).
   Per-run state (`mission: MissionState | null`) lives alongside `baby` at
   `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every other rng()
   consumer, so it never shifts the stream any existing seed/replay depends on.
+
+**Two variants (LUL-3010)**
+- `oakHollow` — near (≈22.4m from spawn), untimed, `MISSION_OAKHOLLOW_REWARD` = 6 Embers.
+  Always eligible.
+- `deepwater` — far (≈105.5m from spawn), `timeLimitSeconds: 60`, `MISSION_DEEPWATER_REWARD` = 12
+  Embers. Only eligible once `eligibleMissionPool()` (`lib/game/mission.ts`) sees
+  `progression[difficulty].wins >= MISSION_FAR_UNLOCK_WINS` (3) — below that, `pickMission()` only
+  ever draws `oakHollow`. A returning player with existing win history keeps seeing `deepwater`
+  immediately; a fresh/reset progression starts gated to the safe variant.
+- `MissionState.status` widens to `'active' | 'complete' | 'expired'` — `checkMissionExpiry()`
+  flips `deepwater`'s status to `'expired'` the instant survived time passes its `timeLimitSeconds`
+  (checked every tick), forfeiting the bonus without failing the run. `oakHollow` has no
+  `timeLimitSeconds` and can never expire. `#missionPanel`'s glyph is `●` complete / `✕` expired /
+  `○` active; `#missionTimer` renders the countdown only while a `timeLimitSeconds` is set.
+  `?qaMissionKind=<kind>` (under `?qaHooks=1`) forces the draw to a single kind for deterministic
+  test coverage; `qaShrinkMissionTimer(seconds)` stages an imminent expiry.
 - No verbs of its own — completion rides the existing interact action (`KeyE`
   (`engine/forest-engine.js:1689`) / `triggerTouchInteract()` (`:3635`), the same key/button
   that already lifts the child), gated on a `missionCanComplete` check computed alongside
   `canPickup` (`:3430`).
 
 **What it can do**
-- Add a completion bonus to the win payout only: `MISSION_DEEPWATER_REWARD = 12` Embers
-  (`lib/game/economy.ts`), passed as `computeWinPayout()`'s new optional fourth argument at the
-  `arriveHome()` call site. **Forfeited on death** — `computeDeathPayout()` is unmodified, so
-  reaching the mission target but dying before reaching home banks none of the +12 (the detour's
-  real payout is the `depth` term, already uncapped on win / capped on death; the mission bonus
-  is a small addition on top, not the source of the risk/reward).
+- Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
+  (`lib/game/economy.ts`, `deepwater: MISSION_DEEPWATER_REWARD = 12`, `oakHollow:
+  MISSION_OAKHOLLOW_REWARD = 6`), passed as `computeWinPayout()`'s optional fourth argument at
+  the `arriveHome()` call site. **Forfeited on death or expiry** — `computeDeathPayout()` is
+  unmodified, so reaching the mission target but dying before reaching home banks no bonus; a
+  `deepwater` mission that times out (`status: 'expired'`) also forfeits the bonus even on a
+  win, since the payout site only pays `status === 'complete'` (the detour's real payout is the
+  `depth` term, already uncapped on win / capped on death; the mission bonus is a small addition
+  on top, not the source of the risk/reward).
 - Emit a repeating, non-predator-audible navigational audio cue (tempo-shortens with proximity,
   same shape as Ship 1's `childCry` wayfinding pattern) while the mission is active and the
   player is not carrying the child; silent once carrying.

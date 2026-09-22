@@ -146,14 +146,30 @@ test.describe('scent trail visual (LUL-2230)', () => {
   test('the one-time caption appears once, is gone within 8s, and the persisted gate resets on demand', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-2903: root-caused via live repro -- the QA micro world (96u, far smaller
+    // than the 480u full map this test predates) routinely spawns a predator close
+    // enough to reach and kill the player during this test's ~13s of walking/idling,
+    // which silences every hint (baseHintEligible gates on !hudState.deathVisible)
+    // and reads as "the reset gate is broken" when it's really an ambient kill. This
+    // test isolates the scent-trail caption, not combat -- park every predator first
+    // (qaClearAllPredators precedent: e2e/day-night-cycle.spec.ts, e2e/hints.spec.ts,
+    // e2e/mobile/throwables.spec.ts).
+    await qaHook(page, 'qaClearAllPredators');
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     await walkForward(page, 2.5);
     const { yaw } = await qaHook(page, 'qaProbePlayer');
     await qaHook(page, 'qaSetLookYaw', yaw + Math.PI); // turn around to face the trail laid behind us
-    await qaHook(page, 'qaAdvance', stepsFor(0.1)); // one frame is enough for the frustum check to see it
-
+    // LUL-2957: the camera's own facing lags player.yaw by more than one fixed-step
+    // batch before projectToScreen() re-admits a point to frustum (same settle-lag
+    // class e2e/hints.spec.ts and e2e/mobile/scent-trail.spec.ts hit) -- poll a few
+    // more fixed-step batches instead of trusting a hardcoded count, still driven
+    // entirely by qaAdvance's deterministic clock, never a wall-clock wait.
     let probe = await qaHook(page, 'qaProbeScentTrail');
+    for (let attempt = 0; attempt < 5 && !probe.captionVisible; attempt++) {
+      await qaHook(page, 'qaAdvance', stepsFor(0.1));
+      probe = await qaHook(page, 'qaProbeScentTrail');
+    }
     expect(probe.points.some((p: { inFrustum: boolean }) => p.inFrustum), 'turning around must put a mote in frustum').toBe(true);
     expect(probe.captionVisible).toBe(true);
 
@@ -185,10 +201,16 @@ test.describe('scent trail visual (LUL-2230)', () => {
     expect(probe.captionVisible, 'a caption already marked seen must not reappear').toBe(false);
 
     // qaResetScentCaption() proves the one-time gate is the persisted flag, not luck.
+    // Same settle-lag class as the first turn above -- yaw is already at yaw+PI so
+    // this qaSetLookYaw is a no-op, but poll anyway rather than assume "no yaw
+    // change" means "already settled".
     await qaHook(page, 'qaResetScentCaption');
     await qaHook(page, 'qaSetLookYaw', yaw + Math.PI);
-    await qaHook(page, 'qaAdvance', stepsFor(0.1));
     probe = await qaHook(page, 'qaProbeScentTrail');
+    for (let attempt = 0; attempt < 5 && !probe.captionVisible; attempt++) {
+      await qaHook(page, 'qaAdvance', stepsFor(0.1));
+      probe = await qaHook(page, 'qaProbeScentTrail');
+    }
     expect(probe.captionVisible, 'resetting the gate must let the caption show again').toBe(true);
     expect(probe.captionSeen).toBe(false);
   });

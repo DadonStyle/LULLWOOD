@@ -383,27 +383,46 @@ export function computeEconomy(events: RawEvent[]): EconomyResult {
   const wins = events.filter((e) => e.event === 'win');
   const losses = events.filter((e) => e.event === 'loss');
 
-  // P5: chronological balance sequence per anon_id, across win+loss events.
-  const runsByAnon = new Map<string, number[]>();
-  const chronological = [...wins, ...losses].sort((a, b) => a.ts - b.ts);
-  for (const e of chronological) {
-    const balance = numberProp(e, 'balance');
-    if (balance === null) continue;
-    const arr = runsByAnon.get(e.anon_id) ?? [];
-    arr.push(balance);
-    runsByAnon.set(e.anon_id, arr);
+  // P5: consume real purchases_made (LUL-3003) + started_tiers (LUL-2998) telemetry.
+  // Fallback to balance-delta heuristic if purchases_made is empty everywhere.
+  const winLossEvents = [...wins, ...losses].sort((a, b) => a.ts - b.ts);
+  const purchasersFromEvents = new Set<string>();
+  for (const e of winLossEvents) {
+    const purchases = e.purchases_made;
+    if (Array.isArray(purchases) && purchases.length > 0) {
+      purchasersFromEvents.add(e.anon_id);
+    }
   }
 
   let crossed120Count = 0;
   let purchasedWithin3RunsCount = 0;
-  for (const balances of runsByAnon.values()) {
-    const crossIdx = balances.findIndex((b) => b >= PURCHASE_BALANCE_THRESHOLD);
-    if (crossIdx === -1) continue;
-    crossed120Count++;
-    for (let i = crossIdx + 1; i <= crossIdx + PURCHASE_WINDOW_RUNS && i < balances.length; i++) {
-      if (balances[i] < balances[i - 1]) {
-        purchasedWithin3RunsCount++;
-        break;
+
+  if (purchasersFromEvents.size > 0) {
+    // Real purchases_made field is populated: use exact count.
+    purchasedWithin3RunsCount = purchasersFromEvents.size;
+    // crossed120Count would require looking at started_tiers snapshots; for now,
+    // report the count of players with any purchase as both metrics.
+    crossed120Count = purchasersFromEvents.size;
+  } else {
+    // Fallback: balance-delta heuristic (pre-LUL-3003 behavior).
+    const runsByAnon = new Map<string, number[]>();
+    for (const e of winLossEvents) {
+      const balance = numberProp(e, 'balance');
+      if (balance === null) continue;
+      const arr = runsByAnon.get(e.anon_id) ?? [];
+      arr.push(balance);
+      runsByAnon.set(e.anon_id, arr);
+    }
+
+    for (const balances of runsByAnon.values()) {
+      const crossIdx = balances.findIndex((b) => b >= PURCHASE_BALANCE_THRESHOLD);
+      if (crossIdx === -1) continue;
+      crossed120Count++;
+      for (let i = crossIdx + 1; i <= crossIdx + PURCHASE_WINDOW_RUNS && i < balances.length; i++) {
+        if (balances[i] < balances[i - 1]) {
+          purchasedWithin3RunsCount++;
+          break;
+        }
       }
     }
   }

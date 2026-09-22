@@ -1,9 +1,13 @@
 // LUL-1258: the missions pool. One active per run, seeded from the run's own
 // RNG stream (never player-selected) so the cheapest/safest mission can't be
 // farmed -- see game/economy/mission-rewards §2, "anti-farming comes from the
-// draw, not from decay". Today the pool has exactly one member; a later
-// ticket adds M1/M3/M4/M5 by appending to MISSION_POOL, not by reshaping this.
-export type MissionKind = 'deepwater';
+// draw, not from decay". LUL-3010 widened the pool to two members (deepwater
+// far/timed, oakHollow near/untimed); a later ticket adds M1/M3/M4/M5 by
+// appending to MISSION_POOL, not by reshaping this.
+import type { Progression } from './progression.ts';
+import type { DifficultyTier } from './economy.ts';
+
+export type MissionKind = 'deepwater' | 'oakHollow';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -18,6 +22,10 @@ export interface MissionTarget {
    * this pool entry's nominal (pre-clearLandmarkSpot) constant. Undefined for a mission with
    * no fixed-landmark target. */
   landmarkKind?: string;
+  /** LUL-3010: wall-clock seconds from run start after which the mission can no
+   * longer be completed (see checkMissionExpiry). Undefined = untimed, the
+   * `deepwater` mission's original behaviour, still true for the near variant. */
+  timeLimitSeconds?: number;
 }
 
 export const MISSION_POOL: readonly MissionTarget[] = [
@@ -29,12 +37,16 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // (missionScaleMul === 1) generateMap() always overwrites x/z with the landmark's real
   // post-placement position via `landmarkKind` below, so drift between this constant and
   // LANDMARKS can no longer produce an unreachable target -- see LUL-2740.
-  { kind: 'deepwater', x: -95, z: 46, zoneRadius: 20, interactRadius: 4, landmarkKind: 'drownedCar' },
+  { kind: 'deepwater', x: -95, z: 46, zoneRadius: 20, interactRadius: 4, landmarkKind: 'drownedCar', timeLimitSeconds: 60 },
+  // LUL-3010: near/untimed variant, keyed to the `oak` LANDMARKS entry (engine/tuning.js:80),
+  // placed unconditionally every round like drownedCar and not referenced by any other
+  // mission or mechanic.
+  { kind: 'oakHollow', x: 22, z: 4, zoneRadius: 10, interactRadius: 4, landmarkKind: 'oak' },
 ];
 
 export interface MissionState {
   target: MissionTarget;
-  status: 'active' | 'complete';
+  status: 'active' | 'complete' | 'expired';
   secondary: MissionSecondaryState | null;
 }
 
@@ -42,13 +54,44 @@ export interface MissionState {
  * picks. `secondaryChoice` is the player's pre-run menu selection (LUL-1666);
  * null when no secondary is chosen, or when the drawn mission doesn't support
  * one yet (see SECONDARY_SUPPORTED_MISSIONS below) -- callers don't need to
- * check support themselves. */
-export function pickMission(rng: () => number, secondaryChoice: SecondaryKind | null = null): MissionState {
-  const target = MISSION_POOL[Math.floor(rng() * MISSION_POOL.length)];
+ * check support themselves. `pool` defaults to the full MISSION_POOL so
+ * existing callers/tests are unaffected; LUL-3010 lets callers pass a
+ * filtered pool (eligibility gate, QA override) instead. */
+export function pickMission(
+  rng: () => number,
+  secondaryChoice: SecondaryKind | null = null,
+  pool: readonly MissionTarget[] = MISSION_POOL,
+): MissionState {
+  const target = pool[Math.floor(rng() * pool.length)];
   const secondary = secondaryChoice && SECONDARY_SUPPORTED_MISSIONS.has(target.kind)
     ? freshSecondary(secondaryChoice)
     : null;
   return { target, status: 'active', secondary };
+}
+
+/** LUL-3010: wins on the *current* difficulty tier before the far/timed variant can be
+ * drawn at all -- cheap gate, reuses progression.ts's existing per-tier win counter
+ * (lib/game/progression.ts:10), no new persisted field. Below the threshold, only the
+ * near/untimed variant is eligible; at/above it, pickMission() draws uniformly between
+ * both (still via rng(), same as today) -- a returning player who already has wins
+ * recorded keeps seeing deepwater immediately on this deploy; a fresh player starts on
+ * the safe variant. Retune the threshold here only. */
+export const MISSION_FAR_UNLOCK_WINS = 3;
+
+export function eligibleMissionPool(progression: Progression, difficulty: DifficultyTier): readonly MissionTarget[] {
+  if (progression[difficulty].wins >= MISSION_FAR_UNLOCK_WINS) return MISSION_POOL;
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null);
+}
+
+/** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
+ * is already 'complete' or 'expired', or has no timeLimitSeconds (the near variant is never
+ * expirable) -- callers don't need to pre-check. Flips 'active' -> 'expired' the instant
+ * survivedSeconds reaches the limit; never un-expires. */
+export function checkMissionExpiry(mission: MissionState, survivedSeconds: number): MissionState {
+  if (mission.status !== 'active') return mission;
+  const limit = mission.target.timeLimitSeconds;
+  if (limit == null || survivedSeconds < limit) return mission;
+  return { ...mission, status: 'expired' };
 }
 
 /** LUL-2740: overwrites `mission.target.x/z` with `landmark`'s position when the target is

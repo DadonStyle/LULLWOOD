@@ -47,17 +47,17 @@ test.describe('embers shop (LUL-2351)', () => {
     let probe = await qaHook(page, 'qaProbeEmbersPurchase');
     expect(probe.purchaseCueCount).toBe(1);
 
-    // Quiet Step tier 1: 150 embers, 1880 -> 1730.
+    // Quiet Step tier 1: 80 embers, 1880 -> 1800.
     await clickBuyButton(page, 'buy-quietStep');
-    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1730');
+    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1800');
     probe = await qaHook(page, 'qaProbeEmbersPurchase');
     expect(probe.purchaseCueCount).toBe(2);
     expect(await qaHook(page, 'qaProbeScentLifetime')).toBeCloseTo(14 * 0.8, 5);
 
     // Pocket Stones single tier: default engine difficulty is 'night' (LUL-2983), so
-    // 120 embers, 1730 -> 1610, then maxed.
+    // 120 embers, 1800 -> 1680, then maxed.
     await clickBuyButton(page, 'buy-pocketStones');
-    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1610');
+    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1680');
     probe = await qaHook(page, 'qaProbeEmbersPurchase');
     expect(probe.purchaseCueCount).toBe(3);
     await expect(page.locator('#embersShopMaxed-pocketStones')).toContainText('maxed');
@@ -95,11 +95,11 @@ test.describe('embers shop (LUL-2351)', () => {
     await seedEmbers(context, HIGH_BALANCE_EMBERS);
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await clickBuyButton(page, 'buy-quietStep');
-    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1850');
+    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1920');
 
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForFunction(() => Boolean(window.ForestEngine));
-    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1850');
+    await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1920');
     const stored = await page.evaluate(() => JSON.parse(window.localStorage.getItem('lullwood:embers') ?? '{}'));
     expect(stored.tiers.quietStep).toBe(1);
   });

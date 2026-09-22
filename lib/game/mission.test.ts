@@ -12,8 +12,12 @@ import {
   secondaryComplete,
   RETRIEVAL_ITEM,
   MISSION_DEEPWATER_SPEEDRUN_SECONDS,
+  checkMissionExpiry,
+  eligibleMissionPool,
+  MISSION_FAR_UNLOCK_WINS,
   type MissionState,
 } from './mission.ts';
+import { freshProgression } from './progression.ts';
 
 function fixedRng(value: number): () => number {
   return () => value;
@@ -273,4 +277,81 @@ test('secondaryComplete for speedrun is false once survivedSeconds exceeds the t
     secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } },
   };
   assert.equal(secondaryComplete(m, MISSION_DEEPWATER_SPEEDRUN_SECONDS + 1), false);
+});
+
+// ---- checkMissionExpiry (LUL-3010) --------------------------------------
+
+test('checkMissionExpiry no-ops before the limit', () => {
+  const deepwater = MISSION_POOL.find((t) => t.kind === 'deepwater')!;
+  const m: MissionState = { target: deepwater, status: 'active', secondary: null };
+  const next = checkMissionExpiry(m, deepwater.timeLimitSeconds! - 1);
+  assert.equal(next, m); // same reference -- the no-op branch
+});
+
+test('checkMissionExpiry no-ops on an untimed target', () => {
+  const oakHollow = MISSION_POOL.find((t) => t.kind === 'oakHollow')!;
+  assert.equal(oakHollow.timeLimitSeconds, undefined);
+  const m: MissionState = { target: oakHollow, status: 'active', secondary: null };
+  const next = checkMissionExpiry(m, 999999);
+  assert.equal(next, m);
+});
+
+test('checkMissionExpiry no-ops once the mission is already complete or expired', () => {
+  const deepwater = MISSION_POOL.find((t) => t.kind === 'deepwater')!;
+  const complete: MissionState = { target: deepwater, status: 'complete', secondary: null };
+  const expired: MissionState = { target: deepwater, status: 'expired', secondary: null };
+  assert.equal(checkMissionExpiry(complete, 999999), complete);
+  assert.equal(checkMissionExpiry(expired, 999999), expired);
+});
+
+test('checkMissionExpiry flips active -> expired exactly at the limit', () => {
+  const deepwater = MISSION_POOL.find((t) => t.kind === 'deepwater')!;
+  const m: MissionState = { target: deepwater, status: 'active', secondary: null };
+  const next = checkMissionExpiry(m, deepwater.timeLimitSeconds!);
+  assert.equal(next.status, 'expired');
+  assert.equal(next.target, m.target);
+});
+
+test('checkMissionExpiry never un-expires', () => {
+  const deepwater = MISSION_POOL.find((t) => t.kind === 'deepwater')!;
+  const m: MissionState = { target: deepwater, status: 'expired', secondary: null };
+  const next = checkMissionExpiry(m, 0);
+  assert.equal(next, m);
+});
+
+// ---- eligibleMissionPool (LUL-3010) --------------------------------------
+
+test('eligibleMissionPool returns only untimed missions below MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow']);
+});
+
+test('eligibleMissionPool returns the full pool at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.deepEqual(pool.map((m) => m.kind), MISSION_POOL.map((m) => m.kind));
+});
+
+test('eligibleMissionPool returns the full pool above MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS + 5;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.deepEqual(pool.map((m) => m.kind), MISSION_POOL.map((m) => m.kind));
+});
+
+test('eligibleMissionPool checks only the given difficulty tier', () => {
+  const progression = freshProgression();
+  progression.night.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow']);
+});
+
+// ---- pickMission with an explicit pool (LUL-3010) ------------------------
+
+test('pickMission with an explicit 1-element pool always returns that entry', () => {
+  const oakHollow = MISSION_POOL.find((t) => t.kind === 'oakHollow')!;
+  const m = pickMission(fixedRng(0.5), null, [oakHollow]);
+  assert.equal(m.target, oakHollow);
 });

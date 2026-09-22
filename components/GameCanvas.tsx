@@ -160,8 +160,12 @@ const OVERLAY_STYLE = `
     .buyBtn { padding: 13px 18px; font-size: 14px; }
     #gateTitle { font-size: 26px; }
     #gateSub { font-size: 12px; }
-    #gateCredit { font-size: 11px; }
-    #gateKeys { font-size: 11px; line-height: 1.7; max-width: 34rem; margin-inline: auto; }
+    /* LUL-3255: was 11px, under lib/ui/hygiene.ts's 12px MIN_FONT_PX floor --
+       flagged every prod QA run on both landscape mobile viewports. Plenty of
+       vertical slack on #gate (see the ticket's screenshot), so no compensating
+       trim needed here. */
+    #gateCredit { font-size: 12px; }
+    #gateKeys { font-size: 12px; line-height: 1.7; max-width: 34rem; margin-inline: auto; }
     /* Minimap stays legible at the same physical size rather than shrinking
        further -- on a ~390px-wide phone it's already a larger fraction of
        the screen than on desktop, which is the point (small map = useless
@@ -323,18 +327,15 @@ const OVERLAY_STYLE = `
      for veil/light is the in-world vignette dim + fog billow, not this HUD. */
   body[data-admin-mode="0"] #panel { display: none !important; }
 
-  /* LUL-2309: the minimap got its own player-facing setting, decoupled from
-     admin mode (LUL-2248 turned it into a navigation aid -- home ring + beacon
-     colours -- not a dev tool). Default OFF, same as adminMode/highContrast.
-     Selects on the attribute being ABSENT or "0", not just "0": before
-     SettingsPanel's effect runs on first paint there is no data-show-minimap
-     attribute at all, and an absent attribute must still hide, not show by
-     falling through to no matching rule.
-     !important still needed: the engine writes its own inline mm.style.display
-     (blackout difficulty preset, forest-engine.js) -- when this rule doesn't
-     apply (setting is on), that inline style is what correctly still hides the
-     minimap under blackout. */
-  body:not([data-show-minimap="1"]) #minimap { display: none !important; }
+  /* LUL-4341: reverts LUL-2309's standalone player-facing minimap toggle --
+     the leaderboard record (LUL-3264) is Blackout-only, no minimap, no admin
+     mode, and a speed record isn't meaningful if half the field ran with a
+     map on screen. Minimap is admin-gated again, same rule shape as #panel
+     above. !important still needed: the engine writes its own inline
+     mm.style.display (blackout difficulty preset, forest-engine.js) -- when
+     this rule doesn't apply (admin mode is on), that inline style is what
+     correctly still hides the minimap under blackout. */
+  body[data-admin-mode="0"] #minimap { display: none !important; }
 
   /* shown when pointer lock is released — visual only, never blocks the panel */
   #pausePrompt { position: fixed; inset: 0; z-index: 15; display: none;
@@ -393,13 +394,11 @@ const OVERLAY_STYLE = `
     text-shadow: 0 1px 6px rgba(0,0,0,0.8); pointer-events: none; opacity: 1; }
 
   /* LUL-1912's minimap-clearance push only matters while the minimap is actually
-     visible -- top:20/right:20 above is what a player with the minimap off (still
-     the default, LUL-2309) and the QA tester actually see. Keyed off
-     data-show-minimap now that visibility is decoupled from admin mode; used to
-     key off data-admin-mode="1" back when the minimap only ever showed under
-     admin mode. */
-  body[data-show-minimap="1"] #windIndicator { top: 184px; }
-  body[data-show-minimap="1"] #windIndicatorHint { top: 228px; }
+     visible -- top:20/right:20 above is what a player with admin mode off (the
+     default) and the QA tester actually see. LUL-4341: keyed back off
+     data-admin-mode="1" now that minimap visibility is admin-gated again. */
+  body[data-admin-mode="1"] #windIndicator { top: 184px; }
+  body[data-admin-mode="1"] #windIndicatorHint { top: 228px; }
 
   /* LUL-2307: generic first-encounter hint caption, generalizing LUL-2230's
      scent-only #scentTrailCaption -- scent is now just one entry in the engine's
@@ -657,14 +656,46 @@ const OVERLAY_STYLE = `
        tighter of the two reported viewports): 465px of content into a
        327px budget needed ~140px trimmed across every child, not just the
        shop. */
+    /* LUL-3282: #deathText's own base padding/gap/h1/p rules (below, "death:
+       video cutscene + loss text" section) are declared *after* this block,
+       so at equal specificity they'd normally win by source order and silently
+       cancel this squeeze on #deathText -- same class of bug as the documented
+       LUL-1088 .restartBtn/.buyBtn cascade-order issue above. #winText's
+       equivalent base rules sit *before* this block (no #deathText-style risk),
+       so only the #deathText side of each declaration needs !important here,
+       matching the LUL-2410/LUL-2158 precedent for guaranteed-win overrides. */
     #winText, #deathText { padding: 8px 16px; gap: 2px; }
+    #deathText { padding: 8px 16px !important; gap: 2px !important; }
     #winText h1, #deathText h1 { font-size: 20px; }
+    #deathText h1 { font-size: 20px !important; }
     #winText p, #deathText p { margin: 0 0 2px; font-size: 11px; }
+    #deathText p { margin: 0 0 2px !important; font-size: 11px !important; }
     #runChronicle { font-size: 10px; margin-top: 2px; }
     .restartBtn { margin-top: 2px; padding: 6px 16px; }
-    #embersShop { flex-direction: column; margin-top: 2px; gap: 2px; }
-    #embersShopBalance, #embersShopMaxed { font-size: 11px; }
-    .buyBtn { font-size: 10px; padding: 3px 8px; }
+    #embersShop { flex-direction: column; margin-top: 2px; gap: 1px; }
+    /* LUL-3255: #embersShopBalance/.buyBtn were 11px/10px, under the 12px
+       MIN_FONT_PX floor -- flagged every prod QA run (also reproduces on the
+       win/death shop, shared markup, see the LUL-2694 comment above this
+       block). Bumping both by 1-2px reopens the exact overflow LUL-2694 fixed,
+       so the gap/padding trims here (2px->1px, 3px->2px vertical) claw back
+       slightly more height than the font bump adds -- verified against a live
+       win screen on iphone-se-landscape (375px tall, the tighter viewport)
+       that #winText's scrollHeight still fits its clientHeight. */
+    #embersShopBalance, #embersShopMaxed { font-size: 12px; }
+    .buyBtn { font-size: 12px; padding: 2px 6px; }
+    /* LUL-4506: the LUL-1912 admin-mode minimap-clearance push (top:228px, see the
+       rule above outside this block) puts #windIndicatorHint's bottom edge at
+       y=306 -- below MobileControls.tsx's touch column top (y=157 iPhone SE
+       landscape / y=175 Pixel 5 landscape at this breakpoint's fixed bottom
+       anchor). There is no vertical gap between the minimap-clearance zone and
+       the touch controls on a viewport this short (same conclusion as the
+       LUL-2410/2418/2459/2594/2743 comments above for this exact breakpoint).
+       Falling back to the default top:64px here overlaps the admin-only minimap
+       instead -- untested and accepted, since this is a dev-only combination
+       (admin mode is off for every real player, body[data-admin-mode="0"]
+       #minimap{display:none}, GameCanvas.tsx:338) and no spec asserts
+       windIndicatorHint-vs-minimap clearance. */
+    body[data-admin-mode="1"] #windIndicatorHint { top: 64px; }
   }
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);

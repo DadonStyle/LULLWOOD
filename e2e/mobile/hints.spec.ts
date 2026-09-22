@@ -40,8 +40,9 @@ async function assertNoOverlap(page: Page, selA: string, selB: string) {
 }
 
 /** See ../hints.spec.ts's identical helper: drains whichever always-eligible-at-spawn
- * hint ('landmark', then 'deepwater') is active until nothing is, so a scenario further
- * down HINT_PRIORITY isn't just waiting behind one of those. */
+ * hint ('landmark', then whichever mission kind was drawn -- LUL-3010) is active until
+ * nothing is, so a scenario further down HINT_PRIORITY isn't just waiting behind one of
+ * those. */
 async function clearPreemptiveHints(page: Page, maxRounds = 4) {
   for (let i = 0; i < maxRounds; i++) {
     await qaHook(page, 'qaAdvance', stepsFor(0.1));
@@ -97,7 +98,9 @@ for (const viewport of VIEWPORTS) {
     // here the same way #hint is -- deepwater isn't in the must-stay-visible set
     // (only landmark is, per LUL-2414), so hiding it outright is correct.
     test('the deepwater hint stays hidden at this breakpoint (LUL-2418)', async ({ page }) => {
-      await boot(page, { qaHooks: true });
+      // LUL-3010: this test asserts deepwater-specific behaviour; force it past the new
+      // eligibility gate (fresh progression would otherwise only draw oakHollow).
+      await boot(page, { qaHooks: true, qaMissionKind: 'deepwater' });
       await enterMobile(page);
       await qaHook(page, 'qaSetFixedStep', FIXED_DT);
       await qaHook(page, 'qaBuildScene', { predators: [] });

@@ -55,7 +55,7 @@ test.describe('#throwPrompt via qaGrabThrowable()', () => {
 test.describe('#missionPanel via qaTeleportNearMission()', () => {
   test('teleporting near the mission target shows #missionPanel and enables completion', async ({ page }) => {
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaMissionKind: 'deepwater' }); // LUL-3010: this test asserts deepwater-specific behaviour; force it past the new eligibility gate
     await enter(page);
 
     const target = await qaHook(page, 'qaTeleportNearMission');
@@ -118,7 +118,7 @@ test.describe('#missionPanel via qaTeleportNearMission()', () => {
 test.describe('#missionPanel via qaTeleportAtMissionTarget()', () => {
   test('teleporting inside the interactRadius completes the mission with no movement', async ({ page }) => {
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaMissionKind: 'deepwater' }); // LUL-3010: this test asserts deepwater-specific behaviour; force it past the new eligibility gate
     await enter(page);
 
     const target = await qaHook(page, 'qaTeleportAtMissionTarget');

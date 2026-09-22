@@ -140,6 +140,7 @@ import {
   tierOf,
   POCKET_STONES_RESERVE,
   MISSION_DEEPWATER_REWARD,
+  MISSION_REWARDS,
   DEEPWATER_RETRIEVAL_BONUS,
   DEEPWATER_SPEEDRUN_BONUS,
   computeDepth,
@@ -162,6 +163,9 @@ import {
   completeRetrieval,
   secondaryComplete,
   RETRIEVAL_ITEM,
+  eligibleMissionPool,
+  checkMissionExpiry,
+  MISSION_POOL,
 } from '@/lib/game/mission';
 // LUL-2740: pure spiral clearance search, extracted from clearLandmarkSpot()
 // below so it is unit-testable without a Three.js scene.
@@ -171,6 +175,7 @@ import {
   inLakeClearance,
   lakeSpeedMultiplier,
   pushOutOfLakeClearance,
+  pushOutOfLakeClearanceAvoiding,
   keepWaypointOffLake,
 } from '@/lib/game/lake';
 import {
@@ -324,9 +329,25 @@ const clamp = (v,a,b) => v<a ? a : v>b ? b : v;
 // wall-clock hour at load, not a live clock during play -- see
 // docs/specs/time-of-day.md for why. Consumed by the sky/lighting block
 // below and by startAudio().
-const timeOfDay = timeOfDayFromHour(new Date().getHours());
+// LUL-2667: ?qaHour=<0-23> pins the hour timeOfDayFromHour() sees, for
+// deterministic e2e coverage of a system that otherwise reads the real
+// wall-clock hour once at module load (LUL-1644, see docs/specs/time-of-day.md).
+// Falls back to the real clock when absent/invalid, so real players are
+// unaffected. Read here rather than added to the qaParams block above
+// (:244) because that block runs after CONFIG mutation for qaWorld/
+// qaNoRender, and this line already has its own qaParams-shaped read --
+// same window.location.search source, no second URLSearchParams parse.
+const qaHourParam = qaParams ? qaParams.get('qaHour') : null;
+const qaHourNum = qaHourParam === null ? NaN : Number(qaHourParam);
+const timeOfDay = timeOfDayFromHour(Number.isFinite(qaHourNum) ? qaHourNum : new Date().getHours());
 const TOD_VISUAL = TIME_OF_DAY_VISUALS[timeOfDay];
 const TOD_AUDIO = TIME_OF_DAY_AUDIO[timeOfDay];
+
+// LUL-3010: ?qaMissionKind=<kind> forces generateMap()'s mission draw to a single-kind
+// pool so a test doesn't have to fight the progression gate + rng draw to land on a
+// specific variant -- same read pattern as ?qaHour= above. Read once at module init,
+// same lifetime as the other ?qa*= boot overrides.
+const qaForcedMissionKind = qaParams ? qaParams.get('qaMissionKind') : null;
 
 // ---- Scene / camera / renderer -------------------------------------------
 const scene = new THREE.Scene();
@@ -1328,7 +1349,14 @@ function generateMap(seed){
   bwisps.visible = true;   // LUL-38: pickup() hides these; a fresh map/restart brings them back
   // LUL-1258: draw this run's mission last, after every other rng() consumer
   // above, so it never shifts the stream any existing seed/replay depends on.
-  mission = pickMission(rng, secondaryChoice);
+  // LUL-3010: ?qaMissionKind= (only meaningful under ?qaHooks=1, same gating style as
+  // ?qaHour=) forces a single-kind pool so a test doesn't have to fight the progression
+  // gate + rng draw to land on a specific variant -- mirrors qaWorld picking a real map,
+  // not a faked one.
+  const missionPool = qaForcedMissionKind
+    ? MISSION_POOL.filter((m) => m.kind === qaForcedMissionKind)
+    : eligibleMissionPool(progression, difficulty);
+  mission = pickMission(rng, secondaryChoice, missionPool);
   if(CONFIG.missionScaleMul !== 1){
     mission = { ...mission, target: { ...mission.target, x: mission.target.x * CONFIG.missionScaleMul, z: mission.target.z * CONFIG.missionScaleMul } };
   } else {
@@ -1742,9 +1770,23 @@ const BOOM_FOV_SCALE = Math.tan(CAMERA_FOV * Math.PI/360) / Math.tan(70 * Math.P
 // arithmetic. FLASH_PEAK_OPACITY replaces the two `0.9` literals below and
 // in updateBoom() so the two stay in lockstep.
 const FLASH_PEAK_OPACITY = 0.65;
+// LUL-3130: boomFlash is the only one of the three burst layers that ever
+// covers the screen centre (boomRing is a torus -- its own centre is a hole
+// -- and bspPts's scattered points rarely land on one exact pixel; live
+// per-layer probing with qaProbeBoomPixel() confirmed this). At
+// AdditiveBlending, boomFlash *adds* its gold onto whatever is already
+// behind it instead of replacing it -- during the pickup cinematic the
+// camera looks up into a bright sky (background alone read ~(188,210,224)),
+// so the additive gold pushed every channel to within a few percent of 255,
+// and ACES/bloom's compression at that saturation flattens the remaining
+// per-channel gap into a wash regardless of the mesh's own hue (verified:
+// AdditiveBlending measured deficit ~4.5, needs >20). NormalBlending
+// replaces the background pixel with the mesh's own color instead of
+// stacking onto it, so the readout stays gold/orange no matter how bright
+// the sky behind it is (measured (240,231,143), deficit 112).
 const boomGroup = new THREE.Group(); boomGroup.visible = false; scene.add(boomGroup);
 const boomFlash = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12),
-  new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+  new THREE.MeshBasicMaterial({ color: 0xffb020, transparent: true, opacity: 1, blending: THREE.NormalBlending, depthWrite: false, fog: false }));
 const boomRing = new THREE.Mesh(new THREE.TorusGeometry(1, 0.05, 8, 44),
   new THREE.MeshBasicMaterial({ color: 0xff8c1a, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
 boomRing.rotation.x = Math.PI/2;
@@ -2023,7 +2065,25 @@ function placePredators(){
     let x, z, tries = 0;
     do { x=rnd(-half+margin, half-margin); z=rnd(-half+margin, half-margin); tries++; }
     while((x*x+z*z < 2500*clearScale*clearScale || Math.hypot(x-baby.x, z-baby.z) < 34*clearScale || blockedR(x, z, p.rad+0.5)) && tries < 60);
-    if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
+    if(inLake(x,z)){
+      // LUL-2735: the plain push only guarantees clear-of-lake, not
+      // clear-of-origin/baby (see the wrapper's own comment in lib/game/lake.ts).
+      // Re-check both circles this loop already enforced above and, if the
+      // push still violates one, search the same clearance ring for an angle
+      // that clears it too. If even that also collides with a tree/prop
+      // (blockedR), fall back to the pre-push candidate -- it already passed
+      // this loop's own blockedR check on exit (or, on the rare 60-try
+      // exhaustion path, is no worse than what shipped before this fix).
+      const pushed = pushOutOfLakeClearanceAvoiding(x, z, CONFIG.lake, [
+        { x: 0, z: 0, r: 50 * clearScale },
+        { x: baby.x, z: baby.z, r: 34 * clearScale },
+      ]);
+      if(blockedR(pushed.x, pushed.z, p.rad+0.5) && !blockedR(x, z, p.rad+0.5)){
+        // pushed candidate now collides with a prop the pre-push spot didn't -- keep the pre-push spot (still inside the lake, same as today's unfixed behavior for this one rare corner).
+      } else {
+        x = pushed.x; z = pushed.z;
+      }
+    }
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     const [ccx, ccz] = chunkXZ(x, z), [pcx, pcz] = chunkXZ(player.x, player.z);
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
@@ -2161,7 +2221,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // a fresh install), and a higher-priority key preempts a lower-priority one
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
-const HINT_PRIORITY = ['scent','landmark','lake','bog','deepwater',
+const HINT_PRIORITY = ['scent','landmark','lake','bog','deepwater','oakHollow',
   'wolf','bear','lion','stamina','cover','caveImmune','throwable','veil'];
 // 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
 // projected to a viewport fraction via projectToScreen() below, same math the
@@ -2176,7 +2236,8 @@ const HINT_TEXT = {
   landmark:   'landmarks in the fog are safe to navigate by',
   lake:       'chest-deep water — half pace. predators wade too',
   bog:        'bog — half pace, but it masks your scent from wolves',
-  deepwater:  'deepwater — reach the drowned car for a bonus payout on a run you survive',
+  deepwater:  'the drowned car — a bonus payout, but only if you reach it within the time limit',
+  oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
@@ -3822,6 +3883,9 @@ let hudState = {
   // LUL-1258: M2 Deepwater's minimal HUD panel -- null/null whenever no
   // mission is active or the player is carrying (see the tick() pushState).
   missionKind: null, missionStatus: null,
+  // LUL-3010: seconds remaining for the far/timed variant; null for the
+  // near/untimed variant or whenever missionKind/missionStatus is null.
+  missionTimerSeconds: null,
   // LUL-1666: secondary objectives (deepwater only, Phase 1). `missionUnlocks`
   // is cross-session like embersBalance above (Hud.tsx persists it).
   // `secondaryChoice` is the player's pre-run pick, reset only by
@@ -4017,6 +4081,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       visible: landmarkGroups[l.kind].children.some(c => c.isSprite),
       fog: landmarkGroups[l.kind].children.find(c => c.isSprite)?.material.fog ?? null,
     }));
+  };
+  // LUL-2667: exposes the resolved timeOfDay state plus the exact TOD_VISUAL/
+  // TOD_AUDIO values init() applied, so a test can assert against the six
+  // documented states (lib/game/timeOfDay.ts) without scraping renderer
+  // internals (scene.fog.color, hemiLight.color, etc. are Three.js instances,
+  // not plain values a test can diff cleanly).
+  window.ForestEngine.qaProbeTimeOfDay = function(){
+    return { state: timeOfDay, visual: TOD_VISUAL, audio: TOD_AUDIO };
   };
   // LUL-2225: bogginess and its two derived multipliers at an arbitrary
   // point, so a test can sample the patch's shape/edge directly (centre,
@@ -4420,6 +4492,24 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // put a lion a few units out with hunt=true. Even at full stillness this
   // must still catch you (STILL_DETECT_CUT never reaches 1).
   window.ForestEngine.qaOpenHideNearLion = function(){
+    // LUL-3126: live-repro'd that an in-flight charge staged by an earlier
+    // qaTriggerCharge() call can resolve to 'caught' (stepCharge, CHARGE_WINDOW
+    // 1s game time) in the render loop between the caller's two separate
+    // page.evaluate() round-trips -- i.e. entirely before this hook's own body
+    // ever runs, not just before it finishes. No amount of clearing state
+    // below can undo a kill that already landed: `dead` is a once-only guard
+    // (triggerDeath), and the below loop's `p.inert = true` skip in
+    // updatePredators() only prevents *future* catches. Returning the lion's
+    // index anyway told the caller "the lion is now the one hunting you" while
+    // the kill credit already belonged to whatever caught the player first --
+    // the 3rd recurrence of this shape (LUL-2596, LUL-2876), same symptom
+    // (#deathKind names the wrong species), different predator each time,
+    // because each prior fix cleared more staged-state races instead of
+    // checking whether the race had already been lost. Returning null here
+    // reuses the hook's existing "no lion spawned" contract so the caller's
+    // own fallback path names the real killer instead of asserting a lion
+    // that can no longer exist.
+    if(dead) return null;
     player.x = 0; player.z = 0;
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
@@ -4436,7 +4526,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // on the mobile death-cutscene step: #deathKind read 'bear' instead of the
     // staged 'lion'). `inert` removes a predator from updatePredators()'s loop
     // entirely (:2516), same flag qaIsolatePredatorKind (:4635) and
-    // qaStageWalkIntoCover use for this exact failure mode.
+    // qaStageWalkIntoCover use for this exact failure mode. LUL-3126: none of
+    // this runs at all if `dead` is already true (see the guard above) -- it
+    // only protects the window between this hook starting and a *later*
+    // in-flight charge/re-detect resolving, not a race already lost before
+    // the hook was even called.
     for(const p of predators){
       if(p === lion) continue;
       if(p.charge){ p.charge = null; endChargeHud(); }
@@ -4872,6 +4966,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // wait window.
   const LION_STANDOFF = 14;
   window.ForestEngine.qaOpenHideNearLionAtHideSpot = function(){
+    // LUL-3126: same already-lost-the-race guard as qaOpenHideNearLion above --
+    // a kill from an earlier-staged predator can land before this hook's body
+    // ever runs, and nothing below can undo it.
+    if(dead) return null;
     const idx = predators.findIndex(p => p.kind === 'lion');
     if(idx < 0) return null;
     const lion = predators[idx];
@@ -5323,8 +5421,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // Force a render so the WebGL back buffer reflects the exact simulated
     // instant this is called at, independent of the rAF/fixed-step loop's
     // own timing -- readPixels with no preserveDrawingBuffer is only
-    // reliable read-immediately-after-render.
-    renderer.render(scene, camera);
+    // reliable read-immediately-after-render. LUL-3130: must go through the
+    // same path the real frame loop uses (line ~7183) -- a raw
+    // renderer.render(scene,camera) skips the bloom+ACES composite
+    // (renderPost) whenever usePost is true, reading back an uncomposited,
+    // untonemapped frame a real player never sees.
+    if(usePost) renderPost(0); else renderer.render(scene, camera);
     const gl = renderer.getContext();
     const w = renderer.domElement.width, h = renderer.domElement.height;
     const px = new Uint8Array(4);
@@ -5499,6 +5601,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!mission) return null;
     player.x = mission.target.x + mission.target.interactRadius - 1; player.z = mission.target.z;
     return { kind: mission.target.kind, x: mission.target.x, z: mission.target.z, status: mission.status };
+  };
+  // [QA-HOOK] LUL-3010: shrinks the *current* mission's own timeLimitSeconds so the real
+  // per-tick checkMissionExpiry() trips on the next frame -- stages the scenario, does not
+  // set status directly (status is still flipped by the real expiry path, cue included).
+  // No-op (returns null) if the mission has no timer (near variant / already resolved).
+  window.ForestEngine.qaShrinkMissionTimer = function(seconds){
+    if(!mission || mission.target.timeLimitSeconds == null) return null;
+    mission = { ...mission, target: { ...mission.target, timeLimitSeconds: seconds } };
+    return { kind: mission.target.kind, timeLimitSeconds: mission.target.timeLimitSeconds };
   };
 
   // [QA-HOOK] LUL-2230: exactly what the last frame drew for the scent trail
@@ -5813,7 +5924,7 @@ function finishPickup(){
   // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
   // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
   // like carried/home, since computeDeathPayout's signature is untouched.
-  const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
+  const missionBonus = mission?.status === 'complete' ? MISSION_REWARDS[mission.target.kind] : 0;
   // LUL-1666: secondary bonus is independent of missionBonus -- a player can
   // win the secondary without ever completing the deepwater baseline this
   // run (already unlocked from a prior run), or complete the baseline and
@@ -5860,6 +5971,17 @@ function missionCompleteSting(){
   const og = ctx.createGain();
   og.gain.setValueAtTime(0.0001, t); og.gain.exponentialRampToValueAtTime(0.18, t+0.03); og.gain.exponentialRampToValueAtTime(0.0001, t+0.4);
   o.connect(og); og.connect(master); og.connect(conv); o.start(t); o.stop(t+0.42);
+}
+// LUL-3010: the far/timed variant's expiry cue -- descending register, the inverse of
+// missionCompleteSting()'s rising sweep above, same "audibly distinguishable opposites"
+// precedent as caveImmuneStartCue()/caveImmuneEndCue() below.
+function missionExpiredSting(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(560, t); o.frequency.exponentialRampToValueAtTime(220, t+0.3);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t+0.03); g.gain.exponentialRampToValueAtTime(0.0001, t+0.45);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+0.5);
 }
 // LUL-2351: decisions/0015-cue-triple's audio leg for every SHOP_CATALOG purchase
 // (Deeper Lungs included -- it had no purchase sound before this ticket; making
@@ -5956,7 +6078,7 @@ function arriveHome(){
   // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
   // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
   // like carried/home, since computeDeathPayout's signature is untouched.
-  const missionBonus = mission?.status === 'complete' ? MISSION_DEEPWATER_REWARD : 0;
+  const missionBonus = mission?.status === 'complete' ? MISSION_REWARDS[mission.target.kind] : 0;
   // LUL-1666: secondary bonus is independent of missionBonus -- a player can
   // win the secondary without ever completing the deepwater baseline this
   // run (already unlocked from a prior run), or complete the baseline and
@@ -6765,6 +6887,16 @@ function stepFrame(dt, t, skipRender){
     const d = Math.hypot(t.x - player.x, t.z - player.z);
     if(d < nearestThrowableD) nearestThrowableD = d;
   }
+  // LUL-3010: per-tick expiry check for the far/timed variant -- edge-triggered so the
+  // fail cue/caption fires exactly once, the instant checkMissionExpiry flips the status.
+  if(mission){
+    const wasActive = mission.status === 'active';
+    mission = checkMissionExpiry(mission, clock.elapsedTime - enteredAt);
+    if(wasActive && mission.status === 'expired'){
+      pushState({ caption: 'the mission window has closed -- no bonus this run', captionId: ++captionSeq });
+      missionExpiredSting();
+    }
+  }
   // LUL-1258: M2 Deepwater -- distance/completion gate for the mission target,
   // computed the same way canPickup is above.
   const distMission = mission ? distToMissionTarget(mission, player.x, player.z) : Infinity;
@@ -6840,6 +6972,11 @@ function stepFrame(dt, t, skipRender){
       // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
       missionKind: mission && !carrying ? mission.target.kind : null,
       missionStatus: mission && !carrying ? mission.status : null,
+      // LUL-3010: only the far/timed variant carries a timer; null for
+      // oakHollow (untimed) same as missionKind/missionStatus while carrying.
+      missionTimerSeconds: mission && !carrying && mission.target.timeLimitSeconds != null
+        ? Math.max(0, Math.round(mission.target.timeLimitSeconds - (clock.elapsedTime - enteredAt)))
+        : null,
       secondaryKind: mission && !carrying && mission.secondary ? mission.secondary.data.kind : null,
       secondaryStatus: mission && !carrying && mission.secondary
         ? (secondaryComplete(mission, clock.elapsedTime - enteredAt) ? 'complete' : 'active')
@@ -6856,7 +6993,7 @@ function stepFrame(dt, t, skipRender){
       caveImmuneTimeLeft: caveImmuneT,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false });
   }
   // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
   // baby.taken stays true forever once first picked up, so babySetDown is the only signal
@@ -7016,8 +7153,8 @@ function stepFrame(dt, t, skipRender){
     const coverHintVisible = !hidden && lastHideSpot !== null;
 
     // key -> [eligible this frame, world anchor {x,y,z} | null]. Self/panel-anchored
-    // keys (lake/bog/deepwater/stamina/caveImmune/veil) never need an anchor -- they're
-    // positioned by fixed CSS in GameCanvas.tsx, not a per-frame world point.
+    // keys (lake/bog/deepwater/oakHollow/stamina/caveImmune/veil) never need an anchor --
+    // they're positioned by fixed CSS in GameCanvas.tsx, not a per-frame world point.
     function hintCandidate(key){
       switch(key){
         case 'scent': return [scentTrailVisible, null];   // anchor handled separately below (firstFrustum)
@@ -7025,6 +7162,7 @@ function stepFrame(dt, t, skipRender){
         case 'lake': return [playerInLake, null];
         case 'bog': return [playerBogginess > 0.05, null];
         case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active' && !carrying, null];
+        case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active' && !carrying, null];
         case 'wolf': case 'bear': case 'lion': {
           for(const p of predators){
             if(p.inert || p.kind !== key) continue;
@@ -7048,6 +7186,7 @@ function stepFrame(dt, t, skipRender){
         case 'throwable': return throwableGrabCount > baseline;
         case 'caveImmune': return caveImmuneT <= 0;
         case 'deepwater': return missionCanComplete;
+        case 'oakHollow': return missionCanComplete;
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
         default: return false;   // landmark, lake, bog: time-only

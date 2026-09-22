@@ -32,13 +32,6 @@ interface PersistedSettings {
   // action, applied via a document.body dataset flag. Defaults to OFF (see
   // readSettings() below): a player shouldn't see dev GUI unless they opt in.
   adminMode: boolean;
-  // LUL-2309: the minimap became a player-facing navigation aid (home ring +
-  // beacon colours, LUL-2248) and needs its own player-visible toggle rather
-  // than riding along with the dev-only admin mode above. Same
-  // presentation-only shape and falsy default idiom as adminMode/highContrast
-  // (NOT the `!== false` default-on idiom scentTrailVisible/hintsEnabled use
-  // above) -- a never-persisted key must read as OFF.
-  showMinimap: boolean;
 }
 
 function readSettings(): Partial<PersistedSettings> {
@@ -78,8 +71,6 @@ export default function SettingsPanel({
   const [highContrast, setHighContrast] = useState(() => !!readSettings().highContrast);
   // LUL-650: defaults OFF (`!!undefined` on a never-persisted key is `false`).
   const [adminMode, setAdminMode] = useState(() => !!readSettings().adminMode);
-  // LUL-2309: defaults OFF, same idiom as adminMode above.
-  const [showMinimap, setShowMinimap] = useState(() => !!readSettings().showMinimap);
   // LUL-1088: "(instead of hold Shift)" names a keyboard key that doesn't exist
   // on a touch device -- same isMobile() single source of truth every other
   // mobile surface uses (see components/OrientationGate.tsx).
@@ -132,10 +123,6 @@ export default function SettingsPanel({
     document.body.dataset.adminMode = adminMode ? '1' : '0';
   }, [adminMode]);
 
-  useEffect(() => {
-    document.body.dataset.showMinimap = showMinimap ? '1' : '0';
-  }, [showMinimap]);
-
   // Persist whenever any of these actually change -- after the apply-on-ready
   // effect above, so a mount with a stored `sensitivity: 1.4` doesn't get
   // immediately re-written as the engine's own default before it applies.
@@ -158,7 +145,6 @@ export default function SettingsPanel({
       hintsEnabled: state.hintsEnabled,
       highContrast,
       adminMode,
-      showMinimap,
     });
   }, [
     state.difficulty,
@@ -171,7 +157,6 @@ export default function SettingsPanel({
     state.hintsEnabled,
     highContrast,
     adminMode,
-    showMinimap,
   ]);
 
   if (!open) return null;
@@ -272,16 +257,8 @@ export default function SettingsPanel({
           High-contrast HUD
         </label>
         <label className="radioRow">
-          <input
-            type="checkbox"
-            checked={showMinimap}
-            onChange={(e) => setShowMinimap(e.target.checked)}
-          />
-          Minimap
-        </label>
-        <label className="radioRow">
           <input type="checkbox" checked={adminMode} onChange={(e) => setAdminMode(e.target.checked)} />
-          Admin mode (show pace/mist panel)
+          Admin mode (show pace/mist panel + minimap)
         </label>
         {/* Fog density already has an adjustable control -- the "Mist" slider
             in the main #panel (components/Hud.tsx) -- which is exactly the

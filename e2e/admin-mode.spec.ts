@@ -9,9 +9,10 @@
 // hide the pace/mist/sound/regen/fullscreen controls, not show today's full
 // dev HUD until a player opts in.
 //
-// LUL-2309: the minimap got its own `showMinimap` setting, decoupled from
-// admin mode (LUL-2248 turned it into a player-facing navigation aid, not a
-// dev tool) -- its default-off/toggle coverage moved to e2e/minimap-setting.spec.ts.
+// LUL-4341: the minimap is admin-gated again (reverts LUL-2309's standalone
+// toggle) -- on/off coverage lives here alongside the rest of admin mode;
+// e2e/minimap-setting.spec.ts keeps the blackout-preset and stale-key
+// regression coverage.
 //
 // LUL-1085: #settingsBtn moved into GameMenu's hamburger panel (components/GameMenu.tsx)
 // and only renders once that menu is opened -- not visible on boot the way it was
@@ -36,6 +37,8 @@ test.describe('admin mode', () => {
     // the real player-facing tell for veil/light is the in-world vignette + fog.
     await expect(page.locator('#lightState')).toBeHidden();
     await expect(page.locator('#veilState')).toBeHidden();
+    // LUL-4341: minimap is admin-gated again, default OFF like the rest of #panel.
+    await expect(page.locator('#minimap')).toBeHidden();
 
     // The one control that must survive admin-mode-off: without it a player
     // who never opts in has no way back into Settings at all. It lives inside
@@ -67,9 +70,12 @@ test.describe('admin mode', () => {
     await expect(page.locator('#fog')).toBeVisible();
     await expect(page.locator('#sound')).toBeVisible();
     await expect(page.locator('#regen')).toBeVisible();
+    // LUL-4341: same frame, no reload -- minimap comes back with admin mode.
+    await expect(page.locator('#minimap')).toBeVisible();
 
     await toggle.evaluate((el) => (el as HTMLInputElement).click());
     await expect(toggle).not.toBeChecked();
     await expect(page.locator('#pace')).toBeHidden();
+    await expect(page.locator('#minimap')).toBeHidden();
   });
 });

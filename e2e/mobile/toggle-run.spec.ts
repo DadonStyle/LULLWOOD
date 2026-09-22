@@ -22,12 +22,17 @@ test('the Run button only appears in toggle-run mode, and toggles the engine fla
   // Default runMode is 'hold' -- the button must not exist yet.
   await expect(page.getByTestId('touchToggleRun')).toHaveCount(0);
 
-  // #settingsBtn is reachable on mobile regardless of pause state (LUL-198
-  // repositions #panel, it doesn't hide it) -- see components/Hud.tsx.
+  // #settingsBtn only exists inside GameMenu.tsx's hamburger panel, which
+  // renders conditionally on `open` (components/GameMenu.tsx) -- open it first.
+  await page.getByTestId('menuToggle').click();
   await page.locator('#settingsBtn').click();
   const runModeCheckbox = page.getByRole('checkbox', { name: /toggle to run/i });
   await expect(runModeCheckbox).toBeVisible();
-  await runModeCheckbox.check();
+  // LUL-1088: #settingsPanel checkboxes are pointer-events: none (the
+  // wrapping .radioRow label is the real tap target) -- .check() fails
+  // actionability because the label intercepts the pointer at the input's
+  // box. Same workaround as the admin-mode toggle in wind-hint.spec.ts.
+  await runModeCheckbox.evaluate((el) => (el as HTMLInputElement).click());
   await page.getByRole('button', { name: 'Close settings' }).click();
 
   const runBtn = page.getByTestId('touchToggleRun');

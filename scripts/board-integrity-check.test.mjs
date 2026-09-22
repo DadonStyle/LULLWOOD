@@ -42,6 +42,10 @@ import {
   isAssignedBacklogNoGate,
   findAssignedBacklogNoGate,
   assignedBacklogNoGateWakeMarker,
+  isBlockedNoBlockers,
+  findBlockedNoBlockers,
+  isOwnWakeTicket,
+  blockedNoBlockersWakeMarker,
   authJsonPath,
   durableToken,
   resolveSelfAgentId,
@@ -1548,6 +1552,275 @@ test('fileWakeTickets never assigns an assigned-backlog-no-gate wake ticket to a
       Date.now(),
       assignedBacklogNoGate,
       agentsById,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].assigneeAgentId, 'cto-agent-id', 'must not inherit the paused Task Runner assignee');
+    assert.equal(postedIssue.assigneeAgentId, 'cto-agent-id');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+// ---- Alarm F: blocked issue with zero blockers -----------------------------
+//
+// Founder directive LUL-3018, observed 6x (LUL-2570/2998/3009/2831/2818/2813):
+// status `blocked` with an empty `blockedByIssueIds` -- nothing is waiting on
+// it either way, so it never wakes automatically. Unconditional: no
+// heartbeat/recovery/interaction carve-out, unlike isTombstone.
+
+test('LUL-2570 shape: blocked + empty blockedBy + no tombstone-suppression signal -> alarm fires', () => {
+  const issue = { identifier: 'LUL-2570', status: 'blocked', blockedBy: [], assigneeAgentId: null };
+  assert.equal(isBlockedNoBlockers(issue), true);
+});
+
+test('missing blockedBy field entirely (not even an empty array) -> alarm fires', () => {
+  const issue = { identifier: 'LUL-2998', status: 'blocked', assigneeAgentId: 'some-agent' };
+  assert.equal(isBlockedNoBlockers(issue), true);
+});
+
+test('blocked with a real blockedBy entry -> not this alarm', () => {
+  const issue = { identifier: 'LUL-1', status: 'blocked', blockedBy: [{ identifier: 'LUL-2', status: 'todo' }] };
+  assert.equal(isBlockedNoBlockers(issue), false);
+});
+
+test('a status outside blocked is never this alarm, regardless of blockedBy', () => {
+  const issue = { identifier: 'LUL-1', status: 'todo', blockedBy: [] };
+  assert.equal(isBlockedNoBlockers(issue), false);
+});
+
+test('findBlockedNoBlockers excludes anything isTombstone() already flags -- Alarm B owns that overlap', () => {
+  const nowMs = new Date('2026-09-17T12:00:00.000Z').getTime();
+  // Plain blocked+empty-blockedBy, no recovery action/interaction/fresh
+  // heartbeat -- isTombstone(issue) is true for this shape too,
+  // so Alarm B's own STRANDED/SHIPPED wake ticket should be the one that fires.
+  const alsoTombstone = { identifier: 'LUL-1', status: 'blocked', blockedBy: [], assigneeAgentId: 'ghost' };
+  // Same structural shape, but the assignee has a fresh heartbeat right now --
+  // isTombstone excludes it, yet the empty-blockedByIssueIds problem still stands.
+  const notATombstone = { identifier: 'LUL-2570', status: 'blocked', blockedBy: [], assigneeAgentId: 'agent-1' };
+  const agentsById = new Map([['agent-1', { id: 'agent-1', status: 'running', lastHeartbeatAt: '2026-09-17T11:59:50.000Z' }]]);
+  const hits = findBlockedNoBlockers([alsoTombstone, notATombstone], agentsById, nowMs);
+  assert.deepEqual(hits.map((i) => i.identifier), ['LUL-2570']);
+});
+
+test('findBlockedNoBlockers never fires on the detector own wake tickets -- LUL-3311 runaway', () => {
+  const nowMs = new Date('2026-09-18T12:00:00.000Z').getTime();
+  const agentsById = new Map([
+    ['agent-1', { id: 'agent-1', status: 'running', lastHeartbeatAt: '2026-09-18T11:59:50.000Z' }],
+  ]);
+  // A real stranded ticket. This one must still be reported.
+  const realIssue = {
+    identifier: 'LUL-2570',
+    title: 'Feature Scout proposal needs routing',
+    status: 'blocked',
+    blockedBy: [],
+    assigneeAgentId: 'agent-1',
+  };
+  // Alarm F own output, stranded the same way by quota suppression. Filing a
+  // second wake ticket about this one is what produced ~1000 tickets in a day.
+  const ownOutput = {
+    identifier: 'LUL-3091',
+    title: 'Board-integrity: LUL-3086 is blocked with zero blockers (LUL-3018 detector)',
+    status: 'blocked',
+    blockedBy: [],
+    assigneeAgentId: 'agent-1',
+  };
+  // Every other alarm output shares the prefix and must be excluded too.
+  const tombstoneOutput = {
+    identifier: 'LUL-3174',
+    title: 'Board-integrity: LUL-3130 is a tombstone (LUL-672 detector)',
+    status: 'blocked',
+    blockedBy: [],
+    assigneeAgentId: 'agent-1',
+  };
+  const hits = findBlockedNoBlockers([realIssue, ownOutput, tombstoneOutput], agentsById, nowMs);
+  assert.deepEqual(
+    hits.map((i) => i.identifier),
+    ['LUL-2570'],
+  );
+});
+
+test('isOwnWakeTicket matches every alarm marker and nothing else', () => {
+  assert.equal(isOwnWakeTicket({ title: 'Board-integrity: LUL-1 is blocked with zero blockers' }), true);
+  assert.equal(isOwnWakeTicket({ title: 'Board-integrity: LUL-1 is a tombstone' }), true);
+  assert.equal(isOwnWakeTicket({ title: 'Board-integrity: PR #12 has no owning ticket' }), true);
+  assert.equal(isOwnWakeTicket({ title: 'Board-integrity: board has zero pullable work' }), true);
+  // A ticket a human wrote that merely mentions the detector is not our output.
+  assert.equal(isOwnWakeTicket({ title: 'Fix the Board-integrity: detector loop' }), false);
+  assert.equal(isOwnWakeTicket({ title: 'LUL-3311 detector runaway' }), false);
+  assert.equal(isOwnWakeTicket({}), false);
+});
+
+test('blockedNoBlockersWakeMarker is stable and starts with Board-integrity:', () => {
+  const marker = blockedNoBlockersWakeMarker({ identifier: 'LUL-2570' });
+  assert.equal(marker, 'Board-integrity: LUL-2570 is blocked with zero blockers');
+});
+
+test('formatReport includes Alarm F text and the assignee id (or "none") when blockedNoBlockers has hits', () => {
+  const hits = [{ identifier: 'LUL-2570', title: 'stuck ticket', assigneeAgentId: null }];
+  const report = formatReport([], [], 'DadonStyle/LULLWOOD', null, [], [], hits);
+  assert.match(report, /LUL-3018/);
+  assert.match(report, /LUL-2570/);
+  assert.match(report, /none/);
+});
+
+test('formatReport still returns null when blockedNoBlockers is empty and no other alarms', () => {
+  assert.equal(formatReport([], [], 'DadonStyle/LULLWOOD', null, [], [], []), null);
+});
+
+test('fileWakeTickets files a todo issue assigned to the ticket\'s own assignee, and dedups on the marker', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    let meCalled = false;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) {
+        meCalled = true;
+        return { ok: true, json: async () => ({ id: 'should-not-be-used' }) };
+      }
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-f1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const agentsById = new Map([['game-engineer', { id: 'game-engineer', status: 'running' }]]);
+    const blockedNoBlockers = [
+      { id: 'issue-2998', identifier: 'LUL-2998', title: 'stuck ticket', status: 'blocked', assigneeAgentId: 'game-engineer' },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      [],
+      agentsById,
+      [],
+      blockedNoBlockers,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].kind, 'blocked-no-blockers');
+    assert.equal(filed[0].assigneeAgentId, 'game-engineer');
+    assert.ok(postedIssue, 'expected a POST to /issues');
+    assert.equal(postedIssue.assigneeAgentId, 'game-engineer');
+    assert.equal(postedIssue.status, 'todo');
+    assert.match(postedIssue.description, /not silently flip its status/i);
+    assert.equal(meCalled, false, 'must not resolve self -- the issue already names a real, non-paused assignee');
+
+    const openIssuesAfter = [postedIssue];
+    globalThis.fetch = async (url, opts) => {
+      if (opts?.method === 'POST') throw new Error('should not file a second wake ticket');
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+    const filedAgain = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      openIssuesAfter,
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      [],
+      agentsById,
+      [],
+      blockedNoBlockers,
+    );
+    assert.equal(filedAgain.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets falls back to self-resolution for a blocked-no-blockers ticket with no assignee at all (LUL-2570 was unassigned)', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) return { ok: true, json: async () => ({ id: 'self-agent-id' }) };
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-f2' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const blockedNoBlockers = [
+      { id: 'issue-2570', identifier: 'LUL-2570', title: 'unassigned stuck ticket', status: 'blocked', assigneeAgentId: null },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      [],
+      new Map(),
+      [],
+      blockedNoBlockers,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].assigneeAgentId, 'self-agent-id');
+    assert.equal(postedIssue.assigneeAgentId, 'self-agent-id');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets never assigns a blocked-no-blockers wake ticket to a paused assignee -- falls back to self-resolution instead', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.endsWith('/api/agents/me')) return { ok: true, json: async () => ({ id: 'cto-agent-id' }) };
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-f3' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const agentsById = new Map([['task-runner', { id: 'task-runner', status: 'paused' }]]);
+    const blockedNoBlockers = [
+      { id: 'issue-2813', identifier: 'LUL-2813', title: 'stuck ticket', status: 'blocked', assigneeAgentId: 'task-runner' },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      [],
+      [],
+      Date.now(),
+      [],
+      agentsById,
+      [],
+      blockedNoBlockers,
     );
 
     assert.equal(filed.length, 1);

@@ -12,6 +12,8 @@ import {
   DEEPER_LUNGS_COSTS,
   DEEPER_LUNGS_MAX_TIER,
   MISSION_DEEPWATER_REWARD,
+  MISSION_OAKHOLLOW_REWARD,
+  MISSION_REWARDS,
   DEEPWATER_RETRIEVAL_BONUS,
   DEEPWATER_SPEEDRUN_BONUS,
   purchase,
@@ -153,6 +155,14 @@ test('completing M2 Deepwater and reaching home adds MISSION_DEEPWATER_REWARD on
   const base = computeWinPayout(212, 50);
   const withMission = computeWinPayout(212, 50, 'lantern', MISSION_DEEPWATER_REWARD);
   assert.equal(withMission.total, base.total + MISSION_DEEPWATER_REWARD);
+});
+
+// ---- MISSION_REWARDS (LUL-3010) ------------------------------------------
+
+test('MISSION_REWARDS has exactly one entry per MissionKind, keyed correctly', () => {
+  assert.deepEqual(Object.keys(MISSION_REWARDS).sort(), ['deepwater', 'oakHollow']);
+  assert.equal(MISSION_REWARDS.deepwater, MISSION_DEEPWATER_REWARD);
+  assert.equal(MISSION_REWARDS.oakHollow, MISSION_OAKHOLLOW_REWARD);
 });
 
 test('the mission bonus is not payable on death -- computeDeathPayout has no missionBonus argument', () => {
@@ -308,9 +318,9 @@ test('freshEmbersState starts at zero balance, empty tiers', () => {
 
 // ---- Generic catalog spend ------------------------------------------------
 
-test('SHOP_CATALOG has the three accepted items, 1,500 total across all tiers', () => {
+test('SHOP_CATALOG has the three accepted items, 1,430 total across all tiers', () => {
   const total = SHOP_CATALOG.reduce((sum, item) => sum + item.costs.reduce((a, b) => a + b, 0), 0);
-  assert.equal(total, 1500);
+  assert.equal(total, 1430);
 });
 
 test('nextCost is 120/300/600 for deeperLungs tiers 0/1/2, then null once maxed', () => {
@@ -356,8 +366,8 @@ test('purchase is a no-op for an unknown id', () => {
   assert.equal(purchase(s0, 'nope'), s0);
 });
 
-test('purchasing quietStep twice in sequence costs 150+250 and lands at tier 2', () => {
-  let s: EmbersState = { balance: 400, tiers: {} };
+test('purchasing quietStep twice in sequence costs 80+250 and lands at tier 2', () => {
+  let s: EmbersState = { balance: 330, tiers: {} };
   s = purchase(s, 'quietStep');
   s = purchase(s, 'quietStep');
   assert.equal(tierOf(s, 'quietStep'), 2);
@@ -365,7 +375,7 @@ test('purchasing quietStep twice in sequence costs 150+250 and lands at tier 2',
 });
 
 test('POCKET_STONES_COSTS/RESERVE are the accepted single-tier price and grant', () => {
-  assert.deepEqual(QUIET_STEP_COSTS, [150, 250]);
+  assert.deepEqual(QUIET_STEP_COSTS, [80, 250]);
   assert.deepEqual(POCKET_STONES_COSTS, [80]);
   assert.equal(POCKET_STONES_RESERVE, 2);
 });

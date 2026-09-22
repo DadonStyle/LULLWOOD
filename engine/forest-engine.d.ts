@@ -74,6 +74,16 @@ declare global {
        * LANDMARKS kind, so a test can assert the sprite exists and reads past the fog line
        * without a screenshot. */
       qaProbeLandmarkBeacons?: () => Array<{ kind: string; x: number; z: number; visible: boolean; fog: boolean | null }>;
+      /** LUL-2667: the resolved timeOfDay state plus the exact TOD_VISUAL/TOD_AUDIO
+       * values init() applied, so a test can assert against the six documented
+       * states without scraping renderer internals. Read-only snapshot -- see
+       * `?qaHour=` (docs/specs/lul-2667-time-of-day-coverage.md) for how a test
+       * pins which state this reflects. */
+      qaProbeTimeOfDay?: () => {
+        state: 'night' | 'early-morning' | 'morning' | 'noon' | 'afternoon' | 'evening';
+        visual: import('../lib/game/timeOfDay').TimeOfDaySkyConfig;
+        audio: import('../lib/game/timeOfDay').TimeOfDayAudioConfig;
+      };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */
@@ -465,16 +475,20 @@ declare global {
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
        * is active. */
-      qaTeleportNearMission?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
+      qaTeleportNearMission?: () => { kind: 'deepwater' | 'oakHollow'; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
       /** LUL-2884: sibling of qaTeleportNearMission, but places the player
        * already inside the mission target's interactRadius -- no wall-clock
        * movement needed to close the gap. Returns the target, or null if no
        * mission is active. */
-      qaTeleportAtMissionTarget?: () => { kind: 'deepwater'; x: number; z: number; status: 'active' | 'complete' } | null;
+      qaTeleportAtMissionTarget?: () => { kind: 'deepwater' | 'oakHollow'; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
       /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
        * fields qaTeleportNearMission returns as a side effect, for a test that
        * only needs to read, not teleport. */
-      qaProbeMission?: () => { kind: 'deepwater'; status: 'active' | 'complete'; x: number; z: number } | null;
+      qaProbeMission?: () => { kind: 'deepwater' | 'oakHollow'; status: 'active' | 'complete' | 'expired'; x: number; z: number } | null;
+      /** LUL-3010: shrinks the current mission's own timeLimitSeconds so the real per-tick
+       * checkMissionExpiry() trips on the next frame. No-op (null) if the mission has no
+       * timer (near variant / already resolved). */
+      qaShrinkMissionTimer?: (seconds: number) => { kind: 'deepwater' | 'oakHollow'; timeLimitSeconds: number } | null;
       /** LUL-2230: exactly what the last frame drew for the scent trail visual
        * -- `points.length` always equals the draw range the renderer used
        * this tick, so a test can assert the picture directly instead of
