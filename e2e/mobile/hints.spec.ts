@@ -1,6 +1,6 @@
 // LUL-2307 mobile half -- see ../hints.spec.ts for the desktop spec and the full writeup.
 // Same qaSetFixedStep/qaAdvance-driven determinism; qaTeleportTo/qaSetLookYaw/qaBuildScene
-// are engine hooks with no input-mode dependency, so the lake/deepwater/wolf staging is
+// are engine hooks with no input-mode dependency, so the deepwater/wolf staging is
 // identical to the desktop version -- only entry (no pointer lock on mobile) and the
 // Settings-row touch-target/overlap checks are mobile-specific, mirroring
 // ../mobile/scent-trail.spec.ts's own split between shared engine assertions and
@@ -114,7 +114,7 @@ for (const viewport of VIEWPORTS) {
     });
 
     // LUL-4581: oakHollow had no entry in either GameCanvas.tsx selector list that
-    // positions the self-anchored hint family (lake/bog/stamina/veil/landmark), so it
+    // positions the self-anchored hint family (bog/stamina/veil/landmark), so it
     // fell through to the generic #hintCaption rule and rendered above the top edge of
     // the viewport at this breakpoint (y:-47px on Pixel 5 landscape). PR #790 added it
     // to both lists; this pins the fix so a future selector-list edit that drops it
@@ -143,40 +143,6 @@ for (const viewport of VIEWPORTS) {
       await assertNoOverlap(page, '#hintCaption', '[data-testid=touchVeil]');
       await assertNoOverlap(page, '#hintCaption', '[data-testid=leftStick]');
       await assertNoOverlap(page, '#hintCaption', '[data-testid=rightStick]');
-    });
-
-    test('the lake hint appears on first entry into the water, not on a second visit', async ({ page }) => {
-      await boot(page, { qaHooks: true });
-      await enterMobile(page);
-      await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-      // LUL-2422: see ../hints.spec.ts's lake test comment -- park predators before the
-      // multi-round preemptive-hint drain below.
-      await qaHook(page, 'qaBuildScene', { predators: [] });
-      await clearPreemptiveHints(page);
-
-      await qaHook(page, 'qaTeleportTo', CONFIG.lake.x, CONFIG.lake.z);
-      await qaHook(page, 'qaAdvance', stepsFor(0.1));
-
-      let probe = await qaHook(page, 'qaProbeHints');
-      expect(probe.activeKey).toBe('lake');
-      const caption = page.locator('#hintCaption');
-      await expect(caption).toBeVisible();
-      await expect(caption).toContainText('chest-deep water — half pace. predators wade too');
-      await assertNoOverlap(page, '#hintCaption', '[data-testid=touchHide]');
-      await assertNoOverlap(page, '#hintCaption', '[data-testid=touchVeil]');
-      await assertNoOverlap(page, '#hintCaption', '[data-testid=leftStick]');
-      await assertNoOverlap(page, '#hintCaption', '[data-testid=rightStick]');
-
-      await qaHook(page, 'qaAdvance', stepsFor(8.1));
-      probe = await qaHook(page, 'qaProbeHints');
-      expect(probe.seen.lake).toBe(true);
-      await expect(caption).toHaveCount(0);
-
-      await qaHook(page, 'qaTeleportTo', 0, 0);
-      await qaHook(page, 'qaAdvance', stepsFor(0.5));
-      await qaHook(page, 'qaTeleportTo', CONFIG.lake.x, CONFIG.lake.z);
-      await qaHook(page, 'qaAdvance', stepsFor(0.1));
-      expect((await qaHook(page, 'qaProbeHints')).activeKey, 'an already-seen hint must not retrigger').not.toBe('lake');
     });
 
     test('a first-sighted wolf shows its caption once', async ({ page }) => {

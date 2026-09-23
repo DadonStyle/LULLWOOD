@@ -1,5 +1,5 @@
 // LUL-2247: generateCover()/generateReeds()/generateBogTrees()/
-// generateThrowables() each reject a candidate against lake/spawn/baby/
+// generateThrowables() each reject a candidate against spawn/baby/
 // tree, but never against each other, and never against a per-area count --
 // a bog chunk could hold dozens of cover/reed/bogTree props a couple of
 // units apart. thinGeneratedProps() (engine/forest-engine.js) now runs a
@@ -59,10 +59,6 @@ for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_P
 
     expect(density.minPairSpacing).not.toBeNull();
     expect(density.minPairSpacing).toBeGreaterThanOrEqual(MIN_SPACING - SLOP);
-
-    // Mandatory per the ticket: no reed may land inside CONFIG.lake.clear.
-    // generateReeds() now runs inLake() as its own rejection check.
-    expect(density.reedsInLakeClear, `seed ${seed} reeds inside CONFIG.lake.clear`).toBe(0);
   });
 }
 

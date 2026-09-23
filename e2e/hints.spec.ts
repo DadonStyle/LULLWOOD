@@ -13,7 +13,7 @@
 // 'deepwater' specifically pass `qaMissionKind: 'deepwater'`) are both eligible from frame
 // one regardless of where the player stands, and both sit ahead of most other keys in
 // HINT_PRIORITY -- so on a fresh boot they win the "become active" race before a scenario
-// further down the list (lake/wolf/...) ever gets a turn. clearPreemptiveHints() drains
+// further down the list (bog/wolf/...) ever gets a turn. clearPreemptiveHints() drains
 // whichever of those is currently active, repeatedly, until nothing is -- so a test
 // staging a specific key isn't just watching an unrelated hint play out first.
 import { test, expect } from './fixtures';
@@ -93,45 +93,6 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     // restarts -- the registry version must not: only the persisted "seen" flag decides.
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
     expect((await qaHook(page, 'qaProbeHints')).activeKey).not.toBe('landmark');
-  });
-
-  test('the lake hint appears on first entry into the water, not on a second visit', async ({ page }) => {
-    await boot(page, { qaHooks: true });
-    await enter(page);
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-    // LUL-2422: park predators before the multi-round preemptive-hint drain below (up
-    // to ~33s idle at spawn) -- see the landmark test's comment above for the root
-    // cause (a seeded predator can reach and kill the idle player on the 96u micro
-    // world well inside that window, which local-qa's lul-2307-first-encounter-hints
-    // request caught as "seen.lake never becomes true").
-    await qaHook(page, 'qaBuildScene', { predators: [] });
-    await clearPreemptiveHints(page);
-
-    await qaHook(page, 'qaTeleportTo', CONFIG.lake.x, CONFIG.lake.z);
-    await qaHook(page, 'qaAdvance', stepsFor(0.1));
-
-    let probe = await qaHook(page, 'qaProbeHints');
-    expect(probe.activeKey).toBe('lake');
-    const caption = page.locator('#hintCaption');
-    await expect(caption).toBeVisible();
-    await expect(caption).toContainText('chest-deep water — half pace. predators wade too');
-    await assertNoOverlap(page, '#hintCaption', '#objective');
-    await assertNoOverlap(page, '#hintCaption', '#missionPanel');
-    await assertNoOverlap(page, '#hintCaption', '#windIndicatorHint');
-
-    // Gone within 8s, marked seen.
-    await qaHook(page, 'qaAdvance', stepsFor(8.1));
-    probe = await qaHook(page, 'qaProbeHints');
-    expect(probe.activeKey).not.toBe('lake');
-    expect(probe.seen.lake).toBe(true);
-    await expect(caption).toHaveCount(0);
-
-    // Leave, come back -- must not reappear.
-    await qaHook(page, 'qaTeleportTo', 0, 0);
-    await qaHook(page, 'qaAdvance', stepsFor(0.5));
-    await qaHook(page, 'qaTeleportTo', CONFIG.lake.x, CONFIG.lake.z);
-    await qaHook(page, 'qaAdvance', stepsFor(0.1));
-    expect((await qaHook(page, 'qaProbeHints')).activeKey, 'an already-seen hint must not retrigger').not.toBe('lake');
   });
 
   test('the deepwater hint appears once the mission is active', async ({ page }) => {
