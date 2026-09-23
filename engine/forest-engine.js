@@ -2164,7 +2164,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // a fresh install), and a higher-priority key preempts a lower-priority one
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
-const HINT_PRIORITY = ['scent','landmark','lake','bog','deepwater','oakHollow',
+const HINT_PRIORITY = ['scent','landmark','bog','deepwater','oakHollow',
   'wolf','bear','lion','stamina','windAssist','cover','caveImmune','veilOverload','throwable','veil'];
 // 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
 // projected to a viewport fraction via projectToScreen() below, same math the
@@ -2177,7 +2177,6 @@ const WORLD_HINT_KEYS = { scent:1, wolf:1, bear:1, lion:1, cover:1, throwable:1 
 const HINT_TEXT = {
   scent:      'this is your scent trail — predators follow it',
   landmark:   'landmarks in the fog are safe to navigate by',
-  lake:       'chest-deep water — half pace. predators wade too',
   bog:        'bog — half pace, but it masks your scent from wolves',
   deepwater:  'the drowned car — a bonus payout, but only if you reach it within the time limit',
   oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
@@ -2346,7 +2345,7 @@ function scentOnto(p){
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
   predatorCall(p.kind, false, p);
-  logChronicle('scent_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home, CONFIG.lake) });
+  logChronicle('scent_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home) });
   scentLockEventCount++;   // LUL-2230: the trail caption dismisses itself on the first one of these
 }
 
@@ -4128,18 +4127,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       e[cat]++; perChunkMap.set(chunk, e);
     };
     const all = [];
-    let reedsInLakeClear = 0;
     for(const c of coverData){
       if(c.kind === 'tree') continue;
       const cat = c.kind === 'reed' ? 'reed' : 'cover';
       bump(treeChunkIndex(c.x, c.z), cat);
       all.push(c);
-      // LUL-2247 review fix: mandatory assertion from the ticket -- no reed
-      // may land inside CONFIG.lake.clear. inLake() is the exact check
-      // generateReeds() now runs at generation time (see its comment);
-      // reported here too so the e2e spec can assert the finished map
-      // rather than trusting the generator never regresses silently.
-      if(cat === 'reed' && inLake(c.x, c.z)) reedsInLakeClear++;
     }
     for(const b of bogTreeData){ bump(treeChunkIndex(b.x, b.z), 'bogTree'); all.push(b); }
     for(const t of throwableData){ bump(treeChunkIndex(t.x, t.z), 'stone'); all.push(t); }
@@ -4156,7 +4148,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       perChunk: Array.from(perChunkMap.values()),
       minPairSpacing: Number.isFinite(minPairSpacing) ? minPairSpacing : null,
       total: all.length,
-      reedsInLakeClear,
     };
   };
 
@@ -6036,7 +6027,7 @@ function triggerDeath(kind, cause, killerIdx){
   // false here, so a charge/telegraph in flight at the exact moment of death
   // would otherwise render on top of the death screen forever.
   activeCharges = 0;
-  logChronicle('death', { kind, landmark: nearestLandmarkName(player.x, player.z, LANDMARKS, CONFIG.home, CONFIG.lake) });
+  logChronicle('death', { kind, landmark: nearestLandmarkName(player.x, player.z, LANDMARKS, CONFIG.home) });
   // LUL-1194: full-length + unskippable only on the player's first-ever death
   // (persisted, see HAS_DIED_KEY above) -- skippable by any input every death after.
   cutsceneSkippable = hasDiedBefore;
@@ -6234,17 +6225,15 @@ function drawMinimapStatic(){
     sx.fillStyle = beacon ? ('#' + beacon.color.toString(16).padStart(6, '0')) : 'rgba(120,150,120,0.5)';
     sx.fillRect(px-1.5, py-1.5, 3, 3);
   }
-  const [lx,ly] = w2m(CONFIG.lake.x, CONFIG.lake.z);
-  sx.beginPath(); sx.arc(lx, ly, CONFIG.lake.r*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(134,184,255,0.55)'; sx.fill();
   // LUL-2225: the bog patch was never drawn here (LUL-1902 explicitly scoped
   // the minimap out) -- with a small, keep-clear patch there's finally a
-  // single clean disc to draw, same pattern as the lake immediately above.
+  // single clean disc to draw.
   // Blackout still hides the whole minimap (see the LUL-1505-era caller),
   // so this doesn't help blackout read the patch -- that's the point of it.
   const [bx,by] = w2m(BOG_CENTER.x, BOG_CENTER.z);
   sx.beginPath(); sx.arc(bx, by, BOG_OUTER_RADIUS*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(70,110,80,0.5)'; sx.fill();
   // LUL-2248: home as a warm stroked ring (not a filled disc, so it reads
-  // distinctly from the lake/bog fills) -- a small fixed minimap radius since
+  // distinctly from the bog fill) -- a small fixed minimap radius since
   // CONFIG.home.r is a gameplay proximity radius, not a visual size.
   const [hx,hy] = w2m(CONFIG.home.x, CONFIG.home.z);
   sx.beginPath(); sx.arc(hx, hy, 4, 0, Math.PI*2);
@@ -6740,8 +6729,6 @@ function stepFrame(dt, t, skipRender){
   if(bearingPulseSide) bearingPulseEl.className = bearingPulseSide;
   bearingPulseEl.style.opacity = (bearingPulseT*0.5).toFixed(3);
 
-  const distLake = Math.hypot(player.x - CONFIG.lake.x, player.z - CONFIG.lake.z);
-
   // objective + status HUD
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
   canPickup = canPickUp(runState(), distBaby, 3.6);
@@ -6923,9 +6910,8 @@ function stepFrame(dt, t, skipRender){
       audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuildAt(player.x, player.z, fogTideBuild, WRAP_SPAN, WRAP_SPAN)) * TOD_AUDIO.droneGainMul, now, 0.3);
       audio.twinkle -= dt;
       if(audio.twinkle <= 0){
-        const near = distLake < CONFIG.lake.r*3;
-        twinkle(near ? 0.10 : 0.05, near && Math.random() < 0.5);
-        audio.twinkle = near ? rnd(0.5, 1.6) : rnd(2.5, 6);
+        twinkle(0.05, false);
+        audio.twinkle = rnd(2.5, 6);
       }
     }
     audio.foot += dist;                              // footsteps play in both states
@@ -7026,13 +7012,12 @@ function stepFrame(dt, t, skipRender){
     const coverHintVisible = !hidden && lastHideSpot !== null;
 
     // key -> [eligible this frame, world anchor {x,y,z} | null]. Self/panel-anchored
-    // keys (lake/bog/deepwater/oakHollow/stamina/caveImmune/veil) never need an anchor --
+    // keys (bog/deepwater/oakHollow/stamina/caveImmune/veil) never need an anchor --
     // they're positioned by fixed CSS in GameCanvas.tsx, not a per-frame world point.
     function hintCandidate(key){
       switch(key){
         case 'scent': return [scentTrailVisible, null];   // anchor handled separately below (firstFrustum)
         case 'landmark': return [true, null];
-        case 'lake': return [playerInLake, null];
         case 'bog': return [playerBogginess > 0.05, null];
         case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active', null];
         case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active', null];
@@ -7065,7 +7050,7 @@ function stepFrame(dt, t, skipRender){
         case 'oakHollow': return missionCanComplete;
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
-        default: return false;   // landmark, lake, bog: time-only
+        default: return false;   // landmark, bog: time-only
       }
     }
     function hintDismissBaselineFor(key){
