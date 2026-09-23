@@ -1242,9 +1242,19 @@ function generateMap(seed){
   scentPoints = [];   // LUL-23: no trail survives a fresh map/restart
 
   // place the child far across the map (the "other side")
+  // LUL-4816/LUL-4824 review fix: sibling site to the tree-loop fix below --
+  // this draw sits earlier in the same seeded rng() stream, before trees and
+  // placePredators(), so a retry that redraws a different number of times
+  // than before reshuffles every tree and predator placed after it. Keep
+  // rejecting-and-redrawing against the former lake clearance circle (old
+  // CONFIG.lake: x:34,z:-28,clear:22, deleted from tuning.js by this ticket)
+  // even though nothing renders or collides there anymore.
   {
-    const ang = rng()*Math.PI*2, d = half*(0.5 + rng()*0.3);
-    baby.x = Math.cos(ang)*d; baby.z = Math.sin(ang)*d;
+    let ang, d;
+    do {
+      ang = rng()*Math.PI*2; d = half*(0.5 + rng()*0.3);
+      baby.x = Math.cos(ang)*d; baby.z = Math.sin(ang)*d;
+    } while((baby.x-34)*(baby.x-34) + (baby.z+28)*(baby.z+28) < 484);
   }
   babyNormalSpawn = { x: baby.x, z: baby.z };
   baby.taken = false;
