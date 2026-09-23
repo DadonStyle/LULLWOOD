@@ -39,7 +39,7 @@ const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 // LUL-2457: boot() (e2e/helpers.ts) has defaulted to qaWorld=micro since
 // LUL-2377 (this spec predates that change) -- applyQaWorldMicroPreset()
 // (engine/tuning.js) sets CONFIG.speedScaleMul=0.2, folded into every
-// predator's pLakeMul in updatePredators() (forest-engine.js), the same site
+// predator's pSpeedScaleMul in updatePredators() (forest-engine.js), the same site
 // e2e/qa-world-micro.spec.ts's speedScaleMul describe block asserts against.
 // Actual on-map movement is therefore 0.2x this raw formula, not the formula
 // itself -- un-scaled, this test asserted a floor 5x higher than the wolf can

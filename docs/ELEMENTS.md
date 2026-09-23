@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7338 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6516, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7238 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6435, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -143,12 +143,7 @@ Cue-triple audit: see `docs/CUES.md`.
 - Cannot enter `hidden` anywhere else — standing behind a rock or a
   large tree (LOS cover) does **not** let you hide; those only block sight
   incidentally while you keep moving (LUL-212's own framing, L263-277).
-- Cannot be blocked by the **lake** — it is a wade (half `maxSpd`,
-  `lakeSpeedMultiplier()`/`inLakeWater()` in `lib/game/lake.ts`), not a wall.
-  **Fixed, LUL-791/LUL-392** — see the Lake section and the matrix (`SLOW`⁴).
-  This bullet used to say the lake had no effect at all; that was true until
-  LUL-791 landed and is stale now.
-- Cannot physically collide with the child, a predator, the lake, the fog,
+- Cannot physically collide with the child, a predator, the fog,
   or the home landmark — none of `blocked()`/`blockedR()`/`coverBlockedR()`
   is ever called with those as the obstacle; every player/actor "contact" in
   this game is a **distance threshold**, not a solid-body collision
@@ -193,7 +188,7 @@ Cue-triple audit: see `docs/CUES.md`.
 **Collision & physics profile**
 - Movement collider: **circular, radius 0.6**, checked against the tree grid
   (`t.cr = 0.35*s`), the canopy-aware grid (`t.crCanopy`, player-only), and
-  rotated-AABB cover props. No collider vs. lake, home, fog, child, or
+  rotated-AABB cover props. No collider vs. home, fog, child, or
   predators — see above.
 - No vertical/ground collision at all: eye height is a formula
   (`eyeH + bob + jumpY`, L2395), never a raycast against the ground mesh.
@@ -298,8 +293,8 @@ Cue-triple audit: see `docs/CUES.md`.
 
 **Behaviours & logic**
 - Placement: `generateMap()` — polar draw, `d = half*(0.5+rng()*0.3)`
-  from origin, rejected while `inLake(baby.x,baby.z)` is true (only spawn
-  guard on the child; no guard against landing near a tree/cover cluster).
+  from origin, no rejection guard at all (no guard against landing
+  near a tree/cover cluster either).
 - On `'blackout'` difficulty (the hardest `DIFFICULTY_PRESETS` tier), the
   draw above is overridden by `applyHardBabySpawn()` to a point beyond the
   Bog band instead, via `pickHardBabyPosition()` (`lib/game/bog.ts`) — a
@@ -317,7 +312,7 @@ Cue-triple audit: see `docs/CUES.md`.
 **Collision & physics profile**
 - No collider. Visual scale/position only (`babyGroup`, a `THREE.Group` of
   two spheres + a halo + a point light, L526-539). Placement-time-only
-  clearance from the lake (`inLake`) and from trees/cover (`inBaby()`,
+  clearance from trees/cover (`inBaby()`,
   used symmetrically by *their* placement loops, not the child's own).
 
 ---
@@ -458,10 +453,7 @@ one geometry builder (`makePredator()`), differentiated by the
   player's max sprint, `RUN = CONFIG.walk*1.8 = 10.8`, all three final
   speeds exceed it — L623-624).
 - Cannot spawn inside the spawn clearing, too close to the child, or inside
-  another collider (`placePredators()`'s rejection loop) — **but
-  this loop does not check `inLake()`**, unlike the tree and child spawn
-  loops. `UNVERIFIED`/`UNDEFINED` whether a predator can spawn inside the
-  lake's clear radius on some seeds — see matrix.
+  another collider (`placePredators()`'s rejection loop).
 
 **Behaviours & logic**
 - `PSPEC`'s literal `speed` values (8.5/6.8/9.2, L616-618) are **immediately
@@ -810,74 +802,14 @@ one geometry builder (`makePredator()`), differentiated by the
   a purely visual coincidence of Y=0-ish values agreeing, not a physical
   relationship.
 - Has no texture variation, slope, or region boundary of its own — the map's
-  actual "regions" (lake, spawn clearing, forest) are separate systems
-  (`inLake()`, `inSpawn()`) layered on top of one uniform flat plane.
+  actual "regions" (spawn clearing, forest) are separate systems
+  (`inSpawn()`) layered on top of one uniform flat plane.
 
 **Behaviours & logic**
 - Single static mesh, created once, never touched again after L140-142.
 
 **Collision & physics profile**
 - None. See above.
-
----
-
-### Lake
-
-**What it can do**
-- Visually mark the map's landmark body of water: a circular water mesh
-  (`CONFIG.lake.r`=15, unlit `MeshLambertMaterial`) and an additive glow
-  ring; wisp particles rise out of it. LUL-2696 removed the dedicated
-  `lakeLight` point light that used to sit here (render-cost fix for the
-  swiftshader `qaAdvance` crash) — the glow ring alone now carries the
-  "landmark visible at night" read, and the water still darkens/lightens
-  with the scene's existing moon/hemisphere/rim lights.
-- Keep other elements clear of itself **at placement time only**: trees,
-  cover props, and the child all reject spawn candidates inside
-  `CONFIG.lake.clear` (22 units, `inLake()`, used for cover, tree, child,
-  and — as of LUL-791/LUL-395 — predator spawn placement).
-- Slow the player: `lakeSpeedMultiplier()` (`lib/game/lake.ts`) halves
-  `maxSpd` while `inLakeWater()` is true — the visible water radius
-  `CONFIG.lake.r` (15), a tighter circle than the `clear` ring spawn checks
-  use, so the slow starts exactly where the water mesh does. LUL-791/LUL-392.
-- Slow predators too, the same way: `updatePredators()` samples
-  `lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake))` (and the bog's
-  equivalent) per predator per tick and folds it into every roam/hunt/chase/
-  investigate/flank speed — a predator that wades in pays the same cost the
-  player does. The `charge` dash is explicitly exempt (LUL-1309).
-- Bias the ambient "twinkle" chime to play brighter/more often when the
-  player is near it (`distLake < CONFIG.lake.r*3`, `tick()`).
-- Explain itself once: the first step into `inLakeWater()` fires the `lake`
-  first-encounter hint ("chest-deep water — half pace. predators wade too"),
-  persisted so it only ever shows once per install. See "Hints" below and
-  `docs/specs/lul-2307-first-encounter-hints.md`.
-- Deflect a predator's roam/stuck-recovery waypoint: `updatePredators()`'s
-  two waypoint-pick sites (fresh roam target, and the stuck-recovery
-  fallback) both route the candidate through `keepWaypointOffLake()`, which
-  pushes it just past the water's edge (`inLakeWater()`, radius `r`) if it
-  landed inside — predators never *target* water, though nothing stops one
-  from crossing open water while actively chasing (LUL-857).
-
-**What it CANNOT do**
-- **Still cannot block player movement, by design.** Deliberately a wade
-  (half speed, `LAKE_SPEED_MULTIPLIER`=0.5, same shape as the bog's
-  `BOG_SPEED_MULTIPLIER`), not a hard wall — see ⁴. Nothing currently reads
-  the lake as anything deeper than ankle/waist depth (no drown state, no
-  stamina drain, no audio change beyond the existing proximity chime bias).
-- Does not affect scent or noise propagation (both are pure radius+wind /
-  radius+chance functions with no lake awareness).
-
-**Behaviours & logic**
-- `CONFIG.lake = { x:34, z:-28, r:15, clear:22, glow:0x86b8ff }`.
-- Ambient wisp particles loop 0.2→4.5 units and reset (`tick()`).
-- `pushOutOfLakeClearance()` (`lib/game/lake.ts`) is the deterministic
-  fallback `placePredators()` applies if its 60-try spawn-retry budget
-  exhausts on a candidate still inside `clear` — relocates radially outward
-  to just past the ring, same angle as the rejected candidate.
-
-**Collision & physics profile**
-- **Slow-only for the player** (`SLOW`, water radius `r`), **placement-time
-  exclusion only for everyone else** (`clear` radius: trees, cover, child,
-  predators). No hard collider anywhere.
 
 ---
 
@@ -902,7 +834,7 @@ one geometry builder (`makePredator()`), differentiated by the
   rng draw"). If `CONFIG.home` ever moved off the spawn point, this
   protection would silently stop applying.
 - Drawn on the minimap as a warm stroked ring only, not a filled disc, so it
-  reads distinctly from the lake/bog fills (`drawMinimapStatic()`, LUL-2248) —
+  reads distinctly from the bog fill (`drawMinimapStatic()`, LUL-2248) —
   a fixed 4px minimap radius, since `CONFIG.home.r` is a gameplay proximity
   radius, not a visual size.
 
@@ -1458,8 +1390,8 @@ follow-up, not part of the LUL-4629/CEO-accepted "Full" slice).
   `setTouchVeil`, LUL-529) — these are the *only* way React code can affect
   the world.
   No LUL-26 accessibility/difficulty setters exist in this object on `main`.
-- The minimap specifically reads and draws two other elements' live data:
-  tree positions (`treeData`, every 4th tree) and the lake's position/radius
+- The minimap specifically reads and draws another element's live data:
+  tree positions (`treeData`, every 4th tree)
   (`drawMinimapStatic()`) — not just player/child/predator state.
 
 **What it CANNOT do**
@@ -1545,16 +1477,16 @@ follow-up, not part of the LUL-4629/CEO-accepted "Full" slice).
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5890-5950, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6107-6148). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5814-5874, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6031-6072). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6107-6148) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6111) rather than recomputed later, since `player.x/z` can move on
+  (L6031-6072) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6013) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1610,8 +1542,8 @@ follow-up, not part of the LUL-4629/CEO-accepted "Full" slice).
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3941),
-  reset to 0 on `enter()` (L3959) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3785),
+  reset to 0 on `enter()` (L3884) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L6662: `computeDepth(maxDistFromHome) +
@@ -1734,12 +1666,12 @@ follow-up, not part of the LUL-4629/CEO-accepted "Full" slice).
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6466-7270, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6388-7174, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
 - Cannot prevent the player from moving at all — sprinting with zero stamina falls back to walk speed, not immobilization.
-- Does not interact with any other world element (predators, cover, lake, etc.) — purely a player-state resource.
+- Does not interact with any other world element (predators, cover, etc.) — purely a player-state resource.
 - Cannot be toggled or disabled by difficulty/accessibility settings (LUL-26 unmerged; no `DIFFICULTY_PRESETS` logic exists on `main` today).
 
 **Behaviours & logic**
@@ -2032,25 +1964,24 @@ collider · `ATT` = permanently attached/coincident · `–` = no interaction,
 verified in source · **`U`** = **UNDEFINED — no source resolves this**.
 Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
-| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | MI | UI | EM |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG²⁴ | TRIG⁶ | TRIG²¹ |
-| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | – | TRIG⁶ | TRIG²¹ |
-| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | – | TRIG⁶ | TRIG²¹ |
-| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | – | TRIG⁶ | TRIG²¹ |
-| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | – | TRIG⁶ | TRIG²¹ |
-| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | – | render¹⁷ | – |
-| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – | – |
-| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – | – |
-| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – | – | – |
-| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – | – | – |
-| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | – | render¹⁷ | – |
-| **HO** Home | | | | | | | | | | | | · | – | – | – | – | TRIG²¹ |
-| **FO** Fog | | | | | | | | | | | | | · | – | – | – | – |
-| **FL** Follow-light | | | | | | | | | | | | | | · | – | – | – |
-| **MI** Missions | | | | | | | | | | | | | | | · | TRIG⁶ | TRIG²¹ |
-| **UI** HUD/UI | | | | | | | | | | | | | | | | · | – |
-| **EM** Embers | | | | | | | | | | | | | | | | | · |
+| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | HO | FO | FL | MI | UI | EM |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | TRIG⁵ | – | ATT | TRIG²⁴ | TRIG⁶ | TRIG²¹ |
+| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁶ | – | – | – | render¹⁷ | – |
+| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁶ | – | – | – | – | – |
+| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁶ | – | – | – | – | – |
+| **BR** Bramble | | | | | | | | | · | STAND | –¹⁶ | – | – | – | – | – |
+| **GR** Ground | | | | | | | | | | · | STAND | – | – | – | – | – |
+| **HO** Home | | | | | | | | | | | · | – | – | – | – | TRIG²¹ |
+| **FO** Fog | | | | | | | | | | | | · | – | – | – | – |
+| **FL** Follow-light | | | | | | | | | | | | | · | – | – | – |
+| **MI** Missions | | | | | | | | | | | | | | · | TRIG⁶ | TRIG²¹ |
+| **UI** HUD/UI | | | | | | | | | | | | | | | · | – |
+| **EM** Embers | | | | | | | | | | | | | | | | · |
 
 ¹ Pickup (`distBaby<3.6`) — proximity, not collision. **LUL-2281** (2026-09-09) made
 the pickup cinematic itself the win, so there is no carry-follow leg after it.
@@ -2058,13 +1989,6 @@ the pickup cinematic itself the win, so there is no carry-follow leg after it.
 predators never call `blocked()`/`blockedR()` against each other.
 ³ Only trees tagged `s>1.4` (`coverData`); smaller trees block movement but
 not sight.
-⁴ **Fixed, LUL-791/LUL-392.** The player wades: `lakeSpeedMultiplier()`
-(`lib/game/lake.ts`) halves `maxSpd` while `inLakeWater()` is true (the
-visible water radius `CONFIG.lake.r`, not the wider `clear` spawn-clearance
-ring ¹² uses). Deliberately a slow, not a hard wall — a fog-heavy horror
-game reading a lake as an invisible wall feels like a bug even when
-intentional, and the slow plays into the core hiding loop (risk the slow
-crossing, or go around). Previously zero mechanical effect at all.
 ⁵ **Historical.** Used to be the walk-home win trigger (`dh<CONFIG.home.r`,
 gated on `carrying===true`). `LUL-2281` moved the win to the pickup cinematic
 (see footnote ¹); `LUL-2285` (2026-09-23) deleted this trigger along with the
@@ -2075,9 +1999,6 @@ text, death/win screens) but never collides with or is collided into.
 child's — only a spawn-time clearance (`placePredators()`). A predator can
 stand on an un-collected child indefinitely with no reaction from either
 side. Filed as **LUL-393**.
-⁸ Child's spawn draw rejects `inLake()` positions (`generateMap()`)
-— defined, not undefined; the child itself has no runtime lake interaction
-because it never moves.
 ⁹ Wolves-vs-wolves: coordinate via `updateWolfPack()` (flank targeting reads
 teammates' *state*, never position) and, as of **LUL-394**, also physically
 collide — see ¹⁰.
@@ -2096,21 +2017,6 @@ player, LUL-384/LUL-1642) — **deliberate**, the one exemption
 composite block both actors otherwise share. **Rock/Reed no longer belong
 in this footnote as of LUL-1643** — see ²³. LOS is still blocked normally
 for all four kinds.
-¹² **Fixed, LUL-791/LUL-395 (spawn) and LUL-857 (roam).**
-`placePredators()`'s spawn-rejection loop rejects `inLake()` (the
-`clear`-radius ring, same predicate as the tree/cover/child spawn loops),
-same bounded budget (`tries<60`); on exhaustion, `pushOutOfLakeClearance()`
-(`lib/game/lake.ts`) deterministically relocates the candidate just past the
-clearance ring. Separately, `updatePredators()`'s two roam-waypoint pick
-sites (fresh roam target and the stuck-recovery fallback) route through
-`keepWaypointOffLake()` (`engine/forest-engine.js`), which pushes a
-candidate just past the water's edge (`inLakeWater()`, radius `r`, not the
-wider `clear`) if it landed inside — closes the gap this footnote used to
-flag as residual. **Still not covered:** a predator actively chasing
-(`state==='chase'`/`hunt`) heads straight at the player (`ux`/`uz`) and
-ignores `wpx`/`wpz` entirely, so it can still cross open water mid-chase;
-that's an intentional, unchanged behaviour (chase priority over lake
-avoidance), not a gap in this fix.
 ¹³ Bears and lions are explicitly solitary — no pack *coordination* exists
 for either species (LUL-24 comment: "bears stay solitary... the contrast is
 the point"). That's targeting/flanking logic only; as of **LUL-394** they
@@ -2120,7 +2026,7 @@ still physically collide with same-species packmates via
 ¹⁴ **Fixed, LUL-396/LUL-450.** `generateCover()` now rejects a
 candidate rock/log/bramble whose own footprint circle overlaps a nearby
 tree's trunk collision circle (`treesNear()` + `overlapsTreeTrunk()` in
-`lib/game/cover.ts`) before placing it, same as the `inLake()`/`inSpawn()`/
+`lib/game/cover.ts`) before placing it, same as the `inSpawn()`/
 `inBaby()` rejections already there. Previously unchecked — a prop could
 spawn overlapping a tree trunk, a possible unreachable/broken hide spot if
 it hit a `bramble`/`log`. **Log (and, as of LUL-1642, Bramble too) also
@@ -2134,8 +2040,6 @@ within the canopy radius regardless of what's on the ground; without this a
 log or bramble could spawn clear of every trunk yet still wedge the player
 mid-crossing at a canopy edge. Rock/Reed stay trunk-only — solid either
 way, so a canopy-only overlap changes nothing observable for them.
-¹⁵ Trees and cover props both reject `inLake()` spawn candidates
-(`generateMap()`, `generateCover()`) — defined, not undefined.
 ¹⁶ Both protected from home only indirectly, via the shared `inSpawn()`
 check (home reuses the spawn coordinates) — see Home's "what it cannot do."
 ¹⁷ Rendered as a dot/circle on the minimap (`drawMinimapStatic()`)
@@ -2149,10 +2053,6 @@ LUL-1642, Bramble is walkable like Log, so a Log-Bramble overlap
 specifically is cosmetic in every sense — neither collides with the
 player either) — not filed as a separate ticket; noted for whoever next
 touches `generateCover()`.
-¹⁹ Both are static, hardcoded far apart (lake at (34,-28) r=15/clear=22;
-home at (0,0) r=3.6) — no code enforces their separation, but no seed can
-move either one, so there's nothing to verify per-seed. Defined by
-construction, not undefined.
 ²⁰ **Changed, LUL-384; changed again, LUL-2311.** LUL-384: previously
 `C+LOS+HIDE` like Bramble. Log became one of the cover kinds that doesn't
 block the player's movement — `coverKindBlocksMovement('log')` is `false`
@@ -2229,22 +2129,14 @@ registry's own merge.
   (`feature_engagement('hide')` never fired since LUL-212, function
   shadowing) is resolved: the shadowed declaration is deleted and the
   `track()` call now lives in `enterHide()`; see Player section.
-- ~~**LUL-392**~~ — **Fixed, PR #163.** Player now wades: `lakeSpeedMultiplier()`
-  halves `maxSpd` inside `inLakeWater()`; see footnote 4 and the Lake section.
 - **LUL-393** — Predators have zero runtime awareness of the child's
   position; can stand on it with no reaction. P3 (narrow: only matters
   before pickup, and nothing currently depends on it).
 - ~~**LUL-394**~~ — **Fixed.** `predatorSeparationPush()` resolves overlap
   for every predator pairing, same-species or cross-species; see footnotes
   ⁹/¹⁰/¹³.
-- ~~**LUL-395**~~ — **Fixed, PR #163.** `placePredators()`'s spawn-rejection
-  loop now rejects `inLake()` too; see footnote 12.
 - ~~**LUL-396**~~ — **Fixed, LUL-450.** Cover-prop placement (`generateCover()`)
   now checks tree clearance before placing; see footnote 14 above.
-- ~~**LUL-857**~~ — **Fixed.** `updatePredators()`'s roam and stuck-recovery
-  waypoint picks now route through `keepWaypointOffLake()`; see footnote 12.
-  (Filed after this doc's original ticket, as a residual gap PR #163 itself
-  flagged rather than fixed — not one of the original `UNDEFINED` findings.)
 
 ---
 
@@ -2274,9 +2166,8 @@ lists), and `generateCover()`/`generateThrowables()` post-filter any log/rock/br
 that lands inside it. Forest trees inside the patch's dense-core threshold
 (`biomeAt > 0.5`) are culled to 1-in-4 (deterministic index counter, no rng change) so the
 interior reads as sparse, not "the same forest plus more trees" — `qaProbeBogKeepClear()`
-reads all of this back from the live map. `CONFIG.lake` is now 131 units from `BOG_CENTER`
-(outside `BOG_OUTER_RADIUS` on its own), so the old lake carve-out in `lib/game/bog.ts` was
-dead code and was removed; `CONFIG.home`/spawn is still explicitly carved out to stay dry
+reads all of this back from the live map. The bog generator has no lake special-case
+(none was ever needed — see git history if the "why" matters); `CONFIG.home`/spawn is still explicitly carved out to stay dry
 (`HOME_CLEAR_RADIUS`/`HOME_FADE_RADIUS`). The patch now has a visible boundary: two
 concentric ground discs (`bogOuterGround`/`bogInnerGround`, darker/wetter material than the
 base `ground` plane) and a matching disc on the minimap (`drawMinimapStatic()`) — the
@@ -2299,7 +2190,7 @@ every seed (1000/1000, and asserted with no fallback over 200 seeds in `bog.test
 but **not** in `HIDE_KINDS` — not a hiding spot; own budget `BOG_REEDS` (120) as of
 LUL-2225, placed only in the ring between `BOG_INNER_RADIUS` and `BOG_OUTER_RADIUS` so reeds
 themselves read as the patch's boundary, not scattered through its interior, and rejecting
-`inLake()`/`overlapsTreeTrunk()` candidates in its own generation loop as of **LUL-2247**
+`overlapsTreeTrunk()` candidates in its own generation loop as of **LUL-2247**
 (same checks `generateCover()` runs); as of the same ticket, Cover/Reed/BogTree/stone
 (throwables) are additionally jointly capped per 60x60 chunk and to a 3.5u minimum spacing
 across every non-tree prop type (`PROP_CHUNK_CAP`/`PROP_MIN_SPACING`, `engine/tuning.js`) —
@@ -2387,7 +2278,7 @@ LUL-1855's beacon glow. Slice (b) (two-way, player-triggered, Tier C) and slice
 
 One small engine-side registry (`HINT_PRIORITY`/`HINT_TEXT`, `engine/forest-engine.js`)
 replaces LUL-2230's bespoke scent-only caption with a `{key -> text/trigger}` table covering
-thirteen keys: `scent`, `landmark`, `lake`, `bog`, `deepwater`, `wolf`/`bear`/`lion`,
+twelve keys: `scent`, `landmark`, `bog`, `deepwater`, `wolf`/`bear`/`lion`,
 `stamina`, `cover` (hollow log/bramble), `caveImmune`, `throwable`, `veil`. Each key fires
 once per install, the first time its trigger condition is true while `entered && !hidden &&
 !win && !death` and the `Show hints` setting is on. Only one hint shows at a time;
@@ -2405,18 +2296,18 @@ already saw the scent caption doesn't see it a second time under the new key.
 **Anchoring**: `scent`/`wolf`/`bear`/`lion`/`cover`/`throwable` are world-anchored — a real 3D
 point (the mote/animal/prop/stone), projected to a viewport fraction via the same
 camera-frustum math LUL-2230 introduced (`projectToScreen()`, generalized out of the
-scent-only inline version). `lake`/`bog`/`deepwater`/`stamina`/`caveImmune`/`veil`/`landmark`
+scent-only inline version). `bog`/`deepwater`/`stamina`/`caveImmune`/`veil`/`landmark`
 have no natural 3D point (or, for stamina/veil, no player-facing meter to anchor to at all —
 see `SettingsPanel.tsx`'s own note that `#panel`'s stamina/veil readouts are dev-only;
 `landmark` fires unconditionally on entry with nothing specific to point at, same as the old
 toast it replaces) and are positioned by a fixed `[data-hint-key]` CSS rule instead:
 `deepwater`/`caveImmune` sit below their own `#missionPanel`/`#caveImmunePanel`;
-`lake`/`bog`/`stamina`/`veil`/`landmark` share the bottom-center spot `#captionToast`
+`bog`/`stamina`/`veil`/`landmark` share the bottom-center spot `#captionToast`
 (predator-call captions) already uses, above `#actionSlot`.
 
 **LUL-2743 (short-landscape breakpoint only)**: at `@media (max-height: 420px)` (short
 landscape phones, e.g. Pixel 5 851x393 / iPhone SE 667x375), the world-anchored keys stop
-world-anchoring and share the same fixed slot as `lake`/`bog`/`stamina`/`veil`/`landmark`
+world-anchoring and share the same fixed slot as `bog`/`stamina`/`veil`/`landmark`
 instead (`components/GameCanvas.tsx`). Two earlier attempts (LUL-2532, LUL-2594) tuned the
 ceiling a world-anchored pill's `translate(-50%,-120%)` lift is clamped against, but that
 ceiling is `#actionSlot`'s own top edge — 9px above the viewport top on iPhone SE landscape
@@ -2528,7 +2419,7 @@ it already fires correctly for the sprint-bonus window; both the `title` and the
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
 (`engine/forest-engine.js` L7321 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'`. A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6071) and `windAssistEndCue()` (L6080), edge-triggers on the combined
+`windAssistStartCue()` (L5995) and `windAssistEndCue()` (L6004), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

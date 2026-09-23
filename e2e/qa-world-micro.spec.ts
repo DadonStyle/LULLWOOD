@@ -75,8 +75,8 @@ test.describe('detectScaleMul', () => {
 });
 
 test.describe('speedScaleMul', () => {
-  // LUL-2469: CONFIG.speedScaleMul (LUL-2422) was folded into pLakeMul and applied to every
-  // `*pLakeMul` speed site in updatePredators() except one -- the roam state's waypoint-travel
+  // LUL-2469: CONFIG.speedScaleMul (LUL-2422) was folded into pSpeedScaleMul and applied to every
+  // `*pSpeedScaleMul` speed site in updatePredators() except one -- the roam state's waypoint-travel
   // leg, which was left as a bare `speed=2.3` literal. That's exactly the case the fix's own
   // motivating comment names ("a full-speed predator can still wander/chase into a scripted QA
   // teleport target"), so a roaming (never-alerted) predator kept crossing the shrunk micro map
@@ -90,11 +90,10 @@ test.describe('speedScaleMul', () => {
 
     const FIXED_DT = 0.05;
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-    // Spawned well clear of CONFIG.lake (x:34,z:-28,r:15) so pLakeMul's lake component stays 1 --
-    // isolates speedScaleMul as the only multiplier in play. Child relocated to CRY_NOISE_RADIUS
+    // Child relocated to CRY_NOISE_RADIUS
     // (32, lib/game/noise.ts) clear of the predator too -- otherwise the unconditional per-tick
     // cry-noise roll (Math.random(), not the seeded rng) can flip roam->investigate mid-measurement
-    // and this would flakily measure the investigate/approach leg's `p.spec.speed*pLakeMul` instead.
+    // and this would flakily measure the investigate/approach leg's `p.spec.speed*pSpeedScaleMul` instead.
     await qaHook(page, 'qaBuildScene', {
       predators: [{ kind: 'wolf', x: -30, z: 0, state: 'roam' }],
       child: { x: 40, z: 40 },

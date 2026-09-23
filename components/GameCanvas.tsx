@@ -431,14 +431,14 @@ const OVERLAY_STYLE = `
     font-size: 12px; letter-spacing: 0.03em; color: #cdf3e8; text-align: center;
     text-shadow: 0 1px 6px rgba(0,0,0,0.7); }
   .scentTrailCaptionGlyph, .hintCaptionGlyph { color: #9fe0d0; margin-right: 4px; }
-  /* Self/panel-anchored keys (lake/bog/stamina/veil -- no real 3D point, and no
+  /* Self/panel-anchored keys (bog/stamina/veil -- no real 3D point, and no
      player-facing meter to anchor to today; landmark -- fires unconditionally on
      entry, no single object to point at, same as the old toast it replaces -- see
      docs/specs/lul-2307-first-encounter-hints.md) share one bottom-center position:
      the same spot #captionToast already uses above #actionSlot, so "about your own
      state" reads consistently with predator-call captions. No inline left/top is set
      for these (Hud.tsx), so the position rule lives entirely here. */
-  #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
+  #hintCaption[data-hint-key="bog"],
   #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
   #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"] {
     left: 50%; top: auto; transform: translateX(-50%);
@@ -583,13 +583,13 @@ const OVERLAY_STYLE = `
        must-stay-visible set (only landmark is, per LUL-2414) -- hide it here the
        same way #hint is. */
     #hintCaption[data-hint-key="deepwater"] { display: none !important; }
-    /* LUL-2414: the bottom self-anchored #hintCaption family (lake/bog/stamina/
+    /* LUL-2414: the bottom self-anchored #hintCaption family (bog/stamina/
        veil/landmark, see the "Self/panel-anchored keys" rule above) positions
        itself at bottom: action-slot-bottom + action-slot-height + 10px --
        190px + 176px + 10px = 376px at this breakpoint's own row/gap sizes,
        taller than a 375px-tall viewport (iPhone SE landscape), so the pill
        renders fully above the top edge ("offscreen" per the audit) regardless
-       of which of the five keys fires -- unlike #hint, e2e/mobile/hints.spec.ts
+       of which of the four keys fires -- unlike #hint, e2e/mobile/hints.spec.ts
        requires the landmark variant to stay legible at this exact breakpoint, so
        hiding it outright isn't an option here. There is no room left *above*
        #actionSlot (it now starts near the very top, see the comment above), but
@@ -623,7 +623,7 @@ const OVERLAY_STYLE = `
        key at a time, and #scentTrailCaption/#hintCaption are mutually
        exclusive by key (Hud.tsx), so this family and the self-anchored one
        below never render at the same time. */
-    #hintCaption[data-hint-key="lake"], #hintCaption[data-hint-key="bog"],
+    #hintCaption[data-hint-key="bog"],
     #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
     #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
     #scentTrailCaption,

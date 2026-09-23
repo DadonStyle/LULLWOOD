@@ -18,7 +18,7 @@ const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 // these as already-seen guarantees a genuine windAssist trigger can never be preempted by a
 // higher-priority hint becoming eligible mid-window (e.g. 'scent' once a real trail exists,
 // or 'stamina' once continuous sprinting drains the meter past STAMINA_DRAIN_TIME's 6s).
-const HINTS_AHEAD_OF_WIND_ASSIST = ['scent', 'landmark', 'lake', 'bog', 'deepwater', 'oakHollow', 'wolf', 'bear', 'lion', 'stamina'];
+const HINTS_AHEAD_OF_WIND_ASSIST = ['scent', 'landmark', 'bog', 'deepwater', 'oakHollow', 'wolf', 'bear', 'lion', 'stamina'];
 async function preSeenHintsAheadOfWindAssist(page: Page) {
   await page.addInitScript((keys) => {
     for (const k of keys) window.localStorage.setItem('lullwood:hints:' + k, '1');
