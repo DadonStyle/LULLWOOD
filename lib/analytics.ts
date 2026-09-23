@@ -41,9 +41,9 @@ export type AnalyticsEventInput =
   // LUL-2461: `distance_from_home_m` is the player's distance from CONFIG.home at the
   // moment triggerDeath() fired (engine/forest-engine.js) -- for the Economist's
   // blackout-pricing model (LUL-1413), which needs where a run actually ended.
-  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; carrying: boolean; difficulty: Difficulty; distance_from_home_m: number; purchases_made?: PurchaseRecord[] }
+  | { event: 'loss'; predator_kind: PredatorKind; time_survived_ms: number; seed: number; payout: number; balance: number; difficulty: Difficulty; distance_from_home_m: number; purchases_made?: PurchaseRecord[] }
   | { event: 'session_length'; duration_ms: number; reached_gameplay: boolean; session_id: string }
-  | { event: 'feature_engagement'; feature: string; action: string; carrying?: boolean }
+  | { event: 'feature_engagement'; feature: string; action: string }
   // LUL-2239: production-only signal from lib/engine-contract.ts's assertEngineContract()
   // -- fires when init()'s return object (engine/forest-engine.js) is missing a key
   // ENGINE_ACTION_KEYS promises exists (the LUL-1697 failure mode). Should never fire in

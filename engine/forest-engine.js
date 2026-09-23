@@ -20,14 +20,10 @@ import {
   canPickUp,
   beginPickup,
   completePickup,
-  canArriveHome,
-  arriveHome as outcomeArriveHome,
   triggerDeath as outcomeTriggerDeath,
   canGrabThrowable,
   canThrowThrowable,
   canRegenMap,
-  canSetDown,
-  beginSetDown,
 } from '@/lib/game/outcome';
 import {
   shouldTriggerCharge,
@@ -38,7 +34,7 @@ import {
   CHARGE_TRIGGER_MIN,
   CHARGE_TRIGGER_MAX,
 } from '@/lib/game/charge';
-import { startSightLock, stepSightLock, SIGHT_TELL_TIME } from '@/lib/game/sightLock';
+import { stepSightLock, SIGHT_TELL_TIME } from '@/lib/game/sightLock';
 import {
   clampDt,
   isScentDetected,
@@ -85,7 +81,7 @@ import {
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { spawnClearanceScale } from '@/lib/game/spawnClearance';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, NOISE_RADIUS_RUN_WIND, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, CARRIED_NOISE_FLOOR, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, NOISE_RADIUS_RUN_WIND, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -127,7 +123,7 @@ import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE }
 import { CAVE_IMMUNITY_TIME, isCaveImmune } from '@/lib/game/cave';
 import { VEIL_OVERLOAD_DURATION, isVeilOverloadActive } from '@/lib/game/veilOverload';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL, WIND_ASSIST_SPEED_MUL } from '@/lib/game/stamina';
-import { carryGlowIntensity, carryHaloOpacity, idleGlowIntensity, idleHaloOpacity } from '@/lib/game/childGlow';
+import { idleGlowIntensity, idleHaloOpacity } from '@/lib/game/childGlow';
 import {
   freshEmbersState,
   computeWinPayout,
@@ -1715,7 +1711,6 @@ function inBaby(x,z){ const dx=x-baby.x, dz=z-baby.z; return dx*dx+dz*dz < 20; }
 // map/predator generation already consumes -- never player-selected.
 let mission = null;
 let cryTimer = 2;   // LUL-1255 (Ship 1 wayfinding S3d): first cry fires quickly, not after a full interval
-let homeFireTimer = 2;   // LUL-1255 (Ship 1 wayfinding S5): same init as cryTimer
 let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- first hum fires quickly, not after a full interval
 // LUL-1666: cross-session record of which missions have had their secondary
 // unlocked (completed baseline once). Engine-owned, synced from
@@ -1726,7 +1721,6 @@ let missionUnlocks = { deepwater: false };
 // LUL-1666: the player's pre-run menu choice for the *next* draw -- 'none' by
 // default. Read once at pickMission() time in generateMap(), not re-read mid-run.
 let secondaryChoice = null;
-let carriedCryPulse = false;   // LUL-1857: one-tick pulse, set by the carry-leg cry timer, consumed by updatePredators() the same frame
 
 const babyGroup = new THREE.Group();
 const bundle = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12),
@@ -2601,11 +2595,11 @@ function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN)
 // position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
 function effectiveDetect(p){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return 0;
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime, carrying });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime });
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime, carrying }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -2833,8 +2827,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // only re-detection is suppressed, so it isn't frozen in place.
       const sniffImmune = isSniffImmune(p.sniffImmuneT, hidden);
       if(!sniffImmune && canSee(p, dist)){
-        if(carrying){ p.sightLock = startSightLock(); facePlayer = true; }
-        else spotOnto(p);
+        spotOnto(p);
       }
       else if(!sniffImmune && checkScent(p)){ scentOnto(p); }
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
@@ -2846,17 +2839,6 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // then cry).
       else if(!sniffImmune && !baby.taken && checkNoise(p, Math.hypot(baby.x - p.x, baby.z - p.z), cryNoiseRadius, dt)){
         hearCry(p);
-      }
-      else if(!sniffImmune && carrying && carriedCryPulse && dist < CARRIED_NOISE_FLOOR){
-        // LUL-1857: pulse-fired, not a continuous isNoiseHeard() roll (mitigation 2)
-        // -- deterministic proximity check at the moment the cry sounds, same shape
-        // as checkThrowableNoise()'s one-shot design (lib/game/noise.ts). `dist` here
-        // is already the live predator-to-*player* distance computed at the top of
-        // this loop -- correct source position for the carry leg since the child
-        // moves with the player and baby.x/z is not live during carry (see
-        // childCry() fix above).
-        hearNoise(p);   // commits to investigate/approach targeting the live player position -- exactly the carry-leg contract (the "noise source" moves with you)
-        p.alertedBy = 'cry';   // LUL-1857 mitigation 4 (LUL-2194): tag the carry-leg cry channel too, same as hearCry()'s outbound-cry tagging below, so triggerDeath() can name "heard the child" on this catch path as well
       }
       else {
         let wx=p.wpx-p.x, wz=p.wpz-p.z; const wd=Math.hypot(wx,wz);
@@ -2911,8 +2893,8 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // through the cover prop breaking canSee() right now, since
         // predators never physically collide with cover (LUL-119/LUL-211).
         // LUL-1857 mitigation 4 (recommended): a chase this predator only entered because
-        // it heard the carried child's cry gets a distinguishable death cause -- see
-        // hearCry()/the carriedCryPulse branch below for where p.alertedBy is set, and
+        // it heard the child's cry gets a distinguishable death cause -- see
+        // hearCry() for where p.alertedBy is set, and
         // hearNoise()/scentOnto()/spotOnto() for where it's cleared by every other channel.
         if(canCatchInChase(canSee(p, dist), dist, p.rad)){ triggerDeath(p.kind, p.alertedBy === 'cry' ? 'heard' : 'chase', predators.indexOf(p)); }   // LUL-1194: run down mid-chase, in the open
         // LUL-2320 (D): contact was reached (isCaught) but the kill was refused because the
@@ -3016,34 +2998,18 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.sniffImmuneT = SNIFF_IMMUNITY_TIME;   // LUL-437: grace before re-detection, either transition
           if(sniffOutcome.next === 'back'){ p.inv='back'; const bd = 8 + rng()*8;
             [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN); }
-          else if(hidden && carrying){
-            // LUL-1857 (carried-cry-fairness §A5): route the give-up through the
-            // same backoff helper the mid-loop 'back' path uses, but land in 'roam'
-            // on arrival (not 'approach' -- there's nothing left to sniff). Scoped to
-            // hidden+carrying only, per the verdict's own scope (§A5) -- the ordinary
-            // (non-carrying) give-up keeps its existing in-place behavior unchanged,
-            // an intentional, not-yet-asked-for-elsewhere deviation from a uniform fix.
-            const bd = 8 + rng()*8;
-            [p.backX, p.backZ] = backOffPoint(p.x, p.z, ux, uz, bd, half, zMax, WRAP_SPAN);
-            p.inv = 'leave';
-          }
           else { const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
         if(bd < 2){ p.inv='approach'; p.approachEnteredHidden=hidden; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
-      } else if(p.inv === 'leave'){
-        const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ const arm = armReturnSweep(p.lkpSweeps, p.lkpX, p.lkpZ, player.x, player.z); p.lkpX=arm.lkpX; p.lkpZ=arm.lkpZ; p.lkpSweeps=arm.lkpSweeps; p.state='roam'; p.spotted=false; p.inv=''; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
-        else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
       }
     } else if(p.state === 'flank'){
       // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
       // still work normally -- a flanker that stumbles onto the player still
       // spots/scents them -- this only replaces what it does with *no* signal.
       if(canSee(p, dist)){
-        if(carrying){ p.sightLock = startSightLock(); facePlayer = true; }
-        else spotOnto(p);
+        spotOnto(p);
       }
       else if(checkScent(p)){ scentOnto(p); }
       else if(p.inv === 'hold'){
@@ -3233,7 +3199,7 @@ const player = { x:0, z:0, yaw:0, pitch:-0.02 };
 const keys = {};
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
-    dead = false, pickingUp = false, carrying = false, babySetDown = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
+    dead = false, pickingUp = false, pickStart = 0, hidden = false, hideTime = 0, eyeH = CONFIG.eye,
     deathStart = 0, deathShown = false, pickBoomed = false, scentEmitT = 0, enteredAt = 0,
     deathDistanceFromHomeM = null,   // LUL-2461: set by triggerDeath(), read by qaProbeDeath() + the loss telemetry event
     lastDeathKillerIdx = null,   // LUL-2853: predators-array index of the instance that actually won triggerDeath()'s once-only guard
@@ -3246,7 +3212,6 @@ let heldThrowable = false;
 let throwablesReserve = 0;   // LUL-2351: Pocket Stones -- free re-arms of heldThrowable for this run
 let hideEventCount = 0;       // LUL-2307: bumped by enterHide() -- dismiss-on-interaction for the wolf/bear/lion/cover hints
 let throwableGrabCount = 0;   // LUL-2307: bumped by grabThrowable() -- dismiss-on-interaction for the throwable hint
-let carryDeathExplained = false;   // LUL-1438: first carry death per page load
 // LUL-1103: The Run Chronicle. Flat {t, code, args} buffer, reset per-run in
 // enter() (covers restart() too, which calls enter()). Handed to React once,
 // in the same pushState() call as winVisible/deathVisible -- NOT streamed
@@ -3261,8 +3226,8 @@ function logChronicle(code, args){
 }
 // LUL-1194: the death cutscene is full-length and unskippable exactly once --
 // the player's first-ever death -- and skippable by any input after that.
-// Persisted across sessions (not just page load, unlike carryDeathExplained
-// above) so it stays a one-time thing rather than resetting on every reload.
+// Persisted across sessions (not just page load) so it stays a one-time
+// thing rather than resetting on every reload.
 const HAS_DIED_KEY = 'lullwood:hasDied';
 let hasDiedBefore = false;
 try { hasDiedBefore = localStorage.getItem(HAS_DIED_KEY) === '1'; } catch(e){}
@@ -3283,14 +3248,14 @@ let purchasesMade = [];
 // LUL-2558: personal-best time + tier streak counter, keyed per DifficultyTier. Synced
 // from components/Hud.tsx's localStorage read via setProgression() once on mount (same
 // pattern as embers/missionUnlocks above), mutated in place by recordRun() at each of the
-// three outcome call sites (finishPickup/arriveHome/triggerDeath).
+// two outcome call sites (finishPickup/triggerDeath).
 let progression = freshProgression();
-// LUL-596: `won`/`dead`/`pickingUp`/`carrying`/`baby.taken` above stay the
+// LUL-596: `won`/`dead`/`pickingUp`/`baby.taken` above stay the
 // engine's own mutable locals (lib/game/outcome.ts is pure and holds no
 // state of its own) -- this snapshots them into the RunState shape the
 // module's pure functions read, on demand, right before each call.
 function runState(){
-  return { entered, won, dead, pickingUp, carrying, setDown: babySetDown, babyTaken: baby.taken };
+  return { entered, won, dead, pickingUp, babyTaken: baby.taken };
 }
 // LUL-24: last normalized heading the player actually moved along -- the "escape
 // vector" the wolf pack flanks off of. Only updated while moving (see tick()'s
@@ -3349,13 +3314,8 @@ on(window, 'keydown', e => {
     toggleRunOn = !toggleRunOn;
   }
   // LUL-1258: no new key -- mission completion reuses the interact action.
-  // LUL-1815: set-down is a third arm of the same multiplex -- carrying is mutually
-  // exclusive with canPickup (pickupAllowed requires !carrying), so ordering vs.
-  // canPickup doesn't matter, but it must come before missionCanComplete/grabThrowable
-  // since carrying is already true whenever this arm should fire.
   if(e.code === 'KeyE' && playing && !paused){
     if(canPickup) pickup();
-    else if(carrying) setDown();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
     else if(secondaryCanComplete) completeSecondarySequence();
@@ -3580,33 +3540,6 @@ function leafRustle(entering){
     src.start(t+d); src.stop(t+d+0.14);
   }
 }
-// LUL-1255 (Ship 1 wayfinding S5): home-fire crackle, panned by bearing to
-// CONFIG.home -- a short bandpassed noise burst, timbrally close to a dry-
-// wood knock but softer and unpitched, no sine thump. Density (call
-// interval), not pan, rises as the player nears home -- see homeFireTimer's
-// countdown in tick().
-function homeFireCrackle(dist){
-  if(!audio || !soundOn) return;
-  const { ctx, conv, master } = audio, t = ctx.currentTime;
-  const near = Math.max(0, Math.min(1, 1 - dist / 140));
-  const pan = ctx.createStereoPanner();
-  const dx = CONFIG.home.x - player.x, dz = CONFIG.home.z - player.z;
-  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
-  const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-  const right = dx*rx + dz*rz, fwd = dx*fx + dz*fz;
-  pan.pan.value = Math.max(-1, Math.min(1, right / Math.max(1, Math.hypot(right, fwd))));
-  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.1, false);
-  const bp = ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value = 220; bp.Q.value = 6;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.15 + near * 0.1, t+0.008); ng.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
-  nb.connect(bp); bp.connect(ng); ng.connect(pan); pan.connect(master); pan.connect(conv);
-  nb.start(t); nb.stop(t+0.18);
-  if(captionsOn){
-    const cnear = dist < 30 ? 'near' : 'far';
-    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
-    pushState({ caption: `home fire crackling · ${cnear} · ${side}`, captionId: ++captionSeq });
-  }
-}
 // The three call sites (KeyH, the touch Hide button, and tick()'s
 // movement-breaks-cover check) all funnel through these so entering/exiting
 // always agree on `hidden`/`hideTime`/`hideKind` and always play the right
@@ -3620,7 +3553,7 @@ function homeFireCrackle(dist){
 // not kept, since nothing could call the log branch anymore.
 function enterHide(spot){
   hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true);
-  track({ event: 'feature_engagement', feature: 'hide', action: 'used', carrying });
+  track({ event: 'feature_engagement', feature: 'hide', action: 'used' });
   logChronicle('hide', { kind: spot.kind });
   // LUL-2547: hiding isn't silent -- a one-shot noise broadcast on entry, same shape as
   // throwThrowable()'s per-predator loop (:4933-4947), but gated to `state === 'roam'` (the
@@ -3717,29 +3650,6 @@ function playWinMusic(){
     o.connect(g); g.connect(bus); g.connect(conv); o.start(s); o.stop(s+1.5);
   });
   later(() => { if(audio){ audio.wg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); audio.dg.gain.setTargetAtTime(0.05, audio.ctx.currentTime, 1); } }, 11000);
-}
-// LUL-1635: mark the pickup->carry transition -- short weight-settling
-// thump plus a soft rising two-note interval, reading as "the load is now
-// in your arms," not a fanfare. Dead since LUL-2281 (the carry-home leg
-// this scored is unreachable -- pickup() now wins outright) but left in
-// place per Decision 2, same as the carrying state machine it announces.
-function playCarryStartCue(){
-  if(!audio || !soundOn) return;
-  const { ctx, master, conv } = audio, t = ctx.currentTime;
-  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.08, false);
-  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300; lp.Q.value = 0.7;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.16, t+0.01); ng.gain.exponentialRampToValueAtTime(0.0001, t+0.12);
-  nb.connect(lp); lp.connect(ng); ng.connect(master); ng.connect(conv); nb.start(t); nb.stop(t+0.14);
-
-  const notes = [130.81, 164.81];   // C3 -> E3, soft rising third -- warm, not triumphant
-  notes.forEach((f, i) => {
-    const s = t + 0.05 + i*0.09;
-    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, s); g.gain.exponentialRampToValueAtTime(0.14, s+0.03); g.gain.exponentialRampToValueAtTime(0.0001, s+0.5);
-    o.connect(g); g.connect(master); g.connect(conv); o.start(s); o.stop(s+0.55);
-  });
 }
 // distinct voice per species so you can hear what's coming
 // LUL-26: closed captions for the fully-procedural audio -- there is no other
@@ -3940,7 +3850,7 @@ let hudState = {
   coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null,
   veilPromptVisible: false, veilPromptUrgent: false,
   // LUL-1258: M2 Deepwater's minimal HUD panel -- null/null whenever no
-  // mission is active or the player is carrying (see the tick() pushState).
+  // mission is active (see the tick() pushState).
   missionKind: null, missionStatus: null,
   // LUL-3010: seconds remaining for the far/timed variant; null for the
   // near/untimed variant or whenever missionKind/missionStatus is null.
@@ -4178,7 +4088,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaTeleportTo = function(x, z){ player.x = x; player.z = z; };
   window.ForestEngine.qaProbeBabyLight = function(){
     return { intensity: babyLight.intensity, distance: babyLight.distance,
-             carrying, pickingUp, taken: baby.taken };
+             pickingUp, taken: baby.taken };
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
 
@@ -4652,17 +4562,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       if(p.charge){ p.charge = null; endChargeHud(); }
       p.hunt = false;
     }
-    // Kept staged 40u out from qaOpenVeilTarget's 0,0 (pre-LUL-4663 this avoided
-    // `carrying=true` completing arriveHome() before KeyQ could be pressed; no
-    // longer load-bearing since this hook stopped setting `carrying`, kept anyway
-    // for a stable, well-clear-of-landmarks scene).
+    // Kept staged 40u out from qaOpenVeilTarget's 0,0 for a stable, well-clear-
+    // of-landmarks scene.
     player.x = 40; player.z = 0;
     target.x = 46; target.z = 0;
     target.vx = target.vz = 0; target.alert = 0; target.stuckT = 0; target.sightLock = null;
     target.state = 'chase'; target.hunt = true; target.alertedBy = null; target.charge = null; target.scentLock = 0;
     target.reroute = 10; target.rrX = target.x; target.rrZ = target.z;
-    // LUL-4663: no longer sets `carrying` -- the trigger (veilOverloadTriggerActive)
-    // reads `target.state === 'chase'` above directly. Still forces full, unlocked
+    // LUL-4663: the trigger (veilOverloadTriggerActive) reads `target.state === 'chase'`
+    // above directly. Still forces full, unlocked
     // veil charge and a fresh one-shot so callers get a deterministic activation-
     // eligible scene regardless of what came before in the same test.
     veilCharge = 1; veilLocked = false; veilOverloadUsedThisRound = false; veilOverloadChargeT = 0;
@@ -5926,9 +5834,9 @@ if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
   const next = beginPickup(runState());
   if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
-  baby.taken = next.babyTaken; pickingUp = next.pickingUp; babySetDown = next.setDown;
+  baby.taken = next.babyTaken; pickingUp = next.pickingUp;
   pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; lastHideSpot = null; coverProbeAccum = 0;
-  bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found; carrying starts now
+  bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found
   pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
   document.body.style.cursor = 'none';
@@ -5943,24 +5851,6 @@ function buyVeilCharm(){
   embersPurchaseCue();
   stoneMarkerPulseT = 0.6;   // LUL-2331: one-shot beacon-glow boost, decayed in tick()
   track({ event: 'feature_engagement', feature: 'veil_charm', action: 'purchased' });
-}
-function setDown(){
-  const next = beginSetDown(runState());
-  if(next.carrying === carrying) return;   // rejected -- see setDownAllowed() in lib/game/outcome.ts
-  carrying = next.carrying; babySetDown = next.setDown;
-  // LUL-4663: vestigial now the trigger no longer keys off `carrying` (this whole
-  // function is unreachable in real play since LUL-2281 -- decisions/lul-2281-
-  // pickup-is-the-win-2026-09-09; the real per-round reset is in placeCave()).
-  // Left renamed-not-deleted: LUL-2285 owns removing the carry-home machinery.
-  veilOverloadUsedThisRound = false;
-  baby.x = player.x; baby.z = player.z;
-  babyGroup.position.set(baby.x, 0, baby.z);
-  babyGroup.visible = true; babyGroup.scale.setScalar(1);
-  placeBabyWisps();         // re-seed the ring around the NEW baby.x/z -- see correction above
-  bwisps.visible = true;    // LUL-38's beacon wisps, hidden by pickup() at :3355 -- back on so she's spottable through fog again
-  // reset glow to the idle baseline finishPickup()/restart() also use (:3399/:3508) --
-  // the per-frame idle-glow block (§3.7 below) takes over the animated curve from here.
-  bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
 }
 function grabThrowable(){
   if(heldThrowable) return;
@@ -6210,60 +6100,6 @@ function completeSecondarySequence(){
   pushState({ caption: 'the radio mast -- retrieved', captionId: ++captionSeq });
   missionCompleteSting();
 }
-function arriveHome(){
-  const next = outcomeArriveHome(runState());
-  won = next.won; carrying = next.carrying;
-  babyGroup.visible = false;
-  if(locked) document.exitPointerLock();
-  document.body.style.cursor = '';
-  playWinMusic(); fireBoom(CONFIG.home.x, 2.2, CONFIG.home.z);   // LUL-1307: the win, not the midpoint
-  // LUL-1611: winRevealed used to fire off a wall-clock later(...,1900) timer,
-  // which can outrun the dt-clamped boom burst (dt clamped to 0.05/frame,
-  // wiki systems/dt-clamp-vs-walltime) on a sustained sub-20fps device -- the
-  // reveal is now polled against boomStart in tick() instead, so it fires
-  // exactly when the burst itself retires (undilated mirror of revealLoss()'s
-  // CUT_END poll on the death path).
-  const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
-  // LUL-303: updatePredators() (the only other place that clears the charge
-  // HUD) stops running once `playing` goes false here, so a charge/telegraph
-  // in flight at the exact moment of arrival would otherwise render on top
-  // of the win screen forever -- clear it the same way placePredators() does
-  // on restart.
-  activeCharges = 0;
-  // LUL-1043: bank the run's Embers -- carried+home only pay on a win.
-  // LUL-1258: the mission bonus is win-only too -- forfeited on death exactly
-  // like carried/home, since computeDeathPayout's signature is untouched.
-  const missionBonus = mission?.status === 'complete' ? MISSION_REWARDS[mission.target.kind] : 0;
-  // LUL-1666: secondary bonus is independent of missionBonus -- a player can
-  // win the secondary without ever completing the deepwater baseline this
-  // run (already unlocked from a prior run), or complete the baseline and
-  // still miss the secondary. Never gates arriveHome() itself (see spec S1).
-  const secondaryWon = mission ? secondaryComplete(mission, survivedSeconds) : false;
-  const secondaryBonus = secondaryWon
-    ? (mission.secondary.data.kind === 'retrieval' ? DEEPWATER_RETRIEVAL_BONUS : DEEPWATER_SPEEDRUN_BONUS)
-    : 0;
-  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus), embersSpent);
-  // LUL-1666: unlock is keyed on the *baseline* completing, independent of
-  // whether a secondary was even attempted this run -- guardrail is "complete
-  // the mission once", not "complete a secondary once". Persisted by
-  // components/Hud.tsx same as embersBalance below.
-  if(mission?.status === 'complete' && !missionUnlocks[mission.target.kind]){
-    missionUnlocks = { ...missionUnlocks, [mission.target.kind]: true };
-    pushState({ missionUnlocks: { ...missionUnlocks } });
-  }
-  embers = applyPayout(embers, payout);
-  // LUL-2558: personal-best time + tier streak counter (dead-code parity only, see
-  // decisions/lul-2281-pickup-is-the-win-2026-09-09 -- arriveHome() is unreachable in real play).
-  const progressionResult = recordRun(progression, difficulty, survivedSeconds, true);
-  progression = progressionResult.progression;
-  logChronicle('win');
-  pushState({ objectiveVisible: false, statusVisible: false, winVisible: true, chargeVisible: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chronicle: chronicle.slice(), difficulty,
-    progression: { ...progression }, personalBest: progression[difficulty].bestTime,
-    tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
-    newRecord: progressionResult.newRecord });
-  track({ event: 'win', time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty, purchases_made: purchasesMade.slice() });
-}
 function triggerDeath(kind, cause, killerIdx){
   const next = outcomeTriggerDeath(runState());
   if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
@@ -6289,8 +6125,6 @@ function triggerDeath(kind, cause, killerIdx){
   // false here, so a charge/telegraph in flight at the exact moment of death
   // would otherwise render on top of the death screen forever.
   activeCharges = 0;
-  const deathCarrying = carrying && !carryDeathExplained;
-  if(deathCarrying) carryDeathExplained = true;
   logChronicle('death', { kind, landmark: nearestLandmarkName(player.x, player.z, LANDMARKS, CONFIG.home, CONFIG.lake) });
   // LUL-1194: full-length + unskippable only on the player's first-ever death
   // (persisted, see HAS_DIED_KEY above) -- skippable by any input every death after.
@@ -6300,11 +6134,11 @@ function triggerDeath(kind, cause, killerIdx){
   const progressionResult = recordRun(progression, difficulty, survivedSeconds, false);
   progression = progressionResult.progression;
   pushState({ deathVisible: true, deathKind: kind, deathCause: cause, lossRevealed: false, survivedSeconds,
-    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, deathCarrying, chronicle: chronicle.slice(),
+    lastPayout: payout, embersBalance: embers.balance, chargeVisible: false, chronicle: chronicle.slice(),
     progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak },
     newRecord: progressionResult.newRecord });
-  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, carrying, difficulty, distance_from_home_m: deathDistanceFromHomeM, purchases_made: purchasesMade.slice() });
+  track({ event: 'loss', predator_kind: kind, death_cause: cause, time_survived_ms: Math.round(survivedSeconds * 1000), seed: currentSeed, payout: payout.total, balance: embers.balance, difficulty, distance_from_home_m: deathDistanceFromHomeM, purchases_made: purchasesMade.slice() });
   playDeathVideo();
   deathAudio(kind);
 }
@@ -6320,7 +6154,7 @@ function restart(){
   pushState({ winVisible: false, winRevealed: false, deathVisible: false, lossRevealed: false });
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   const fresh = freshRunState();
-  won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; carrying = fresh.carrying; babySetDown = fresh.setDown; baby.taken = fresh.babyTaken;
+  won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; baby.taken = fresh.babyTaken;
   hidden = false; hideTime = 0; hideKind = null; lastHideSpot = null; coverProbeAccum = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false; playerBogMask = 0;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
@@ -6745,7 +6579,7 @@ function stepFrame(dt, t, skipRender){
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
-    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * (carrying ? CONFIG.carryPaceMul : 1) * bogSpeedMultiplier(playerBogginess) * lakeSpeedMultiplier(playerInLake);
+    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * bogSpeedMultiplier(playerBogginess) * lakeSpeedMultiplier(playerInLake);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
@@ -6865,39 +6699,6 @@ function stepFrame(dt, t, skipRender){
       camera.quaternion.slerp(lookQ, 0.06);
     }
     if(e >= 11.3) finishPickup();
-  } else if(carrying){
-    // LUL-38: carrying phase — child rides at the player's feet, glowing
-    babyGroup.position.set(player.x, Math.sin(t*1.4)*0.04, player.z);
-    babyGroup.rotation.y = t * 0.4;
-    halo.material.opacity = carryHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
-    babyLight.intensity = carryGlowIntensity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
-    babyLight.distance = BABY_LIGHT_DISTANCE * fogTideGlowRangeMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
-    camera.position.set(player.x, eyeH + jumpY, player.z);
-    camera.rotation.set(player.pitch, player.yaw, 0);
-    const dh = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
-    // LUL-1255 (Ship 1 wayfinding S5): same tempo-carries-distance shape as
-    // cryTimer (S3d) -- 5.5s far, 2s close, density rising as dh shrinks.
-    homeFireTimer -= dt;
-    if(homeFireTimer <= 0){
-      homeFireCrackle(dh);
-      const nearH = Math.max(0, Math.min(1, 1 - dh / 140));
-      homeFireTimer = 5.5 - nearH * 3.5;
-    }
-    // LUL-1857: carry-leg cry pulse -- reuses cryTimer (LUL-1674 S3d) rather than a
-    // second timer, so outbound and carry-leg cry cadence stay one clock (mitigation
-    // 1: "one source, two consumers"). The outbound pulse block below (`if(!baby.taken
-    // || babySetDown)`) is the exact logical negation of `carrying`, so the two never
-    // both fire in the same frame -- safe to share the module-level cryTimer.
-    cryTimer -= dt;
-    if(cryTimer <= 0){
-      childCry(0, player.x, player.z);   // in your arms: always "near" (near=1), centered (no pan)
-      cryTimer = 2;                      // closest-tempo floor -- matches the outbound block's own near=1 case (5.5 - 1*3.5)
-      carriedCryPulse = true;            // consumed by updatePredators() this same tick, cleared after
-    }
-    // LUL-596: canArriveHome() also requires !dead && !won -- this call site
-    // used to be the only thing keeping a dead player from winning (positional
-    // safety, not a precondition). Do not drop this guard.
-    if(canArriveHome(runState(), dh, CONFIG.home.r)) arriveHome();
   } else if(dead){
     // the death "cutscene" is a real video overlay (see #deathVideo); just reveal the loss text at the end
     if((clock.elapsedTime - deathStart) >= CUT_END && !deathShown) revealLoss();
@@ -6963,7 +6764,6 @@ function stepFrame(dt, t, skipRender){
   }
   if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
   if(playing) updateRoosts(dt);   // LUL-1914: roost feedback, same gate as predator AI
-  carriedCryPulse = false;   // LUL-1857: one-tick pulse, consumed above -- clear so it isn't sticky
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
@@ -7043,7 +6843,7 @@ function stepFrame(dt, t, skipRender){
   const distBaby = Math.hypot(player.x - baby.x, player.z - baby.z);
   canPickup = canPickUp(runState(), distBaby, 3.6);
   const distStoneMarker = Math.hypot(player.x - landmarkGroups.stoneMarker.position.x, player.z - landmarkGroups.stoneMarker.position.z);
-  canBuyVeilCharm = !carrying && !veilReserve && distStoneMarker < VEIL_CHARM_INTERACT_RADIUS
+  canBuyVeilCharm = !veilReserve && distStoneMarker < VEIL_CHARM_INTERACT_RADIUS
     && computeDepth(maxDistFromHome) >= VEIL_CHARM_PRICE;
   // LUL-1623: nearest-throwable distance computed once per frame, reused only
   // for the HUD gate below -- grabThrowable() re-scans on its own discrete
@@ -7102,10 +6902,9 @@ function stepFrame(dt, t, skipRender){
     // while already spotted in the open. `state === 'chase'` alone (no `p.hunt`)
     // per the CEO ruling's tighter option -- see the KeyQ handler's own comment.
     veilOverloadTriggerActive = predators.some(function(p){ return !p.inert && p.state === 'chase'; });
-    // LUL-1258: the mission's nav-cue hum, only while active and not carrying
-    // (return leg is silent, same rule the mission panel follows below) --
-    // reuses childCry's tempo-carries-distance shape (Ship 1 spec S3d).
-    if(mission?.status === 'active' && !carrying){
+    // LUL-1258: the mission's nav-cue hum, only while active -- reuses
+    // childCry's tempo-carries-distance shape (Ship 1 spec S3d).
+    if(mission?.status === 'active'){
       missionHumTimer -= dt;
       if(missionHumTimer <= 0){
         missionWaypointHum(mission, distMission);
@@ -7136,11 +6935,10 @@ function stepFrame(dt, t, skipRender){
     if(veilOverloadJustEnded) veilOverloadEndCue();
     pushState({
       objectiveVisible: true, objectiveReady: canPickup || canBuyVeilCharm,
-      // LUL-2281: collapsed to the single pre-carry prompt -- completePickup()
-      // now wins outright (lib/game/outcome.ts), so `carrying`/`babySetDown`
-      // never go true in real play and there is no carry/set-down state left
-      // to prompt for (wiki decisions/lul-2281-pickup-is-the-win-2026-09-09
-      // Decision 5).
+      // LUL-2281: collapsed to the single pre-pickup prompt -- completePickup()
+      // wins outright (lib/game/outcome.ts), so there is no carry/set-down
+      // state left to prompt for (wiki decisions/lul-2281-pickup-is-the-win-
+      // 2026-09-09 Decision 5).
       objectiveText: canPickup ? 'Press  E  to lift the child'
         : (canBuyVeilCharm ? 'Press  E  for a mist-charm  ·  15 embers  ·  saves your veil from locking, once'
            : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
@@ -7148,23 +6946,20 @@ function stepFrame(dt, t, skipRender){
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,
       heldThrowable, canGrabThrowable: canGrabThrowable(heldThrowable, nearestThrowableD, THROWABLE_PICKUP_RADIUS), throwablesReserve,
-      // LUL-1258: mission HUD panel -- null/null while carrying so the panel
-      // never renders on the return leg (decisions/missions-accepted-2026-09-01 §2).
-      missionKind: mission && !carrying ? mission.target.kind : null,
-      missionStatus: mission && !carrying ? mission.status : null,
-      // LUL-3010: only the far/timed variant carries a timer; null for
-      // oakHollow (untimed) same as missionKind/missionStatus while carrying.
-      missionTimerSeconds: mission && !carrying && mission.target.timeLimitSeconds != null
+      missionKind: mission ? mission.target.kind : null,
+      missionStatus: mission ? mission.status : null,
+      // LUL-3010: only the far/timed variant carries a timer; null for oakHollow (untimed).
+      missionTimerSeconds: mission && mission.target.timeLimitSeconds != null
         ? Math.max(0, Math.round(mission.target.timeLimitSeconds - (clock.elapsedTime - enteredAt)))
         : null,
-      secondaryKind: mission && !carrying && mission.secondary ? mission.secondary.data.kind : null,
-      secondaryStatus: mission && !carrying && mission.secondary
+      secondaryKind: mission && mission.secondary ? mission.secondary.data.kind : null,
+      secondaryStatus: mission && mission.secondary
         ? (secondaryComplete(mission, clock.elapsedTime - enteredAt) ? 'complete' : 'active')
         : null,
       // LUL-1666: retrieval -> whole meters/distance for the Hud's progress
       // indicator; speedrun -> seconds remaining for its countdown. One field,
       // shape keyed by kind, mirrors lastPayout's discriminated-by-caller shape.
-      secondaryProgress: mission && !carrying && mission.secondary
+      secondaryProgress: mission && mission.secondary
         ? (mission.secondary.data.kind === 'retrieval'
             ? { kind: 'retrieval', retrieved: mission.secondary.data.retrieved, distance: Math.round(distSecondaryItem) }
             : { kind: 'speedrun', remainingSeconds: Math.max(0, Math.round(mission.secondary.data.timeLimitSeconds - (clock.elapsedTime - enteredAt))) })
@@ -7178,10 +6973,8 @@ function stepFrame(dt, t, skipRender){
   } else {
     pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false });
   }
-  // the child's idle glow (outside the cinematic) -- also covers a set-down child (LUL-1815):
-  // baby.taken stays true forever once first picked up, so babySetDown is the only signal
-  // that she's back on the ground.
-  if(!baby.taken || babySetDown){
+  // the child's idle glow, outside the pickup cinematic.
+  if(!baby.taken){
     babyGroup.position.y = Math.sin(t*1.4) * 0.06;
     babyGroup.rotation.y = t * 0.4;
     halo.material.opacity = idleHaloOpacity(t) * DIFFICULTY_PRESETS[difficulty].glowMul * fogTideGlowMul(fogTideAmountAt(babyGroup.position.x, babyGroup.position.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN));
@@ -7344,8 +7137,8 @@ function stepFrame(dt, t, skipRender){
         case 'landmark': return [true, null];
         case 'lake': return [playerInLake, null];
         case 'bog': return [playerBogginess > 0.05, null];
-        case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active' && !carrying, null];
-        case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active' && !carrying, null];
+        case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active', null];
+        case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active', null];
         case 'wolf': case 'bear': case 'lion': {
           for(const p of predators){
             if(p.inert || p.kind !== key) continue;
@@ -7543,7 +7336,6 @@ tick();
     const playing = isPlaying(runState());
     if(!playing || paused) return;
     if(canPickup) pickup();
-    else if(carrying) setDown();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(missionCanComplete) completeMissionSequence();
     else if(secondaryCanComplete) completeSecondarySequence();
