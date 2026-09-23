@@ -1373,11 +1373,10 @@ from the continuous `leafRustle(true)` ambience already looping while hidden. A 
 clamps `#rustleFlash`'s opacity to a fixed `0.15` while active instead of animating the decay ramp
 (same clamp-not-remove shape `stoneMarkerPulseT` already uses). LUL-4790 (Cover Degradation Full)
 scales both by difficulty tier — `DIFFICULTY_PRESETS[tier].rustleThresholdMul`/`rustleIntervalMul`
-(`engine/tuning.js`) — lantern 16s/6s, night 12s/5s (unchanged), blackout 8s/4s — and adds
-reposition-to-reset via LUL-3066's Shuffle action (see that ticket's own ELEMENTS.md entry): a
-successful shuffle's `hideTime = 0` already zeroes `coverRustleAccum` through the self-healing
-tick check above, no separate reset path. Cover-density scaling remains out of scope (Economist
-follow-up, not part of the LUL-4629/CEO-accepted "Full" slice).
+(`engine/tuning.js`) — lantern 16s/6s, night 12s/5s (unchanged), blackout 8s/4s. Cover-density
+scaling remains out of scope (Economist follow-up, not part of the LUL-4629/CEO-accepted "Full"
+slice); reposition-to-reset via LUL-3066's Shuffle action is deferred until `shuffleHide()`
+(LUL-4786) actually merges, not described here yet.
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
