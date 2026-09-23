@@ -28,6 +28,13 @@ const BEFORE_THRESHOLD_S = 11.4;
 const LATE_STAGE_LEAD_S = 16.0;
 const LATE_STAGE_TAIL_S = 1.4;
 
+// LUL-4790: blackout's scaled threshold+interval (8s+4s=12s) vs night's unscaled 17s
+// first roll -- 13s clears blackout's first roll with margin while staying well short
+// of night's.
+const BLACKOUT_PAST_FIRST_ROLL_S = 13;
+// lantern's scaled threshold+interval (16s+6s=22s) -- PAST_FIRST_ROLL_S (17.4s, night's
+// baseline first-roll time) clears night's own first roll but stays short of lantern's.
+
 const RUSTLE_SCENE = {
   props: [{ kind: 'bramble' as const, x: 10, z: 0 }],
   // Parked far away (same 9999,9999/roam shape as hide-alert.spec.ts's HIDE_SCENE) so
@@ -71,6 +78,16 @@ async function stageHiddenThenLateStagePredator(page: Page, dx: number, dz: numb
   expect(staged, 'wolf must have spawned this seed').not.toBeNull();
   await advanceChunked(page, stepsFor(LATE_STAGE_TAIL_S));
   return staged;
+}
+
+// LUL-4790: real Settings UI path (not a QA hook), matching
+// e2e/minimap-setting.spec.ts's exact click sequence -- DIFFICULTY_PRESETS[difficulty]
+// is read live every tick the same way detectMul already is, so no qaRegenerateMap
+// is needed here.
+async function selectDifficulty(page: Page, label: RegExp) {
+  await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
+  await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
+  await page.getByLabel(label).evaluate((el) => (el as HTMLInputElement).click());
 }
 
 async function enableCaptions(page: Page) {
@@ -156,5 +173,31 @@ test.describe('cover-rustle degradation (LUL-2856)', () => {
 
     const opacity = await page.locator('#rustleFlash').evaluate((el) => (el as HTMLElement).style.opacity);
     expect(opacity).toBe('0.15');
+  });
+
+  test('blackout\'s shorter grace window fires a rustle before night\'s baseline threshold at the same elapsed hide time', async ({ page }) => {
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+    await selectDifficulty(page, /blackout/i);
+    // rollCoverRustle() fires unconditionally on the roll -- the wolf stays parked at
+    // its default (9999,9999), this is purely about whether the roll fired at all.
+    await stageHidden(page);
+
+    await advanceChunked(page, stepsFor(BLACKOUT_PAST_FIRST_ROLL_S));
+
+    const chronicle = await qaHook(page, 'qaGetChronicle');
+    expect(chronicle.some((e: any) => e.code === 'cover_rustle')).toBe(true);
+  });
+
+  test('lantern\'s longer grace window has not yet fired at night\'s baseline first-roll time', async ({ page }) => {
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+    await selectDifficulty(page, /lantern/i);
+    await stageHidden(page);
+
+    await advanceChunked(page, stepsFor(PAST_FIRST_ROLL_S));
+
+    const chronicle = await qaHook(page, 'qaGetChronicle');
+    expect(chronicle.some((e: any) => e.code === 'cover_rustle')).toBe(false);
   });
 });

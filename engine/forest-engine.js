@@ -6488,8 +6488,11 @@ function stepFrame(dt, t, skipRender){
   // LUL-2856: self-healing off hideTime the same way hideTime is self-healing off `hidden` --
   // zero the instant hideTime drops below threshold (covers exitHide, movement-break, death,
   // pickup, restart -- every path that already zeroes hideTime -- with no extra reset call site).
-  coverRustleAccum = hideTime > COVER_RUSTLE_THRESHOLD_S ? coverRustleAccum + dt : 0;
-  if(coverRustleAccum >= COVER_RUSTLE_INTERVAL_S){
+  // LUL-4790: difficulty-scaled grace window/interval -- DIFFICULTY_PRESETS[difficulty] is
+  // already read live every tick two lines below in effectiveDetect()/canSee() (:2598,:2602),
+  // same "no restart needed, changes next tick" property applies here.
+  coverRustleAccum = hideTime > COVER_RUSTLE_THRESHOLD_S * DIFFICULTY_PRESETS[difficulty].rustleThresholdMul ? coverRustleAccum + dt : 0;
+  if(coverRustleAccum >= COVER_RUSTLE_INTERVAL_S * DIFFICULTY_PRESETS[difficulty].rustleIntervalMul){
     coverRustleAccum = 0;
     rollCoverRustle();
   }
