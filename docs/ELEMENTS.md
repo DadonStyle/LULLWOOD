@@ -2049,7 +2049,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 
 ## The interaction matrix
 
-Every pairwise combination of the 16 elements above, physical/geometric
+Every pairwise combination of the 17 elements above, physical/geometric
 relationships only (movement collision, line-of-sight blocking, "stood on").
 Scent and noise are **not** columns here because the source is unambiguous
 that neither channel has *any* geometry interaction with *any* element
@@ -2067,24 +2067,25 @@ collider · `ATT` = permanently attached/coincident · `–` = no interaction,
 verified in source · **`U`** = **UNDEFINED — no source resolves this**.
 Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
-| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI | EM |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
-| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | TRIG²¹ |
-| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
-| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
-| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
-| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ | – |
-| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
-| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
-| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
-| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – | – |
-| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | render¹⁷ | – |
-| **HO** Home | | | | | | | | | | | | · | – | – | – | TRIG²¹ |
-| **FO** Fog | | | | | | | | | | | | | · | – | – | – |
-| **FL** Follow-light | | | | | | | | | | | | | | · | – | – |
-| **UI** HUD/UI | | | | | | | | | | | | | | | · | – |
-| **EM** Embers | | | | | | | | | | | | | | | | · |
+| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | MI | UI | EM |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG²⁴ | TRIG⁶ | TRIG²¹ |
+| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | – | render¹⁷ | – |
+| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – | – |
+| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – | – |
+| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – | – | – |
+| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – | – | – |
+| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | – | render¹⁷ | – |
+| **HO** Home | | | | | | | | | | | | · | – | – | – | – | TRIG²¹ |
+| **FO** Fog | | | | | | | | | | | | | · | – | – | – | – |
+| **FL** Follow-light | | | | | | | | | | | | | | · | – | – | – |
+| **MI** Missions | | | | | | | | | | | | | | | · | TRIG⁶ | TRIG²¹ |
+| **UI** HUD/UI | | | | | | | | | | | | | | | | · | – |
+| **EM** Embers | | | | | | | | | | | | | | | | | · |
 
 ¹ Pickup (`distBaby<3.6`) and carry-follow (child's position snaps to
 player's while carrying) — proximity, not collision.
@@ -2199,7 +2200,10 @@ lives on its own constant, `WALKABLE_KINDS` (`lib/game/cover.ts`), which
 ²¹ **Embers** (LUL-1043) is a run-currency event tracker, not a spatial
 object — no movement collision or LOS interaction. `TRIG` marks events where
 Embers earnings are computed: Player earnings/spending gate, Child pickup
-earning trigger, Predator kill earning trigger, Home arrival earning trigger.
+earning trigger, Predator kill earning trigger, Home arrival earning trigger,
+Mission completion earning trigger (`MISSION_REWARDS`/secondary bonuses,
+`lib/game/economy.ts` — win-only, forfeited on death or expiry, see Missions
+section).
 ²² **Changed, LUL-1642.** Previously `C+LOS+HIDE` — Bramble was the one
 `HIDE_KINDS` prop still solid to the player, unlike Log (²⁰). Both kinds
 already ran the exact same `hidden`/`hideTime`/`findHideSpot()` state
@@ -2235,6 +2239,14 @@ in advance rather than bonking into it — same qualitative behaviour it
 already had for trees. `canopyBlockedR` stays player-only (camera/eye-height
 concern, no predator analogue) — Rock/Reed's predator collider is grid+cover
 only. Log/Bramble are unaffected by this change (¹¹).
+²⁴ **Missions** (LUL-1259/LUL-3010/LUL-1666) — proximity + interact trigger,
+not a collider. `missionCanComplete` (`engine/forest-engine.js:7048`),
+computed alongside `canPickup` (`:7021`), gates completion on distance to
+the mission's target waypoint (or, for the `retrieval` secondary, the
+`radioMast` landmark's `interactRadius`); firing also requires the player to
+press the shared interact key/button (`KeyE`, `:3348` / `triggerTouchInteract()`,
+`:7513`, the same one that lifts the child). No new keybinding, no new touch
+target, no `blocked()`/`blockedR()` call against the player at all.
 
 ---
 
