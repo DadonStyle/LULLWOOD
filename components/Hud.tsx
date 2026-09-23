@@ -170,7 +170,7 @@ export interface EngineHudState {
 }
 
 // LUL-2307: world-anchored hint keys render the down-arrow glyph and use the
-// engine-projected hintX/hintY; the rest (lake/bog/deepwater/stamina/
+// engine-projected hintX/hintY; the rest (bog/deepwater/stamina/
 // caveImmune/veil/landmark -- no real 3D point, or no player-facing panel to
 // anchor to) are positioned by a fixed `[data-hint-key]` CSS rule instead. See
 // docs/specs/lul-2307-first-encounter-hints.md.

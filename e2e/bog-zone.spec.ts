@@ -35,9 +35,6 @@ test.describe('bog zone @fullmap', () => {
     const home = await qaHook(page, 'qaProbeBog', 0, 0);
     expect(home.bogginess).toBe(0);
 
-    const lake = await qaHook(page, 'qaProbeBog', CONFIG.lake.x, CONFIG.lake.z);
-    expect(lake.bogginess).toBe(0);
-
     for (const l of LANDMARKS) {
       const sample = await qaHook(page, 'qaProbeBog', l.x, l.z);
       expect(sample.bogginess, `${l.kind} should be dry`).toBe(0);

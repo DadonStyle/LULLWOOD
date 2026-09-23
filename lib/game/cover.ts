@@ -32,7 +32,7 @@ export function distanceToCoverEdge(lx: number, lz: number, hx: number, hz: numb
 }
 
 // ---- cover-vs-tree spawn clearance (LUL-396) --------------------------------
-// generateCover() placed rock/log/bramble props checking inLake()/inSpawn()/
+// generateCover() placed rock/log/bramble props checking inSpawn()/
 // inBaby() only -- it never checked tree positions, so a prop could spawn
 // overlapping a tree trunk's own movement-collision circle (t.cr). Worst
 // case for a HIDE_KINDS prop (bramble/log): an unreachable or broken hide
@@ -232,8 +232,8 @@ export function coverKindBlocksMovement(kind: string): boolean {
 //
 // Scoped out on purpose: mesh construction, layoutCoverMeshes(), and
 // generateCover()'s InstancedMesh writes all stay in the engine (Three.js
-// only). generateCover()'s inLake/inSpawn/inBaby rejection also stays put --
-// those predicates read live map state (CONFIG.lake, the baby's rolled
+// only). generateCover()'s inSpawn/inBaby rejection also stays put --
+// those predicates read live map state (the baby's rolled
 // position) that isn't cover/LOS geometry. rollCoverPropShape() below lifts
 // the one piece of that loop's math that is pure: the roll -> kind/hx/hz/y
 // assignment.
@@ -768,7 +768,7 @@ export function canopyRadiusAtEye(s: number, eye: number, geo: CanopyGeometry): 
 // rotation-local half-extents. Preserves the exact rng() draw order and
 // count per branch -- generateCover() appends to a seeded stream that must
 // stay byte-identical for a given seed, so this must never reorder or add
-// draws relative to `main`. The inLake/inSpawn/inBaby rejection and the
+// draws relative to `main`. The inSpawn/inBaby rejection and the
 // InstancedMesh writes stay in the engine (see the module comment above).
 export interface CoverPropShape {
   kind: 'log' | 'rock' | 'bramble';
