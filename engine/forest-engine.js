@@ -168,14 +168,6 @@ import {
 // below so it is unit-testable without a Three.js scene.
 import { findClearLandmarkSpot } from '@/lib/game/landmarkClearance';
 import {
-  inLakeWater,
-  inLakeClearance,
-  lakeSpeedMultiplier,
-  pushOutOfLakeClearance,
-  pushOutOfLakeClearanceAvoiding,
-  keepWaypointOffLake,
-} from '@/lib/game/lake';
-import {
   FOG_TIDE_CONFIG,
   FOG_TIDE_RAMP,
   FOG_TIDE_AUDIO_RAMP,
@@ -285,7 +277,7 @@ const WRAP_SPAN = CONFIG.wrapEnabled ? CONFIG.mapSize : Infinity;
 // over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() below, both untouched).
-// Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home
+// Fixed constants, not an rng draw, same treatment as CONFIG.home
 // -- a place you can actually learn, not one more random prop. Two sit in the
 // forest, two mark the bog: the split oak at its near edge (a gateway you see
 // coming) and the drowned car deep in it (how far you've come).
@@ -629,10 +621,7 @@ let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged
 let coverGrid = new Map();     // same CELL keying as `grid`, built from coverData
 let throwableData = [];   // {x,z,taken} -- ambient pickup props, own spawn list, no LOS/collision role
 
-function inLake(x,z){ return inLakeClearance(x, z, CONFIG.lake); }
 function inSpawn(x,z){ return x*x+z*z < 40; }
-// LUL-873: keepWaypointOffLake() extracted to lib/game/lake.ts (pure,
-// CONFIG.lake passed in explicitly) -- imported above.
 // LUL-425: CELL and key() (now gridKey) live in lib/game/cover.ts, imported
 // above -- single source of truth for the bucketing convention every
 // grid-querying function in this file and in cover.ts now shares.
@@ -696,7 +685,7 @@ function buildCoverGrid(){
 // props. This runs at the END of generateMap(), after every existing rng draw
 // (baby, trees, predators) -- so it only ever APPENDS to the seeded stream and
 // today's map (tree/baby/predator positions) stays byte-identical.
-// LUL-396: cover props only ever checked inLake()/inSpawn()/inBaby() against
+// LUL-396: cover props only ever checked inSpawn()/inBaby() against
 // their own center point -- never tree positions -- so a rock/log/bramble
 // could spawn overlapping a tree trunk's own movement-collision circle
 // (t.cr). Worst case for a HIDE_KINDS prop (bramble/log): an unreachable or
@@ -730,7 +719,7 @@ function buildCoverGrid(){
 //
 // Deliberate consequence, not a bug: the new rejection branch below skips a
 // candidate's `ry` rng() draw when it fires (same short-circuit shape the
-// existing inLake()/inSpawn()/inBaby() check above already has). Tree/baby/
+// existing inSpawn()/inBaby() check above already has). Tree/baby/
 // predator positions are unaffected (this fix only touches generateCover()'s
 // own stream, which runs after all of those per the comment above) -- but
 // the exact set and layout of cover props for a given seed will shift from
@@ -745,7 +734,7 @@ function generateCover(){
   while(placed < CONFIG.coverProps && tries < CONFIG.coverProps*25){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
-    if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
+    if(inSpawn(x,z) || inBaby(x,z)) continue;
     const roll = rng();
     const { kind, hx, hz, y } = rollCoverPropShape(roll, rng);   // LUL-425: lib/game/cover.ts
     if(overlapsTreeTrunk(x, z, Math.max(hx,hz), treesNear(x,z))) continue;
@@ -1159,12 +1148,7 @@ function generateBogTrees(){
 // no longer COVER_PROPS -- a much smaller target ring than the old 135-unit
 // disc COVER_PROPS was sized for.
 //
-// LUL-2247 review fix: this loop never checked `inLake()`/`overlapsTreeTrunk()`
-// at all, unlike every other prop generator in this file (generateCover()
-// runs both). `inLake()` is a no-op after LUL-2225's backmerge -- BOG_CENTER
-// is 131 units from CONFIG.lake, well outside BOG_OUTER_RADIUS, so no ring
-// candidate can ever be inLake() -- kept anyway per the ticket/review ask and
-// as a guard if the bog or lake geometry ever moves again. overlapsTreeTrunk()
+// overlapsTreeTrunk()
 // is the one that matters today: ordinary (non-culled, non-bog) forest trees
 // are NOT excluded from the 25-45 ring, and overlapsExistingCover() below
 // deliberately skips `kind==='tree'` entries (lib/game/cover.ts), so without
@@ -1182,7 +1166,6 @@ function generateReeds(){
     const dist = Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z);
     if(dist < BOG_INNER_RADIUS || dist > BOG_OUTER_RADIUS) continue;
     if(nearLandmarks(x, z, 3)) continue;
-    if(inLake(x, z)) continue;
     const r = 0.5 + rng()*0.4, h = 1.3 + rng()*0.9;
     if(overlapsTreeTrunk(x, z, r, treesNear(x, z))) continue;
     if(overlapsExistingCover(x, z, r, coverData)) continue;
@@ -1258,11 +1241,11 @@ function generateMap(seed){
   rng = mulberry32(seed >>> 0);
   scentPoints = [];   // LUL-23: no trail survives a fresh map/restart
 
-  // place the child far across the map (the "other side"), clear of the pool
-  do {
+  // place the child far across the map (the "other side")
+  {
     const ang = rng()*Math.PI*2, d = half*(0.5 + rng()*0.3);
     baby.x = Math.cos(ang)*d; baby.z = Math.sin(ang)*d;
-  } while(inLake(baby.x, baby.z));
+  }
   babyNormalSpawn = { x: baby.x, z: baby.z };
   baby.taken = false;
   babyGroup.visible = true;
@@ -1285,7 +1268,7 @@ function generateMap(seed){
   while(treeData.length < CONFIG.trees && tries < CONFIG.trees*25){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
-    if(inLake(x,z) || inSpawn(x,z) || inBaby(x,z)) continue;
+    if(inSpawn(x,z) || inBaby(x,z)) continue;
     const s = 0.7 + rng()*1.7;
     let culled = false;
     if(Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z) < BOG_INNER_RADIUS){
@@ -2037,21 +2020,7 @@ function placePredators(){
     p.inert = p.speciesIdx >= preset.activePerSpecies;
     p.g.visible = !p.inert;
     if(p.inert){ p.x = p.z = -9999; continue; }   // parked off-map; both scan loops also skip on p.inert
-    // LUL-395: the reject condition never checked the lake, so a predator
-    // could spawn in or right at the edge of the water -- unlike the tree,
-    // baby and cover spawn loops (generateMap()/generateCover()), which all
-    // reject inLake() already. LUL-791/LUL-794 P1: `inLake(x,z)` must NOT
-    // join this loop's own while-condition -- that would change how many
-    // rng() draws this loop makes on any seed where a candidate lands in the
-    // lake, and generateMap() calls placePredators() before generateCover()
-    // against one shared rng stream, so a draw-count change here silently
-    // reshuffles every prop generateCover() places afterward (reproduced the
-    // LUL-491 canopy-overlap bug on a log, see
-    // wiki:game/lul791-lake-predator-spawn-rng-shift). The retry loop below
-    // is byte-for-byte the pre-LUL-791 loop (same conditions, same rng()
-    // call count on every seed); the lake is handled entirely after it, by
-    // the deterministic, non-rng pushOutOfLakeClearance() -- unconditionally,
-    // not just when the retry budget exhausts. LUL-2725: the 2500/34
+    // LUL-2725: the 2500/34
     // constants below are scaled by clearScale (lib/game/spawnClearance.ts),
     // which is exactly 1 on every real map, so this remains byte-for-byte
     // the pre-LUL-2725 loop there -- only qaWorld=micro's half=48 changes
@@ -2059,25 +2028,6 @@ function placePredators(){
     let x, z, tries = 0;
     do { x=rnd(-half+margin, half-margin); z=rnd(-half+margin, half-margin); tries++; }
     while((x*x+z*z < 2500*clearScale*clearScale || Math.hypot(x-baby.x, z-baby.z) < 34*clearScale || blockedR(x, z, p.rad+0.5)) && tries < 60);
-    if(inLake(x,z)){
-      // LUL-2735: the plain push only guarantees clear-of-lake, not
-      // clear-of-origin/baby (see the wrapper's own comment in lib/game/lake.ts).
-      // Re-check both circles this loop already enforced above and, if the
-      // push still violates one, search the same clearance ring for an angle
-      // that clears it too. If even that also collides with a tree/prop
-      // (blockedR), fall back to the pre-push candidate -- it already passed
-      // this loop's own blockedR check on exit (or, on the rare 60-try
-      // exhaustion path, is no worse than what shipped before this fix).
-      const pushed = pushOutOfLakeClearanceAvoiding(x, z, CONFIG.lake, [
-        { x: 0, z: 0, r: 50 * clearScale },
-        { x: baby.x, z: baby.z, r: 34 * clearScale },
-      ]);
-      if(blockedR(pushed.x, pushed.z, p.rad+0.5) && !blockedR(x, z, p.rad+0.5)){
-        // pushed candidate now collides with a prop the pre-push spot didn't -- keep the pre-push spot (still inside the lake, same as today's unfixed behavior for this one rare corner).
-      } else {
-        x = pushed.x; z = pushed.z;
-      }
-    }
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     const [ccx, ccz] = chunkXZ(x, z), [pcx, pcz] = chunkXZ(player.x, player.z);
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
@@ -2137,7 +2087,6 @@ function relocateParkedHunter(pcx, pcz){
     }
   }
   if(x === null) return;   // every geometrically-valid ring chunk was blocked/visible on every try -- stay parked, retry next relocation call rather than violate the guarantee
-  if(inLake(x,z)){ const pushed = pushOutOfLakeClearance(x, z, CONFIG.lake); x = pushed.x; z = pushed.z; }
   target.x = x; target.z = z; target.wpx = x; target.wpz = z;
   target.parked = false; target.g.visible = true; target.g.position.set(x, 0, z);
   logChronicle('hunter_relocated', { kind: target.kind });
@@ -2631,22 +2580,9 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // LUL-1861: bog component dropped here -- LUL-1483's speed *= bogSpeedMultiplier(biomeAt(...))
     // below already applies bog once, terminally; keeping it here too double-applies it.
     // LUL-2422: CONFIG.speedScaleMul (default 1, set by applyQaWorldMicroPreset) folded in
-    // here so every `*pLakeMul` speed site below is scaled together -- mirrors detectScaleMul's
-    // fold-in at effectiveDetect() (LUL-2407).
-    const pLakeMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake)) * (CONFIG.speedScaleMul || 1);
-    // LUL-2611: speedScaleMul's own comment (engine/tuning.js) says its job is crossing-time
-    // parity for roam wander and the staged qaTeleportNear*/qaStageChaseAtContact-style safety
-    // window -- not pursuit-speed parity against a live, moving player. Folding it into every
-    // `*pLakeMul` site (LUL-2422) missed that distinction: at the micro world's 0.2 factor, a
-    // lion's full chase speed (9.2*0.2=1.84u/s) can never close on or even keep pace with the
-    // player's own (unscaled) walk speed (6u/s), so the `chase`/`hunt` full-species-speed lines
-    // below -- the two states whose whole job is "catch a player that may be moving" -- use this
-    // water-only multiplier instead of pLakeMul. Every other state (roam/investigate/flank/
-    // reroute/standoff) is untouched: those don't need to out-pace a moving player (investigate/
-    // approach is deliberately 0.45x even on the full map) and existing specs
-    // (qaStageChaseAtContact's wolf-glue test, force-hunt-closes, scent/scent-trail) already
-    // pass against a stationary or scent-driven target, unaffected by this split.
-    const pPursuitMul = lakeSpeedMultiplier(inLakeWater(p.x, p.z, CONFIG.lake));
+    // here so every `*pSpeedScaleMul` speed site below is scaled together -- mirrors
+    // detectScaleMul's fold-in at effectiveDetect() (LUL-2407).
+    const pSpeedScaleMul = CONFIG.speedScaleMul || 1;
     let desx = 0, desz = 0, speed = 0, facePlayer = false;
     if (p.state !== p.lastSteerState) { p.commitDir = null; p.commitT = 0; p.searchPath = null; p.lastSteerState = p.state; }
 
@@ -2723,7 +2659,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       } else {
         p.charge = cs;
         facePlayer = cs.phase === 'telegraph';
-        // LUL-2469: chargeSpeed(cs.distance) intentionally not folded into pLakeMul/speedScaleMul --
+        // LUL-2469: chargeSpeed(cs.distance) intentionally not folded into pSpeedScaleMul --
         // a charge only starts from 'chase' once canSee()+playerCanSee() both already hold (see the
         // startCharge() call below), and canSee() is already scaled by CONFIG.detectScaleMul (LUL-2407),
         // so on the QA micro map a charge can't begin until the predator is within the shrunk detect
@@ -2765,13 +2701,13 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     } else if(p.reroute > 0){                        // stuck → back up along its trail, then a different way
       p.reroute -= dt;
       const bx=p.rrX-p.x, bz=p.rrZ-p.z, bd=Math.hypot(bx,bz);
-      if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pLakeMul; }
+      if(bd > 0.4){ desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.7*pSpeedScaleMul; }
       if(p.reroute <= 0) p.stuckT = 0;
     } else if(p.searchPath && p.searchPath.length){
       const [wx, wz] = p.searchPath[0];
       const wdx = wx - p.x, wdz = wz - p.z, wd = Math.hypot(wdx, wdz);
       if(wd < LOCAL_SEARCH_ARRIVE_R) p.searchPath = p.searchPath.slice(1);
-      else { desx = wdx/wd; desz = wdz/wd; speed = p.spec.speed*0.7*pLakeMul; }
+      else { desx = wdx/wd; desz = wdz/wd; speed = p.spec.speed*0.7*pSpeedScaleMul; }
     } else if(p.hunt){                              // forced: comes straight for you while it can see you (no giving up otherwise)
       if(!canSee(p, dist)){
         // LUL-2246: a live force-hunt lock means this collapse is the 30s escalation
@@ -2785,7 +2721,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt', predators.indexOf(p));   // LUL-1194: the 30s force-hunt escalation caught up
-        else { desx=ux; desz=uz; speed=p.spec.speed*pPursuitMul; }
+        else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -2821,10 +2757,9 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.lkpSweeps = pick.sweepsLeft;
           let nwx = Number.isFinite(WRAP_SPAN) ? wrapCoord(pick.x, WRAP_SPAN) : clamp(pick.x,-half+4,half-4);
           let nwz = Number.isFinite(WRAP_SPAN) ? wrapCoord(pick.z, WRAP_SPAN) : clamp(pick.z,-half+4,zMax-4);
-          const kept = keepWaypointOffLake(nwx, nwz, CONFIG.lake);
-          p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.x, WRAP_SPAN) : clamp(kept.x,-half+4,half-4);
-          p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(kept.z, WRAP_SPAN) : clamp(kept.z,-half+4,zMax-4); }
-        else { desx=wx/wd; desz=wz/wd; speed=2.3*pLakeMul; }
+          p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(nwx, WRAP_SPAN) : clamp(nwx,-half+4,half-4);
+          p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(nwz, WRAP_SPAN) : clamp(nwz,-half+4,zMax-4); }
+        else { desx=wx/wd; desz=wz/wd; speed=2.3*pSpeedScaleMul; }
       }
     } else if(p.state === 'chase'){
       // While scentLock (LUL-23) holds, this chase was triggered by a stale
@@ -2885,7 +2820,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         else if(hidden && isCaught(dist, p.rad)){
           p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
         }
-        else { desx=ux; desz=uz; speed=p.spec.speed*pPursuitMul; }
+        else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -2939,7 +2874,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           adist = Math.hypot(ndx, ndz) || 0.0001;
           aux = ndx / adist; auz = ndz / adist;
         }
-        const step = stepApproach(aux, auz, p.spec.speed*pLakeMul, adist, p.rad);
+        const step = stepApproach(aux, auz, p.spec.speed*pSpeedScaleMul, adist, p.rad);
         desx = step.desx; desz = step.desz; speed = step.speed;
         if(step.enterSniff){
           // LUL-1090: a hidden player gets walked back to SNIFF_STANDOFF
@@ -2962,7 +2897,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         facePlayer = true;
         const sx=p.standX-p.x, sz=p.standZ-p.z, sd=Math.hypot(sx,sz);
         if(sd < 2){ p.inv='sniff'; p.sniffTimer = rnd(1,5); sniff(); }
-        else { desx=sx/sd; desz=sz/sd; speed=p.spec.speed*0.45*pLakeMul; }
+        else { desx=sx/sd; desz=sz/sd; speed=p.spec.speed*0.45*pSpeedScaleMul; }
       } else if(p.inv === 'sniff'){
         facePlayer = true; p.sniffTimer -= dt;
         const sniffOutcome = stepSniffLoop(p.sniffTimer, p.sniffsLeft);
@@ -2975,7 +2910,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         }
       } else if(p.inv === 'back'){
         const bx=p.backX-p.x, bz=p.backZ-p.z, bd=Math.hypot(bx,bz);
-        if(bd < 2){ p.inv='approach'; p.approachEnteredHidden=hidden; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pLakeMul; }
+        if(bd < 2){ p.inv='approach'; p.approachEnteredHidden=hidden; } else { desx=bx/bd; desz=bz/bd; speed=p.spec.speed*0.5*pSpeedScaleMul; }
       }
     } else if(p.state === 'flank'){
       // LUL-24: pack-ordered wolf, not independently hunting. Sight and scent
@@ -3002,7 +2937,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       } else {
         const fx=p.flankX-p.x, fz=p.flankZ-p.z, fd=Math.hypot(fx,fz);
         if(fd < FLANK_ARRIVE_R){ p.inv='hold'; p.sniffsLeft=rollSniffs(rng, 3); p.sniffTimer=rnd(1,4); sniff(); }
-        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL*pLakeMul; }
+        else { desx=fx/fd; desz=fz/fd; speed=p.spec.speed*FLANK_SPEED_MUL*pSpeedScaleMul; }
       }
     }
 
@@ -3046,12 +2981,11 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         }
         if(!pursuing || !p.searchPath){
           // roam, or the bounded search itself found nothing -- same guaranteed
-          // unstick as before (LUL-857: kept off the water same as the roam pick above)
+          // unstick as before
           const freshx = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.x + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.x + (rng()-0.5)*40, -half+4, half-4);
           const freshz = Number.isFinite(WRAP_SPAN) ? wrapCoord(p.z + (rng()-0.5)*40, WRAP_SPAN) : clamp(p.z + (rng()-0.5)*40, -half+4, zMax-4);
-          const freshKept = keepWaypointOffLake(freshx, freshz, CONFIG.lake);
-          p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.x, WRAP_SPAN) : clamp(freshKept.x, -half+4, half-4);
-          p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshKept.z, WRAP_SPAN) : clamp(freshKept.z, -half+4, zMax-4);
+          p.wpx = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshx, WRAP_SPAN) : clamp(freshx, -half+4, half-4);
+          p.wpz = Number.isFinite(WRAP_SPAN) ? wrapCoord(freshz, WRAP_SPAN) : clamp(freshz, -half+4, zMax-4);
         }
       }
     }
@@ -4034,7 +3968,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   };
   // LUL-2225: bogginess and its two derived multipliers at an arbitrary
   // point, so a test can sample the patch's shape/edge directly (centre,
-  // the inner/outer radii, home, the lake, every LANDMARKS/CAVE position)
+  // the inner/outer radii, home, every LANDMARKS/CAVE position)
   // without re-deriving lib/game/bog.ts's math from player position.
   window.ForestEngine.qaProbeBog = function(x, z){
     const bogginess = biomeAt(x, z);
@@ -6542,21 +6476,12 @@ function stepFrame(dt, t, skipRender){
   let spd = 0, dist = 0, running = false, noiseRadius = 0, movingAgainstWind = false;
   const playerBogginess = biomeAt(player.x, player.z);   // LUL-1483: continuous 0..1, was a boolean z-band test
   playerBogMask = bogMaskLevel(playerBogginess, playerBogMask, dt);   // LUL-1902: decaying wolf-scent-mask, see checkScent()
-  // LUL-791/LUL-392: the lake used to be pure render -- no collision, no slow,
-  // walkable like dry ground. `inLakeWater` (the visible water radius `r`,
-  // not the wider `clear` spawn-clearance ring the spawn checks use) so the
-  // slow starts exactly where the water mesh does, not several units of dry
-  // shore early. A wade-slow, not a wall, per the ticket: the lake reads as
-  // an atmospheric hazard, and a hard invisible wall in a fog-heavy horror
-  // game reads as a bug even when intentional -- and it plays into the core
-  // hiding loop (risk the slow crossing, or go around).
-  const playerInLake = inLakeWater(player.x, player.z, CONFIG.lake);
   if(playing && !hidden){
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
-    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * bogSpeedMultiplier(playerBogginess) * lakeSpeedMultiplier(playerInLake);
+    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * bogSpeedMultiplier(playerBogginess);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
