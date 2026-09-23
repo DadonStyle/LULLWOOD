@@ -157,7 +157,13 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     // (qaBuildScene would guarantee isolation but also wipes the natural
     // cover this hook depends on). See
     // docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
-    await boot(page, { qaHooks: true });
+    // LUL-4789: qaHideBehindCoverKind gates candidates on effectiveDetect(p)
+    // (engine/forest-engine.js ~:4712), which now composes timeOfDayDetectMul
+    // -- an unpinned boot let the real wall-clock hour resolve to 'night'
+    // (0.8x) and shrink the only viable bear candidate on this pinned seed
+    // below the required separation, returning null. Pin qaHour to noon
+    // (1.15x, the most permissive state) so this search stays deterministic.
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
 
     if (fixedClock) {
