@@ -1114,9 +1114,13 @@ export default function Hud({
           reducedMotion={state.reducedMotion}
           {...hideVeilPromptContent(state, mobile)}
         />
-        {/* LUL-3150: carry-leg panic button -- next to actionPrompt since it's read
-            the same way ("something to do about being hunted"); carrying is mutually
-            exclusive with the hide/cover prompt so the two rows never compete. */}
+        {/* LUL-3150/LUL-4663: emergency panic button, triggered by a real chase
+            (engine/forest-engine.js veilOverloadTriggerActive, not `carrying` --
+            LUL-4662/LUL-4663) -- next to actionPrompt since it's read the same way
+            ("something to do about being hunted"). Not mutually exclusive with
+            coverPromptVisible/veilPromptVisible above (a chased player near a hide
+            spot can see both rows at once); separate `#actionSlot` rows, so the two
+            never compete for the same DOM node. */}
         <ActionPrompt
           id="veilOverloadPrompt"
           visible={state.veilOverloadVisible && !state.winVisible && !state.deathVisible}

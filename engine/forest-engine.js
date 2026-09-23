@@ -619,7 +619,14 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 // gate; caveImmuneT is the live countdown (0 = inactive), decremented in
 // tick() alongside the other per-frame timers.
 let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
-let veilOverloadChargeT = 0, veilOverloadUsedThisCarry = false;
+let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
+// LUL-4663: whether the retargeted trigger (any live predator in `state ===
+// 'chase'`) is true this frame -- recomputed in the `playing` block of
+// stepFrame() alongside veilActive/coverPromptVisible, read by both the
+// KeyQ keydown handler and triggerTouchVeilOverload() below (neither has
+// access to that block's locals, same reason canPickup/canBuyVeilCharm are
+// module-level lets rather than block-scoped consts).
+let veilOverloadTriggerActive = false;
 let windAssistActive = false;   // LUL-3149: previous frame's (running && movingAgainstWind), for edge-triggered start/end cues
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
@@ -1638,6 +1645,11 @@ function placeCave(){
   caveConsumed = false;
   caveImmuneT = 0;
   windAssistActive = false;   // LUL-3149: per-run reset, same site as the other detection-state timers
+  // LUL-4663: per-round reset for the retargeted trigger -- now that activation no
+  // longer requires `carrying` (dead in real play since LUL-2281), the one-shot
+  // "resets on reset" half of the CEO ruling needs an explicit per-round site;
+  // it used to live in setDown(), which real play never reaches either.
+  veilOverloadChargeT = 0; veilOverloadUsedThisRound = false; veilOverloadTriggerActive = false;
   if(caveSpawned){
     const [x, z] = clearLandmarkSpot(CAVE.x, CAVE.z, CAVE.clear);
     caveData = { x, z };
@@ -2391,7 +2403,7 @@ function activateVeilOverload(){
                      // hit 0" path that sets locked=true. Setting locked here too would be
                      // a second, undocumented penalty on top of the burn itself.
   veilOverloadChargeT = VEIL_OVERLOAD_DURATION;
-  veilOverloadUsedThisCarry = true;
+  veilOverloadUsedThisRound = true;
   pushState({ veilOverloadActive: true, veilOverloadTimeLeft: VEIL_OVERLOAD_DURATION });
   veilOverloadActivateCue();
 }
@@ -3353,14 +3365,23 @@ on(window, 'keydown', e => {
     else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
   }
-  // LUL-3150: carry-leg emergency panic button -- burns all veil charge for a
-  // detection-immunity window, once per carry leg. Gated the same three ways
-  // veilOverloadVisible is (carrying/charge/not-yet-used) so the key only ever
-  // does something when the HUD prompt agrees it should; the denied branch is
-  // the Q5 refusal-feedback gap the CEO's acceptance flagged as in-scope, not
-  // deferred -- pressing Q while carrying but ineligible always gets a cue.
-  if(e.code === 'KeyQ' && playing && !paused && carrying){
-    if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisCarry) activateVeilOverload();
+  // LUL-4663: retargeted from `carrying` (permanently false in real play since
+  // LUL-2281 -- completePickup() wins directly, no carry-home leg -- decisions/
+  // lul-2281-pickup-is-the-win-2026-09-09) to a real live-danger signal: any
+  // non-inert predator in `state === 'chase'` (veilOverloadTriggerActive,
+  // recomputed every frame below). The tighter of the CEO ruling's two options
+  // (decisions/veil-overload-retarget-2026-09-23) -- `p.hunt` (forced approach,
+  // used for scripted/guaranteed pursuit and the 30s no-threat-seen escalation)
+  // is deliberately excluded so an early forced approach can't spend the
+  // one-shot before a real chase ever starts. Emergency panic button: burns
+  // all veil charge for a detection-immunity window, once per round. Gated
+  // the same three ways veilOverloadVisible is (hunted/charge/not-yet-used)
+  // so the key only ever does something when the HUD prompt agrees it should;
+  // the denied branch is the Q5 refusal-feedback gap the CEO's acceptance
+  // flagged as in-scope, not deferred -- pressing Q while hunted but
+  // ineligible always gets a cue.
+  if(e.code === 'KeyQ' && playing && !paused && veilOverloadTriggerActive){
+    if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound) activateVeilOverload();
     else veilOverloadDeniedCue();
   }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
@@ -4635,18 +4656,20 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       if(p.charge){ p.charge = null; endChargeHud(); }
       p.hunt = false;
     }
-    // Spec drift fix: qaOpenVeilTarget's own player.x=0,z=0 placement sits exactly at
-    // CONFIG.home (engine/tuning.js:60) -- harmless there since carrying stays false,
-    // but this hook sets carrying=true, and arriveHome()'s per-frame distance check
-    // (tick()) fires the instant a carrying player is within interactRadius of home,
-    // completing the run and flipping `won` true before the test can ever press KeyQ.
-    // Staged away from home instead, same 6-unit gap.
+    // Kept staged 40u out from qaOpenVeilTarget's 0,0 (pre-LUL-4663 this avoided
+    // `carrying=true` completing arriveHome() before KeyQ could be pressed; no
+    // longer load-bearing since this hook stopped setting `carrying`, kept anyway
+    // for a stable, well-clear-of-landmarks scene).
     player.x = 40; player.z = 0;
     target.x = 46; target.z = 0;
     target.vx = target.vz = 0; target.alert = 0; target.stuckT = 0; target.sightLock = null;
     target.state = 'chase'; target.hunt = true; target.alertedBy = null; target.charge = null; target.scentLock = 0;
     target.reroute = 10; target.rrX = target.x; target.rrZ = target.z;
-    carrying = true; veilCharge = 1; veilLocked = false; veilOverloadUsedThisCarry = false; veilOverloadChargeT = 0;
+    // LUL-4663: no longer sets `carrying` -- the trigger (veilOverloadTriggerActive)
+    // reads `target.state === 'chase'` above directly. Still forces full, unlocked
+    // veil charge and a fresh one-shot so callers get a deterministic activation-
+    // eligible scene regardless of what came before in the same test.
+    veilCharge = 1; veilLocked = false; veilOverloadUsedThisRound = false; veilOverloadChargeT = 0;
     return idx;
   };
 
@@ -5661,7 +5684,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { charge: veilCharge, locked: veilLocked, reserve: veilReserve, releaseCueCount: qaVeilCharmReleaseCueCount };
   };
   window.ForestEngine.qaProbeVeilOverload = function(){
-    return { chargeT: veilOverloadChargeT, usedThisCarry: veilOverloadUsedThisCarry, deniedCueCount: qaVeilOverloadDeniedCueCount };
+    return { chargeT: veilOverloadChargeT, usedThisRound: veilOverloadUsedThisRound, deniedCueCount: qaVeilOverloadDeniedCueCount };
   };
   // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
   // mission prompt and the objective are all on screen at once. Returns the target or null.
@@ -5929,7 +5952,11 @@ function setDown(){
   const next = beginSetDown(runState());
   if(next.carrying === carrying) return;   // rejected -- see setDownAllowed() in lib/game/outcome.ts
   carrying = next.carrying; babySetDown = next.setDown;
-  veilOverloadUsedThisCarry = false;
+  // LUL-4663: vestigial now the trigger no longer keys off `carrying` (this whole
+  // function is unreachable in real play since LUL-2281 -- decisions/lul-2281-
+  // pickup-is-the-win-2026-09-09; the real per-round reset is in placeCave()).
+  // Left renamed-not-deleted: LUL-2285 owns removing the carry-home machinery.
+  veilOverloadUsedThisRound = false;
   baby.x = player.x; baby.z = player.z;
   babyGroup.position.set(baby.x, 0, baby.z);
   babyGroup.visible = true; babyGroup.scale.setScalar(1);
@@ -7073,6 +7100,12 @@ function stepFrame(dt, t, skipRender){
       && predators.some(function(p){ return p.state === 'chase' && canSee(p, Math.hypot(player.x-p.x, player.z-p.z)); });
     const veilPromptVisible = veilActive && !coverPromptVisible;
     const veilPromptUrgent = veilPromptVisible;
+    // LUL-4663: Veil Overload's own trigger -- deliberately broader than veilActive
+    // above (no !hidden/!veilLocked/canSee gate): the panic button must stay
+    // reachable through a blind scent-chase or right as cover is lost, not only
+    // while already spotted in the open. `state === 'chase'` alone (no `p.hunt`)
+    // per the CEO ruling's tighter option -- see the KeyQ handler's own comment.
+    veilOverloadTriggerActive = predators.some(function(p){ return !p.inert && p.state === 'chase'; });
     // LUL-1258: the mission's nav-cue hum, only while active and not carrying
     // (return leg is silent, same rule the mission panel follows below) --
     // reuses childCry's tempo-carries-distance shape (Ship 1 spec S3d).
@@ -7144,7 +7177,7 @@ function stepFrame(dt, t, skipRender){
       caveImmuneTimeLeft: caveImmuneT,
       veilOverloadActive: veilOverloadChargeT > 0,
       veilOverloadTimeLeft: veilOverloadChargeT,
-      veilOverloadVisible: carrying && veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisCarry,
+      veilOverloadVisible: veilOverloadTriggerActive && veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound,
     });
   } else {
     pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false });
@@ -7540,8 +7573,8 @@ tick();
   // as the KeyQ keydown handler (§2), just without the e.code/keydown-event wrapper.
   function triggerTouchVeilOverload() {
     const playing = entered && !won && !dead && !pickingUp;
-    if(!playing || paused || !carrying) return;
-    if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisCarry) activateVeilOverload();
+    if(!playing || paused || !veilOverloadTriggerActive) return;
+    if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound) activateVeilOverload();
     else veilOverloadDeniedCue();
   }
   // LUL-529: touch analogue of Escape. Desktop's Escape only ever pauses --
