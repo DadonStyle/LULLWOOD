@@ -367,4 +367,38 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     await expect(page.locator('#scentTrailCaption')).toHaveCount(0);
     expect((await qaHook(page, 'qaProbeHints')).activeKey).toBeNull();
   });
+
+  // LUL-4677: winVisible only flips true in finishPickup() at e>=11.3, but fireBoom()
+  // (the win-burst #flash) fires earlier at e>=9.3 -- so the e=9.3..11.3 window has
+  // pickingUp=true, carrying=false, winVisible=false, and an eligible hint (oakHollow,
+  // gated only on mission active && !carrying) rendered right over the burst.
+  test('does not show over the pickup cinematic burst (LUL-4677)', async ({ page }) => {
+    await boot(page, { qaHooks: true, qaMissionKind: 'oakHollow' });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await qaHook(page, 'qaBuildScene', { predators: [] });
+
+    // Only 'landmark' precedes 'oakHollow' among the keys eligible at spawn with no
+    // player action (same race as the deepwater test above) -- drain it first.
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+    expect((await qaHook(page, 'qaProbeHints')).activeKey).toBe('landmark');
+    await qaHook(page, 'qaAdvance', stepsFor(8.1));
+    expect((await qaHook(page, 'qaProbeHints')).activeKey).toBe('oakHollow');
+
+    await qaHook(page, 'qaTeleportNearBaby');
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+    await page.keyboard.press('KeyE');
+    const probe = await qaHook(page, 'qaProbeBabyLight');
+    expect(probe.pickingUp, 'KeyE did not start the pickingUp cinematic').toBe(true);
+
+    // Cleared the instant pickingUp goes true, well before fireBoom() at e>=9.3.
+    await qaHook(page, 'qaAdvance', stepsFor(0.02));
+    expect((await qaHook(page, 'qaProbeHints')).activeKey).toBeNull();
+    await expect(page.locator('#hintCaption')).toHaveCount(0);
+
+    // Still clear through the burst itself and up to winVisible flipping at e>=11.3.
+    await qaHook(page, 'qaAdvance', stepsFor(9.32));
+    expect((await qaHook(page, 'qaProbeHints')).activeKey).toBeNull();
+    await expect(page.locator('#hintCaption')).toHaveCount(0);
+  });
 });

@@ -7111,7 +7111,7 @@ function stepFrame(dt, t, skipRender){
     // dismiss-on-interaction event, then persists "seen" so it never shows
     // again this install. Losing eligibility mid-caption stops it without
     // marking seen. See docs/specs/lul-2307-first-encounter-hints.md.
-    const baseHintEligible = hintsEnabled && entered && !hidden && !hudState.winVisible && !hudState.deathVisible;
+    const baseHintEligible = hintsEnabled && entered && !hidden && !pickingUp && !hudState.winVisible && !hudState.deathVisible;
 
     // Nearest untaken throwable that could actually be grabbed right now, plus
     // its own position for the anchor (distinct from the HUD's nearestThrowableD
