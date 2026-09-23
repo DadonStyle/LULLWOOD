@@ -19,7 +19,7 @@ export const CONFIG = {
   detectScaleMul: 1,     // LUL-2407: predator detect-radius multiplier; applyQaWorldMicroPreset()
                           // scales this down to match the shrunk map so spawn distance keeps the
                           // same safety margin against detect radius. 1 = full-map, no-op default.
-  speedScaleMul: 1,       // LUL-2422: predator movement-speed multiplier (folded into pLakeMul in
+  speedScaleMul: 1,       // LUL-2422: predator movement-speed multiplier (folded into pSpeedScaleMul in
                           // the main predator loop, forest-engine.js). detectScaleMul alone wasn't
                           // enough -- a full-speed predator can still wander/chase into a scripted
                           // QA teleport target well within a scenario's ~8s window on the shrunk
@@ -190,8 +190,8 @@ export const BSP = 70;            // win-burst particles
 // BOG_OUTER_RADIUS (45) would partially overlap the map's own edge, so
 // bogTrees/bogReeds are zeroed explicitly rather than relying on geometry to
 // exclude every candidate (which would instead spend each loop's full try
-// budget rejecting points, wastefully but harmlessly). LANDMARKS/CAVE/
-// CONFIG.lake are deliberately left untouched -- tuning.js's own LANDMARKS
+// budget rejecting points, wastefully but harmlessly). LANDMARKS/CAVE are
+// deliberately left untouched -- tuning.js's own LANDMARKS
 // comment already documents they're placed unconditionally regardless of map
 // size, so at this scale they simply sit at or past the map edge; not worth
 // a special case for six fixed props.

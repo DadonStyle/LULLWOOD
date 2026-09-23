@@ -9,30 +9,28 @@ const LANDMARKS = [
   { x: -50, z: 50, kind: 'stoneMarker' },
 ];
 const HOME = { x: 0, z: 0 };
-const LAKE = { x: 60, z: 60 };
 
 test('nearestLandmarkName returns null when nothing is within maxDist', () => {
-  assert.equal(nearestLandmarkName(200, 200, LANDMARKS, HOME, LAKE), null);
+  assert.equal(nearestLandmarkName(200, 200, LANDMARKS, HOME), null);
 });
 
 test('nearestLandmarkName names the closest landmark within range', () => {
-  assert.equal(nearestLandmarkName(23, 5, LANDMARKS, HOME, LAKE), 'the Split Oak');
-  assert.equal(nearestLandmarkName(-94, 45, LANDMARKS, HOME, LAKE), 'the Drowned Car');
+  assert.equal(nearestLandmarkName(23, 5, LANDMARKS, HOME), 'the Split Oak');
+  assert.equal(nearestLandmarkName(-94, 45, LANDMARKS, HOME), 'the Drowned Car');
 });
 
-test('nearestLandmarkName also considers home and lake as named points', () => {
-  assert.equal(nearestLandmarkName(1, 1, LANDMARKS, HOME, LAKE), 'the Cabin');
-  assert.equal(nearestLandmarkName(59, 59, LANDMARKS, HOME, LAKE), 'the Lake');
+test('nearestLandmarkName also considers home as a named point', () => {
+  assert.equal(nearestLandmarkName(1, 1, LANDMARKS, HOME), 'the Cabin');
 });
 
 test('nearestLandmarkName respects a custom maxDist', () => {
-  assert.equal(nearestLandmarkName(30, 4, LANDMARKS, HOME, LAKE, 5), null);
-  assert.equal(nearestLandmarkName(30, 4, LANDMARKS, HOME, LAKE, 50), 'the Split Oak');
+  assert.equal(nearestLandmarkName(30, 4, LANDMARKS, HOME, 5), null);
+  assert.equal(nearestLandmarkName(30, 4, LANDMARKS, HOME, 50), 'the Split Oak');
 });
 
 test('nearestLandmarkName falls back to the raw kind for an unnamed landmark kind', () => {
   const unknown = [{ x: 10, z: 10, kind: 'mysteryStone' }];
-  assert.equal(nearestLandmarkName(11, 10, unknown, HOME, LAKE), 'mysteryStone');
+  assert.equal(nearestLandmarkName(11, 10, unknown, HOME), 'mysteryStone');
 });
 
 test('formatChronicle renders a line per known code, oldest first, with mm:ss timestamps', () => {
@@ -53,11 +51,11 @@ test('formatChronicle renders a line per known code, oldest first, with mm:ss ti
 test('formatChronicle appends a nearby landmark name when args.landmark is set', () => {
   const events: ChronicleEvent[] = [
     { t: 10, code: 'scent_lock', args: { kind: 'bear', landmark: 'the Fire Tower' } },
-    { t: 20, code: 'death', args: { kind: 'lion', landmark: 'the Lake' } },
+    { t: 20, code: 'death', args: { kind: 'lion', landmark: 'the Split Oak' } },
   ];
   assert.deepEqual(formatChronicle(events), [
     '0:10 — a bear caught your scent near the Fire Tower.',
-    '0:20 — a lion caught you near the Lake.',
+    '0:20 — a lion caught you near the Split Oak.',
   ]);
 });
 

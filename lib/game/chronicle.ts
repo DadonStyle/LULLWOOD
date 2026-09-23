@@ -47,13 +47,11 @@ export function nearestLandmarkName(
   z: number,
   landmarks: (Point & { kind: string })[],
   home: Point,
-  lake: Point,
   maxDist = 45,
 ): string | null {
   const points: (Point & { name: string })[] = [
     ...landmarks.map((l) => ({ x: l.x, z: l.z, name: LANDMARK_NAMES[l.kind] || l.kind })),
     { x: home.x, z: home.z, name: 'the Cabin' },
-    { x: lake.x, z: lake.z, name: 'the Lake' },
   ];
   let best: (Point & { name: string }) | null = null;
   let bestDist = Infinity;

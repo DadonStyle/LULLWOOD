@@ -235,7 +235,7 @@ export default function SettingsPanel({
           />
           Show my scent trail
         </label>
-        {/* LUL-2307: one-time first-encounter explanations (lake, bog, predators,
+        {/* LUL-2307: one-time first-encounter explanations (bog, predators,
             stamina, ...) -- see docs/specs/lul-2307-first-encounter-hints.md. */}
         <label className="radioRow">
           <input
