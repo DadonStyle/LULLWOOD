@@ -21,13 +21,17 @@ per-role, per-PR habit instead of something only the reviewer remembers.
 
 ## Feature questions — answered in the proposal, in writing
 
-Every feature proposal answers all sixteen questions below **before** an engineer plans anything. An unanswered question is not a review comment; it is a bounce — the proposal goes back to the proposer unplanned. Answers are prose with `file:line` citations, in the wiki page at `game/mechanics/<slug>` and in the `suggest_tasks` body. This is section 0 of `docs/FEATURE_CHECKLIST.md`; sections 1–4 (proposer / developer / reviewer / QA) still run after it.
+Every feature proposal answers all seventeen questions below **before** an engineer plans anything. An unanswered question is not a review comment; it is a bounce — the proposal goes back to the proposer unplanned. Answers are prose with `file:line` citations, in the wiki page at `game/mechanics/<slug>` and in the `suggest_tasks` body. This is section 0 of `docs/FEATURE_CHECKLIST.md`; sections 1–4 (proposer / developer / reviewer / QA) still run after it.
 
 ### A. What does the player see?
 
 **1. List every piece of state this feature introduces, and for each one name the pixels that show it.**
 Why: the engine holds state the screen never admits to. Worked example — throwables: `heldThrowable` is a boolean (`engine/forest-engine.js:2976`) while `throwablesReserve` is a hidden integer (`:2977`), so a Pocket Stones owner gets two throws and the HUD says the same thing for both: `text={mobile ? 'Holding a stone — tap  ' : 'Holding a stone — click to throw'}` (`components/Hud.tsx:1082`).
 Good answer: a table of `state name → engine line → HUD element id → the exact string or glyph the player reads`, with no row whose HUD cell is empty.
+
+**1.5. For every trigger condition this feature reads, when was it last set true by a real (non-QA-hook) code path — cite the line?**
+Why: LUL-4662 shipped Veil Overload gated on `carrying`, a flag `decisions/lul-2281-pickup-is-the-win-2026-09-09` had already made permanently false in real play three months earlier — the feature was dead on arrival and green CI/e2e never caught it because the only test drove it through a QA hook that force-sets the same flag.
+Good answer: the `file:line` of a real-play assignment (not a `qa*` hook, not a test fixture) plus confirmation the code path is still reachable today, or a bounce.
 
 **2. Which of this feature's values can be greater than one, and where is the count rendered?**
 Why: a quantity the player must ration may never be expressed as a has/has-not pill; "you hold a stone" cannot answer "how many?".
@@ -99,7 +103,8 @@ Good answer: new key → registered in the shared bindings map, exposed in `Sett
 
 The reviewer rejects on these grounds, by name:
 
-- **Unanswered question.** Any of the sixteen missing from the proposal → returned to the proposer, not planned. This gate runs at proposal time, before a tier exists, so the `AGENTS.md:115-118` demotion of checklist items to P2 in Tiers A and B does not reach it; a missing answer blocks at every tier.
+- **Unanswered question.** Any of the seventeen missing from the proposal → returned to the proposer, not planned. This gate runs at proposal time, before a tier exists, so the `AGENTS.md:115-118` demotion of checklist items to P2 in Tiers A and B does not reach it; a missing answer blocks at every tier.
+- **Unproven trigger reachability (Q1.5).** A trigger condition cited with no real-play `file:line` that still sets it true, and no decision doc ruling on why one isn't needed → the condition is treated as unproven — bounce, same severity as an unanswered question.
 - **Unrendered state (Q1–Q4, Q10).** An engine count exposed as a boolean, a player-facing readout placed under `#panel`, or an `EngineHudState` field with no render site → **P1**, same class as a missing `docs/ELEMENTS.md` update.
 - **Unproven duplicate claim, or an unbuilt replacement (Q7–Q8).** Duplication asserted from similar copy with no two-expression proof, or a prompt removed whose replacement has no entry in `HINT_PRIORITY` → block.
 - **New flashing keycap or prompt outside `#actionSlot` (Q9).** Block, with the LUL-2312 diff cited.
