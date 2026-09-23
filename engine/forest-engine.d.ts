@@ -197,8 +197,12 @@ declare global {
       /** LUL-2311: teleports the player just outside the edge of the first cover prop of the given kind, no HIDE_KINDS check -- for asserting KeyH is a no-op beside a walkable-but-not-hide-eligible prop (e.g. 'log'). Returns the spot's kind, or null if none of that kind were generated. */
       qaTeleportNearCoverKind?: (kind: string) => string | null;
       /** LUL-211: the player's world position and heading -- the only way a test can
-       * see where movement actually ended up (player is init()-closure-local). */
-      qaProbePlayer?: () => { x: number; z: number; yaw: number };
+       * see where movement actually ended up (player is init()-closure-local).
+       * LUL-3169 adds sprintWindBonusActive, mirroring stepFrame()'s own
+       * `running && isMovingAgainstWind(mvx, mvz, windX, windZ)` (LUL-3149's Wind-Assisted
+       * Evasion trigger) -- true only while the player is actively sprinting against the
+       * wind, unlike qaProbeWind's movingAgainstWind which ignores `running`. */
+      qaProbePlayer?: () => { x: number; z: number; yaw: number; sprintWindBonusActive: boolean };
       /** LUL-2189/LUL-2207: the module-scope wind unit vector (windX/windZ), set once per
        * generateMap() by generateWind() -- map-constant, not per-frame. windHighSpeed
        * (LUL-2539) is the independently-rolled high-wind flag from the same call.
