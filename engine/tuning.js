@@ -323,3 +323,11 @@ export const SCALE = [523.25, 587.33, 659.25, 783.99, 880.0, 987.77];   // twink
 
 // ---- Death cutscene -------------------------------------------------------------
 export const CUT_END = 3.7;   // death video length; reveal the loss text at the end
+
+// ---- Bramble Thorn Snag (LUL-4526) ---------------------------------------------
+// Sprint-diving into the sole hide spot (bramble) costs a stumble + noise burst; walking in
+// stays free/silent. Pricing owned by the Game Economist in parallel (LUL-4526) -- these are
+// the proposal's example values, not final tuning; retune here, no call site changes needed.
+export const BRAMBLE_SNAG_DURATION_S = 0.3;   // seconds of reduced-speed "stumble" after a sprint entry/exit
+export const BRAMBLE_SNAG_SPEED_MUL = 0.4;    // movement-speed multiplier applied for that window
+export const BRAMBLE_SNAG_NOISE_RADIUS = 5;   // noise-burst radius, smaller than THROWABLE_NOISE_RADIUS

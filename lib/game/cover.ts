@@ -1,4 +1,5 @@
 import { wrapCoord, wrapDelta, wrapCellIndex } from './wrap.ts';
+import { BRAMBLE_SNAG_SPEED_MUL } from '../../engine/tuning.js';
 
 // LUL-450 (resumes LUL-383b/LUL-387): geometry helpers for the hiding-
 // collision bug class, lifted out of engine/forest-engine.js so they are
@@ -788,4 +789,12 @@ export function rollCoverPropShape(roll: number, rng: RNG): CoverPropShape {
     const r = 0.8 + rng() * 0.7;
     return { kind: 'bramble', hx: r, hz: r, y: r * 0.6 };
   }
+}
+
+// LUL-4526: Thorn Snag speed penalty during the post-sprint-transition stumble window.
+// Pure so it's unit-testable without a Three.js scene, same rationale as this file's other
+// exports (module comment above). Mirrors bogSpeedMultiplier()/lakeSpeedMultiplier()'s
+// explicit-arg shape rather than reading engine state internally.
+export function brambleSnagSpeedMultiplier(brambleSnagT: number): number {
+  return brambleSnagT > 0 ? BRAMBLE_SNAG_SPEED_MUL : 1;
 }

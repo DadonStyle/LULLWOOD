@@ -77,6 +77,7 @@ import {
   COVER_URGENT_RANGE,
   COVER_PROBE_HZ,
   PLAYER_COLLISION_RADIUS,
+  brambleSnagSpeedMultiplier,
 } from '@/lib/game/cover';
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
@@ -198,6 +199,7 @@ import {
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
+  BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL, BRAMBLE_SNAG_NOISE_RADIUS,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -437,7 +439,7 @@ let lightDimmed = false;
 let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, staminaLowCuePlayed = false, veilReserve = false, playerBogMask = 0;
 // LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
 // decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
-let stoneMarkerPulseT = 0;
+let stoneMarkerPulseT = 0, brambleSnagT = 0;   // LUL-4526: Thorn Snag stumble countdown
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
 // last result between probes; coverProbeAccum counts elapsed seconds.
 let lastHideSpot = null, coverProbeAccum = 0, coverRustleAccum = 0;   // LUL-2856
@@ -3483,10 +3485,46 @@ function leafRustle(entering){
 // leafRustle() is the only hide sound -- the former per-kind dispatch
 // (playHideSfx()) and its hollow-log knock (hollowLogSound()) are deleted,
 // not kept, since nothing could call the log branch anymore.
+// LUL-4526: mirrors the per-frame `running` expression at :6582 exactly, but callable from
+// enterHide()/exitHide()/toggleHidden(), none of which run inside stepFrame()'s per-frame
+// scope where `running` itself lives. Do not merge this into :6582 -- see spec deviation #1.
+function isSprintHeld(){
+  return runMode === 'toggle' ? (toggleRunOn || touchSprint) : (!!keys['ShiftLeft'] || !!keys['ShiftRight'] || touchSprint);
+}
+// LUL-4526: same procedural-noise-burst shape as leafRustle()/rustleSting() (:3457/:3702) --
+// no audio files, no bus, gated identically on `audio && soundOn`.
+function thornSnagSound(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.15, false);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1800; bp.Q.value = 1.3;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.2, t+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
+  src.connect(bp); bp.connect(g); g.connect(master); g.connect(conv);
+  src.start(t); src.stop(t+0.18);
+}
 function enterHide(spot){
   hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true);
   track({ event: 'feature_engagement', feature: 'hide', action: 'used' });
   logChronicle('hide', { kind: spot.kind });
+  // LUL-4526: Thorn Snag -- sprint-diving into bramble costs a stumble + alerts nearby
+  // roaming predators; walking in (isSprintHeld()===false) stays free and silent.
+  if(spot.kind === 'bramble' && isSprintHeld()){
+    brambleSnagT = BRAMBLE_SNAG_DURATION_S;
+    thornSnagSound();
+    let snagAlerted = 0;
+    for(const p of predators){
+      if(p.inert || p.state !== 'roam') continue;
+      if(checkThrowableNoise(Math.hypot(p.x - player.x, p.z - player.z), BRAMBLE_SNAG_NOISE_RADIUS)){ hearNoise(p); snagAlerted++; }
+    }
+    logChronicle('bramble_snag', { alerted: snagAlerted });
+    if(!hintSeen('brambleSnag')){
+      markHintSeen('brambleSnag');
+      if(captionsOn) pushState({ caption: 'Diving into bramble at a sprint snags you for a moment — walk in instead to stay silent.', captionId: ++captionSeq });
+    }
+  }
   // LUL-2547: hiding isn't silent -- a one-shot noise broadcast on entry, same shape as
   // throwThrowable()'s per-predator loop (:4933-4947), but gated to `state === 'roam'` (the
   // same gate the per-frame roam-branch noise check already uses, :2386) unlike throwThrowable's
@@ -3505,7 +3543,24 @@ function enterHide(spot){
     if(captionsOn) pushState({ caption: 'Hiding makes noise — predators within earshot will investigate.', captionId: ++captionSeq });
   }
 }
-function exitHide(){ if(!hidden) return; leafRustle(false); hidden = false; hideKind = null; }
+function exitHide(){
+  if(!hidden) return;
+  leafRustle(false);
+  // LUL-4526: symmetric to the entry tax -- reads hideKind/isSprintHeld() before either is
+  // cleared below. Covers both call paths (manual toggleHidden() and the movement-break
+  // check at :6486) since both route through this one funnel.
+  if(hideKind === 'bramble' && isSprintHeld()){
+    brambleSnagT = BRAMBLE_SNAG_DURATION_S;
+    thornSnagSound();
+    let snagAlerted = 0;
+    for(const p of predators){
+      if(p.inert || p.state !== 'roam') continue;
+      if(checkThrowableNoise(Math.hypot(p.x - player.x, p.z - player.z), BRAMBLE_SNAG_NOISE_RADIUS)){ hearNoise(p); snagAlerted++; }
+    }
+    logChronicle('bramble_snag', { alerted: snagAlerted });
+  }
+  hidden = false; hideKind = null;
+}
 // LUL-2856: cover-degradation cheap slice. Fires every COVER_RUSTLE_INTERVAL_S once hideTime
 // clears COVER_RUSTLE_THRESHOLD_S (driven by the tick()-loop check added in step 6, not called
 // from anywhere else). Same alerted-predator loop as enterHide()'s one-shot entry noise
@@ -5064,7 +5119,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       x: player.x, z: player.z, yaw: player.yaw, pitch: player.pitch, mode: mode,
       jumping: jumping, paused: paused, toggleRunOn: toggleRunOn,
       veilHeld: (entered && !won && !dead && !pickingUp) && (!!keys['KeyF'] || touchVeil),
-      hidden: hidden,
+      hidden: hidden, brambleSnagT: brambleSnagT,
     };
   };
 
@@ -6458,6 +6513,7 @@ function stepFrame(dt, t, skipRender){
   dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
   applyVignette(dimAmount);
   if(stoneMarkerPulseT > 0) stoneMarkerPulseT = Math.max(0, stoneMarkerPulseT - dt);   // LUL-2331
+  if(brambleSnagT > 0) brambleSnagT = Math.max(0, brambleSnagT - dt);   // LUL-4526
   // LUL-382: mist ramp is deliberately slower than the vignette above (VEIL_RAMP
   // 1.6s vs. dimAmount's ~0.5s) -- the light pool reacts fast, the world's mist
   // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
@@ -6499,7 +6555,7 @@ function stepFrame(dt, t, skipRender){
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
-    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * bogSpeedMultiplier(playerBogginess);
+    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * bogSpeedMultiplier(playerBogginess) * brambleSnagSpeedMultiplier(brambleSnagT);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
