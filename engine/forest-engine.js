@@ -201,7 +201,7 @@ import { nearestLandmarkName } from '@/lib/game/chronicle';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
-  STAR, LW, DUST, BW, BSP, DUST_WIND_SPEED, WARM,
+  STAR, DUST, BW, BSP, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
@@ -1407,25 +1407,6 @@ function generateMap(seed){
   drawMinimapStatic();
 }
 
-// ---- Lake landmark (the thing to find) -----------------------------------
-// LUL-2696: was MeshStandardMaterial + a dedicated PointLight. The water mesh sits
-// close enough to the camera at the "chest-deep" teleport point to near-fill the
-// view, and PBR's per-fragment lighting math there (plus lakeLight adding another
-// point light every other lit mesh in the frame has to loop over) is what backed up
-// swiftshader's software render pipeline into the qaAdvance(410) crash -- see this
-// ticket for the live measurements. Lambert is unlit-cheap but still reacts to the
-// scene's existing moon/hemi/rim lights, so the water still darkens/lightens with
-// the day-night cycle; the glow ring below (unlit already) carries the "landmark
-// visible at night" cue that lakeLight used to help with.
-const water = new THREE.Mesh(new THREE.CircleGeometry(CONFIG.lake.r, 48),
-  new THREE.MeshLambertMaterial({ color: 0x0a1a2c }));
-water.rotation.x = -Math.PI/2; water.position.set(CONFIG.lake.x, 0.02, CONFIG.lake.z); scene.add(water);
-
-const ring = new THREE.Mesh(new THREE.RingGeometry(CONFIG.lake.r*0.72, CONFIG.lake.r*1.05, 48),
-  new THREE.MeshBasicMaterial({ color: CONFIG.lake.glow, transparent: true, opacity: 0.16,
-    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-ring.rotation.x = -Math.PI/2; ring.position.set(CONFIG.lake.x, 0.06, CONFIG.lake.z); scene.add(ring);
-
 // ---- Bog patch ground (LUL-2225) ------------------------------------------
 // The single flat `ground` plane above gave the bog no visible boundary at
 // all -- a player could only learn where the slow ground was by getting
@@ -1459,8 +1440,8 @@ const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG
 homeRing.rotation.x = -Math.PI/2; homeRing.position.set(CONFIG.home.x, 0.04, CONFIG.home.z); scene.add(homeRing);
 
 // ---- Navigational landmarks (LUL-25) --------------------------------------
-// Same "static group + a light to read through the fog" recipe as the lake/
-// home beacons above, just four distinct low-poly silhouettes instead of a
+// Same "static group + a light to read through the fog" recipe as the home
+// beacon above, just four distinct low-poly silhouettes instead of a
 // ring. Built once at module scope (LANDMARKS gives each its target x/z);
 // placeLandmarks(), called at the tail of generateMap(), only ever nudges
 // their position a few units to keep this seed's actual trees from
@@ -1657,14 +1638,6 @@ function placeCave(){
     landmarkGroups.cave.visible = false;
   }
 }
-
-const lwArr = new Float32Array(LW*3);
-for(let i=0;i<LW;i++){ const a=Math.random()*Math.PI*2, r=Math.random()*CONFIG.lake.r*0.95;
-  lwArr[i*3]=CONFIG.lake.x+Math.cos(a)*r; lwArr[i*3+1]=0.3+Math.random()*4; lwArr[i*3+2]=CONFIG.lake.z+Math.sin(a)*r; }
-const lwGeo = new THREE.BufferGeometry(); lwGeo.setAttribute('position', new THREE.BufferAttribute(lwArr,3));
-const lwisps = new THREE.Points(lwGeo, new THREE.PointsMaterial({ color: CONFIG.lake.glow, size: 0.17,
-  transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
-lwisps.frustumCulled = false; scene.add(lwisps);
 
 // ---- Ambient dust that drifts around you ---------------------------------
 // Drift direction is windX/windZ (LUL-195): wind silently decides scent
@@ -7051,12 +7024,6 @@ function stepFrame(dt, t, skipRender){
     }
     landmarkBeaconGlows[kind].material.opacity = opacity;
   }
-
-  // pool breathes; its wisps rise
-  ring.material.opacity = 0.14 + Math.sin(t*0.8)*0.05;
-  const lp = lwGeo.attributes.position.array;
-  for(let i=0;i<LW;i++){ lp[i*3+1] += dt*0.25; if(lp[i*3+1] > 4.5) lp[i*3+1] = 0.2; }
-  lwGeo.attributes.position.needsUpdate = true;
 
   // ambient dust follows you, drifting downwind (LUL-195, see setup above)
   const amp = motionReduced() ? 0.3 : 1, dp = dustGeo.attributes.position.array;
