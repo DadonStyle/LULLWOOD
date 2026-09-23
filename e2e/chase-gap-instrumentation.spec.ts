@@ -11,7 +11,7 @@
 // (same requirement e2e/predator-memory.spec.ts documents): investigate/
 // sniff's shouldRevertInvestigateToChase reverts to `chase` on the very next
 // tick otherwise. isSniffImmune (lib/game/predator.ts) is `hidden &&
-// sniffImmuneT > 0` -- staying hidden past SNIFF_IMMUNITY_TIME (1.5s) is what
+// sniffImmuneT > 0` -- staying hidden past SNIFF_IMMUNITY_TIME (5.0s) is what
 // lets checkScent() run again.
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook, expectRowVisible } from './helpers';
@@ -19,9 +19,9 @@ import { boot, enter, qaHook, expectRowVisible } from './helpers';
 // Matches the fixed-step convention e2e/action-prompt.spec.ts and
 // e2e/force-hunt-closes.spec.ts already use.
 const FIXED_DT = 0.02;
-// SNIFF_IMMUNITY_TIME (lib/game/predator.ts) is 1.5s -- 80 ticks at 0.02s/tick
-// is 1.6s, comfortably past it.
-const IMMUNITY_CLEAR_TICKS = 80;
+// SNIFF_IMMUNITY_TIME (lib/game/predator.ts) is 5.0s -- 260 ticks at 0.02s/tick
+// is 5.2s, comfortably past it.
+const IMMUNITY_CLEAR_TICKS = 260;
 
 test.describe('chase_gap instrumentation (LUL-2392)', () => {
   test('scentOnto() re-acquisition after a give-up reports duration_ms + difficulty', async ({ page }) => {
