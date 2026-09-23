@@ -44,7 +44,6 @@ export interface EngineHudState {
   // mid-chase) -- the death screen names this, not deathKind's species; deathKind
   // stays around for the #deathKind test hook (e2e/*.spec.ts key on it directly).
   deathCause: 'charge' | 'hunt' | 'chase' | 'heard';
-  deathCarrying: boolean;   // LUL-1438: show carry-death clause on first carry death only
   lossRevealed: boolean;
   survivedSeconds: number;
   pace: number;
@@ -122,8 +121,7 @@ export interface EngineHudState {
   // rendered as the #throwPrompt suffix.
   throwablesReserve: number;
   // LUL-1258: M2 Deepwater's minimal HUD panel. Both null whenever no mission
-  // exists or the player is carrying (the engine never sends non-null values
-  // in that case) -- Hud never has to know about `carrying` itself.
+  // exists (the engine never sends non-null values in that case).
   missionKind: MissionKind | null;
   missionStatus: 'active' | 'complete' | 'expired' | null;
   // LUL-3010: seconds remaining for the far/timed variant; null for the
@@ -241,7 +239,6 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   deathVisible: false,
   deathKind: 'wolf',
   deathCause: 'chase',
-  deathCarrying: false,
   lossRevealed: false,
   survivedSeconds: 0,
   pace: 6,
@@ -1201,7 +1198,6 @@ export default function Hud({
                   the cause, not the animal. */}
               <span id="deathKind" style={{ display: 'none' }}>{state.deathKind}</span>
               {DEATH_CAUSE_TEXT[state.deathCause]}
-              {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
             <button

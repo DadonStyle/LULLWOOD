@@ -57,13 +57,12 @@ declare global {
        * anything once the patch shrank small enough that no point inside it
        * is ever >= BLACKOUT_MIN_RADIUS from home. */
       qaProbeBaby?: () => { x: number; z: number; distHome: number; routeCrossesBog: boolean };
-      /** LUL-2122: babyLight's live intensity/distance plus the pickup/carry/taken
+      /** LUL-2122: babyLight's live intensity/distance plus the pickup/taken
        * state flags, so a test can assert the interact button actually reached
        * pickup() instead of only that it rendered and was tappable. */
       qaProbeBabyLight?: () => {
         intensity: number;
         distance: number;
-        carrying: boolean;
         pickingUp: boolean;
         taken: boolean;
       };

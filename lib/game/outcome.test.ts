@@ -6,19 +6,15 @@ import {
   canPickUp,
   beginPickup,
   completePickup,
-  canArriveHome,
-  arriveHome,
   canTriggerDeath,
   triggerDeath,
   canRegenMap,
   canGrabThrowable,
   canThrowThrowable,
-  canSetDown,
-  beginSetDown,
   type RunState,
 } from './outcome.ts';
 
-const RADIUS = 3.6; // matches CONFIG.home.r and the pickup-interaction distance in forest-engine.js
+const RADIUS = 3.6; // matches the pickup-interaction distance in forest-engine.js
 
 function state(overrides: Partial<RunState> = {}): RunState {
   return { ...freshRunState(), entered: true, ...overrides };
@@ -29,7 +25,7 @@ function state(overrides: Partial<RunState> = {}): RunState {
 test('freshRunState clears every flag, including babyTaken', () => {
   const s = freshRunState();
   assert.deepEqual(s, {
-    entered: false, won: false, dead: false, pickingUp: false, carrying: false, setDown: false, babyTaken: false,
+    entered: false, won: false, dead: false, pickingUp: false, babyTaken: false,
   });
 });
 
@@ -53,8 +49,8 @@ test('isPlaying is false while pickingUp', () => {
   assert.equal(isPlaying(state({ pickingUp: true })), false);
 });
 
-test('isPlaying does not look at carrying or babyTaken', () => {
-  assert.equal(isPlaying(state({ carrying: true, babyTaken: true })), true);
+test('isPlaying does not look at babyTaken', () => {
+  assert.equal(isPlaying(state({ babyTaken: true })), true);
 });
 
 // ---- pickup -----------------------------------------------------------------
@@ -71,13 +67,6 @@ test('canPickUp boundary: distBaby just under radius is in range', () => {
   assert.equal(canPickUp(state(), RADIUS - 0.001, RADIUS), true);
 });
 
-test('canPickUp / beginPickup reject while already carrying, made explicit (not just via babyTaken)', () => {
-  const s = state({ carrying: true, babyTaken: true });
-  assert.equal(canPickUp(s, 1, RADIUS), false);
-  const next = beginPickup(s);
-  assert.deepEqual(next, s);
-});
-
 test('beginPickup rejects while dead', () => {
   const s = state({ dead: true });
   assert.deepEqual(beginPickup(s), s);
@@ -92,7 +81,6 @@ test('beginPickup sets babyTaken and pickingUp on a clean state', () => {
   const next = beginPickup(state());
   assert.equal(next.babyTaken, true);
   assert.equal(next.pickingUp, true);
-  assert.equal(next.carrying, false);
 });
 
 test('a second beginPickup in the same frame is rejected (pickingUp already true)', () => {
@@ -105,47 +93,9 @@ test('pickupAllowed (via canPickUp) rejects a fresh not-yet-taken-back child the
   assert.equal(canPickUp(state(), 1, RADIUS), true);
 });
 
-test('canPickUp allows re-pickup of a set-down child even though babyTaken is still true', () => {
-  const s = state({ babyTaken: true, setDown: true });
-  assert.equal(canPickUp(s, 1, RADIUS), true);
-});
-
-test('canPickUp still rejects a taken, not-set-down child (ordinary carrying-not-yet-set-down case)', () => {
-  const s = state({ babyTaken: true, setDown: false });
+test('canPickUp rejects an already-taken child', () => {
+  const s = state({ babyTaken: true });
   assert.equal(canPickUp(s, 1, RADIUS), false);
-});
-
-test('beginPickup on a set-down child clears setDown and re-enters pickingUp', () => {
-  const s = state({ babyTaken: true, setDown: true });
-  const next = beginPickup(s);
-  assert.deepEqual(next, { ...s, babyTaken: true, pickingUp: true, setDown: false });
-});
-
-test('canSetDown is true only while carrying', () => {
-  assert.equal(canSetDown(state({ carrying: true })), true);
-  assert.equal(canSetDown(state({ carrying: false })), false);
-});
-
-test('canSetDown rejects while dead or won even if carrying is (inconsistently) still true', () => {
-  assert.equal(canSetDown(state({ carrying: true, dead: true })), false);
-  assert.equal(canSetDown(state({ carrying: true, won: true })), false);
-});
-
-test('beginSetDown clears carrying and sets setDown on a legitimate call', () => {
-  const s = state({ carrying: true, babyTaken: true });
-  const next = beginSetDown(s);
-  assert.deepEqual(next, { ...s, carrying: false, setDown: true });
-});
-
-test('beginSetDown is a no-op when not carrying', () => {
-  const s = state({ carrying: false });
-  assert.deepEqual(beginSetDown(s), s);
-});
-
-test('a second beginSetDown in the same frame is rejected (carrying already false)', () => {
-  const first = beginSetDown(state({ carrying: true }));
-  const second = beginSetDown(first);
-  assert.deepEqual(second, first);
 });
 
 test('completePickup hands off pickingUp -> won (LUL-2281: reverts LUL-1307 -- no carry-home leg)', () => {
@@ -153,7 +103,6 @@ test('completePickup hands off pickingUp -> won (LUL-2281: reverts LUL-1307 -- n
   const next = completePickup(picked);
   assert.equal(next.pickingUp, false);
   assert.equal(next.won, true);
-  assert.equal(next.carrying, false);
   assert.equal(next.babyTaken, true);
 });
 
@@ -162,56 +111,20 @@ test('completePickup is a no-op when not currently pickingUp', () => {
   assert.deepEqual(completePickup(s), s);
 });
 
-test('LUL-2281 golden path: beginPickup -> completePickup wins in one pass, never sets carrying', () => {
+test('LUL-2281 golden path: beginPickup -> completePickup wins in one pass', () => {
   const next = completePickup(beginPickup(state()));
   assert.equal(next.won, true);
-  assert.equal(next.carrying, false);
   assert.equal(next.pickingUp, false);
   assert.equal(next.babyTaken, true);
 });
 
-// ---- arrive home --------------------------------------------------------------
-
-test('canArriveHome requires carrying', () => {
-  assert.equal(canArriveHome(state(), 0, RADIUS), false);
-});
-
-test('canArriveHome boundary: dh === radius is not arrived (strict <)', () => {
-  assert.equal(canArriveHome(state({ carrying: true }), RADIUS, RADIUS), false);
-});
-
-test('canArriveHome boundary: dh just under radius is arrived', () => {
-  assert.equal(canArriveHome(state({ carrying: true }), RADIUS - 0.001, RADIUS), true);
-});
-
-test('a dead-while-carrying state cannot win -- canArriveHome and arriveHome both reject it', () => {
-  // LUL-596: this is the behaviour that had no guard of its own before this
-  // extraction, safe only by the position of its one call site. Pin it hard.
-  const s = state({ carrying: true, dead: true });
-  assert.equal(canArriveHome(s, 0, RADIUS), false);
-  assert.deepEqual(arriveHome(s), s);
-});
-
-test('a won-while-carrying (already won) state does not re-win', () => {
-  const s = state({ carrying: true, won: true });
-  assert.equal(canArriveHome(s, 0, RADIUS), false);
-  assert.deepEqual(arriveHome(s), s);
-});
-
-test('arriveHome sets won and clears carrying on a legitimate arrival', () => {
-  const next = arriveHome(state({ carrying: true }));
-  assert.equal(next.won, true);
-  assert.equal(next.carrying, false);
-});
-
 // ---- death --------------------------------------------------------------------
 
-test('canTriggerDeath / triggerDeath allow death while carrying -- you can be caught carrying the child', () => {
-  const s = state({ carrying: true, babyTaken: true });
+test('canTriggerDeath / triggerDeath allow death on a clean playing state', () => {
+  const s = state({ babyTaken: true });
   assert.equal(canTriggerDeath(s), true);
   const next = triggerDeath(s);
   assert.equal(next.dead, true);
-  assert.equal(next.carrying, true); // triggerDeath does not itself clear carrying
 });
 
 test('death during the pickup cinematic is ignored on purpose -- a deliberate invulnerability window, do not "fix"', () => {
@@ -232,21 +145,16 @@ test('triggerDeath while already dead is idempotent -- a caller gating a track()
   assert.deepEqual(second, first);
 });
 
-test('triggerDeath on a clean state only sets dead, leaves won/carrying untouched', () => {
+test('triggerDeath on a clean state only sets dead, leaves won untouched', () => {
   const next = triggerDeath(state());
   assert.equal(next.dead, true);
   assert.equal(next.won, false);
-  assert.equal(next.carrying, false);
 });
 
 // ---- regenMap (LUL-1585) -------------------------------------------------------
 
 test('canRegenMap allows a fresh map on a clean, in-progress run', () => {
   assert.equal(canRegenMap(state()), true);
-});
-
-test('canRegenMap allows regenerating while carrying -- a dev-tool footgun, not a state-machine violation', () => {
-  assert.equal(canRegenMap(state({ carrying: true })), true);
 });
 
 test('canRegenMap rejects once won', () => {

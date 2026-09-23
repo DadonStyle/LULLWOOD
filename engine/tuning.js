@@ -58,7 +58,6 @@ export const CONFIG = {
   // the lake or shrinking mapSize (wiki game/lul857-review-pr183).
   lake:    { x: 34, z: -28, r: 15, clear: 22, glow: 0x86b8ff },
   home:    { x: 0, z: 0, r: 3.6, glow: 0xffd9b0 },   // LUL-38: reuses the spawn point, no new rng draw
-  carryPaceMul: 0.72,                                 // LUL-38: burden while carrying the child, not a cripple
 };
 
 // LUL-25: six fixed navigational landmarks, "visible over the fog line" so
