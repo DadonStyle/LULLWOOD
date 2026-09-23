@@ -39,15 +39,19 @@ export const CRY_NOISE_RADIUS = 32;
  * (the `alerted` count below) gives a signal to tune against. */
 export const HIDE_ALERT_RADIUS = 20;
 
-/** LUL-2856: past this many seconds continuously hidden in the same spot, the brush
- * itself starts periodically rustling -- turtling in one bramble stops being free.
- * Cheap-slice default: fixed for all difficulties (Economist owns a difficulty/cover-
- * density retune as a separate follow-up proposal, per the wiki decision). */
+/** LUL-2856/LUL-4790: past this many seconds continuously hidden in the same spot, the brush
+ * itself starts periodically rustling -- turtling in one bramble stops being free. This is
+ * the 'night'-tier (baseline) value; engine/tuning.js's DIFFICULTY_PRESETS[tier].rustleThresholdMul
+ * scales it per difficulty (LUL-4790) -- this module stays framework-agnostic/unit-testable,
+ * so the per-tier table lives in engine/tuning.js, not here (same layering
+ * lib/game/cover.ts's STILL_RAMP already keeps: this module owns the base number, the engine
+ * owns which multiplier applies). */
 export const COVER_RUSTLE_THRESHOLD_S = 12;
 
 /** LUL-2856: once past COVER_RUSTLE_THRESHOLD_S, a rustle-noise roll fires every this
  * many seconds, reusing HIDE_ALERT_RADIUS/checkThrowableNoise the same way enterHide()'s
- * one-shot entry noise already does. */
+ * one-shot entry noise already does. This is the 'night'-tier (baseline) value; DIFFICULTY_PRESETS[tier].rustleIntervalMul
+ * (engine/tuning.js, LUL-4790) scales it per difficulty. */
 export const COVER_RUSTLE_INTERVAL_S = 5;
 
 /**

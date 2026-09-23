@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7238 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6435, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7241 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6438, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1371,9 +1371,12 @@ and one z-index lower), and plays `rustleSting()` — an escalating 3-burst band
 from the continuous `leafRustle(true)` ambience already looping while hidden. A one-time
 `captionsOn`-gated hint caption fires via `hintSeen`/`markHintSeen('coverRustle')`. Reduced motion
 clamps `#rustleFlash`'s opacity to a fixed `0.15` while active instead of animating the decay ramp
-(same clamp-not-remove shape `stoneMarkerPulseT` already uses). Fixed threshold + fixed interval
-only in this slice — no difficulty/cover-density scaling and no reposition-to-reset action (both
-deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
+(same clamp-not-remove shape `stoneMarkerPulseT` already uses). LUL-4790 (Cover Degradation Full)
+scales both by difficulty tier — `DIFFICULTY_PRESETS[tier].rustleThresholdMul`/`rustleIntervalMul`
+(`engine/tuning.js`) — lantern 16s/6s, night 12s/5s (unchanged), blackout 8s/4s. Cover-density
+scaling remains out of scope (Economist follow-up, not part of the LUL-4629/CEO-accepted "Full"
+slice); reposition-to-reset via LUL-3066's Shuffle action is deferred until `shuffleHide()`
+(LUL-4786) actually merges, not described here yet.
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
