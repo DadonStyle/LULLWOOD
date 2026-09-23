@@ -54,7 +54,7 @@ test('#missionPanel is absent before entering and disappears for good once the p
 // (top:56px inside #gameMenu's own top:16px) and shares #missionPanel's
 // left:16px corner, landing right on top of it (#missionPanel is top:76px,
 // GameCanvas.tsx) -- the QA layout audit caught the first menu row ("Fullscreen:
-// off (F11)") overlapping the mission pill's "Deepwater" text. LUL-1942 already
+// off (F11)") overlapping the mission pill's "Fire Tower" text. LUL-1942 already
 // solved this for the *closed* 48px toggle button; the open dropdown is taller
 // and was never covered. Same fix family as LUL-2410/2411/2414: hide the
 // panel rather than fight z-index, gated on the `menuOpen` state already
