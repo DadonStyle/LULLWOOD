@@ -4443,7 +4443,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbePredatorState = function(kind){
     const p = predators.find(pp => pp.kind === kind);
     if(!p) return null;
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, t: clock.elapsedTime };
+    // LUL-2667 (Ship 1 wayfinding S3 e2e coverage): `alertedBy` distinguishes the cry
+    // hearing channel (`hearCry()`, `:2488`) from every other route into 'investigate'
+    // (scent/footstep/sight all leave it null) -- state alone can't tell a test which
+    // detection channel actually fired.
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, t: clock.elapsedTime };
   };
   // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
   // stage a "first sighted" scenario -- effectiveDetect() applies
