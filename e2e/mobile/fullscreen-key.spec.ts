@@ -12,7 +12,7 @@ import { boot } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)
 
-test('menuFullscreen stays absent on mobile when the Fullscreen API is unsupported', async ({ page }) => {
+test('fullscreenToggle stays absent on mobile when the Fullscreen API is unsupported', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, get: () => false });
     // No webkit* fallback either -- this is the "neither API exists" case
@@ -33,7 +33,7 @@ test('menuFullscreen stays absent on mobile when the Fullscreen API is unsupport
   await page.waitForTimeout(1200); // gate fade settle
 
   await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
-  await expect(page.getByTestId('menuFullscreen')).toHaveCount(0);
+  await expect(page.getByTestId('fullscreenToggle')).toHaveCount(0);
 });
 
 test('F11 still drives the fullscreen path unchanged on a touch-emulated device', async ({ page }) => {
