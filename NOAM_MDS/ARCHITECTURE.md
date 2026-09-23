@@ -1198,7 +1198,7 @@ flowchart TD
 | `CATCH_MARGIN` | 1.3 | `dist < rad + 1.3` is a kill |
 | `SNIFF_APPROACH_MARGIN` | 1.7 | investigate → sniff transition |
 | `SNIFF_STANDOFF` / `SNIFF_STATUS_RANGE` | 4.5 / 8 | where a predator stands to sniff a hider; the status-line range that must stay above it |
-| `SNIFF_IMMUNITY_TIME` | 1.5 | post-hide grace, only while `hidden` |
+| `SNIFF_IMMUNITY_TIME` | 5.0 | post-hide grace, only while `hidden` |
 | `LKP_MAX_SWEEPS` / `LKP_RING_RADIUS` / `LKP_RING_JITTER` / `LKP_REPEAT_RADIUS` | 3 / 18 / 10 / 32 | bounded last-known-position return sweeps (all four carry the `LKP_` prefix) |
 | `FLANK_ANGLE` / `FLANK_DIST_MUL` / `FLANK_RECOMPUTE` / `FLANK_ARRIVE_R` / `FLANK_SPEED_MUL` (pack.ts) | π/3 / 1.4 / 0.5 s / 4 / 0.7 | wolf pincer geometry |
 

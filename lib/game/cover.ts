@@ -695,25 +695,18 @@ export function insideHideFootprint(
 // apply and hands over the single product.
 export const STILL_RAMP = 1.2;        // seconds of continuous hold-still to reach full stillness
 export const STILL_DETECT_CUT = 0.82; // max fraction stillness can shrink detect range by
-export const CARRY_DETECT_MUL = 1.35;
 // LUL-1089: contextual hide prompt
 export const COVER_URGENT_RANGE = 22; // world units — a chasing predator within this triggers urgent state
-export const COVER_PROBE_HZ     = 6;  // findHideSpot() is throttled to this rate (never 60x/s) // Priced by Game Economist (LUL-1311): return-leg win rate
-                                       // moves 0.850 -> 0.795, inside the 0.75-0.90 bracket the
-                                       // tier multipliers (LUL-1043) were solved over -- 1.5 is the
-                                       // ceiling before those need re-deriving. See wiki
-                                       // game/economy/carry-leg-detection-price.
+export const COVER_PROBE_HZ     = 6;  // findHideSpot() is throttled to this rate (never 60x/s)
 
 export interface DetectionState {
   hidden: boolean;
   hideTime: number;
-  carrying?: boolean;
 }
 
 export function effectiveDetect(detect: number, detectMul: number, state: DetectionState): number {
   const stillness = state.hidden ? Math.min(1, state.hideTime / STILL_RAMP) : 0;
-  const carryMul = state.carrying ? CARRY_DETECT_MUL : 1;
-  return detect * (1 - stillness * STILL_DETECT_CUT) * detectMul * carryMul;
+  return detect * (1 - stillness * STILL_DETECT_CUT) * detectMul;
 }
 
 // ---- can a predator see the player? ------------------------------------------

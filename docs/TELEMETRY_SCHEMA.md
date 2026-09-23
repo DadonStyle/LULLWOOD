@@ -53,9 +53,9 @@ is the source of truth for the exact shape -- this table is a summary, not a cop
 | `cta_start_clicked` | (none) | `computeFunnel` |
 | `game_start` | `seed` | `computeFunnel` |
 | `win` | `time_survived_ms`, `seed`, `payout`, `balance`, `difficulty`, `purchases_made?` (LUL-2998) | `computeFunnel`, `computeOutcomes`, `computeOutcomesByTier`, `computeEconomy` |
-| `loss` | `predator_kind`, `time_survived_ms`, `seed`, `payout`, `balance`, `carrying`, `difficulty`, `distance_from_home_m`, `purchases_made?` (LUL-2998) | `computeOutcomes`, `computeOutcomesByTier`, `computeEconomy` |
+| `loss` | `predator_kind`, `time_survived_ms`, `seed`, `payout`, `balance`, `difficulty`, `distance_from_home_m`, `purchases_made?` (LUL-2998) | `computeOutcomes`, `computeOutcomesByTier`, `computeEconomy` |
 | `session_length` | `duration_ms`, `reached_gameplay`, `session_id` | `computeSessions` |
-| `feature_engagement` | `feature`, `action`, `carrying?` | `computeFeatureEngagement` |
+| `feature_engagement` | `feature`, `action` | `computeFeatureEngagement` |
 | `engine_contract_violation` | `missing_keys` | none (infra tripwire, not a gameplay metric) |
 | `chase_gap` | `duration_ms`, `difficulty` | `computeChaseGapByTier` |
 | `started_tiers` (LUL-2998) | `tiers: Record<string, number>` | none yet -- see "Known gaps" |

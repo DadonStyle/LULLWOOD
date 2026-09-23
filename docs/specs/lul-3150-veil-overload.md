@@ -15,6 +15,47 @@ not exist in the repo and are **not** what this spec implements; the technical d
 supersedes it, verified against real `file:line` citations). `decisions/veil-overload-
 accepted-2026-09-18` (CEO acceptance, flags the Q5 refusal-feedback gap as in-scope).
 
+## LUL-4663 retarget (2026-09-23) — supersedes the trigger below, rest of this spec is historical
+
+**CEO ruling (decisions/veil-overload-retarget-2026-09-23):** `carrying` (the trigger this
+spec originally implemented, throughout the code/tests below) has been permanently false in
+real play since LUL-2281 shipped (`completePickup()` wins directly from the pickup cinematic,
+no carry-home leg — decisions/lul-2281-pickup-is-the-win-2026-09-09) — Veil Overload was dead
+for every real player (LUL-4662). Ruling: keep the mechanic, retarget the trigger to a real
+live-danger signal, chosen tighter of the two options offered: **any non-inert predator in
+`state === 'chase'`** (`p.hunt`, the forced-approach flag, is deliberately excluded — it also
+covers the 30s no-threat-seen escalation and a scripted approach shouldn't be able to spend
+the one-shot before a real chase starts).
+
+Every `carrying`/`veilOverloadUsedThisCarry` reference in the code excerpts and test bodies
+below is the **original, as-shipped LUL-3150 implementation** — left unedited as the historical
+record of what LUL-3150 built. The current code (`engine/forest-engine.js`,
+`e2e/veil-overload.spec.ts`) and `docs/ELEMENTS.md`'s `### Veil Overload` section are the
+source of truth for current behavior:
+
+- Gate expression is now `veilOverloadTriggerActive && veilCharge > VEIL_PROMPT_MIN_CHARGE &&
+  !veilOverloadUsedThisRound`, where `veilOverloadTriggerActive` is `predators.some(p =>
+  !p.inert && p.state === 'chase')`, recomputed every frame alongside `veilActive` (the
+  existing mist-veil prompt's own chase-based signal, `:7098` as of this writing).
+- The one-shot flag is `veilOverloadUsedThisRound`; its reset site moved from `setDown()`
+  (unreachable in real play, same reason `carrying` is) to `placeCave()`, the engine's
+  existing per-round reset site for detection-state timers (alongside `windAssistActive`,
+  `caveImmuneT`).
+- `qaOpenVeilOverloadTarget(kind)` no longer sets `carrying` — it stages a chasing predator
+  plus a full/unlocked veil charge and a fresh one-shot, nothing else.
+- `qaProbeVeilOverload()`'s `usedThisCarry` field is now `usedThisRound`.
+- Section 0 re-answered against the new trigger: **Q1** (state → pixels) unchanged —
+  `veilOverloadChargeT`/`veilOverloadTriggerActive` still render as `#veilOverloadPanel`'s
+  countdown and `#veilOverloadPrompt`'s offer, just gated on a different upstream signal.
+  **Q5** (silent refusal) unchanged in shape but the *scope* of "eligible to ask" narrowed
+  from "always, while carrying" to "only during a real chase" — pressing Q with nothing
+  chasing you is now a silent no-op by design (matches KeyE's own not-applicable convention),
+  not a denied-cue case; see `e2e/veil-overload.spec.ts`'s dedicated no-op test. **Q6** (stale
+  copy) — `#veilOverloadPanel`/`#veilOverloadPrompt` copy ("Overload · Xs" /
+  "Burn veil for a detection-proof escape") never named "carrying", so no copy fix was needed;
+  code comments referencing "carry-leg" in `components/Hud.tsx` and `engine/forest-engine.js`
+  were updated in the same PR.
+
 ## Drift from the CTO's 2026-09-18 PLAN comment
 
 The PLAN's line numbers (`:598`, `:2272`, `:2502/:2506`, `:5709-5710`, `:5851-5858`,
@@ -415,26 +456,45 @@ visibility note (both `#veilOverloadPanel` and the `#actionSlot` row are visible
 
 ## e2e
 
-**Specs.** `e2e/veil-overload.spec.ts` — new, three tests:
+**Specs.** `e2e/veil-overload.spec.ts` — as of LUL-4663, six tests (originally three, per
+LUL-3150 below; LUL-4663 added the falsification/no-op tests and replaced the set-down test
+with a round-reset test — see the retarget addendum above for why):
 1. "burning veil overload suppresses a lion's detection for the cooldown window, then it
    returns" — the core mechanic.
-2. "pressing Q while carrying with insufficient veil charge fires the denied cue, not
-   activation" — the Q5 refusal-feedback gap.
-3. "veilOverloadUsedThisCarry resets on set-down, allowing a second use next carry leg" —
-   the one-shot-per-leg boundary.
+2. "a real chase staged through the generic qaStageChaseAtContact hook makes the KeyQ prompt
+   live and activation work" (LUL-4663) — falsification coverage for the retarget itself:
+   stages danger through a hook with no veil-overload-specific behavior, proving the trigger
+   is really `state === 'chase'` and not incidentally still `carrying` somewhere.
+3. "pressing Q while nothing is chasing you is a silent no-op" (LUL-4663) — the narrowed Q5
+   scope: eligibility to ask is now "during a real chase", not "always, while carrying".
+4. "pressing Q while chased with insufficient veil charge fires the denied cue, not
+   activation" — the Q5 refusal-feedback gap, now staged as a real chase (`qaIsolatePredator`,
+   not `qaClearAllPredators`, so the staged predator's own chase state — the trigger itself
+   post-LUL-4663 — survives the drain-hold).
+5. "veilOverloadUsedThisRound resets on a fresh round (restart), not mid-round" (LUL-4663,
+   replaces LUL-3150's set-down test) — the one-shot boundary, now via the real
+   death → `.restartBtn` → `placeCave()` path instead of the unreachable-in-real-play
+   `setDown()` path.
+6. mobile: "tapping the veilOverloadPrompt row activates Veil Overload on a touch device".
 
 `e2e/veil.spec.ts`, `e2e/veil-charm.spec.ts` must pass unchanged (see Verification).
 
 **World.** micro (default — `boot(page, { qaHooks: true })` already boots micro per LUL-2377;
-no `qaBuildScene` call needed, same as `e2e/veil.spec.ts`'s existing pattern —
-`qaOpenVeilOverloadTarget('lion')` stages predator + player + carrying/charge state on the
-already-spawned micro-world predator pool).
+no `qaBuildScene` call needed, same as `e2e/veil.spec.ts`'s existing pattern).
+`qaOpenVeilOverloadTarget('lion')` stages a chasing predator plus full/unlocked veil charge
+on the already-spawned micro-world predator pool; `qaStageChaseAtContact('lion', dx, dz)`
+(generic, pre-existing) stages a chase with no veil-overload-specific side effects, for test 2.
 
-**Hooks.** `qaOpenVeilOverloadTarget(kind): number | null` — new, staging (§8). `qaProbeVeilOverload():
-{chargeT, usedThisCarry, deniedCueCount}` — new, read-only (§8). `qaSetFixedStep`/`qaAdvance`
-— existing (`docs/specs/lul-2071-deterministic-qa-clock.md`), used to cross the 7s cooldown
-deterministically instead of a wall-clock wait, same as `e2e/veil.spec.ts`'s ramp-crossing
-loop.
+**Hooks.** `qaOpenVeilOverloadTarget(kind): number | null` — LUL-3150, staging (§8), no longer
+sets `carrying` (LUL-4663). `qaProbeVeilOverload(): {chargeT, usedThisRound, deniedCueCount}`
+— LUL-3150, read-only (§8), field renamed `usedThisCarry` → `usedThisRound` (LUL-4663).
+`qaStageChaseAtContact(kind, dx, dz)` — pre-existing generic chase-staging hook, used by test 2.
+`qaIsolatePredator(idx)` — pre-existing, used by test 4 in place of LUL-3150's
+`qaClearAllPredators` (which would now inert the staged predator too, defeating the test —
+see the retarget addendum). `qaForceDeath`/`.restartBtn` — pre-existing, used by test 5.
+`qaSetFixedStep`/`qaAdvance` — existing (`docs/specs/lul-2071-deterministic-qa-clock.md`),
+used to cross the 7s cooldown deterministically instead of a wall-clock wait, same as
+`e2e/veil.spec.ts`'s ramp-crossing loop.
 
 **Test 1 sketch:**
 ```ts
@@ -446,7 +506,7 @@ expect((await qaHook(page, 'qaPredatorState', idx))?.canSee).toBe(true);
 await page.keyboard.press('KeyQ');
 const mid = await qaHook(page, 'qaProbeVeilOverload');
 expect(mid.chargeT).toBeGreaterThan(0);
-expect(mid.usedThisCarry).toBe(true);
+expect(mid.usedThisRound).toBe(true);   // LUL-4663: renamed from usedThisCarry
 expect((await qaHook(page, 'qaPredatorState', idx))?.canSee).toBe(false);
 await qaHook(page, 'qaSetFixedStep', 0.02);
 await qaHook(page, 'qaAdvance', 400);   // 8s game-time, clears the 7s window with margin

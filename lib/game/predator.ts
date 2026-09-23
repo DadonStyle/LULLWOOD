@@ -188,7 +188,7 @@ export function stepFlankHold(sniffTimer: number, sniffsLeft: number): FlankHold
 // still (`hidden`), `roam`'s re-detection chain is skipped for that
 // predator -- moving cancels the immunity's protection immediately, same as
 // hiding itself already requires holding still.
-export const SNIFF_IMMUNITY_TIME = 1.5;
+export const SNIFF_IMMUNITY_TIME = 5.0;
 export function isSniffImmune(sniffImmuneT: number, hidden: boolean): boolean {
   return hidden && sniffImmuneT > 0;
 }

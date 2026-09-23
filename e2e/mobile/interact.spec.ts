@@ -58,7 +58,7 @@ test.describe('mobile Interact (E) button -- touchInteract', () => {
 
     // LUL-2281 (reverts LUL-1307): completePickup() now wins outright once
     // the ascend/explode cinematic finishes -- no carry-home leg, no
-    // qaTeleportHome step, `carrying` never goes true in real play.
+    // qaTeleportHome step.
     await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
   });
 
@@ -68,7 +68,6 @@ test.describe('mobile Interact (E) button -- touchInteract', () => {
 
     const before = await page.evaluate(() => window.ForestEngine?.qaProbeBabyLight?.());
     expect(before?.pickingUp).toBe(false);
-    expect(before?.carrying).toBe(false);
 
     const interactBtn = page.getByTestId('touchInteract');
     await expect(interactBtn).toBeVisible();
@@ -78,6 +77,5 @@ test.describe('mobile Interact (E) button -- touchInteract', () => {
     await page.waitForTimeout(300);
     const after = await page.evaluate(() => window.ForestEngine?.qaProbeBabyLight?.());
     expect(after?.pickingUp).toBe(false);
-    expect(after?.carrying).toBe(false);
   });
 });

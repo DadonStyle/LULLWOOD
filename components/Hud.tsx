@@ -44,7 +44,6 @@ export interface EngineHudState {
   // mid-chase) -- the death screen names this, not deathKind's species; deathKind
   // stays around for the #deathKind test hook (e2e/*.spec.ts key on it directly).
   deathCause: 'charge' | 'hunt' | 'chase' | 'heard';
-  deathCarrying: boolean;   // LUL-1438: show carry-death clause on first carry death only
   lossRevealed: boolean;
   survivedSeconds: number;
   pace: number;
@@ -68,6 +67,10 @@ export interface EngineHudState {
   // LUL-1904: cave detection-immunity countdown -- 0 while inactive.
   caveImmuneActive:   boolean;
   caveImmuneTimeLeft: number;
+  // LUL-3150: carry-leg panic button -- burns all veil charge for a detection-proof window.
+  veilOverloadActive:  boolean;
+  veilOverloadTimeLeft: number;
+  veilOverloadVisible: boolean;
   // LUL-1089: contextual action prompts for hide and veil mechanics.
   coverPromptVisible: boolean;
   coverPromptUrgent:  boolean;
@@ -118,8 +121,7 @@ export interface EngineHudState {
   // rendered as the #throwPrompt suffix.
   throwablesReserve: number;
   // LUL-1258: M2 Deepwater's minimal HUD panel. Both null whenever no mission
-  // exists or the player is carrying (the engine never sends non-null values
-  // in that case) -- Hud never has to know about `carrying` itself.
+  // exists (the engine never sends non-null values in that case).
   missionKind: MissionKind | null;
   missionStatus: 'active' | 'complete' | 'expired' | null;
   // LUL-3010: seconds remaining for the far/timed variant; null for the
@@ -192,6 +194,7 @@ export interface EngineActions {
   // MobileControls.tsx and forest-engine.js's triggerTouchJump/Pause/ToggleRun
   // and setTouchVeil.
   triggerTouchJump: () => void;
+  triggerTouchVeilOverload: () => void;
   triggerTouchPause: () => void;
   triggerTouchToggleRun: () => void;
   setTouchVeil: (v: boolean) => void;
@@ -236,7 +239,6 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   deathVisible: false,
   deathKind: 'wolf',
   deathCause: 'chase',
-  deathCarrying: false,
   lossRevealed: false,
   survivedSeconds: 0,
   pace: 6,
@@ -249,6 +251,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   veilReserve: false,
   caveImmuneActive: false,
   caveImmuneTimeLeft: 0,
+  veilOverloadActive: false,
+  veilOverloadTimeLeft: 0,
+  veilOverloadVisible: false,
   coverPromptVisible: false,
   coverPromptUrgent: false,
   coverPromptKind: null,
@@ -754,6 +759,10 @@ export default function Hud({
     return () => clearTimeout(id);
   }, [state.lossRevealed]);
 
+  // LUL-2159: suppresses live HUD elements over the end screens; was inlined
+  // at every call site, hoisted here to a single source of truth.
+  const hudLive = !state.winVisible && !state.deathVisible;
+
   return (
     <>
       <OrientationGate />
@@ -833,7 +842,7 @@ export default function Hud({
             player-facing balance is #embersShopBalance (EmbersShop, above),
             which this duplicates for dev monitoring only. */}
         <span id="embersBalance">Embers: {state.embersBalance}</span>
-        {state.entered && !state.winVisible && !state.deathVisible && (
+        {state.entered && hudLive && (
           <span id="embersPile">Unbanked: {state.livePileEmbers}</span>
         )}
         <button id="regen" onClick={() => actions?.regenMap()}>
@@ -857,7 +866,7 @@ export default function Hud({
           state.caption are toast state, not reset by triggerDeath/arriveHome --
           a caption in flight at the exact moment of win/death would otherwise
           keep fading in over the end screen. */}
-      {captionVisible && state.caption && !state.winVisible && !state.deathVisible && (
+      {captionVisible && state.caption && hudLive && (
         <ActionPrompt
           id="captionToast"
           key={state.captionId}
@@ -978,12 +987,20 @@ export default function Hud({
         </div>
       )}
 
+      {/* LUL-3150: veil-overload countdown -- sibling of #caveImmunePanel, same
+          always-visible-while-active treatment. */}
+      {state.veilOverloadActive && (
+        <div id="veilOverloadPanel">
+          Overload · {Math.ceil(state.veilOverloadTimeLeft)}s
+        </div>
+      )}
+
       {/* LUL-2131: gate on !winVisible/!deathVisible too -- entered stays true
           through the end screens (restart() never clears it), so this used to
           keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
           It's below the modals visually either way, but it's still a live,
           ticking readout that has no business rendering once the run is over. */}
-      {state.entered && !state.winVisible && !state.deathVisible && (
+      {state.entered && hudLive && (
         <div
           id="windIndicator"
           // LUL-3009: pulse class while the player is currently benefiting from the wind
@@ -999,7 +1016,7 @@ export default function Hud({
         </div>
       )}
 
-      {state.entered && !state.winVisible && !state.deathVisible && (
+      {state.entered && hudLive && (
         <div id="windIndicatorHint">wind — move into the arrow to mask your scent; sprint into it for extra speed and quiet</div>
       )}
 
@@ -1015,7 +1032,7 @@ export default function Hud({
           `#scentTrailCaption` directly and must pass unchanged. Gated on
           !winVisible/!deathVisible like #hint (LUL-2158 precedent) so a fast
           death never shows it over "YOU LOSE". */}
-      {state.hintVisible && !state.winVisible && !state.deathVisible && (
+      {state.hintVisible && hudLive && (
         <div
           id={state.hintKey === 'scent' ? 'scentTrailCaption' : 'hintCaption'}
           data-hint-key={state.hintKey ?? undefined}
@@ -1071,7 +1088,7 @@ export default function Hud({
         <ActionPrompt
           id="chargePrompt"
           testId={mobile ? 'chargePromptTap' : undefined}
-          visible={state.chargeVisible && !state.winVisible && !state.deathVisible}
+          visible={state.chargeVisible && hudLive}
           tone="urgent"
           keycap={mobile ? 'JUMP' : 'SPACE'}
           reducedMotion={state.reducedMotion}
@@ -1084,7 +1101,7 @@ export default function Hud({
             rather than parsed for a keycap chip -- engine contract unchanged. */}
         <ActionPrompt
           id="objective"
-          visible={state.objectiveVisible && !state.winVisible && !state.deathVisible}
+          visible={state.objectiveVisible && hudLive}
           tone={state.objectiveReady ? 'ready' : 'calm'}
           text={state.objectiveText}
         />
@@ -1094,9 +1111,24 @@ export default function Hud({
             style (match "Press  E  to lift the child"). */}
         <ActionPrompt
           id="actionPrompt"
-          visible={(state.coverPromptVisible || state.veilPromptVisible) && !state.winVisible && !state.deathVisible}
+          visible={(state.coverPromptVisible || state.veilPromptVisible) && hudLive}
           reducedMotion={state.reducedMotion}
           {...hideVeilPromptContent(state, mobile)}
+        />
+        {/* LUL-3150/LUL-4663: emergency panic button, triggered by a real chase
+            (engine/forest-engine.js veilOverloadTriggerActive, not `carrying` --
+            LUL-4662/LUL-4663) -- next to actionPrompt since it's read the same way
+            ("something to do about being hunted"). Not mutually exclusive with
+            coverPromptVisible/veilPromptVisible above (a chased player near a hide
+            spot can see both rows at once); separate `#actionSlot` rows, so the two
+            never compete for the same DOM node. */}
+        <ActionPrompt
+          id="veilOverloadPrompt"
+          visible={state.veilOverloadVisible && hudLive}
+          tone="urgent"
+          keycap="Q"
+          text="Burn veil for a detection-proof escape"
+          onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchVeilOverload(); } : undefined}
         />
         {/* LUL-1623: holding-a-throwable affordance -- there's no held-item
             mesh in first person, so this is the only way the player knows
@@ -1105,7 +1137,7 @@ export default function Hud({
             state of its own). */}
         <ActionPrompt
           id="throwPrompt"
-          visible={state.heldThrowable && !state.winVisible && !state.deathVisible}
+          visible={state.heldThrowable && hudLive}
           tone="ready"
           text={
             mobile
@@ -1120,7 +1152,7 @@ export default function Hud({
             (lib/game/outcome.ts's canGrabThrowable already excludes heldThrowable). */}
         <ActionPrompt
           id="pickupPrompt"
-          visible={state.canGrabThrowable && !state.winVisible && !state.deathVisible}
+          visible={state.canGrabThrowable && hudLive}
           tone="calm"
           text="Press  E  to pick up the stone"
         />
@@ -1129,7 +1161,7 @@ export default function Hud({
             only ever set to the same value as `statusVisible`). */}
         <ActionPrompt
           id="status"
-          visible={state.statusVisible && !state.winVisible && !state.deathVisible}
+          visible={state.statusVisible && hudLive}
           tone="status"
           text={state.statusText}
         />
@@ -1166,7 +1198,6 @@ export default function Hud({
                   the cause, not the animal. */}
               <span id="deathKind" style={{ display: 'none' }}>{state.deathKind}</span>
               {DEATH_CAUSE_TEXT[state.deathCause]}
-              {state.deathCarrying && <> — you were carrying the only light in it</>}
             </p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={true} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
             <button
