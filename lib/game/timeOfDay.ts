@@ -123,3 +123,24 @@ export const TIME_OF_DAY_AUDIO: Record<TimeOfDayState, TimeOfDayAudioConfig> = {
   afternoon:       { windGainMul: 0.7, droneGainMul: 0.12, birdsGain: 0.02, birdsChirpHz: 0.25, insectsGain: 0.03 },
   evening:         { windGainMul: 0.9, droneGainMul: 0.5,  birdsGain: 0.015,birdsChirpHz: 0.15, insectsGain: 0.025 },
 };
+
+// ---- detection multiplier (LUL-4789) -----------------------------------------
+// Passive modifier composed into the engine's own detectMul product
+// (engine/forest-engine.js:2598/:2602), alongside veilDetectMul/fogTideDetectMul/
+// timeOfRunDetectMul -- same multiplicative-stacking pattern, one more factor.
+//
+// Do not confuse with timeOfRunDetectMul (lib/game/dayNight.ts) -- that is the
+// within-session pacing clock (0 at run start -> 1 at "full night" of THIS run,
+// detection goes UP to +30% as a run drags on). This multiplier is keyed on the
+// wall-clock TimeOfDayState (lib/game/timeOfDay.ts, LUL-1644/LUL-2667) instead --
+// orthogonal axis, opposite valence at "night": wall-clock night makes detection
+// EASIER (-20%), not harder. Both compose at the same call sites; that's correct,
+// not a duplicate.
+const TIME_OF_DAY_DETECT_MUL: Record<TimeOfDayState, number> = {
+  night: 0.8, 'early-morning': 1.0, morning: 1.0,
+  noon: 1.15, afternoon: 1.05, evening: 1.0,
+};
+
+export function timeOfDayDetectMul(state: TimeOfDayState): number {
+  return TIME_OF_DAY_DETECT_MUL[state];
+}

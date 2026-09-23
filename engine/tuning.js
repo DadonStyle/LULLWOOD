@@ -19,7 +19,7 @@ export const CONFIG = {
   detectScaleMul: 1,     // LUL-2407: predator detect-radius multiplier; applyQaWorldMicroPreset()
                           // scales this down to match the shrunk map so spawn distance keeps the
                           // same safety margin against detect radius. 1 = full-map, no-op default.
-  speedScaleMul: 1,       // LUL-2422: predator movement-speed multiplier (folded into pLakeMul in
+  speedScaleMul: 1,       // LUL-2422: predator movement-speed multiplier (folded into pSpeedScaleMul in
                           // the main predator loop, forest-engine.js). detectScaleMul alone wasn't
                           // enough -- a full-speed predator can still wander/chase into a scripted
                           // QA teleport target well within a scenario's ~8s window on the shrunk
@@ -46,24 +46,13 @@ export const CONFIG = {
   trunk:   0x171b20,
   foliage: 0x102420,
   ground:  0x0c1117,
-  // LUL-874: keep this well clear of the map edge (half = mapSize/2 = 240).
-  // updatePredators()'s waypoint-pick sites clamp to map bounds, call
-  // keepWaypointOffLake() (lib/game/lake.ts) -- which can push a waypoint out
-  // to `r + margin` (~17 units) from the lake's center -- then clamp to
-  // bounds *again*. If the lake ever sat within that push distance of an
-  // edge, the second clamp could silently snap the waypoint back into the
-  // water, reopening the bug PR #183 fixed, with no test or CI signal since
-  // nothing currently asserts this. Today's (34,-28) is ~206 units from the
-  // nearest edge, comfortably clear -- re-check this distance before moving
-  // the lake or shrinking mapSize (wiki game/lul857-review-pr183).
-  lake:    { x: 34, z: -28, r: 15, clear: 22, glow: 0x86b8ff },
   home:    { x: 0, z: 0, r: 3.6, glow: 0xffd9b0 },   // LUL-38: reuses the spawn point, no new rng draw
 };
 
 // LUL-25: six fixed navigational landmarks, "visible over the fog line" so
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() in forest-engine.js).
-// Fixed constants, not an rng draw, same treatment as CONFIG.lake/CONFIG.home.
+// Fixed constants, not an rng draw, same treatment as CONFIG.home.
 // `cr` is the movement-collision radius (LUL-374) -- deliberately much
 // smaller than `clear` (which only keeps trees/cover from generating too
 // close to the landmark's nudge target).
@@ -167,7 +156,6 @@ export const CONE1_Y = 2.1;
 
 // ---- Population counts ------------------------------------------------------
 export const STAR = 700;          // starfield points
-export const LW = 50;             // lake wisps
 export const DUST = 350;          // ambient dust particles
 export const BW = 26;             // baby beacon wisps
 export const BSP = 70;            // win-burst particles
@@ -202,8 +190,8 @@ export const BSP = 70;            // win-burst particles
 // BOG_OUTER_RADIUS (45) would partially overlap the map's own edge, so
 // bogTrees/bogReeds are zeroed explicitly rather than relying on geometry to
 // exclude every candidate (which would instead spend each loop's full try
-// budget rejecting points, wastefully but harmlessly). LANDMARKS/CAVE/
-// CONFIG.lake are deliberately left untouched -- tuning.js's own LANDMARKS
+// budget rejecting points, wastefully but harmlessly). LANDMARKS/CAVE are
+// deliberately left untouched -- tuning.js's own LANDMARKS
 // comment already documents they're placed unconditionally regardless of map
 // size, so at this scale they simply sit at or past the map edge; not worth
 // a special case for six fixed props.

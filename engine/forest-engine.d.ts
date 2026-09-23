@@ -92,12 +92,11 @@ declare global {
         trees: { x: number; z: number }[];
         predators: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number }[];
       };
-      /** LUL-2247: per-chunk prop counts by category (cover/reed/bogTree/stone), the minimum pairwise centre-to-centre distance across every non-tree prop, the total count, and how many reeds land inside CONFIG.lake.clear (must be 0) -- all read from the finished, post-thin map. */
+      /** LUL-2247: per-chunk prop counts by category (cover/reed/bogTree/stone), the minimum pairwise centre-to-centre distance across every non-tree prop, and the total count -- all read from the finished, post-thin map. */
       qaProbePropDensity?: () => {
         perChunk: Array<{ chunk: number; cover: number; reed: number; bogTree: number; stone: number }>;
         minPairSpacing: number | null;
         total: number;
-        reedsInLakeClear: number;
       };
       /** LUL-1487 (E6), extended by LUL-2249: `chunks`/`instantiated` are the
        * count of currently-live (ring-streamed) tree chunks, `populated` is
@@ -247,7 +246,7 @@ declare global {
         inv: string;
         sniffsLeft: number;
         scentCalls: number;
-        dist: number;
+        dist: number; detectRange: number;
         canSee: boolean;
         rad: number;
         moveRad: number;

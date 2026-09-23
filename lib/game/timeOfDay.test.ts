@@ -4,6 +4,7 @@ import {
   timeOfDayFromHour,
   TIME_OF_DAY_VISUALS,
   TIME_OF_DAY_AUDIO,
+  timeOfDayDetectMul,
   type TimeOfDayState,
 } from './timeOfDay.ts';
 
@@ -58,4 +59,13 @@ test('daylight states have zero star opacity; night and the dawn/dusk pair do no
   assert.equal(TIME_OF_DAY_VISUALS.morning.starOpacity, 0);
   assert.equal(TIME_OF_DAY_VISUALS.afternoon.starOpacity, 0);
   assert.ok(TIME_OF_DAY_VISUALS.night.starOpacity > 0);
+});
+
+test('timeOfDayDetectMul has the documented six-state lookup', () => {
+  assert.equal(timeOfDayDetectMul('night'), 0.8);
+  assert.equal(timeOfDayDetectMul('early-morning'), 1.0);
+  assert.equal(timeOfDayDetectMul('morning'), 1.0);
+  assert.equal(timeOfDayDetectMul('noon'), 1.15);
+  assert.equal(timeOfDayDetectMul('afternoon'), 1.05);
+  assert.equal(timeOfDayDetectMul('evening'), 1.0);
 });
