@@ -41,10 +41,35 @@ test('win screen is mandatory and persists until the player restarts (mobile)', 
   const objective = await page.locator('#objective').textContent();
   expect(objective ?? '', 'qaTeleportNearBaby did not land within pickup range').toContain('Press');
 
+  // LUL-2159 P2 (LUL-2131 mobile end-screen unmount regression coverage):
+  // confirm the pre-win baseline before asserting anything disappears --
+  // MobileControls/GameMenu unmount outright (return null) on
+  // winVisible/deathVisible, #windIndicator/#windIndicatorHint are wrapped in
+  // `{state.entered && hudLive && (...)}` in Hud.tsx and unmount the same way.
+  // #actionPrompt/#throwPrompt never unmount (ActionPrompt's own wrapper div
+  // has no visible/hudLive gate -- only its inner `.actionPromptLine` does via
+  // the `visible` prop), so those are asserted via `data-visible` below
+  // instead of DOM absence.
+  await expect(page.locator('[data-testid="mobileControls"]')).toBeVisible();
+  await expect(page.locator('#gameMenu')).toBeVisible();
+  await expect(page.locator('#windIndicator')).toBeVisible();
+  await expect(page.locator('#windIndicatorHint')).toBeVisible();
+
   // LUL-2281 (reverts LUL-1307): no carry-home leg -- pressing E and letting
   // the ascend/explode cinematic finish wins outright.
   await page.keyboard.press('KeyE');
   await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
+
+  // LUL-2159 P2: the elements that unmount outright on win must actually be
+  // gone from the DOM, not just visually covered by #winScreen's z-index.
+  await expect(page.locator('[data-testid="mobileControls"]'), 'MobileControls must unmount on win (LUL-2131)').toHaveCount(0);
+  await expect(page.locator('#gameMenu'), 'GameMenu must unmount on win (LUL-2131)').toHaveCount(0);
+  await expect(page.locator('#windIndicator'), 'windIndicator must unmount on win (LUL-2131)').toHaveCount(0);
+  await expect(page.locator('#windIndicatorHint'), 'windIndicatorHint must unmount on win (LUL-2131)').toHaveCount(0);
+  // #actionPrompt/#throwPrompt stay mounted (empty row) -- their content is
+  // gated by the `visible` prop, reflected in `data-visible`.
+  await expect(page.locator('#actionPrompt'), 'actionPrompt must report not-visible on win').toHaveAttribute('data-visible', '0');
+  await expect(page.locator('#throwPrompt'), 'throwPrompt must report not-visible on win').toHaveAttribute('data-visible', '0');
 
   let elapsedMs = 0;
   for (const stepMs of [1000, 2000, 2000]) {

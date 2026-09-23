@@ -762,6 +762,10 @@ export default function Hud({
     return () => clearTimeout(id);
   }, [state.lossRevealed]);
 
+  // LUL-2159: suppresses live HUD elements over the end screens; was inlined
+  // at every call site, hoisted here to a single source of truth.
+  const hudLive = !state.winVisible && !state.deathVisible;
+
   return (
     <>
       <OrientationGate />
@@ -841,7 +845,7 @@ export default function Hud({
             player-facing balance is #embersShopBalance (EmbersShop, above),
             which this duplicates for dev monitoring only. */}
         <span id="embersBalance">Embers: {state.embersBalance}</span>
-        {state.entered && !state.winVisible && !state.deathVisible && (
+        {state.entered && hudLive && (
           <span id="embersPile">Unbanked: {state.livePileEmbers}</span>
         )}
         <button id="regen" onClick={() => actions?.regenMap()}>
@@ -865,7 +869,7 @@ export default function Hud({
           state.caption are toast state, not reset by triggerDeath/arriveHome --
           a caption in flight at the exact moment of win/death would otherwise
           keep fading in over the end screen. */}
-      {captionVisible && state.caption && !state.winVisible && !state.deathVisible && (
+      {captionVisible && state.caption && hudLive && (
         <ActionPrompt
           id="captionToast"
           key={state.captionId}
@@ -999,7 +1003,7 @@ export default function Hud({
           keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
           It's below the modals visually either way, but it's still a live,
           ticking readout that has no business rendering once the run is over. */}
-      {state.entered && !state.winVisible && !state.deathVisible && (
+      {state.entered && hudLive && (
         <div
           id="windIndicator"
           // LUL-3009: pulse class while the player is currently benefiting from the wind
@@ -1015,7 +1019,7 @@ export default function Hud({
         </div>
       )}
 
-      {state.entered && !state.winVisible && !state.deathVisible && (
+      {state.entered && hudLive && (
         <div id="windIndicatorHint">wind — move into the arrow to mask your scent; sprint into it for extra speed and quiet</div>
       )}
 
@@ -1031,7 +1035,7 @@ export default function Hud({
           `#scentTrailCaption` directly and must pass unchanged. Gated on
           !winVisible/!deathVisible like #hint (LUL-2158 precedent) so a fast
           death never shows it over "YOU LOSE". */}
-      {state.hintVisible && !state.winVisible && !state.deathVisible && (
+      {state.hintVisible && hudLive && (
         <div
           id={state.hintKey === 'scent' ? 'scentTrailCaption' : 'hintCaption'}
           data-hint-key={state.hintKey ?? undefined}
@@ -1087,7 +1091,7 @@ export default function Hud({
         <ActionPrompt
           id="chargePrompt"
           testId={mobile ? 'chargePromptTap' : undefined}
-          visible={state.chargeVisible && !state.winVisible && !state.deathVisible}
+          visible={state.chargeVisible && hudLive}
           tone="urgent"
           keycap={mobile ? 'JUMP' : 'SPACE'}
           reducedMotion={state.reducedMotion}
@@ -1100,7 +1104,7 @@ export default function Hud({
             rather than parsed for a keycap chip -- engine contract unchanged. */}
         <ActionPrompt
           id="objective"
-          visible={state.objectiveVisible && !state.winVisible && !state.deathVisible}
+          visible={state.objectiveVisible && hudLive}
           tone={state.objectiveReady ? 'ready' : 'calm'}
           text={state.objectiveText}
         />
@@ -1110,7 +1114,7 @@ export default function Hud({
             style (match "Press  E  to lift the child"). */}
         <ActionPrompt
           id="actionPrompt"
-          visible={(state.coverPromptVisible || state.veilPromptVisible) && !state.winVisible && !state.deathVisible}
+          visible={(state.coverPromptVisible || state.veilPromptVisible) && hudLive}
           reducedMotion={state.reducedMotion}
           {...hideVeilPromptContent(state, mobile)}
         />
@@ -1119,7 +1123,7 @@ export default function Hud({
             exclusive with the hide/cover prompt so the two rows never compete. */}
         <ActionPrompt
           id="veilOverloadPrompt"
-          visible={state.veilOverloadVisible && !state.winVisible && !state.deathVisible}
+          visible={state.veilOverloadVisible && hudLive}
           tone="urgent"
           keycap="Q"
           text="Burn veil for a detection-proof escape"
@@ -1132,7 +1136,7 @@ export default function Hud({
             state of its own). */}
         <ActionPrompt
           id="throwPrompt"
-          visible={state.heldThrowable && !state.winVisible && !state.deathVisible}
+          visible={state.heldThrowable && hudLive}
           tone="ready"
           text={
             mobile
@@ -1147,7 +1151,7 @@ export default function Hud({
             (lib/game/outcome.ts's canGrabThrowable already excludes heldThrowable). */}
         <ActionPrompt
           id="pickupPrompt"
-          visible={state.canGrabThrowable && !state.winVisible && !state.deathVisible}
+          visible={state.canGrabThrowable && hudLive}
           tone="calm"
           text="Press  E  to pick up the stone"
         />
@@ -1156,7 +1160,7 @@ export default function Hud({
             only ever set to the same value as `statusVisible`). */}
         <ActionPrompt
           id="status"
-          visible={state.statusVisible && !state.winVisible && !state.deathVisible}
+          visible={state.statusVisible && hudLive}
           tone="status"
           text={state.statusText}
         />
