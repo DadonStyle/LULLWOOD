@@ -4272,7 +4272,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // reported by a human. These two hooks close that: stage the player facing a
   // prop of a given kind, hold W, then read the position back.
   window.ForestEngine.qaProbePlayer = function(){
-    return { x: player.x, z: player.z, yaw: player.yaw };
+    return { x: player.x, z: player.z, yaw: player.yaw, sprintWindBonusActive: !!player.sprintWindBonusActive };
   };
 
   // LUL-2187/LUL-2209: raw mission state, mirrors qaProbeBaby's shape. Cheap
@@ -6633,6 +6633,7 @@ function stepFrame(dt, t, skipRender){
   // movingAgainstWind alone -- walking against the wind stays silent on this cue, only the
   // sprint bonus gets one.
   const windAssistNowActive = running && movingAgainstWind;
+  player.sprintWindBonusActive = windAssistNowActive;   // LUL-3169: qaProbePlayer() read-back, mirrors x/z/yaw
   if(windAssistNowActive && !windAssistActive) windAssistStartCue();
   else if(!windAssistNowActive && windAssistActive) windAssistEndCue();
   windAssistActive = windAssistNowActive;
