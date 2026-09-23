@@ -118,7 +118,12 @@ const videoGameJsonLd = {
   // without it the VideoGame node is text-only. Reuses the OG asset Next
   // already generates from app/opengraph-image.png.
   image: `${SITE_URL}/opengraph-image.png`,
-  screenshot: `${SITE_URL}/opengraph-image.png`,
+  // LUL-4841: schema.org's `screenshot` property is repeatable -- an array
+  // qualifies for Google's screenshot gallery in a way a single value does
+  // not. Real gameplay screenshots are still blocked on the founder
+  // (LUL-3053); this reuses the one real asset in the repo rather than
+  // fabricating placeholder images Google would flag as misleading.
+  screenshot: [`${SITE_URL}/opengraph-image.png`],
   genre: ["Horror", "Survival", "Adventure"],
   gamePlatform: "Web Browser",
   // LUL-2375: "Game" is not a schema.org SoftwareApplication category value;
