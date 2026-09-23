@@ -312,10 +312,16 @@ export default function MobileControls({
   // for menuToggle's click to register). Offset left past menuToggle's own
   // 48px width plus a gap so both buttons sit side by side instead of
   // stacked.
+  // LUL-4767: PR#816 (LUL-3253) added a second 48px button (fullscreenToggle)
+  // into #gameMenu's .menuButtons row next to menuToggle when
+  // fullscreenSupported() is true, widening the row's right edge from 64px
+  // to 120px. Offset past the full two-button row so this wrapper clears
+  // both; when fullscreen isn't supported the row is one button and this
+  // just leaves extra harmless gap.
   const pauseWrapper: React.CSSProperties = {
     position: 'fixed',
     top: 'calc(16px + env(safe-area-inset-top))',
-    left: 'calc(76px + env(safe-area-inset-left))',
+    left: 'calc(132px + env(safe-area-inset-left))',
     zIndex: 31,
     pointerEvents: 'auto',
   };
