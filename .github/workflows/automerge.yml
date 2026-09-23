@@ -71,31 +71,41 @@ permissions:
 jobs:
   merge:
     name: merge if green and shipped
-    # A GITHUB_TOKEN-authored backmerge head never gets a `push` run -- GitHub
-    # suppresses push/pull_request events for GITHUB_TOKEN-authored commits, so the
-    # now-deleted `pr-freshness.yml` backmerge step used to explicitly workflow_dispatch
-    # CI on the new head instead (systems/ci-github-token-blind-spot, LUL-439). A
-    # push-only guard here silently skipped every one of those, which was a standing
-    # cause of "APPROVED + green + nobody merged it" (LUL-692). This branch of the
-    # condition accepts that workflow_dispatch green too, but only when
-    # github-actions[bot] triggered it -- that was the exact signature of the
-    # pr-freshness remedy and nothing else. LUL-778 (2026-08-27) deleted the backmerge
-    # step itself (it bought mergeability the repo never needed, per that ticket), so
-    # this branch is now dormant rather than removed -- routine staleness no longer
-    # produces a GITHUB_TOKEN head to rescue, but a future automated dispatch in this
-    # same shape would still need this path. A human/agent manually dispatching CI on a
-    # red branch must not be able to paint it green this way
-    # (playbooks/ci-green-from-workflow-dispatch).
+    # ONLY 'push' is accepted here. LUL-692 (2026-08-26) widened this to also
+    # accept a `workflow_dispatch` green from `github-actions[bot]`, on the
+    # theory that GITHUB_TOKEN-authored pushes are recursion-suppressed (no
+    # `push` event) and a bot-triggered `workflow_dispatch` was the rescue.
+    # LUL-1665 (2026-09-23) measured that branch and found it dead on arrival:
+    # this job's own trigger -- `on: workflow_run: workflows: [CI]` -- never
+    # fires at all when the upstream CI run's event is `workflow_dispatch`,
+    # for ANY triggering actor. Checked across every `workflow_dispatch` CI
+    # completion produced by `daily-report.yml`'s now-removed dispatch
+    # fallback over 2026-08-26..2026-09-06 (~13 completions, both
+    # `github-actions[bot]`- and PAT(`DadonStyle`)-triggered): zero
+    # corresponding `automerge.yml` runs exist for any of those head
+    # branches, vs. hundreds of same-day `push`-sourced completions that all
+    # produced a run (success or skipped) within seconds. So the LUL-692
+    # `if:` branch could never evaluate true -- the event never reaches the
+    # job to be evaluated. This is not GITHUB_TOKEN-specific recursion
+    # suppression (systems/ci-github-token-blind-spot); it is that
+    # `workflow_run` does not deliver `workflow_dispatch`-sourced completions
+    # of the watched workflow at all. Full measurement: wiki
+    # systems/lul692-automerge-dispatch-guard-fix.
+    #
+    # This also means the branch was never a safety hole: a human/agent
+    # manually dispatching CI on a red branch could never have painted it
+    # green through this path either (playbooks/ci-green-from-workflow-dispatch
+    # still applies to the merge call itself, independent of this trigger).
+    #
+    # The actual fix for "a workflow needs its CI completion to reach this
+    # job" is what daily-report.yml already does (LUL-1115): push with a real
+    # credential so CI fires as a genuine `push` event. A `workflow_dispatch`
+    # fallback cannot substitute for that, structurally, regardless of who
+    # triggers it.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       startsWith(github.event.workflow_run.head_branch, 'lul-') &&
-      (
-        github.event.workflow_run.event == 'push' ||
-        (
-          github.event.workflow_run.event == 'workflow_dispatch' &&
-          github.event.workflow_run.triggering_actor.login == 'github-actions[bot]'
-        )
-      )
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     steps:
       # `main`, not the branch under test: this is where the merge gate is read
