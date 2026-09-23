@@ -56,6 +56,8 @@ test('sticks are absent before entering, and appear once entered', async ({ page
 // .menuPanel's top:56px (inside #gameMenu's own top:16px) lands right on
 // #missionPanel's top:76px/left:16px corner (GameCanvas.tsx). Same `menuOpen`
 // gate as this file's other test, applied to #missionPanel (components/Hud.tsx).
+// (that row was removed in LUL-3253; the open .menuPanel itself still overlaps
+// #missionPanel the same way, which is what this test still covers)
 test('#missionPanel is absent while the game menu is open, on mobile', async ({ page }) => {
   await boot(page, { qaHooks: true });
 

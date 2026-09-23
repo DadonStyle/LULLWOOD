@@ -912,7 +912,7 @@ These ids, testids and attributes are load-bearing. `e2e/` (**93 files — 55 at
 | Component | testids |
 |---|---|
 | `MobileControls` | `mobileControls`, `leftStick`, `rightStick`, `touchInteract`, `touchThrow`, `touchJump`, `touchToggleRun`, `touchHide`, `touchVeil`, `mobilePauseWrapper`, `touchPause` |
-| `GameMenu` | `menuToggle`, `menuFullscreen`, `menuPause`, `menuSound`, `menuRestart`, `menuDifficulty{lantern,night,blackout}`, `menuSecondary{None,Retrieval,Speedrun}` |
+| `GameMenu` | `menuToggle`, `fullscreenToggle`, `menuPause`, `menuSound`, `menuRestart`, `menuDifficulty{lantern,night,blackout}`, `menuSecondary{None,Retrieval,Speedrun}` |
 | `OrientationGate` | `orientationGate` |
 | `Hud` | `chargePromptTap` (mobile-only, on `#chargePrompt`) |
 

@@ -15,8 +15,8 @@
 //    the mobile control root, and its scrollWidth <= clientWidth (no nowrap overflow).
 // 5. With prefers-reduced-motion emulated, computed animation-name on the row's
 //    .actionPromptKey is 'none'.
-// 6. #actionSlot's five rows are always mounted, in the founder's stated
-//    priority order (charge > objective > hide/veil > throwable > status),
+// 6. #actionSlot's rows are always mounted, in the founder's stated
+//    priority order (charge > objective > hide/veil > veil-overload > throwable > status),
 //    regardless of which currently have content.
 // 7. LUL-2336: qaForceAllActionRows() puts all five rows live with real
 //    content at once (no real playthrough state does) -- none of their
@@ -409,12 +409,12 @@ test.describe('#actionSlot — all five rows forced live at once (LUL-2336)', ()
 // staging, so it can never silently drift if a future edit reorders the JSX
 // inside #actionSlot (components/Hud.tsx).
 test.describe('#actionSlot row order', () => {
-  test('six rows are always mounted, top to bottom in priority order', async ({ page }) => {
+  test('seven rows are always mounted, top to bottom in priority order', async ({ page }) => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     const ids = await page.evaluate(() => Array.from(document.querySelectorAll('#actionSlot > *')).map((el) => el.id));
-    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'throwPrompt', 'pickupPrompt', 'status']);
+    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'veilOverloadPrompt', 'throwPrompt', 'pickupPrompt', 'status']);
 
     // Every row exists (not conditionally mounted) even with nothing to show.
     for (const id of ids) {
