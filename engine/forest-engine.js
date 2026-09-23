@@ -2541,11 +2541,8 @@ function missionWaypointHum(m, distToPlayer){
   const { ctx, conv, master } = audio, t = ctx.currentTime;
   const near = Math.max(0, Math.min(1, 1 - distToPlayer / 140));   // 0 far .. 1 close
   const pan = ctx.createStereoPanner();
-  const dx = m.target.x - player.x, dz = m.target.z - player.z;
-  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
-  const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-  const right = dx*rx + dz*rz, fwd = dx*fx + dz*fz;
-  pan.pan.value = Math.max(-1, Math.min(1, right / Math.max(1, Math.hypot(right, fwd))));
+  const bearing = bearingOf(m.target.x, m.target.z, player.x, player.z, player.yaw);
+  pan.pan.value = bearingPan(bearing);
   const o = ctx.createOscillator(); o.type = 'sine';
   const baseF = 220 + near * 60;   // lower/duller than the child's cry so the two cues stay distinguishable
   o.frequency.setValueAtTime(baseF, t);
@@ -2559,8 +2556,7 @@ function missionWaypointHum(m, distToPlayer){
   o.start(t); o.stop(t + 0.75);
   if(captionsOn){
     const cnear = distToPlayer < 30 ? 'near' : 'far';
-    const side = Math.abs(right) < Math.abs(fwd)*0.6 ? (fwd >= 0 ? 'ahead' : 'behind') : (right > 0 ? 'right' : 'left');
-    pushState({ caption: `something metal, underwater · ${cnear} · ${side}`, captionId: ++captionSeq });
+    pushState({ caption: `something metal, underwater · ${cnear} · ${bearing.side}`, captionId: ++captionSeq });
   }
 }
 

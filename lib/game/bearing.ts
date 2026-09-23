@@ -41,11 +41,12 @@ export function bearingOf(
 }
 
 /**
- * Stereo pan value in [-1, 1] for a bearing. Same formula already shipped for
- * the mission waypoint hum (missionWaypointHum(), forest-engine.js:1251 @ 8b99b9f:
- * `right / Math.max(1, hypot(right, fwd))`, clamped) — reused here for
- * consistency across the audio graph rather than inventing a second curve.
- * `Math.max(1, dist)` avoids a divide-by-zero/spike when dist is near 0.
+ * Stereo pan value in [-1, 1] for a bearing. Same formula the mission waypoint
+ * hum (missionWaypointHum(), forest-engine.js) originally shipped inline —
+ * `right / Math.max(1, hypot(right, fwd))`, clamped; `hypot(right, fwd)` is a
+ * rotation of `hypot(dx, dz)` so it equals `dist` (LUL-1791 deduped that call
+ * site onto this function). `Math.max(1, dist)` avoids a divide-by-zero/spike
+ * when dist is near 0.
  */
 export function bearingPan(bearing: Pick<Bearing, 'right' | 'dist'>): number {
   return Math.max(-1, Math.min(1, bearing.right / Math.max(1, bearing.dist)));
