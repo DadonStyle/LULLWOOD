@@ -19,7 +19,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import { boot, enter, qaHook } from './helpers';
-import { CONFIG } from '../engine/tuning';
 
 const FIXED_DT = 0.02;
 const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
@@ -30,18 +29,6 @@ async function openSettings(page: Page) {
 }
 const closeSettings = (page: Page) =>
   page.getByRole('button', { name: 'Close settings' }).evaluate((el) => (el as HTMLElement).click());
-
-async function assertNoOverlap(page: Page, selA: string, selB: string) {
-  const locA = page.locator(selA), locB = page.locator(selB);
-  if ((await locA.count()) === 0 || (await locB.count()) === 0) return;
-  const a = await locA.boundingBox();
-  const b = await locB.boundingBox();
-  if (!a || !b || a.width === 0 || a.height === 0 || b.width === 0 || b.height === 0) return;
-  const overlaps =
-    a.x < b.x + b.width && a.x + a.width > b.x &&
-    a.y < b.y + b.height && a.y + a.height > b.y;
-  expect(overlaps, `${selA} (${JSON.stringify(a)}) must not overlap ${selB} (${JSON.stringify(b)})`).toBe(false);
-}
 
 /** Drains whichever hint is currently active (or about to become active) by waiting out
  * its 8s timeout, repeatedly, until a round produces no active hint at all. Requires

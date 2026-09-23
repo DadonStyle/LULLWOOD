@@ -8,7 +8,6 @@
 import { test, expect } from '../fixtures';
 import type { Page } from '@playwright/test';
 import { boot, qaHook } from '../helpers';
-import { CONFIG } from '../../engine/tuning';
 
 const FIXED_DT = 0.02;
 const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
