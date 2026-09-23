@@ -247,7 +247,7 @@ declare global {
         inv: string;
         sniffsLeft: number;
         scentCalls: number;
-        dist: number;
+        dist: number; detectRange: number;
         canSee: boolean;
         rad: number;
         moveRad: number;
