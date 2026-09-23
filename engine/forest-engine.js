@@ -1268,7 +1268,23 @@ function generateMap(seed){
   while(treeData.length < CONFIG.trees && tries < CONFIG.trees*25){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
-    if(inSpawn(x,z) || inBaby(x,z)) continue;
+    // LUL-4685 review fix: this loop sits directly between the baby draw and
+    // placePredators() in the shared rng() stream (see the comment above this
+    // function), with nothing else consuming rng in between -- so changing how
+    // many candidates this loop rejects-and-redraws reshuffles every tree
+    // placed after the shift AND every predator placePredators() draws next,
+    // silently invalidating every QA_PINNED_SEED-keyed test (LUL-791 precedent:
+    // wiki:game/lul791-lake-predator-spawn-rng-shift). generateCover()/
+    // generateThrowables()/generateReeds() all run *after* placePredators() in
+    // this same stream, so dropping their own inLake() checks (done elsewhere
+    // in this ticket) only reshuffles later cosmetic props, never predators --
+    // safe. This site is different: the old lake clearance circle (former
+    // CONFIG.lake: x:34,z:-28,clear:22, deleted from tuning.js by this ticket)
+    // must keep rejecting the same candidates it always did, even though nothing
+    // renders or collides there anymore, purely to keep this loop's accept/
+    // reject count -- and therefore every seed's tree/predator layout --
+    // byte-identical to before the lake was deleted.
+    if(inSpawn(x,z) || inBaby(x,z) || ((x-34)*(x-34) + (z+28)*(z+28) < 484)) continue;
     const s = 0.7 + rng()*1.7;
     let culled = false;
     if(Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z) < BOG_INNER_RADIUS){
