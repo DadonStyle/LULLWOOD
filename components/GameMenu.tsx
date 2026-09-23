@@ -80,31 +80,31 @@ export default function GameMenu({
 
   return (
     <div id="gameMenu" ref={menuRef}>
-      <button
-        data-testid="menuToggle"
-        className="menuToggle"
-        onClick={() => setOpen(!open)}
-        aria-label={open ? 'Close menu' : 'Open menu'}
-        aria-expanded={open}
-      >
-        ☰
-      </button>
+      <div className="menuButtons">
+        <button
+          data-testid="menuToggle"
+          className="menuToggle"
+          onClick={() => setOpen(!open)}
+          aria-label={open ? 'Close menu' : 'Open menu'}
+          aria-expanded={open}
+        >
+          ☰
+        </button>
+
+        {fullscreenSupported && (
+          <button
+            data-testid="fullscreenToggle"
+            className={`fullscreenToggle${isFullscreen ? ' active' : ''}`}
+            onClick={toggleFullscreen}
+            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          >
+            <span className={`fsIcon${isFullscreen ? ' fsIconActive' : ''}`}>⛶</span>
+          </button>
+        )}
+      </div>
 
       {open && (
         <div className="menuPanel">
-          {fullscreenSupported && (
-            <button
-              data-testid="menuFullscreen"
-              className="menuRow"
-              onClick={() => {
-                toggleFullscreen();
-                setOpen(false);
-              }}
-            >
-              Fullscreen: {isFullscreen ? 'on' : 'off'} (F11)
-            </button>
-          )}
-
           <button
             data-testid="menuPause"
             className="menuRow"
@@ -232,6 +232,51 @@ export default function GameMenu({
 
         .menuToggle:active {
           transform: scale(0.95);
+        }
+
+        .menuButtons {
+          display: flex;
+          gap: 8px;
+        }
+
+        .fullscreenToggle {
+          width: 48px;
+          height: 48px;
+          min-width: 48px;
+          min-height: 48px;
+          border: 1px solid #cdd9ea;
+          background: rgba(6, 9, 15, 0.8);
+          color: #cdd9ea;
+          font-size: 20px;
+          cursor: pointer;
+          border-radius: 4px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+          transition: background-color 0.2s;
+        }
+
+        .fullscreenToggle:hover {
+          background: rgba(6, 9, 15, 0.95);
+        }
+
+        .fullscreenToggle:active {
+          transform: scale(0.95);
+        }
+
+        .fullscreenToggle.active {
+          background: rgba(205, 217, 234, 0.3);
+          border-color: #fff;
+        }
+
+        .fsIcon {
+          display: inline-block;
+          transition: transform 0.2s;
+        }
+
+        .fsIconActive {
+          transform: rotate(45deg);
         }
 
         .menuPanel {

@@ -59,7 +59,7 @@ test('everything important is at most two taps away', async ({ page }) => {
   // The menu is the first tap. Anything that needs a third is over budget.
   const MENU = '[data-testid="menuToggle"]';
   const depths = {
-    Fullscreen: await tapDepth(page, '[data-testid="menuFullscreen"]', [MENU]),
+    Fullscreen: await tapDepth(page, '[data-testid="fullscreenToggle"]', [MENU]),
     Settings: await tapDepth(page, '#settingsBtn', [MENU]),
     Pause: await tapDepth(page, '[data-testid="touchPause"]', [MENU]),
     Sound: await tapDepth(page, '[data-testid="menuSound"]', [MENU]),

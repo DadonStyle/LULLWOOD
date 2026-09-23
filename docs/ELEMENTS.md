@@ -1258,7 +1258,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   stored `showMinimap: true` from before LUL-4341 is dead and does not
   resurrect the minimap.
   LUL-2310: fullscreen has a second entry point besides `GameMenu.tsx`'s
-  `menuFullscreen` button -- **F11** and **Alt+Enter** (`engine/
+  dedicated `fullscreenToggle` button (LUL-3253) -- **F11** and **Alt+Enter** (`engine/
   forest-engine.js`'s `keydown` handler), both routed through one shared
   module, `lib/game/fullscreen.ts` (`toggleFullscreen`/`fullscreenSupported`/
   `isFullscreenActive`), so the button and the keys can never implement two
@@ -1267,7 +1267,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   fallback (`webkitRequestFullscreen`/`webkitExitFullscreen`/
   `webkitFullscreenElement`/`webkitfullscreenchange`) Safari < 16.4 needs --
   `fullscreenSupported()` is true if either the unprefixed or webkit API is
-  present, so `menuFullscreen` now renders there too. Browser collision
+  present, so `fullscreenToggle` now renders there too. Browser collision
   matrix (ticket has the full writeup): F11 is Chromium/Firefox's own
   fullscreen key, so the keydown handler calls `e.preventDefault()` on it
   before toggling, or the browser's own handling fires alongside this one and
@@ -1281,6 +1281,17 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   screen too and only end screens should suppress it; `e.repeat` is dropped
   so holding either combo down doesn't spam request/exit calls every OS
   auto-repeat tick.
+  LUL-3253: fullscreen moved from a row inside `.menuPanel` (2 clicks: open the menu, then
+  the row) to a dedicated `fullscreenToggle` button rendered as a sibling of `.menuToggle`
+  inside a `.menuButtons` flex row, both still inside `#gameMenu` (`GameMenu.tsx`) -- 1 click,
+  and the whole cluster stays one `#gameMenu` id/z-index-20 box so nothing that already treats
+  `#gameMenu` as one region needed a change. `.menuPanel`'s `top: 56px; left: 0` stays anchored
+  to `#gameMenu` itself, not to either button, so it's unmoved. The old `menuFullscreen` row is
+  gone -- a dedicated one-click button and a still-present 2-click menu row would have been the
+  exact same action and readout (`toggleFullscreen`/`isFullscreen`) a few pixels apart, so the
+  row was removed rather than kept as a second path to the same state. Gated on the same
+  `fullscreenSupported` boolean and the same `winVisible`/`deathVisible` unmount as
+  `menuToggle` -- no new logic for requirements 5/6, see above.
   LUL-2131: `#windIndicator`/`#windIndicatorHint` (and `#throwPrompt`, `#actionPrompt`,
   `#captionToast`, all `components/Hud.tsx`) now also gate on `!state.winVisible &&
   !state.deathVisible` -- `state.entered` alone stays true through both end screens

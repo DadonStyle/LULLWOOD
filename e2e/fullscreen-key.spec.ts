@@ -130,16 +130,34 @@ test.describe('fullscreen shortcut (F11 / Alt+Enter)', () => {
     expect(await fsCalls(page)).toEqual({ request: 0, exit: 0 });
   });
 
-  test('menuFullscreen label flips on a synthetic fullscreenchange event from the key path', async ({ page }) => {
+  test('fullscreenToggle label flips on a synthetic fullscreenchange event from the key path', async ({ page }) => {
     await stubFullscreenAPI(page);
     await boot(page);
     await enter(page);
 
-    await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
-    const btn = page.getByTestId('menuFullscreen');
-    await expect(btn).toHaveText(/Fullscreen: off/);
+    const btn = page.getByTestId('fullscreenToggle');
+    await expect(btn).toHaveAttribute('aria-label', 'Enter fullscreen');
+    await expect(btn).not.toHaveClass(/active/);
 
     await pressFullscreenKey(page, { code: 'F11' });
-    await expect(btn).toHaveText(/Fullscreen: on/);
+    await expect(btn).toHaveAttribute('aria-label', 'Exit fullscreen');
+    await expect(btn).toHaveClass(/active/);
+  });
+
+  test('fullscreenToggle click enters and exits fullscreen with one click, no menu involved', async ({ page }) => {
+    await stubFullscreenAPI(page);
+    await boot(page);
+    await enter(page);
+
+    await expect(page.locator('.menuPanel')).toHaveCount(0);
+
+    const btn = page.getByTestId('fullscreenToggle');
+    await btn.evaluate((el) => (el as HTMLElement).click());
+    expect(await fsCalls(page)).toEqual({ request: 1, exit: 0 });
+    await expect(btn).toHaveAttribute('aria-label', 'Exit fullscreen');
+
+    await btn.evaluate((el) => (el as HTMLElement).click());
+    expect(await fsCalls(page)).toEqual({ request: 1, exit: 1 });
+    await expect(btn).toHaveAttribute('aria-label', 'Enter fullscreen');
   });
 });
