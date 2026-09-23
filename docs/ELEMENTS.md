@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7504 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6648, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7537 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6675, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1552,17 +1552,17 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, now in `finishPickup()` (L5969-6029, the live win path as
-  of `LUL-2281` -- `arriveHome()`'s L6186-6239 copy is unreachable, kept per Decision 2)
-  and `triggerDeath()` (L6240-6283). The `difficulty` module-level variable is in scope
+  both `track()` call sites, now in `finishPickup()` (L5996-6056, the live win path as
+  of `LUL-2281` -- `arriveHome()`'s L6213-6266 copy is unreachable, kept per Decision 2)
+  and `triggerDeath()` (L6267-6310). The `difficulty` module-level variable is in scope
   at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6240-6283) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6248) rather than recomputed later, since `player.x/z` can move on
+  (L6267-6310) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6252) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1619,7 +1619,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3941),
-  reset to 0 on `enter()` (L4031) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4045) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L5895: `computeDepth(maxDistFromHome) +
@@ -1743,7 +1743,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6601-7440, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6628-7473, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2049,7 +2049,7 @@ deferred, see `decisions/lul-2570-cover-degradation-accepted-2026-09-17`).
 
 ## The interaction matrix
 
-Every pairwise combination of the 16 elements above, physical/geometric
+Every pairwise combination of the 17 elements above, physical/geometric
 relationships only (movement collision, line-of-sight blocking, "stood on").
 Scent and noise are **not** columns here because the source is unambiguous
 that neither channel has *any* geometry interaction with *any* element
@@ -2067,24 +2067,25 @@ collider · `ATT` = permanently attached/coincident · `–` = no interaction,
 verified in source · **`U`** = **UNDEFINED — no source resolves this**.
 Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
-| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | UI | EM |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG⁶ | TRIG²¹ |
-| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | TRIG⁶ | TRIG²¹ |
-| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
-| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
-| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | TRIG⁶ | TRIG²¹ |
-| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | render¹⁷ | – |
-| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
-| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
-| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – | – |
-| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – | – |
-| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | render¹⁷ | – |
-| **HO** Home | | | | | | | | | | | | · | – | – | – | TRIG²¹ |
-| **FO** Fog | | | | | | | | | | | | | · | – | – | – |
-| **FL** Follow-light | | | | | | | | | | | | | | · | – | – |
-| **UI** HUD/UI | | | | | | | | | | | | | | | · | – |
-| **EM** Embers | | | | | | | | | | | | | | | | · |
+| | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | LA | HO | FO | FL | MI | UI | EM |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | SLOW⁴ | TRIG⁵ | – | ATT | TRIG²⁴ | TRIG⁶ | TRIG²¹ |
+| **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – ⁸ | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **LI** Lion | | | | | C¹³ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | –¹² | – | – | – | – | TRIG⁶ | TRIG²¹ |
+| **TR** Tree | | | | | | · | –¹⁴ | –¹⁴ | –¹⁴ | STAND | –¹⁵ | –¹⁶ | – | – | – | render¹⁷ | – |
+| **RO** Rock | | | | | | | · | –¹⁸ | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – | – |
+| **LO** Log | | | | | | | | · | –¹⁸ | STAND | –¹⁵ | –¹⁶ | – | – | – | – | – |
+| **BR** Bramble | | | | | | | | | · | STAND | –¹⁵ | –¹⁶ | – | – | – | – | – |
+| **GR** Ground | | | | | | | | | | · | STAND | STAND | – | – | – | – | – |
+| **LA** Lake | | | | | | | | | | | · | –¹⁹ | – | – | – | render¹⁷ | – |
+| **HO** Home | | | | | | | | | | | | · | – | – | – | – | TRIG²¹ |
+| **FO** Fog | | | | | | | | | | | | | · | – | – | – | – |
+| **FL** Follow-light | | | | | | | | | | | | | | · | – | – | – |
+| **MI** Missions | | | | | | | | | | | | | | | · | TRIG⁶ | TRIG²¹ |
+| **UI** HUD/UI | | | | | | | | | | | | | | | | · | – |
+| **EM** Embers | | | | | | | | | | | | | | | | | · |
 
 ¹ Pickup (`distBaby<3.6`) and carry-follow (child's position snaps to
 player's while carrying) — proximity, not collision.
@@ -2199,7 +2200,10 @@ lives on its own constant, `WALKABLE_KINDS` (`lib/game/cover.ts`), which
 ²¹ **Embers** (LUL-1043) is a run-currency event tracker, not a spatial
 object — no movement collision or LOS interaction. `TRIG` marks events where
 Embers earnings are computed: Player earnings/spending gate, Child pickup
-earning trigger, Predator kill earning trigger, Home arrival earning trigger.
+earning trigger, Predator kill earning trigger, Home arrival earning trigger,
+Mission completion earning trigger (`MISSION_REWARDS`/secondary bonuses,
+`lib/game/economy.ts` — win-only, forfeited on death or expiry, see Missions
+section).
 ²² **Changed, LUL-1642.** Previously `C+LOS+HIDE` — Bramble was the one
 `HIDE_KINDS` prop still solid to the player, unlike Log (²⁰). Both kinds
 already ran the exact same `hidden`/`hideTime`/`findHideSpot()` state
@@ -2235,6 +2239,14 @@ in advance rather than bonking into it — same qualitative behaviour it
 already had for trees. `canopyBlockedR` stays player-only (camera/eye-height
 concern, no predator analogue) — Rock/Reed's predator collider is grid+cover
 only. Log/Bramble are unaffected by this change (¹¹).
+²⁴ **Missions** (LUL-1259/LUL-3010/LUL-1666) — proximity + interact trigger,
+not a collider. `missionCanComplete` (`engine/forest-engine.js:7048`),
+computed alongside `canPickup` (`:7021`), gates completion on distance to
+the mission's target waypoint (or, for the `retrieval` secondary, the
+`radioMast` landmark's `interactRadius`); firing also requires the player to
+press the shared interact key/button (`KeyE`, `:3348` / `triggerTouchInteract()`,
+`:7513`, the same one that lifts the child). No new keybinding, no new touch
+target, no `blocked()`/`blockedR()` call against the player at all.
 
 ---
 
@@ -2457,17 +2469,22 @@ See `docs/specs/lul-2307-first-encounter-hints.md` for the full per-key trigger 
 declared simplifications (no per-cover-kind copy branching, constant CSS position instead of
 a DOM-measured one for the six fixed-anchor keys).
 
-### Veil Overload (LUL-3150)
+### Veil Overload (LUL-3150, retargeted LUL-4663)
 
 **What it is**
-- A carry-leg emergency panic button: pressing `KeyQ` (desktop) or tapping `#veilOverloadPrompt`
-  (mobile, `triggerTouchVeilOverload()`) while carrying with veil charge above
-  `VEIL_PROMPT_MIN_CHARGE` and not yet used this carry leg burns the entire `veilCharge` to 0
-  and grants `VEIL_OVERLOAD_DURATION` (7s) of full sight+scent detection immunity, once per
-  carry leg (`veilOverloadUsedThisCarry`, reset in `setDown()`, `engine/forest-engine.js`).
+- A real-danger emergency panic button: pressing `KeyQ` (desktop) or tapping
+  `#veilOverloadPrompt` (mobile, `triggerTouchVeilOverload()`) while a live predator is in
+  `state === 'chase'` (`veilOverloadTriggerActive`, recomputed every frame,
+  `engine/forest-engine.js`) with veil charge above `VEIL_PROMPT_MIN_CHARGE` and not yet used
+  this round burns the entire `veilCharge` to 0 and grants `VEIL_OVERLOAD_DURATION` (7s) of
+  full sight+scent detection immunity, once per round (`veilOverloadUsedThisRound`, reset in
+  `placeCave()` alongside the other per-round detection-state timers).
+  LUL-4663: originally gated on `carrying`, which decisions/lul-2281-pickup-is-the-win-
+  2026-09-09 made permanently false in real play (`completePickup()` wins directly, no
+  carry-home leg) — the mechanic was dead for every real player (LUL-4662) until retargeted.
 - Gate expression (`activateVeilOverload()`/`triggerTouchVeilOverload()`,
-  `engine/forest-engine.js`): `veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisCarry`.
-  A refused press (carrying but ineligible) always fires `veilOverloadDeniedCue()` — no silent
+  `engine/forest-engine.js`): `veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound`.
+  A refused press (chased but ineligible) always fires `veilOverloadDeniedCue()` — no silent
   no-op.
 - Detection suppression is an OR with cave immunity at the same three real call sites —
   `checkScent(p)`, `effectiveDetect(p)`, `canSee(p, dist)` (`engine/forest-engine.js`) — same
@@ -2490,8 +2507,8 @@ a DOM-measured one for the six fixed-anchor keys).
   ("burn all veil charge (Q) for a detection-proof escape") the first time
   `veilOverloadChargeT > 0`, dismissed once it returns to 0 — same `caveImmune` precedent.
 
-**QA hooks**: `qaOpenVeilOverloadTarget(kind)` (stages a predator + carrying/full-charge state,
-mirrors `qaOpenVeilTarget`), `qaProbeVeilOverload()` (`{ chargeT, usedThisCarry,
+**QA hooks**: `qaOpenVeilOverloadTarget(kind)` (stages a chasing predator + full/unlocked veil
+charge, mirrors `qaOpenVeilTarget`), `qaProbeVeilOverload()` (`{ chargeT, usedThisRound,
 deniedCueCount }`).
 
 See `docs/specs/lul-3150-veil-overload.md`.
@@ -2544,7 +2561,7 @@ it already fires correctly for the sprint-bonus window; both the `title` and the
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
 (`engine/forest-engine.js` L7321 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'`. A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6154) and `windAssistEndCue()` (L6163), edge-triggers on the combined
+`windAssistStartCue()` (L6181) and `windAssistEndCue()` (L6190), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
