@@ -2022,7 +2022,23 @@ const predators = [];
 // `speciesIdx` (0..2 within its species) is what LUL-26's `activePerSpecies`
 // preset compares against -- fixed at creation so placePredators() doesn't
 // need to re-derive array position every restart.
-for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
+for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){
+  const p = makePredator(k); p.speciesIdx = i;
+  // LUL-5010: real spawn path for the Beacon Hunter cheap slice -- the
+  // wolf.0 roster slot is a permanent Beacon Hunter in every real game.
+  // speciesIdx 0 is always active (every DIFFICULTY_PRESETS tier has
+  // activePerSpecies >= 1), so this variant is never parked off-map.
+  // placePredators() never touches p.variant (only x/z/state/etc reset on
+  // restart), so this module-load assignment persists for the process
+  // lifetime -- the same reason `speciesIdx` itself is fixed here instead
+  // of being re-derived every restart. qaBuildScene() still overwrites
+  // p.variant per staged spec (engine/forest-engine.js `p.variant =
+  // spec.variant`), so existing micro-world specs that stage a plain wolf
+  // with no `variant` field reset this slot back to undefined -- no e2e
+  // behavior changes for tests that don't opt in.
+  if(k === 'wolf' && i === 0) p.variant = 'beaconHunter';
+  predators.push(p);
+}
 let sinceClose = 0, huntTime = 0, spotFlash = 0, rustleFlash = 0, pianoTimer = 0;   // threat timers, spot flash, cover-rustle flash (LUL-2856), approach-note timer
 let sinceBelowMinHunters = 0;   // LUL-2250: seconds the active-hunter count has been below MIN_ACTIVE_HUNTERS
 let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
