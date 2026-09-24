@@ -1,5 +1,6 @@
 import { wrapCoord, wrapDelta, wrapCellIndex } from './wrap.ts';
 import { BRAMBLE_SNAG_SPEED_MUL, LOG_CRAWL_ENTER_RADIUS } from '../../engine/tuning.js';
+import { ROCK_MOUNT_RADIUS } from './rockClimb';
 
 // LUL-450 (resumes LUL-383b/LUL-387): geometry helpers for the hiding-
 // collision bug class, lifted out of engine/forest-engine.js so they are
@@ -658,6 +659,28 @@ export function findHideSpot(
     const lx = dx * co - dz * si, lz = dx * si + dz * co;
     const d = distanceToCoverEdge(lx, lz, c.hx, c.hz);
     if (d < HIDE_RADIUS && d < bestD) { bestD = d; best = c; }
+  }
+  return best;
+}
+
+// ---- rock vantage-climb proximity query (LUL-4528) --------------------------------
+// Same shape as findHideSpot, parameterized to kind === 'rock' and ROCK_MOUNT_RADIUS
+// instead of HIDE_KINDS/HIDE_RADIUS -- reuses the rock's actual AABB edge distance
+// (distanceToCoverEdge, above) rather than a flat center-to-center radius, so a large
+// rock's mount trigger tracks its real footprint the same way hiding does.
+export function findRockMountSpot(
+  x: number, z: number,
+  coverGrid: SpatialGrid<CoverAABB>,
+  cell: number = CELL, span: number = Infinity,
+): CoverAABB | null {
+  let best: CoverAABB | null = null, bestD = Infinity;
+  for (const c of neighbourhood(coverGrid, x, z, cell, span)) {
+    if (c.kind !== 'rock') continue;
+    const dx = wrapDelta(x, c.x, span), dz = wrapDelta(z, c.z, span);
+    const ry = c.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
+    const lx = dx * co - dz * si, lz = dx * si + dz * co;
+    const d = distanceToCoverEdge(lx, lz, c.hx, c.hz);
+    if (d < ROCK_MOUNT_RADIUS && d < bestD) { bestD = d; best = c; }
   }
   return best;
 }
