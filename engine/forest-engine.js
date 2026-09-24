@@ -7287,7 +7287,7 @@ function stepFrame(dt, t, skipRender){
     // predator. Deliberately excludes the stamina check (scentVeilPromptEnabled,
     // below) so the row stays visible, rendered disabled+grayed, when stamina is
     // the only thing blocking it (Q5).
-    scentVeilPromptActive = movingAgainstWind && predators.some(function(p){ return !p.inert && p.scentLock > 0 && p.scentVeilReady; });
+    scentVeilPromptActive = predators.some(function(p){ return !p.inert && scentVeilTriggerActive(p.scentLock, p.scentVeilReady, movingAgainstWind); });
     const scentVeilPromptEnabled = staminaCharge >= SCENT_VEIL_STAMINA_COST;
     // LUL-1258: the mission's nav-cue hum, only while active -- reuses
     // childCry's tempo-carries-distance shape (Ship 1 spec S3d).
