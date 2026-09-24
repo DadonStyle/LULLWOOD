@@ -100,6 +100,12 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
 export const FIREPOWER_RETRIEVAL_BONUS = 8;
 export const FIREPOWER_SPEEDRUN_BONUS = 10;
 
+// LUL-4960: M5 Cold Walk's win-only bonus -- independent of MISSION_REWARDS (Cold Walk is
+// not a MissionKind, decisions/m5-cold-walk-retarget-2026-09-24's architecture note), same
+// additive-only shape as secondaryBonus below. NOT FINAL -- placeholder pending Game
+// Economist repricing for the outbound-leg tension profile (see the SPEC's Design call).
+export const COLD_WALK_REWARD = 8;
+
 // LUL-1210: Stone Marker veil-charm, priced against Deeper Lungs I (120) so it reads as
 // worse value than saving -- game/economy/veil-charm-price. 125-unit landmark distance ->
 // depth >= 31 at the point of purchase by geometry, 16-point margin.
@@ -119,6 +125,7 @@ export function computeWinPayout(
   tier: DifficultyTier = 'lantern',
   missionBonus = 0,
   secondaryBonus = 0,
+  coldWalkBonus = 0,
 ): RunPayout {
   const mult = TIER_MULTIPLIERS[tier].win;
   const cappedDepth = Math.min(computeDepth(maxDistFromHome), 62); // caps blackout's 2.0x win multiplier at 476E (post-LUL-1806 CARRIED/RESCUE); inert for lantern/night, whose max depth is 48
@@ -126,7 +133,7 @@ export function computeWinPayout(
   const survival = Math.round(computeSurvival(survivedSeconds) * mult);
   const carried = Math.round(CARRIED * mult);
   const rescue = Math.round(RESCUE * mult);
-  const total = depth + survival + carried + rescue + Math.round(missionBonus * mult) + Math.round(secondaryBonus * mult);
+  const total = depth + survival + carried + rescue + Math.round(missionBonus * mult) + Math.round(secondaryBonus * mult) + Math.round(coldWalkBonus * mult);
   return { depth, survival, carried, rescue, spent: 0, total };
 }
 

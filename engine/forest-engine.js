@@ -116,6 +116,7 @@ import {
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { CAVE_IMMUNITY_TIME, isCaveImmune } from '@/lib/game/cave';
 import { VEIL_OVERLOAD_DURATION, isVeilOverloadActive } from '@/lib/game/veilOverload';
+import { coldWalkJustBroke } from '@/lib/game/coldWalk';
 import { ROCK_MOUNT_RADIUS, ROCK_MOUNT_DURATION, ROCK_MOUNT_HEIGHT, isRockClimbActive, canMountRock, rockClimbDetectMul } from '@/lib/game/rockClimb';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL, WIND_ASSIST_SPEED_MUL } from '@/lib/game/stamina';
 import { idleGlowIntensity, idleHaloOpacity } from '@/lib/game/childGlow';
@@ -134,6 +135,7 @@ import {
   MISSION_FIREPOWER_REWARD,
   MISSION_REWARDS,
   FIREPOWER_RETRIEVAL_BONUS,
+  COLD_WALK_REWARD,
   FIREPOWER_SPEEDRUN_BONUS,
   computeDepth,
   computeSurvival,
@@ -592,6 +594,7 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 // tick() alongside the other per-frame timers.
 let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
 let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
+let coldWalkOptIn = false, coldWalkBroken = false;
 // LUL-5005: Chapel Sanctuary -- chapelSanctuaryActive is the live dwell gate,
 // chapelSanctuaryChargeT the countdown (decremented in tick() alongside the other
 // per-frame timers, same shape as caveImmuneT/veilOverloadChargeT above).
@@ -3899,6 +3902,7 @@ function enter(){
   runElapsed = 0;
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   veilReserve = false; embersSpent = 0;   // LUL-1210: fresh run, no charm banked or spent
+  coldWalkBroken = false;   // LUL-4960: fresh run, constraint not yet broken
   // LUL-2351: Pocket Stones -- refill the reserve every run (not just restart(), which
   // already tails into enter() -- see the spec's Decisions note on why this can't live
   // in restart() alone) and auto-arm heldThrowable from it, reusing the existing
@@ -6041,7 +6045,8 @@ function finishPickup(){
   const secondaryBonus = secondaryWon
     ? (mission.secondary.data.kind === 'retrieval' ? FIREPOWER_RETRIEVAL_BONUS : FIREPOWER_SPEEDRUN_BONUS)
     : 0;
-  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus), embersSpent);
+  const coldWalkBonus = (coldWalkOptIn && !coldWalkBroken) ? COLD_WALK_REWARD : 0;
+  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus, coldWalkBonus), embersSpent);
   // LUL-1666: unlock is keyed on the *baseline* completing, independent of
   // whether a secondary was even attempted this run -- guardrail is "complete
   // the mission once", not "complete a secondary once". Persisted by
@@ -6303,6 +6308,20 @@ function windPulseCue(){
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.22);
 }
+// LUL-4960: Cold Walk's one-shot "you just lost the bonus" tell -- fires exactly once per
+// run, the frame `running` first goes true after opt-in (see coldWalkJustBroke()). Falling
+// tone distinct in register from rockClimbEndCue (triangle) and veilOverloadEndCue
+// (sawtooth) so all three "something just ended" cues stay distinguishable.
+function coldWalkBrokenCue(){
+  if(captionsOn) pushState({ caption: 'sprinted — the cold walk is broken', captionId: ++captionSeq });
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(320, t); o.frequency.exponentialRampToValueAtTime(140, t + 0.3);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.42);
+}
 // LUL-4897: Beacon Hunter's lock-on cue -- a rising 350->500Hz synth sweep, distinct
 // register and shape from both windPulseCue() above (a 120->180Hz freeze chime) and the
 // howl SFX (predatorCall(), below) so a locked Beacon Hunter doesn't read as either.
@@ -6448,6 +6467,7 @@ function setSensitivity(v){ sensMul = clamp(v, 0.25, 3); pushState({ sensitivity
 function setInvertY(v){ invertY = !!v; pushState({ invertY }); }
 function setReducedMotion(v){ reducedMotionSetting = !!v; pushState({ reducedMotion: reducedMotionSetting }); }
 function setCaptions(v){ captionsOn = !!v; pushState({ captionsOn }); }
+function setColdWalkOptIn(v){ coldWalkOptIn = !!v; pushState({ coldWalkOptIn }); }
 // LUL-1043/LUL-2351: sync from components/Hud.tsx's localStorage read, once on mount --
 // same "engine owns the state, React persists it" split as setDifficulty/setRunMode/etc.
 // above. Bypasses earn/spend logic entirely -- this only ever restores a prior balance,
@@ -6789,6 +6809,10 @@ function stepFrame(dt, t, skipRender){
   let spd = 0, dist = 0, running = false, noiseRadius = 0, movingAgainstWind = false;
   if(playing && !hidden){
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
+    if(coldWalkJustBroke(coldWalkOptIn, coldWalkBroken, pickingUp, running)){
+      coldWalkBroken = true;
+      coldWalkBrokenCue();
+    }
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
@@ -7296,9 +7320,11 @@ function stepFrame(dt, t, skipRender){
       chapelSanctuaryActive,
       chapelSanctuaryChargeT,
       chapelSanctuaryPromptVisible,
+      coldWalkActive: coldWalkOptIn && !pickingUp,
+      coldWalkBroken,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false, coldWalkActive: false });
   }
   // the child's idle glow, outside the pickup cinematic.
   if(!baby.taken){
@@ -7737,7 +7763,7 @@ tick();
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchClimb, triggerTouchShuffle, triggerTouchInteract,
            triggerTouchThrow,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload,
-           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
+           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions, setColdWalkOptIn,
            setEmbers, purchase,
            // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.
            setMissionUnlocks, setSecondaryChoice,
