@@ -5811,6 +5811,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     coverData = (opts.props || [])
       .filter(p => QA_COVER_SHAPE[p.kind])
       .map(p => ({ x: p.x, z: p.z, kind: p.kind, ry: p.ry || 0, ...QA_COVER_SHAPE[p.kind] }));
+    // LUL-2667 (child 5/6): mirror generateCover()'s own large-tree LOS-cover
+    // synthesis (:736 -- `if(!t.culled && t.s > 1.4) coverData.push({ x, z,
+    // hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' })`) for qaBuildScene-placed
+    // trees. Without this, qaStageWalkIntoCover('tree') -- which reads
+    // coverData, not treeData -- can never find a synthetic tree. Real
+    // movement collision against the trunk goes through blockedR()'s grid off
+    // treeData directly and already worked before this change; only the
+    // staging hook's tree branch was unreachable in a qaBuildScene world.
+    for(const t of treeData) if(!t.culled && t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
 
     bogTreeData = [];
 
