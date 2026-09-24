@@ -40,8 +40,11 @@ Nightly-vision backstop for LUL-4527 (Log Crawl-Through). Spec:
 `docs/specs/lul-4527-log-crawl-through.md`.
 
 The e2e suite (`e2e/log-crawl.spec.ts`) proves the wiring: `inLogCrawl` flips true on approach
-and false at the far mouth, and scent deposit is suppressed for the whole crossing (a predator
-staged at the exit mouth stays `'roam'` until the player re-emerges). What it cannot prove is
+and false at the far mouth, scent deposit is suppressed for the whole crossing (checked directly
+against `qaProbeScentTrail().livePoints`, the raw deposit count — sight/noise are untouched by
+this feature and a nearby predator during the crossing would confound the check, see the spec's
+file header), and a predator staged close once the player re-emerges picks up the resumed trail.
+What it cannot prove is
 whether the eye-height crouch actually *reads* as a crawl under real WebGL, and whether the
 first-encounter caption ("Crawling through the log -- you can't sprint or turn until you're
 through.") renders legibly without overlapping the rest of the HUD -- both are exactly the

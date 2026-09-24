@@ -605,7 +605,13 @@ one geometry builder (`makePredator()`), differentiated by the
   `inLogCrawl` (the forced branch has no call site for it at all), so a
   predator loses scent continuity for the crossing and re-acquires the
   instant the player resumes normal movement at the exit mouth — a pure
-  side effect of the branch split, not new predator AI. This is a third,
+  side effect of the branch split, not new predator AI. Sight and noise
+  detection are untouched: `hasLOS()`'s pre-existing walkable-cover
+  exemption (LUL-2320(A)) means a predator with a clear sightline down the
+  log's own axis still sees straight through it while the player is inside
+  the log's footprint, and `checkNoise()` still rolls every moving frame
+  (`NOISE_RADIUS_WALK`) regardless of `inLogCrawl` — this feature is scent-
+  continuity only, not a stealth/invisibility mechanic. This is a third,
   separate boolean state from `hidden`/`HIDE_KINDS` — log stays out of
   `HIDE_KINDS` (LUL-2311's reasoning still stands; a crawl is a transit,
   not a static hide). `qaPlayerState()` exposes `inLogCrawl`/
