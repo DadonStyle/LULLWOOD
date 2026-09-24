@@ -26,9 +26,7 @@ const E2E = join(ROOT, 'e2e');
 
 // Files allowed to load the full map, and why. Keep this list SHRINKING.
 export const FULLMAP_ALLOWLIST: Record<string, string> = {
-  'e2e/bog-zone.spec.ts': 'bog is zeroed in the micro preset',
   'e2e/map-seed.spec.ts': 'seeded generator reproduces the real layout',
-  'e2e/lul211-founder-report.spec.ts': "founder's walk-into-cover replays on the pinned full layout",
   'e2e/prop-density.spec.ts': 'per-chunk caps over the full 8x8 grid',
   'e2e/layout.spec.ts': 'canvas-fills-viewport on the shipped default boot',
   'e2e/qa-world-micro-budget.spec.ts': 'the full-map memory budget itself',
@@ -36,7 +34,6 @@ export const FULLMAP_ALLOWLIST: Record<string, string> = {
   'e2e/predator-determinism.spec.ts': 'byte-identical traces across two full-map boots',
   'e2e/qa-probe-perf.spec.ts': 'boot-cost probe of the real map',
   'e2e/tree-pathing.spec.ts': "go-around against the pinned seed's trunk clusters",
-  'e2e/mobile/bog-zone.spec.ts': 'bog is zeroed in the micro preset (phone viewport)',
   'e2e/mobile/prop-density.spec.ts': 'per-chunk caps over the full grid (phone viewport)',
   'e2e/mobile/minimap.spec.ts': 'w2m clamping past the forest/bog seam (phone viewport)',
   'e2e/mission-landmark-sync.spec.ts': 'full-map-only mission/landmark sync path -- the micro world\'s mission target is a different, intentionally-decoupled synthetic position (LUL-2578)',
@@ -102,12 +99,14 @@ test('the allowlist only shrinks: no stale entries, nothing added without a reas
     assert.ok(present.has(rel), `allowlist names a spec that no longer exists: ${rel}`);
     assert.ok(reason.trim().length > 10, `allowlist entry needs a real reason: ${rel}`);
   }
-  // LUL-2740 (2026-09-17): +1 for e2e/mission-landmark-sync.spec.ts, the one
-  // case this ticket's own CTO fix-direction requires -- promotes a manual
-  // request file that was timing out (shared/local-qa/requests/lul-2187-
-  // mission-panel-overlap.md) into real CI coverage of a full-map-only code
-  // path (mission target must sync to the landmark's real, unscaled placement).
-  assert.ok(Object.keys(FULLMAP_ALLOWLIST).length <= 14, 'the @fullmap allowlist may only shrink (14 on 2026-09-17, was 13 on 2026-09-11)');
+  // LUL-2740 (2026-09-17): +1 for e2e/mission-landmark-sync.spec.ts (see git
+  // blame for the full note). LUL-2667 child 5 (2026-09-22): -2, both
+  // lul211-founder-report.spec.ts (tree case migrated to
+  // e2e/tree-collision.spec.ts) and tree-pathing.spec.ts (migrated in place)
+  // -- first PR in this migration series to actually shrink the count
+  // (rock/log left lul211-founder-report.spec.ts on the list since tree
+  // still needed it).
+  assert.ok(Object.keys(FULLMAP_ALLOWLIST).length <= 12, 'the @fullmap allowlist may only shrink (12 on 2026-09-22, was 14 on 2026-09-17, 13 on 2026-09-11)');
 });
 
 test('boot() defaults to the micro world', () => {

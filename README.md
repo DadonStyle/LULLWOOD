@@ -47,7 +47,7 @@ npx playwright test   # e2e suite (desktop + mobile projects)
   effects. Not linted or type-checked (see `eslint.config.mjs`) — a vendored, as-is port.
   Logic is being extracted into typed `lib/game/` units incrementally.
 - `lib/game/` — pure, tested game logic extracted from the engine (cover, jump, charge,
-  lake, bog, predator, event scheduler…). No DOM, no Three.js, no wall-clock reads.
+  mission, predator, event scheduler…). No DOM, no Three.js, no wall-clock reads.
 - `lib/site.ts` — the single source of truth for the site URL, title and description.
   Everything else — canonical tag, Open Graph, JSON-LD, `robots.txt`, `sitemap.xml` —
   derives from it, so a domain change is one redeploy and no edits.

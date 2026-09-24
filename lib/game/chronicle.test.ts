@@ -74,6 +74,13 @@ test('formatChronicle handles hide in an unrecognized cover kind and predator_ga
   ]);
 });
 
+test('formatChronicle renders a line for crawl (LUL-4527 Log Crawl-Through)', () => {
+  const events: ChronicleEvent[] = [{ t: 30, code: 'crawl' }];
+  assert.deepEqual(formatChronicle(events), [
+    '0:30 — you slipped through a hollow log, out the other side.',
+  ]);
+});
+
 test('formatChronicle renders a line for hide_alert when a predator was alerted, and drops the line entirely when none were', () => {
   const events: ChronicleEvent[] = [
     { t: 12, code: 'hide_alert', args: { kind: 'bramble', alerted: 1 } },

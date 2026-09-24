@@ -102,3 +102,45 @@ test("tapping the Hide button inside a hide spot's footprint blocks a lion that 
   const after = await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx);
   expect(after?.canSee, "lion must lose sight of the player once hidden inside the hide spot's footprint").toBe(false);
 });
+
+// LUL-3066 (Hide Reposition / Wind-Gated Shuffle, docs/specs/lul-3066-hide-reposition.md,
+// LUL-1697 engine/React contract): proves the touch Shuffle button drives the same
+// shuffleHide() KeyR drives on desktop (../hide.spec.ts), not just that the button renders.
+// Same facing-direction-fallback approach as the desktop spec -- player.yaw is 0 right after
+// qaTeleportToHideSpot, so no held direction input is needed (and holding one would trip the
+// same "moving breaks cover" check this file's own toggle test above doesn't need to touch).
+test('tapping the Shuffle button drives the same shuffleHide() KeyR drives on desktop', async ({ page }) => {
+  await boot(page, { qaHooks: true, qaWorld: 'micro' });
+
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error('mobile project must have a viewport size');
+  await page.mouse.click(viewport.width / 2, viewport.height / 2);
+  await page.waitForTimeout(1200); // gate fade settle (mobile has no pointer-lock to wait on)
+
+  await page.evaluate(() => window.ForestEngine?.qaBuildScene?.({ props: [{ kind: 'bramble', x: 10, z: 0 }] }));
+  const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.('bramble') ?? null);
+  if (spot === null) {
+    throw new Error('qaTeleportToHideSpot returned null -- no bramble hiding spot was found for this seed');
+  }
+
+  const hideBtn = page.getByTestId('touchHide');
+  await expect(hideBtn).toBeVisible();
+  const pointerOpts = { pointerId: 1, pointerType: 'touch', isPrimary: true, bubbles: true };
+  await hideBtn.dispatchEvent('pointerdown', pointerOpts);
+  await expect
+    .poll(async () => (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.hidden)
+    .toBe(true);
+
+  const before = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
+  if (!before) throw new Error('qaPlayerState unavailable');
+
+  const shuffleBtn = page.getByTestId('touchShuffle');
+  await expect(shuffleBtn).toBeVisible();
+  await shuffleBtn.dispatchEvent('pointerdown', pointerOpts);
+
+  await expect
+    .poll(async () => (await page.evaluate(() => window.ForestEngine?.qaPlayerState?.()))?.z)
+    .toBeLessThan(before.z);
+  const after = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
+  expect(after?.hidden, 'tapping Shuffle must not exit hide').toBe(true);
+});

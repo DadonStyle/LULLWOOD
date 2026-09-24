@@ -54,6 +54,10 @@ export const COVER_RUSTLE_THRESHOLD_S = 12;
  * (engine/tuning.js, LUL-4790) scales it per difficulty. */
 export const COVER_RUSTLE_INTERVAL_S = 5;
 
+// LUL-3066: cooldown between shuffleHide() presses (KeyR / touch Shuffle) -- prevents
+// spamming the reposition as a free, repeated hideTime=0 reset.
+export const SHUFFLE_COOLDOWN_S = 2.0;
+
 /**
  * Whether a predator at `dist` from a throwable's landing point notices it. Pure
  * distance check, deliberately not probabilistic like isNoiseHeard() -- a thrown

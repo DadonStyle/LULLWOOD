@@ -27,6 +27,7 @@ import {
   canopyRadiusAtEye,
   rollCoverPropShape,
   brambleSnagSpeedMultiplier,
+  findLogCrawlEntry,
   STILL_RAMP,
   STILL_DETECT_CUT,
   PLAYER_COLLISION_RADIUS,
@@ -1068,6 +1069,29 @@ test('brambleSnagSpeedMultiplier: full speed once the snag timer clears', () => 
 test('brambleSnagSpeedMultiplier: reduced while the snag timer is live', () => {
   assert.ok(brambleSnagSpeedMultiplier(0.3) < 1);
   assert.ok(brambleSnagSpeedMultiplier(0.01) < 1);
+});
+
+// ---- findLogCrawlEntry (LUL-4527) --------------------------------------------
+
+test('findLogCrawlEntry: null with no logs nearby', () => {
+  const coverGrid = makeGrid<CoverAABB>([]);
+  assert.equal(findLogCrawlEntry(0, 0, 1, 0, coverGrid, CELL, Infinity), null);
+});
+
+test('findLogCrawlEntry: finds the near mouth of a log dead ahead, ry=0', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 5, z: 0, hx: 1.85, hz: 0.475, kind: 'log', ry: 0 }]);
+  // player just outside the -x mouth (5 - 1.85 - 0.5 = 2.65), walking +x (toward the log)
+  const r = findLogCrawlEntry(2.65, 0, 1, 0, coverGrid, CELL, Infinity);
+  assert.ok(r);
+  assert.ok(Math.abs(r.exitX - 6.85) < 0.05); // far mouth: 5 + 1.85
+  assert.ok(Math.abs(r.dirX - 1) < 1e-5);
+});
+
+test('findLogCrawlEntry: walking past without turning toward it does not trigger', () => {
+  const coverGrid = makeGrid<CoverAABB>([{ x: 5, z: 0, hx: 1.85, hz: 0.475, kind: 'log', ry: 0 }]);
+  // near the mouth but moving parallel (+z), not toward the log's center
+  const r = findLogCrawlEntry(2.65, 0, 0, 1, coverGrid, CELL, Infinity);
+  assert.equal(r, null);
 });
 
 // ---- wrap span (LUL-1485) ----------------------------------------------------

@@ -423,7 +423,16 @@ const OVERLAY_STYLE = `
      the "bear" hint text at the 240px mobile max-width below, ~57px tall) plus a
      small visual gap -- tune it up if a future, longer HINT_TEXT entry still clips. */
   #scentTrailCaption, #hintCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
-    left: var(--hint-left, 50%);
+    /* LUL-4328: the engine only clamps the anchor fraction to [0.08, 0.92]
+       (engine/forest-engine.js), which bounds the world-projected point but not this
+       pill's own rendered width (max-width: 60vw below) -- a pill anchored near either
+       edge could still have its centered, -50%-translated left edge land offscreen (the
+       scentTrailCaptionGlyph span, first flex child, is what went invisible). Since the
+       pill can never be wider than 60vw, its half-width can never exceed 30vw, so
+       clamping the center to [30vw, 70vw] keeps both edges on-viewport on every screen
+       this rule applies to (position: fixed, so % and vw resolve identically here) --
+       no per-viewport tuning needed even if a longer HINT_TEXT is added later. */
+    left: clamp(30vw, var(--hint-left, 50%), 70vw);
     top: min(var(--hint-top, 50%), calc(100% - var(--action-slot-bottom) - var(--action-slot-height) - 24px));
     max-width: 60vw; padding: 6px 14px; border-radius: 999px; pointer-events: none;
     background: rgba(18,34,34,0.6); border: 1px solid rgba(159,224,208,0.4);
@@ -610,7 +619,8 @@ const OVERLAY_STYLE = `
        translate(-50%,-120%) needs ~1.2x the pill's own rendered height of
        clearance above that edge to avoid drawing over #actionSlot. A real
        two-line pill (this family's text routinely wraps at the 240px
-       max-width below) is ~40-57px tall, so iPhone SE landscape would need
+       max-width the narrower override below applies) is ~40-57px tall, so
+       iPhone SE landscape would need
        the ceiling to sit >=1.2x that above y=0 -- no ceiling tuning gets
        there since the ceiling is already capped at 9px; LUL-2594's fix
        narrowed the gap but the viewport is structurally too short to float
@@ -716,6 +726,39 @@ const OVERLAY_STYLE = `
        windIndicatorHint-vs-minimap clearance. */
     body[data-admin-mode="1"] #windIndicatorHint { top: 64px; }
   }
+  /* LUL-4931: LUL-4786 added a third 56px button (Shuffle) into
+     MobileControls.tsx's right-hand touch row (Hide/Shuffle/Veil), widening
+     that row from 122px (2 buttons + 1 gap) to 188px. That row's container is
+     right-anchored (MobileControls.tsx's wrapper uses justify-content:
+     space-between, side auto-sizes to its widest child), so the extra 66px
+     grows the column leftward, toward center, instead of off the right edge --
+     Veil's position is unchanged but Hide (now leftmost of the three) sits
+     66px further left than the ~128px-column math the block above was tuned
+     against. On iPhone SE landscape (667px wide, the narrower of the two
+     breakpoints this file supports) the self-anchored #hintCaption/
+     #scentTrailCaption family above is centered (left:50%) with
+     max-width:min(60vw,300px) -> 300px there, whose right edge (333.5 + 150 =
+     483.5) now reaches past touchHide's new left edge (459) -- confirmed by
+     local-qa's PR watch (pr-e2e-850-69fd145). Pixel 5 landscape (851px) has
+     enough width that the same 66px column growth doesn't reach the 300px-wide
+     pill (not flagged), so this only narrows the family for the tighter
+     breakpoint via max-width: 700px (667 matches, 851 doesn't) rather than
+     shrinking both and re-litigating the Pixel 5 pill-height budget above.
+     240px keeps the pill's right edge at 333.5 + 120 = 453.5, clear of
+     touchHide's 459 with a few px to spare; text wrapping to a 3rd line only
+     grows the pill downward (top is fixed, not translateY'd), away from the
+     touch row's y-band, so it doesn't reopen a vertical clearance issue. */
+  @media (max-height: 420px) and (max-width: 700px) {
+    #hintCaption[data-hint-key="bog"],
+    #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
+    #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
+    #scentTrailCaption,
+    #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
+    #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
+    #hintCaption[data-hint-key="throwable"] {
+      max-width: 240px;
+    }
+  }
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
     z-index: 12; display: grid;
@@ -795,6 +838,13 @@ const OVERLAY_STYLE = `
   #bearingPulse.behind { background:
     linear-gradient(to right, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%),
     linear-gradient(to left, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%); }
+  /* LUL-1633: fills the ~2.0s dead window between fireBoom() and winVisible (the pickup
+     cinematic's e=9.3->11.3 keyframes) with a continuously-building cue instead of a frozen
+     screen. Engine-owned (winPendingEl in forest-engine.js), same ramp-then-hold shape as
+     #rustleFlash. Sibling of #panel, NOT a descendant -- visible with adminMode off
+     (Q3, GameCanvas.tsx:328's selector only matches #panel). */
+  #winPendingCue { position: fixed; inset: 0; z-index: 22; pointer-events: none; opacity: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(255,225,160,0) 55%, rgba(255,225,160,0.4) 100%); }
   #flash { position: fixed; inset: 0; z-index: 23; pointer-events: none; opacity: 0; background: #fff; }
   #deathVideo { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
     z-index: 24; display: none; background: #000; pointer-events: none; }
@@ -823,6 +873,7 @@ function overlayMarkup(mobile: boolean) {
 <div id="spotFlash"></div>
 <div id="rustleFlash"></div><!-- LUL-2856 -->
 <div id="bearingPulse"></div>
+<div id="winPendingCue"></div><!-- LUL-1633 -->
 <div id="flash"></div>
 <canvas id="minimap" width="160" height="160"></canvas>
 <div id="hint">${hint}</div>

@@ -15,13 +15,49 @@ import {
   checkMissionExpiry,
   eligibleMissionPool,
   MISSION_FAR_UNLOCK_WINS,
+  pickHardBabyPosition,
+  BLACKOUT_MIN_RADIUS,
   type MissionState,
+  type Landmark,
 } from './mission.ts';
 import { freshProgression } from './progression.ts';
 
 function fixedRng(value: number): () => number {
   return () => value;
 }
+
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return function rng() {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---- pickHardBabyPosition (moved from lib/game/bog.ts, LUL-4676) ------
+
+test('pickHardBabyPosition is deterministic for a given seed', () => {
+  const a = pickHardBabyPosition(seeded(42), 240, []);
+  const b = pickHardBabyPosition(seeded(42), 240, []);
+  assert.deepEqual(a, b);
+});
+
+test('pickHardBabyPosition never lands closer than BLACKOUT_MIN_RADIUS', () => {
+  for (const seed of [1, 2, 3, 42, 99]) {
+    const p = pickHardBabyPosition(seeded(seed), 240, []);
+    assert.ok(Math.hypot(p.x, p.z) >= BLACKOUT_MIN_RADIUS, `seed ${seed}: (${p.x},${p.z}) is inside the floor`);
+  }
+});
+
+test('pickHardBabyPosition avoids a landmark covering its whole reachable area, still terminates', () => {
+  const landmarks: Landmark[] = [{ x: 22, z: 4, clear: 300 }];
+  const p = pickHardBabyPosition(seeded(7), 120, landmarks, 6, 20, 5);
+  assert.equal(typeof p.x, 'number');
+  assert.equal(typeof p.z, 'number');
+  assert.ok(Number.isFinite(p.x) && Number.isFinite(p.z));
+});
 
 // ---- pickMission ------------------------------------------------------
 

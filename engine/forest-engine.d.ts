@@ -42,7 +42,7 @@ declare global {
       qaTriggerDeath?: (kind?: 'wolf' | 'bear' | 'lion', cause?: 'charge' | 'hunt' | 'chase') => void;
       /** LUL-25: sets difficulty for the *next* generateMap() (restart/regen), not the
        * current map. No UI wires this yet (LUL-26) -- it's how a test exercises hard
-       * mode's "child spawns beyond the bog" before that UI exists. */
+       * mode's "child spawns far from home" before that UI exists. */
       qaSetDifficulty?: (mode: 'normal' | 'hard') => void;
       /** LUL-2225: regenerates the map with an explicit seed, the same
        * generateMap() every other map-gen path calls -- unlike regenMap()/
@@ -50,13 +50,12 @@ declare global {
        * exact layout after qaSetDifficulty('hard'), for pinned-seed blackout
        * spawn coverage. */
       qaRegenerateMap?: (seed: number) => void;
-      /** LUL-2225: the child's world position, its distance from home, and
-       * whether the direct route home crosses the bog's full-bogginess core
-       * (lib/game/bog.ts routeCrossesBog) -- replaces the old `inBog` field
-       * (whether the child itself stood in the bog), which stopped meaning
-       * anything once the patch shrank small enough that no point inside it
-       * is ever >= BLACKOUT_MIN_RADIUS from home. */
-      qaProbeBaby?: () => { x: number; z: number; distHome: number; routeCrossesBog: boolean };
+      /** LUL-2225: the child's world position and its distance from home
+       * (LUL-4676: dropped the `routeCrossesBog` field once the bog was
+       * deleted -- blackout's hard-baby-spawn predicate now requires only
+       * `>= BLACKOUT_MIN_RADIUS` and landmark clearance, see lib/game/mission.ts
+       * pickHardBabyPosition()). */
+      qaProbeBaby?: () => { x: number; z: number; distHome: number };
       /** LUL-2122: babyLight's live intensity/distance plus the pickup/taken
        * state flags, so a test can assert the interact button actually reached
        * pickup() instead of only that it rendered and was tappable. */
@@ -92,9 +91,9 @@ declare global {
         trees: { x: number; z: number }[];
         predators: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number }[];
       };
-      /** LUL-2247: per-chunk prop counts by category (cover/reed/bogTree/stone), the minimum pairwise centre-to-centre distance across every non-tree prop, and the total count -- all read from the finished, post-thin map. */
+      /** LUL-2247: per-chunk prop counts by category (cover/stone), the minimum pairwise centre-to-centre distance across every non-tree prop, and the total count -- all read from the finished, post-thin map. */
       qaProbePropDensity?: () => {
-        perChunk: Array<{ chunk: number; cover: number; reed: number; bogTree: number; stone: number }>;
+        perChunk: Array<{ chunk: number; cover: number; stone: number }>;
         minPairSpacing: number | null;
         total: number;
       };
@@ -113,12 +112,11 @@ declare global {
         expected: number;
       };
       /** LUL-2249: the ring-streamed chunk lifecycle's own live state --
-       * which chunk ids are currently live, how many cover/bog chunks of
+       * which chunk ids are currently live, how many cover chunks of
        * those are live, and the player's own current chunk id. */
       qaProbeChunkStreaming?: () => {
         liveChunks: number[];
         coverLive: number;
-        bogLive: number;
         playerChunk: number;
       };
       /** LUL-2250: active (non-inert, non-parked) predator count + how long
@@ -256,6 +254,14 @@ declare global {
         parked: boolean;
         visible: boolean;
         sightFlicker: number;
+        /** LUL-4893: seconds remaining in an active Predator Pause wind-freeze, 0 otherwise. */
+        windPauseT: number;
+        /** LUL-4897: 'beaconHunter' for that variant, undefined for every ordinary predator. */
+        variant?: 'beaconHunter';
+        /** LUL-4897: true while this predator is mid-chase via the wind-signal lock-on channel. */
+        beaconHunterLocked: boolean;
+        /** LUL-4996: seconds remaining in the post-freeze re-arm cooldown, 0 otherwise. */
+        windPauseCooldownT: number;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
@@ -294,6 +300,7 @@ declare global {
         x: number; z: number; yaw: number; pitch: number; mode: 'desktop' | 'mobile';
         jumping: boolean; paused: boolean; toggleRunOn: boolean; veilHeld: boolean;
         hidden: boolean; brambleSnagT: number;
+        inLogCrawl: boolean; logCrawlExitX: number; logCrawlExitZ: number;
       };
       /** LUL-388: places `kind` in a blind scent-chase (state='chase', scentLock=SCENT_TRACK_TIME)
        * within catch range (dist < rad+CATCH_MARGIN) of the player, with a real cover prop's
@@ -372,6 +379,32 @@ declare global {
         dist: number;
         trace: { t: number; dist: number; state: string; reached: boolean }[];
       } | null>;
+      /** LUL-5046: fixed-step sibling of qaStageAndTraceBehindTree above.
+       * That hook's maxMs budget is real wall-clock time (performance.now())
+       * against a frame dt that's clamped to DT_CLAMP_CEILING=0.05 every
+       * tick -- under CI-realistic CPU contention simulated time falls
+       * behind wall-clock time in proportion to how loaded the machine is,
+       * so the same simulated arc (predators legitimately swing 2x+ further
+       * from the player than the staged distance before curving back in,
+       * confirmed live -- not a bug) needs proportionally more real seconds
+       * to finish, which can exceed a fixed maxMs on a loaded runner even
+       * though nothing about the steering itself is wrong. This variant
+       * drives simulated time directly through qaAdvance's own stepFrame()
+       * call instead of requestAnimationFrame, so the trace depends only on
+       * simulated steps -- immune to real CPU speed. Requires
+       * qaSetFixedStep(dt) first (same precondition qaAdvance() has).
+       * Synchronous (no page-render wait needed, unlike the rAF-driven
+       * sibling), returns null if staging failed (see qaStageBehindTree). */
+      qaStageAndTraceBehindTreeFixed?: (
+        kind: 'wolf' | 'bear' | 'lion',
+        margin: number,
+        maxSteps: number,
+      ) => {
+        idx: number;
+        kind: 'wolf' | 'bear' | 'lion';
+        dist: number;
+        trace: { t: number; dist: number; state: string; reached: boolean }[];
+      } | null;
       /** LUL-69: the live camera vertical FOV (degrees) -- confirms the
        * mobile/desktop CAMERA_FOV split in init() actually took effect. */
       qaCameraFov?: () => number;
@@ -484,6 +517,17 @@ declare global {
        * qaTeleportNearThrowable, works regardless of where the landmark actually sits (the
        * micro QA world leaves LANDMARKS untouched). Returns the marker's position. */
       qaTeleportNearStoneMarker?: () => { x: number; z: number };
+      /** LUL-4894: places the player 2 units off ROOSTS[i]'s live position on the +z side,
+       * yaw untouched -- with the default yaw=0 facing (-z), an immediate throw lands 16u
+       * from the player, straight at the roost, inside its 20u radius. Mirrors
+       * qaTeleportNearStoneMarker, since the micro QA world leaves ROOSTS untouched. Omit
+       * `i` to target whichever roost is nearest the player's current position. Returns
+       * null if `i` doesn't exist. */
+      qaTeleportNearRoost?: (i?: number) => { i: number; x: number; z: number } | null;
+      /** LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a test
+       * assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
+       * that a second throw within the cooldown window does not re-flush it. */
+      qaProbeRoostState?: (i: number) => { cooldown: number; burstActive: boolean };
       /** LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. `releaseCueCount` is
        * the mist-charm activation cue's fire count, so a test can assert it fired without
        * decoding actual WebAudio output. */
@@ -553,20 +597,20 @@ declare global {
       qaGetChronicle?: () => { t: number; code: string; args: Record<string, unknown> | null }[];
       /** LUL-2328: builds a minimal, exact scene -- no rng, no full
        * generateMap() -- for tests that don't need the real procedural
-       * forest. Clears and replaces treeData/coverData/bogTreeData and every
+       * forest. Clears and replaces treeData/coverData and every
        * predator's placement; landmarkData/throwableData/mission and the
        * player's position are left untouched. `predators` matches the fixed
        * 3-per-species pool by `kind` in array order (a 4th of the same kind
        * is dropped); every unmatched predator is parked inert. Cover `kind`
-       * must be one of 'log'|'rock'|'bramble'|'reed' -- an unrecognised kind
+       * must be one of 'log'|'rock'|'bramble' -- an unrecognised kind
        * is dropped, not an error. Works with `?qaWorld=micro` and
        * `?qaNoRender=1` (both boot-time URL params, not hooks -- see
        * docs/specs/lul-2328-qa-world-micro-hooks.md). Returns the counts
        * actually placed. */
       qaBuildScene?: (scene: {
         trees?: { x: number; z: number; s?: number }[];
-        props?: { kind: 'log' | 'rock' | 'bramble' | 'reed'; x: number; z: number; ry?: number }[];
-        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string }[];
+        props?: { kind: 'log' | 'rock' | 'bramble'; x: number; z: number; ry?: number }[];
+        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string; variant?: 'beaconHunter' }[];
         child?: { x: number; z: number };
         home?: { x: number; z: number };
       }) => { trees: number; props: number; predators: number };
@@ -581,30 +625,9 @@ declare global {
         heap: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number } | null;
         renderer: { geometries: number; textures: number };
       };
-      /** LUL-2225: bogginess (biomeAt) and the two multipliers derived from
-       * it (bogSpeedMultiplier/bogNoiseMultiplier) at an arbitrary world
-       * point -- lets a test sample the patch's shape/edge directly instead
-       * of re-deriving lib/game/bog.ts's math from player position. */
-      qaProbeBog?: (x: number, z: number) => { bogginess: number; speedMul: number; noiseMul: number };
-      /** LUL-2225: counts of the live map's own generated data that fall
-       * inside the bog's keep-clear radius (lib/game/bog.ts bogKeepClear) --
-       * every field should read 0 except `treesInsideCore`, which is
-       * expected to be small but nonzero (sparse forest inside the patch,
-       * not none; see the tree-culling comment in generateMap()).
-       * `treesInsideCore` counts only non-culled trees within
-       * BOG_INNER_RADIUS specifically (not the wider keep-clear radius used
-       * for everything else), matching the density check the spec's e2e
-       * section computes against. */
-      qaProbeBogKeepClear?: () => {
-        coverInside: number;
-        reedsInsideCore: number;
-        throwablesInside: number;
-        treesInsideCore: number;
-        landmarksInside: number;
-      };
       /** LUL-2225: teleports the player to an arbitrary world point --
        * generic version of qaTeleportNearBaby/qaTeleportHome, for staging a
-       * position (e.g. the bog center) that isn't a fixed named landmark. */
+       * position that isn't a fixed named landmark. */
       qaTeleportTo?: (x: number, z: number) => void;
       /** LUL-2336: force-sets chargeVisible/objectiveVisible/coverPromptVisible/
        * heldThrowable/statusVisible all true on the real EngineHudState via

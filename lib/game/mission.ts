@@ -7,6 +7,52 @@
 import type { Progression } from './progression.ts';
 import type { DifficultyTier } from './economy.ts';
 
+export interface Point {
+  x: number;
+  z: number;
+}
+
+export interface Landmark extends Point {
+  clear: number; // radius to keep clear of, in world units
+}
+
+// Floor for blackout-difficulty's hard baby-spawn draw below -- lantern's spawn annulus
+// tops out at half*0.8=192u at half=240, so this never spawns closer than lantern's
+// hardest draw. Moved from lib/game/bog.ts (LUL-4676): this was never a bog mechanic,
+// only coupled to bog geometry via a route-crosses-the-patch condition that had no
+// meaning once the patch stopped existing -- see docs/specs/lul-4676-delete-bog.md.
+export const BLACKOUT_MIN_RADIUS = 192;
+
+export function clearOfLandmarks(x: number, z: number, landmarks: readonly Landmark[], pad: number): boolean {
+  return landmarks.every((l) => Math.hypot(x - l.x, z - l.z) >= l.clear + pad);
+}
+
+/**
+ * Draws a point from `rng` at least BLACKOUT_MIN_RADIUS from home, at least `margin` units
+ * in from the map edge on both axes, clear of every landmark by `pad`. Bounded by
+ * `maxTries` so a landmark layout that happens to leave no candidate can't spin forever --
+ * returns its last candidate rather than looping.
+ */
+export function pickHardBabyPosition(
+  rng: () => number,
+  half: number,
+  landmarks: readonly Landmark[],
+  pad = 6,
+  margin = 20,
+  maxTries = 200,
+): Point {
+  const lo = -Math.max(0, half - margin);
+  const hi = Math.max(0, half - margin);
+  let x = 0;
+  let z = 0;
+  for (let i = 0; i < maxTries; i++) {
+    x = lo + rng() * (hi - lo);
+    z = lo + rng() * (hi - lo);
+    if (Math.hypot(x, z) >= BLACKOUT_MIN_RADIUS && clearOfLandmarks(x, z, landmarks, pad)) return { x, z };
+  }
+  return { x, z };
+}
+
 export type MissionKind = 'deepwater' | 'oakHollow';
 
 export interface MissionTarget {

@@ -114,6 +114,47 @@ export function shouldDowngradeChase(scentLock: number, sightFlicker: number, ca
   return scentLock <= 0 && sightFlicker <= 0 && !canSeeNow;
 }
 
+// ---- Predator Pause (LUL-4893) ---------------------------------------------------
+// Wind-gated freeze for a predator mid ordinary chase pursuit: sprinting perpendicular
+// to the player's facing while the wind is at its back. Evaluated only at the
+// `p.state === 'chase'` fallback branch (engine/forest-engine.js, the `desx=ux;
+// desz=uz; speed=p.spec.speed` line) -- charge/sightLock/alert/reroute/searchPath/hunt
+// all sit ahead of it in updatePredators()'s priority chain and already own their own
+// freezes, so this never fires underneath them.
+//
+// `ux,uz` is the predator->player unit vector (the predator's travel direction while
+// chasing); `fx,fz` is the player's facing (`-Math.sin(player.yaw), -Math.cos(player.yaw)`,
+// the same two-line pattern already used at several audio-panning call sites in the
+// engine); `windX,windZ` is the map-constant wind unit vector (generateWind(), drawn once
+// per generateMap()).
+export const WIND_PAUSE_PERPENDICULAR_THRESHOLD = 0.2; // |dot(approach, facing)| below this reads as "crossing," not "toward/away"
+export const WIND_PAUSE_DOWNWIND_THRESHOLD = 0.6;      // dot(approach, wind) above this reads as "wind at its back"
+export const WIND_PAUSE_DURATION = 0.3;                // seconds the sprint freeze holds once triggered
+// LUL-4996: re-arm cooldown after a trigger, fixing the documented (docs/ELEMENTS.md
+// "Known limitation") indefinite-freeze hole -- a stationary player leaves the
+// approach/facing/wind geometry unchanged from tick to tick, so with no cooldown the
+// freeze decayed to 0 and `shouldWindPause` fired again on the very next tick, forever
+// (LUL-4996's proof: e2e/missions-fire-tower.spec.ts and e2e/positional-hiding.spec.ts's
+// catch-path cases both script exactly this -- a stationary player facing a chasing
+// predator -- and both are real-play reachable, not QA-hook-only). The predator keeps
+// pursuing at full speed during the cooldown window (only the *retrigger check* is
+// suppressed, not movement) so the cooldown cannot itself stall a chase.
+export const WIND_PAUSE_COOLDOWN = 2.0;                // seconds after a freeze ends before it can retrigger
+
+export function shouldWindPause(
+  ux: number,
+  uz: number,
+  fx: number,
+  fz: number,
+  windX: number,
+  windZ: number,
+): boolean {
+  const facingDot = ux * fx + uz * fz;
+  if (Math.abs(facingDot) >= WIND_PAUSE_PERPENDICULAR_THRESHOLD) return false;
+  const windDot = ux * windX + uz * windZ;
+  return windDot > WIND_PAUSE_DOWNWIND_THRESHOLD;
+}
+
 // ---- per-tick timer decay ------------------------------------------------------
 // `scentLock` and `chargeCooldown` both tick down unconditionally, in every
 // predator state, every frame (lines 903-905 on main). That is load-bearing:

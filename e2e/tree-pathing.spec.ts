@@ -40,9 +40,50 @@
 // direct line or a reasonable sidestep -- keeping the scenario to exactly
 // one obstacle, close enough that the total gap for every species stays
 // under 4 units.
+//
+// LUL-2667 (child 5/6, 2026-09-22): migrated off @fullmap. qaStageBehindTree's
+// own tree search and neighbour-isolation math (engine/forest-engine.js:5325-
+// 5361) are unchanged and don't care how treeData was populated -- a
+// qaBuildScene single-tree scene satisfies the isolation check trivially (no
+// second tree exists to crowd the lane).
+//
+// LUL-5046: the rest of this file used to trace via qaStageAndTraceBehindTree,
+// which drives the real requestAnimationFrame loop and budgets *wall-clock*
+// time (MAX_MS, measured with performance.now()) for the predator to reach
+// the player. That looked solid on an idle rig (4x margin over a ~2s
+// measurement) but broke on CI's actual 4-core runner and on
+// `taskset -c 0-3` locally: wolf/lion (bear happened not to trip it) would
+// still be short of contact range with dist *larger* than the staged
+// distance when the 8s budget ran out.
+//
+// Root-caused live (not guessed): staged this way, the predator's committed
+// avoidance angle (pickCommittedAvoidDirection, lib/game/steer.ts,
+// AVOID_COMMIT_TIME=1.0 *simulated* second) genuinely swings it 2x+ further
+// from the player than the staged distance before it curves back in and
+// closes -- confirmed with qaSetFixedStep(0.05)+qaStageAndTraceBehindTreeFixed
+// below, at full real-time speed too. That's normal, correct steering around
+// a trunk at wolf/lion's 8.5-9.2 speed, not a regression. What changes under
+// CPU load is only how much *wall-clock* time that fixed amount of
+// *simulated* time costs: every frame's dt is clamped to
+// DT_CLAMP_CEILING=0.05s (lib/game/scent.ts) so a stall can't teleport a
+// predator through a wall, so once real per-frame time regularly exceeds
+// 50ms (a loaded 4-core runner, a low-end player machine), simulated time
+// falls behind wall-clock time in direct proportion -- the whole simulation
+// runs in slow motion relative to performance.now(), and the same ~2.2-2.4s
+// arc that comfortably beat an 8s wall-clock budget on an idle box can blow
+// straight through it on a contended one, with nothing in the underlying
+// physics actually wrong (wiki: systems/dt-clamp-vs-walltime).
+//
+// Fix: trace in *simulated* time instead of wall-clock time. qaSetFixedStep
+// + qaStageAndTraceBehindTreeFixed (engine/forest-engine.js) drive the exact
+// same stepFrame() the real loop calls, but through qaAdvance's own
+// mechanism (fixed dt, no requestAnimationFrame) -- the trace this produces
+// depends only on simulated steps, never on how fast the host machine can
+// render them. Same LUL-2107/LUL-2838 pattern already used to de-flake
+// other GPU/CPU-timing-sensitive specs (wind-assisted-evasion.spec.ts,
+// action-prompt.spec.ts).
 import { test, expect } from './fixtures';
-import { boot, enter } from './helpers';
-// fullmap-reason: predator go-around measured against the pinned seed's real trunk clusters (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
+import { boot, enter, qaHook } from './helpers';
 
 // Extra clearance beyond (tree trunk radius + predator collision radius) on
 // each side -- just enough that qaStageBehindTree's own qualifying check
@@ -50,43 +91,44 @@ import { boot, enter } from './helpers';
 // spot without the actor's collision circle already overlapping the trunk.
 const MARGIN = 1.0;
 
-// Measured baseline (see PR description) with the tight, neighbour-isolated
-// staging above: on this seed, every species reaches contact range in well
-// under 2s of trace time once it has to go around the tree instead of
-// through it. 8s gives better than 4x margin over that measurement -- enough
-// to absorb CI's slower, more jittery frame timing (wiki:
-// systems/dt-clamp-vs-walltime) without masking a real regression, since the
-// pre-fix behaviour here isn't "a little slower", it's "never arrives"
-// (grinds into the trunk indefinitely, confirmed below).
-const MAX_MS = 8_000;
+// DT_CLAMP_CEILING (lib/game/scent.ts) -- the coarsest dt the real game ever
+// legally runs a frame at (every larger raw delta gets clamped down to this).
+// Driving the trace at exactly this step size, rather than a smoother
+// 60fps-equivalent dt, exercises the worst-case-but-still-legal frame
+// granularity a real contended machine converges on, which is exactly the
+// condition LUL-5046 needs coverage for.
+const FIXED_DT = 0.05;
 
-test.describe('predator behind a tree reaches the player (LUL-1091 regression) @fullmap', () => {
+// Measured live (LUL-5046) with qaSetFixedStep(FIXED_DT) +
+// qaStageAndTraceBehindTreeFixed against this seed's synthetic scene: every
+// species reaches contact range within 46-48 steps (~2.3-2.4s of simulated
+// time), including the full avoid-arc swing described above. 200 steps
+// (10s simulated) is better than 4x margin over that -- same margin
+// philosophy the old wall-clock MAX_MS used, just measured in simulated
+// steps instead of real milliseconds, so CPU load can no longer eat into it.
+const MAX_STEPS = 200;
+
+test.describe('predator behind a tree reaches the player (LUL-1091 regression, qaWorld=micro)', () => {
   for (const kind of ['wolf', 'bear', 'lion'] as const) {
     test(`${kind}: staged directly behind a tree trunk, closes to contact range`, async ({ page }) => {
-      // Deliberately no explicit test.setTimeout() override here -- the trace
-      // itself resolves in ~2s (MAX_MS above), but a real triggerDeath() plus
-      // Playwright's own trace-capture teardown measured ~57.5s wall-clock on
-      // this rig's swiftshader software rendering (LUL-1461, 2026-09-09). An
-      // earlier version of this spec set test.setTimeout(60_000), which is
-      // *tighter* than playwright.config.ts's own already-tuned defaults
-      // (90s locally, 240s on CI) and was the actual cause of every prior
-      // "Test timeout exceeded" failure here -- the in-page trace and the
-      // real death sequence were both completing fine; only the explicit
-      // override was too tight. Rely on the config defaults instead.
-      await boot(page, { qaWorld: 'full',  qaHooks: true });
+      await boot(page, { qaHooks: true }); // qaWorld defaults to 'micro' (helpers.ts)
       await enter(page);
 
-      const result = await page.evaluate(
-        ({ k, margin, maxMs }) => window.ForestEngine?.qaStageAndTraceBehindTree?.(k, margin, maxMs) ?? null,
-        { k: kind, margin: MARGIN, maxMs: MAX_MS },
+      const built = await page.evaluate(
+        ({ k }) => window.ForestEngine?.qaBuildScene?.({ trees: [{ x: 10, z: 0 }], predators: [{ kind: k, x: 0, z: 0 }] }),
+        { k: kind },
       );
+      expect(built).toEqual({ trees: 1, props: 0, predators: 1 });
+
+      await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+      const result = await qaHook(page, 'qaStageAndTraceBehindTreeFixed', kind, MARGIN, MAX_STEPS);
       if (result === null) {
         throw new Error(
-          `qaStageAndTraceBehindTree('${kind}') returned null -- no tree in this seed left both staged points clear of every obstacle and neighbour-isolated`,
+          `qaStageAndTraceBehindTreeFixed('${kind}') returned null -- no tree in this seed left both staged points clear of every obstacle and neighbour-isolated`,
         );
       }
       const { dist: stagedDist, trace } = result;
-      expect(trace.length, 'qaStageAndTraceBehindTree recorded zero frames').toBeGreaterThan(0);
+      expect(trace.length, 'qaStageAndTraceBehindTreeFixed recorded zero steps').toBeGreaterThan(0);
       expect(
         trace[0]!.dist,
         `staged scenario started already inside contact range (dist=${trace[0]!.dist.toFixed(2)}, staged=${stagedDist.toFixed(2)}) -- it never actually had to path around the tree`,
@@ -96,7 +138,7 @@ test.describe('predator behind a tree reaches the player (LUL-1091 regression) @
       console.log('TRACE_DEBUG', JSON.stringify({ kind, stagedDist, n: trace.length, first: trace[0], last }));
       expect(
         last.reached,
-        `${kind} never reached the player within ${MAX_MS}ms -- stopped at dist=${last.dist.toFixed(2)}, state=${last.state} ` +
+        `${kind} never reached the player within ${MAX_STEPS} steps (${(MAX_STEPS * FIXED_DT).toFixed(1)}s simulated) -- stopped at dist=${last.dist.toFixed(2)}, state=${last.state} ` +
           `(pre-LUL-1091 behaviour: grinds into the trunk and never arrives)`,
       ).toBe(true);
     });

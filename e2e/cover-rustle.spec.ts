@@ -200,4 +200,35 @@ test.describe('cover-rustle degradation (LUL-2856)', () => {
     const chronicle = await qaHook(page, 'qaGetChronicle');
     expect(chronicle.some((e: any) => e.code === 'cover_rustle')).toBe(false);
   });
+
+  test('a successful shuffle resets coverRustleAccum -- the timer doesn\'t carry a near-threshold hideTime across a reposition', async ({ page }) => {
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+    await stageHidden(page);
+
+    await advanceChunked(page, stepsFor(BEFORE_THRESHOLD_S));
+
+    // shuffleHide() (LUL-3066/LUL-4786) needs a direction to resolve -- hold the
+    // movement key only across the KeyR keydown, never across a tick, so
+    // stepFrame()'s own `hidden && moveKey -> exitHide()` gate (:6617) never gets a
+    // turn between the key going down and coming back up (qaSetFixedStep() means no
+    // tick runs except via advanceChunked, so this is safe).
+    await page.keyboard.down('KeyD');
+    await page.keyboard.press('KeyR');
+    await page.keyboard.up('KeyD');
+
+    // Proves the shuffle itself actually landed (not silently no-op'd by shuffleHide()'s
+    // own `blocked(nx, nz)` early return) -- without this the test below would pass
+    // vacuously even if shuffleHide() did nothing at all.
+    const afterShuffle = await qaHook(page, 'qaGetChronicle');
+    expect(afterShuffle.some((e: any) => e.code === 'hide_reposition')).toBe(true);
+
+    // Second full BEFORE_THRESHOLD_S window: if hideTime/coverRustleAccum hadn't
+    // restarted from 0 at the shuffle, the original threshold would already be well
+    // past by now and a rustle would have fired partway through this window.
+    await advanceChunked(page, stepsFor(BEFORE_THRESHOLD_S));
+
+    const chronicle = await qaHook(page, 'qaGetChronicle');
+    expect(chronicle.some((e: any) => e.code === 'cover_rustle')).toBe(false);
+  });
 });
