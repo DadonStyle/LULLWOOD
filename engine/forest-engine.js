@@ -791,7 +791,7 @@ function treeChunkIndex(x, z){
 // category's data or simply not currently live.
 let treeChunkTrios = [];     // chunk id -> [trunk, cone1, cone2], live tree chunks only
 let treeChunkBuckets = [];   // chunk id -> indices into treeData, every populated chunk
-let coverChunkMeshes = [];   // chunk id -> { log?, rock?, bramble?, reed?: InstancedMesh }, live only
+let coverChunkMeshes = [];   // chunk id -> { log?, rock?, bramble?: InstancedMesh }, live only
 let coverChunkBuckets = [];  // chunk id -> indices into coverData (non-'tree' kinds only)
 let liveChunks = new Set();  // chunk ids currently live -- one liveness set, every category
                               // streams in/out together since they all share one ring
@@ -898,9 +898,9 @@ function updateStreamedChunks(force){
   }
 }
 
-// ---- cover/reed pool: per-chunk InstancedMesh, per-chunk coverGrid entries ----
+// ---- cover pool: per-chunk InstancedMesh, per-chunk coverGrid entries ----
 // coverData already carries x/z (bucketable via the same treeChunkIndex() every
-// category shares) and kind (log/rock/bramble/reed); 'tree' entries (tagged
+// category shares) and kind (log/rock/bramble); 'tree' entries (tagged
 // forest trees, already handled above) are excluded.
 function bucketCoverChunks(){
   const nChunks = TREE_CHUNKS_PER_AXIS * TREE_CHUNKS_PER_AXIS;
@@ -920,7 +920,7 @@ function ensureCoverChunk(c){
   if(coverChunkMeshes[c]) return;
   const idxs = coverChunkBuckets[c];
   if(!idxs || idxs.length === 0) return;
-  const byKind = { log: [], rock: [], bramble: [], reed: [] };
+  const byKind = { log: [], rock: [], bramble: [] };
   for(const i of idxs) byKind[coverData[i].kind].push(i);
   const meshes = {};
   for(const kind in byKind){
@@ -1339,7 +1339,6 @@ Object.values(landmarkGroups).forEach(g => scene.add(g));
 function clearLandmarkSpot(x, z, clear){
   const obstacles = [
     ...treeData.map(t => ({ x: t.x, z: t.z, radius: t.cr })),
-    ...bogTreeData.map(t => ({ x: t.x, z: t.z, radius: t.cr })),
     ...coverData.map(c => ({ x: c.x, z: c.z, radius: Math.max(c.hx, c.hz) })),
   ];
   return findClearLandmarkSpot(x, z, clear, obstacles);
@@ -1892,9 +1891,9 @@ let windHighSpeed = false;   // LUL-2539: rolled once per generateMap(), see gen
 function generateWind(){
   const a = rng() * Math.PI * 2;
   windX = Math.cos(a); windZ = Math.sin(a);
-  // LUL-2539: independent one-shot generator, NOT the shared `rng` stream -- generateWind()
-  // is the last rng() consumer before generateBogTrees() (:1108), and drawing from the shared
-  // stream here would shift every later map-gen roll for the same seed (QA_PINNED_SEED drift).
+  // LUL-2539: independent one-shot generator, NOT the shared `rng` stream -- drawing from
+  // the shared stream here would shift every later map-gen roll for the same seed
+  // (QA_PINNED_SEED drift).
   windHighSpeed = mulberry32(currentSeed ^ 0x57494e44)() < 0.5;
 }
 
@@ -1924,7 +1923,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // a fresh install), and a higher-priority key preempts a lower-priority one
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
-const HINT_PRIORITY = ['scent','landmark','bog','deepwater','oakHollow',
+const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow',
   'wolf','bear','lion','stamina','windAssist','cover','caveImmune','veilOverload','throwable','veil'];
 // 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
 // projected to a viewport fraction via projectToScreen() below, same math the
@@ -1937,7 +1936,6 @@ const WORLD_HINT_KEYS = { scent:1, wolf:1, bear:1, lion:1, cover:1, throwable:1 
 const HINT_TEXT = {
   scent:      'this is your scent trail — predators follow it',
   landmark:   'landmarks in the fog are safe to navigate by',
-  bog:        'bog — half pace, but it masks your scent from wolves',
   deepwater:  'the fire tower — a bonus payout, but only if you reach it within the time limit',
   oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
@@ -2332,10 +2330,6 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     if(p.inert || p.parked) continue;   // LUL-26: parked out for the current difficulty preset; LUL-2250: outside the live streaming ring
     const dx = wrapDelta(player.x, p.x, WRAP_SPAN), dz = wrapDelta(player.z, p.z, WRAP_SPAN), dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
-    // LUL-1309: predators wade too -- same per-position terrain sample the
-    // player already gets at :3173/:3179, applied to this predator's own (x,z).
-    // LUL-1861: bog component dropped here -- LUL-1483's speed *= bogSpeedMultiplier(biomeAt(...))
-    // below already applies bog once, terminally; keeping it here too double-applies it.
     // LUL-2422: CONFIG.speedScaleMul (default 1, set by applyQaWorldMicroPreset) folded in
     // here so every `*pSpeedScaleMul` speed site below is scaled together -- mirrors
     // detectScaleMul's fold-in at effectiveDetect() (LUL-2407).
@@ -2699,13 +2693,6 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     }
 
     if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz, dt);
-
-    // LUL-1483: wading, same as the player -- applied once here rather than
-    // at each state branch above, since every one of them (hunt/chase/
-    // investigate/flank/reroute/charge) already funnels into this one
-    // `speed` read. Was previously player-only (bogSpeedMultiplier at
-    // player-movement's maxSpd, above); predators waded at full land speed.
-    speed *= bogSpeedMultiplier(biomeAt(p.x, p.z));
 
     // smooth velocity + collide with trees (axis-separated slide)
     const dvx = desx*speed, dvz = desz*speed, accel = speed > 0 ? 3.6 : 6;
@@ -3153,11 +3140,11 @@ function scheduleBirdChirp(){
   const nextMs = (0.4 + Math.random() * 1.6) / TOD_AUDIO.birdsChirpHz * 1000;
   later(scheduleBirdChirp, nextMs);
 }
-// LUL-25: bog footstep foley -- a noise burst through a lowpass sweep (bright
-// slap of impact dropping to a dull glug as the ripple settles), same
-// building blocks as the rest of this file's all-procedural audio. Deliberately
-// louder than footstep() (see the bogNoiseMultiplier call site) -- the whole
-// point of wading through the bog is that it costs you on the sound channel.
+// LUL-25: wading footstep foley -- a noise burst through a lowpass sweep
+// (bright slap of impact dropping to a dull glug as the ripple settles),
+// same building blocks as the rest of this file's all-procedural audio.
+// Deliberately louder than footstep() -- the whole point of wading is that
+// it costs you on the sound channel. Used for lake wading (LUL-4675).
 function splash(vol){
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
@@ -3745,7 +3732,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // just a parameterized seed instead of a random one.
   window.ForestEngine.qaRegenerateMap = function(seed){ generateMap(seed >>> 0); };
   window.ForestEngine.qaProbeBaby = function(){
-    return { x: baby.x, z: baby.z, distHome: Math.hypot(baby.x, baby.z), routeCrossesBog: routeCrossesBog(0, 0, baby.x, baby.z) };
+    return { x: baby.x, z: baby.z, distHome: Math.hypot(baby.x, baby.z) };
   };
   // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
   // "this world point stays on-canvas" for both the player arrow (which calls
@@ -3771,32 +3758,8 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeTimeOfDay = function(){
     return { state: timeOfDay, visual: TOD_VISUAL, audio: TOD_AUDIO };
   };
-  // LUL-2225: bogginess and its two derived multipliers at an arbitrary
-  // point, so a test can sample the patch's shape/edge directly (centre,
-  // the inner/outer radii, home, every LANDMARKS/CAVE position)
-  // without re-deriving lib/game/bog.ts's math from player position.
-  window.ForestEngine.qaProbeBog = function(x, z){
-    const bogginess = biomeAt(x, z);
-    return { bogginess, speedMul: bogSpeedMultiplier(bogginess), noiseMul: bogNoiseMultiplier(bogginess) };
-  };
-  // LUL-2225: counts of the live map's own generated data that fall inside
-  // the bog's keep-clear radius -- the "nothing else spawns inside it" half
-  // of this ticket's acceptance criteria, read back from the real arrays
-  // generateMap() populated (coverData/throwableData/treeData/landmarkData),
-  // not re-derived. treesInsideCore intentionally counts only non-culled
-  // trees strictly within BOG_INNER_RADIUS (sparse forest inside the patch
-  // is the target, not zero) -- every other field is expected to be 0.
-  window.ForestEngine.qaProbeBogKeepClear = function(){
-    const coverInside = coverData.filter(c => c.kind !== 'tree' && c.kind !== 'reed' && bogKeepClear(c.x, c.z, 0)).length;
-    const reedsInsideCore = coverData.filter(c => c.kind === 'reed' && Math.hypot(c.x - BOG_CENTER.x, c.z - BOG_CENTER.z) < BOG_INNER_RADIUS).length;
-    const throwablesInside = throwableData.filter(t => bogKeepClear(t.x, t.z, 0)).length;
-    const treesInsideCore = treeData.filter(t => !t.culled && Math.hypot(t.x - BOG_CENTER.x, t.z - BOG_CENTER.z) < BOG_INNER_RADIUS).length;
-    const landmarksInside = landmarkData.filter(l => bogKeepClear(l.x, l.z, 0)).length;
-    return { coverInside, reedsInsideCore, throwablesInside, treesInsideCore, landmarksInside };
-  };
-  // LUL-2225: generic teleport, for staging a position (e.g. the bog center)
-  // that isn't already a fixed named landmark like qaTeleportHome/
-  // qaTeleportNearBaby.
+  // LUL-2225: generic teleport, for staging an arbitrary position that isn't
+  // already a fixed named landmark like qaTeleportHome/qaTeleportNearBaby.
   window.ForestEngine.qaTeleportTo = function(x, z){ player.x = x; player.z = z; };
   window.ForestEngine.qaProbeBabyLight = function(){
     return { intensity: babyLight.intensity, distance: babyLight.distance,
@@ -3893,14 +3856,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     };
   };
 
-  // LUL-2249: liveChunks/cover/bog liveness + the player's own current chunk,
+  // LUL-2249: liveChunks/cover liveness + the player's own current chunk,
   // for e2e assertions that a chunk-change moved the live set (and that old
   // far chunks actually dropped) without reaching into module-private state.
   window.ForestEngine.qaProbeChunkStreaming = function(){
     return {
       liveChunks: Array.from(liveChunks).sort((a, b) => a - b),
       coverLive: coverChunkMeshes.reduce((n, m) => n + (m ? 1 : 0), 0),
-      bogLive: bogChunkMeshes.reduce((n, m) => n + (m ? 1 : 0), 0),
       playerChunk: (function(){ const [cx, cz] = chunkXZ(player.x, player.z); return cx*TREE_CHUNKS_PER_AXIS + cz; })(),
     };
   };
@@ -3923,23 +3885,21 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // LUL-2247: exposes the finished map's post-thin prop layout for e2e
   // assertions -- per-chunk counts by category (same categories
   // PROP_CHUNK_CAP keys), the minimum pairwise centre-to-centre distance
-  // across every non-tree prop (cover/reed/bogTree/stone) regardless of
-  // kind, and the total count. O(n^2) over the thinned (small) population --
-  // test-only, never called per-frame.
+  // across every non-tree prop (cover/stone) regardless of kind, and the
+  // total count. O(n^2) over the thinned (small) population -- test-only,
+  // never called per-frame.
   window.ForestEngine.qaProbePropDensity = function(){
     const perChunkMap = new Map();
     const bump = (chunk, cat) => {
-      const e = perChunkMap.get(chunk) || { chunk, cover: 0, reed: 0, bogTree: 0, stone: 0 };
+      const e = perChunkMap.get(chunk) || { chunk, cover: 0, stone: 0 };
       e[cat]++; perChunkMap.set(chunk, e);
     };
     const all = [];
     for(const c of coverData){
       if(c.kind === 'tree') continue;
-      const cat = c.kind === 'reed' ? 'reed' : 'cover';
-      bump(treeChunkIndex(c.x, c.z), cat);
+      bump(treeChunkIndex(c.x, c.z), 'cover');
       all.push(c);
     }
-    for(const b of bogTreeData){ bump(treeChunkIndex(b.x, b.z), 'bogTree'); all.push(b); }
     for(const t of throwableData){ bump(treeChunkIndex(t.x, t.z), 'stone'); all.push(t); }
 
     let minPairSpacing = Infinity;
@@ -5376,7 +5336,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     log:     { hx: 1.85, hz: 0.475, y: 0.3 },
     rock:    { hx: 1.35, hz: 1.28,  y: 0.74 },
     bramble: { hx: 1.15, hz: 1.15,  y: 0.69 },
-    reed:    { hx: 0.7,  hz: 0.7,   y: 0.875 },
   };
   // [QA-HOOK] LUL-2328: builds a minimal, exact scene for a test that doesn't
   // want a full procedurally-generated map -- child 2/2 of epic LUL-2324
@@ -5384,7 +5343,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // generateMap() boot. Deterministic and rng-free (every position/shape is
   // caller-given or a fixed constant above), so it never touches the seeded
   // rng stream and can be called after any generateMap(), any number of
-  // times. Clears and replaces treeData/coverData/bogTreeData and every
+  // times. Clears and replaces treeData/coverData and every
   // predator's placement; landmarkData/throwableData/mission are left as
   // whatever the last generateMap() produced (out of scope here -- see the
   // spec's Out of scope section, docs/specs/lul-2328-qa-world-micro-hooks.md).
@@ -5414,8 +5373,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       .filter(p => QA_COVER_SHAPE[p.kind])
       .map(p => ({ x: p.x, z: p.z, kind: p.kind, ry: p.ry || 0, ...QA_COVER_SHAPE[p.kind] }));
 
-    bogTreeData = [];
-
     // LUL-2249: same full reset generateMap() does at the end of every call --
     // drop whatever the previous scene left live (sized for different data),
     // rebucket this synthetic scene's data, and let coverGrid start empty so
@@ -5429,7 +5386,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     if(!qaNoRender){
       bucketTreeChunks(treeData);
       bucketCoverChunks();
-      bucketBogChunks();
       updateStreamedChunks(true);
     }
 
@@ -5901,10 +5857,10 @@ function setDifficulty(d){
   if(!DIFFICULTY_PRESETS[d]) return;
   difficulty = d;
   track({ event: 'feature_engagement', feature: 'difficulty', action: d });
-  // LUL-372: thread the real difficulty choice down to LUL-25's hard-baby-
-  // spawn seam -- 'blackout' (the hardest preset: full roster, already
-  // hunting, no minimap) is the only tier that also pushes the child beyond
-  // the bog; 'lantern'/'night' keep the child at its normal spawn.
+  // LUL-372: thread the real difficulty choice down to the hard-baby-spawn
+  // seam -- 'blackout' (the hardest preset: full roster, already hunting, no
+  // minimap) is the only tier that also pushes the child far from home;
+  // 'lantern'/'night' keep the child at its normal spawn.
   babySpawnDifficulty = d === 'blackout' ? 'hard' : 'normal';
   // Difficulty changes always take effect on the next restart(), which already
   // calls placePredators() and (via generateMap()) applyHardBabySpawn().
@@ -6000,9 +5956,9 @@ on(window, 'resize', () => {
 const mm = document.getElementById('minimap'), mmx = mm.getContext('2d'), MM = mm.width, mmS = MM/CONFIG.mapSize;
 const mmStatic = document.createElement('canvas'); mmStatic.width = MM; mmStatic.height = MM;
 const sx = mmStatic.getContext('2d');
-// LUL-1093: clamped so a bog coordinate (z up to zMax=240, engine/tuning.js
-// CONFIG.bogDepth) pins to the canvas edge instead of being drawn off it and
-// vanishing. mmS is still one scalar for both axes -- splitting into mmSx/mmSz
+// LUL-1093: clamped so a coordinate near the map edge (z up to zMax) pins to
+// the canvas edge instead of being drawn off it and vanishing. mmS is still
+// one scalar for both axes -- splitting into mmSx/mmSz
 // is E2's job once the world stops being a 240x360 rectangle (see LUL-1483's
 // spec, specs/bigger-wrapping-world-e2-e6 in the wiki). This clamp is defence
 // in depth only, not a geometry fix.
@@ -6015,14 +5971,6 @@ function drawMinimapStatic(){
   sx.strokeStyle = 'rgba(150,175,215,0.25)'; sx.lineWidth = 1; sx.strokeRect(1,1,MM-2,MM-2);
   sx.fillStyle = 'rgba(120,150,120,0.5)';
   for(let i=0;i<treeData.length;i+=12){ const [px,py] = w2m(treeData[i].x, treeData[i].z); sx.fillRect(px, py, 1.2, 1.2); }
-  // LUL-1093: bogTreeData/landmarkData were never drawn here -- both are
-  // populated by generateBogTrees()/placeLandmarks(), which used to run AFTER
-  // this function was called from generateMap() (see the generateMap() edit
-  // below), so both arrays were always empty at this point. Same subsample
-  // stride and fill style as the forest-tree loop above; landmarks get a
-  // bigger square (3x3 vs 1.2x1.2) so they read as distinct points -- this is
-  // a minimal legibility choice for a bugfix, not a final art pass.
-  for(let i=0;i<bogTreeData.length;i+=4){ const [px,py] = w2m(bogTreeData[i].x, bogTreeData[i].z); sx.fillRect(px, py, 1.2, 1.2); }
   // LUL-2248: colour each landmark by its beacon hue so the minimap square
   // maps unambiguously to a landmark kind. `cave` has no LANDMARK_BEACONS
   // entry (it never got a beacon sprite -- out of scope, see the spec), so it
@@ -6033,15 +5981,8 @@ function drawMinimapStatic(){
     sx.fillStyle = beacon ? ('#' + beacon.color.toString(16).padStart(6, '0')) : 'rgba(120,150,120,0.5)';
     sx.fillRect(px-1.5, py-1.5, 3, 3);
   }
-  // LUL-2225: the bog patch was never drawn here (LUL-1902 explicitly scoped
-  // the minimap out) -- with a small, keep-clear patch there's finally a
-  // single clean disc to draw.
-  // Blackout still hides the whole minimap (see the LUL-1505-era caller),
-  // so this doesn't help blackout read the patch -- that's the point of it.
-  const [bx,by] = w2m(BOG_CENTER.x, BOG_CENTER.z);
-  sx.beginPath(); sx.arc(bx, by, BOG_OUTER_RADIUS*mmS, 0, Math.PI*2); sx.fillStyle = 'rgba(70,110,80,0.5)'; sx.fill();
   // LUL-2248: home as a warm stroked ring (not a filled disc, so it reads
-  // distinctly from the bog fill) -- a small fixed minimap radius since
+  // distinctly from the forest fill) -- a small fixed minimap radius since
   // CONFIG.home.r is a gameplay proximity radius, not a visual size.
   const [hx,hy] = w2m(CONFIG.home.x, CONFIG.home.z);
   sx.beginPath(); sx.arc(hx, hy, 4, 0, Math.PI*2);
@@ -6275,14 +6216,12 @@ function stepFrame(dt, t, skipRender){
   }
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0, movingAgainstWind = false;
-  const playerBogginess = biomeAt(player.x, player.z);   // LUL-1483: continuous 0..1, was a boolean z-band test
-  playerBogMask = bogMaskLevel(playerBogginess, playerBogMask, dt);   // LUL-1902: decaying wolf-scent-mask, see checkScent()
   if(playing && !hidden){
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
-    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * bogSpeedMultiplier(playerBogginess) * brambleSnagSpeedMultiplier(brambleSnagT);
+    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * brambleSnagSpeedMultiplier(brambleSnagT);
     let ix = 0, iz = 0;
     if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
     if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
@@ -6322,9 +6261,7 @@ function stepFrame(dt, t, skipRender){
       if(scentEmitT <= 0){ depositScent(running, movingAgainstWind); scentEmitT = SCENT_DEPOSIT_INTERVAL; }   // dedup: was a second isMovingAgainstWind() call, no behavior change
       // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
       // shape as scent, sized off the same running flag rather than a new one.
-      // LUL-25: splashing through the bog carries further than a dry footstep --
-      // the sight-cover reeds give you costs you on the sound channel instead.
-      noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK)) * bogNoiseMultiplier(playerBogginess);
+      noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK));
     }
   }
   // LUL-3009: pushed unconditionally every frame (not nested in the movement block above),
@@ -6729,7 +6666,7 @@ function stepFrame(dt, t, skipRender){
     audio.foot += dist;                              // footsteps play in both states
     if(spd > 0.3 && audio.foot >= 1.9){
       audio.foot -= 1.9;
-      if(playerBogginess > 0) splash(0.3); else footstep(0.12);   // LUL-1483: continuous field, splash whenever standing in any bog
+      footstep(0.12);
     }
   }
 
@@ -6824,13 +6761,12 @@ function stepFrame(dt, t, skipRender){
     const coverHintVisible = !hidden && lastHideSpot !== null;
 
     // key -> [eligible this frame, world anchor {x,y,z} | null]. Self/panel-anchored
-    // keys (bog/deepwater/oakHollow/stamina/caveImmune/veil) never need an anchor --
+    // keys (deepwater/oakHollow/stamina/caveImmune/veil) never need an anchor --
     // they're positioned by fixed CSS in GameCanvas.tsx, not a per-frame world point.
     function hintCandidate(key){
       switch(key){
         case 'scent': return [scentTrailVisible, null];   // anchor handled separately below (firstFrustum)
         case 'landmark': return [true, null];
-        case 'bog': return [playerBogginess > 0.05, null];
         case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active', null];
         case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active', null];
         case 'wolf': case 'bear': case 'lion': {
@@ -6862,7 +6798,7 @@ function stepFrame(dt, t, skipRender){
         case 'oakHollow': return missionCanComplete;
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
-        default: return false;   // landmark, bog: time-only
+        default: return false;   // landmark: time-only
       }
     }
     function hintDismissBaselineFor(key){
