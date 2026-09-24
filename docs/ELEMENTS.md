@@ -1777,8 +1777,15 @@ not final tuning.
   at the instant `pickup()` is accepted, not re-checked or expirable afterward -- there is
   only one pickup per run (`decisions/lul-2281-pickup-is-the-win-2026-09-09`). No secondary
   support (`SECONDARY_SUPPORTED_MISSIONS` unchanged). Produces no mission-nav hum (the
-  `spatial: false` gate on `missionWaypointHum`'s call site) and no new HUD surface (LUL-1098's
-  territory).
+  `spatial: false` gate on `missionWaypointHum`'s call site). Renders in the existing, generic
+  `#missionPanel` like every other mission kind while active (`MISSION_NAMES.slackWater` =
+  "Slack Water", glyph `○` — see "show a two-line collapsed HUD panel ... whenever a mission
+  exists" below, which already covers this kind with no gating by name) — this ticket ships no
+  *new* HUD code (LUL-1098's territory is a new panel/copy system for missions generally), but
+  the panel is real and player-visible today. Like every mission kind, the panel unmounts the
+  instant `pickup()` is accepted (`pickingUp: true` excludes `isPlaying()`, and the `if(playing)`
+  HUD-state gate nulls `missionKind`/`missionStatus` in the same tick) — the `●` complete glyph
+  never actually renders for any mission kind, pre-existing behavior unchanged by this ticket.
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`

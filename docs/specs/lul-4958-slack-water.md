@@ -215,8 +215,16 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   at the instant `pickup()` is accepted, not re-checked or expirable afterward -- there is
   only one pickup per run (`decisions/lul-2281-pickup-is-the-win-2026-09-09`). No secondary
   support (`SECONDARY_SUPPORTED_MISSIONS` unchanged). Produces no mission-nav hum (the
-  `spatial: false` gate on `missionWaypointHum`'s call site) and no new HUD surface (LUL-1098's
-  territory).
+  `spatial: false` gate on `missionWaypointHum`'s call site). Renders in the existing, generic
+  `#missionPanel` like every other mission kind while active (`MISSION_NAMES.slackWater` =
+  "Slack Water", glyph `○`, `components/Hud.tsx`'s `state.missionKind && state.missionStatus`
+  gate has no kind exclusion) -- this ticket ships no *new* HUD code (LUL-1098's territory is a
+  new panel/copy system for missions generally), but it is not invisible. Note: like every
+  mission kind, the panel unmounts the instant `pickup()` is accepted (`completePickup()` sets
+  `pickingUp: true` synchronously, which `isPlaying()` excludes, and the engine's
+  `if(playing)` HUD-state gate nulls `missionKind`/`missionStatus` in the same tick) -- the `●`
+  complete glyph never actually renders for any mission kind, pre-existing behavior this ticket
+  doesn't change.
 ```
 
 Update the section header sentence "Two members" -> "Three members" and the intro list if it
@@ -260,6 +268,13 @@ small prose addition unlikely to shift other citations, but verify.
   already exists for `missionWaypointHum`'s bearing/pan tests, or by asserting no console
   error/exception and no audio-graph node created for it if no counter hook exists (state
   which one you used).
+- The first test above also asserts `#missionPanel` directly, inline with its existing
+  completion flow (no separate boot/pickup needed): `#missionPanel` contains "Slack Water" and
+  `#missionGlyph` reads `○` right after `enter()`, then `#missionPanel` is hidden in the same
+  frame `qaProbeMission()` reports `status: 'complete'` (the generic `if(playing)` HUD-state
+  gate unmounts it the instant `pickup()` sets `pickingUp: true`, before any `●` glyph can
+  render, for every mission kind -- not a slackWater-specific gap) -- pixel-level coverage of
+  the panel described in the Design call section above, LUL-5056's required remedy.
 
 **World.** micro (`qaBuildScene` default, `?qaMissionKind=slackWater` forces the pool draw —
 existing mechanism, `engine/forest-engine.js:334`, no new world-staging code needed since this
@@ -269,11 +284,10 @@ procedural map.
 **Hooks.** `qaSetFogTideClock(seconds): void` — new (declared above). Existing hooks reused:
 `qaTeleportNearBaby`, `qaProbeMission()`, `qaSetFixedStep`/`qaAdvance` (for the third test).
 
-**Tester scenario.** "None: not player-visible in a way distinguishable from any other
-mission's win-screen payout line — `#missionPanel`'s deepwater/oakHollow objective-text
-convention does not apply here (no HUD wiring shipped this ticket, per scope), so there is no
-new on-screen surface for the nightly tester to screenshot." If LUL-1098 later wires
-`#missionPanel` copy for `slackWater`, that ticket files the request.
+**Tester scenario.** `shared/local-qa/requests/lul-4958-slack-water.md` — `#missionPanel`
+already shows "Slack Water" with the same ○/● glyph convention as `deepwater`/`oakHollow`
+(inherited, no new HUD code), so the nightly tester screenshots that panel across the
+pickup-during-active-fog-tide flow, same as it does for the other two mission kinds.
 
 **Not covered.** The +10 Embers pricing's game feel (Economist's territory, already decided in
 `game/economy/mission-rewards`). Fog Tide's own visual/audio telegraph (LUL-27, unchanged by
@@ -281,19 +295,19 @@ this ticket).
 
 ## Cues
 
-**Visual.** None new — this ticket adds no HUD surface (out of scope, LUL-1098's territory).
-The existing win-screen payout line already renders whatever `lastPayout.total` is
-(`components/Hud.tsx`, pre-existing), which will include the +10 bonus with no code change on
-that side.
+**Visual.** None *new* — `#missionPanel` inherits the existing generic name+glyph rendering
+(`components/Hud.tsx`, pre-existing code path, no new component or branch) rather than a
+bespoke display for this kind. The existing win-screen payout line already renders whatever
+`lastPayout.total` is, which will include the +10 bonus with no code change on that side.
 **Audio.** None new.
 **Explanation.** None new — no first-encounter caption, since there is no new interaction
 surface for the player to encounter (the trigger is "however you already pick up the child,"
-not a new input).
-**Reduced motion.** N/A — no visual cue introduced.
+not a new input); the generic mission-panel affordance was already introduced by LUL-1259/3010.
+**Reduced motion.** N/A — no new visual cue introduced.
 
-This ticket is a pure event/reward-logic addition with no new player-facing surface, so the
-cue triple is deliberately empty; `decisions/0015-cue-triple` covers cues for *new* affordances,
-not every diff.
+This ticket adds no *new* player-facing surface (it reuses `#missionPanel`'s existing generic
+rendering), so the cue triple is deliberately empty; `decisions/0015-cue-triple` covers cues for
+*new* affordances, not every diff.
 
 ## Constraints
 
@@ -313,9 +327,10 @@ not every diff.
 
 ## Out of scope
 
-- `#missionPanel` objective-text / HUD copy for `slackWater` — LUL-1098's territory per the
-  parent ticket's own scope carve-out. `MISSION_NAMES`'s new entry exists only to satisfy
-  `tsc`'s exhaustiveness check, not to wire a new visible display.
+- A *new* HUD panel or bespoke copy treatment for `slackWater` — LUL-1098's territory per the
+  parent ticket's own scope carve-out. `MISSION_NAMES.slackWater` inherits the existing generic
+  `#missionPanel` rendering the same way `oakHollow`/`deepwater` do; that inherited rendering is
+  in scope and covered by the e2e panel-text/glyph test above, only a *bespoke* display is out.
 - A secondary-objective variant (`SECONDARY_SUPPORTED_MISSIONS` is untouched — `slackWater` is
   not in the set, same as `oakHollow` today).
 - Fog Tide's own mechanic (LUL-27, unchanged).

@@ -5,6 +5,11 @@
 // qaSetFogTideClock (new hook) stages the 90s cycle deterministically instead of waiting
 // on it in real time.
 //
+// #missionPanel is NOT new HUD code -- slackWater inherits the existing generic name+glyph
+// rendering (components/Hud.tsx, gated on state.missionKind && state.missionStatus with no
+// kind exclusion) the same as deepwater/oakHollow, so it is real and player-visible; the
+// panel-text/glyph assertions below are Code-Reviewer-required coverage of that fact (LUL-5056).
+//
 // #runRecap has no dedicated "mission bonus" line item -- the bonus folds straight into
 // `payout.total` (lib/game/economy.ts's computeWinPayout). Same technique
 // e2e/mission-progression.spec.ts's expiry test already uses to prove a bonus was
@@ -39,6 +44,11 @@ test('picking up the child while fog-tide is active completes Slack Water and pa
   expect(mission?.kind).toBe('slackWater');
   expect(mission?.status).toBe('active');
 
+  // LUL-5056: the generic #missionPanel is not gated by mission kind, so slackWater renders
+  // in it exactly like deepwater/oakHollow -- prove the actual pixel a player sees.
+  await expect(page.locator('#missionPanel')).toContainText('Slack Water');
+  await expect(page.locator('#missionGlyph')).toHaveText('○');
+
   // 75s into the 90s cycle -- activeStart = period(90) - activeDuration(20) = 70, so 75 is
   // well inside the active window (lib/game/fogTide.ts FOG_TIDE_CONFIG).
   await qaHook(page, 'qaSetFogTideClock', 75);
@@ -53,6 +63,12 @@ test('picking up the child while fog-tide is active completes Slack Water and pa
   // proves the check fires at pickup()'s acceptance instant, not at finishPickup()'s.
   const completedEarly = await qaHook(page, 'qaProbeMission');
   expect(completedEarly?.status).toBe('complete');
+  // completePickup() sets pickingUp:true synchronously, which isPlaying() excludes -- the
+  // engine's `if(playing)` HUD-state gate (engine/forest-engine.js) unmounts #missionPanel
+  // in the same instant, for every mission kind, before a '●' complete glyph can ever render.
+  // This is pre-existing generic behavior (not a slackWater-specific gap); asserting the real
+  // outcome here so a future change to that gate is caught, not the wished-for glyph flip.
+  await expect(page.locator('#missionPanel')).toBeHidden();
 
   await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
   // boot()'s default tier is 'night' (engine/forest-engine.js `let difficulty = 'night'`,
