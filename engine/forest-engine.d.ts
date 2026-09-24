@@ -379,6 +379,32 @@ declare global {
         dist: number;
         trace: { t: number; dist: number; state: string; reached: boolean }[];
       } | null>;
+      /** LUL-5046: fixed-step sibling of qaStageAndTraceBehindTree above.
+       * That hook's maxMs budget is real wall-clock time (performance.now())
+       * against a frame dt that's clamped to DT_CLAMP_CEILING=0.05 every
+       * tick -- under CI-realistic CPU contention simulated time falls
+       * behind wall-clock time in proportion to how loaded the machine is,
+       * so the same simulated arc (predators legitimately swing 2x+ further
+       * from the player than the staged distance before curving back in,
+       * confirmed live -- not a bug) needs proportionally more real seconds
+       * to finish, which can exceed a fixed maxMs on a loaded runner even
+       * though nothing about the steering itself is wrong. This variant
+       * drives simulated time directly through qaAdvance's own stepFrame()
+       * call instead of requestAnimationFrame, so the trace depends only on
+       * simulated steps -- immune to real CPU speed. Requires
+       * qaSetFixedStep(dt) first (same precondition qaAdvance() has).
+       * Synchronous (no page-render wait needed, unlike the rAF-driven
+       * sibling), returns null if staging failed (see qaStageBehindTree). */
+      qaStageAndTraceBehindTreeFixed?: (
+        kind: 'wolf' | 'bear' | 'lion',
+        margin: number,
+        maxSteps: number,
+      ) => {
+        idx: number;
+        kind: 'wolf' | 'bear' | 'lion';
+        dist: number;
+        trace: { t: number; dist: number; state: string; reached: boolean }[];
+      } | null;
       /** LUL-69: the live camera vertical FOV (degrees) -- confirms the
        * mobile/desktop CAMERA_FOV split in init() actually took effect. */
       qaCameraFov?: () => number;
