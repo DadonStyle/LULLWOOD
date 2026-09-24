@@ -188,6 +188,8 @@ export interface EngineActions {
   setTouchLook: (x: number, y: number) => void;
   setTouchSprint: (v: boolean) => void;
   triggerTouchHide: () => void;
+  // LUL-4528: mobile parity for KeyC (Rock -- Vantage Climb).
+  triggerTouchClimb: () => void;
   triggerTouchShuffle: () => void;
   triggerTouchInteract: () => void;
   triggerTouchThrow: () => void;
