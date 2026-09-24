@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7619 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6715, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7762 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6820, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1611,16 +1611,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6007-6067, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6320-6361). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6068-6132, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6425-6466). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6320-6361) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6050) rather than recomputed later, since `player.x/z` can move on
+  (L6425-6466) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6433) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1676,8 +1676,8 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3956),
-  reset to 0 on `enter()` (L3934) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3871),
+  reset to 0 on `enter()` (L3961) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L6745: `computeDepth(maxDistFromHome) +
@@ -1800,7 +1800,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6774, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6884, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2093,6 +2093,93 @@ not final tuning.
 - N/A — not a spatial/world object of its own. Uses the Stone Marker landmark's existing
   decorative/navigational collision profile (`landmarkGroups.stoneMarker.position`, live post-nudge
   position), unchanged by this entry.
+
+### Chapel Sanctuary (LUL-5005, free `veilReserve` refuge)
+
+**What it is**
+- **Implemented (LUL-5005, cheap slice).** A second, free route to the same `veilReserve = true`
+  the Stone Marker charm above sells for Embers: shelter at the `chapelSteeple` landmark
+  (`x:20, z:-178`, `engine/tuning.js:69`) for a full `CHAPEL_SANCTUARY_DURATION` (15s,
+  `engine/tuning.js:94`) dwell and leave with the charm, no Embers spent. One-shot per run --
+  once granted, the chapel offers nothing more that round. Retargeted 2026-09-24 from an earlier
+  `veilCharge` premise the CEO ruled false (`veilCharge` free-regenerates unconditionally in
+  ~10s, `stepVeilCharge()`, `lib/game/veil.ts:47-71`) -- see wiki
+  `decisions/chapel-sanctuary-retarget-veilreserve-2026-09-24`.
+- State (`engine/forest-engine.js:601`): `chapelSanctuaryActive` (live dwell gate),
+  `chapelSanctuaryChargeT` (countdown, decremented in `tick()`), `chapelSanctuaryUsedThisRun`
+  (one-shot gate -- true ONLY once the full dwell actually completes, see below).
+- Prompt gate `chapelSanctuaryPromptVisible`, computed every tick alongside `canBuyVeilCharm`
+  (`engine/forest-engine.js:7135`): `chapelSanctuaryInRadius && !chapelSanctuaryUsedThisRun &&
+  !chapelSanctuaryActive`, where `chapelSanctuaryInRadius` is `distChapel <
+  CHAPEL_SANCTUARY_INTERACT_RADIUS` (4 units, `engine/tuning.js:93`, same radius shape as
+  `VEIL_CHARM_INTERACT_RADIUS`).
+- `startChapelSanctuary()` (`engine/forest-engine.js:5947`): sets `chapelSanctuaryActive = true`,
+  `chapelSanctuaryChargeT = CHAPEL_SANCTUARY_DURATION`, fires an entry caption + start cue. Does
+  **not** grant anything itself -- the grant only happens in `tick()`'s active-dwell branch
+  (`engine/forest-engine.js:7242`) on the full-countdown edge, so the one-shot gate can only close
+  on a real completed dwell (Q1.5), never on the E-press that starts it.
+- Two exits from the active-dwell branch: full dwell (`chapelSanctuaryChargeT` reaches 0) sets
+  `veilReserve = true`, `chapelSanctuaryUsedThisRun = true`, fires the caption + cue and a
+  one-shot beacon-glow pulse (`chapelSanctuaryPulseT`, mirrors `stoneMarkerPulseT`); leaving the
+  interact radius by more than 1.5x before the countdown completes cancels the dwell
+  (`chapelSanctuaryActive = false`, `chapelSanctuaryChargeT = 0`) and grants nothing -- the
+  one-shot gate stays open for a later retry the same run.
+- **Cue triple.** Explain: entry caption (`startChapelSanctuary()`) names the mechanic and the
+  one-time-per-run rule. Grant tell: reuses `buyVeilCharm()`'s own `embersPurchaseCue()`
+  (`engine/forest-engine.js:6058`) and caption (`'a charm against the mist'`) so the charm reads
+  identically whichever route granted it, plus the beacon-glow pulse above. Refusal tell
+  (`chapelSanctuaryDeniedCue()`, `engine/forest-engine.js:6213`): pressing `KeyE` in radius after
+  the gate is already closed fires the same square/100Hz/~0.17s buzz as
+  `rockClimbDeniedCue()` (`:6137`, "the codebase's one existing 'input was refused' cue") plus a
+  caption, gated on `captionsOn` same as that precedent. Early-exit tell
+  (`chapelSanctuaryEarlyExitCue()`, `:6226`): a distinct, quieter triangle tone + caption --
+  explicitly NOT the denied buzz, since leaving early is a non-event, not a refusal.
+
+**What it can do**
+- Reachable via both interact paths: desktop `KeyE` and mobile `triggerTouchInteract()` (the
+  existing shared "E" tap target, `components/MobileControls.tsx:342`) -- identical priority
+  slot to `canBuyVeilCharm`, right after it in both the keydown handler
+  (`engine/forest-engine.js:3082-3095`) and `triggerTouchInteract()` (`:7658-7667`).
+- Can be attempted, abandoned, and re-attempted freely in the same run as long as the full dwell
+  never completes -- only a completed grant closes the gate.
+
+**What it CANNOT do**
+- Cannot double-grant: `canBuyVeilCharm` already reads `!veilReserve`, so once the chapel grants
+  it, the Stone Marker purchase prompt correctly stops offering itself, and vice versa.
+- Cannot fire both routes' triggers in the same frame -- the two landmarks are placed >100 units
+  apart (`engine/tuning.js` `LANDMARKS`), so `distStoneMarker` and `distChapel` can't both be
+  inside their respective radii at once.
+- No new HUD readout for `veilReserve` itself -- reuses the existing Stone Marker `#veilCharmPip`
+  tell unchanged; this feature only adds a second way to flip the same flag.
+- No animated shelter pose, no interior-glow mesh, no wind-chime ambience loop -- deferred to a
+  Tier B full-feature pass (the cheap slice's visual/audio tell is the existing landmark
+  beacon-glow pulse, boosted on grant, same mechanism as the Stone Marker's `stoneMarkerPulseT`).
+
+**Behaviours & logic**
+- Reset per-run, same site as `veilOverloadUsedThisRound` (`engine/forest-engine.js:1402`, inside
+  `enter()`, called by both initial boot and `restart()`): `chapelSanctuaryActive = false;
+  chapelSanctuaryChargeT = 0; chapelSanctuaryUsedThisRun = false;`. Deliberately NOT reset on
+  `arriveHome()`/child set-down -- that carry-leg path is dead in real play
+  (`decisions/lul-2281-pickup-is-the-win-2026-09-09`), so there is no in-run scenario needing an
+  earlier reset.
+- HUD: `#chapelSanctuaryPrompt` row in `#actionSlot` (`components/Hud.tsx:1222`,
+  "Press  E  for chapel sanctuary — shelter 15s for a free charm against the mist"), visible
+  while `chapelSanctuaryPromptVisible`. `#chapelSanctuaryPanel` (`components/Hud.tsx:1036`),
+  sibling of `#caveImmunePanel`/`#rockClimbPanel`/`#veilOverloadPanel` outside `#panel` (stays
+  visible with `adminMode` off, Q3), "Sanctuary · Xs" countdown while `chapelSanctuaryActive`.
+- QA hooks: `qaProbeChapelSanctuary()` (`engine/forest-engine.js:5652`, mirrors
+  `qaProbeRockClimb()`'s shape -- `{ chapelSanctuaryActive, chapelSanctuaryChargeT,
+  chapelSanctuaryUsedThisRun, promptVisible, startCueCount, deniedCueCount,
+  earlyExitCueCount }`), `qaTeleportNearChapel()` (`:5664`, mirrors
+  `qaTeleportNearStoneMarker()` -- 2 units off the landmark's live position, unaffected by
+  `applyQaWorldMicroPreset()` since `LANDMARKS` positions are untouched in the micro world).
+
+**Collision & physics profile**
+- N/A — not a spatial/world object of its own. Uses the `chapelSteeple` landmark's existing
+  decorative/navigational collision profile (`landmarkGroups.chapelSteeple.position`, live
+  post-nudge position), unchanged by this entry.
+
+See wiki `game/mechanics/chapel-sanctuary.md`.
 
 ---
 
@@ -2536,7 +2623,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7341 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6260) and `windAssistEndCue()` (L6269), edge-triggers on the combined
+`windAssistStartCue()` (L6365) and `windAssistEndCue()` (L6374), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

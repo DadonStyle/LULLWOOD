@@ -197,6 +197,7 @@ import {
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, ROOSTS, ROOST_COOLDOWN,
+  CHAPEL_SANCTUARY_INTERACT_RADIUS, CHAPEL_SANCTUARY_DURATION,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
   BEACON_HUNTER_LOCK_MUL, BEACON_HUNTER_EYE_COLOR,
@@ -438,6 +439,7 @@ let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, stami
 // LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
 // decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
 let stoneMarkerPulseT = 0, brambleSnagT = 0;   // LUL-4526: Thorn Snag stumble countdown
+let chapelSanctuaryPulseT = 0;   // LUL-5005: same one-shot beacon-glow boost shape as stoneMarkerPulseT, set on grant
 let inLogCrawl = false, logCrawlDirX = 0, logCrawlDirZ = 0,
     logCrawlExitX = 0, logCrawlExitZ = 0, logCrawlDeniedLatch = false;   // LUL-4527
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
@@ -592,6 +594,13 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 // tick() alongside the other per-frame timers.
 let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
 let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
+// LUL-5005: Chapel Sanctuary -- chapelSanctuaryActive is the live dwell gate,
+// chapelSanctuaryChargeT the countdown (decremented in tick() alongside the other
+// per-frame timers, same shape as caveImmuneT/veilOverloadChargeT above).
+// chapelSanctuaryUsedThisRun is the one-shot gate -- set true ONLY once the full
+// dwell completes and the charm is actually granted (see the tick() branch below);
+// leaving early resets chargeT/active but leaves this false so the player can retry.
+let chapelSanctuaryActive = false, chapelSanctuaryChargeT = 0, chapelSanctuaryUsedThisRun = false;
 // LUL-4528: Rock -- Vantage Climb. mountedOnRock is the live gate (mutually exclusive
 // with hidden by construction); rockClimbT is the countdown, decremented in tick()
 // alongside the other per-frame timers (same shape as caveImmuneT above).
@@ -1396,6 +1405,11 @@ function placeCave(){
   // "resets on reset" half of the CEO ruling needs an explicit per-round site;
   // it used to live in setDown(), which real play never reaches either.
   veilOverloadChargeT = 0; veilOverloadUsedThisRound = false; veilOverloadTriggerActive = false;
+  // LUL-5005: same per-run reset site as veilOverloadUsedThisRound above --
+  // chapelSanctuaryUsedThisRun deliberately does NOT reset on arriveHome()/child
+  // set-down (that carry-leg path is dead in real play, decisions/lul-2281-pickup-
+  // is-the-win-2026-09-09), only at run start.
+  chapelSanctuaryActive = false; chapelSanctuaryChargeT = 0; chapelSanctuaryUsedThisRun = false;
   if(caveSpawned){
     const [x, z] = clearLandmarkSpot(CAVE.x, CAVE.z, CAVE.clear);
     caveData = { x, z };
@@ -2988,7 +3002,13 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
     secondaryCanComplete = false,   // LUL-1666: same shape, for the retrieval item
-    canBuyVeilCharm = false;   // LUL-1210: recomputed every tick alongside canPickup, below
+    canBuyVeilCharm = false,   // LUL-1210: recomputed every tick alongside canPickup, below
+    // LUL-5005: both recomputed every tick alongside canBuyVeilCharm, below.
+    // chapelSanctuaryInRadius is NOT gated on the one-shot flag (the KeyE denied-cue
+    // branch reads it directly so a refused re-entry still gets a tell); PromptVisible
+    // additionally gates on !chapelSanctuaryUsedThisRun/!chapelSanctuaryActive for the HUD row.
+    chapelSanctuaryInRadius = false,
+    chapelSanctuaryPromptVisible = false;
 let shuffleCooldownAccum = 0;   // LUL-3066: seconds remaining before the next shuffleHide() is allowed
 let heldThrowable = false;
 let throwablesReserve = 0;   // LUL-2351: Pocket Stones -- free re-arms of heldThrowable for this run
@@ -3096,9 +3116,16 @@ on(window, 'keydown', e => {
     toggleRunOn = !toggleRunOn;
   }
   // LUL-1258: no new key -- mission completion reuses the interact action.
+  // LUL-5005: chapelSanctuaryPromptVisible slots in right after canBuyVeilCharm --
+  // both are "E-key grants veilReserve" actions, mutually exclusive by location
+  // (landmarks >100u apart, Q7). The denied branch fires whenever the player is in
+  // radius but the one-shot gate is already closed and mid-dwell isn't already
+  // running, so a repeat E-press after the charm is granted still gets a tell.
   if(e.code === 'KeyE' && playing && !paused){
     if(canPickup) pickup();
     else if(canBuyVeilCharm) buyVeilCharm();
+    else if(chapelSanctuaryPromptVisible) startChapelSanctuary();
+    else if(chapelSanctuaryInRadius && chapelSanctuaryUsedThisRun && !chapelSanctuaryActive) chapelSanctuaryDeniedCue();
     else if(missionCanComplete) completeMissionSequence();
     else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
@@ -5678,6 +5705,27 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       deniedCueCount: qaRockClimbDeniedCueCount,
     };
   };
+  // [QA-HOOK] LUL-5005: raw chapel-sanctuary state, mirrors qaProbeRockClimb's shape.
+  // veilReserve is already exposed via qaProbeVeil() -- not duplicated here, a spec
+  // reads both hooks together to assert the grant crossed from this feature specifically
+  // (e.g. earlyExitCueCount fired but veilReserve stayed false).
+  window.ForestEngine.qaProbeChapelSanctuary = function(){
+    return {
+      chapelSanctuaryActive, chapelSanctuaryChargeT, chapelSanctuaryUsedThisRun,
+      promptVisible: chapelSanctuaryPromptVisible,
+      startCueCount: qaChapelSanctuaryStartCueCount,
+      deniedCueCount: qaChapelSanctuaryDeniedCueCount,
+      earlyExitCueCount: qaChapelSanctuaryEarlyExitCueCount,
+    };
+  };
+  // [QA-HOOK] LUL-5005: places the player 2 units off the chapel steeple's live position --
+  // mirrors qaTeleportNearStoneMarker exactly (LANDMARKS positions are untouched by
+  // applyQaWorldMicroPreset(), engine/tuning.js, so this works in the micro world too).
+  window.ForestEngine.qaTeleportNearChapel = function(){
+    const p = landmarkGroups.chapelSteeple.position;
+    player.x = p.x + 2; player.z = p.z;
+    return { x: p.x, z: p.z };
+  };
   // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
   // mission prompt and the objective are all on screen at once. Returns the target or null.
   window.ForestEngine.qaTeleportNearMission = function(){
@@ -5956,6 +6004,19 @@ function buyVeilCharm(){
   stoneMarkerPulseT = 0.6;   // LUL-2331: one-shot beacon-glow boost, decayed in tick()
   track({ event: 'feature_engagement', feature: 'veil_charm', action: 'purchased' });
 }
+// LUL-5005: Chapel Sanctuary -- starts the 15s dwell. Does NOT grant anything itself;
+// the grant (veilReserve=true/chapelSanctuaryUsedThisRun=true) only happens in tick()'s
+// active-dwell branch, on the full-countdown edge -- see the comment there for why
+// (Q1.5: the gate must only close on a real completed dwell, not on E-press).
+function startChapelSanctuary(){
+  chapelSanctuaryActive = true;
+  chapelSanctuaryChargeT = CHAPEL_SANCTUARY_DURATION;
+  pushState({
+    caption: 'Chapel sanctuary — shelter 15s for a free charm against the mist. One-time per run.',
+    captionId: ++captionSeq,
+  });
+  chapelSanctuaryStartCue();
+}
 function grabThrowable(){
   if(heldThrowable) return;
   let nearest = -1, nearestD = THROWABLE_PICKUP_RADIUS;
@@ -6194,6 +6255,50 @@ function rockClimbDeniedCue(reason){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.17);
+}
+// LUL-5005: Chapel Sanctuary cues. The grant cue is NOT here -- it deliberately reuses
+// embersPurchaseCue() (above) so the charm reads identically whichever route granted it.
+// deniedCue mirrors rockClimbDeniedCue's shape exactly (same square/100Hz/~0.17s buzz,
+// same counter-before-audio-gate idiom, same unconditional-on-every-press caption) since
+// this is "the codebase's one existing 'input was refused' cue" pattern, not a new one.
+// earlyExitCue is deliberately distinct -- leaving early is a non-event, not a refusal,
+// so it gets its own quieter triangle tone instead of the denied buzz.
+let qaChapelSanctuaryStartCueCount = 0, qaChapelSanctuaryDeniedCueCount = 0, qaChapelSanctuaryEarlyExitCueCount = 0;
+function chapelSanctuaryStartCue(){
+  qaChapelSanctuaryStartCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(330, t + 0.3);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.55);
+}
+function chapelSanctuaryDeniedCue(){
+  qaChapelSanctuaryDeniedCueCount++;
+  if(captionsOn){
+    pushState({ caption: 'Sanctuary unavailable -- one-time per run', captionId: ++captionSeq });
+  }
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(100, t);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.17);
+}
+function chapelSanctuaryEarlyExitCue(){
+  qaChapelSanctuaryEarlyExitCueCount++;
+  if(captionsOn){
+    pushState({ caption: 'left the chapel early -- nothing happened', captionId: ++captionSeq });
+  }
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(260, t); o.frequency.exponentialRampToValueAtTime(180, t + 0.15);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.06, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.22);
 }
 // LUL-3150: veil-overload cues -- distinct register from caveImmuneStartCue/EndCue (which
 // sweep low<->high sine) so the two immunity sources stay audibly distinguishable. Denied
@@ -6735,6 +6840,7 @@ function stepFrame(dt, t, skipRender){
   dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
   applyVignette(dimAmount);
   if(stoneMarkerPulseT > 0) stoneMarkerPulseT = Math.max(0, stoneMarkerPulseT - dt);   // LUL-2331
+  if(chapelSanctuaryPulseT > 0) chapelSanctuaryPulseT = Math.max(0, chapelSanctuaryPulseT - dt);   // LUL-5005
   if(brambleSnagT > 0) brambleSnagT = Math.max(0, brambleSnagT - dt);   // LUL-4526
   // LUL-382: mist ramp is deliberately slower than the vignette above (VEIL_RAMP
   // 1.6s vs. dimAmount's ~0.5s) -- the light pool reacts fast, the world's mist
@@ -7108,6 +7214,14 @@ function stepFrame(dt, t, skipRender){
   const distStoneMarker = Math.hypot(player.x - landmarkGroups.stoneMarker.position.x, player.z - landmarkGroups.stoneMarker.position.z);
   canBuyVeilCharm = !veilReserve && distStoneMarker < VEIL_CHARM_INTERACT_RADIUS
     && computeDepth(maxDistFromHome) >= VEIL_CHARM_PRICE;
+  // LUL-5005: Chapel Sanctuary -- distChapel drives both the prompt gate here and the
+  // early-exit check in the active-dwell branch below (tick()'s caveImmuneT/
+  // veilOverloadChargeT decay block). chapelSanctuaryInRadius (not gated on the
+  // one-shot flag) is what the KeyE denied-cue branch reads, so pressing E in radius
+  // after the charm is already granted still gets a refusal tell instead of silence.
+  const distChapel = Math.hypot(player.x - landmarkGroups.chapelSteeple.position.x, player.z - landmarkGroups.chapelSteeple.position.z);
+  chapelSanctuaryInRadius = distChapel < CHAPEL_SANCTUARY_INTERACT_RADIUS;
+  chapelSanctuaryPromptVisible = chapelSanctuaryInRadius && !chapelSanctuaryUsedThisRun && !chapelSanctuaryActive;
   // LUL-1623: nearest-throwable distance computed once per frame, reused only
   // for the HUD gate below -- grabThrowable() re-scans on its own discrete
   // keypress/tap event, not every frame.
@@ -7216,6 +7330,27 @@ function stepFrame(dt, t, skipRender){
       if(rockClimbT === 0){ rockClimbJustEnded = true; mountedOnRock = false; }
     }
     if(rockClimbJustEnded) rockClimbEndCue();
+    // LUL-5005: Chapel Sanctuary -- decrements while active, same "never lapse
+    // silently" shape as the three countdowns just above. Two distinct exits:
+    // full dwell (chargeT hits 0) grants the charm for free and closes the
+    // one-shot gate; leaving the radius early (1.5x the interact radius, same
+    // margin CAVE.interactR-style hysteresis uses elsewhere) cancels the dwell
+    // and grants nothing, leaving the gate open for a later retry this run.
+    if(chapelSanctuaryActive){
+      chapelSanctuaryChargeT = Math.max(0, chapelSanctuaryChargeT - dt);
+      if(chapelSanctuaryChargeT === 0){
+        veilReserve = true;
+        chapelSanctuaryUsedThisRun = true;
+        chapelSanctuaryActive = false;
+        pushState({ caption: 'a charm against the mist', captionId: ++captionSeq });
+        embersPurchaseCue();   // LUL-5005: reuses buyVeilCharm()'s own grant cue -- same charm, same tell
+        chapelSanctuaryPulseT = 0.6;   // LUL-5005: mirrors buyVeilCharm()'s stoneMarkerPulseT boost
+      } else if(distChapel > CHAPEL_SANCTUARY_INTERACT_RADIUS * 1.5){
+        chapelSanctuaryActive = false;
+        chapelSanctuaryChargeT = 0;
+        chapelSanctuaryEarlyExitCue();
+      }
+    }
     pushState({
       objectiveVisible: true, objectiveReady: canPickup || canBuyVeilCharm,
       // LUL-2281: collapsed to the single pre-pickup prompt -- completePickup()
@@ -7257,9 +7392,12 @@ function stepFrame(dt, t, skipRender){
       mountedOnRock,
       rockClimbTimeLeft: rockClimbT,
       climbPromptVisible: !hidden && !mountedOnRock && lastRockMountSpot !== null,
+      chapelSanctuaryActive,
+      chapelSanctuaryChargeT,
+      chapelSanctuaryPromptVisible,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false });
   }
   // the child's idle glow, outside the pickup cinematic.
   if(!baby.taken){
@@ -7330,6 +7468,11 @@ function stepFrame(dt, t, skipRender){
     // of the ambient pulse above, decayed by stoneMarkerPulseT (set in buyVeilCharm()).
     if(kind === 'stoneMarker' && stoneMarkerPulseT > 0){
       opacity += motionReduced() ? 0.35 : 0.5 * (stoneMarkerPulseT / 0.6);
+    }
+    // LUL-5005: same one-shot grant-moment tell, mirrored for the chapel's free route
+    // to the same veilReserve charm -- see chapelSanctuaryPulseT (set on full-dwell grant).
+    if(kind === 'chapelSteeple' && chapelSanctuaryPulseT > 0){
+      opacity += motionReduced() ? 0.35 : 0.5 * (chapelSanctuaryPulseT / 0.6);
     }
     landmarkBeaconGlows[kind].material.opacity = opacity;
   }
@@ -7637,6 +7780,8 @@ tick();
     if(!playing || paused) return;
     if(canPickup) pickup();
     else if(canBuyVeilCharm) buyVeilCharm();
+    else if(chapelSanctuaryPromptVisible) startChapelSanctuary();   // LUL-5005: touch parity, mirrors the KeyE handler
+    else if(chapelSanctuaryInRadius && chapelSanctuaryUsedThisRun && !chapelSanctuaryActive) chapelSanctuaryDeniedCue();
     else if(missionCanComplete) completeMissionSequence();
     else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
