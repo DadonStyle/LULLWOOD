@@ -70,26 +70,26 @@ export function computeSurvival(survivedSeconds: number): number {
 // home" case. The detour's real payout is `depth` (uncapped on win, capped on
 // death already); this is a flat bonus on top, priced deliberately low per
 // game/economy/mission-rewards §2 ("the greed comes from the depth").
-export const MISSION_DEEPWATER_REWARD = 12;
+export const MISSION_FIREPOWER_REWARD = 8;
 
-// LUL-3010: oakHollow's completion bonus -- priced below MISSION_DEEPWATER_REWARD (12) since
+// LUL-3010: oakHollow's completion bonus -- priced below MISSION_FIREPOWER_REWARD (8) since
 // the detour itself is far cheaper (≈22m vs ≈106m round trip, no timer risk). Half, same
 // "greed comes from depth, not the flat bonus" pricing rule as the original.
 export const MISSION_OAKHOLLOW_REWARD = 6;
 
 export const MISSION_REWARDS: Record<MissionKind, number> = {
-  deepwater: MISSION_DEEPWATER_REWARD,
+  deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
-// MISSION_DEEPWATER_REWARD (never a replacement) -- CEO-accepted reward
+// MISSION_FIREPOWER_REWARD (never a replacement) -- CEO-accepted reward
 // schedule, decisions/secondary-objectives-accepted-2026-09-06. M1/M4/M5 rows
 // from the same table are deferred until those missions ship (CTO scope
 // ruling, decisions/lul-1666-scope-deepwater-only-2026-09-06) -- do not add
 // them here without a MISSION_POOL entry to key them off.
-export const DEEPWATER_RETRIEVAL_BONUS = 15;
-export const DEEPWATER_SPEEDRUN_BONUS = 18;
+export const FIREPOWER_RETRIEVAL_BONUS = 8;
+export const FIREPOWER_SPEEDRUN_BONUS = 10;
 
 // LUL-1210: Stone Marker veil-charm, priced against Deeper Lungs I (120) so it reads as
 // worse value than saving -- game/economy/veil-charm-price. 125-unit landmark distance ->

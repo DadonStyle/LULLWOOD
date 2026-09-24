@@ -137,10 +137,10 @@ import {
   SHOP_CATALOG,
   tierOf,
   POCKET_STONES_RESERVE,
-  MISSION_DEEPWATER_REWARD,
+  MISSION_FIREPOWER_REWARD,
   MISSION_REWARDS,
-  DEEPWATER_RETRIEVAL_BONUS,
-  DEEPWATER_SPEEDRUN_BONUS,
+  FIREPOWER_RETRIEVAL_BONUS,
+  FIREPOWER_SPEEDRUN_BONUS,
   computeDepth,
   computeSurvival,
   applySpend,
@@ -2206,7 +2206,7 @@ const HINT_TEXT = {
   scent:      'this is your scent trail — predators follow it',
   landmark:   'landmarks in the fog are safe to navigate by',
   bog:        'bog — half pace, but it masks your scent from wolves',
-  deepwater:  'the drowned car — a bonus payout, but only if you reach it within the time limit',
+  deepwater:  'the fire tower — a bonus payout, but only if you reach it within the time limit',
   oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
@@ -5899,7 +5899,7 @@ function finishPickup(){
   // still miss the secondary. Never gates the win itself (see spec S1).
   const secondaryWon = mission ? secondaryComplete(mission, survivedSeconds) : false;
   const secondaryBonus = secondaryWon
-    ? (mission.secondary.data.kind === 'retrieval' ? DEEPWATER_RETRIEVAL_BONUS : DEEPWATER_SPEEDRUN_BONUS)
+    ? (mission.secondary.data.kind === 'retrieval' ? FIREPOWER_RETRIEVAL_BONUS : FIREPOWER_SPEEDRUN_BONUS)
     : 0;
   const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus), embersSpent);
   // LUL-1666: unlock is keyed on the *baseline* completing, independent of
@@ -6066,7 +6066,7 @@ function windAssistEndCue(){
 function completeMissionSequence(){
   if(mission.status === 'complete') return;   // guards a same-frame double-fire (e.g. OS key-repeat while holding E), mirrors pickup()'s own rejection check
   mission = completeMission(mission);
-  pushState({ caption: 'the drowned car -- found it', captionId: ++captionSeq });   // unconditional, matches the landmark first-run caption's precedent
+  pushState({ caption: "the warden's logbook -- found it", captionId: ++captionSeq });   // unconditional, matches the landmark first-run caption's precedent
   missionCompleteSting();
 }
 // LUL-1666: retrieval's completion -- mirrors completeMissionSequence()'s
@@ -6121,7 +6121,9 @@ function triggerDeath(kind, cause, killerIdx){
   deathAudio(kind);
 }
 function playDeathVideo(){
-  if(!deathVideo || !deathVideo.getAttribute('src')){ revealLoss(); return; }   // no video embedded → just show text
+  // LUL-4860: on a true first death (cutsceneSkippable false) the no-video path must not
+  // reveal early -- fall through to the CUT_END poll below, same as the video-playing path.
+  if(!deathVideo || !deathVideo.getAttribute('src')){ if(cutsceneSkippable) revealLoss(); return; }   // no video embedded → just show text
   deathVideo.style.display = 'block';
   try { deathVideo.currentTime = 0; } catch(e){}
   const pr = deathVideo.play();
@@ -6911,7 +6913,7 @@ function stepFrame(dt, t, skipRender){
       // 2026-09-09 Decision 5).
       objectiveText: canPickup ? 'Press  E  to lift the child'
         : (canBuyVeilCharm ? 'Press  E  for a mist-charm  ·  15 embers  ·  saves your veil from locking, once'
-           : (missionCanComplete ? 'Press  E  at the drowned car' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
+           : (missionCanComplete ? 'Press  E  at the fire tower' : 'Find the lost child  ·  ' + Math.round(distBaby) + 'm')),
       statusVisible, statusText,
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,

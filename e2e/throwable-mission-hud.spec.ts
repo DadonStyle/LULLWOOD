@@ -69,9 +69,9 @@ test.describe('#missionPanel via qaTeleportNearMission()', () => {
 
     // missionCanComplete itself isn't on qaPlayerState -- it surfaces through
     // #objective's text (engine/forest-engine.js: `missionCanComplete ? 'Press
-    // E at the drowned car' : ...`), which is also what the tester/player see.
+    // E at the fire tower' : ...`), which is also what the tester/player see.
     // Made to fail once on purpose: right outside interactRadius, it must not read that yet.
-    await expect(page.locator('#objective')).not.toContainText('drowned car');
+    await expect(page.locator('#objective')).not.toContainText('fire tower');
 
     // Walk 2 units toward the target -- acceptance criterion from the ticket.
     // Rotate to face the target first: player.yaw is only readable/writable
@@ -103,7 +103,7 @@ test.describe('#missionPanel via qaTeleportNearMission()', () => {
     await page.waitForTimeout(600);
     await page.keyboard.up('KeyW');
 
-    await expect(page.locator('#objective'), 'missionCanComplete must become true after closing the remaining distance').toContainText('drowned car', { timeout: 3_000 });
+    await expect(page.locator('#objective'), 'missionCanComplete must become true after closing the remaining distance').toContainText('fire tower', { timeout: 3_000 });
 
     await page.keyboard.press('KeyE');
     await page.waitForTimeout(300);
@@ -133,7 +133,7 @@ test.describe('#missionPanel via qaTeleportAtMissionTarget()', () => {
     // already, so unlike qaTeleportNearMission()'s test above this needs no
     // KeyW hold to close the gap -- #objective must read complete-ready
     // immediately off the teleport.
-    await expect(page.locator('#objective')).toContainText('drowned car', { timeout: 1_000 });
+    await expect(page.locator('#objective')).toContainText('fire tower', { timeout: 1_000 });
 
     const before = await page.evaluate(() => window.ForestEngine!.qaPlayerState!());
     await page.keyboard.press('KeyE');

@@ -106,7 +106,7 @@ test.describe('first-encounter hints (LUL-2307)', () => {
     expect(probe.activeKey).toBe('deepwater');
     const caption = page.locator('#hintCaption');
     await expect(caption).toBeVisible();
-    await expect(caption).toContainText('the drowned car — a bonus payout, but only if you reach it within the time limit');
+    await expect(caption).toContainText('the fire tower — a bonus payout, but only if you reach it within the time limit');
   });
 
   test('a first-sighted wolf shows its caption once', async ({ page }) => {
