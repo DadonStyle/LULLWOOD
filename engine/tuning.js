@@ -306,3 +306,11 @@ export const CUT_END = 3.7;   // death video length; reveal the loss text at the
 // with misleading intent, not a real mechanic. See engine/forest-engine.js's enterHide().
 export const BRAMBLE_SNAG_DURATION_S = 0.3;   // seconds of reduced-speed "stumble" after a sprint entry/exit
 export const BRAMBLE_SNAG_SPEED_MUL = 0.4;    // movement-speed multiplier applied for that window
+
+// ---- Log Crawl-Through (LUL-4527) ----------------------------------------------
+// Pass-through mobility: crawling through a log is crawl-paced and committed (no sprint,
+// no turning mid-crawl — movement is forced along the log's own axis until the far mouth).
+// Pricing owned by the Game Economist in parallel (LUL-3254 decision) -- these are the
+// proposal's example values, not final tuning; retune here, no call site changes needed.
+export const LOG_CRAWL_SPEED_MUL = 0.5;    // fraction of base walk speed while crawling (fixed, ignores sprint)
+export const LOG_CRAWL_ENTER_RADIUS = 1.2; // how close to a log mouth, while moving into it, triggers entry

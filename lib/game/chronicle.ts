@@ -14,6 +14,7 @@ export type ChronicleCode =
   | 'predator_gave_up'
   | 'hide'
   | 'hide_alert'
+  | 'crawl'
   | 'pickup'
   | 'fog_tide_start'
   | 'fog_tide_end'
@@ -67,7 +68,7 @@ function fmtTime(t: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-const HIDE_KIND_LABEL: Record<string, string> = { bramble: 'the brambles', log: 'a hollow log' };
+const HIDE_KIND_LABEL: Record<string, string> = { bramble: 'the brambles' };
 
 function lineFor(ev: ChronicleEvent): string {
   const a = ev.args || {};
@@ -81,6 +82,7 @@ function lineFor(ev: ChronicleEvent): string {
     case 'hide_alert': return (a.alerted as number) > 0
       ? `something stirred nearby as you went still.`
       : '';
+    case 'crawl': return 'you slipped through a hollow log, out the other side.';
     case 'pickup': return 'you lifted the child.';
     case 'fog_tide_start': return 'a fog tide rolled in.';
     case 'fog_tide_end': return 'the fog tide passed.';

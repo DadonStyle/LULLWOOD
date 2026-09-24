@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7146 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6340, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7257 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6386, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -584,6 +584,30 @@ one geometry builder (`makePredator()`), differentiated by the
   NOT a `hidden`-stance location** (`HIDE_KINDS` dropped `log`, LUL-2311;
   founder brief: a fallen log is thin, walkable cover with nothing to
   visually be "inside" of, so pressing `KeyH` beside one does nothing).
+- **LUL-4527: Log Crawl-Through** — walking into either mouth of a log
+  (`findLogCrawlEntry()`, `lib/game/cover.ts`, gated `LOG_CRAWL_ENTER_RADIUS`
+  and an inward-heading dot-product check) forces the player through it: a
+  fixed, committed pass at `walk * LOG_CRAWL_SPEED_MUL` along the log's own
+  long axis, ignoring sprint/turn input until the far mouth (`inLogCrawl`
+  state, `engine/forest-engine.js`'s `stepFrame()` movement block, replaces
+  the normal WASD/touch composition entirely while active) — a sprint/
+  strafe/reverse attempt mid-crawl is silently refused but fires
+  `logCrawlDeniedCue()` as the tell. Eye height drops to the same `1.05`
+  hide uses (crouch read). `depositScent()` is never called while
+  `inLogCrawl` (the forced branch has no call site for it at all), so a
+  predator loses scent continuity for the crossing and re-acquires the
+  instant the player resumes normal movement at the exit mouth — a pure
+  side effect of the branch split, not new predator AI. Sight and noise
+  detection are untouched: `hasLOS()`'s pre-existing walkable-cover
+  exemption (LUL-2320(A)) means a predator with a clear sightline down the
+  log's own axis still sees straight through it while the player is inside
+  the log's footprint, and `checkNoise()` still rolls every moving frame
+  (`NOISE_RADIUS_WALK`) regardless of `inLogCrawl` — this feature is scent-
+  continuity only, not a stealth/invisibility mechanic. This is a third,
+  separate boolean state from `hidden`/`HIDE_KINDS` — log stays out of
+  `HIDE_KINDS` (LUL-2311's reasoning still stands; a crawl is a transit,
+  not a static hide). `qaPlayerState()` exposes `inLogCrawl`/
+  `logCrawlExitX`/`logCrawlExitZ` for tests.
 - ~40% of cover-prop rolls (`roll < 0.4`, `generateCover()`), long/thin
   (`hx`/`hz` drawn asymmetrically so it reads as a log, not a box).
 - **LUL-384: the player walks and runs over it, no route-around needed** —
@@ -1508,15 +1532,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5716-5776, the win path since
-  `LUL-2281`) and `triggerDeath()` (L5945-5986). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5762-5822, the win path since
+  `LUL-2281`) and `triggerDeath()` (L5991-6032). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5945-5986) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L5991-6032) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L5953) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1574,7 +1598,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3956),
-  reset to 0 on `enter()` (L3763) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3808) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L6745: `computeDepth(maxDistFromHome) +
@@ -2347,7 +2371,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7225 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L5897) and `windAssistEndCue()` (L5906), edge-triggers on the combined
+`windAssistStartCue()` (L5943) and `windAssistEndCue()` (L5952), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
