@@ -72,6 +72,13 @@ export interface EngineHudState {
   mountedOnRock: boolean;
   rockClimbTimeLeft: number;
   climbPromptVisible: boolean;
+  // LUL-5005: Chapel Sanctuary -- a free, one-shot-per-run route to veilReserve=true.
+  // chapelSanctuaryActive/chapelSanctuaryChargeT drive #chapelSanctuaryPanel's countdown
+  // (same shape as mountedOnRock/rockClimbTimeLeft above); chapelSanctuaryPromptVisible
+  // drives the chapelSanctuaryPrompt row (same shape as climbPromptVisible above).
+  chapelSanctuaryActive: boolean;
+  chapelSanctuaryChargeT: number;
+  chapelSanctuaryPromptVisible: boolean;
   // LUL-3150: carry-leg panic button -- burns all veil charge for a detection-proof window.
   veilOverloadActive:  boolean;
   veilOverloadTimeLeft: number;
@@ -262,6 +269,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   mountedOnRock: false,
   rockClimbTimeLeft: 0,
   climbPromptVisible: false,
+  chapelSanctuaryActive: false,
+  chapelSanctuaryChargeT: 0,
+  chapelSanctuaryPromptVisible: false,
   veilOverloadActive: false,
   veilOverloadTimeLeft: 0,
   veilOverloadVisible: false,
@@ -1017,6 +1027,17 @@ export default function Hud({
         </div>
       )}
 
+      {/* LUL-5005: Chapel Sanctuary dwell countdown -- sibling of #caveImmunePanel/
+          #rockClimbPanel/#veilOverloadPanel, same always-visible-while-active treatment
+          (outside #panel, so it stays visible with adminMode off, Q3). The interact
+          prompt itself is a separate #actionSlot row (chapelSanctuaryPrompt, below) --
+          this panel only shows once the dwell has actually started. */}
+      {state.chapelSanctuaryActive && (
+        <div id="chapelSanctuaryPanel">
+          Sanctuary · {Math.ceil(state.chapelSanctuaryChargeT)}s
+        </div>
+      )}
+
       {/* LUL-2131: gate on !winVisible/!deathVisible too -- entered stays true
           through the end screens (restart() never clears it), so this used to
           keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
@@ -1190,6 +1211,18 @@ export default function Hud({
           text="Press  C  to climb the rock"
           keycap={mobile ? 'Climb' : undefined}
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchClimb(); } : undefined}
+        />
+        {/* LUL-5005: Chapel Sanctuary interact prompt -- a contextual "something to do"
+            row like pickupPrompt above, not a held tap target of its own: E-key/
+            triggerTouchInteract() (the shared MobileControls "E" button, same as
+            pickup/buyVeilCharm) is what actually starts the dwell, so this row carries
+            no onPointerDown, matching pickupPrompt's shape rather than climbPrompt's
+            (climbPrompt has its own dedicated KeyC with no shared button to defer to). */}
+        <ActionPrompt
+          id="chapelSanctuaryPrompt"
+          visible={state.chapelSanctuaryPromptVisible && hudLive}
+          tone="calm"
+          text="Press  E  for chapel sanctuary — shelter 15s for a free charm against the mist"
         />
         {/* `hiding` is not a second flag: status only ever appears while hidden
             (LUL-35 pass 2 removed the `statusHiding` field, which the engine

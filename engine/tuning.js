@@ -85,6 +85,14 @@ export const ROOST_COOLDOWN = 32;   // seconds a roost stays quiet after firing
 // MISSION_POOL's interactRadius (lib/game/mission.ts).
 export const VEIL_CHARM_INTERACT_RADIUS = 4;
 
+// LUL-5005: Chapel Sanctuary -- a second, free route to veilReserve=true (the
+// Stone Marker's VEIL_CHARM_INTERACT_RADIUS above is the paid one), gated by a
+// full CHAPEL_SANCTUARY_DURATION-second dwell at the chapelSteeple landmark
+// instead of embers. Same radius shape as VEIL_CHARM_INTERACT_RADIUS -- both are
+// plain "stand this close" interact radii, not a LANDMARKS[].cr movement collider.
+export const CHAPEL_SANCTUARY_INTERACT_RADIUS = 4;
+export const CHAPEL_SANCTUARY_DURATION = 15;   // seconds of dwell required for the free grant
+
 // LUL-1904: the cave -- spawns in ~50% of rounds (coin-flip drawn in
 // generateMap(), see forest-engine.js), a fixed candidate slot like every
 // LANDMARKS entry above, but NOT pushed into LANDMARKS itself -- that array
