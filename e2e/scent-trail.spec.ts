@@ -263,6 +263,42 @@ test.describe('scent trail visual (LUL-2230)', () => {
     await assertNoOverlap(page, '#scentTrailCaption', '#actionPrompt');
   });
 
+  test('the glyph never goes offscreen when anchored near the x-clamp edge (LUL-4328)', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+
+    // Any geometry that shows the caption works here -- this test isolates the
+    // CSS `left` clamp (components/GameCanvas.tsx), not the engine's own hintX
+    // projection, which the y-clamp test above already exercises against real
+    // camera geometry.
+    await walkForward(page, 2.5);
+    const { yaw } = await qaHook(page, 'qaProbePlayer');
+    await qaHook(page, 'qaSetLookYaw', yaw + Math.PI);
+    let probe = await qaHook(page, 'qaProbeScentTrail');
+    for (let attempt = 0; attempt < 5 && !probe.captionVisible; attempt++) {
+      await qaHook(page, 'qaAdvance', stepsFor(0.1));
+      probe = await qaHook(page, 'qaProbeScentTrail');
+    }
+    expect(probe.captionVisible).toBe(true);
+
+    // engine/forest-engine.js's hintX projection is itself clamped to
+    // [0.08, 0.92] (Math.max(0.08, Math.min(0.92, ...))) -- 0.08 is the
+    // closest the engine will ever anchor this caption to the left edge.
+    // Force it directly rather than reverse-engineering camera geometry to
+    // reproduce that exact projection: this pins the CSS clamp's boundary
+    // condition (the actual LUL-4328 repro) regardless of what the RNG-driven
+    // scene happens to project today.
+    await page.evaluate(() => {
+      document.getElementById('scentTrailCaption')?.style.setProperty('--hint-left', '8%');
+    });
+
+    const caption = page.locator('#scentTrailCaption');
+    const glyph = page.locator('.scentTrailCaptionGlyph');
+    await assertInViewport(caption, page, '#scentTrailCaption');
+    await assertInViewport(glyph, page, '.scentTrailCaptionGlyph');
+  });
+
   test('never shows over the win or death screen', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
