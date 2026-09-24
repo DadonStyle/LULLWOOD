@@ -169,6 +169,13 @@ declare global {
       qaHideBehindCoverKind?: (
         kind: 'wolf' | 'bear' | 'lion',
       ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; playerX: number; playerZ: number; detect: number } | null;
+      /** LUL-4528: rock-climb staging hook, mirrors qaHideBehindCoverKind's LOS-clear-ray
+       * check shape but keyed on kind === 'rock' directly (rock is not in HIDE_KINDS).
+       * Places the first live predator at (nearestRock.x + dx, nearestRock.z + dz), staged
+       * into 'chase' so qaProbeEffectiveDetect(kind) reads a real detect roll immediately.
+       * Returns the predator's staged {x,z}, or null if that offset is movement-blocked,
+       * the ray back to the rock isn't LOS-clear, or there is no rock / no live predator. */
+      qaStageRockClimb?: (dx: number, dz: number) => { x: number; z: number } | null;
       /** LUL-196: reset predator[idx] to roam without relocating it; returns {x,z} so callers can verify position unchanged, or null if idx doesn't resolve. */
       qaSetPredatorRoam?: (idx: number) => { x: number; z: number } | null;
       /** LUL-1620: read predator[idx]'s last-known-position return-sweep memory, or null if idx doesn't resolve. */
@@ -534,6 +541,13 @@ declare global {
       qaProbeVeil?: () => { charge: number; locked: boolean; reserve: boolean; releaseCueCount: number };
       /** Read-only: veil-overload countdown, per-round use flag (LUL-4663 -- was per-carry-leg), and denied-cue count. */
       qaProbeVeilOverload?: () => { chargeT: number; usedThisRound: boolean; deniedCueCount: number };
+      /** LUL-4528: read-only rock-climb state, mirrors qaProbeVeilOverload's shape. Includes
+       * all three cues' fire counts so a test can assert e.g. rockClimbEndCue fired exactly
+       * once on countdown expiry, without decoding WebAudio output. */
+      qaProbeRockClimb?: () => {
+        mountedOnRock: boolean; rockClimbT: number;
+        startCueCount: number; endCueCount: number; deniedCueCount: number;
+      };
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission

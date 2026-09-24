@@ -17,6 +17,8 @@ export const ENGINE_ACTION_KEYS = [
   'triggerTouchHide', 'triggerTouchShuffle', 'triggerTouchInteract', 'triggerTouchThrow',
   'triggerTouchJump', 'triggerTouchPause', 'triggerTouchToggleRun', 'setTouchVeil',
   'triggerTouchVeilOverload',
+  // LUL-4528
+  'triggerTouchClimb',
   'setDifficulty', 'setRunMode', 'setSensitivity', 'setInvertY', 'setReducedMotion', 'setCaptions',
   'setEmbers', 'purchase',
   'setMissionUnlocks', 'setSecondaryChoice',
