@@ -86,19 +86,6 @@ import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, NOISE_RADIUS_RUN_WIN
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
-  biomeAt,
-  bogSpeedMultiplier,
-  bogNoiseMultiplier,
-  bogMaskLevel,
-  pickHardBabyPosition,
-  clearOfLandmarks,
-  bogKeepClear,
-  routeCrossesBog,
-  BOG_CENTER,
-  BOG_INNER_RADIUS,
-  BOG_OUTER_RADIUS,
-} from '@/lib/game/bog';
-import {
   armReturnSweep,
   backOffPoint,
   canCatchInChase,
@@ -164,6 +151,8 @@ import {
   eligibleMissionPool,
   checkMissionExpiry,
   MISSION_POOL,
+  pickHardBabyPosition,
+  clearOfLandmarks,
 } from '@/lib/game/mission';
 // LUL-2740: pure spiral clearance search, extracted from clearLandmarkSpot()
 // below so it is unit-testable without a Three.js scene.
@@ -197,7 +186,7 @@ import {
   STAR, DUST, BW, BSP, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
-  VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
+  VEIL_CHARM_INTERACT_RADIUS, ROOSTS, ROOST_COOLDOWN,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
 } from '@/engine/tuning';
@@ -238,8 +227,8 @@ function init(onStateChange, inputMode) {
   }
 
   // LUL-2328: qaWorld/qaNoRender are read once, here, before anything below
-  // reads CONFIG.mapSize/CONFIG.trees/CONFIG.coverProps/CONFIG.bogTrees/
-  // CONFIG.bogReeds for the first time this page life -- the very next
+  // reads CONFIG.mapSize/CONFIG.trees/CONFIG.coverProps for the first time
+  // this page life -- the very next
   // statement (`half = CONFIG.mapSize / 2`) is the earliest such read. See
   // applyQaWorldMicroPreset()'s comment (engine/tuning.js) for why that
   // ordering is load-bearing. Absent by default, so both do nothing for real
@@ -266,7 +255,6 @@ const margin = 4;
 // roam/reroute waypoints, the predator/player position clamps in
 // updatePredators()/tick()) keeps compiling and behaving correctly without a
 // site-by-site rename -- it is not a second world boundary, just an alias.
-// inBog()/isInBog() are gone; biomeAt(x, z) (lib/game/bog.ts) replaces both.
 const zMax = half;
 // LUL-1485: collapses every distance/LOS/detection call below to today's
 // exact behavior (Infinity is a no-op by construction, see lib/game/wrap.ts)
@@ -280,9 +268,7 @@ const WRAP_SPAN = CONFIG.wrapEnabled ? CONFIG.mapSize : Infinity;
 // the player can orient without the minimap (which stays scaled to the
 // original 240x240 forest -- see w2m()/drawMinimap() below, both untouched).
 // Fixed constants, not an rng draw, same treatment as CONFIG.home
-// -- a place you can actually learn, not one more random prop. Two sit in the
-// forest, two mark the bog: the split oak at its near edge (a gateway you see
-// coming) and the drowned car deep in it (how far you've come).
+// -- a place you can actually learn, not one more random prop.
 // `cr` is the movement-collision radius (LUL-374) -- deliberately much
 // smaller than `clear` (which only keeps trees/cover from generating too
 // close to the landmark's nudge target). Every `cr` here is comfortably
@@ -436,7 +422,7 @@ let lightDimmed = false;
 // The engine only owns the rendering-side bits: how fast the mist visibly ramps
 // (VEIL_RAMP), how thick it gets at full ramp (MIST_VEIL_FOG), and the mutable
 // per-frame state itself.
-let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, staminaLowCuePlayed = false, veilReserve = false, playerBogMask = 0;
+let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, staminaLowCuePlayed = false, veilReserve = false;
 // LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
 // decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
 let stoneMarkerPulseT = 0, brambleSnagT = 0;   // LUL-4526: Thorn Snag stumble countdown
@@ -2304,9 +2290,7 @@ function pruneScentPoints(){
 }
 function checkScent(p){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return false;
-  // LUL-1902: wolf-only nose reduction while the player's bog-mask is active.
-  // Bears/lions and all sight-based detect() are untouched.
-  const nose = p.kind === 'wolf' ? p.spec.nose * (1 - WOLF_BOG_MASK_STRENGTH * playerBogMask) : p.spec.nose;
+  const nose = p.spec.nose;
   for(let i = scentPoints.length - 1; i >= 0; i--){
     const s = scentPoints[i], age = clock.elapsedTime - s.t0;
     if(isScentDetected(s, age, p.x, p.z, windX, windZ, nose, scentLifetimeWithWind(effectiveScentLifetime(tierOf(embers, 'quietStep')), windHighSpeed), WRAP_SPAN)) return true;
@@ -6136,7 +6120,7 @@ function restart(){
   const fresh = freshRunState();
   won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; baby.taken = fresh.babyTaken;
   hidden = false; hideTime = 0; hideKind = null; lastHideSpot = null; coverProbeAccum = 0; eyeH = CONFIG.eye; deathShown = false;
-  staminaCharge = 1; staminaLowCuePlayed = false; playerBogMask = 0;
+  staminaCharge = 1; staminaLowCuePlayed = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
