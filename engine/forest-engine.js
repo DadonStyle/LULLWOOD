@@ -78,6 +78,7 @@ import {
   COVER_PROBE_HZ,
   PLAYER_COLLISION_RADIUS,
   brambleSnagSpeedMultiplier,
+  findLogCrawlEntry as geoFindLogCrawlEntry,
   SHUFFLE_OFFSET,
 } from '@/lib/game/cover';
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
@@ -193,6 +194,8 @@ import {
   VEIL_CHARM_INTERACT_RADIUS, ROOSTS, ROOST_COOLDOWN,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
+  BEACON_HUNTER_LOCK_MUL, BEACON_HUNTER_EYE_COLOR,
+  LOG_CRAWL_SPEED_MUL, LOG_CRAWL_ENTER_RADIUS,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -430,6 +433,8 @@ let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, stami
 // LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
 // decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
 let stoneMarkerPulseT = 0, brambleSnagT = 0;   // LUL-4526: Thorn Snag stumble countdown
+let inLogCrawl = false, logCrawlDirX = 0, logCrawlDirZ = 0,
+    logCrawlExitX = 0, logCrawlExitZ = 0, logCrawlDeniedLatch = false;   // LUL-4527
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
 // last result between probes; coverProbeAccum counts elapsed seconds.
 let lastHideSpot = null, coverProbeAccum = 0, coverRustleAccum = 0;   // LUL-2856
@@ -1746,14 +1751,32 @@ function makePredator(kind){
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0, sightFlicker:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
     charge:null, chargeDirX:0, chargeDirZ:0, chargeCooldown:0, chargeRecoveryT:0, inert:false, sightLock:null,
-    noiseTarget:null, noiseTargetT:0, parked:false };
+    noiseTarget:null, noiseTargetT:0, parked:false,
+    variant: undefined, beaconHunterLocked: false, eyeMat };   // LUL-4897: variant is undefined for every predator but a Beacon Hunter wolf; eyeMat kept so its color can swap on lock
 }
 const predators = [];
 // `speciesIdx` (0..2 within its species) is what LUL-26's `activePerSpecies`
 // preset compares against -- fixed at creation so placePredators() doesn't
 // need to re-derive array position every restart.
-for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
-let sinceClose = 0, huntTime = 0, spotFlash = 0, rustleFlash = 0, pianoTimer = 0;   // threat timers, spot flash, cover-rustle flash (LUL-2856), approach-note timer
+for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){
+  const p = makePredator(k); p.speciesIdx = i;
+  // LUL-5010: real spawn path for the Beacon Hunter cheap slice -- the
+  // wolf.0 roster slot is a permanent Beacon Hunter in every real game.
+  // speciesIdx 0 is always active (every DIFFICULTY_PRESETS tier has
+  // activePerSpecies >= 1), so this variant is never parked off-map.
+  // placePredators() never touches p.variant (only x/z/state/etc reset on
+  // restart), so this module-load assignment persists for the process
+  // lifetime -- the same reason `speciesIdx` itself is fixed here instead
+  // of being re-derived every restart. qaBuildScene() still overwrites
+  // p.variant per staged spec (engine/forest-engine.js `p.variant =
+  // spec.variant`), so existing micro-world specs that stage a plain wolf
+  // with no `variant` field reset this slot back to undefined -- no e2e
+  // behavior changes for tests that don't opt in.
+  if(k === 'wolf' && i === 0) p.variant = 'beaconHunter';
+  predators.push(p);
+}
+let sinceClose = 0, huntTime = 0, spotFlash = 0, rustleFlash = 0, pianoTimer = 0,
+    winPendingActive = false, winPendingT = 0;   // LUL-1633: win-reveal dead-window vignette ramp
 let sinceBelowMinHunters = 0;   // LUL-2250: seconds the active-hunter count has been below MIN_ACTIVE_HUNTERS
 let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
 let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
@@ -1928,15 +1951,15 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow',
-  'wolf','bear','lion','stamina','windAssist','windPulse','cover','caveImmune','veilOverload','throwable','veil'];
-// 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
-// projected to a viewport fraction via projectToScreen() below, same math the
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','veilOverload','throwable','veil'];
+// 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
+// point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
 // fires unconditionally on entry with no single object to point at (mirroring the
 // old unconditional toast it replaces) -- are self/panel-anchored: no frustum
 // requirement, positioned by a fixed CSS rule per key in GameCanvas.tsx instead of a
 // per-frame x/y (the engine has no access to React-rendered DOM positions).
-const WORLD_HINT_KEYS = { scent:1, wolf:1, bear:1, lion:1, cover:1, throwable:1 };
+const WORLD_HINT_KEYS = { scent:1, wolf:1, bear:1, lion:1, beaconHunter:1, cover:1, throwable:1 };
 const HINT_TEXT = {
   scent:      'this is your scent trail — predators follow it',
   landmark:   'landmarks in the fog are safe to navigate by',
@@ -1945,6 +1968,7 @@ const HINT_TEXT = {
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
+  beaconHunter: 'a Beacon Hunter — locks onto you the instant you sprint into the wind, sight and scent don\'t matter to it. hide (H) or veil (F), or stop sprinting into the wind.',
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
   windAssist: 'sprinting into the wind moves you faster and quieter',
   windPulse:  'wind pulse — nearby predators pause their sprint when moving across the wind',
@@ -2108,6 +2132,21 @@ function scentOnto(p){
   predatorCall(p.kind, false, p);
   logChronicle('scent_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home) });
   scentLockEventCount++;   // LUL-2230: the trail caption dismisses itself on the first one of these
+}
+
+// ---- Beacon Hunter: a fourth detection channel, wind-signal only (LUL-4897) -----
+// Mirrors scentOnto()'s shape (state->chase, scentLock leash, callTimer, roar) but
+// is triggered by player.sprintWindBonusActive, not sight or scent -- see
+// wiki game/mechanics/beacon-hunter Q7 for why this isn't a duplicate of scentOnto().
+function beaconOnto(p){
+  if(p.state === 'chase') return;   // already chasing (any channel) -- don't re-trigger the cue/roar
+  p.alertedBy = null;
+  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2); p.beaconHunterLocked = true;
+  p.eyeMat.color.setHex(BEACON_HUNTER_EYE_COLOR);   // cold blue-teal rim glow, visible under reducedMotion since it's a static color, not an animation
+  if(!p.spotted) p.spotted = true;
+  predatorCall(p.kind, false, p);
+  beaconLockCue();
+  logChronicle('beacon_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home) });
 }
 
 // ---- Sound: footstep noise as a third detection channel (LUL-39) ---------
@@ -2333,6 +2372,11 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
   updateWolfPack(dt);
   for(const p of predators){
     if(p.inert || p.parked) continue;   // LUL-26: parked out for the current difficulty preset; LUL-2250: outside the live streaming ring
+    // LUL-4897: beaconHunterLocked only means anything while actually chasing -- clearing it
+    // here whenever state isn't 'chase' covers every existing chase-exit site (give-up,
+    // death, hunt escalation, qaBuildScene reset, etc.) without duplicating the clear at
+    // each one individually. Eye color reverts on the same transition.
+    if(p.state !== 'chase' && p.beaconHunterLocked){ p.beaconHunterLocked = false; p.eyeMat.color.setHex(p.spec.eye); }
     const dx = wrapDelta(player.x, p.x, WRAP_SPAN), dz = wrapDelta(player.z, p.z, WRAP_SPAN), dist = Math.hypot(dx, dz) || 0.0001;
     const ux = dx/dist, uz = dz/dist;
     // LUL-2422: CONFIG.speedScaleMul (default 1, set by applyQaWorldMicroPreset) folded in
@@ -2495,6 +2539,18 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         spotOnto(p);
       }
       else if(!sniffImmune && checkScent(p)){ scentOnto(p); }
+      // LUL-4897: Beacon Hunter's wind-signal lock-on -- a fourth detection channel that
+      // bypasses sight/scent entirely, gated on the same sprint-into-wind signal the HUD's
+      // #windIndicator pulse already shows the player. effectiveDetect() already returns 0
+      // during cave immunity/veil overload, but the immunity gate is stated explicitly here
+      // too (not just relied on implicitly) since this is the one channel in the codebase
+      // that could otherwise look like it bypasses immunity -- wiki game/mechanics/beacon-hunter Q1.
+      else if(!sniffImmune && p.kind === 'wolf' && p.variant === 'beaconHunter'
+          && player.sprintWindBonusActive
+          && !isCaveImmune(caveImmuneT) && !isVeilOverloadActive(veilOverloadChargeT)
+          && dist < effectiveDetect(p) * BEACON_HUNTER_LOCK_MUL){
+        beaconOnto(p);
+      }
       else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
       // LUL-1255 (Ship 1 wayfinding S3): the cry is a second, independent
       // hearing check against the child's actual position, not the player's --
@@ -3235,6 +3291,47 @@ function thornSnagSound(){
   g.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
   src.connect(bp); bp.connect(g); g.connect(master); g.connect(conv);
   src.start(t); src.stop(t+0.18);
+}
+// LUL-4527: same procedural-noise-burst shape as thornSnagSound()/leafRustle() -- a low,
+// short scrape rather than a rustle, so it reads as wood/bark rather than brush. One-shot on
+// entry and on exit, not a sustained loop -- this file has no sustained per-state ambience
+// convention (grep confirms `.loop = true` exists only on the two always-on ambient beds,
+// wind/insects); a Start/End one-shot pair is the existing convention for a temporary
+// player-state transition (leafRustle(true/false)), reused here instead of inventing a loop.
+function logCrawlEnterCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.2, false);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.15, t+0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.22);
+  src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
+  src.start(t); src.stop(t+0.24);
+}
+function logCrawlExitCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.15, false);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.12, t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
+  src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
+  src.start(t); src.stop(t+0.18);
+}
+// LUL-4527: refusal tell for a sprint/strafe/reverse attempt mid-crawl -- same shape as
+// veilOverloadDeniedCue(), the codebase's one existing "input was refused" cue.
+function logCrawlDeniedCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(90, t);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.17);
 }
 function enterHide(spot){
   hidden = true; hideTime = 0; hideKind = spot.kind; hideSpot = spot; hideEventCount++; leafRustle(true);
@@ -4812,9 +4909,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // tests already cover the pure function -- see e2e/sight-flicker.spec.ts).
     // LUL-4893: windPauseT exposed so a test can assert the Predator Pause freeze
     // directly instead of inferring it purely from x/z staying constant.
+    // LUL-4897: variant/beaconHunterLocked exposed so e2e/beacon-hunter.spec.ts can assert
+    // the wind-signal lock-on fired without reaching into the wolf's own THREE.js material.
     // LUL-4996: windPauseCooldownT exposed so a test can assert the re-arm cooldown
     // actually blocks a retrigger (not just that x/z eventually moves again).
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, detectRange: effectiveDetect(p), canSee: canSee(p, dist), rad: p.rad, moveRad: p.moveRad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible, sightFlicker: p.sightFlicker, windPauseT: p.windPauseT, windPauseCooldownT: p.windPauseCooldownT };
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, detectRange: effectiveDetect(p), canSee: canSee(p, dist), rad: p.rad, moveRad: p.moveRad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible, sightFlicker: p.sightFlicker, windPauseT: p.windPauseT, windPauseCooldownT: p.windPauseCooldownT, variant: p.variant, beaconHunterLocked: p.beaconHunterLocked };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
@@ -4896,6 +4995,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       jumping: jumping, paused: paused, toggleRunOn: toggleRunOn,
       veilHeld: (entered && !won && !dead && !pickingUp) && (!!keys['KeyF'] || touchVeil),
       hidden: hidden, brambleSnagT: brambleSnagT,
+      inLogCrawl: inLogCrawl, logCrawlExitX: logCrawlExitX, logCrawlExitZ: logCrawlExitZ,
     };
   };
 
@@ -5531,6 +5631,8 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       if(!p) continue;
       p.inert = false; p.g.visible = true; p.parked = false;
       p.x = spec.x; p.z = spec.z; p.wpx = spec.x; p.wpz = spec.z; p.vx = 0; p.vz = 0; p.yaw = 0;
+      p.variant = spec.variant;   // LUL-4897: additive, e.g. 'beaconHunter' for a wolf; undefined for every ordinary predator
+      p.beaconHunterLocked = false;
       p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
       p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = 0; p.scentCalls = 0;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0; p.sightFlicker = 0;
@@ -5623,6 +5725,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 // ---- Objective, pickup cinematic, win / death ----------------------------
 const spotFlashEl = document.getElementById('spotFlash');
 const rustleFlashEl = document.getElementById('rustleFlash');   // LUL-2856
+const winPendingEl = document.getElementById('winPendingCue');   // LUL-1633
 const bearingPulseEl = document.getElementById('bearingPulse');
 const deathVideo = document.getElementById('deathVideo');
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
@@ -5906,6 +6009,18 @@ function windPulseCue(){
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.22);
 }
+// LUL-4897: Beacon Hunter's lock-on cue -- a rising 350->500Hz synth sweep, distinct
+// register and shape from both windPulseCue() above (a 120->180Hz freeze chime) and the
+// howl SFX (predatorCall(), below) so a locked Beacon Hunter doesn't read as either.
+function beaconLockCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sawtooth';
+  o.frequency.setValueAtTime(350, t); o.frequency.exponentialRampToValueAtTime(500, t + 0.35);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.42);
+}
 // LUL-1258: no cinematic lock (unlike pickup's ~2.5s gather) -- this is a
 // detour bonus, not the core objective, and stopping the player's clock here
 // would undercut the risk this mission is supposed to cost.
@@ -5988,6 +6103,7 @@ function restart(){
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
+  winPendingActive = false; winPendingT = 0; if(winPendingEl) winPendingEl.style.opacity = '0';   // LUL-1633
   roostCooldown.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
@@ -6301,7 +6417,7 @@ function stepFrame(dt, t, skipRender){
     coverRustleAccum = 0;
     rollCoverRustle();
   }
-  eyeH += ((hidden ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
+  eyeH += (((hidden || inLogCrawl) ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
 
   // LUL-213: advance in game time (dt is already clamped above -- see wiki
   // systems/dt-clamp-vs-walltime) so the arc can't drift relative to
@@ -6382,46 +6498,111 @@ function stepFrame(dt, t, skipRender){
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
     const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * brambleSnagSpeedMultiplier(brambleSnagT);
-    let ix = 0, iz = 0;
-    if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
-    if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
-    if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
-    if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
-    // LUL-68: merge touch left-stick direction (threshold 0.2 dead-zone)
-    if(hasTouchMove){ ix += touchMove.x; iz += touchMove.z; }
-    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
-    const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-    let mvx = fx*iz + rx*ix, mvz = fz*iz + rz*ix;
-    const mag = Math.hypot(mvx, mvz);
-    if(mag > 0){
-      mvx /= mag; mvz /= mag;
-      escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
-      // LUL-3009: every frame while moving, not throttled by scentEmitT below (that gate is
-      // sized for scent deposit density, not for a HUD readout the player expects to track
-      // their heading in real time).
+    // LUL-4527: entry check -- only when not already crawling, using this frame's actual
+    // input heading (computed below as mvx/mvz normally would be) is circular, so entry uses
+    // the player's last real facing/movement intent instead: any movement key held this frame,
+    // projected the same way the normal branch would. Cheap and correct since the entry check
+    // only needs "are they walking toward the mouth," not the exact final heading.
+    if(!inLogCrawl){
+      let eix = 0, eiz = 0;
+      if(keys['KeyW'] || keys['ArrowUp'])    eiz += 1;
+      if(keys['KeyS'] || keys['ArrowDown'])  eiz -= 1;
+      if(keys['KeyD'] || keys['ArrowRight']) eix += 1;
+      if(keys['KeyA'] || keys['ArrowLeft'])  eix -= 1;
+      if(hasTouchMove){ eix += touchMove.x; eiz += touchMove.z; }
+      const efx = -Math.sin(player.yaw), efz = -Math.cos(player.yaw);
+      const erx =  Math.cos(player.yaw), erz = -Math.sin(player.yaw);
+      let emvx = efx*eiz + erx*eix, emvz = efz*eiz + erz*eix;
+      const emag = Math.hypot(emvx, emvz);
+      if(emag > 0){
+        emvx /= emag; emvz /= emag;
+        const entry = geoFindLogCrawlEntry(player.x, player.z, emvx, emvz, coverGrid, CELL, WRAP_SPAN);
+        if(entry){
+          inLogCrawl = true;
+          logCrawlDirX = entry.dirX; logCrawlDirZ = entry.dirZ;
+          logCrawlExitX = entry.exitX; logCrawlExitZ = entry.exitZ;
+          logCrawlDeniedLatch = false;
+          logCrawlEnterCue();
+          logChronicle('crawl_enter', {});
+          if(!hintSeen('logCrawl')){
+            markHintSeen('logCrawl');
+            if(captionsOn) pushState({ caption: "Crawling through the log — you can't sprint or turn until you're through.", captionId: ++captionSeq });
+          }
+        }
+      }
+    }
+    // LUL-4527: forced-movement branch -- replaces the normal WASD/touch->mvx/mvz composition
+    // entirely while crawling. Direction is locked to logCrawlDirX/Z (set on entry, above);
+    // speed is a fixed override, not a multiplier on `maxSpd` -- sprint/bog/bramble states are
+    // mutually exclusive with being mid-crawl. Any sprint/strafe/reverse input attempt still
+    // fires the one-shot refusal cue (latched so it plays once per continuous hold, not every
+    // frame), matching Q5's "refused input needs a positive tell."
+    if(inLogCrawl){
+      const deniedInput = isSprintHeld() || keys['KeyA'] || keys['KeyD'] || keys['KeyS'] ||
+        keys['ArrowLeft'] || keys['ArrowRight'] || keys['ArrowDown'];
+      if(deniedInput && !logCrawlDeniedLatch){ logCrawlDeniedLatch = true; logCrawlDeniedCue(); }
+      else if(!deniedInput) logCrawlDeniedLatch = false;
+      const mvx = logCrawlDirX, mvz = logCrawlDirZ;
+      escX = mvx; escZ = mvz;
       movingAgainstWind = isMovingAgainstWind(mvx, mvz, windX, windZ);
-      // LUL-3149: Wind-Assisted Evasion -- +20%/-30% speed+noise while sprinting directly
-      // against the wind, stacks on top of Threat Beacon's always-on scent reduction
-      // (depositScent() below, unconditional on `running`). movingAgainstWind is already
-      // known by this point in the frame (line above) -- reuse it, don't re-derive.
-      const windAssist = (running && movingAgainstWind);
-      spd = maxSpd * (windAssist ? WIND_ASSIST_SPEED_MUL : 1);
+      spd = walk * LOG_CRAWL_SPEED_MUL;
       const step = spd*dt, lim = half - margin, zLim = zMax - margin;
-      const nx = Number.isFinite(WRAP_SPAN)
-        ? wrapCoord(player.x + mvx*step, WRAP_SPAN)
-        : Math.max(-lim, Math.min(lim, player.x + mvx*step));
-      const nz = Number.isFinite(WRAP_SPAN)
-        ? wrapCoord(player.z + mvz*step, WRAP_SPAN)
-        : Math.max(-lim, Math.min(zLim, player.z + mvz*step));
-      if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }  // slide along trunks
+      const nx = Number.isFinite(WRAP_SPAN) ? wrapCoord(player.x + mvx*step, WRAP_SPAN) : Math.max(-lim, Math.min(lim, player.x + mvx*step));
+      const nz = Number.isFinite(WRAP_SPAN) ? wrapCoord(player.z + mvz*step, WRAP_SPAN) : Math.max(-lim, Math.min(zLim, player.z + mvz*step));
+      if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }
       if(!blocked(player.x, nz)){ dist += Math.abs(nz - player.z); player.z = nz; }
-      // LUL-23: lay scent while actually moving -- holding still (or being hidden,
-      // which already implies not moving) never adds to the trail.
-      scentEmitT -= dt;
-      if(scentEmitT <= 0){ depositScent(running, movingAgainstWind); scentEmitT = SCENT_DEPOSIT_INTERVAL; }   // dedup: was a second isMovingAgainstWind() call, no behavior change
-      // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
-      // shape as scent, sized off the same running flag rather than a new one.
-      noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK));
+      // LUL-4527: scent suppressed entirely while crawling -- no depositScent() call here at
+      // all (the gate below on the normal branch is belt-and-suspenders in case both branches
+      // ever run the same frame at a transition boundary; see the exit check's own comment).
+      noiseRadius = NOISE_RADIUS_WALK;   // still makes a little noise -- crawling isn't silent, just untracked by scent
+      const past = (player.x - logCrawlExitX) * logCrawlDirX + (player.z - logCrawlExitZ) * logCrawlDirZ;
+      if(past >= 0){
+        inLogCrawl = false;
+        logCrawlExitCue();
+        logChronicle('crawl', {});
+      }
+    } else {
+      let ix = 0, iz = 0;
+      if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
+      if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
+      if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
+      if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
+      // LUL-68: merge touch left-stick direction (threshold 0.2 dead-zone)
+      if(hasTouchMove){ ix += touchMove.x; iz += touchMove.z; }
+      const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+      const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+      let mvx = fx*iz + rx*ix, mvz = fz*iz + rz*ix;
+      const mag = Math.hypot(mvx, mvz);
+      if(mag > 0){
+        mvx /= mag; mvz /= mag;
+        escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
+        // LUL-3009: every frame while moving, not throttled by scentEmitT below (that gate is
+        // sized for scent deposit density, not for a HUD readout the player expects to track
+        // their heading in real time).
+        movingAgainstWind = isMovingAgainstWind(mvx, mvz, windX, windZ);
+        // LUL-3149: Wind-Assisted Evasion -- +20%/-30% speed+noise while sprinting directly
+        // against the wind, stacks on top of Threat Beacon's always-on scent reduction
+        // (depositScent() below, unconditional on `running`). movingAgainstWind is already
+        // known by this point in the frame (line above) -- reuse it, don't re-derive.
+        const windAssist = (running && movingAgainstWind);
+        spd = maxSpd * (windAssist ? WIND_ASSIST_SPEED_MUL : 1);
+        const step = spd*dt, lim = half - margin, zLim = zMax - margin;
+        const nx = Number.isFinite(WRAP_SPAN)
+          ? wrapCoord(player.x + mvx*step, WRAP_SPAN)
+          : Math.max(-lim, Math.min(lim, player.x + mvx*step));
+        const nz = Number.isFinite(WRAP_SPAN)
+          ? wrapCoord(player.z + mvz*step, WRAP_SPAN)
+          : Math.max(-lim, Math.min(zLim, player.z + mvz*step));
+        if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }  // slide along trunks
+        if(!blocked(player.x, nz)){ dist += Math.abs(nz - player.z); player.z = nz; }
+        // LUL-23: lay scent while actually moving -- holding still (or being hidden,
+        // which already implies not moving) never adds to the trail.
+        scentEmitT -= dt;
+        if(scentEmitT <= 0){ depositScent(running, movingAgainstWind); scentEmitT = SCENT_DEPOSIT_INTERVAL; }   // dedup: was a second isMovingAgainstWind() call, no behavior change
+        // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
+        // shape as scent, sized off the same running flag rather than a new one.
+        noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK));
+      }
     }
   }
   // LUL-3009: pushed unconditionally every frame (not nested in the movement block above),
@@ -6486,7 +6667,7 @@ function stepFrame(dt, t, skipRender){
     halo.material.opacity = Math.min(0.5, 0.12 + e*0.05);
     bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5 + e*0.15;
     babyLight.intensity = boomed ? 0 : key3(e, [[0,1],[4,3.2],[7,2],[9,3.5]]);
-    if(boomed && !pickBoomed){ pickBoomed = true; fireBoom(baby.x, ay, baby.z); }   // the child bursts into the sky -- the win moment's visual, finishPickup() below does the bookkeeping
+    if(boomed && !pickBoomed){ pickBoomed = true; fireBoom(baby.x, ay, baby.z); winPendingActive = true; }   // the child bursts into the sky -- the win moment's visual, finishPickup() below does the bookkeeping. LUL-1633: starts the dead-window vignette ramp
     // camera holds position and tilts up to follow the child, then the burst --
     // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly the
     // camera motion the setting exists to remove) and just hold the player's
@@ -6631,6 +6812,10 @@ function stepFrame(dt, t, skipRender){
   // so the vignette still fires as a positive tell without the motion.
   rustleFlash = Math.max(0, rustleFlash - dt*1.6);
   rustleFlashEl.style.opacity = motionReduced() ? (rustleFlash > 0 ? '0.15' : '0') : (rustleFlash*0.4).toFixed(3);
+  if(winPendingActive && winPendingT < 1){
+    winPendingT = Math.min(1, winPendingT + dt/1.5);   // 1.5s build, same shape CTO plan asked for
+    winPendingEl.style.opacity = motionReduced() ? '0.2' : (winPendingT*0.35).toFixed(3);
+  }
   shuffleCooldownAccum = Math.max(0, shuffleCooldownAccum - dt);   // LUL-3066
   // LUL-1308: decays slower than spotFlash (1.6) -- spotFlash is a one-shot
   // "you were just spotted" event; this is a repeating ambient cue and should
@@ -6938,6 +7123,14 @@ function stepFrame(dt, t, skipRender){
           }
           return [false, null];
         }
+        case 'beaconHunter': {
+          for(const p of predators){
+            if(p.inert || p.kind !== 'wolf' || p.variant !== 'beaconHunter') continue;
+            const dx = wrapDelta(player.x, p.x, WRAP_SPAN), dz = wrapDelta(player.z, p.z, WRAP_SPAN);
+            if(Math.hypot(dx, dz) < effectiveDetect(p) * BEACON_HUNTER_LOCK_MUL) return [true, { x: p.x, y: 1, z: p.z }];
+          }
+          return [false, null];
+        }
         case 'stamina': return [staminaCharge <= 0, null];
         case 'windAssist': return [running && movingAgainstWind, null];
         case 'windPulse': return [predators.some(p => p.windPauseT > 0), null];
@@ -6952,7 +7145,7 @@ function stepFrame(dt, t, skipRender){
     function hintDismissedByEvent(key, baseline){
       switch(key){
         case 'scent': return scentLockEventCount > baseline;
-        case 'wolf': case 'bear': case 'lion': case 'cover': return hideEventCount > baseline;
+        case 'wolf': case 'bear': case 'lion': case 'beaconHunter': case 'cover': return hideEventCount > baseline;
         case 'throwable': return throwableGrabCount > baseline;
         case 'caveImmune': return caveImmuneT <= 0;
         case 'windPulse': return !predators.some(p => p.windPauseT > 0);
@@ -6967,7 +7160,7 @@ function stepFrame(dt, t, skipRender){
     function hintDismissBaselineFor(key){
       switch(key){
         case 'scent': return scentLockEventCount;
-        case 'wolf': case 'bear': case 'lion': case 'cover': return hideEventCount;
+        case 'wolf': case 'bear': case 'lion': case 'beaconHunter': case 'cover': return hideEventCount;
         case 'throwable': return throwableGrabCount;
         default: return 0;
       }
