@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7257 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6386, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7332 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6453, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1532,16 +1532,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5762-5822, the win path since
-  `LUL-2281`) and `triggerDeath()` (L5991-6032). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5876, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6096). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5991-6032) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L5953) rather than recomputed later, since `player.x/z` can move on
+  (L6066) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L2937) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1598,7 +1598,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3956),
-  reset to 0 on `enter()` (L3808) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3868) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L6745: `computeDepth(maxDistFromHome) +
@@ -1721,7 +1721,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6390, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6403, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2358,20 +2358,20 @@ engine flag is genuinely true.
 
 **LUL-3149 (Wind-Assisted Evasion)** adds two new, always-on effects to this same trigger --
 `running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
-re-deriving it (`engine/forest-engine.js` L6641-6642) -- stacking on top of the LUL-3009 scent
+re-deriving it (`engine/forest-engine.js` L6790) -- stacking on top of the LUL-3009 scent
 effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
-speed bonus applied to `spd` inside `stepFrame()` (L6642), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
-footstep-radius reduction applied to `noiseRadius` (L6660), replacing the plain sprint radius
+speed bonus applied to `spd` inside `stepFrame()` (L6796), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+footstep-radius reduction applied to `noiseRadius` (L6814), replacing the plain sprint radius
 only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
 is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
 it already fires correctly for the sprint-bonus window; both the `title` and the always-visible
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L7225 for the eligibility case), positioned below the danger hints
+(`engine/forest-engine.js` L7341 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L5943) and `windAssistEndCue()` (L5952), edge-triggers on the combined
+`windAssistStartCue()` (L5998) and `windAssistEndCue()` (L6007), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -2444,3 +2444,55 @@ Covered by `e2e/wind-pulse.spec.ts` (new): a perpendicular+downwind lion freezes
 0.3s window (position provably unchanged) and resumes once the trigger condition no longer holds;
 a head-on (non-perpendicular) lion, even downwind, never freezes; the `windPulse` hint caption
 fires once on first trigger and never reshows.
+
+### LUL-4897: Beacon Hunter (wind-signal wolf variant, cheap slice)
+
+Wiki spec `game/mechanics/beacon-hunter.md` (corrected 2026-09-24). A `beaconHunter` variant of
+the existing wolf that locks onto the player the instant `player.sprintWindBonusActive` is true
+(LUL-3149's combined `running && movingAgainstWind` signal, the same one `#windIndicator`'s pulse
+already shows), bypassing sight and scent entirely -- a fourth detection channel in
+`updatePredators()`'s roam branch (`engine/forest-engine.js:2802`), gated on
+`!sniffImmune && p.kind === 'wolf' && p.variant === 'beaconHunter' && player.sprintWindBonusActive
+&& !isCaveImmune(caveImmuneT) && !isVeilOverloadActive(veilOverloadChargeT) && dist <
+effectiveDetect(p) * BEACON_HUNTER_LOCK_MUL`. The immunity guard is stated explicitly (not just
+relied on via `effectiveDetect()` already zeroing during those states) since this is the one
+channel that could otherwise look like it bypasses immunity.
+
+New tunables in `engine/tuning.js`: `BEACON_HUNTER_LOCK_MUL` (placeholder `1.0` -- companion
+Economist ticket sets the real value, not blocking this merge) and `BEACON_HUNTER_EYE_COLOR`
+(cold blue-teal, `0x2ad1c9`). Reuses `SCENT_TRACK_TIME` (8s) for the lock's `scentLock` --
+no new cooldown constant, decays exactly like an ordinary scent chase (`shouldDowngradeChase()`
+at `:2847` drops it to `investigate` once `scentLock` and `sightFlicker` both empty and sight
+stays dark; `shouldGiveUpChase()` at `:2901` drops `chase` all the way to `roam` once distance
+clears `detect * 1.5`).
+
+New per-predator `p.variant` field (default `undefined`), plumbed additively in
+`qaBuildScene()`'s predator spec loop (`engine/forest-engine.js:5891`, `p.variant = spec.variant`)
+-- QA-stageable only; production spawn rate of a Beacon Hunter into the real wolf pool is out of
+scope for this cheap slice (flagged on the ticket, per the spec's own Q11/Q12 answers this doesn't
+block e2e coverage). `p.beaconHunterLocked` cleared at all three chase-exit sites (mirrors the
+existing `scentLock` consumer pattern).
+
+**Cue triple**
+- Visual: `beaconOnto()` swaps the wolf's eye material to `BEACON_HUNTER_EYE_COLOR` on lock
+  (`engine/forest-engine.js:2395`), reverted to the ordinary `p.spec.eye` the instant
+  `beaconHunterLocked` clears (`:2629`) -- a static color swap, visible under `reducedMotion`
+  since nothing here animates.
+- Audio: `beaconLockCue()` (`engine/forest-engine.js:6271`), its own bus, `soundOn`-gated,
+  distinct from the howl SFX and from `windPulseCue()`/`windAssistStartCue()`.
+- Explanation: new `'beaconHunter'` entry in `HINT_PRIORITY`/`WORLD_HINT_KEYS`/`HINT_TEXT`
+  (`engine/forest-engine.js:2201-2219`), one-shot first encounter: *"a Beacon Hunter -- locks
+  onto you the instant you sprint into the wind, sight and scent don't matter to it. hide (H) or
+  veil (F), or stop sprinting into the wind."*
+
+**QA hooks**: `qaPredatorState(idx)` extended with `variant`/`beaconHunterLocked` (existing hook,
+not a new `[QA-HOOK]` ticket); `qaBuildScene()`'s `predators[].variant` field is additive to an
+existing hook's parameter shape.
+
+Covered by `e2e/beacon-hunter.spec.ts` (new): a `beaconHunter` wolf locks on (`state` -> `'chase'`)
+to a sprinting-against-wind player through a blocking cover prop with no scent trail deposited,
+proving the lock is the beacon channel and not sight/scent; the chase downgrades to `'investigate'`
+once `scentLock` decays and the player is teleported out of sight/leash range, with
+`beaconHunterLocked` clearing; an ordinary wolf (no `variant`) never reaches `'chase'` from the
+identical wind signal in the same single-tick window, proving no accidental duplication of the
+channel onto ordinary wolves.

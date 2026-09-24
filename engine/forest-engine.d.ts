@@ -256,6 +256,10 @@ declare global {
         sightFlicker: number;
         /** LUL-4893: seconds remaining in an active Predator Pause wind-freeze, 0 otherwise. */
         windPauseT: number;
+        /** LUL-4897: 'beaconHunter' for that variant, undefined for every ordinary predator. */
+        variant?: 'beaconHunter';
+        /** LUL-4897: true while this predator is mid-chase via the wind-signal lock-on channel. */
+        beaconHunterLocked: boolean;
         /** LUL-4996: seconds remaining in the post-freeze re-arm cooldown, 0 otherwise. */
         windPauseCooldownT: number;
       } | null;
@@ -580,7 +584,7 @@ declare global {
       qaBuildScene?: (scene: {
         trees?: { x: number; z: number; s?: number }[];
         props?: { kind: 'log' | 'rock' | 'bramble'; x: number; z: number; ry?: number }[];
-        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string }[];
+        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string; variant?: 'beaconHunter' }[];
         child?: { x: number; z: number };
         home?: { x: number; z: number };
       }) => { trees: number; props: number; predators: number };
