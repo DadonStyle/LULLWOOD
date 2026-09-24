@@ -40,9 +40,19 @@
 // direct line or a reasonable sidestep -- keeping the scenario to exactly
 // one obstacle, close enough that the total gap for every species stays
 // under 4 units.
+//
+// LUL-2667 (child 5/6, 2026-09-22): migrated off @fullmap. qaStageBehindTree's
+// own tree search and neighbour-isolation math (engine/forest-engine.js:5325-
+// 5361) are unchanged and don't care how treeData was populated -- a
+// qaBuildScene single-tree scene satisfies the isolation check trivially (no
+// second tree exists to crowd the lane). MARGIN/MAX_MS below were re-measured
+// live against the synthetic scene (see this migration's PR description) and
+// left unchanged: same per-tree standoff derivation, same physics: no
+// real-seed trunk-cluster variance to absorb anymore, if anything a tighter
+// worst case than the full-map measurement they were originally tuned
+// against.
 import { test, expect } from './fixtures';
 import { boot, enter } from './helpers';
-// fullmap-reason: predator go-around measured against the pinned seed's real trunk clusters (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 // Extra clearance beyond (tree trunk radius + predator collision radius) on
 // each side -- just enough that qaStageBehindTree's own qualifying check
@@ -60,7 +70,7 @@ const MARGIN = 1.0;
 // (grinds into the trunk indefinitely, confirmed below).
 const MAX_MS = 8_000;
 
-test.describe('predator behind a tree reaches the player (LUL-1091 regression) @fullmap', () => {
+test.describe('predator behind a tree reaches the player (LUL-1091 regression, qaWorld=micro)', () => {
   for (const kind of ['wolf', 'bear', 'lion'] as const) {
     test(`${kind}: staged directly behind a tree trunk, closes to contact range`, async ({ page }) => {
       // Deliberately no explicit test.setTimeout() override here -- the trace
@@ -73,8 +83,14 @@ test.describe('predator behind a tree reaches the player (LUL-1091 regression) @
       // "Test timeout exceeded" failure here -- the in-page trace and the
       // real death sequence were both completing fine; only the explicit
       // override was too tight. Rely on the config defaults instead.
-      await boot(page, { qaWorld: 'full',  qaHooks: true });
+      await boot(page, { qaHooks: true }); // qaWorld defaults to 'micro' (helpers.ts)
       await enter(page);
+
+      const built = await page.evaluate(
+        ({ k }) => window.ForestEngine?.qaBuildScene?.({ trees: [{ x: 10, z: 0 }], predators: [{ kind: k, x: 0, z: 0 }] }),
+        { k: kind },
+      );
+      expect(built).toEqual({ trees: 1, props: 0, predators: 1 });
 
       const result = await page.evaluate(
         ({ k, margin, maxMs }) => window.ForestEngine?.qaStageAndTraceBehindTree?.(k, margin, maxMs) ?? null,

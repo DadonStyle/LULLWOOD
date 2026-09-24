@@ -35,9 +35,12 @@
 //     `log` from hide-spot eligibility specifically (HIDE_KINDS narrowed to
 //     bramble only) -- walkability and hide-eligibility are independent axes
 //     as of that ticket; this file's walkability coverage below is unaffected.
+//     LUL-2667 (child 5/6, 2026-09-22) migrated the remaining 'tree' case of
+//     bug #3's collision loop to e2e/tree-collision.spec.ts (qaWorld=micro) --
+//     see docs/specs/lul-2667-tree-collision-pathing-micro.md; this file no
+//     longer boots the full map at all.
 import { test, expect } from './fixtures';
 import { boot, enter, readObjective, expectRowHidden } from './helpers';
-// fullmap-reason: the founder's walk-into-cover cases replay against the pinned full layout (two cases already run micro) (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
 test.describe('LUL-211: the canvas is actually the thing you are looking at', () => {
   test('no viewport point resolves to the SSR content shell, and the canvas is not painted below it', async ({
@@ -128,70 +131,6 @@ test.describe('LUL-211: winning shows YOU WON and stays there', () => {
     await expectRowHidden(page, 'objective');
     await expect(page.locator('#gate'), 'the entry gate came back after winning').toBeHidden();
   });
-});
-
-test.describe('LUL-211: cover props are solid @fullmap', () => {
-  // LUL-388: 'tree' added -- qaStageWalkIntoCover('tree') was reachable but had
-  // never actually been driven by a spec (only rock/log/bramble were), and it
-  // turned out to be broken (NaN positions, fixed in the same change that added
-  // this case -- see the hook's own LUL-388 comment in forest-engine.js). Large
-  // trees (coverData's `s>1.4` subset) are the one element the interaction
-  // matrix (docs/ELEMENTS.md) marks C+LOS same as rock, so player-vs-tree
-  // collision belongs in this exact loop, not a separate spec.
-  // 'log' deliberately excluded here as of LUL-384, and 'bramble' as of
-  // LUL-1642 (2026-09-06, unified bramble with log's walkable-cover
-  // exemption -- see the file header) -- see the 'LUL-384/LUL-1642: walkable
-  // cover' describe block below, which pins the new, intended behaviour for
-  // both instead of the old one. Leaving 'bramble' in this loop is what
-  // produced LUL-2072's ~0.92-unit "overshoot": the player wasn't sliding
-  // past a face by extra frame slack, it was walking straight through a prop
-  // that stopped blocking movement three days earlier and only halting at
-  // whatever obstacle came next.
-  // LUL-2684 (LUL-2667 child 1/6): 'rock' migrated to e2e/rock-collision.spec.ts
-  // (qaWorld=micro, qaBuildScene places an exact rock with no rng) -- the
-  // @fullmap boot here was never a requirement of the mechanic, only of the
-  // old search-the-real-seed staging. 'tree' stays @fullmap for now (LUL-2667
-  // child 5 migrates it and then removes this file from FULLMAP_ALLOWLIST).
-  for (const kind of ['tree'] as const) {
-    test(`walking straight into a ${kind} does not pass through it`, async ({ page }) => {
-      test.setTimeout(45_000);
-      await boot(page, { qaWorld: 'full',  qaHooks: true });
-      await enter(page);
-
-      const staged = await page.evaluate((k) => window.ForestEngine?.qaStageWalkIntoCover?.(k), kind);
-      expect(staged, `no reachable ${kind} to stage against`).not.toBeNull();
-      const { prop, start } = staged!;
-      expect(start.x, 'staged start is already inside the prop').toBeLessThan(prop.x - prop.hx);
-
-      // Hold W and let the engine's own movement integrate against blocked().
-      await page.keyboard.down('KeyW');
-      await page.waitForTimeout(3_000);
-      await page.keyboard.up('KeyW');
-      await page.waitForTimeout(200);
-
-      const end = (await page.evaluate(() => window.ForestEngine?.qaProbePlayer?.()))!;
-
-      // Moved toward the prop at all -- otherwise the test proves nothing
-      // (a wedged player also never enters the box).
-      expect(end.x, 'the player never moved toward the prop').toBeGreaterThan(start.x + 0.3);
-      // ...and stopped at its face. blocked() uses a 0.6 player radius. The player
-      // approaches in +x with dz=0, so the collision boundary in world-X depends on
-      // the prop's rotation (ry). In prop-local frame the player stops when BOTH
-      // |lx| < hx+0.6 AND |lz| < hz+0.6; since lx = dx*cos(ry) and lz = dx*sin(ry)
-      // (with dz_world=0), the first-blocked dx is
-      //   max(-(hx+0.6)/|cos(ry)|, -(hz+0.6)/|sin(ry)|)
-      // (clamp denominators away from zero). Allow one 0.05s-clamped step of slack.
-      const ry = prop.ry ?? 0;
-      const absCos = Math.max(Math.abs(Math.cos(ry)), 1e-6);
-      const absSin = Math.max(Math.abs(Math.sin(ry)), 1e-6);
-      const faceDx = Math.max(-(prop.hx + 0.6) / absCos, -(prop.hz + 0.6) / absSin);
-      const faceX = prop.x + faceDx;
-      expect(
-        end.x,
-        `player reached x=${end.x.toFixed(2)}, past the ${kind} face at x=${faceX.toFixed(2)} (prop centre ${prop.x.toFixed(2)}, hx ${prop.hx.toFixed(2)}, ry ${ry.toFixed(3)})`,
-      ).toBeLessThan(faceX + 0.35);
-    });
-  }
 });
 
 // LUL-2685 (LUL-2667 child 2/6): the 'LUL-384/LUL-1642: log and bramble are
