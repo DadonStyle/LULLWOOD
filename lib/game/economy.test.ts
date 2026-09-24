@@ -17,6 +17,7 @@ import {
   MISSION_REWARDS,
   FIREPOWER_RETRIEVAL_BONUS,
   FIREPOWER_SPEEDRUN_BONUS,
+  COLD_WALK_REWARD,
   purchase,
   nextCost,
   tierOf,
@@ -208,6 +209,33 @@ test('secondaryBonus is scaled by the tier multiplier, same as missionBonus (LUL
   const baseNight = computeWinPayout(212, 50, 'night');
   assert.equal(lantern.total - base.total, Math.round(FIREPOWER_RETRIEVAL_BONUS * 1.0));
   assert.equal(night.total - baseNight.total, Math.round(FIREPOWER_RETRIEVAL_BONUS * 1.75));
+});
+
+test('computeWinPayout defaults coldWalkBonus to zero -- existing call sites keep paying identically', () => {
+  const withoutArg = computeWinPayout(212, 50, 'lantern', 0, 0);
+  const withExplicitZero = computeWinPayout(212, 50, 'lantern', 0, 0, 0);
+  assert.equal(withoutArg.total, withExplicitZero.total);
+});
+
+test('a silent Cold Walk run adds COLD_WALK_REWARD on top of the win total', () => {
+  const base = computeWinPayout(212, 50);
+  const withColdWalk = computeWinPayout(212, 50, 'lantern', 0, 0, COLD_WALK_REWARD);
+  assert.equal(withColdWalk.total, base.total + COLD_WALK_REWARD);
+});
+
+test('coldWalkBonus stacks additively with missionBonus and secondaryBonus', () => {
+  const base = computeWinPayout(212, 50);
+  const all = computeWinPayout(212, 50, 'lantern', MISSION_FIREPOWER_REWARD, FIREPOWER_RETRIEVAL_BONUS, COLD_WALK_REWARD);
+  assert.equal(all.total, base.total + MISSION_FIREPOWER_REWARD + FIREPOWER_RETRIEVAL_BONUS + COLD_WALK_REWARD);
+});
+
+test('coldWalkBonus is scaled by the tier multiplier, same as missionBonus/secondaryBonus (LUL-1412)', () => {
+  const lantern = computeWinPayout(212, 50, 'lantern', 0, 0, COLD_WALK_REWARD);
+  const night = computeWinPayout(212, 50, 'night', 0, 0, COLD_WALK_REWARD);
+  const base = computeWinPayout(212, 50, 'lantern');
+  const baseNight = computeWinPayout(212, 50, 'night');
+  assert.equal(lantern.total - base.total, Math.round(COLD_WALK_REWARD * 1.0));
+  assert.equal(night.total - baseNight.total, Math.round(COLD_WALK_REWARD * 1.75));
 });
 
 test('the secondary bonus is not payable on death -- computeDeathPayout has no secondaryBonus argument', () => {

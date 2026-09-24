@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7520 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6626, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7556 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6651, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1611,15 +1611,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5943-6003, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6231-6272). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5950-6013, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6255-6296). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6231-6272) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6255-6296) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6050) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1677,7 +1677,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3956),
-  reset to 0 on `enter()` (L3868) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L3890) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L6745: `computeDepth(maxDistFromHome) +
@@ -1800,7 +1800,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6576, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6723, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2479,7 +2479,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7341 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6171) and `windAssistEndCue()` (L6180), edge-triggers on the combined
+`windAssistStartCue()` (L6181) and `windAssistEndCue()` (L6190), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -2604,3 +2604,50 @@ once `scentLock` decays and the player is teleported out of sight/leash range, w
 `beaconHunterLocked` clearing; an ordinary wolf (no `variant`) never reaches `'chase'` from the
 identical wind signal in the same single-tick window, proving no accidental duplication of the
 channel onto ordinary wolves.
+
+### LUL-4960: Cold Walk (outbound-leg walk-only constraint)
+
+Spec `docs/specs/lul-4960-cold-walk.md`. An opt-in, per-run modifier: sprint even once
+before `pickup()` is accepted and the run-only `COLD_WALK_REWARD` Embers bonus (win-only,
+folded into `RunPayout.total` exactly like `missionBonus`/`secondaryBonus`, not a
+`MissionKind`/`MISSION_REWARDS` entry -- `computeWinPayout()`'s new 6th optional param,
+`lib/game/economy.ts`) is forfeited for the rest of that run.
+
+**State** -- `coldWalkOptIn` (persisted Settings choice, `SettingsPanel.tsx`'s "Run
+modifiers" `<fieldset>`, applied at the next `enter()`/`restart()` same as `setDifficulty`)
+/ `coldWalkBroken` (per-run fact, reset `false` in `enter()`, sticky once `true`) -- both
+module-level lets in `engine/forest-engine.js`. `coldWalkJustBroke()` (`lib/game/
+coldWalk.ts`, pure predicate mirroring `isVeilOverloadActive()`'s one-function-one-file
+shape) is checked every frame immediately after `running` is derived in the movement
+block, inside the same `if(playing && !hidden)` gate the speed/scent-radius consumers of
+`running` already use -- a distinct *sustained-history* read ("has the player ever
+sprinted this run"), not a duplicate of either per-frame consumer.
+
+**HUD** -- `#coldWalkPanel`, a sibling of `#caveImmunePanel`/`#rockClimbPanel`/
+`#veilOverloadPanel` (same always-visible-while-active family, outside `#panel` so it
+stays visible with `adminMode` off). Text swap only ("Cold Walk — silent" / "Cold Walk —
+broken"), no countdown. Driven by the same `if(playing){...} else {coldWalkActive:
+false,...}` per-frame push every other status panel in this family uses -- `playing`
+excludes `pickingUp`, so the panel disappears the instant `pickup()` is accepted, same
+precedent as `#missionPanel`'s pickingUp-hides-it behavior (see the Missions section
+above).
+
+**QA hooks**: none new -- opt-in goes through the real `SettingsPanel` -> `localStorage`
+-> apply-on-ready path, and the constraint is driven by the real sprint key, not a forced
+flag. `qaTeleportNearBaby` (existing) is reused for a deterministic short leg in e2e.
+
+**Cue triple**
+- Visual: `#coldWalkPanel`'s text swap (above) -- static, no animation to reduce.
+- Audio: `coldWalkBrokenCue()` (`engine/forest-engine.js`, near `windPulseCue()`), a
+  one-shot falling sine (320Hz -> 140Hz), `soundOn`-gated, fires exactly once per run the
+  frame the constraint first breaks.
+- Explanation: caption "sprinted — the cold walk is broken", pushed from the same cue
+  function, `captionsOn`-gated, same frame as the audio.
+
+Covered by `e2e/cold-walk.spec.ts` (new): the panel stays absent with no opt-in through a
+real sprint; opted in, the panel reads "silent" then flips to "broken" the instant a real
+Shift-sprint fires and stays "broken" (sticky) after release/re-sprint; a real sprint held
+through the post-pickup cinematic still pays the bonus (proven via the win-screen payout
+gap, the same technique `e2e/mission-slack-water.spec.ts` uses, since the panel itself is
+hidden for that whole window -- see the HUD note above); a silent leg pays
+`COLD_WALK_REWARD` scaled by the tier win multiplier, a broken one pays nothing extra.

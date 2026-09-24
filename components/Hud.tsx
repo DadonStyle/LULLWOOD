@@ -100,6 +100,11 @@ export interface EngineHudState {
   invertY: boolean;
   reducedMotion: boolean;
   captionsOn: boolean;
+  // LUL-4960: M5 Cold Walk -- coldWalkOptIn is the persisted setting; coldWalkActive/
+  // coldWalkBroken drive #coldWalkPanel, same shape as caveImmuneActive/veilOverloadActive.
+  coldWalkOptIn: boolean;
+  coldWalkActive: boolean;
+  coldWalkBroken: boolean;
   caption: string | null;
   captionId: number;
   // LUL-1043: Embers, the run currency -- engine-controlled like difficulty
@@ -213,6 +218,7 @@ export interface EngineActions {
   setInvertY: (v: boolean) => void;
   setReducedMotion: (v: boolean) => void;
   setCaptions: (v: boolean) => void;
+  setColdWalkOptIn: (v: boolean) => void;
   // LUL-1043
   setEmbers: (balance: number, tiers: Record<string, number>) => void;
   purchase: (id: string) => void;
@@ -279,6 +285,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   invertY: false,
   reducedMotion: false,
   captionsOn: false,
+  coldWalkOptIn: false,
+  coldWalkActive: false,
+  coldWalkBroken: false,
   caption: null,
   captionId: 0,
   embersBalance: 0,
@@ -1006,6 +1015,16 @@ export default function Hud({
       {state.mountedOnRock && (
         <div id="rockClimbPanel">
           Exposed · {Math.ceil(state.rockClimbTimeLeft)}s
+        </div>
+      )}
+
+      {/* LUL-4960: M5 Cold Walk -- sibling of #rockClimbPanel/#veilOverloadPanel, same
+          always-visible-while-active treatment, OUTSIDE #panel so it stays visible with
+          adminMode off (Q3). Text swap (not a countdown) is the only visual cue -- see
+          the SPEC's ## Cues, "static text swap, no animation to reduce". */}
+      {state.coldWalkActive && (
+        <div id="coldWalkPanel">
+          Cold Walk — {state.coldWalkBroken ? 'broken' : 'silent'}
         </div>
       )}
 
