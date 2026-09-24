@@ -154,3 +154,107 @@ test.describe('H hide toggle', () => {
     await page.keyboard.up('ShiftLeft');
   });
 });
+
+// LUL-3066 (Hide Reposition / Wind-Gated Shuffle, docs/specs/lul-3066-hide-reposition.md):
+// KeyR while hidden shifts the player within the same cover footprint -- silent upwind,
+// noisy + alert-inducing to nearby roam-state predators downwind, on a cooldown.
+//
+// Deviation from the merged SPEC's literal "hold KeyW, press KeyR" e2e steps: player.yaw is
+// 0 right after qaTeleportToHideSpot (spawn default, never rotated by a teleport), so
+// shuffleHide()'s facing-direction fallback (fired whenever no movement key is held) already
+// produces the same known (0,-1) heading wind-assisted-evasion.spec.ts pins its own wind
+// vectors against -- with no need to hold a movement key at all. Holding one instead would
+// trip stepFrame()'s pre-existing "moving breaks cover" check (engine/forest-engine.js, the
+// tick()-loop moveKey check the 'H hide toggle' describe block above already covers) on the
+// very next tick, which would exit hide before the shuffle's effect on `hidden` could be
+// observed. The facing-direction path exercises the identical noise/wind logic inside
+// shuffleHide() and additionally lets these tests assert the player is still hidden
+// afterward -- the feature's whole premise ("shifts the player within the same cover
+// footprint", not "exits and re-enters it").
+test.describe('KeyR hide-reposition shuffle', () => {
+  test('shuffling upwind is silent and keeps the player hidden', async ({ page }) => {
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+
+    await qaHook(page, 'qaBuildScene', {
+      props: [{ kind: 'bramble', x: 10, z: 0 }],
+      predators: [{ kind: 'wolf', x: 15, z: 0, state: 'roam' }],
+    });
+    const spot = await qaHook(page, 'qaTeleportToHideSpot', 'bramble');
+    expect(spot, 'qaTeleportToHideSpot("bramble") must find the seeded bramble').not.toBeNull();
+
+    await page.keyboard.press('KeyH');
+    await expect.poll(async () => (await qaHook(page, 'qaPlayerState'))?.hidden).toBe(true);
+
+    // Wind blowing -Z is the same direction as the (0,-1) facing-direction fallback --
+    // moving *with* the wind, i.e. not against it (isMovingAgainstWind, lib/game/scent.ts).
+    await qaHook(page, 'qaSetWindDirection', 0, -1);
+    await qaHook(page, 'qaStagePredatorNearPlayer', 'wolf', 5, 0);
+    const before = await qaHook(page, 'qaPlayerState');
+
+    await page.keyboard.press('KeyR');
+
+    const after = await qaHook(page, 'qaPlayerState');
+    expect(after?.hidden, 'an upwind shuffle must not exit hide').toBe(true);
+    expect(after?.z, 'the facing-direction fallback (0,-1) should move the player toward -Z').toBeLessThan(before.z);
+
+    const predState = await qaHook(page, 'qaProbePredatorState', 'wolf');
+    expect(predState?.state, 'an upwind shuffle must not alert a roaming predator').toBe('roam');
+  });
+
+  test('shuffling downwind alerts a staged roaming predator', async ({ page }) => {
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+
+    await qaHook(page, 'qaBuildScene', {
+      props: [{ kind: 'bramble', x: 10, z: 0 }],
+      predators: [{ kind: 'wolf', x: 15, z: 0, state: 'roam' }],
+    });
+    const spot = await qaHook(page, 'qaTeleportToHideSpot', 'bramble');
+    expect(spot, 'qaTeleportToHideSpot("bramble") must find the seeded bramble').not.toBeNull();
+
+    await page.keyboard.press('KeyH');
+    await expect.poll(async () => (await qaHook(page, 'qaPlayerState'))?.hidden).toBe(true);
+
+    // Wind blowing +Z is directly against the (0,-1) facing-direction fallback -- the
+    // movingAgainstWind case (same vector wind-assisted-evasion.spec.ts pins for the
+    // opposite reason: :17-23 there wants a proven speed/noise assist against this wind,
+    // here we want the proven noise/alert cost of shuffling into it).
+    await qaHook(page, 'qaSetWindDirection', 0, 1);
+    await qaHook(page, 'qaStagePredatorNearPlayer', 'wolf', 5, 0);
+    const before = await qaHook(page, 'qaPlayerState');
+
+    await page.keyboard.press('KeyR');
+
+    const after = await qaHook(page, 'qaPlayerState');
+    expect(after?.z, 'the facing-direction fallback (0,-1) should still move the player toward -Z').toBeLessThan(before.z);
+
+    const predState = await qaHook(page, 'qaProbePredatorState', 'wolf');
+    expect(predState?.state, 'a downwind shuffle must alert a roaming predator').toBe('investigate');
+  });
+
+  test('a second KeyR press inside the cooldown window is a no-op', async ({ page }) => {
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+
+    await qaHook(page, 'qaBuildScene', { props: [{ kind: 'bramble', x: 10, z: 0 }] });
+    const spot = await qaHook(page, 'qaTeleportToHideSpot', 'bramble');
+    expect(spot, 'qaTeleportToHideSpot("bramble") must find the seeded bramble').not.toBeNull();
+
+    await page.keyboard.press('KeyH');
+    await expect.poll(async () => (await qaHook(page, 'qaPlayerState'))?.hidden).toBe(true);
+    await qaHook(page, 'qaSetWindDirection', 0, -1);   // upwind -- keeps this test's own shuffles silent
+
+    await page.keyboard.press('KeyR');
+    const afterFirst = await qaHook(page, 'qaPlayerState');
+
+    // SHUFFLE_COOLDOWN_S is 2s (lib/game/noise.ts) -- two presses back to back, no wait,
+    // are well inside the window.
+    await page.keyboard.press('KeyR');
+    const afterSecond = await qaHook(page, 'qaPlayerState');
+
+    expect(afterSecond?.x, 'a second press inside the cooldown must not move the player again').toBe(afterFirst.x);
+    expect(afterSecond?.z, 'a second press inside the cooldown must not move the player again').toBe(afterFirst.z);
+    expect(afterSecond?.hidden).toBe(true);
+  });
+});

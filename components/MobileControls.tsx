@@ -385,6 +385,7 @@ export default function MobileControls({
           {entered && (
             <div style={row}>
               <ActionBtn label="Hide" testId="touchHide" onTap={() => actions.triggerTouchHide()} />
+              <ActionBtn label="Shuffle" testId="touchShuffle" onTap={() => actions.triggerTouchShuffle()} />
               <HoldBtn label="Veil" testId="touchVeil" onHold={(v) => actions.setTouchVeil(v)} />
             </div>
           )}

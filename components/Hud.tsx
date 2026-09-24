@@ -188,6 +188,7 @@ export interface EngineActions {
   setTouchLook: (x: number, y: number) => void;
   setTouchSprint: (v: boolean) => void;
   triggerTouchHide: () => void;
+  triggerTouchShuffle: () => void;
   triggerTouchInteract: () => void;
   triggerTouchThrow: () => void;
   // LUL-529: mobile parity for jump/pause/mist-veil/toggle-run -- see

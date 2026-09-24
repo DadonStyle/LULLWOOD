@@ -14,7 +14,7 @@ import { track } from './analytics.ts';
 export const ENGINE_ACTION_KEYS = [
   'enter', 'restart', 'setPace', 'setFog', 'toggleSound', 'regenMap',
   'setTouchMove', 'setTouchLook', 'setTouchSprint',
-  'triggerTouchHide', 'triggerTouchInteract', 'triggerTouchThrow',
+  'triggerTouchHide', 'triggerTouchShuffle', 'triggerTouchInteract', 'triggerTouchThrow',
   'triggerTouchJump', 'triggerTouchPause', 'triggerTouchToggleRun', 'setTouchVeil',
   'triggerTouchVeilOverload',
   'setDifficulty', 'setRunMode', 'setSensitivity', 'setInvertY', 'setReducedMotion', 'setCaptions',
