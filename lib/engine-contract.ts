@@ -19,6 +19,8 @@ export const ENGINE_ACTION_KEYS = [
   'triggerTouchVeilOverload',
   // LUL-4528
   'triggerTouchClimb',
+  // LUL-5004
+  'triggerTouchScentVeil',
   'setDifficulty', 'setRunMode', 'setSensitivity', 'setInvertY', 'setReducedMotion', 'setCaptions', 'setColdWalkOptIn',
   'setEmbers', 'purchase',
   'setMissionUnlocks', 'setSecondaryChoice',

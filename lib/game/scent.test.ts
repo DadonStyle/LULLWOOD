@@ -11,6 +11,7 @@ import {
   scentDriftDistance,
   scentLifetimeWithWind,
   scentPickupRadius,
+  scentVeilTriggerActive,
   SCENT_LIFETIME,
   WIND_DRIFT_CAP,
   WIND_STRENGTH,
@@ -52,6 +53,24 @@ test('isMovingAgainstWind is false when moving perpendicular to the wind (dot ==
 
 test('isMovingAgainstWind is false for zero movement (dot === 0)', () => {
   assert.equal(isMovingAgainstWind(0, 0, 1, 0), false);
+});
+
+// ---- scentVeilTriggerActive (LUL-5004) -------------------------------------
+
+test('scentVeilTriggerActive is true only when locked, ready, and moving against the wind', () => {
+  assert.equal(scentVeilTriggerActive(3, true, true), true);
+});
+
+test('scentVeilTriggerActive is false with no active scent lock', () => {
+  assert.equal(scentVeilTriggerActive(0, true, true), false);
+});
+
+test('scentVeilTriggerActive is false once this lock cycle has already been used', () => {
+  assert.equal(scentVeilTriggerActive(3, false, true), false);
+});
+
+test('scentVeilTriggerActive is false moving with (not against) the wind', () => {
+  assert.equal(scentVeilTriggerActive(3, true, false), false);
 });
 
 // ---- scentLifetimeWithWind ----------------------------------------------

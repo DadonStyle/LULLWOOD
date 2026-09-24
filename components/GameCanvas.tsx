@@ -47,6 +47,11 @@ const OVERLAY_STYLE = `
     --action-pill-key-shadow: 0 2px 20px rgba(240,199,154,0.6);
     --action-pill-urgent-bg: #e8554a;
     --action-pill-urgent-shadow: 0 2px 26px rgba(232,85,74,0.85);
+    /* LUL-5004: tone="disabled" -- #veilPrompt grayed while stamina-insufficient. */
+    --action-pill-border-disabled: rgba(150,150,150,0.2);
+    --action-pill-color-disabled: #7a7a7a;
+    --action-pill-key-bg-disabled: #5a5a5a;
+    --action-pill-key-color-disabled: #b0b0b0;
     --action-slot-row: 36px;
     --action-slot-row-charge: 48px;
     --action-slot-gap: 6px;
@@ -388,6 +393,14 @@ const OVERLAY_STYLE = `
   @keyframes windIndicatorPulse {
     0%, 100% { filter: brightness(1) drop-shadow(0 0 0 rgba(168,240,224,0)); }
     50% { filter: brightness(1.6) drop-shadow(0 0 8px rgba(168,240,224,0.9)); } }
+  /* LUL-5004: Scent Veil -- 4x windIndicatorPulse's default rate (900ms / 4 =
+     225ms) while a scent lock is ready to break. Declared after
+     .windIndicatorActive so it wins the animation property when both
+     classes are present (same specificity, source order decides) -- Hud.tsx
+     composes the two classes rather than swapping between them, since
+     movingAgainstWind is a precondition of scentVeilPromptVisible and both
+     are true whenever this one is. */
+  #windIndicator.windIndicatorVeilActive { animation: windIndicatorPulse 225ms ease-in-out infinite; }
 
   #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
     font-size: 12px; line-height: 1.3; text-align: center; color: #9fb2cd;
@@ -776,6 +789,10 @@ const OVERLAY_STYLE = `
   .actionPromptRow[data-tone="ready"] .actionPromptLine,
   .actionPromptRow[data-tone="urgent"] .actionPromptLine { color: var(--action-pill-color-ready); border-color: var(--action-pill-border-ready); }
   .actionPromptRow[data-tone="status"] .actionPromptLine { color: var(--action-pill-color-status); border-color: var(--action-pill-border-status); }
+  /* LUL-5004: Scent Veil's refusal path -- visible, not hidden (Q5), just grayed. */
+  .actionPromptRow[data-tone="disabled"] .actionPromptLine { color: var(--action-pill-color-disabled); border-color: var(--action-pill-border-disabled); }
+  .actionPromptRow[data-tone="disabled"] .actionPromptKey {
+    color: var(--action-pill-key-color-disabled); background: var(--action-pill-key-bg-disabled); box-shadow: none; }
   .actionPromptKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
     color: var(--action-pill-key-color); background: var(--action-pill-key-bg); box-shadow: var(--action-pill-key-shadow); }
   /* LUL-1780: tone="urgent" is the one flashing state -- background/box-shadow
@@ -799,7 +816,8 @@ const OVERLAY_STYLE = `
     .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: none; background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); }
     /* LUL-3009: Hud.tsx already skips the class under reducedMotion -- this is the same
        belt-and-suspenders fallback #actionPromptLine gets above, not the primary gate. */
-    #windIndicator.windIndicatorActive { animation: none; } }
+    #windIndicator.windIndicatorActive { animation: none; }
+    #windIndicator.windIndicatorVeilActive { animation: none; } }
 
   /* LUL-2331: mist-charm activation tell -- Hud.tsx toggles this class for the same
      400ms window it eases #veilState's displayed number up in (useVeilMeterRamp),
