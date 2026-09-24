@@ -99,6 +99,7 @@ import {
   shouldDowngradeChase,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
+  shouldWindPause,
   SIGHT_FLICKER_TIME,
   SNIFF_IMMUNITY_TIME,
   SNIFF_STATUS_RANGE,
@@ -107,6 +108,7 @@ import {
   stepFlankHold,
   stepSniffLoop,
   tickTimers,
+  WIND_PAUSE_DURATION,
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { CAVE_IMMUNITY_TIME, isCaveImmune } from '@/lib/game/cave';
@@ -1793,7 +1795,7 @@ function placePredators(){
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
     if(p.parked) p.g.visible = false;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
-    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.scentLock=0; p.scentCalls=0;
+    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0; p.sightFlicker=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
@@ -1925,7 +1927,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow',
-  'wolf','bear','lion','stamina','windAssist','cover','caveImmune','veilOverload','throwable','veil'];
+  'wolf','bear','lion','stamina','windAssist','windPulse','cover','caveImmune','veilOverload','throwable','veil'];
 // 'wolf'/'bear'/'lion'/'cover'/'throwable' are world-anchored (a real 3D point,
 // projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -1944,6 +1946,7 @@ const HINT_TEXT = {
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
   windAssist: 'sprinting into the wind moves you faster and quieter',
+  windPulse:  'wind pulse — nearby predators pause their sprint when moving across the wind',
   cover:      'a bush — predators lose sight of you while you hold still',
   caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
   veilOverload: 'burn all veil charge (Q) for a detection-proof escape',
@@ -2572,6 +2575,17 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         else if(hidden && isCaught(dist, p.rad)){
           p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
         }
+        // LUL-4893 (Predator Pause): a wind-gated freeze on ordinary chase pursuit,
+        // evaluated only here -- charge/sightLock/alert/reroute/searchPath/hunt all
+        // sit ahead of this branch in the priority chain above and already own their
+        // own freezes. p.windPauseT continuing to hold the freeze takes priority over
+        // a fresh trigger re-check; it only decays inside this same branch (mirrors
+        // p.alert's own branch-scoped decay, not the unconditional tickTimers() decay
+        // scentLock/chargeCooldown use -- see lib/game/predator.ts).
+        else if(p.windPauseT > 0){ p.windPauseT = Math.max(0, p.windPauseT - dt); speed = 0; }
+        else if(shouldWindPause(ux, uz, -Math.sin(player.yaw), -Math.cos(player.yaw), windX, windZ)){
+          p.windPauseT = WIND_PAUSE_DURATION; speed = 0; windPulseCue();
+        }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
@@ -2748,7 +2762,10 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     const moving = vmag > 0.3;
     p.phase += dt * (moving ? vmag*0.9 : 1.4);
     const sniffing = (p.state==='investigate' && p.inv==='sniff') || (p.state==='flank' && p.inv==='hold');
-    const alerting = p.alert > 0;
+    // LUL-4893: reuses the spot-lock tell's own rear-up/recovery pose for the wind-pause
+    // freeze -- no separate animation, per Q1's correction (there is no world-space pulse
+    // VFX anywhere in the codebase to build one from).
+    const alerting = p.alert > 0 || p.windPauseT > 0;
     // LUL-213: the readable tell -- stopped, tail up and wiggling, leaning
     // into the charge. Only true during the stationary half of the window
     // (see lib/game/charge.ts CHARGE_TELL_TIME); once it commits to
@@ -4801,7 +4818,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // grace (lib/game/predator.ts shouldDowngradeChase) is actually set/decremented
     // at the real canSee(p,dist) call site, not just correct in isolation (unit
     // tests already cover the pure function -- see e2e/sight-flicker.spec.ts).
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, detectRange: effectiveDetect(p), canSee: canSee(p, dist), rad: p.rad, moveRad: p.moveRad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible, sightFlicker: p.sightFlicker };
+    // LUL-4893: windPauseT exposed so a test can assert the Predator Pause freeze
+    // directly instead of inferring it purely from x/z staying constant.
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, detectRange: effectiveDetect(p), canSee: canSee(p, dist), rad: p.rad, moveRad: p.moveRad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible, sightFlicker: p.sightFlicker, windPauseT: p.windPauseT };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
@@ -5328,6 +5347,37 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     player.x = p.x + 2; player.z = p.z;
     return { x: p.x, z: p.z };
   };
+  // [QA-HOOK] LUL-4894: places the player 2 units off ROOSTS[i]'s live position, on the
+  // +z side, and leaves player.yaw untouched -- restart()'s default yaw=0 (forward =
+  // (-sin(0),-cos(0)) = (0,-1), i.e. -z) means a throw from here lands 16u short of the
+  // player, straight at the roost (18u throw - 2u offset), well inside its 20u radius,
+  // so a spec can throw immediately with no extra facing setup. Mirrors
+  // qaTeleportNearStoneMarker/qaTeleportNearThrowable otherwise, since
+  // applyQaWorldMicroPreset() (engine/tuning.js) doesn't scale ROOSTS, so a roost keeps
+  // its full-map position even in the micro world. Defaults to the nearest roost to the
+  // player's current position so a spec doesn't have to know indices; returns null if
+  // that index doesn't exist.
+  window.ForestEngine.qaTeleportNearRoost = function(i){
+    if(i === undefined){
+      let best = -1, bestD = Infinity;
+      for(let k=0;k<ROOSTS.length;k++){
+        const d = Math.hypot(ROOSTS[k].x - player.x, ROOSTS[k].z - player.z);
+        if(d < bestD){ best = k; bestD = d; }
+      }
+      i = best;
+    }
+    const r = ROOSTS[i];
+    if(!r) return null;
+    player.x = r.x; player.z = r.z + 2;
+    return { i, x: r.x, z: r.z };
+  };
+  // [QA-HOOK] LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a
+  // spec assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
+  // that a second throw within ROOST_COOLDOWN does NOT re-flush it (shared-cooldown proof
+  // with the ambient updateRoosts() trigger). No new engine state.
+  window.ForestEngine.qaProbeRoostState = function(i){
+    return { cooldown: roostCooldown[i], burstActive: roostBurstStart[i] >= 0 };
+  };
   // [QA-HOOK] LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. Includes the
   // activation cue's fire count so a spec can assert it without decoding WebAudio output.
   window.ForestEngine.qaProbeVeil = function(){
@@ -5450,6 +5500,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     coverData = (opts.props || [])
       .filter(p => QA_COVER_SHAPE[p.kind])
       .map(p => ({ x: p.x, z: p.z, kind: p.kind, ry: p.ry || 0, ...QA_COVER_SHAPE[p.kind] }));
+    // LUL-2667 (child 5/6): mirror generateCover()'s own large-tree LOS-cover
+    // synthesis (:736 -- `if(!t.culled && t.s > 1.4) coverData.push({ x, z,
+    // hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' })`) for qaBuildScene-placed
+    // trees. Without this, qaStageWalkIntoCover('tree') -- which reads
+    // coverData, not treeData -- can never find a synthetic tree. Real
+    // movement collision against the trunk goes through blockedR()'s grid off
+    // treeData directly and already worked before this change; only the
+    // staging hook's tree branch was unreachable in a qaBuildScene world.
+    for(const t of treeData) if(!t.culled && t.s > 1.4) coverData.push({ x: t.x, z: t.z, hx: t.cr*1.4, hz: t.cr*1.4, kind: 'tree' });
 
     // LUL-2249: same full reset generateMap() does at the end of every call --
     // drop whatever the previous scene left live (sized for different data),
@@ -5479,7 +5538,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.inert = false; p.g.visible = true; p.parked = false;
       p.x = spec.x; p.z = spec.z; p.wpx = spec.x; p.wpz = spec.z; p.vx = 0; p.vz = 0; p.yaw = 0;
       p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
-      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.scentLock = 0; p.scentCalls = 0;
+      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.scentLock = 0; p.scentCalls = 0;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0; p.sightFlicker = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
       p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;
@@ -5623,6 +5682,23 @@ function throwThrowable(){
     if(p.inert) continue;
     const dist = Math.hypot(p.x - landX, p.z - landZ);
     if(checkThrowableNoise(dist, THROWABLE_NOISE_RADIUS)) hearThrowableNoise(p, landX, landZ);
+  }
+  // LUL-4894: Roost Scare -- slice (b), a second player-initiated trigger into the same
+  // flushRoost()/roostCooldown machinery updateRoosts() already drives for the ambient
+  // predator-proximity path (:3119-3133 area). Shares the per-roost cooldown array so the
+  // two paths can't double-fire the same roost in quick succession.
+  let nearestRoost = -1, nearestRoostDist = Infinity;
+  for(let i=0;i<ROOSTS.length;i++){
+    const dist = Math.hypot(ROOSTS[i].x - landX, ROOSTS[i].z - landZ);
+    if(dist < ROOSTS[i].radius && dist < nearestRoostDist){ nearestRoost = i; nearestRoostDist = dist; }
+  }
+  if(nearestRoost >= 0 && roostCooldown[nearestRoost] <= 0){
+    flushRoost(nearestRoost);
+    roostCooldown[nearestRoost] = ROOST_COOLDOWN;
+    if(!hintSeen('roostThrowCue')){
+      markHintSeen('roostThrowCue');
+      if(captionsOn) pushState({ caption: 'throw a stone at a roost to startle it', captionId: ++captionSeq });
+    }
   }
 }
 function finishPickup(){
@@ -5823,6 +5899,18 @@ function windAssistEndCue(){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.2);
+}
+// LUL-4893: Predator Pause's cue -- a rising chime distinct in register from
+// windAssistStartCue's 440->660Hz pair so the two wind-driven effects (player
+// sprint bonus vs. predator freeze) stay audibly distinguishable.
+function windPulseCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(180, t + 0.2);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.22);
 }
 // LUL-1258: no cinematic lock (unlike pickup's ~2.5s gather) -- this is a
 // detour bonus, not the core objective, and stopping the player's clock here
@@ -6858,6 +6946,7 @@ function stepFrame(dt, t, skipRender){
         }
         case 'stamina': return [staminaCharge <= 0, null];
         case 'windAssist': return [running && movingAgainstWind, null];
+        case 'windPulse': return [predators.some(p => p.windPauseT > 0), null];
         case 'cover': return [coverHintVisible, lastHideSpot ? { x: lastHideSpot.x, y: 1, z: lastHideSpot.z } : null];
         case 'caveImmune': return [caveImmuneT > 0, null];
         case 'veilOverload': return [veilOverloadChargeT > 0, null];
@@ -6872,6 +6961,7 @@ function stepFrame(dt, t, skipRender){
         case 'wolf': case 'bear': case 'lion': case 'cover': return hideEventCount > baseline;
         case 'throwable': return throwableGrabCount > baseline;
         case 'caveImmune': return caveImmuneT <= 0;
+        case 'windPulse': return !predators.some(p => p.windPauseT > 0);
         case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
