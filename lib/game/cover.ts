@@ -1,6 +1,6 @@
 import { wrapCoord, wrapDelta, wrapCellIndex } from './wrap.ts';
 import { BRAMBLE_SNAG_SPEED_MUL, LOG_CRAWL_ENTER_RADIUS } from '../../engine/tuning.js';
-import { ROCK_MOUNT_RADIUS } from './rockClimb';
+import { ROCK_MOUNT_RADIUS } from './rockClimb.ts';
 
 // LUL-450 (resumes LUL-383b/LUL-387): geometry helpers for the hiding-
 // collision bug class, lifted out of engine/forest-engine.js so they are
