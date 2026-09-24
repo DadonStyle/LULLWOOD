@@ -1752,7 +1752,8 @@ const predators = [];
 // preset compares against -- fixed at creation so placePredators() doesn't
 // need to re-derive array position every restart.
 for(const k of ['wolf','bear','lion']) for(let i=0;i<3;i++){ const p = makePredator(k); p.speciesIdx = i; predators.push(p); }
-let sinceClose = 0, huntTime = 0, spotFlash = 0, rustleFlash = 0, pianoTimer = 0;   // threat timers, spot flash, cover-rustle flash (LUL-2856), approach-note timer
+let sinceClose = 0, huntTime = 0, spotFlash = 0, rustleFlash = 0, pianoTimer = 0,
+    winPendingActive = false, winPendingT = 0;   // LUL-1633: win-reveal dead-window vignette ramp
 let sinceBelowMinHunters = 0;   // LUL-2250: seconds the active-hunter count has been below MIN_ACTIVE_HUNTERS
 let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
 let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
@@ -5629,6 +5630,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
 // ---- Objective, pickup cinematic, win / death ----------------------------
 const spotFlashEl = document.getElementById('spotFlash');
 const rustleFlashEl = document.getElementById('rustleFlash');   // LUL-2856
+const winPendingEl = document.getElementById('winPendingCue');   // LUL-1633
 const bearingPulseEl = document.getElementById('bearingPulse');
 const deathVideo = document.getElementById('deathVideo');
 if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
@@ -5994,6 +5996,7 @@ function restart(){
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
+  winPendingActive = false; winPendingT = 0; if(winPendingEl) winPendingEl.style.opacity = '0';   // LUL-1633
   roostCooldown.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
@@ -6492,7 +6495,7 @@ function stepFrame(dt, t, skipRender){
     halo.material.opacity = Math.min(0.5, 0.12 + e*0.05);
     bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5 + e*0.15;
     babyLight.intensity = boomed ? 0 : key3(e, [[0,1],[4,3.2],[7,2],[9,3.5]]);
-    if(boomed && !pickBoomed){ pickBoomed = true; fireBoom(baby.x, ay, baby.z); }   // the child bursts into the sky -- the win moment's visual, finishPickup() below does the bookkeeping
+    if(boomed && !pickBoomed){ pickBoomed = true; fireBoom(baby.x, ay, baby.z); winPendingActive = true; }   // the child bursts into the sky -- the win moment's visual, finishPickup() below does the bookkeeping. LUL-1633: starts the dead-window vignette ramp
     // camera holds position and tilts up to follow the child, then the burst --
     // LUL-26: under reduced motion, skip the tilt-to-follow slerp (exactly the
     // camera motion the setting exists to remove) and just hold the player's
@@ -6637,6 +6640,10 @@ function stepFrame(dt, t, skipRender){
   // so the vignette still fires as a positive tell without the motion.
   rustleFlash = Math.max(0, rustleFlash - dt*1.6);
   rustleFlashEl.style.opacity = motionReduced() ? (rustleFlash > 0 ? '0.15' : '0') : (rustleFlash*0.4).toFixed(3);
+  if(winPendingActive && winPendingT < 1){
+    winPendingT = Math.min(1, winPendingT + dt/1.5);   // 1.5s build, same shape CTO plan asked for
+    winPendingEl.style.opacity = motionReduced() ? '0.2' : (winPendingT*0.35).toFixed(3);
+  }
   shuffleCooldownAccum = Math.max(0, shuffleCooldownAccum - dt);   // LUL-3066
   // LUL-1308: decays slower than spotFlash (1.6) -- spotFlash is a one-shot
   // "you were just spotted" event; this is a repeating ambient cue and should

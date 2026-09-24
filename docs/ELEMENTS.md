@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7129 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6327, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7136 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6330, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1046,7 +1046,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
 
 - **Engine-owned DOM** (`document.getElementById(...)`, created by
   `components/GameCanvas.tsx`, mutated directly by the engine): `#vignette`,
-  `#spotFlash`, `#rustleFlash`, `#bearingPulse`, `#flash`, `#minimap` (canvas, drawn every frame by
+  `#spotFlash`, `#rustleFlash`, `#bearingPulse`, `#flash`, `#winPendingCue`, `#minimap` (canvas, drawn every frame by
   `drawMinimap()`/`drawMinimapStatic()`), `#hint`, `#pausePrompt`,
   `#deathVideo`.
 - **React-owned** (`components/Hud.tsx`), driven one-directionally by
@@ -1354,6 +1354,19 @@ scales both by difficulty tier — `DIFFICULTY_PRESETS[tier].rustleThresholdMul`
 scaling remains out of scope (Economist follow-up, not part of the LUL-4629/CEO-accepted "Full"
 slice).
 
+LUL-1633 adds `#winPendingCue`, a warm full-bleed vignette answering "the win is resolving" —
+the ~2.0s gap between the pickup cinematic's `fireBoom()` keyframe (`e>=9.3`,
+`engine/forest-engine.js:6496`) and `finishPickup()` flipping `winVisible` (`e>=11.3`) during
+which the boom burst had already decayed but no win text was up yet (LUL-1633 triage). Ramps
+from 0 to 0.35 opacity over 1.5s once `winPendingActive` is set at the `fireBoom()` call site,
+holds at peak for the remaining ~0.5s, and is naturally superseded when `#winText` fades in
+over it (`components/Hud.tsx`, its own existing 0.5s transition). Reduced motion clamps it to a
+static `0.2` instead of animating the build (same clamp-not-remove shape `#rustleFlash` uses
+above). Not a new interactive feature under `decisions/0015-cue-triple` — it is an additive
+layer inside the existing win moment, which already carries its own audio (`playWinMusic()`,
+fired at `pickStart` in `pickup()`) and explanation (`#winText`'s "YOU WON"); no new audio or
+caption is added.
+
 LUL-3066/LUL-4786 adds the reposition-to-reset itself: `KeyR` (+ touch Shuffle button,
 `components/MobileControls.tsx`, next to Hide) while `hidden`, off cooldown, calls
 `shuffleHide()` (`engine/forest-engine.js`). Direction comes from held movement keys/touch
@@ -1495,15 +1508,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5704-5764, the win path since
-  `LUL-2281`) and `triggerDeath()` (L5933-5974). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5706-5766, the win path since
+  `LUL-2281`) and `triggerDeath()` (L5935-5976). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5933-5974) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L5935-5976) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6198) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -2334,7 +2347,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7225 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L5885) and `windAssistEndCue()` (L5894), edge-triggers on the combined
+`windAssistStartCue()` (L5887) and `windAssistEndCue()` (L5896), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

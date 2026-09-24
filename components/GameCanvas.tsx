@@ -838,6 +838,13 @@ const OVERLAY_STYLE = `
   #bearingPulse.behind { background:
     linear-gradient(to right, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%),
     linear-gradient(to left, rgba(255,60,40,0.5) 0%, rgba(255,60,40,0) 18%); }
+  /* LUL-1633: fills the ~2.0s dead window between fireBoom() and winVisible (the pickup
+     cinematic's e=9.3->11.3 keyframes) with a continuously-building cue instead of a frozen
+     screen. Engine-owned (winPendingEl in forest-engine.js), same ramp-then-hold shape as
+     #rustleFlash. Sibling of #panel, NOT a descendant -- visible with adminMode off
+     (Q3, GameCanvas.tsx:328's selector only matches #panel). */
+  #winPendingCue { position: fixed; inset: 0; z-index: 22; pointer-events: none; opacity: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(255,225,160,0) 55%, rgba(255,225,160,0.4) 100%); }
   #flash { position: fixed; inset: 0; z-index: 23; pointer-events: none; opacity: 0; background: #fff; }
   #deathVideo { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
     z-index: 24; display: none; background: #000; pointer-events: none; }
@@ -866,6 +873,7 @@ function overlayMarkup(mobile: boolean) {
 <div id="spotFlash"></div>
 <div id="rustleFlash"></div><!-- LUL-2856 -->
 <div id="bearingPulse"></div>
+<div id="winPendingCue"></div><!-- LUL-1633 -->
 <div id="flash"></div>
 <canvas id="minimap" width="160" height="160"></canvas>
 <div id="hint">${hint}</div>
