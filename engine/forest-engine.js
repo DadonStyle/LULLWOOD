@@ -3640,10 +3640,10 @@ function shuffleHide(){
   rustleFlash = 1; rustleSting();
   // LUL-3066 (deviation from the merged SPEC, declared in the PR): the SPEC asked for both
   // a regular per-use caption AND a first-use HINT_PRIORITY entry, but (1) pushState()
-  // calls emitState() synchronously on every call (:3963) with no queue, so firing two in
+  // calls emitState() synchronously on every call (:3966) with no queue, so firing two in
   // the same tick silently drops the first -- confirmed by reading the code, not assumed;
   // and (2) HINT_PRIORITY's world-anchored hint system gates every entry on `!hidden`
-  // (baseHintEligible, :7155), which this feature's own precondition (hidden === true)
+  // (baseHintEligible, :7158), which this feature's own precondition (hidden === true)
   // can never satisfy -- adding 'hideReposition' there would be a dead trigger (exactly
   // the Q1.5 class of bug: a condition cited as a trigger that a real code path never
   // sets true). Folding first-use into the one caption slot, same shape enterHide()'s
