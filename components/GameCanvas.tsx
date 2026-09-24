@@ -423,7 +423,16 @@ const OVERLAY_STYLE = `
      the "bear" hint text at the 240px mobile max-width below, ~57px tall) plus a
      small visual gap -- tune it up if a future, longer HINT_TEXT entry still clips. */
   #scentTrailCaption, #hintCaption { position: fixed; z-index: 12; transform: translate(-50%, -120%);
-    left: var(--hint-left, 50%);
+    /* LUL-4328: the engine only clamps the anchor fraction to [0.08, 0.92]
+       (engine/forest-engine.js), which bounds the world-projected point but not this
+       pill's own rendered width (max-width: 60vw below) -- a pill anchored near either
+       edge could still have its centered, -50%-translated left edge land offscreen (the
+       scentTrailCaptionGlyph span, first flex child, is what went invisible). Since the
+       pill can never be wider than 60vw, its half-width can never exceed 30vw, so
+       clamping the center to [30vw, 70vw] keeps both edges on-viewport on every screen
+       this rule applies to (position: fixed, so % and vw resolve identically here) --
+       no per-viewport tuning needed even if a longer HINT_TEXT is added later. */
+    left: clamp(30vw, var(--hint-left, 50%), 70vw);
     top: min(var(--hint-top, 50%), calc(100% - var(--action-slot-bottom) - var(--action-slot-height) - 24px));
     max-width: 60vw; padding: 6px 14px; border-radius: 999px; pointer-events: none;
     background: rgba(18,34,34,0.6); border: 1px solid rgba(159,224,208,0.4);
