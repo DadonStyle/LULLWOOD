@@ -13,7 +13,7 @@ test.use({ viewport: { width: 727, height: 393 } });
 // lib/e2e-policy/world-policy.test.ts's FULLMAP_ALLOWLIST for a case this
 // file's own reason already covers.
 
-const CAPS = { cover: 12, reed: 24, bogTree: 12, stone: 3 };
+const CAPS = { cover: 12, stone: 3 };
 const MIN_SPACING = 3.5;
 const SLOP = 1e-6;
 
@@ -27,8 +27,6 @@ for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_P
 
     for (const entry of density.perChunk) {
       expect(entry.cover, `chunk ${entry.chunk} cover count`).toBeLessThanOrEqual(CAPS.cover);
-      expect(entry.reed, `chunk ${entry.chunk} reed count`).toBeLessThanOrEqual(CAPS.reed);
-      expect(entry.bogTree, `chunk ${entry.chunk} bogTree count`).toBeLessThanOrEqual(CAPS.bogTree);
       expect(entry.stone, `chunk ${entry.chunk} stone count`).toBeLessThanOrEqual(CAPS.stone);
     }
 

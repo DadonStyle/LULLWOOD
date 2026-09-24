@@ -1,18 +1,19 @@
-// LUL-2247: generateCover()/generateReeds()/generateBogTrees()/
-// generateThrowables() each reject a candidate against spawn/baby/
-// tree, but never against each other, and never against a per-area count --
-// a bog chunk could hold dozens of cover/reed/bogTree props a couple of
+// LUL-2247: generateCover()/generateThrowables() each reject a candidate
+// against spawn/baby/tree, but never against each other, and never against
+// a per-area count -- a chunk could hold dozens of cover props a couple of
 // units apart. thinGeneratedProps() (engine/forest-engine.js) now runs a
 // deterministic post-filter after every prop generator finishes, enforcing
 // PROP_MIN_SPACING/PROP_CHUNK_CAP (engine/tuning.js). This proves the
 // finished map actually respects both, at the pinned seed and three more, so
 // a regression that reintroduces dense clustering for some seed but not
 // others doesn't slip through. See docs/specs/lul-2247-prop-density.md.
+// LUL-4676 deleted the bog system (generateReeds()/generateBogTrees()); the
+// reed/bogTree caps went with it.
 import { test, expect } from './fixtures';
 import { boot, enter, QA_PINNED_SEED, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
 // fullmap-reason: measures per-chunk prop caps over the full 8x8 chunk grid (LUL-2377: the QA rig never runs @fullmap; run locally with E2E_FULLMAP=1)
 
-const CAPS = { cover: 12, reed: 24, bogTree: 12, stone: 3 };
+const CAPS = { cover: 12, stone: 3 };
 const MIN_SPACING = 3.5;
 const SLOP = 1e-6;
 
@@ -52,8 +53,6 @@ for (const seed of [QA_PINNED_SEED, QA_PINNED_SEED + 1, QA_PINNED_SEED + 2, QA_P
 
     for (const entry of density.perChunk) {
       expect(entry.cover, `chunk ${entry.chunk} cover count`).toBeLessThanOrEqual(CAPS.cover);
-      expect(entry.reed, `chunk ${entry.chunk} reed count`).toBeLessThanOrEqual(CAPS.reed);
-      expect(entry.bogTree, `chunk ${entry.chunk} bogTree count`).toBeLessThanOrEqual(CAPS.bogTree);
       expect(entry.stone, `chunk ${entry.chunk} stone count`).toBeLessThanOrEqual(CAPS.stone);
     }
 

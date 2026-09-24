@@ -1,7 +1,7 @@
-// LUL-47: Devlog infrastructure. Posts live in content/devlog/ as .tsx files
-// that export a `meta` object and a default React component.
+// LUL-47: Devlog infrastructure. Posts live in app/devlog/posts/ as .tsx files
+// with a default-exported React component; this registry is the metadata.
 //
-// To add a post: create content/devlog/<slug>.tsx, add its meta to POSTS,
+// To add a post: create app/devlog/posts/<slug>.tsx, add its meta here,
 // and the sitemap + index + [slug] route update automatically.
 
 export interface PostMeta {
@@ -34,6 +34,13 @@ const POSTS: PostMeta[] = [
     date: '2026-09-21',
     description:
       "A squash merge quietly discarded a repair commit's parent, and every release cut after it opened with a conflict. How we found the real cause — twice.",
+  },
+  {
+    slug: 'the-lake-was-never-forest',
+    title: 'The lake was never forest',
+    date: '2026-09-24',
+    description:
+      'Why we deleted the lake, the bog, and the mission built on top of the lake — and replaced the mission instead of leaving an empty slot.',
   },
 ];
 
