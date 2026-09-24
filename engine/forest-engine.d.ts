@@ -548,6 +548,16 @@ declare global {
         mountedOnRock: boolean; rockClimbT: number;
         startCueCount: number; endCueCount: number; deniedCueCount: number;
       };
+      /** LUL-5005: read-only chapel-sanctuary state, mirrors qaProbeRockClimb's shape.
+       * veilReserve itself is read via qaProbeVeil() -- not duplicated here, a test reads
+       * both hooks together to confirm the grant came from this feature specifically. */
+      qaProbeChapelSanctuary?: () => {
+        chapelSanctuaryActive: boolean; chapelSanctuaryChargeT: number; chapelSanctuaryUsedThisRun: boolean;
+        promptVisible: boolean; startCueCount: number; deniedCueCount: number; earlyExitCueCount: number;
+      };
+      /** LUL-5005: places the player 2 units off the chapel steeple's live position -- mirrors
+       * qaTeleportNearStoneMarker exactly (the micro QA world leaves LANDMARKS untouched). */
+      qaTeleportNearChapel?: () => { x: number; z: number };
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
