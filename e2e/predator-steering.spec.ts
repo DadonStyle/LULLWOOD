@@ -102,7 +102,7 @@ test.describe('predator steering (LUL-2306): player-sized movement collision + c
   for (const kind of ['wolf', 'bear', 'lion'] as const) {
     test(`${kind} passes the same 1.4u trunk gap the player passes`, async ({ page }) => {
       test.setTimeout(45_000);
-      await boot(page, { qaHooks: true }); // qaWorld defaults to 'micro' (LUL-2377)
+      await boot(page, { qaHooks: true, qaHour: 12 }); // qaWorld defaults to 'micro' (LUL-2377)
       await enter(page);
       await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
@@ -140,7 +140,7 @@ test.describe('predator steering (LUL-2306): player-sized movement collision + c
 
   test('a predator commits around a 5-trunk wall instead of grinding into it', async ({ page }) => {
     test.setTimeout(180_000);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
@@ -192,7 +192,7 @@ test.describe('predator steering (LUL-2306): player-sized movement collision + c
 
   test('a rock still blocks a predator exactly where it blocks the player', async ({ page }) => {
     test.setTimeout(45_000);
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
