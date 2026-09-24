@@ -5657,6 +5657,37 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     player.x = p.x + 2; player.z = p.z;
     return { x: p.x, z: p.z };
   };
+  // [QA-HOOK] LUL-4894: places the player 2 units off ROOSTS[i]'s live position, on the
+  // +z side, and leaves player.yaw untouched -- restart()'s default yaw=0 (forward =
+  // (-sin(0),-cos(0)) = (0,-1), i.e. -z) means a throw from here lands 16u short of the
+  // player, straight at the roost (18u throw - 2u offset), well inside its 20u radius,
+  // so a spec can throw immediately with no extra facing setup. Mirrors
+  // qaTeleportNearStoneMarker/qaTeleportNearThrowable otherwise, since
+  // applyQaWorldMicroPreset() (engine/tuning.js) doesn't scale ROOSTS, so a roost keeps
+  // its full-map position even in the micro world. Defaults to the nearest roost to the
+  // player's current position so a spec doesn't have to know indices; returns null if
+  // that index doesn't exist.
+  window.ForestEngine.qaTeleportNearRoost = function(i){
+    if(i === undefined){
+      let best = -1, bestD = Infinity;
+      for(let k=0;k<ROOSTS.length;k++){
+        const d = Math.hypot(ROOSTS[k].x - player.x, ROOSTS[k].z - player.z);
+        if(d < bestD){ best = k; bestD = d; }
+      }
+      i = best;
+    }
+    const r = ROOSTS[i];
+    if(!r) return null;
+    player.x = r.x; player.z = r.z + 2;
+    return { i, x: r.x, z: r.z };
+  };
+  // [QA-HOOK] LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a
+  // spec assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
+  // that a second throw within ROOST_COOLDOWN does NOT re-flush it (shared-cooldown proof
+  // with the ambient updateRoosts() trigger). No new engine state.
+  window.ForestEngine.qaProbeRoostState = function(i){
+    return { cooldown: roostCooldown[i], burstActive: roostBurstStart[i] >= 0 };
+  };
   // [QA-HOOK] LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. Includes the
   // activation cue's fire count so a spec can assert it without decoding WebAudio output.
   window.ForestEngine.qaProbeVeil = function(){
@@ -5956,6 +5987,23 @@ function throwThrowable(){
     if(p.inert) continue;
     const dist = Math.hypot(p.x - landX, p.z - landZ);
     if(checkThrowableNoise(dist, THROWABLE_NOISE_RADIUS)) hearThrowableNoise(p, landX, landZ);
+  }
+  // LUL-4894: Roost Scare -- slice (b), a second player-initiated trigger into the same
+  // flushRoost()/roostCooldown machinery updateRoosts() already drives for the ambient
+  // predator-proximity path (:3119-3133 area). Shares the per-roost cooldown array so the
+  // two paths can't double-fire the same roost in quick succession.
+  let nearestRoost = -1, nearestRoostDist = Infinity;
+  for(let i=0;i<ROOSTS.length;i++){
+    const dist = Math.hypot(ROOSTS[i].x - landX, ROOSTS[i].z - landZ);
+    if(dist < ROOSTS[i].radius && dist < nearestRoostDist){ nearestRoost = i; nearestRoostDist = dist; }
+  }
+  if(nearestRoost >= 0 && roostCooldown[nearestRoost] <= 0){
+    flushRoost(nearestRoost);
+    roostCooldown[nearestRoost] = ROOST_COOLDOWN;
+    if(!hintSeen('roostThrowCue')){
+      markHintSeen('roostThrowCue');
+      if(captionsOn) pushState({ caption: 'throw a stone at a roost to startle it', captionId: ++captionSeq });
+    }
   }
 }
 function finishPickup(){

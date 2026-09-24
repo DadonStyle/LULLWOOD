@@ -486,6 +486,17 @@ declare global {
        * qaTeleportNearThrowable, works regardless of where the landmark actually sits (the
        * micro QA world leaves LANDMARKS untouched). Returns the marker's position. */
       qaTeleportNearStoneMarker?: () => { x: number; z: number };
+      /** LUL-4894: places the player 2 units off ROOSTS[i]'s live position on the +z side,
+       * yaw untouched -- with the default yaw=0 facing (-z), an immediate throw lands 16u
+       * from the player, straight at the roost, inside its 20u radius. Mirrors
+       * qaTeleportNearStoneMarker, since the micro QA world leaves ROOSTS untouched. Omit
+       * `i` to target whichever roost is nearest the player's current position. Returns
+       * null if `i` doesn't exist. */
+      qaTeleportNearRoost?: (i?: number) => { i: number; x: number; z: number } | null;
+      /** LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a test
+       * assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
+       * that a second throw within the cooldown window does not re-flush it. */
+      qaProbeRoostState?: (i: number) => { cooldown: number; burstActive: boolean };
       /** LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. `releaseCueCount` is
        * the mist-charm activation cue's fire count, so a test can assert it fired without
        * decoding actual WebAudio output. */
