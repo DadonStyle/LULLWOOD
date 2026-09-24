@@ -6071,7 +6071,9 @@ function triggerDeath(kind, cause, killerIdx){
   deathAudio(kind);
 }
 function playDeathVideo(){
-  if(!deathVideo || !deathVideo.getAttribute('src')){ revealLoss(); return; }   // no video embedded → just show text
+  // LUL-4860: on a true first death (cutsceneSkippable false) the no-video path must not
+  // reveal early -- fall through to the CUT_END poll below, same as the video-playing path.
+  if(!deathVideo || !deathVideo.getAttribute('src')){ if(cutsceneSkippable) revealLoss(); return; }   // no video embedded → just show text
   deathVideo.style.display = 'block';
   try { deathVideo.currentTime = 0; } catch(e){}
   const pr = deathVideo.play();
