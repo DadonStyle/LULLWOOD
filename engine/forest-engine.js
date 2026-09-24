@@ -506,18 +506,9 @@ const CANOPY_GEO = { canopyR: CANOPY_R, cone1Height: CONE1_HEIGHT, apexY: CONE1_
 const trunkMat   = new THREE.MeshStandardMaterial({ color: CONFIG.trunk,   roughness: 1 });
 const foliageMat = new THREE.MeshStandardMaterial({ color: CONFIG.foliage, roughness: 1 });
 
-// ---- Bog tree cover (LUL-25) -----------------------------------------------
-// Own data array, much smaller than CONFIG.trees -- "thinner tree cover" per
-// the ticket. A separate pool, not a bigger CONFIG.trees, so the original
-// forest loop's rng draw count (and every draw after it) is untouched -- see
-// generateBogTrees() below. LUL-2249: no longer a single fixed-capacity
-// InstancedMesh trio -- chunked the same way as the forest trees (see
-// ensureBogChunk()/dropBogChunk() below), reusing this same shared
-// trunkGeo/cone1Geo/cone2Geo/trunkMat/foliageMat.
-
 // ---- Cover props (LUL-43): brambles, fallen logs, rock shelves -----------
 // Purely visual + line-of-sight-blocking (see canSee()/hasLOS() below) --
-// deliberately NOT movement colliders. LUL-1643 made rock/reed real predator
+// deliberately NOT movement colliders. LUL-1643 made rock real predator
 // colliders (see predatorBlocked() below and blockedForPredator() in
 // lib/game/cover.ts); log/bramble stay walkable for predators, matching the
 // player's own exemption.
@@ -532,13 +523,6 @@ const brambleGeo = new THREE.IcosahedronGeometry(1, 1);
 const logMat = new THREE.MeshStandardMaterial({ color: 0x241a10, roughness: 1 });
 const rockMat = new THREE.MeshStandardMaterial({ color: 0x2c3036, roughness: 1 });
 const brambleMat = new THREE.MeshStandardMaterial({ color: 0x121a0e, roughness: 1 });
-// LUL-25: reed clumps -- tall cover volumes in the bog, same "duck behind it"
-// LOS-blocking treatment as rock/bramble (see coverBlockedR/hasLOS below),
-// not a HIDE_KINDS entry -- canSee()'s LOS raycast already treats any
-// coverData AABB as real sight-cover regardless of hide-stance membership;
-// the reeds' actual cost is the louder splash while wading (see bogNoiseMultiplier).
-const reedGeo = new THREE.ConeGeometry(0.5, 1, 5);
-const reedMat = new THREE.MeshStandardMaterial({ color: 0x2e3b1c, roughness: 1 });
 // LUL-2249: was four fixed-capacity (CONFIG.coverProps) InstancedMesh, one per
 // kind, instantiated once and fully repainted by layoutCoverMeshes() every
 // generateMap() call. Replaced by a per-chunk, per-kind InstancedMesh sized to
@@ -549,7 +533,6 @@ const COVER_GEO_MAT = {
   log: [logGeo, logMat],
   rock: [rockGeo, rockMat],
   bramble: [brambleGeo, brambleMat],
-  reed: [reedGeo, reedMat],
 };
 
 // ---- Throwable distractions (LUL-1623) ------------------------------------
@@ -583,8 +566,6 @@ scene.add(throwableMesh);
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
 let treeData = [];            // {x,z,s,cr,crCanopy}
-let bogTreeData = [];          // LUL-25: same shape, thinner cover, bog band only -- own array so
-                                // it can't shift how many rng() calls the original tree loop makes
 let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders for the four fixed
                                  // landmark meshes, populated by placeLandmarks() post-nudge. No
                                  // crCanopy (canopyBlockedR() skips entries that lack it) and never
@@ -616,11 +597,11 @@ function inSpawn(x,z){ return x*x+z*z < 40; }
 
 function addAllToGrid(arr){
   for(const t of arr){
-    // LUL-2225: skip forest trees culled for standing inside the bog patch's
-    // dense-core threshold (see the treeData.push() below) -- a culled tree
-    // is parked off-screen in layoutTreeChunks() and must not still block
-    // movement/LOS via this grid. bogTreeData/landmarkData entries never
-    // carry `culled`, so this is a no-op for them.
+    // LUL-2225: skip forest trees culled for standing inside a dense-core
+    // threshold (see the treeData.push() below) -- a culled tree is parked
+    // off-screen in layoutTreeChunks() and must not still block movement/LOS
+    // via this grid. landmarkData entries never carry `culled`, so this is a
+    // no-op for them.
     if(t.culled) continue;
     const k = key(Math.floor(t.x/CELL), Math.floor(t.z/CELL));
     (grid.get(k) || grid.set(k, []).get(k)).push(t);
@@ -629,7 +610,6 @@ function addAllToGrid(arr){
 function buildGrid(){
   grid = new Map();
   addAllToGrid(treeData);
-  addAllToGrid(bogTreeData);
   // LUL-374: landmarkData is only populated once placeLandmarks() has run
   // (empty on the first, pre-landmark call this function makes at map-gen
   // time -- see the third call right after placeLandmarks() below).
@@ -731,13 +711,6 @@ function generateCover(){
     coverData.push({ x, z, hx, hz, kind, y, ry: rng()*Math.PI*2 });
     placed++;
   }
-  // LUL-2225: drop any non-tree prop (log/rock/bramble) that landed inside
-  // the bog's keep-clear radius -- nothing but reeds (generateReeds(), own
-  // ring-only placement) is allowed in the patch. Filtering the finished
-  // array, not rejecting inside the loop above, keeps the loop's rng() draw
-  // count/order byte-identical for every existing seed (see the LUL-2212
-  // comment above this function on why that stream must not move).
-  coverData = coverData.filter(c => c.kind === 'tree' || !bogKeepClear(c.x, c.z, 0));
   buildCoverGrid();
 }
 function generateThrowables(){
@@ -757,12 +730,6 @@ function generateThrowables(){
     throwableData.push({ x, z, taken: false });
     placed++;
   }
-  // LUL-2225: drop any throwable inside the bog's keep-clear radius. Filters
-  // the finished array rather than rejecting inside the loop, so the loop's
-  // rng() draw count/order stays byte-identical for every existing seed.
-  // layoutThrowableMeshes() already parks any index past throwableData's new,
-  // shorter length off-map (its `!t` branch) -- no rng consumed there either.
-  throwableData = throwableData.filter(t => !bogKeepClear(t.x, t.z, 0));
 }
 // LUL-2249: layoutCoverMeshes() (repainted all four fixed-capacity meshes from
 // coverData every call) is gone -- ensureCoverChunk()/dropCoverChunk() below
@@ -793,32 +760,6 @@ function layoutThrowableMeshes(){
 
 function nearLandmarks(x, z, pad){
   return !clearOfLandmarks(x, z, LANDMARKS, pad);
-}
-// LUL-375/LUL-2247, replaced by LUL-2249: this used to be layoutTreePool(),
-// shared by generateMap()'s forest-tree loop (until LUL-2249 moved trees onto
-// treeChunkTrios) and generateBogTrees()'s own instanced trio, drawing
-// rotation/tint rng() *and* writing the mesh in one pass. Streaming needs
-// those two split -- see the tree-chunk section above for why (rot/tint must
-// be stored on the object and drawn once, mesh writes happen later, per chunk,
-// on approach). This is the bog-only half of that split: draws rotation/tint
-// for the FULL pre-thin array, in order, same rng stream position
-// layoutTreePool() used to draw them from (immediately after
-// thinGeneratedProps(), nothing else consumes rng in between) -- so every
-// seed's post-tree rng draws (placeCave(), pickMission()) stay byte-identical.
-// `count` (CONFIG.bogTrees) mirrors layoutTreePool()'s own loop bound: `data`
-// can be shorter than `count` if generateBogTrees()'s try-budget didn't fill
-// it, and no draw happens past `data.length` (same as before). Entries the
-// later density thin drops still get rot/tint drawn here (this is the
-// load-bearing part LUL-2247 fixed in layoutTreePool() -- draw count must stay
-// fixed at data.length regardless of what thinGeneratedProps() keeps) but are
-// simply never in the final (already-thinned) bogTreeData array
-// ensureBogChunk() buckets from, so nothing extra needs parking off-map.
-function drawBogTreeVisuals(data, count){
-  for(let i=0; i<count; i++){
-    if(i >= data.length) break;
-    data[i].rot = rng()*Math.PI*2;
-    data[i].tint = 0.72 + rng()*0.5;
-  }
 }
 // ---- E6: chunk the main forest pool so three.js can frustum-cull whole chunks ----
 // FogExp2 (density 0.04) already hides anything past ~40-60 units; the old single
@@ -852,8 +793,6 @@ let treeChunkTrios = [];     // chunk id -> [trunk, cone1, cone2], live tree chu
 let treeChunkBuckets = [];   // chunk id -> indices into treeData, every populated chunk
 let coverChunkMeshes = [];   // chunk id -> { log?, rock?, bramble?, reed?: InstancedMesh }, live only
 let coverChunkBuckets = [];  // chunk id -> indices into coverData (non-'tree' kinds only)
-let bogChunkMeshes = [];     // chunk id -> [trunk, cone1, cone2], live bog chunks only
-let bogChunkBuckets = [];    // chunk id -> indices into bogTreeData
 let liveChunks = new Set();  // chunk ids currently live -- one liveness set, every category
                               // streams in/out together since they all share one ring
 
@@ -883,8 +822,7 @@ function ensureChunk(c){
   // point (E6): a whole chunk outside the view frustum is now free to skip.
   idxs.forEach((ti, slot) => {
     const t = treeData[ti];
-    // LUL-2225: a culled tree (sparse bog-core forest) is parked off-screen,
-    // same as before this ticket -- only what's rendered differs, never rng.
+    // a culled tree is parked off-screen -- only what's rendered differs, never rng.
     if(t.culled){
       dummy.position.set(0, -999, 0); dummy.scale.setScalar(0.0001); dummy.rotation.set(0,0,0);
     } else {
@@ -908,7 +846,7 @@ function ensureChunk(c){
 // Disposes chunk `c`'s live tree trio's own instanceMatrix/instanceColor GPU
 // buffers via .dispose(), then drops the reference -- never
 // .geometry.dispose()/.material.dispose(): trunkGeo/cone1Geo/cone2Geo/
-// trunkMat/foliageMat are shared with every other tree/bog chunk. No-op if
+// trunkMat/foliageMat are shared with every other tree chunk. No-op if
 // the chunk isn't currently live.
 function dropChunk(c){
   const trio = treeChunkTrios[c];
@@ -951,12 +889,12 @@ function updateStreamedChunks(force){
       wanted.add(ccx*TREE_CHUNKS_PER_AXIS + ccz);
     }
   }
-  for(const c of wanted) if(!liveChunks.has(c)){ ensureChunk(c); ensureCoverChunk(c); ensureBogChunk(c); liveChunks.add(c); }
+  for(const c of wanted) if(!liveChunks.has(c)){ ensureChunk(c); ensureCoverChunk(c); liveChunks.add(c); }
   for(const c of Array.from(liveChunks)){
     if(wanted.has(c)) continue;
     const lcx = Math.floor(c/TREE_CHUNKS_PER_AXIS), lcz = c%TREE_CHUNKS_PER_AXIS;
     const cheb = Math.max(Math.abs(lcx-cx), Math.abs(lcz-cz));
-    if(cheb > STREAM_UNLOAD_CHEBYSHEV){ dropChunk(c); dropCoverChunk(c); dropBogChunk(c); liveChunks.delete(c); }
+    if(cheb > STREAM_UNLOAD_CHEBYSHEV){ dropChunk(c); dropCoverChunk(c); liveChunks.delete(c); }
   }
 }
 
@@ -1045,156 +983,36 @@ function dropCoverChunkMeshesOnly(c){
   coverChunkMeshes[c] = undefined;
 }
 
-// ---- bog tree pool: same per-chunk treatment, smaller scale ----------------
-// bogTreeData is already the final (post-thin) array by the time this ever
-// runs (see generateMap()'s reset sequence) -- every bucketed index renders.
-function bucketBogChunks(){
-  const nChunks = TREE_CHUNKS_PER_AXIS * TREE_CHUNKS_PER_AXIS;
-  bogChunkBuckets = Array.from({length: nChunks}, () => []);
-  for(let i=0; i<bogTreeData.length; i++) bogChunkBuckets[treeChunkIndex(bogTreeData[i].x, bogTreeData[i].z)].push(i);
-}
-function ensureBogChunk(c){
-  if(bogChunkMeshes[c]) return;
-  const idxs = bogChunkBuckets[c];
-  if(!idxs || idxs.length === 0) return;
-  const trio = [
-    new THREE.InstancedMesh(trunkGeo, trunkMat,   idxs.length),
-    new THREE.InstancedMesh(cone1Geo, foliageMat, idxs.length),
-    new THREE.InstancedMesh(cone2Geo, foliageMat, idxs.length),
-  ];
-  trio.forEach(m => { m.frustumCulled = false; });   // matches the old bogParts trio
-  idxs.forEach((bi, slot) => {
-    const t = bogTreeData[bi];
-    dummy.position.set(t.x, 0, t.z);
-    dummy.rotation.set(0, t.rot, 0);
-    dummy.scale.setScalar(t.s);
-    dummy.updateMatrix();
-    for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
-    tintCol.setRGB(t.tint*0.92, t.tint, t.tint*0.86);
-    trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
-  });
-  for(const m of trio){
-    scene.add(m);
-    m.instanceMatrix.needsUpdate = true;
-    if(m.instanceColor) m.instanceColor.needsUpdate = true;
-    m.computeBoundingSphere();
-  }
-  bogChunkMeshes[c] = trio;
-}
-function dropBogChunk(c){
-  const trio = bogChunkMeshes[c];
-  if(!trio) return;
-  for(const m of trio){ scene.remove(m); m.dispose(); }
-  bogChunkMeshes[c] = undefined;
-}
-// ---- Bog map band (LUL-25) --------------------------------------------------
-// generateBogTrees()/generateReeds()/applyHardBabySpawn() are all called from
-// the tail of generateMap(), strictly after every existing rng() draw (baby,
-// trees, predators, cover, wind) -- new content only ever appends to the
-// seeded stream, same rule LUL-43/LUL-23 already established, so the current
-// forest keeps generating byte-identical for CONFIG.seed.
-function generateBogTrees(){
-  bogTreeData = [];
-  let tries = 0;
-  // LUL-1483: was a direct scatter into the z-band (100% acceptance minus
-  // nearLandmarks) -- now also rejects on biomeAt (~30% of the square is
-  // boggy), so the try budget is raised to keep hitting BOG_TREES reliably.
-  while(bogTreeData.length < CONFIG.bogTrees && tries < CONFIG.bogTrees*200){
-    tries++;
-    const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
-    if(biomeAt(x, z) <= 0) continue;
-    if(nearLandmarks(x, z, 2)) continue;
-    const s = 0.6 + rng()*1.3;   // thinner cover -- same scatter shape, smaller sizes than the forest
-    bogTreeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO) });
-  }
-  // LUL-2247/LUL-2249: drawBogTreeVisuals() moved out of here -- it now runs
-  // from generateMap(), after thinGeneratedProps() has filtered bogTreeData,
-  // so ensureBogChunk() can render only the surviving (post-thin) trees while
-  // drawBogTreeVisuals() still draws rng() for the full pre-thin array
-  // (review fix -- see drawBogTreeVisuals()'s own comment).
-}
-// Reeds: tall cover volumes, bog band only. Pushed into the same coverData
-// array log/rock/bramble use (see COVER_GEO_MAT.reed above) so canSee()'s LOS
-// raycast and the player's coverBlockedR() movement check treat them exactly
-// like any other prop, with zero changes to either function.
-//
-// LUL-2212: this loop had no overlap check against `coverData` at all --
-// generateCover() (called earlier in generateMap(), so its rock/log/bramble/
-// tree entries are already in `coverData` by the time this runs) checks new
-// candidates against trees and, as of this same ticket, against each other,
-// but reeds bypassed all of it. A reed (solid, coverKindBlocksMovement()
-// true) spawning on top of a log/bramble (walkable) reintroduces exactly the
-// bug the other check fixes: the player hits an invisible wall mid-span on a
-// prop that's supposed to be fully walkable. This was the actual failure
-// e2e/lul211-founder-report.spec.ts caught on the QA-pinned seed -- a reed
-// 0.5 units from a bramble's centre.
-//
-// LUL-2225: reeds are now the patch's visible boundary, not scattered
-// through its interior -- restricted to the ring between BOG_INNER_RADIUS
-// and BOG_OUTER_RADIUS (the old `biomeAt(x,z) <= 0` reject let them land
-// anywhere in the disc, including the dense core). Own budget (BOG_REEDS),
-// no longer COVER_PROPS -- a much smaller target ring than the old 135-unit
-// disc COVER_PROPS was sized for.
-//
-// overlapsTreeTrunk()
-// is the one that matters today: ordinary (non-culled, non-bog) forest trees
-// are NOT excluded from the 25-45 ring, and overlapsExistingCover() below
-// deliberately skips `kind==='tree'` entries (lib/game/cover.ts), so without
-// this a reed can still land on top of a forest tree trunk in the ring.
-// Declared reshuffle (LUL-2212/LUL-2225 precedent): both new checks can
-// reject a candidate before its `ry` rng() draw, so the exact ry stream for
-// this loop -- and only this loop, since it's the last rng() consumer before
-// thinGeneratedProps(), which draws none -- shifts for any seed where either
-// check now fires. No other generator's stream is affected.
-function generateReeds(){
-  let tries = 0, placed = 0;
-  while(placed < CONFIG.bogReeds && tries < CONFIG.bogReeds*200){
-    tries++;
-    const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
-    const dist = Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z);
-    if(dist < BOG_INNER_RADIUS || dist > BOG_OUTER_RADIUS) continue;
-    if(nearLandmarks(x, z, 3)) continue;
-    const r = 0.5 + rng()*0.4, h = 1.3 + rng()*0.9;
-    if(overlapsTreeTrunk(x, z, r, treesNear(x, z))) continue;
-    if(overlapsExistingCover(x, z, r, coverData)) continue;
-    coverData.push({ x, z, hx: r, hz: r, y: h*0.5, kind: 'reed', ry: rng()*Math.PI*2 });
-    placed++;
-  }
-  buildCoverGrid();
-}
-// LUL-2247: cross-category density pass. Runs once, after generateCover(),
-// generateThrowables(), generateBogTrees() and generateReeds() have all
-// finished (so coverData/bogTreeData/throwableData are each at their final,
-// pre-thin size for this map) and before any of their layout*()/buildGrid()
-// consumers run. Builds one combined, order-preserving list -- cover (log/
-// rock/bramble) and reeds first (already in generation order inside
-// coverData), then bog trees, then stones -- tags each with the category key
-// thinProps()/PROP_CHUNK_CAP use, thins it, then filters the three real
+// LUL-2247: cross-category density pass. Runs once, after generateCover()
+// and generateThrowables() have both finished (so coverData/throwableData
+// are each at their final, pre-thin size for this map) and before any of
+// their layout*()/buildGrid() consumers run. Builds one combined,
+// order-preserving list -- cover (log/rock/bramble, already in generation
+// order inside coverData), then stones -- tags each with the category key
+// thinProps()/PROP_CHUNK_CAP use, thins it, then filters the two real
 // arrays down to exactly the kept objects (by reference, so no new object
 // shapes are introduced downstream). 'tree' entries in coverData are excluded
 // from the combined list entirely -- forest trees are not a "non-tree
 // object" and already have their own spacing discipline; they pass through
 // unfiltered below.
 //
-// buildCoverGrid() was already run twice above (end of generateCover(), end
-// of generateReeds()) against the pre-thin coverData -- coverGrid is a
-// separate Map of object references built at call time, so it still holds
-// entries this pass is about to drop. Re-running it here (same call the two
-// mutators above already make after touching coverData) keeps coverGrid in
-// sync with the array coverBlockedR()/hasLOS()/canSee()/findHideSpot() are
-// meant to reflect; skipping it would leave invisible collision/LOS from
-// props whose meshes this ticket has already moved off-map.
+// buildCoverGrid() was already run once above (end of generateCover())
+// against the pre-thin coverData -- coverGrid is a separate Map of object
+// references built at call time, so it still holds entries this pass is
+// about to drop. Re-running it here (same call the mutator above already
+// makes after touching coverData) keeps coverGrid in sync with the array
+// coverBlockedR()/hasLOS()/canSee()/findHideSpot() are meant to reflect;
+// skipping it would leave invisible collision/LOS from props whose meshes
+// this ticket has already moved off-map.
 function thinGeneratedProps(){
   const combined = [];
-  for(const c of coverData) if(c.kind !== 'tree') combined.push({ x: c.x, z: c.z, kind: c.kind === 'reed' ? 'reed' : 'cover', ref: c });
-  for(const b of bogTreeData) combined.push({ x: b.x, z: b.z, kind: 'bogTree', ref: b });
+  for(const c of coverData) if(c.kind !== 'tree') combined.push({ x: c.x, z: c.z, kind: 'cover', ref: c });
   for(const t of throwableData) combined.push({ x: t.x, z: t.z, kind: 'stone', ref: t });
 
   const kept = thinProps(combined, PROP_MIN_SPACING, PROP_CHUNK_CAP, treeChunkIndex);
   const keptRefs = new Set(kept.map(k => k.ref));
 
   coverData = coverData.filter(c => c.kind === 'tree' || keptRefs.has(c));
-  bogTreeData = bogTreeData.filter(b => keptRefs.has(b));
   throwableData = throwableData.filter(t => keptRefs.has(t));
   buildCoverGrid();
 }
@@ -1252,17 +1070,6 @@ function generateMap(seed){
 
   treeData = [];
   let tries = 0;
-  // LUL-2225: "sparse inside the bog, not none" -- every 4th tree that lands
-  // within BOG_INNER_RADIUS of BOG_CENTER is kept, the rest marked `culled`.
-  // Deterministic (a counter, no extra rng() draw) so this cannot perturb
-  // the seeded tree stream below it; ensureChunk() parks culled trees
-  // off-screen and addAllToGrid()/generateCover() skip them for collision/
-  // hide-cover. Scoped to BOG_INNER_RADIUS specifically (not the wider
-  // biomeAt > 0.5 threshold, which reaches ~35 units at this geometry) so
-  // the counter directly controls the density qaProbeBogKeepClear() and the
-  // spec's e2e section measure, rather than a proxy region whose overlap
-  // with the measured radius varies by seed.
-  let bogCoreSeen = 0;
   while(treeData.length < CONFIG.trees && tries < CONFIG.trees*25){
     tries++;
     const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
@@ -1284,12 +1091,7 @@ function generateMap(seed){
     // byte-identical to before the lake was deleted.
     if(inSpawn(x,z) || inBaby(x,z) || ((x-34)*(x-34) + (z+28)*(z+28) < 484)) continue;
     const s = 0.7 + rng()*1.7;
-    let culled = false;
-    if(Math.hypot(x - BOG_CENTER.x, z - BOG_CENTER.z) < BOG_INNER_RADIUS){
-      culled = (bogCoreSeen % 4 !== 0);
-      bogCoreSeen++;
-    }
-    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled });
+    treeData.push({ x, z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled: false });
   }
   // LUL-2249: rot/tint used to be drawn inside layoutTreeChunks()'s own
   // per-tree loop, which ran here -- right after tree generation finished,
@@ -1309,42 +1111,9 @@ function generateMap(seed){
   generateThrowables();
   generateWind();   // LUL-23: appended after cover -- doesn't reorder either stream
   pushState({ windX, windZ });   // LUL-1724: map-constant, pushed once, not per-frame
-  // LUL-25: everything below is new and runs last -- see the comment on
-  // generateBogTrees() for why the ordering is load-bearing.
-  generateBogTrees();
-  // LUL-2215: generateCover() (above) ran before bog trees existed, so its
-  // overlapsTreeCanopy() check for walkable kinds (log/bramble -- see the
-  // comment on that call) couldn't see bog tree canopies. A log/bramble could
-  // land overlapping one; canopyBlockedR() blocks the player unconditionally
-  // within a tree's canopy circle regardless of what's on the ground, so the
-  // player hits the exact same invisible-wall-mid-span bug LUL-2212 fixed for
-  // cover-vs-cover overlap, but for cover-vs-bog-tree. Filtering the finished
-  // coverData array here, rather than reordering generateBogTrees() before
-  // generateCover() or rejecting inside generateCover()'s loop, keeps every
-  // existing rng() draw -- tree, baby, predator, and generateCover()'s own
-  // stream -- byte-identical for every seed; same precedent as the LUL-2225
-  // bog-keep-clear filter in generateCover() above.
-  coverData = coverData.filter(c =>
-    c.kind === 'tree' ||
-    coverKindBlocksMovement(c.kind) ||
-    !overlapsTreeCanopy(c.x, c.z, Math.max(c.hx, c.hz), bogTreeData)
-  );
-  generateReeds();
-  // LUL-2247 review fix: capture the pre-thin array by reference before
-  // thinGeneratedProps() reassigns bogTreeData to a filtered copy --
-  // drawBogTreeVisuals() below needs the full array so its rng() draw count
-  // stays fixed at bogTreeData.length regardless of what the thin drops
-  // (see the comment on drawBogTreeVisuals() itself).
-  const bogTreeDataPreThin = bogTreeData;
   thinGeneratedProps();   // LUL-2247: cross-category spacing + per-chunk caps -- draws no rng
-  // LUL-2249: same rot/tint extraction as the forest trees above -- draws for
-  // the FULL pre-thin array, in order, at the same rng stream position
-  // layoutTreePool() used to draw them from here (moved out of
-  // generateBogTrees() for the same LUL-2247 reason: needs the full array,
-  // not the thinned one, to keep its draw count fixed for any seed).
-  drawBogTreeVisuals(bogTreeDataPreThin, CONFIG.bogTrees);
   if(!qaNoRender) layoutThrowableMeshes();   // moved from right after generateThrowables() -- needs the thinned array too
-  buildGrid();   // picks up bogTreeData for blockedR()/canopyBlockedR()
+  buildGrid();
   placeLandmarks();
   buildGrid();   // LUL-374: re-run now landmarkData is populated, so blockedR()/predators'
                   // own blockedR() calls treat the four landmark meshes as solid too
@@ -1372,12 +1141,12 @@ function generateMap(seed){
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
                   // reasoning as the LUL-374 buildGrid() call above
   // LUL-2249: hand off from "every populated chunk instantiated up front" to
-  // the streamed ring, now that treeData/coverData/bogTreeData are all at
-  // their final, post-thin state. Drop whatever the PREVIOUS seed left live
-  // (those meshes are sized for that seed's per-chunk counts, never
-  // reusable), rebucket this seed's data, and reset coverGrid to empty --
-  // buildCoverGrid() (generateCover()/generateReeds()/thinGeneratedProps())
-  // populated it whole-map for generation-time overlap checks, but from here
+  // the streamed ring, now that treeData/coverData are all at their final,
+  // post-thin state. Drop whatever the PREVIOUS seed left live (those meshes
+  // are sized for that seed's per-chunk counts, never reusable), rebucket
+  // this seed's data, and reset coverGrid to empty -- buildCoverGrid()
+  // (generateCover()/thinGeneratedProps()) populated it whole-map for
+  // generation-time overlap checks, but from here
   // on only a live chunk's own entries belong in it (ensureCoverChunk() adds
   // them, dropCoverChunk() removes them during live streaming), so coverBlockedR()/hasLOS()/
   // findHideSpot()/canSee() only ever see cover that's actually rendered --
@@ -1385,45 +1154,22 @@ function generateMap(seed){
   // were reset to (0,0) above, before any of this, so the initial
   // updateStreamedChunks(true) streams in the ring around the real spawn
   // point, not wherever the player stood in the previous round.
-  for(const c of liveChunks){ dropChunk(c); dropCoverChunkMeshesOnly(c); dropBogChunk(c); }
+  for(const c of liveChunks){ dropChunk(c); dropCoverChunkMeshesOnly(c); }
   liveChunks = new Set();
   lastStreamChunkX = null; lastStreamChunkZ = null;
   coverGrid = new Map();
   if(!qaNoRender){
     bucketTreeChunks(treeData);
     bucketCoverChunks();
-    bucketBogChunks();
     updateStreamedChunks(true);
   }
   // LUL-1093: moved from right after the tree-pool buildGrid() above.
-  // bogTreeData/landmarkData don't exist until generateBogTrees()/
-  // placeLandmarks() run, both below the old call site -- drawing from them
-  // there always rendered empty arrays. This draws from data only and
-  // consumes no rng, so it cannot perturb the seeded stream (LUL-25's
-  // ordering comment above generateBogTrees() explains what does).
+  // landmarkData doesn't exist until placeLandmarks() runs, below the old
+  // call site -- drawing from it there always rendered an empty array. This
+  // draws from data only and consumes no rng, so it cannot perturb the
+  // seeded stream.
   drawMinimapStatic();
 }
-
-// ---- Bog patch ground (LUL-2225) ------------------------------------------
-// The single flat `ground` plane above gave the bog no visible boundary at
-// all -- a player could only learn where the slow ground was by getting
-// slow. Two concentric discs, same "flat mesh just above `ground`" approach
-// as `water`/`ring` above: a wide dark/wet disc out to BOG_OUTER_RADIUS (the
-// full falloff, where bogginess reaches 0) and a darker one at
-// BOG_INNER_RADIUS (the full-bogginess core) sitting fractionally higher so
-// it doesn't z-fight. Static geometry, no rng draw, no shader -- a
-// ripple/water-shader pass is a legitimate follow-up, not a blocker here.
-const bogOuterGround = new THREE.Mesh(new THREE.CircleGeometry(BOG_OUTER_RADIUS, 64),
-  new THREE.MeshStandardMaterial({ color: 0x0c1a14, roughness: 0.6, metalness: 0.05 }));
-bogOuterGround.rotation.x = -Math.PI/2;
-bogOuterGround.position.set(BOG_CENTER.x, 0.015, BOG_CENTER.z);
-scene.add(bogOuterGround);
-
-const bogInnerGround = new THREE.Mesh(new THREE.CircleGeometry(BOG_INNER_RADIUS, 48),
-  new THREE.MeshStandardMaterial({ color: 0x08120f, roughness: 0.55, metalness: 0.1 }));
-bogInnerGround.rotation.x = -Math.PI/2;
-bogInnerGround.position.set(BOG_CENTER.x, 0.02, BOG_CENTER.z);
-scene.add(bogInnerGround);
 
 // ---- Home landmark: where the child must be carried (LUL-38) -------------
 // Deliberately minimal -- "reuse the spawn point" per the ticket's own scope,
@@ -5676,7 +5422,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // it only ever reflects what streams back in below (real cross-check:
     // e2e/qa-world-micro.spec.ts's qaStageWalkIntoCover() proves the staged
     // prop is genuinely reachable through coverData/coverGrid after this).
-    for(const c of liveChunks){ dropChunk(c); dropCoverChunkMeshesOnly(c); dropBogChunk(c); }
+    for(const c of liveChunks){ dropChunk(c); dropCoverChunkMeshesOnly(c); }
     liveChunks = new Set();
     lastStreamChunkX = null; lastStreamChunkZ = null;
     coverGrid = new Map();
