@@ -11,7 +11,7 @@ import {
   completeRetrieval,
   secondaryComplete,
   RETRIEVAL_ITEM,
-  MISSION_DEEPWATER_SPEEDRUN_SECONDS,
+  MISSION_FIREPOWER_SPEEDRUN_SECONDS,
   checkMissionExpiry,
   eligibleMissionPool,
   MISSION_FAR_UNLOCK_WINS,
@@ -49,16 +49,16 @@ test('pickMission clamps a near-1 rng draw to the last pool member, not past it'
 
 test('syncMissionTargetToLandmark overwrites x/z when landmarkKind matches', () => {
   const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
-  const landmarks = [{ kind: 'drownedCar', x: -91.95, z: 46.03 }];
+  const landmarks = [{ kind: 'fireTower', x: -91.95, z: -94.03 }];
   const synced = syncMissionTargetToLandmark(m, landmarks);
   assert.equal(synced.target.x, -91.95);
-  assert.equal(synced.target.z, 46.03);
+  assert.equal(synced.target.z, -94.03);
 });
 
 test('syncMissionTargetToLandmark no-ops when landmarkKind is unset', () => {
   const target = { ...MISSION_POOL[0], landmarkKind: undefined };
   const m: MissionState = { target, status: 'active', secondary: null };
-  const landmarks = [{ kind: 'drownedCar', x: -91.95, z: 46.03 }];
+  const landmarks = [{ kind: 'fireTower', x: -91.95, z: -94.03 }];
   const synced = syncMissionTargetToLandmark(m, landmarks);
   assert.equal(synced, m);
 });
@@ -72,11 +72,11 @@ test('syncMissionTargetToLandmark no-ops when no landmark in the list matches', 
 
 test('syncMissionTargetToLandmark never mutates the input mission or landmarks objects', () => {
   const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
-  const landmarks = [{ kind: 'drownedCar', x: -91.95, z: 46.03 }];
+  const landmarks = [{ kind: 'fireTower', x: -91.95, z: -94.03 }];
   syncMissionTargetToLandmark(m, landmarks);
   assert.equal(m.target, MISSION_POOL[0]);
   assert.equal(landmarks[0].x, -91.95);
-  assert.equal(landmarks[0].z, 46.03);
+  assert.equal(landmarks[0].z, -94.03);
 });
 
 // ---- distToMissionTarget ------------------------------------------------
@@ -138,7 +138,7 @@ test('pickMission with secondaryChoice "retrieval" attaches a fresh, unretrieved
 
 test('pickMission with secondaryChoice "speedrun" attaches a fresh speedrun secondary at the deepwater time limit', () => {
   const m = pickMission(fixedRng(0), 'speedrun');
-  assert.deepEqual(m.secondary, { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } });
+  assert.deepEqual(m.secondary, { data: { kind: 'speedrun', timeLimitSeconds: MISSION_FIREPOWER_SPEEDRUN_SECONDS } });
 });
 
 test('pickMission is deterministic with a secondaryChoice too -- same rng and choice always produce the same state', () => {
@@ -158,7 +158,7 @@ test('canCompleteRetrieval is false when the secondary is a speedrun, not a retr
   const m: MissionState = {
     target: MISSION_POOL[0],
     status: 'active',
-    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } },
+    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_FIREPOWER_SPEEDRUN_SECONDS } },
   };
   assert.equal(canCompleteRetrieval(m, 0), false);
 });
@@ -223,7 +223,7 @@ test('completeRetrieval is a no-op on a speedrun secondary -- callers do not nee
   const m: MissionState = {
     target: MISSION_POOL[0],
     status: 'active',
-    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } },
+    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_FIREPOWER_SPEEDRUN_SECONDS } },
   };
   const next = completeRetrieval(m);
   assert.equal(next, m);
@@ -264,19 +264,19 @@ test('secondaryComplete for speedrun is true at or under the time limit (inclusi
   const m: MissionState = {
     target: MISSION_POOL[0],
     status: 'active',
-    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } },
+    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_FIREPOWER_SPEEDRUN_SECONDS } },
   };
-  assert.equal(secondaryComplete(m, MISSION_DEEPWATER_SPEEDRUN_SECONDS), true);
-  assert.equal(secondaryComplete(m, MISSION_DEEPWATER_SPEEDRUN_SECONDS - 1), true);
+  assert.equal(secondaryComplete(m, MISSION_FIREPOWER_SPEEDRUN_SECONDS), true);
+  assert.equal(secondaryComplete(m, MISSION_FIREPOWER_SPEEDRUN_SECONDS - 1), true);
 });
 
 test('secondaryComplete for speedrun is false once survivedSeconds exceeds the time limit', () => {
   const m: MissionState = {
     target: MISSION_POOL[0],
     status: 'active',
-    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } },
+    secondary: { data: { kind: 'speedrun', timeLimitSeconds: MISSION_FIREPOWER_SPEEDRUN_SECONDS } },
   };
-  assert.equal(secondaryComplete(m, MISSION_DEEPWATER_SPEEDRUN_SECONDS + 1), false);
+  assert.equal(secondaryComplete(m, MISSION_FIREPOWER_SPEEDRUN_SECONDS + 1), false);
 });
 
 // ---- checkMissionExpiry (LUL-3010) --------------------------------------

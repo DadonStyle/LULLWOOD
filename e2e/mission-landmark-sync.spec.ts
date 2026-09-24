@@ -1,7 +1,7 @@
 // LUL-2740: full-map-only regression coverage for syncMissionTargetToLandmark()
 // (lib/game/mission.ts). Before this fix, mission.target.x/z stayed at
-// MISSION_POOL's stale nominal (x:-95, z:46) even when clearLandmarkSpot()
-// nudged the drownedCar landmark off that spot to dodge a collision -- at seed
+// MISSION_POOL's stale nominal (x:-95, z:-95) even when clearLandmarkSpot()
+// nudged the fireTower landmark off that spot to dodge a collision -- at seed
 // QA_PINNED_SEED this left a continuous collision wall between any straight-line
 // approach and the stale target, so no walk-in could ever complete the mission.
 // Promotes the timing-out shared/local-qa/requests/lul-2187-mission-panel-overlap.md
@@ -19,7 +19,7 @@ test.describe('mission target stays synced to the landmark @fullmap', () => {
   test('walking straight at the synced mission target from qaTeleportNearMission() completes the deepwater mission', async ({ page }) => {
     test.setTimeout(45_000);
     const errs = trackConsoleErrors(page);
-    // LUL-3010: this test asserts deepwater-specific behaviour (drownedCar sync); force
+    // LUL-3010: this test asserts deepwater-specific behaviour (fireTower sync); force
     // it past the new eligibility gate.
     await boot(page, { qaHooks: true, qaWorld: 'full', qaMissionKind: 'deepwater' });
     await enter(page);
@@ -43,7 +43,7 @@ test.describe('mission target stays synced to the landmark @fullmap', () => {
     await page.waitForTimeout(700);
     await page.keyboard.up('KeyW');
 
-    await expect(page.locator('#objective'), 'mission target must be reachable by a straight walk-in once synced to the landmark\'s real placement').toContainText('drowned car', { timeout: 3_000 });
+    await expect(page.locator('#objective'), 'mission target must be reachable by a straight walk-in once synced to the landmark\'s real placement').toContainText('fire tower', { timeout: 3_000 });
 
     await page.keyboard.press('KeyE');
     await page.waitForTimeout(300);

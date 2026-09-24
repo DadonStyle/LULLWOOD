@@ -1688,8 +1688,8 @@ slice); reposition-to-reset via LUL-3066's Shuffle action is deferred until `shu
 **What it is**
 - **Implemented (LUL-1259, widened LUL-3010).** `MISSION_POOL` (`lib/game/mission.ts`): a pool of
   optional detour objectives, one active per run, drawn from the run's own seeded RNG (never
-  player-selected). Two members: `deepwater` — a fixed waypoint at the drowned car landmark
-  (`x: -95, z: 46`, matching `LANDMARKS`' `drownedCar` entry, `engine/tuning.js:81`) — and
+  player-selected). Two members: `deepwater` — a fixed waypoint at the fire tower landmark
+  (`x: -95, z: -95`, matching `LANDMARKS`' `fireTower` entry, `engine/tuning.js:77`) — and
   `oakHollow` — a near waypoint at the `oak` landmark (`x: 22, z: 4`, `engine/tuning.js:80`).
   Per-run state (`mission: MissionState | null`) lives alongside `baby` at
   `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every other rng()
@@ -1698,7 +1698,7 @@ slice); reposition-to-reset via LUL-3066's Shuffle action is deferred until `shu
 **Two variants (LUL-3010)**
 - `oakHollow` — near (≈22.4m from spawn), untimed, `MISSION_OAKHOLLOW_REWARD` = 6 Embers.
   Always eligible.
-- `deepwater` — far (≈105.5m from spawn), `timeLimitSeconds: 60`, `MISSION_DEEPWATER_REWARD` = 12
+- `deepwater` — far (≈134.4m from spawn), `timeLimitSeconds: 60`, `MISSION_FIREPOWER_REWARD` = 8
   Embers. Only eligible once `eligibleMissionPool()` (`lib/game/mission.ts`) sees
   `progression[difficulty].wins >= MISSION_FAR_UNLOCK_WINS` (3) — below that, `pickMission()` only
   ever draws `oakHollow`. A returning player with existing win history keeps seeing `deepwater`
@@ -1717,7 +1717,7 @@ slice); reposition-to-reset via LUL-3066's Shuffle action is deferred until `shu
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
-  (`lib/game/economy.ts`, `deepwater: MISSION_DEEPWATER_REWARD = 12`, `oakHollow:
+  (`lib/game/economy.ts`, `deepwater: MISSION_FIREPOWER_REWARD = 8`, `oakHollow:
   MISSION_OAKHOLLOW_REWARD = 6`), passed as `computeWinPayout()`'s optional fourth argument at
   the `finishPickup()` call site. **Forfeited on death or expiry** — `computeDeathPayout()` is
   unmodified, so reaching the mission target but dying before reaching home banks no bonus; a
@@ -1753,10 +1753,10 @@ slice); reposition-to-reset via LUL-3066's Shuffle action is deferred until `shu
   — the choice is a request, not a guarantee.
 - Two kinds: `retrieval` (reach the existing `radioMast` landmark, see below, and press
   interact — completion is a one-time flag, does not require still holding/standing on it at
-  arrive-home) and `speedrun` (arrive home within `MISSION_DEEPWATER_SPEEDRUN_SECONDS` = 240s of
+  arrive-home) and `speedrun` (arrive home within `MISSION_FIREPOWER_SPEEDRUN_SECONDS` = 240s of
   entering). Evaluated once, at `finishPickup()`, via `secondaryComplete()`.
-- Pays an additive bonus on top of `MISSION_DEEPWATER_REWARD` at the moment of winning:
-  `DEEPWATER_RETRIEVAL_BONUS` = 15 or `DEEPWATER_SPEEDRUN_BONUS` = 18 Embers
+- Pays an additive bonus on top of `MISSION_FIREPOWER_REWARD` at the moment of winning:
+  `FIREPOWER_RETRIEVAL_BONUS` = 8 or `FIREPOWER_SPEEDRUN_BONUS` = 10 Embers
   (`lib/game/economy.ts`), passed as `computeWinPayout()`'s new fifth argument. Win-only —
   `computeDeathPayout()` is unmodified, same rule as the baseline mission bonus.
 - **Never gates the baseline win.** Failing (or not attempting) the secondary never fails
@@ -1774,7 +1774,7 @@ slice); reposition-to-reset via LUL-3066's Shuffle action is deferred until `shu
   (speedrun), hidden whenever no secondary is attached.
 
 **Collision & physics profile**
-- N/A — not a spatial/world object. The mission *target* (the drowned car) is a `LANDMARKS`
+- N/A — not a spatial/world object. The mission *target* (the fire tower) is a `LANDMARKS`
   entry with its own existing decorative/navigational collision profile, unchanged by this
   entry; the mission struct only reads that entry's coordinates, it does not add new geometry.
   The retrieval secondary's target is the `radioMast` landmark, below — also unchanged
