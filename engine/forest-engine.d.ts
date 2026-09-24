@@ -258,6 +258,10 @@ declare global {
         sightFlicker: number;
         /** LUL-4893: seconds remaining in an active Predator Pause wind-freeze, 0 otherwise. */
         windPauseT: number;
+        /** LUL-4897: 'beaconHunter' for that variant, undefined for every ordinary predator. */
+        variant?: 'beaconHunter';
+        /** LUL-4897: true while this predator is mid-chase via the wind-signal lock-on channel. */
+        beaconHunterLocked: boolean;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
@@ -579,7 +583,7 @@ declare global {
       qaBuildScene?: (scene: {
         trees?: { x: number; z: number; s?: number }[];
         props?: { kind: 'log' | 'rock' | 'bramble' | 'reed'; x: number; z: number; ry?: number }[];
-        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string }[];
+        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string; variant?: 'beaconHunter' }[];
         child?: { x: number; z: number };
         home?: { x: number; z: number };
       }) => { trees: number; props: number; predators: number };
