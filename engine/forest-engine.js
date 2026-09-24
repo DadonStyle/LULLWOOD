@@ -5326,6 +5326,54 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     });
   };
 
+  // LUL-5046: fixed-step sibling of traceApproach() above. That function's
+  // budget (maxMs) is real wall-clock time measured via performance.now(),
+  // while the frame `dt` it observes is clamped to DT_CLAMP_CEILING=0.05
+  // (lib/game/scent.ts) every tick -- intentional, so a tab-out/GC pause
+  // can't teleport a predator through a wall. Under sustained CPU
+  // contention (a loaded CI runner, a low-end player machine) real
+  // per-frame time regularly exceeds that 50ms ceiling, so simulated time
+  // falls behind wall-clock time in direct proportion to how contended the
+  // machine is -- the whole simulation runs in slow motion relative to
+  // performance.now(). The predator's own steering is unaffected by this
+  // (pickCommittedAvoidDirection commits to one avoid angle for
+  // AVOID_COMMIT_TIME=1.0 *simulated* second, lib/game/steer.ts, so at
+  // wolf/lion's 8.5-9.2 speed the arc it draws around a trunk legitimately
+  // swings the predator 2x+ *further* from the player than the staged
+  // distance before it curves back in -- confirmed live, LUL-5046: this
+  // happens on every run, throttled or not, dist momentarily hits ~8-11 on a
+  // ~4.5-5.8 staged gap). None of that is a bug: replayed at a fixed dt the
+  // arc always closes in ~44-48 steps (~2.2-2.4s of simulated time)
+  // regardless of how much real time each of those steps costs. What broke
+  // under CI-realistic load was traceApproach()'s wall-clock MAX_MS budget
+  // running out before that fixed amount of simulated time could be paid
+  // for in real seconds -- a test-timing problem, not a steering one. This
+  // variant drives simulated time directly via qaAdvance's own stepFrame()
+  // call (qaSetFixedStep() must be called first, same precondition
+  // qaAdvance() itself has) instead of requestAnimationFrame, so the trace
+  // it records depends only on simulated steps, never on how fast the host
+  // machine can render them.
+  function traceApproachFixed(idx, maxSteps){
+    if(qaFixedDt === null) throw new Error('qaStageAndTraceBehindTreeFixed: call qaSetFixedStep(dt) first');
+    const trace = [];
+    for(let i = 0; i <= maxSteps; i++){
+      const p = predators[idx];
+      if(!p) break;
+      const d = Math.hypot(player.x-p.x, player.z-p.z) || 0.0001;
+      trace.push({ t: clock.elapsedTime*1000, dist: d, state: p.state, reached: dead });
+      if(dead || i === maxSteps) break;
+      clock.elapsedTime += qaFixedDt;
+      stepFrame(qaFixedDt, clock.elapsedTime, true);
+    }
+    return trace;
+  }
+  window.ForestEngine.qaStageAndTraceBehindTreeFixed = function(kind, margin, maxSteps){
+    const staged = stageBehindTree(kind, margin);
+    if(staged === null) return null;
+    const trace = traceApproachFixed(staged.idx, maxSteps);
+    return { idx: staged.idx, kind: staged.kind, dist: staged.dist, trace: trace };
+  };
+
   // LUL-69: camera.fov is closure-local (created fresh per init(), see
   // CAMERA_FOV above) -- nothing outside init() could otherwise confirm the
   // mobile/desktop FOV split actually took effect.

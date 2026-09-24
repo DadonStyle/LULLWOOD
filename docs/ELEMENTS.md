@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7454 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6562, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7502 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6610, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -561,11 +561,7 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What it CANNOT do**
 - Cannot be a hiding spot — not in `HIDE_KINDS`. Ducking behind a rock
-  blocks sight but never enables `hidden`. This is a separate, narrower
-  concept from the LUL-4528 vantage-climb *mount* below: mounting a rock
-  does not add it to `HIDE_KINDS`, and mounting/hiding are mutually
-  exclusive by construction (see below) — a rock is never simultaneously
-  a hide spot and a mount spot.
+  blocks sight but never enables `hidden`.
 - Not guaranteed clear of tree trunks at placement (see matrix).
 
 **Behaviours & logic**
@@ -577,81 +573,6 @@ one geometry builder (`makePredator()`), differentiated by the
   `ry`) — `blocked()` (player) and `blockedForPredator()` (predator,
   **LUL-1643**) both route through the same `coverBlockedR()`.
 - LOS: same AABB, both actors.
-
-## Vantage Climb (LUL-4528)
-
-Sightline-only cut of the Feature Scout's Prop Powers proposal (LUL-3254) —
-CEO-accepted with the Scout's own self-imposed cut: no directional ping, no
-compass indicator, no Threat Beacon (LUL-3009) widget reuse, to avoid
-duplicating that feature. Pure camera-height + detection-weight exposure.
-
-**Trigger** — tap `KeyC` (desktop) or `triggerTouchClimb()` (mobile), not
-held. `toggleRockClimb()` gates on `canMountRock()` (`lib/game/rockClimb.ts`):
-not already hidden, not already mounted, and a rock within `ROCK_MOUNT_RADIUS`
-(3 units, found via `findRockMountSpot()` — same rotated-AABB edge-distance
-query `findHideSpot()` uses, next to it in `lib/game/cover.ts`). A refused
-attempt (no rock in range, or hidden) fires `rockClimbDeniedCue()` — a short
-declined-interact sound plus a caption ("can't climb here" / "can't climb
-while hidden"), never a silent no-op.
-
-**State** — `mountedOnRock` (boolean) / `rockClimbT` (countdown seconds,
-module-level lets in `engine/forest-engine.js`). Mounting starts a fixed
-`ROCK_MOUNT_DURATION` (2s) window; `rockClimbT` decrements every frame while
-playing and auto-dismounts at 0 (`rockClimbEndCue()` fires exactly once on
-that edge, "never lapse silently"). Manual KeyC/`triggerTouchClimb()` while
-mounted dismounts immediately, same end cue. Reset to `false`/`0` at all
-three `hidden = false` sites (`pickup()`, `triggerDeath()`, `restart()`).
-
-**Effect** — while `mountedOnRock`:
-- `rockClimbDetectMul(mountedOnRock)` (`lib/game/rockClimb.ts`) multiplies
-  into both `effectiveDetect()` and `canSee()`'s shared multiplier chain
-  (`ROCK_CLIMB_DETECT_MUL = 1.6`, alongside `veilDetectMul`/
-  `fogTideDetectMul`/`timeOfRunDetectMul`/`timeOfDayDetectMul`) — the
-  player is more exposed to every predator while up on the rock. Returns
-  exactly `1` (no-op) whenever `mountedOnRock` is false.
-- `eyeH` eases toward `CONFIG.eye + ROCK_MOUNT_HEIGHT` (1.4 added) instead of
-  its usual hidden/standing targets. Since `blocked()` already forwards the
-  live `eyeH` into `canopyBlockedR()` every frame, the raised camera also
-  improves the player's own outward canopy clearance — a real sightline
-  benefit, not just a number going up.
-
-**Mutual exclusion with hiding** — `canMountRock`'s own `!hidden` gate refuses
-a mount while hidden; symmetrically, `toggleHidden()` now also refuses while
-`mountedOnRock` (a rock-mounted player has no reachable hide spot logically,
-but the code says so rather than relying on geometry to make it impossible).
-
-**HUD** — `climbPrompt` row inside `#actionSlot` ("Press  C  to climb the
-rock", contextual — visible whenever a rock is in range, not hidden, not
-already mounted). `#rockClimbPanel` countdown ("Exposed · Ns"), a sibling of
-`#caveImmunePanel` outside `#panel` so both stay visible with `adminMode` off.
-
-**Explanation** — `HINT_PRIORITY`'s `rockClimb` entry shows the one-shot
-`#hintCaption` pill ("climb the rock to see farther — but you're exposed
-while you're up there") the first time it becomes eligible, same precedent
-as `caveImmune`/`veilOverload`. The refusal captions ("can't climb here" /
-"can't climb while hidden") are separate — fired unconditionally on every
-declined KeyC press, not gated by `hintSeen`/first-encounter, since they are
-a repeated-input tell rather than a one-time explanation.
-
-**QA hooks**: `qaStageRockClimb(dx, dz)` (stages a predator with LOS to the
-nearest rock at a fixed clear distance, mirrors `qaHideBehindCoverKind` but
-keyed on `kind === 'rock'` directly since rock is outside `HIDE_KINDS`),
-`qaProbeRockClimb()` (`{ mountedOnRock, rockClimbT, startCueCount,
-endCueCount, deniedCueCount }`, mirrors `qaProbeVeilOverload`'s shape).
-
-See `docs/specs/lul-4528-rock-vantage-climb.md`.
-
-**What it still CANNOT do**
-- Still not a `HIDE_KINDS` spot — see "What it CANNOT do" above. Mounting and
-  hiding are two distinct, mutually exclusive interactions with the same prop.
-- No directional ping / compass — explicitly cut, not deferred (see the
-  proposal's CEO decision). Sightline (camera height + exposure) only.
-- No per-rock mount-height lookup — `ROCK_MOUNT_HEIGHT` is one fixed constant
-  for every rock, even though the underlying mesh height (`y: r*0.55`,
-  `generateCover()`) varies per rock.
-- No predator-AI-specific reaction to a mounted player beyond the existing
-  detection-weight chain (no "converge on last-seen-mounted position"
-  behaviour) — no exposure state has that today.
 
 ---
 
@@ -1611,15 +1532,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5879-5939, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6167-6208). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5927-5987, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6215-6256). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6167-6208) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6215-6256) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6050) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1800,7 +1721,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6625, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6560, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2100,7 +2021,7 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
 | | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | HO | FO | FL | MI | UI | EM |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS+TRIG²⁵ | LOS²⁰ | LOS+HIDE²² | STAND | TRIG⁵ | – | ATT | TRIG²⁴ | TRIG⁶ | TRIG²¹ |
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | TRIG⁵ | – | ATT | TRIG²⁴ | TRIG⁶ | TRIG²¹ |
 | **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
 | **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
 | **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
@@ -2248,15 +2169,6 @@ the mission's target waypoint (or, for the `retrieval` secondary, the
 press the shared interact key/button (`KeyE`, `:3348` / `triggerTouchInteract()`,
 `:7513`, the same one that lifts the child). No new keybinding, no new touch
 target, no `blocked()`/`blockedR()` call against the player at all.
-²⁵ **Added, LUL-4528 (Vantage Climb).** `KeyC`/`triggerTouchClimb()` proximity
-trigger, on top of Rock's unchanged `C+LOS` collider — `findRockMountSpot()`
-(`ROCK_MOUNT_RADIUS`=3, `lib/game/cover.ts`) is a distance query, not a new
-collider; a mounted player still physically collides with the same rock AABB
-as before. Directional effect (detection-weight exposure, camera-height
-easing toward the rock) is *not* pairwise-geometric — see the Rock section's
-"Vantage Climb" subsection above rather than a new matrix column, same
-treatment `caveImmune`/`veilOverload` get (player-state features, not new
-spatial elements).
 
 ---
 
@@ -2318,9 +2230,7 @@ event (single caption slot, last `pushState()` wins). Slice (c)
 One small engine-side registry (`HINT_PRIORITY`/`HINT_TEXT`, `engine/forest-engine.js`)
 replaces LUL-2230's bespoke scent-only caption with a `{key -> text/trigger}` table covering
 eleven keys: `scent`, `landmark`, `deepwater`, `wolf`/`bear`/`lion`,
-`stamina`, `cover` (hollow log/bramble), `caveImmune`, `rockClimb` (LUL-4528), `throwable`,
-`veil` — plus `windAssist`/`windPulse`/`beaconHunter`/`veilOverload`, added later (see their
-own sections below). Each key fires
+`stamina`, `cover` (hollow log/bramble), `caveImmune`, `throwable`, `veil`. Each key fires
 once per install, the first time its trigger condition is true while `entered && !hidden &&
 !win && !death` and the `Show hints` setting is on. Only one hint shows at a time;
 `HINT_PRIORITY` order both breaks same-frame ties and lets a higher-priority key preempt a
@@ -2461,7 +2371,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7341 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6107) and `windAssistEndCue()` (L6116), edge-triggers on the combined
+`windAssistStartCue()` (L6155) and `windAssistEndCue()` (L6164), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
