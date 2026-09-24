@@ -2547,3 +2547,55 @@ Covered by `e2e/wind-pulse.spec.ts` (new): a perpendicular+downwind lion freezes
 0.3s window (position provably unchanged) and resumes once the trigger condition no longer holds;
 a head-on (non-perpendicular) lion, even downwind, never freezes; the `windPulse` hint caption
 fires once on first trigger and never reshows.
+
+### LUL-4897: Beacon Hunter (wind-signal wolf variant, cheap slice)
+
+Wiki spec `game/mechanics/beacon-hunter.md` (corrected 2026-09-24). A `beaconHunter` variant of
+the existing wolf that locks onto the player the instant `player.sprintWindBonusActive` is true
+(LUL-3149's combined `running && movingAgainstWind` signal, the same one `#windIndicator`'s pulse
+already shows), bypassing sight and scent entirely -- a fourth detection channel in
+`updatePredators()`'s roam branch (`engine/forest-engine.js:2802`), gated on
+`!sniffImmune && p.kind === 'wolf' && p.variant === 'beaconHunter' && player.sprintWindBonusActive
+&& !isCaveImmune(caveImmuneT) && !isVeilOverloadActive(veilOverloadChargeT) && dist <
+effectiveDetect(p) * BEACON_HUNTER_LOCK_MUL`. The immunity guard is stated explicitly (not just
+relied on via `effectiveDetect()` already zeroing during those states) since this is the one
+channel that could otherwise look like it bypasses immunity.
+
+New tunables in `engine/tuning.js`: `BEACON_HUNTER_LOCK_MUL` (placeholder `1.0` -- companion
+Economist ticket sets the real value, not blocking this merge) and `BEACON_HUNTER_EYE_COLOR`
+(cold blue-teal, `0x2ad1c9`). Reuses `SCENT_TRACK_TIME` (8s) for the lock's `scentLock` --
+no new cooldown constant, decays exactly like an ordinary scent chase (`shouldDowngradeChase()`
+at `:2847` drops it to `investigate` once `scentLock` and `sightFlicker` both empty and sight
+stays dark; `shouldGiveUpChase()` at `:2901` drops `chase` all the way to `roam` once distance
+clears `detect * 1.5`).
+
+New per-predator `p.variant` field (default `undefined`), plumbed additively in
+`qaBuildScene()`'s predator spec loop (`engine/forest-engine.js:5891`, `p.variant = spec.variant`)
+-- QA-stageable only; production spawn rate of a Beacon Hunter into the real wolf pool is out of
+scope for this cheap slice (flagged on the ticket, per the spec's own Q11/Q12 answers this doesn't
+block e2e coverage). `p.beaconHunterLocked` cleared at all three chase-exit sites (mirrors the
+existing `scentLock` consumer pattern).
+
+**Cue triple**
+- Visual: `beaconOnto()` swaps the wolf's eye material to `BEACON_HUNTER_EYE_COLOR` on lock
+  (`engine/forest-engine.js:2395`), reverted to the ordinary `p.spec.eye` the instant
+  `beaconHunterLocked` clears (`:2629`) -- a static color swap, visible under `reducedMotion`
+  since nothing here animates.
+- Audio: `beaconLockCue()` (`engine/forest-engine.js:6271`), its own bus, `soundOn`-gated,
+  distinct from the howl SFX and from `windPulseCue()`/`windAssistStartCue()`.
+- Explanation: new `'beaconHunter'` entry in `HINT_PRIORITY`/`WORLD_HINT_KEYS`/`HINT_TEXT`
+  (`engine/forest-engine.js:2201-2219`), one-shot first encounter: *"a Beacon Hunter -- locks
+  onto you the instant you sprint into the wind, sight and scent don't matter to it. hide (H) or
+  veil (F), or stop sprinting into the wind."*
+
+**QA hooks**: `qaPredatorState(idx)` extended with `variant`/`beaconHunterLocked` (existing hook,
+not a new `[QA-HOOK]` ticket); `qaBuildScene()`'s `predators[].variant` field is additive to an
+existing hook's parameter shape.
+
+Covered by `e2e/beacon-hunter.spec.ts` (new): a `beaconHunter` wolf locks on (`state` -> `'chase'`)
+to a sprinting-against-wind player through a blocking cover prop with no scent trail deposited,
+proving the lock is the beacon channel and not sight/scent; the chase downgrades to `'investigate'`
+once `scentLock` decays and the player is teleported out of sight/leash range, with
+`beaconHunterLocked` clearing; an ordinary wolf (no `variant`) never reaches `'chase'` from the
+identical wind signal in the same single-tick window, proving no accidental duplication of the
+channel onto ordinary wolves.
