@@ -3226,22 +3226,6 @@ function scheduleBirdChirp(){
   const nextMs = (0.4 + Math.random() * 1.6) / TOD_AUDIO.birdsChirpHz * 1000;
   later(scheduleBirdChirp, nextMs);
 }
-// LUL-25: wading footstep foley -- a noise burst through a lowpass sweep
-// (bright slap of impact dropping to a dull glug as the ripple settles),
-// same building blocks as the rest of this file's all-procedural audio.
-// Deliberately louder than footstep() -- the whole point of wading is that
-// it costs you on the sound channel. Used for lake wading (LUL-4675).
-function splash(vol){
-  if(!audio || !soundOn) return;
-  const { ctx, conv, master } = audio, t = ctx.currentTime;
-  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.22, false);
-  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
-  lp.frequency.setValueAtTime(2600, t); lp.frequency.exponentialRampToValueAtTime(220, t+0.24);
-  lp.Q.value = 0.7;
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t+0.006); g.gain.exponentialRampToValueAtTime(0.0001, t+0.26);
-  nb.connect(lp); lp.connect(g); g.connect(master); g.connect(conv); nb.start(t); nb.stop(t+0.28);
-}
 // LUL-1209: stamina low-charge audio cue -- breath/exertion sound when player
 // nears full sprint drain. A short tone burst at ~200Hz (breath pitch).
 function staminaExertionCue(){
