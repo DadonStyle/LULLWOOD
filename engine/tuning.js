@@ -323,3 +323,14 @@ export const SCALE = [523.25, 587.33, 659.25, 783.99, 880.0, 987.77];   // twink
 
 // ---- Death cutscene -------------------------------------------------------------
 export const CUT_END = 3.7;   // death video length; reveal the loss text at the end
+
+// ---- Bramble Thorn Snag (LUL-4526) ---------------------------------------------
+// Sprint-diving into the sole hide spot (bramble) costs a brief stumble; walking in stays
+// free. Pricing owned by the Game Economist in parallel (LUL-4526) -- these are the
+// proposal's example values, not final tuning; retune here, no call site changes needed.
+// LUL-4872 review: dropped a third tuning const, BRAMBLE_SNAG_NOISE_RADIUS -- it gated a
+// second predator-alert loop that could never fire independently of the pre-existing
+// unconditional HIDE_ALERT_RADIUS(20) hide-entry alert (5 < 20 always), so it was dead code
+// with misleading intent, not a real mechanic. See engine/forest-engine.js's enterHide().
+export const BRAMBLE_SNAG_DURATION_S = 0.3;   // seconds of reduced-speed "stumble" after a sprint entry/exit
+export const BRAMBLE_SNAG_SPEED_MUL = 0.4;    // movement-speed multiplier applied for that window

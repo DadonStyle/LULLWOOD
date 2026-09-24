@@ -26,6 +26,7 @@ import {
   canSee,
   canopyRadiusAtEye,
   rollCoverPropShape,
+  brambleSnagSpeedMultiplier,
   STILL_RAMP,
   STILL_DETECT_CUT,
   PLAYER_COLLISION_RADIUS,
@@ -1056,6 +1057,17 @@ test('rollCoverPropShape: draws exactly 3 rng() calls for a log, 2 for a rock, 1
   calls = 0; rollCoverPropShape(0.1, counting); assert.equal(calls, 3);
   calls = 0; rollCoverPropShape(0.5, counting); assert.equal(calls, 2);
   calls = 0; rollCoverPropShape(0.9, counting); assert.equal(calls, 1);
+});
+
+// ---- brambleSnagSpeedMultiplier (LUL-4526) ----------------------------------
+
+test('brambleSnagSpeedMultiplier: full speed once the snag timer clears', () => {
+  assert.equal(brambleSnagSpeedMultiplier(0), 1);
+});
+
+test('brambleSnagSpeedMultiplier: reduced while the snag timer is live', () => {
+  assert.ok(brambleSnagSpeedMultiplier(0.3) < 1);
+  assert.ok(brambleSnagSpeedMultiplier(0.01) < 1);
 });
 
 // ---- wrap span (LUL-1485) ----------------------------------------------------
