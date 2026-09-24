@@ -15,7 +15,10 @@
 // #actionSlot (Hud.tsx) so the CSS grid's row tracks stay put whether or not a
 // given row currently has content; only the pill inside fades.
 
-export type ActionPromptTone = 'calm' | 'ready' | 'urgent' | 'status';
+// LUL-5004: 'disabled' -- a row that's visible (something to do) but not
+// currently actionable (insufficient stamina). Grayed rather than hidden --
+// Q5: a refused input needs a positive tell, not just silence.
+export type ActionPromptTone = 'calm' | 'ready' | 'urgent' | 'status' | 'disabled';
 
 export interface ActionPromptProgress {
   // Remounts the drain-bar animation on a fresh countdown (mirrors the old

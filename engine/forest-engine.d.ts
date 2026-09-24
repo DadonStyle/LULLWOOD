@@ -138,10 +138,11 @@ declare global {
       /** LUL-65: state + distance-to-player + scentOnto() re-trigger count for `kind`. Null if not found.
        * LUL-99: `t` is clock.elapsedTime -- game time, not wall time (see wiki: systems/dt-clamp-vs-walltime).
        * LUL-2667: `alertedBy` names which hearing channel set 'investigate' ('cry' via hearCry(), or null
-       * for sight/scent/footstep) -- state alone can't distinguish them. */
+       * for sight/scent/footstep) -- state alone can't distinguish them.
+       * LUL-5004: `scentLock`/`scentVeilReady` are the real predator fields Scent Veil reads/clears. */
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
-      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; t: number } | null;
+      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number } | null;
       /** LUL-2878: `kind`'s scaled effectiveDetect() this tick (veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul applied on top of tuning.js's unscaled spec.detect), or null if not spawned. Use this, not the tuning constant, to stage a distance that will actually pass canSee()'s detect gate. */
       qaProbeEffectiveDetect?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
@@ -541,6 +542,10 @@ declare global {
       qaProbeVeil?: () => { charge: number; locked: boolean; reserve: boolean; releaseCueCount: number };
       /** Read-only: veil-overload countdown, per-round use flag (LUL-4663 -- was per-carry-leg), and denied-cue count. */
       qaProbeVeilOverload?: () => { chargeT: number; usedThisRound: boolean; deniedCueCount: number };
+      /** LUL-5004: read-only Scent Veil state, mirrors qaProbeVeilOverload's shape. `staminaCharge`
+       * is the unrounded 0..1 value (pushState's HUD copy rounds to 2 decimals); `deniedCueCount`
+       * is the blocked-tone refusal cue's fire count. */
+      qaProbeScentVeil?: () => { staminaCharge: number; deniedCueCount: number };
       /** LUL-4528: read-only rock-climb state, mirrors qaProbeVeilOverload's shape. Includes
        * all three cues' fire counts so a test can assert e.g. rockClimbEndCue fired exactly
        * once on countdown expiry, without decoding WebAudio output. */

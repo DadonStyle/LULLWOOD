@@ -76,6 +76,12 @@ export interface EngineHudState {
   veilOverloadActive:  boolean;
   veilOverloadTimeLeft: number;
   veilOverloadVisible: boolean;
+  // LUL-5004: Scent Veil -- #veilPrompt. Visible whenever a live scentLock is
+  // ready to break (regardless of stamina, Q5); Enabled gates whether pressing
+  // G actually breaks it or plays the blocked-tone refusal, and which tone
+  // (urgent vs disabled+grayed) the row renders in.
+  scentVeilPromptVisible: boolean;
+  scentVeilPromptEnabled: boolean;
   // LUL-1089: contextual action prompts for hide and veil mechanics.
   coverPromptVisible: boolean;
   coverPromptUrgent:  boolean;
@@ -203,6 +209,8 @@ export interface EngineActions {
   // and setTouchVeil.
   triggerTouchJump: () => void;
   triggerTouchVeilOverload: () => void;
+  // LUL-5004: mobile parity for KeyG (Scent Veil).
+  triggerTouchScentVeil: () => void;
   triggerTouchPause: () => void;
   triggerTouchToggleRun: () => void;
   setTouchVeil: (v: boolean) => void;
@@ -265,6 +273,8 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   veilOverloadActive: false,
   veilOverloadTimeLeft: 0,
   veilOverloadVisible: false,
+  scentVeilPromptVisible: false,
+  scentVeilPromptEnabled: false,
   coverPromptVisible: false,
   coverPromptUrgent: false,
   coverPromptKind: null,
@@ -1030,7 +1040,17 @@ export default function Hud({
           // direction, same element, no new one (Q7/Q8 duplicate-proof, docs/ELEMENTS.md).
           // Skipped outright under reducedMotion, same precedent as veilRefillFlash
           // (useVeilMeterRamp above) -- not just left to the CSS media query fallback.
-          className={state.movingAgainstWind && !state.reducedMotion ? 'windIndicatorActive' : undefined}
+          // LUL-5004: windIndicatorVeilActive (4x pulse) composes alongside
+          // windIndicatorActive rather than overwriting it -- movingAgainstWind
+          // and scentVeilPromptVisible can both be true the same frame (the
+          // latter requires the former), so this can't be a single either/or
+          // ternary the way it used to be.
+          className={
+            [
+              state.movingAgainstWind && !state.reducedMotion ? 'windIndicatorActive' : null,
+              state.scentVeilPromptVisible && !state.reducedMotion ? 'windIndicatorVeilActive' : null,
+            ].filter(Boolean).join(' ') || undefined
+          }
           title="Wind direction -- move into the arrow to mask your scent; sprint into it for extra speed and quiet"
           style={{ transform: `rotate(${Math.atan2(state.windZ, state.windX)}rad)` }}
         >
@@ -1151,6 +1171,23 @@ export default function Hud({
           keycap="Q"
           text="Burn veil for a detection-proof escape"
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchVeilOverload(); } : undefined}
+        />
+        {/* LUL-5004: Scent Veil -- breaks a live scentLock (real scent pickup or
+            LUL-4897 Beacon Hunter's wind-signal channel) while moving against the
+            wind. Own row, not merged into veilOverloadPrompt/actionPrompt above --
+            distinct trigger (scentLock, not `state === 'chase'`/cover), distinct
+            key (G, not Q/F -- decisions/scent-veil-key-collision-retarget-2026-09-24),
+            can be visible at the same time as either. tone switches to "disabled"
+            (grayed, not hidden -- Q5) rather than gating `visible` when stamina is
+            the only thing blocking the press. */}
+        <ActionPrompt
+          id="veilPrompt"
+          visible={state.scentVeilPromptVisible && hudLive}
+          tone={state.scentVeilPromptEnabled ? 'urgent' : 'disabled'}
+          keycap="G"
+          text="Press  "
+          suffix="  to break the scent trail"
+          onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchScentVeil(); } : undefined}
         />
         {/* LUL-1623: holding-a-throwable affordance -- there's no held-item
             mesh in first person, so this is the only way the player knows
