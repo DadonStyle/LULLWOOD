@@ -151,6 +151,7 @@ import {
   distToMissionTarget,
   canCompleteMission,
   completeMission,
+  canCompleteSlackWater,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -4161,6 +4162,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z };
   };
 
+  // [QA-HOOK] LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e
+  // staging -- the real cycle is a 90s wall/game-clock loop (lib/game/fogTide.ts
+  // FOG_TIDE_CONFIG), too slow to drive through qaAdvance() one real dt-step at a time for a
+  // per-test setup. Takes effect on the next tick's fogTidePhase() re-evaluation, same
+  // as a real elapsed-time crossing would -- not a force-set of fogTideActive itself, so the
+  // existing phase-transition tracking still fires correctly off this value, unlike a hook
+  // that set the derived boolean directly would.
+  window.ForestEngine.qaSetFogTideClock = function(seconds){
+    fogTideClock = Math.max(0, seconds % FOG_TIDE_CONFIG.period);
+  };
+
   // LUL-2189/LUL-2207: exposes the module-scope wind unit vector (set once per
   // generateMap() by generateWind(), engine/forest-engine.js:1810/1812) so a test
   // can derive #windIndicator's expected rotation instead of hardcoding an angle.
@@ -5858,6 +5870,10 @@ if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
   const next = beginPickup(runState());
   if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
+  // LUL-4958: snapshot fog-tide state at the instant the lift is ACCEPTED, not at
+  // finishPickup() ~11.3s later -- see docs/specs/lul-4958-slack-water.md's Design-call §1
+  // for why the timing matters (Fog Tide's window is 20s, the cinematic is ~11.3s).
+  if(mission && canCompleteSlackWater(mission, fogTideActive)) mission = completeMission(mission);
   baby.taken = next.babyTaken; pickingUp = next.pickingUp;
   pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found
@@ -7064,7 +7080,9 @@ function stepFrame(dt, t, skipRender){
     veilOverloadTriggerActive = predators.some(function(p){ return !p.inert && p.state === 'chase'; });
     // LUL-1258: the mission's nav-cue hum, only while active -- reuses
     // childCry's tempo-carries-distance shape (Ship 1 spec S3d).
-    if(mission?.status === 'active'){
+    // LUL-4958: `spatial !== false` -- a mission with no real target position (slackWater)
+    // must not hum the player toward (0,0), a meaningless location.
+    if(mission?.status === 'active' && mission.target.spatial !== false){
       missionHumTimer -= dt;
       if(missionHumTimer <= 0){
         missionWaypointHum(mission, distMission);

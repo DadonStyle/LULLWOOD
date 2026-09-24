@@ -6,6 +6,7 @@ import {
   syncMissionTargetToLandmark,
   distToMissionTarget,
   canCompleteMission,
+  canCompleteSlackWater,
   completeMission,
   canCompleteRetrieval,
   completeRetrieval,
@@ -138,6 +139,30 @@ test('canCompleteMission is true just inside interactRadius', () => {
 test('canCompleteMission is false once the mission is already complete', () => {
   const m: MissionState = { target: MISSION_POOL[0], status: 'complete', secondary: null };
   assert.equal(canCompleteMission(m, 0), false);
+});
+
+// ---- canCompleteSlackWater (LUL-4958) ------------------------------------
+
+const slackWaterTarget = MISSION_POOL.find((t) => t.kind === 'slackWater')!;
+
+test('canCompleteSlackWater is true when active, slackWater, and fog-tide is active', () => {
+  const m: MissionState = { target: slackWaterTarget, status: 'active', secondary: null };
+  assert.equal(canCompleteSlackWater(m, true), true);
+});
+
+test('canCompleteSlackWater is false when fog-tide is not active', () => {
+  const m: MissionState = { target: slackWaterTarget, status: 'active', secondary: null };
+  assert.equal(canCompleteSlackWater(m, false), false);
+});
+
+test('canCompleteSlackWater is false once the mission is already complete', () => {
+  const m: MissionState = { target: slackWaterTarget, status: 'complete', secondary: null };
+  assert.equal(canCompleteSlackWater(m, true), false);
+});
+
+test('canCompleteSlackWater is false for a non-slackWater mission even with fog-tide active', () => {
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
+  assert.equal(canCompleteSlackWater(m, true), false);
 });
 
 // ---- completeMission idempotence ----------------------------------------
@@ -360,7 +385,9 @@ test('checkMissionExpiry never un-expires', () => {
 test('eligibleMissionPool returns only untimed missions below MISSION_FAR_UNLOCK_WINS', () => {
   const progression = freshProgression();
   const pool = eligibleMissionPool(progression, 'lantern');
-  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow']);
+  // LUL-4958: slackWater has no timeLimitSeconds either (untimed, like oakHollow), so it
+  // is eligible from run 1 too -- the SPEC's own design call gives it no win-gate.
+  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow', 'slackWater']);
 });
 
 test('eligibleMissionPool returns the full pool at MISSION_FAR_UNLOCK_WINS', () => {
@@ -381,7 +408,9 @@ test('eligibleMissionPool checks only the given difficulty tier', () => {
   const progression = freshProgression();
   progression.night.wins = MISSION_FAR_UNLOCK_WINS;
   const pool = eligibleMissionPool(progression, 'lantern');
-  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow']);
+  // LUL-4958: slackWater has no timeLimitSeconds either (untimed, like oakHollow), so it
+  // is eligible from run 1 too -- the SPEC's own design call gives it no win-gate.
+  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow', 'slackWater']);
 });
 
 // ---- pickMission with an explicit pool (LUL-3010) ------------------------
