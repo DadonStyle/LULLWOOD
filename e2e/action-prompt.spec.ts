@@ -409,12 +409,13 @@ test.describe('#actionSlot — all five rows forced live at once (LUL-2336)', ()
 // staging, so it can never silently drift if a future edit reorders the JSX
 // inside #actionSlot (components/Hud.tsx).
 test.describe('#actionSlot row order', () => {
-  test('seven rows are always mounted, top to bottom in priority order', async ({ page }) => {
+  test('eight rows are always mounted, top to bottom in priority order', async ({ page }) => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
     const ids = await page.evaluate(() => Array.from(document.querySelectorAll('#actionSlot > *')).map((el) => el.id));
-    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'veilOverloadPrompt', 'throwPrompt', 'pickupPrompt', 'status']);
+    // LUL-4528: climbPrompt inserted after pickupPrompt, before the terminal status row.
+    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'veilOverloadPrompt', 'throwPrompt', 'pickupPrompt', 'climbPrompt', 'status']);
 
     // Every row exists (not conditionally mounted) even with nothing to show.
     for (const id of ids) {

@@ -67,6 +67,11 @@ export interface EngineHudState {
   // LUL-1904: cave detection-immunity countdown -- 0 while inactive.
   caveImmuneActive:   boolean;
   caveImmuneTimeLeft: number;
+  // LUL-4528: Rock -- Vantage Climb. mountedOnRock/rockClimbTimeLeft drive
+  // #rockClimbPanel's countdown; climbPromptVisible drives the climbPrompt row.
+  mountedOnRock: boolean;
+  rockClimbTimeLeft: number;
+  climbPromptVisible: boolean;
   // LUL-3150: carry-leg panic button -- burns all veil charge for a detection-proof window.
   veilOverloadActive:  boolean;
   veilOverloadTimeLeft: number;
@@ -188,6 +193,8 @@ export interface EngineActions {
   setTouchLook: (x: number, y: number) => void;
   setTouchSprint: (v: boolean) => void;
   triggerTouchHide: () => void;
+  // LUL-4528: mobile parity for KeyC (Rock -- Vantage Climb).
+  triggerTouchClimb: () => void;
   triggerTouchShuffle: () => void;
   triggerTouchInteract: () => void;
   triggerTouchThrow: () => void;
@@ -252,6 +259,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   veilReserve: false,
   caveImmuneActive: false,
   caveImmuneTimeLeft: 0,
+  mountedOnRock: false,
+  rockClimbTimeLeft: 0,
+  climbPromptVisible: false,
   veilOverloadActive: false,
   veilOverloadTimeLeft: 0,
   veilOverloadVisible: false,
@@ -988,6 +998,16 @@ export default function Hud({
         </div>
       )}
 
+      {/* LUL-4528: Rock -- Vantage Climb countdown -- sibling of #caveImmunePanel, same
+          always-visible-while-active treatment, OUTSIDE #panel so it stays visible with
+          adminMode off (Q3, GameCanvas.tsx's `body[data-admin-mode="0"] #panel { display:
+          none !important; }` rule only reaches #panel's actual descendants). */}
+      {state.mountedOnRock && (
+        <div id="rockClimbPanel">
+          Exposed · {Math.ceil(state.rockClimbTimeLeft)}s
+        </div>
+      )}
+
       {/* LUL-3150: veil-overload countdown -- sibling of #caveImmunePanel, same
           always-visible-while-active treatment. */}
       {state.veilOverloadActive && (
@@ -1156,6 +1176,19 @@ export default function Hud({
           visible={state.canGrabThrowable && hudLive}
           tone="calm"
           text="Press  E  to pick up the stone"
+        />
+        {/* LUL-4528: Rock -- Vantage Climb prompt -- a contextual "something to do" row
+            like pickupPrompt just above, not the terminal status row, so it's placed
+            after pickupPrompt and before status. Mobile taps the row itself (no separate
+            floating button, matching throwPrompt/veilOverloadPrompt's existing pattern --
+            CEO-accepted cut, no directional ping/compass). */}
+        <ActionPrompt
+          id="climbPrompt"
+          visible={state.climbPromptVisible && hudLive}
+          tone="calm"
+          text="Press  C  to climb the rock"
+          keycap={mobile ? 'Climb' : undefined}
+          onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchClimb(); } : undefined}
         />
         {/* `hiding` is not a second flag: status only ever appears while hidden
             (LUL-35 pass 2 removed the `statusHiding` field, which the engine
