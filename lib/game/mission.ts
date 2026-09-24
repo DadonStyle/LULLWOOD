@@ -140,7 +140,18 @@ export const MISSION_FAR_UNLOCK_WINS = 3;
 
 export function eligibleMissionPool(progression: Progression, difficulty: DifficultyTier): readonly MissionTarget[] {
   if (progression[difficulty].wins >= MISSION_FAR_UNLOCK_WINS) return MISSION_POOL;
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null);
+  // LUL-4958/LUL-5069: `timeLimitSeconds == null` was written as "the near/untimed variant"
+  // back when oakHollow was the only untimed entry in MISSION_POOL -- it was never meant as
+  // a general "safe for a fresh player" test. slackWater is also untimed but was not designed
+  // to replace oakHollow as the guaranteed pre-3-wins draw: excluding it here restores the
+  // LUL-3010 invariant this function's own comment states ("a fresh player starts on the safe
+  // variant") and fixes the concrete regression it caused -- a fresh `boot()` drawing
+  // slackWater instead of oakHollow ~50% of the time broke e2e/hints.spec.ts's landmark test
+  // (no oakHollow/deepwater HINT_PRIORITY entry matches slackWater, so no hint ever took the
+  // slot after 'landmark' expired) and shifted downstream charge-dodge timing via the changed
+  // mission draw. slackWater stays reachable at/above the win threshold via the MISSION_POOL
+  // branch above, same as deepwater.
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
