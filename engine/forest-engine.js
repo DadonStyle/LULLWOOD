@@ -199,7 +199,7 @@ import {
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, WOLF_BOG_MASK_STRENGTH, ROOSTS, ROOST_COOLDOWN,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
-  BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL, BRAMBLE_SNAG_NOISE_RADIUS,
+  BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -3509,20 +3509,20 @@ function enterHide(spot){
   hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true);
   track({ event: 'feature_engagement', feature: 'hide', action: 'used' });
   logChronicle('hide', { kind: spot.kind });
-  // LUL-4526: Thorn Snag -- sprint-diving into bramble costs a stumble + alerts nearby
-  // roaming predators; walking in (isSprintHeld()===false) stays free and silent.
+  // LUL-4526: Thorn Snag -- sprint-diving into bramble costs a brief stumble (speed penalty
+  // + sound/caption). LUL-4872 review: no separate noise-alert loop here -- the unconditional
+  // HIDE_ALERT_RADIUS=20 loop just below already alerts every roaming predator within earshot
+  // of any hide entry regardless of sprint, and BRAMBLE_SNAG_NOISE_RADIUS(5) < HIDE_ALERT_RADIUS
+  // always, so a second, narrower alert check here could never independently change a
+  // predator's fate -- it would only re-roll hearNoise() on one the loop below already caught.
+  // Walking in (isSprintHeld()===false) stays free.
   if(spot.kind === 'bramble' && isSprintHeld()){
     brambleSnagT = BRAMBLE_SNAG_DURATION_S;
     thornSnagSound();
-    let snagAlerted = 0;
-    for(const p of predators){
-      if(p.inert || p.state !== 'roam') continue;
-      if(checkThrowableNoise(Math.hypot(p.x - player.x, p.z - player.z), BRAMBLE_SNAG_NOISE_RADIUS)){ hearNoise(p); snagAlerted++; }
-    }
-    logChronicle('bramble_snag', { alerted: snagAlerted });
+    logChronicle('bramble_snag', {});
     if(!hintSeen('brambleSnag')){
       markHintSeen('brambleSnag');
-      if(captionsOn) pushState({ caption: 'Diving into bramble at a sprint snags you for a moment — walk in instead to stay silent.', captionId: ++captionSeq });
+      if(captionsOn) pushState({ caption: 'Diving into bramble at a sprint snags you for a moment — walk in instead to avoid it.', captionId: ++captionSeq });
     }
   }
   // LUL-2547: hiding isn't silent -- a one-shot noise broadcast on entry, same shape as
@@ -3552,12 +3552,7 @@ function exitHide(){
   if(hideKind === 'bramble' && isSprintHeld()){
     brambleSnagT = BRAMBLE_SNAG_DURATION_S;
     thornSnagSound();
-    let snagAlerted = 0;
-    for(const p of predators){
-      if(p.inert || p.state !== 'roam') continue;
-      if(checkThrowableNoise(Math.hypot(p.x - player.x, p.z - player.z), BRAMBLE_SNAG_NOISE_RADIUS)){ hearNoise(p); snagAlerted++; }
-    }
-    logChronicle('bramble_snag', { alerted: snagAlerted });
+    logChronicle('bramble_snag', {});
   }
   hidden = false; hideKind = null;
 }

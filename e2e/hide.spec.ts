@@ -116,23 +116,26 @@ test.describe('H hide toggle', () => {
     expect(after?.canSee, "lion must lose sight of the player once hidden inside the hide spot's footprint").toBe(false);
   });
 
-  // LUL-4526: Thorn Snag -- sprint-diving into bramble costs a stumble + alerts a nearby
-  // roaming predator; walking in stays free and silent. Both halves staged back to back on
-  // the same micro scene so "walking in is free" is a real negative control, not just
-  // asserted from the code.
-  test('sprint-diving into bramble triggers Thorn Snag: stumble speed + noise burst wakes a nearby roaming predator; walking in stays silent', async ({ page }) => {
+  // LUL-4526: Thorn Snag -- sprint-diving into bramble costs a brief stumble (brambleSnagT
+  // speed penalty); walking in costs nothing. Both halves staged back to back on the same
+  // micro scene so "walking in is free" is a real negative control, not just asserted from
+  // the code.
+  //
+  // LUL-4872 review: this test originally also staged a wolf and asserted it got alerted by
+  // a dedicated Thorn Snag noise burst (BRAMBLE_SNAG_NOISE_RADIUS=5). That assertion passed
+  // for the wrong reason -- enterHide()/exitHide() already run an unconditional predator-alert
+  // loop at HIDE_ALERT_RADIUS=20 on every hide entry/exit regardless of sprint (LUL-2547), and
+  // 5 < 20 always, so any predator close enough to trip the narrower radius was already caught
+  // by the wider one; the assertion would have passed identically with Thorn Snag's alert code
+  // deleted (coverage that can't fail). The redundant loop has been removed from the engine
+  // (see docs/ELEMENTS.md's LUL-4526 paragraph) -- brambleSnagT is the one observable this
+  // mechanic alone controls, so it's the only thing asserted below; no predator needed.
+  test('sprint-diving into bramble triggers Thorn Snag stumble (brambleSnagT); walking in costs nothing', async ({ page }) => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
-    // No predator during the walk-in control -- the pre-existing unconditional entry
-    // alert (enterHide()'s own HIDE_ALERT_RADIUS=20 loop, fires on every hide entry
-    // regardless of sprint) would reach any predator close enough to also be in
-    // BRAMBLE_SNAG_NOISE_RADIUS=5 range (5 < 20, so the new radius is strictly inside the
-    // old one), confounding a predator-state assertion here. brambleSnagT is the one
-    // observable the new mechanic alone controls -- see
-    // docs/specs/lul-4526-bramble-thorn-snag.md deviation #4.
     await qaHook(page, 'qaBuildScene', { props: [{ kind: 'bramble', x: 10, z: 0 }] });
-    let spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
+    const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
     if (spot === null) {
       throw new Error('qaTeleportToHideSpot returned null -- no bramble hiding spot was found for this seed');
     }
@@ -143,37 +146,11 @@ test.describe('H hide toggle', () => {
     expect(ps?.brambleSnagT ?? 0).toBe(0);
     await page.keyboard.press('KeyH');   // exit, still no sprint
 
-    // Rebuild with a fresh roaming wolf for the sprint-dive half, 5u from the bramble
-    // (inside BRAMBLE_SNAG_NOISE_RADIUS) -- a clean predator, never previously alerted.
-    // A rock sits between them (x:10,z:-3) purely to occlude sightline: wolf's own
-    // species detect range (42u, engine/tuning.js PSPEC.wolf) dwarfs the 5u snag-noise
-    // radius, so without an occluder the wolf spots the exposed player on sight alone
-    // (canSee()/spotOnto(), engine/forest-engine.js ~:2765) before Thorn Snag ever gets
-    // a chance to fire -- an ordinary-detection false positive, not a Thorn Snag proof.
-    // checkThrowableNoise()'s distance-only gate (no LOS) still reaches the wolf through
-    // the rock once we make noise, so the alert we assert below is unambiguously the
-    // snag/hide-alert noise burst, not sight.
-    await qaHook(page, 'qaBuildScene', {
-      props: [
-        { kind: 'bramble', x: 10, z: 0 },
-        { kind: 'rock', x: 10, z: -3 },
-      ],
-      predators: [{ kind: 'wolf', x: 10, z: -5, state: 'roam' }],
-    });
-    spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
-    if (spot === null) {
-      throw new Error('qaTeleportToHideSpot returned null -- no bramble hiding spot was found for this seed');
-    }
-    const before = await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i), 0);
-    expect(before?.state, 'wolf must start roam before the sprint-dive proof').toBe('roam');
-
     // sprint-dive: hold Shift through entry.
     await page.keyboard.down('ShiftLeft');
     await page.keyboard.press('KeyH');
     ps = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
     expect(ps?.brambleSnagT ?? 0).toBeGreaterThan(0);
-    const after = await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i), 0);
-    expect(after?.state).not.toBe('roam');   // alerted by the noise burst
     await page.keyboard.up('ShiftLeft');
   });
 });

@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7297 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6493, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7292 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6488, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1382,18 +1382,21 @@ LUL-4526 (Bramble Thorn Snag) prices sprint-diving into the sole hide spot: `ent
 `exitHide()` (`engine/forest-engine.js`) both check `isSprintHeld()` (new, same-shape mirror of
 the per-frame `running` expression, callable outside `stepFrame()`'s scope) against
 `spot.kind`/`hideKind === 'bramble'` and, only if the transition happened at a sprint, set
-`brambleSnagT` to `BRAMBLE_SNAG_DURATION_S` (`engine/tuning.js`), play `thornSnagSound()` (new,
-same procedural-WebAudio shape as `leafRustle()`/`rustleSting()`, no bus), and run the same
-roam-only `checkThrowableNoise`/`hearNoise` alerted-predator loop `enterHide()`'s own hide-alert
-noise already uses, gated to `BRAMBLE_SNAG_NOISE_RADIUS` instead of `HIDE_ALERT_RADIUS`. Walking
-in/out (`isSprintHeld()===false`) costs nothing. The movement calc's `maxSpd` multiplies in
+`brambleSnagT` to `BRAMBLE_SNAG_DURATION_S` (`engine/tuning.js`) and play `thornSnagSound()`
+(new, same procedural-WebAudio shape as `leafRustle()`/`rustleSting()`, no bus). Walking in/out
+(`isSprintHeld()===false`) costs nothing. **LUL-4872 review:** the shipped diff also ran a
+second `checkThrowableNoise`/`hearNoise` alerted-predator loop here, gated to a dedicated
+`BRAMBLE_SNAG_NOISE_RADIUS` (5); dropped, since `enterHide()`'s own pre-existing unconditional
+`HIDE_ALERT_RADIUS` (20) alert already fires on every hide entry regardless of sprint and
+5 < 20 always, so the narrower loop could never independently alert a predator the wider one
+hadn't already caught. The movement calc's `maxSpd` multiplies in
 `brambleSnagSpeedMultiplier(brambleSnagT)` (`lib/game/cover.ts`, pure, `BRAMBLE_SNAG_SPEED_MUL`
 while the timer is live, `1` once it decays) alongside `bogSpeedMultiplier`; the tick loop decays
 `brambleSnagT` the same clamp-to-zero way `stoneMarkerPulseT` already does. A one-time
 `captionsOn`-gated hint fires via `hintSeen`/`markHintSeen('brambleSnag')`. `qaPlayerState()`
-exposes `brambleSnagT` for e2e. Pricing (`BRAMBLE_SNAG_DURATION_S`/`BRAMBLE_SNAG_SPEED_MUL`/
-`BRAMBLE_SNAG_NOISE_RADIUS`, `engine/tuning.js`) is Game Economist territory, shipped with the
-proposal's example values, not final tuning.
+exposes `brambleSnagT` for e2e. Pricing (`BRAMBLE_SNAG_DURATION_S`/`BRAMBLE_SNAG_SPEED_MUL`,
+`engine/tuning.js`) is Game Economist territory, shipped with the proposal's example values,
+not final tuning.
 
 **What it can do**
 - Render every piece of state the engine pushes (`pushState()`, only sends
@@ -1493,15 +1496,15 @@ proposal's example values, not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5869-5929, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6086-6127). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5864-5924, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6081-6122). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6086-6127) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6081-6122) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6013) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1682,7 +1685,7 @@ proposal's example values, not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6443-7233, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6438-7228, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
