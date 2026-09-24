@@ -78,6 +78,7 @@ import {
   COVER_PROBE_HZ,
   PLAYER_COLLISION_RADIUS,
   brambleSnagSpeedMultiplier,
+  findLogCrawlEntry as geoFindLogCrawlEntry,
   SHUFFLE_OFFSET,
 } from '@/lib/game/cover';
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
@@ -192,6 +193,7 @@ import {
   VEIL_CHARM_INTERACT_RADIUS, ROOSTS, ROOST_COOLDOWN,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
+  LOG_CRAWL_SPEED_MUL, LOG_CRAWL_ENTER_RADIUS,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -429,6 +431,8 @@ let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, stami
 // LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
 // decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
 let stoneMarkerPulseT = 0, brambleSnagT = 0;   // LUL-4526: Thorn Snag stumble countdown
+let inLogCrawl = false, logCrawlDirX = 0, logCrawlDirZ = 0,
+    logCrawlExitX = 0, logCrawlExitZ = 0, logCrawlDeniedLatch = false;   // LUL-4527
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
 // last result between probes; coverProbeAccum counts elapsed seconds.
 let lastHideSpot = null, coverProbeAccum = 0, coverRustleAccum = 0;   // LUL-2856
@@ -3244,6 +3248,47 @@ function thornSnagSound(){
   src.connect(bp); bp.connect(g); g.connect(master); g.connect(conv);
   src.start(t); src.stop(t+0.18);
 }
+// LUL-4527: same procedural-noise-burst shape as thornSnagSound()/leafRustle() -- a low,
+// short scrape rather than a rustle, so it reads as wood/bark rather than brush. One-shot on
+// entry and on exit, not a sustained loop -- this file has no sustained per-state ambience
+// convention (grep confirms `.loop = true` exists only on the two always-on ambient beds,
+// wind/insects); a Start/End one-shot pair is the existing convention for a temporary
+// player-state transition (leafRustle(true/false)), reused here instead of inventing a loop.
+function logCrawlEnterCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.2, false);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 500;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.15, t+0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.22);
+  src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
+  src.start(t); src.stop(t+0.24);
+}
+function logCrawlExitCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.15, false);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.12, t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
+  src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
+  src.start(t); src.stop(t+0.18);
+}
+// LUL-4527: refusal tell for a sprint/strafe/reverse attempt mid-crawl -- same shape as
+// veilOverloadDeniedCue(), the codebase's one existing "input was refused" cue.
+function logCrawlDeniedCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(90, t);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.17);
+}
 function enterHide(spot){
   hidden = true; hideTime = 0; hideKind = spot.kind; hideSpot = spot; hideEventCount++; leafRustle(true);
   track({ event: 'feature_engagement', feature: 'hide', action: 'used' });
@@ -4902,6 +4947,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       jumping: jumping, paused: paused, toggleRunOn: toggleRunOn,
       veilHeld: (entered && !won && !dead && !pickingUp) && (!!keys['KeyF'] || touchVeil),
       hidden: hidden, brambleSnagT: brambleSnagT,
+      inLogCrawl: inLogCrawl, logCrawlExitX: logCrawlExitX, logCrawlExitZ: logCrawlExitZ,
     };
   };
 
@@ -6307,7 +6353,7 @@ function stepFrame(dt, t, skipRender){
     coverRustleAccum = 0;
     rollCoverRustle();
   }
-  eyeH += ((hidden ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
+  eyeH += (((hidden || inLogCrawl) ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
 
   // LUL-213: advance in game time (dt is already clamped above -- see wiki
   // systems/dt-clamp-vs-walltime) so the arc can't drift relative to
@@ -6388,46 +6434,111 @@ function stepFrame(dt, t, skipRender){
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
     const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * brambleSnagSpeedMultiplier(brambleSnagT);
-    let ix = 0, iz = 0;
-    if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
-    if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
-    if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
-    if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
-    // LUL-68: merge touch left-stick direction (threshold 0.2 dead-zone)
-    if(hasTouchMove){ ix += touchMove.x; iz += touchMove.z; }
-    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
-    const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-    let mvx = fx*iz + rx*ix, mvz = fz*iz + rz*ix;
-    const mag = Math.hypot(mvx, mvz);
-    if(mag > 0){
-      mvx /= mag; mvz /= mag;
-      escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
-      // LUL-3009: every frame while moving, not throttled by scentEmitT below (that gate is
-      // sized for scent deposit density, not for a HUD readout the player expects to track
-      // their heading in real time).
+    // LUL-4527: entry check -- only when not already crawling, using this frame's actual
+    // input heading (computed below as mvx/mvz normally would be) is circular, so entry uses
+    // the player's last real facing/movement intent instead: any movement key held this frame,
+    // projected the same way the normal branch would. Cheap and correct since the entry check
+    // only needs "are they walking toward the mouth," not the exact final heading.
+    if(!inLogCrawl){
+      let eix = 0, eiz = 0;
+      if(keys['KeyW'] || keys['ArrowUp'])    eiz += 1;
+      if(keys['KeyS'] || keys['ArrowDown'])  eiz -= 1;
+      if(keys['KeyD'] || keys['ArrowRight']) eix += 1;
+      if(keys['KeyA'] || keys['ArrowLeft'])  eix -= 1;
+      if(hasTouchMove){ eix += touchMove.x; eiz += touchMove.z; }
+      const efx = -Math.sin(player.yaw), efz = -Math.cos(player.yaw);
+      const erx =  Math.cos(player.yaw), erz = -Math.sin(player.yaw);
+      let emvx = efx*eiz + erx*eix, emvz = efz*eiz + erz*eix;
+      const emag = Math.hypot(emvx, emvz);
+      if(emag > 0){
+        emvx /= emag; emvz /= emag;
+        const entry = geoFindLogCrawlEntry(player.x, player.z, emvx, emvz, coverGrid, CELL, WRAP_SPAN);
+        if(entry){
+          inLogCrawl = true;
+          logCrawlDirX = entry.dirX; logCrawlDirZ = entry.dirZ;
+          logCrawlExitX = entry.exitX; logCrawlExitZ = entry.exitZ;
+          logCrawlDeniedLatch = false;
+          logCrawlEnterCue();
+          logChronicle('crawl_enter', {});
+          if(!hintSeen('logCrawl')){
+            markHintSeen('logCrawl');
+            if(captionsOn) pushState({ caption: "Crawling through the log — you can't sprint or turn until you're through.", captionId: ++captionSeq });
+          }
+        }
+      }
+    }
+    // LUL-4527: forced-movement branch -- replaces the normal WASD/touch->mvx/mvz composition
+    // entirely while crawling. Direction is locked to logCrawlDirX/Z (set on entry, above);
+    // speed is a fixed override, not a multiplier on `maxSpd` -- sprint/bog/bramble states are
+    // mutually exclusive with being mid-crawl. Any sprint/strafe/reverse input attempt still
+    // fires the one-shot refusal cue (latched so it plays once per continuous hold, not every
+    // frame), matching Q5's "refused input needs a positive tell."
+    if(inLogCrawl){
+      const deniedInput = isSprintHeld() || keys['KeyA'] || keys['KeyD'] || keys['KeyS'] ||
+        keys['ArrowLeft'] || keys['ArrowRight'] || keys['ArrowDown'];
+      if(deniedInput && !logCrawlDeniedLatch){ logCrawlDeniedLatch = true; logCrawlDeniedCue(); }
+      else if(!deniedInput) logCrawlDeniedLatch = false;
+      const mvx = logCrawlDirX, mvz = logCrawlDirZ;
+      escX = mvx; escZ = mvz;
       movingAgainstWind = isMovingAgainstWind(mvx, mvz, windX, windZ);
-      // LUL-3149: Wind-Assisted Evasion -- +20%/-30% speed+noise while sprinting directly
-      // against the wind, stacks on top of Threat Beacon's always-on scent reduction
-      // (depositScent() below, unconditional on `running`). movingAgainstWind is already
-      // known by this point in the frame (line above) -- reuse it, don't re-derive.
-      const windAssist = (running && movingAgainstWind);
-      spd = maxSpd * (windAssist ? WIND_ASSIST_SPEED_MUL : 1);
+      spd = walk * LOG_CRAWL_SPEED_MUL;
       const step = spd*dt, lim = half - margin, zLim = zMax - margin;
-      const nx = Number.isFinite(WRAP_SPAN)
-        ? wrapCoord(player.x + mvx*step, WRAP_SPAN)
-        : Math.max(-lim, Math.min(lim, player.x + mvx*step));
-      const nz = Number.isFinite(WRAP_SPAN)
-        ? wrapCoord(player.z + mvz*step, WRAP_SPAN)
-        : Math.max(-lim, Math.min(zLim, player.z + mvz*step));
-      if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }  // slide along trunks
+      const nx = Number.isFinite(WRAP_SPAN) ? wrapCoord(player.x + mvx*step, WRAP_SPAN) : Math.max(-lim, Math.min(lim, player.x + mvx*step));
+      const nz = Number.isFinite(WRAP_SPAN) ? wrapCoord(player.z + mvz*step, WRAP_SPAN) : Math.max(-lim, Math.min(zLim, player.z + mvz*step));
+      if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }
       if(!blocked(player.x, nz)){ dist += Math.abs(nz - player.z); player.z = nz; }
-      // LUL-23: lay scent while actually moving -- holding still (or being hidden,
-      // which already implies not moving) never adds to the trail.
-      scentEmitT -= dt;
-      if(scentEmitT <= 0){ depositScent(running, movingAgainstWind); scentEmitT = SCENT_DEPOSIT_INTERVAL; }   // dedup: was a second isMovingAgainstWind() call, no behavior change
-      // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
-      // shape as scent, sized off the same running flag rather than a new one.
-      noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK));
+      // LUL-4527: scent suppressed entirely while crawling -- no depositScent() call here at
+      // all (the gate below on the normal branch is belt-and-suspenders in case both branches
+      // ever run the same frame at a transition boundary; see the exit check's own comment).
+      noiseRadius = NOISE_RADIUS_WALK;   // still makes a little noise -- crawling isn't silent, just untracked by scent
+      const past = (player.x - logCrawlExitX) * logCrawlDirX + (player.z - logCrawlExitZ) * logCrawlDirZ;
+      if(past >= 0){
+        inLogCrawl = false;
+        logCrawlExitCue();
+        logChronicle('crawl', {});
+      }
+    } else {
+      let ix = 0, iz = 0;
+      if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
+      if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
+      if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
+      if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
+      // LUL-68: merge touch left-stick direction (threshold 0.2 dead-zone)
+      if(hasTouchMove){ ix += touchMove.x; iz += touchMove.z; }
+      const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+      const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+      let mvx = fx*iz + rx*ix, mvz = fz*iz + rz*ix;
+      const mag = Math.hypot(mvx, mvz);
+      if(mag > 0){
+        mvx /= mag; mvz /= mag;
+        escX = mvx; escZ = mvz;   // LUL-24: record the flight heading wolves flank off of
+        // LUL-3009: every frame while moving, not throttled by scentEmitT below (that gate is
+        // sized for scent deposit density, not for a HUD readout the player expects to track
+        // their heading in real time).
+        movingAgainstWind = isMovingAgainstWind(mvx, mvz, windX, windZ);
+        // LUL-3149: Wind-Assisted Evasion -- +20%/-30% speed+noise while sprinting directly
+        // against the wind, stacks on top of Threat Beacon's always-on scent reduction
+        // (depositScent() below, unconditional on `running`). movingAgainstWind is already
+        // known by this point in the frame (line above) -- reuse it, don't re-derive.
+        const windAssist = (running && movingAgainstWind);
+        spd = maxSpd * (windAssist ? WIND_ASSIST_SPEED_MUL : 1);
+        const step = spd*dt, lim = half - margin, zLim = zMax - margin;
+        const nx = Number.isFinite(WRAP_SPAN)
+          ? wrapCoord(player.x + mvx*step, WRAP_SPAN)
+          : Math.max(-lim, Math.min(lim, player.x + mvx*step));
+        const nz = Number.isFinite(WRAP_SPAN)
+          ? wrapCoord(player.z + mvz*step, WRAP_SPAN)
+          : Math.max(-lim, Math.min(zLim, player.z + mvz*step));
+        if(!blocked(nx, player.z)){ dist += Math.abs(nx - player.x); player.x = nx; }  // slide along trunks
+        if(!blocked(player.x, nz)){ dist += Math.abs(nz - player.z); player.z = nz; }
+        // LUL-23: lay scent while actually moving -- holding still (or being hidden,
+        // which already implies not moving) never adds to the trail.
+        scentEmitT -= dt;
+        if(scentEmitT <= 0){ depositScent(running, movingAgainstWind); scentEmitT = SCENT_DEPOSIT_INTERVAL; }   // dedup: was a second isMovingAgainstWind() call, no behavior change
+        // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
+        // shape as scent, sized off the same running flag rather than a new one.
+        noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK));
+      }
     }
   }
   // LUL-3009: pushed unconditionally every frame (not nested in the movement block above),

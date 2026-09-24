@@ -294,6 +294,7 @@ declare global {
         x: number; z: number; yaw: number; pitch: number; mode: 'desktop' | 'mobile';
         jumping: boolean; paused: boolean; toggleRunOn: boolean; veilHeld: boolean;
         hidden: boolean; brambleSnagT: number;
+        inLogCrawl: boolean; logCrawlExitX: number; logCrawlExitZ: number;
       };
       /** LUL-388: places `kind` in a blind scent-chase (state='chase', scentLock=SCENT_TRACK_TIME)
        * within catch range (dist < rad+CATCH_MARGIN) of the player, with a real cover prop's
