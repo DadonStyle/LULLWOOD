@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7294 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6490, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7370 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6565, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1375,8 +1375,32 @@ clamps `#rustleFlash`'s opacity to a fixed `0.15` while active instead of animat
 scales both by difficulty tier — `DIFFICULTY_PRESETS[tier].rustleThresholdMul`/`rustleIntervalMul`
 (`engine/tuning.js`) — lantern 16s/6s, night 12s/5s (unchanged), blackout 8s/4s. Cover-density
 scaling remains out of scope (Economist follow-up, not part of the LUL-4629/CEO-accepted "Full"
-slice); reposition-to-reset via LUL-3066's Shuffle action is deferred until `shuffleHide()`
-(LUL-4786) actually merges, not described here yet.
+slice).
+
+LUL-3066/LUL-4786 adds the reposition-to-reset itself: `KeyR` (+ touch Shuffle button,
+`components/MobileControls.tsx`, next to Hide) while `hidden`, off cooldown, calls
+`shuffleHide()` (`engine/forest-engine.js`). Direction comes from held movement keys/touch
+stick (same `ix/iz` -> `fx/fz/rx/rz` transform `stepFrame()`'s own movement block uses),
+falling back to the player's facing direction when nothing is held; the candidate position is
+clamped into the stored `hideSpot` `CoverAABB`'s own footprint (never outside the cover that
+was entered) and rejected via `blocked()` if it would land in a collision. On success:
+`hideTime` resets to 0 (feeding the exact same self-healing `coverRustleAccum` formula above,
+for free — no separate tracker), `SHUFFLE_OFFSET` (`lib/game/cover.ts`) is the shuffle
+distance, `isMovingAgainstWind()` (`lib/game/scent.ts`) decides silent-upwind vs.
+alert-inducing-downwind (same roam-only alerted-predator loop as `enterHide()`/
+`rollCoverRustle()`), `leafRustle(movingAgainstWind)` plays the muffled (2-burst) or fuller
+(3-burst) foley, `rustleFlash`/`rustleSting()` fire unconditionally (reusing the cover-rustle
+vignette above, not `spotFlash` — a newly-alerted roam predator is a lower-severity event than
+a real detection), and a transient `caption`/`captionId` toast reads `'Shifted position'` /
+`'Shifted position — noisy'`. First use instead gets the explanatory hint text (one caption
+slot per call, not both — `pushState()` calls `emitState()` synchronously with no queue, so a
+second call in the same tick would silently drop the first). `shuffleCooldownAccum`
+(`SHUFFLE_COOLDOWN_S`, `lib/game/noise.ts`, 2.0s) blocks a repeat press until it decays. Note:
+holding a movement key across the press still trips `stepFrame()`'s own pre-existing
+"moving breaks cover" check on the very next tick, same as it always has for `KeyH` — the
+shuffle's direction-from-held-keys path does not get an exemption from that rule, so the
+facing-direction fallback (no key held) is the only path that reliably keeps the player hidden
+afterward.
 
 LUL-4526 (Bramble Thorn Snag) prices sprint-diving into the sole hide spot: `enterHide()` and
 `exitHide()` (`engine/forest-engine.js`) both check `isSprintHeld()` (new, same-shape mirror of
@@ -1496,16 +1520,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5864-5924, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6081-6122). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5939-5999, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6156-6197). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6081-6122) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6013) rather than recomputed later, since `player.x/z` can move on
+  (L6156-6197) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6164) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1561,11 +1585,11 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3866),
-  reset to 0 on `enter()` (L3956) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3936),
+  reset to 0 on `enter()` (L4026) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L6662: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L6711: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1685,7 +1709,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6440-7230, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6515-7305, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2438,7 +2462,7 @@ it already fires correctly for the sprint-bonus window; both the `title` and the
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
 (`engine/forest-engine.js` L7321 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'`. A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6050) and `windAssistEndCue()` (L6059), edge-triggers on the combined
+`windAssistStartCue()` (L6120) and `windAssistEndCue()` (L6129), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
