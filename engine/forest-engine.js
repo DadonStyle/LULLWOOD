@@ -108,6 +108,7 @@ import {
   stepFlankHold,
   stepSniffLoop,
   tickTimers,
+  WIND_PAUSE_COOLDOWN,
   WIND_PAUSE_DURATION,
 } from '@/lib/game/predator';
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
@@ -1795,7 +1796,7 @@ function placePredators(){
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
     if(p.parked) p.g.visible = false;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
-    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.scentLock=0; p.scentCalls=0;
+    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.windPauseCooldownT=0; p.scentLock=0; p.scentCalls=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0; p.sightFlicker=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
@@ -2582,9 +2583,16 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // a fresh trigger re-check; it only decays inside this same branch (mirrors
         // p.alert's own branch-scoped decay, not the unconditional tickTimers() decay
         // scentLock/chargeCooldown use -- see lib/game/predator.ts).
+        // LUL-4996: p.windPauseCooldownT (also branch-scoped, same shape) blocks a fresh
+        // trigger for WIND_PAUSE_COOLDOWN after a freeze ends -- without it, a stationary
+        // player leaves the approach/facing/wind geometry unchanged, so shouldWindPause()
+        // re-fired the instant windPauseT decayed to 0, forever. The predator still
+        // pursues at full speed during the cooldown window; only the retrigger check is
+        // suppressed.
         else if(p.windPauseT > 0){ p.windPauseT = Math.max(0, p.windPauseT - dt); speed = 0; }
+        else if(p.windPauseCooldownT > 0){ p.windPauseCooldownT = Math.max(0, p.windPauseCooldownT - dt); desx=ux; desz=uz; speed=p.spec.speed; }
         else if(shouldWindPause(ux, uz, -Math.sin(player.yaw), -Math.cos(player.yaw), windX, windZ)){
-          p.windPauseT = WIND_PAUSE_DURATION; speed = 0; windPulseCue();
+          p.windPauseT = WIND_PAUSE_DURATION; p.windPauseCooldownT = WIND_PAUSE_COOLDOWN; speed = 0; windPulseCue();
         }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
@@ -4820,7 +4828,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // tests already cover the pure function -- see e2e/sight-flicker.spec.ts).
     // LUL-4893: windPauseT exposed so a test can assert the Predator Pause freeze
     // directly instead of inferring it purely from x/z staying constant.
-    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, detectRange: effectiveDetect(p), canSee: canSee(p, dist), rad: p.rad, moveRad: p.moveRad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible, sightFlicker: p.sightFlicker, windPauseT: p.windPauseT };
+    // LUL-4996: windPauseCooldownT exposed so a test can assert the re-arm cooldown
+    // actually blocks a retrigger (not just that x/z eventually moves again).
+    return { kind: p.kind, state: p.state, inv: p.inv, sniffsLeft: p.sniffsLeft, scentCalls: p.scentCalls, dist, detectRange: effectiveDetect(p), canSee: canSee(p, dist), rad: p.rad, moveRad: p.moveRad, x: p.x, z: p.z, gaveUpAt: p.gaveUpAt, sightLock: p.sightLock ? { phase: p.sightLock.phase, t: p.sightLock.t } : null, parked: p.parked, visible: p.g.visible, sightFlicker: p.sightFlicker, windPauseT: p.windPauseT, windPauseCooldownT: p.windPauseCooldownT };
   };
 
   // LUL-213: forces a wolf/lion straight into a charge telegraph, deterministically
@@ -5538,7 +5548,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.inert = false; p.g.visible = true; p.parked = false;
       p.x = spec.x; p.z = spec.z; p.wpx = spec.x; p.wpz = spec.z; p.vx = 0; p.vz = 0; p.yaw = 0;
       p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
-      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.scentLock = 0; p.scentCalls = 0;
+      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = 0; p.scentCalls = 0;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0; p.sightFlicker = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
       p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;

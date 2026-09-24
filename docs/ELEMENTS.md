@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7129 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6327, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7139 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6337, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1520,15 +1520,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5704-5764, the win path since
-  `LUL-2281`) and `triggerDeath()` (L5933-5974). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5714-5774, the win path since
+  `LUL-2281`) and `triggerDeath()` (L5943-5984). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L5933-5974) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L5943-5984) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6198) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -2476,7 +2476,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7225 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L5885) and `windAssistEndCue()` (L5894), edge-triggers on the combined
+`windAssistStartCue()` (L5895) and `windAssistEndCue()` (L5904), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -2532,16 +2532,18 @@ pose for free by extending its gate, `const alerting = p.alert > 0 || p.windPaus
   (and marked seen) once that returns to 0 -- same `caveImmune`/`veilOverload` timer-dismiss
   precedent.
 
-**Known limitation (flagged, not fixed in this ticket):** the trigger has no re-arm cooldown. If
-the player and a paused predator's relative geometry stays exactly perpendicular+downwind for a
-full static window (both parties motionless), the freeze re-triggers the instant it decays,
-indefinitely. Not reachable in ordinary play (the player is essentially never perfectly stationary
-against a live predator for seconds at a stretch), and the one-shot hint caption's `hintSeen()`
-latch means the repeat re-trigger is silent after the first cue -- but worth a product call if a
-future difficulty pass wants predators to eventually push through it.
+**Fixed 2026-09-24 (LUL-4996):** the "Known limitation" above -- no re-arm cooldown -- was
+trivially reachable, not the "essentially never" case originally claimed: any player who simply
+stops moving in a perpendicular+downwind geometry stalled a chasing predator indefinitely, which is
+exactly what `e2e/missions-fire-tower.spec.ts` and `e2e/positional-hiding.spec.ts`'s catch-path
+cases script (a stationary player, real predator chase) and exactly what broke them. A new
+`p.windPauseCooldownT` field (`WIND_PAUSE_COOLDOWN` = 2.0s, `lib/game/predator.ts`) blocks a fresh
+trigger for that long after a freeze ends; the predator still pursues at full speed during the
+cooldown window (`desx=ux; desz=uz; speed=p.spec.speed`), so the cooldown itself can never stall a
+chase. Branch-scoped decay, same shape as `p.windPauseT`/`p.alert`.
 
-**QA hooks**: `qaPredatorState(idx)` extended with `windPauseT` (existing hook, not a new
-`[QA-HOOK]` ticket per the corrected spec's Q11/Q12).
+**QA hooks**: `qaPredatorState(idx)` extended with `windPauseT` and `windPauseCooldownT` (existing
+hook, not a new `[QA-HOOK]` ticket per the corrected spec's Q11/Q12).
 
 Covered by `e2e/wind-pulse.spec.ts` (new): a perpendicular+downwind lion freezes for the full
 0.3s window (position provably unchanged) and resumes once the trigger condition no longer holds;
