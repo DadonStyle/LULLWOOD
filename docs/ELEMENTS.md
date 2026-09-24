@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7663 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6731, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7762 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6820, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1611,16 +1611,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6004-6064, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6336-6377). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6068-6128, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6425-6466). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6336-6377) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6050) rather than recomputed later, since `player.x/z` can move on
+  (L6425-6466) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6433) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1676,8 +1676,8 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3956),
-  reset to 0 on `enter()` (L3892) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3871),
+  reset to 0 on `enter()` (L3961) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L6745: `computeDepth(maxDistFromHome) +
@@ -1800,7 +1800,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6681, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6884, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2517,6 +2517,63 @@ deniedCueCount }`).
 
 See `docs/specs/lul-3150-veil-overload.md`.
 
+### Scent Veil (LUL-5004, LUL-4895 accepted/retargeted)
+
+**What it is**
+- A one-time-per-lock break: pressing `KeyG` (desktop) or tapping `#veilPrompt` (mobile,
+  `triggerTouchScentVeil()`) while at least one live predator has an active scent/beacon lock
+  (`p.scentLock > 0`), the player is moving against the wind (`movingAgainstWind`), and the
+  lock hasn't already been broken this cycle (`p.scentVeilReady`) spends `SCENT_VEIL_STAMINA_COST`
+  (`lib/game/scent.ts`, placeholder 0.3 of the 0..1 stamina bar, Economist retuning is a
+  deliberate follow-up) and clears `scentLock`/`scentVeilReady` on every predator that currently
+  matches (`breakScentVeil()`, `engine/forest-engine.js`) -- not just the nearest one, since the
+  HUD gate itself is a `.some()` across all predators and there's no way for the player to aim
+  the press at a single animal.
+  LUL-5004 ticket note: the original spec text gated this on `carrying`, which
+  decisions/lul-2281-pickup-is-the-win-2026-09-09 already made permanently false in real play
+  (same dead-gate class LUL-4662/LUL-4663 found on Veil Overload) -- dropped entirely rather than
+  shipped dead, verified `checkScent()`/`scentOnto()` (`engine/forest-engine.js`) read no
+  `carrying` reference before dropping it.
+- `scentLock` is the one shared leash both real scent pickup (`scentOnto()`) and LUL-4897 Beacon
+  Hunter's wind-signal channel (`beaconOnto()`) arm -- both set `p.scentVeilReady = true` alongside
+  `p.scentLock = SCENT_TRACK_TIME`, so a break works on either detection channel without a second
+  gate.
+- Key binding: `KeyG`, not `KeyF` -- decisions/scent-veil-key-collision-retarget-2026-09-24. `KeyF`
+  is already the mist veil's own hold key (`veilHeld`, this file's Veil section) and both are
+  eligible the same real-play frame (hunted + downwind + charge/stamina available), so holding F
+  would be ambiguous between two unrelated systems.
+- Gate expression (`scentVeilPromptActive`, recomputed every frame, `engine/forest-engine.js`):
+  `movingAgainstWind && predators.some(p => !p.inert && p.scentLock > 0 && p.scentVeilReady)`.
+  Deliberately excludes the stamina check -- `#veilPrompt` stays visible, rendered `tone="disabled"`
+  (grayed, not hidden) rather than unmounted, whenever stamina is the only thing blocking the
+  press (Q5: a refused input needs a positive tell). A press while grayed fires
+  `scentVeilDeniedCue()`, never a silent no-op.
+
+**Cue triple**
+- Visual: `#veilPrompt` row in `#actionSlot` (`components/Hud.tsx`, keycap `G`, "Press G to break
+  the scent trail"), `tone="urgent"` when stamina-eligible, `tone="disabled"` (grayed) when not.
+  `#windIndicator`'s `windIndicatorVeilActive` class (4x `windIndicatorPulse`'s default 900ms
+  rate = 225ms, `components/GameCanvas.tsx`) composes alongside the existing `windIndicatorActive`
+  class rather than overwriting it -- `movingAgainstWind` is a precondition of
+  `scentVeilPromptVisible`, so both classes can be (and always are, when this one applies) present
+  the same frame; `className` is built by joining an array of conditional class names, not a
+  ternary. Visible with `adminMode` off -- `#actionSlot` is not inside `#panel`.
+- Audio: `scentVeilBreakCue()` on a successful break (sine, 440->880Hz rising), `scentVeilDeniedCue()`
+  on a refused press (square, 300->100Hz descending) -- both gated `if(!audio || !soundOn) return`,
+  distinct register from Veil Overload's pair (sawtooth 140<->560Hz) so the two "something happened
+  to my veil" sounds stay distinguishable.
+- Explanation: none yet -- no `HINT_PRIORITY` entry filed with this cheap slice (out of scope per
+  the ticket; a follow-up can add one the same way `veilOverload`'s entry works).
+
+**QA hooks**: `qaProbePredatorState(kind)` extended with `scentLock`/`scentVeilReady` (real
+predator fields, not a fake shadow copy). `qaProbeScentVeil()` (`{ staminaCharge,
+deniedCueCount }`, mirrors `qaProbeVeilOverload`'s shape). Staging a real lock for a test reuses
+the existing `qaSeedScentPoint`/`qaProbeScentOnOldest` pair (this file's LUL-65 scent-chase
+coverage) -- no new "fake a lock" hook.
+
+Wiki spec `game/mechanics/scent-veil.md`, decisions/scent-veil-accepted-retargeted-2026-09-24,
+decisions/scent-veil-key-collision-retarget-2026-09-24.
+
 ### LUL-3009: Threat Beacon (active pulse on `#windIndicator`)
 
 Scout proposal (LUL-3007), CEO-accepted cheap slice. Adds one new read-only `EngineHudState`
@@ -2566,7 +2623,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7341 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6276) and `windAssistEndCue()` (L6285), edge-triggers on the combined
+`windAssistStartCue()` (L6365) and `windAssistEndCue()` (L6374), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

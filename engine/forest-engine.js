@@ -50,6 +50,8 @@ import {
   isMovingAgainstWind,
   scentLifetimeWithWind,
   WIND_AGAINST_RADIUS_MULTIPLIER,
+  scentVeilTriggerActive,
+  SCENT_VEIL_STAMINA_COST,
 } from '@/lib/game/scent';
 import {
   coverKindBlocksMovement,
@@ -610,6 +612,14 @@ let mountedOnRock = false, rockClimbT = 0;
 // access to that block's locals, same reason canPickup/canBuyVeilCharm are
 // module-level lets rather than block-scoped consts).
 let veilOverloadTriggerActive = false;
+// LUL-5004: same module-level-let shape as veilOverloadTriggerActive just
+// above, for the same reason -- recomputed every frame in stepFrame()'s
+// `playing` block, read by both the KeyG keydown handler and
+// triggerTouchScentVeil() below, neither of which has access to that block's
+// locals. Stamina sufficiency is deliberately NOT folded in here (Q5: the
+// prompt must stay visible, rendered disabled+grayed, not hidden, when
+// stamina is the only thing blocking it) -- see scentVeilPromptEnabled.
+let scentVeilPromptActive = false;
 let windAssistActive = false;   // LUL-3149: previous frame's (running && movingAgainstWind), for edge-triggered start/end cues
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
@@ -1768,7 +1778,7 @@ function makePredator(kind){
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:rng()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0, standX:0, standZ:0,
-    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
+    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0, scentVeilReady:false,
     commitDir: null, commitT: 0, lastSteerState: 'roam', searchPath: null,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0, sightFlicker:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
@@ -1841,7 +1851,7 @@ function placePredators(){
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
     if(p.parked) p.g.visible = false;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
-    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.windPauseCooldownT=0; p.scentLock=0; p.scentCalls=0;
+    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.windPauseCooldownT=0; p.scentLock=0; p.scentCalls=0; p.scentVeilReady=false;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0; p.sightFlicker=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
@@ -2150,6 +2160,7 @@ function scentOnto(p){
   }
   p.alertedBy = null;   // LUL-1857: scent-driven, not the carried cry
   p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
+  p.scentVeilReady = true;   // LUL-5004: a fresh lock cycle re-arms the one-time-per-lock break
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
   predatorCall(p.kind, false, p);
@@ -2165,11 +2176,37 @@ function beaconOnto(p){
   if(p.state === 'chase') return;   // already chasing (any channel) -- don't re-trigger the cue/roar
   p.alertedBy = null;
   p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2); p.beaconHunterLocked = true;
+  p.scentVeilReady = true;   // LUL-5004: scentLock is the shared leash both channels arm -- see scentVeilTriggerActive's own comment (lib/game/scent.ts)
   p.eyeMat.color.setHex(BEACON_HUNTER_EYE_COLOR);   // cold blue-teal rim glow, visible under reducedMotion since it's a static color, not an animation
   if(!p.spotted) p.spotted = true;
   predatorCall(p.kind, false, p);
   beaconLockCue();
   logChronicle('beacon_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home) });
+}
+
+// LUL-5004: Scent Veil -- spends stamina to break every currently-ready
+// scent/beacon lock at once (KeyG / triggerTouchScentVeil below). Iterates
+// `predators` rather than a single target: scentVeilTriggerActive() (lib/game/
+// scent.ts) is evaluated with `.some()` across all of them for the HUD gate,
+// so a press while more than one predator is scent-locked breaks every one
+// it applies to in the same frame, not just the nearest -- there's no way for
+// the player to aim this at a single animal, and leaving the others locked
+// after a successful press would silently fail to deliver what the prompt
+// promised.
+// Only called once the caller has already confirmed scentVeilTriggerActive()
+// is true for at least one predator (movingAgainstWind is a single player-wide
+// condition, already satisfied) -- the per-predator check here is just
+// scentLock/scentVeilReady, the two fields that actually vary predator to
+// predator.
+function breakScentVeil(){
+  staminaCharge = Math.max(0, staminaCharge - SCENT_VEIL_STAMINA_COST);
+  for(const p of predators){
+    if(p.scentLock > 0 && p.scentVeilReady){
+      p.scentLock = 0;         // Design Q1: reset to 0, not paused -- the leash releases outright
+      p.scentVeilReady = false;   // Design Q2: one-time per lock cycle, re-armed only by the next scentOnto()/beaconOnto()
+    }
+  }
+  scentVeilBreakCue();
 }
 
 // ---- Sound: footstep noise as a third detection channel (LUL-39) ---------
@@ -3112,6 +3149,17 @@ on(window, 'keydown', e => {
     if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound) activateVeilOverload();
     else veilOverloadDeniedCue();
   }
+  // LUL-5004/LUL-4895: Scent Veil. Retargeted off `carrying` (permanently false in
+  // real play since LUL-2281, decisions/lul-2281-pickup-is-the-win-2026-09-09) to
+  // scentLock/movingAgainstWind/stamina, same shape as KeyQ's retarget just above.
+  // Bound to G, not F -- decisions/scent-veil-key-collision-retarget-2026-09-24: F
+  // is already the mist veil's own hold key (veilHeld below), and both are eligible
+  // in the same real-play frame (hunted + downwind + charge/stamina available), so
+  // holding F would be ambiguous between two unrelated systems.
+  if(e.code === 'KeyG' && playing && !paused && scentVeilPromptActive){
+    if(staminaCharge >= SCENT_VEIL_STAMINA_COST) breakScentVeil();
+    else scentVeilDeniedCue();
+  }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
   // LUL-4528: Rock -- Vantage Climb. Tap, not held (mirrors KeyH's shape above).
   if(e.code === 'KeyC' && playing && !paused) toggleRockClimb();
@@ -3787,6 +3835,9 @@ let hudState = {
   chargeVisible: false, chargeToken: 0,
   caveImmuneActive: false, caveImmuneTimeLeft: 0,
   veilOverloadActive: false, veilOverloadTimeLeft: 0, veilOverloadVisible: false,
+  // LUL-5004: Scent Veil -- #veilPrompt's visible/enabled pair (Q5: stays
+  // visible, disabled+grayed, when only stamina blocks it).
+  scentVeilPromptVisible: false, scentVeilPromptEnabled: false,
   // LUL-1089: contextual action prompts
   coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null,
   veilPromptVisible: false, veilPromptUrgent: false,
@@ -4364,7 +4415,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // hearing channel (`hearCry()`, `:2488`) from every other route into 'investigate'
     // (scent/footstep/sight all leave it null) -- state alone can't tell a test which
     // detection channel actually fired.
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, t: clock.elapsedTime };
+    // LUL-5004: scentLock/scentVeilReady added for the Scent Veil e2e coverage --
+    // real values off the real predator object, not a fake/QA-only shadow copy.
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime };
   };
   // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
   // stage a "first sighted" scenario -- effectiveDetect() applies
@@ -5633,6 +5686,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeVeilOverload = function(){
     return { chargeT: veilOverloadChargeT, usedThisRound: veilOverloadUsedThisRound, deniedCueCount: qaVeilOverloadDeniedCueCount };
   };
+  // [QA-HOOK] LUL-5004: raw Scent Veil state, mirrors qaProbeVeilOverload's shape --
+  // the denied cue's fire count so a spec can assert the blocked-tone refusal path
+  // without decoding WebAudio output, plus the unrounded stamina value pushState's
+  // HUD copy rounds to 2 decimals.
+  window.ForestEngine.qaProbeScentVeil = function(){
+    return { staminaCharge, deniedCueCount: qaScentVeilDeniedCueCount };
+  };
   // [QA-HOOK] LUL-4528: raw rock-climb state, mirrors qaProbeVeilOverload's shape.
   // Includes all three cues' fire counts so a spec can assert e.g. rockClimbEndCue
   // fired exactly once on countdown expiry (never lapse silently, never re-fire)
@@ -5820,7 +5880,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.variant = spec.variant;   // LUL-4897: additive, e.g. 'beaconHunter' for a wolf; undefined for every ordinary predator
       p.beaconHunterLocked = false;
       p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
-      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = 0; p.scentCalls = 0;
+      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = 0; p.scentCalls = 0; p.scentVeilReady = false;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0; p.sightFlicker = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
       p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;
@@ -5886,6 +5946,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       coverPromptVisible: true,
       heldThrowable: true,
       statusVisible: true, statusText: 'Hidden · 0.0s   (moving breaks cover)',
+      // LUL-5004: added so the overlap-safety check below actually exercises
+      // #veilPrompt too, not just the five rows this hook covered when it
+      // was named (LUL-2336, before veilOverload/climb/pickup/this one existed).
+      scentVeilPromptVisible: true, scentVeilPromptEnabled: true,
     });
   };
 }
@@ -6268,6 +6332,31 @@ function veilOverloadDeniedCue(){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.2);
+}
+// LUL-5004: Scent Veil cues -- distinct register from veilOverload's pair above
+// (that one sweeps sawtooth 140<->560Hz) so the two "something happened to my
+// veil" sounds stay distinguishable. qaScentVeilDeniedCueCount mirrors
+// qaVeilOverloadDeniedCueCount's counter-before-audio-gate idiom so the e2e
+// blocked-tone assertion works with soundOn:false too.
+let qaScentVeilDeniedCueCount = 0;
+function scentVeilBreakCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(440, t); o.frequency.exponentialRampToValueAtTime(880, t + 0.25);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.4);
+}
+function scentVeilDeniedCue(){
+  qaScentVeilDeniedCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(300, t); o.frequency.exponentialRampToValueAtTime(100, t + 0.2);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.26);
 }
 // LUL-3149: Wind-Assisted Evasion cues -- same rising-start/falling-end shape as
 // caveImmuneStartCue/EndCue above, but a shorter, quieter pair: this is a continuous
@@ -7192,6 +7281,14 @@ function stepFrame(dt, t, skipRender){
     // while already spotted in the open. `state === 'chase'` alone (no `p.hunt`)
     // per the CEO ruling's tighter option -- see the KeyQ handler's own comment.
     veilOverloadTriggerActive = predators.some(function(p){ return !p.inert && p.state === 'chase'; });
+    // LUL-5004: Scent Veil's own broad gate, same shape as veilOverloadTriggerActive
+    // just above -- movingAgainstWind is a player-wide signal (already computed this
+    // frame in the movement block), so only scentLock/scentVeilReady vary per
+    // predator. Deliberately excludes the stamina check (scentVeilPromptEnabled,
+    // below) so the row stays visible, rendered disabled+grayed, when stamina is
+    // the only thing blocking it (Q5).
+    scentVeilPromptActive = predators.some(function(p){ return !p.inert && scentVeilTriggerActive(p.scentLock, p.scentVeilReady, movingAgainstWind); });
+    const scentVeilPromptEnabled = staminaCharge >= SCENT_VEIL_STAMINA_COST;
     // LUL-1258: the mission's nav-cue hum, only while active -- reuses
     // childCry's tempo-carries-distance shape (Ship 1 spec S3d).
     // LUL-4958: `spatial !== false` -- a mission with no real target position (slackWater)
@@ -7290,6 +7387,8 @@ function stepFrame(dt, t, skipRender){
       veilOverloadActive: veilOverloadChargeT > 0,
       veilOverloadTimeLeft: veilOverloadChargeT,
       veilOverloadVisible: veilOverloadTriggerActive && veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound,
+      scentVeilPromptVisible: scentVeilPromptActive,
+      scentVeilPromptEnabled,
       mountedOnRock,
       rockClimbTimeLeft: rockClimbT,
       climbPromptVisible: !hidden && !mountedOnRock && lastRockMountSpot !== null,
@@ -7298,7 +7397,7 @@ function stepFrame(dt, t, skipRender){
       chapelSanctuaryPromptVisible,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false });
   }
   // the child's idle glow, outside the pickup cinematic.
   if(!baby.taken){
@@ -7711,6 +7810,14 @@ tick();
     if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound) activateVeilOverload();
     else veilOverloadDeniedCue();
   }
+  // LUL-5004: mobile has no physical KeyG to synthesize -- same guard/branch shape
+  // as the KeyQ/triggerTouchVeilOverload pair just above.
+  function triggerTouchScentVeil() {
+    const playing = entered && !won && !dead && !pickingUp;
+    if(!playing || paused || !scentVeilPromptActive) return;
+    if(staminaCharge >= SCENT_VEIL_STAMINA_COST) breakScentVeil();
+    else scentVeilDeniedCue();
+  }
   // LUL-529: touch analogue of Escape. Desktop's Escape only ever pauses --
   // resuming happens by re-acquiring pointer lock (a mousedown handler that's
   // desktop-only, see the `mode === 'desktop'` block above), which has no
@@ -7736,7 +7843,7 @@ tick();
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchClimb, triggerTouchShuffle, triggerTouchInteract,
            triggerTouchThrow,
-           triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload,
+           triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload, triggerTouchScentVeil,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
            setEmbers, purchase,
            // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.

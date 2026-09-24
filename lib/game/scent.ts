@@ -127,6 +127,33 @@ export function isMovingAgainstWind(
   return mvx * windX + mvz * windZ < 0;
 }
 
+// LUL-5004: Scent Veil placeholder cost -- fraction of the 0..1 staminaCharge
+// bar (lib/game/stamina.ts) one break costs. Economist retuning is a
+// deliberate follow-up per the ticket, not deferred correctness.
+export const SCENT_VEIL_STAMINA_COST = 0.3;
+
+/** Gates `#veilPrompt`'s visibility (and the KeyG/triggerTouchScentVeil
+ * handlers' broad eligibility check, mirroring veilOverloadTriggerActive's
+ * role for KeyQ) -- deliberately excludes the stamina check so an
+ * insufficient-stamina player still sees the prompt, rendered disabled+grayed
+ * (Q5: a refused input needs a positive tell, not just silence). `scentLock`
+ * is the shared leash both checkScent()/scentOnto() (real scent pickup) and
+ * beaconOnto() (LUL-4897 Beacon Hunter's wind-signal channel) arm, so this
+ * reads as "any channel currently has you leashed," not scent specifically.
+ * `scentVeilReady` is the one-time-per-lock-cycle flag armed alongside
+ * scentLock and cleared by breakScentVeil() -- without it, re-checking this
+ * every frame while scentLock decays toward 0 would let a second break spend
+ * stamina on the same lock. `movingAgainstWind` is the same per-frame signal
+ * isMovingAgainstWind() above already computes for the mist-veil's Wind-
+ * Assisted Evasion bonus -- reused, not re-derived (Q7/Q8 duplicate check). */
+export function scentVeilTriggerActive(
+  scentLock: number,
+  scentVeilReady: boolean,
+  movingAgainstWind: boolean,
+): boolean {
+  return scentLock > 0 && scentVeilReady && movingAgainstWind;
+}
+
 // Sibling to WIND_AGAINST_RADIUS_MULTIPLIER above (LUL-1724, same "-20% at wind" shape, but on
 // lifetime rather than deposit radius). LUL-2539/2485 cheap slice.
 export const WIND_HIGH_SPEED_LIFETIME_MULTIPLIER = 0.8; // CEO-accepted: 20% reduction
