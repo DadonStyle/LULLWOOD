@@ -630,6 +630,9 @@ export function hasLOS(
 // hide in low logs, it doesn't make sense"). Bramble is now the only member.
 export const HIDE_KINDS: Readonly<Record<string, boolean>> = { bramble: true };
 export const HIDE_RADIUS = 2.2;
+// LUL-3066: how far a successful hide-reposition shuffle moves the player within the
+// same cover footprint (clamped to stay inside hideSpot's own box -- see shuffleHide()).
+export const SHUFFLE_OFFSET = 1.0;
 
 // ---- which cover kinds a player/predator walks straight through (LUL-384,
 // LUL-1642, LUL-2311) ----------------------------------------------------

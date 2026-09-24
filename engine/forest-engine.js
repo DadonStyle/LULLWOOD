@@ -78,11 +78,12 @@ import {
   COVER_PROBE_HZ,
   PLAYER_COLLISION_RADIUS,
   brambleSnagSpeedMultiplier,
+  SHUFFLE_OFFSET,
 } from '@/lib/game/cover';
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { spawnClearanceScale } from '@/lib/game/spawnClearance';
-import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, NOISE_RADIUS_RUN_WIND, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S } from '@/lib/game/noise';
+import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, NOISE_RADIUS_RUN_WIND, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S, SHUFFLE_COOLDOWN_S } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
@@ -2855,10 +2856,12 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     deathDistanceFromHomeM = null,   // LUL-2461: set by triggerDeath(), read by qaProbeDeath() + the loss telemetry event
     lastDeathKillerIdx = null,   // LUL-2853: predators-array index of the instance that actually won triggerDeath()'s once-only guard
     hideKind = null,   // LUL-212: which hiding-spot kind the player is currently in ('bramble'), for the exit sound
+    hideSpot = null,   // LUL-3066: the full CoverAABB enterHide() was called with, for shuffleHide()'s footprint clamp
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
     secondaryCanComplete = false,   // LUL-1666: same shape, for the retrieval item
     canBuyVeilCharm = false;   // LUL-1210: recomputed every tick alongside canPickup, below
+let shuffleCooldownAccum = 0;   // LUL-3066: seconds remaining before the next shuffleHide() is allowed
 let heldThrowable = false;
 let throwablesReserve = 0;   // LUL-2351: Pocket Stones -- free re-arms of heldThrowable for this run
 let hideEventCount = 0;       // LUL-2307: bumped by enterHide() -- dismiss-on-interaction for the wolf/bear/lion/cover hints
@@ -2992,6 +2995,8 @@ on(window, 'keydown', e => {
     else veilOverloadDeniedCue();
   }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
+  // LUL-3066: hide-reposition shuffle -- only while already hidden, off cooldown.
+  if(e.code === 'KeyR' && playing && !paused && hidden && shuffleCooldownAccum <= 0) shuffleHide();
   // LUL-213: jumping stands you up first (same as any movement key already
   // does via the moveKey-breaks-hide check in tick()) -- a charge can still
   // catch a hidden player (STILL_DETECT_CUT never reaches 1), and jump is the
@@ -3223,7 +3228,7 @@ function thornSnagSound(){
   src.start(t); src.stop(t+0.18);
 }
 function enterHide(spot){
-  hidden = true; hideTime = 0; hideKind = spot.kind; hideEventCount++; leafRustle(true);
+  hidden = true; hideTime = 0; hideKind = spot.kind; hideSpot = spot; hideEventCount++; leafRustle(true);
   track({ event: 'feature_engagement', feature: 'hide', action: 'used' });
   logChronicle('hide', { kind: spot.kind });
   // LUL-4526: Thorn Snag -- sprint-diving into bramble costs a brief stumble (speed penalty
@@ -3271,7 +3276,7 @@ function exitHide(){
     thornSnagSound();
     logChronicle('bramble_snag', {});
   }
-  hidden = false; hideKind = null;
+  hidden = false; hideKind = null; hideSpot = null;
 }
 // LUL-2856: cover-degradation cheap slice. Fires every COVER_RUSTLE_INTERVAL_S once hideTime
 // clears COVER_RUSTLE_THRESHOLD_S (driven by the tick()-loop check added in step 6, not called
@@ -3296,6 +3301,79 @@ function toggleHidden(){
   if(hidden){ exitHide(); return; }
   const spot = findHideSpot(player.x, player.z);
   if(spot) enterHide(spot);
+}
+// LUL-3066: hide-reposition / wind-gated shuffle. Only ever called while `hidden` with
+// `hideSpot` set (the KeyR handler and triggerTouchShuffle() both guard on that already),
+// so this never has to handle "shuffle with no cover" itself.
+//
+// Direction: held movement keys/touch stick, same ix/iz -> fx/fz/rx/rz transform stepFrame()
+// uses for real movement (:6511-6512-ish, kept in sync by hand since this is a one-shot
+// teleport, not a per-frame integration), falling back to the player's facing direction when
+// nothing is held -- note held WASD/arrows still trip stepFrame()'s own "moving breaks cover"
+// check on the very next tick regardless of this function; the facing-direction fallback is
+// the only path that reliably keeps the player hidden after a shuffle.
+function shuffleHide(){
+  let ix = 0, iz = 0;
+  if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
+  if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
+  if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
+  if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
+  // hasTouchMove is stepFrame()'s own per-frame local (:6532) -- shuffleHide() runs
+  // outside that scope (a one-shot keydown/touch handler, not a per-tick call), so it
+  // recomputes the same >0.15 deadzone check directly off the module-level `touchMove`.
+  if(Math.hypot(touchMove.x, touchMove.z) > 0.15){ ix += touchMove.x; iz += touchMove.z; }
+  const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+  const rx =  Math.cos(player.yaw), rz = -Math.sin(player.yaw);
+  let mvx = fx*iz + rx*ix, mvz = fz*iz + rz*ix;
+  const mag = Math.hypot(mvx, mvz);
+  if(mag > 0){ mvx /= mag; mvz /= mag; } else { mvx = fx; mvz = fz; }   // facing-direction fallback
+  const movingAgainstWind = isMovingAgainstWind(mvx, mvz, windX, windZ);
+
+  // Candidate position, clamped into hideSpot's own footprint so a shuffle can never place
+  // the player outside the cover it started from (the box is finite, so a clamp always has
+  // somewhere valid to land -- never a silent no-op).
+  let nx = player.x + mvx * SHUFFLE_OFFSET, nz = player.z + mvz * SHUFFLE_OFFSET;
+  const ry = hideSpot.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
+  const dx = nx - hideSpot.x, dz = nz - hideSpot.z;
+  let lx = dx*co - dz*si, lz = dx*si + dz*co;
+  lx = Math.max(-hideSpot.hx, Math.min(hideSpot.hx, lx));
+  lz = Math.max(-hideSpot.hz, Math.min(hideSpot.hz, lz));
+  nx = hideSpot.x + lx*co + lz*si; nz = hideSpot.z + (-lx*si + lz*co);
+  if(blocked(nx, nz)) return;
+
+  player.x = nx; player.z = nz; hideTime = 0;
+  leafRustle(movingAgainstWind);   // muffled (2-burst) upwind, fuller (3-burst) downwind
+
+  // Same "only newly-alert a roaming predator" gate as enterHide()/rollCoverRustle() --
+  // silent upwind, alert-inducing downwind (LUL-3066's whole premise).
+  let alerted = 0;
+  if(movingAgainstWind){
+    for(const p of predators){
+      if(p.inert || p.state !== 'roam') continue;
+      if(checkThrowableNoise(Math.hypot(p.x - player.x, p.z - player.z), HIDE_ALERT_RADIUS)){ hearNoise(p); alerted++; }
+    }
+  }
+  logChronicle('hide_reposition', { alerted, movingAgainstWind });
+  rustleFlash = 1; rustleSting();
+  // LUL-3066 (deviation from the merged SPEC, declared in the PR): the SPEC asked for both
+  // a regular per-use caption AND a first-use HINT_PRIORITY entry, but (1) pushState()
+  // calls emitState() synchronously on every call (:3966) with no queue, so firing two in
+  // the same tick silently drops the first -- confirmed by reading the code, not assumed;
+  // and (2) HINT_PRIORITY's world-anchored hint system gates every entry on `!hidden`
+  // (baseHintEligible, :7158), which this feature's own precondition (hidden === true)
+  // can never satisfy -- adding 'hideReposition' there would be a dead trigger (exactly
+  // the Q1.5 class of bug: a condition cited as a trigger that a real code path never
+  // sets true). Folding first-use into the one caption slot, same shape enterHide()'s
+  // hideAlert / rollCoverRustle()'s coverRustle one-shot hints already use.
+  if(captionsOn){
+    if(!hintSeen('hideReposition')){
+      markHintSeen('hideReposition');
+      pushState({ caption: 'Press R to shift position within cover — silent upwind, noisy downwind.', captionId: ++captionSeq });
+    } else {
+      pushState({ caption: movingAgainstWind ? 'Shifted position — noisy' : 'Shifted position', captionId: ++captionSeq });
+    }
+  }
+  shuffleCooldownAccum = SHUFFLE_COOLDOWN_S;
 }
 function twinkle(vol, bright){
   const { ctx, conv, master } = audio, t = ctx.currentTime;
@@ -5499,7 +5577,7 @@ function pickup(){
   const next = beginPickup(runState());
   if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
   baby.taken = next.babyTaken; pickingUp = next.pickingUp;
-  pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; lastHideSpot = null; coverProbeAccum = 0;
+  pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found
   pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
@@ -5767,7 +5845,7 @@ function completeSecondarySequence(){
 function triggerDeath(kind, cause, killerIdx){
   const next = outcomeTriggerDeath(runState());
   if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
-  dead = next.dead; hidden = false; lastHideSpot = null; coverProbeAccum = 0; deathStart = clock.elapsedTime; deathShown = false;
+  dead = next.dead; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; deathStart = clock.elapsedTime; deathShown = false;
   lastDeathKillerIdx = killerIdx ?? null;   // LUL-2853: only stamped on the call that actually wins the guard above
   // LUL-2461: distance from home at the moment of death, not maxDistFromHome
   // (the run's furthest point) -- the Economist's blackout-pricing model
@@ -5821,7 +5899,7 @@ function restart(){
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   const fresh = freshRunState();
   won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; baby.taken = fresh.babyTaken;
-  hidden = false; hideTime = 0; hideKind = null; lastHideSpot = null; coverProbeAccum = 0; eyeH = CONFIG.eye; deathShown = false;
+  hidden = false; hideTime = 0; hideKind = null; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
@@ -6471,6 +6549,7 @@ function stepFrame(dt, t, skipRender){
   // so the vignette still fires as a positive tell without the motion.
   rustleFlash = Math.max(0, rustleFlash - dt*1.6);
   rustleFlashEl.style.opacity = motionReduced() ? (rustleFlash > 0 ? '0.15' : '0') : (rustleFlash*0.4).toFixed(3);
+  shuffleCooldownAccum = Math.max(0, shuffleCooldownAccum - dt);   // LUL-3066
   // LUL-1308: decays slower than spotFlash (1.6) -- spotFlash is a one-shot
   // "you were just spotted" event; this is a repeating ambient cue and should
   // linger a beat between piano notes rather than fully blink out.
@@ -6962,6 +7041,12 @@ tick();
     const playing = isPlaying(runState());
     if(playing && !paused) toggleHidden();
   }
+  // LUL-3066: touch parity for KeyR -- same guard shape as triggerTouchHide, plus the
+  // hidden/cooldown gate the KeyR keydown handler applies.
+  function triggerTouchShuffle() {
+    const playing = isPlaying(runState());
+    if(playing && !paused && hidden && shuffleCooldownAccum <= 0) shuffleHide();
+  }
   function triggerTouchInteract() {
     const playing = isPlaying(runState());
     if(!playing || paused) return;
@@ -7018,7 +7103,7 @@ tick();
   }
 
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
-           setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchInteract,
+           setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchShuffle, triggerTouchInteract,
            triggerTouchThrow,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
