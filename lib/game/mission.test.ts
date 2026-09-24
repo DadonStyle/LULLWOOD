@@ -385,9 +385,11 @@ test('checkMissionExpiry never un-expires', () => {
 test('eligibleMissionPool returns only untimed missions below MISSION_FAR_UNLOCK_WINS', () => {
   const progression = freshProgression();
   const pool = eligibleMissionPool(progression, 'lantern');
-  // LUL-4958: slackWater has no timeLimitSeconds either (untimed, like oakHollow), so it
-  // is eligible from run 1 too -- the SPEC's own design call gives it no win-gate.
-  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow', 'slackWater']);
+  // LUL-5069: slackWater is also untimed (like oakHollow), but is explicitly excluded from
+  // the pre-win-gate pool -- letting it through broke the LUL-3010 invariant ("a fresh player
+  // starts on the safe variant") and caused a real e2e regression (e2e/hints.spec.ts's
+  // landmark test) via a boot() that no longer deterministically drew oakHollow.
+  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow']);
 });
 
 test('eligibleMissionPool returns the full pool at MISSION_FAR_UNLOCK_WINS', () => {
@@ -408,9 +410,8 @@ test('eligibleMissionPool checks only the given difficulty tier', () => {
   const progression = freshProgression();
   progression.night.wins = MISSION_FAR_UNLOCK_WINS;
   const pool = eligibleMissionPool(progression, 'lantern');
-  // LUL-4958: slackWater has no timeLimitSeconds either (untimed, like oakHollow), so it
-  // is eligible from run 1 too -- the SPEC's own design call gives it no win-gate.
-  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow', 'slackWater']);
+  // LUL-5069: see the pre-win-gate test above -- slackWater stays excluded here too.
+  assert.deepEqual(pool.map((m) => m.kind), ['oakHollow']);
 });
 
 // ---- pickMission with an explicit pool (LUL-3010) ------------------------
