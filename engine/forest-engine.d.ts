@@ -548,6 +548,9 @@ declare global {
        * fields qaTeleportNearMission returns as a side effect, for a test that
        * only needs to read, not teleport. */
       qaProbeMission?: () => { kind: 'deepwater' | 'oakHollow'; status: 'active' | 'complete' | 'expired'; x: number; z: number } | null;
+      /** LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e staging.
+       * See engine/forest-engine.js's qaSetFogTideClock for the full rationale. */
+      qaSetFogTideClock?: (seconds: number) => void;
       /** LUL-3010: shrinks the current mission's own timeLimitSeconds so the real per-tick
        * checkMissionExpiry() trips on the next frame. No-op (null) if the mission has no
        * timer (near variant / already resolved). */

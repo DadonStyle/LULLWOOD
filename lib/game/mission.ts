@@ -53,7 +53,7 @@ export function pickHardBabyPosition(
   return { x, z };
 }
 
-export type MissionKind = 'deepwater' | 'oakHollow';
+export type MissionKind = 'deepwater' | 'oakHollow' | 'slackWater';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -72,6 +72,14 @@ export interface MissionTarget {
    * longer be completed (see checkMissionExpiry). Undefined = untimed, the
    * `deepwater` mission's original behaviour, still true for the near variant. */
   timeLimitSeconds?: number;
+  /** LUL-4958: false for a mission whose completion condition is not "stand within
+   * interactRadius of x/z" at all (the field's absence -- true -- covers every existing
+   * mission unchanged). Gates the per-frame mission-nav-cue hum in
+   * engine/forest-engine.js's tick() -- a mission with no real target position
+   * must not hum the player toward one. Does NOT need to gate canCompleteMission() itself:
+   * a non-spatial mission's interactRadius is 0, which already makes that path's strict
+   * `<` permanently false by construction. */
+  spatial?: boolean;
 }
 
 export const MISSION_POOL: readonly MissionTarget[] = [
@@ -88,6 +96,12 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // placed unconditionally every round like drownedCar and not referenced by any other
   // mission or mechanic.
   { kind: 'oakHollow', x: 22, z: 4, zoneRadius: 10, interactRadius: 4, landmarkKind: 'oak' },
+  // LUL-4958: no real target position -- completion is "pickup() accepted while fog-tide is
+  // active" (see canCompleteSlackWater below), checked at engine/forest-engine.js's pickup(),
+  // not through canCompleteMission(). x/z/zoneRadius/interactRadius are inert placeholders;
+  // interactRadius: 0 keeps the existing E-key/canCompleteMission() path permanently false
+  // for this kind (0 < 0 is false), spatial: false keeps the nav-cue hum from firing at (0,0).
+  { kind: 'slackWater', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false },
 ];
 
 export interface MissionState {
@@ -166,6 +180,16 @@ export function distToMissionTarget(mission: MissionState, x: number, z: number)
 /** Mirrors canPickUp's shape (lib/game/outcome.ts:46) -- strict `<`, same boundary contract. */
 export function canCompleteMission(mission: MissionState, distToTarget: number): boolean {
   return mission.status === 'active' && distToTarget < mission.target.interactRadius;
+}
+
+/** LUL-4958: the player accepted the pickup (beginPickup() transitioned, not just attempted
+ * it) while Fog Tide's active phase was live. Caller passes the engine's own fogTideActive
+ * boolean, read at the exact instant pickup() accepts -- not re-derived here, this module
+ * has no fog-tide import and should not gain one just to duplicate a boolean the engine
+ * already computes every frame (lib/game/fogTide.ts's fogTidePhase() is the source of truth
+ * for that boolean; this function only decides what to do with it). */
+export function canCompleteSlackWater(mission: MissionState, fogTideActive: boolean): boolean {
+  return mission.status === 'active' && mission.target.kind === 'slackWater' && fogTideActive;
 }
 
 export function completeMission(mission: MissionState): MissionState {
