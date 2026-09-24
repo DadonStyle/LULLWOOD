@@ -72,8 +72,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7373 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6568, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7406 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6599, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1520,16 +1520,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5942-6002, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6159-6200). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L5961-6021, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6190-6231). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6159-6200) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6167) rather than recomputed later, since `player.x/z` can move on
+  (L6190-6231) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6198) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1585,11 +1585,11 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3936),
-  reset to 0 on `enter()` (L4026) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3956),
+  reset to 0 on `enter()` (L4046) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L6711: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L6745: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1709,7 +1709,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6518-7309, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6549-7342, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2460,9 +2460,10 @@ it already fires correctly for the sprint-bonus window; both the `title` and the
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L7321 for the eligibility case), positioned below the danger hints
-and `'stamina'`, above `'cover'`/`'caveImmune'`. A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6123) and `windAssistEndCue()` (L6132), edge-triggers on the combined
+(`engine/forest-engine.js` L7225 for the eligibility case), positioned below the danger hints
+and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
+it). A rising/falling sine-sweep audio cue pair,
+`windAssistStartCue()` (L6142) and `windAssistEndCue()` (L6151), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -2476,3 +2477,60 @@ ground than sprinting with it over a fixed window; a wolf at a distance inside
 wind-assisted one; walking against the wind triggers neither the speed nor the noise bonus
 (scent-only, per LUL-3009); both updated copy strings; the `windAssist` hint caption appears
 once and not again after being marked seen.
+
+### LUL-4893: Predator Pause (wind-gated freeze on downwind-perpendicular chase)
+
+Scout proposal (LUL-4625), CEO-accepted (`decisions/predator-pause-roost-scare-dusk-stealth-accepted-2026-09-23.md`).
+Completes the wind-mastery arc started by LUL-3149 above: wind now also works against a
+chasing predator, not just for the player. Wiki spec `game/mechanics/predator-pause.md` was
+corrected 2026-09-24 after review found several fabricated citations (the original claimed a
+non-existent "Threat Beacon pulse visual" reuse and an `p.charge`-based trigger); the design
+below is the corrected one, verified against `release/next` @`772d087`.
+
+New pure decision helper `shouldWindPause(ux, uz, fx, fz, windX, windZ)` (`lib/game/predator.ts`,
+LUL-345 standard) fires when a predator's chase-approach direction is both perpendicular to the
+player's facing (`|dot(approach, facing)| < WIND_PAUSE_PERPENDICULAR_THRESHOLD` = 0.2) and
+downwind (`dot(approach, wind) > WIND_PAUSE_DOWNWIND_THRESHOLD` = 0.6). Wired into exactly one
+call site: the `p.state === 'chase'` fallback branch's plain pursuit line (`engine/forest-engine.js`,
+`else { desx=ux; desz=uz; speed=p.spec.speed; }`) -- charge/sightLock/alert/reroute/searchPath/hunt
+all sit ahead of this branch in `updatePredators()`'s priority chain and are untouched. A new
+`p.windPauseT` field (distinct from `p.alert`, which already has its own spot-lock-tell contract)
+holds the freeze for `WIND_PAUSE_DURATION` (0.3s) once triggered; `speed` is forced to 0 for that
+window, same shape as the `p.alert > 0` branch, and decays only inside this branch (mirrors
+`p.alert`'s own branch-scoped decay, not the unconditional `tickTimers()` decay `scentLock`/
+`chargeCooldown` use).
+
+No new visual asset (Q1 correction): reuses the predator's existing spot-lock rear-up/recovery
+pose for free by extending its gate, `const alerting = p.alert > 0 || p.windPauseT > 0;`. No new
+`EngineHudState`/`EngineActions` key (Q3/Q10) -- the freeze has no player-facing readout, matching
+`decisions/0010-wind-hud-overrides-no-readouts.md`.
+
+**Cue triple**
+- Visual: the reused rear-up/recovery pose above -- no new keyframes, no `reducedMotion` branch
+  needed (nothing new to simplify).
+- Audio: `windPulseCue()` (`engine/forest-engine.js`, near `windAssistStartCue()`), a 120->180Hz
+  rising sine chime, `soundOn`-gated, fired on the freeze's trigger edge. Distinct register from
+  `windAssistStartCue()`'s 440->660Hz pair so the two wind-driven effects (player sprint bonus vs.
+  predator freeze) stay audibly distinguishable.
+- Explanation: new `'windPulse'` entry in `HINT_PRIORITY`/`HINT_TEXT`, positioned directly below
+  `'windAssist'` (so the existing `HINTS_AHEAD_OF_WIND_ASSIST`-style pre-seed lists in other specs
+  don't need updating). One-shot `#hintCaption` pill, "wind pulse -- nearby predators pause their
+  sprint when moving across the wind", eligible while any predator has `windPauseT > 0`, dismissed
+  (and marked seen) once that returns to 0 -- same `caveImmune`/`veilOverload` timer-dismiss
+  precedent.
+
+**Known limitation (flagged, not fixed in this ticket):** the trigger has no re-arm cooldown. If
+the player and a paused predator's relative geometry stays exactly perpendicular+downwind for a
+full static window (both parties motionless), the freeze re-triggers the instant it decays,
+indefinitely. Not reachable in ordinary play (the player is essentially never perfectly stationary
+against a live predator for seconds at a stretch), and the one-shot hint caption's `hintSeen()`
+latch means the repeat re-trigger is silent after the first cue -- but worth a product call if a
+future difficulty pass wants predators to eventually push through it.
+
+**QA hooks**: `qaPredatorState(idx)` extended with `windPauseT` (existing hook, not a new
+`[QA-HOOK]` ticket per the corrected spec's Q11/Q12).
+
+Covered by `e2e/wind-pulse.spec.ts` (new): a perpendicular+downwind lion freezes for the full
+0.3s window (position provably unchanged) and resumes once the trigger condition no longer holds;
+a head-on (non-perpendicular) lion, even downwind, never freezes; the `windPulse` hint caption
+fires once on first trigger and never reshows.

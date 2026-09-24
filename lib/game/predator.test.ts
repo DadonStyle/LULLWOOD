@@ -17,6 +17,7 @@ import {
   shouldDowngradeChase,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
+  shouldWindPause,
   SIGHT_FLICKER_TIME,
   SNIFF_APPROACH_MARGIN,
   SNIFF_IMMUNITY_TIME,
@@ -27,6 +28,8 @@ import {
   stepFlankHold,
   stepSniffLoop,
   tickTimers,
+  WIND_PAUSE_DOWNWIND_THRESHOLD,
+  WIND_PAUSE_PERPENDICULAR_THRESHOLD,
 } from './predator.ts';
 import { ROAM_STEP_FRAC } from '../../engine/tuning.js';
 import { wrapCoord } from './wrap.ts';
@@ -599,4 +602,37 @@ test('predatorSeparationPush: two predators straddling the seam, close the wrap-
   const [px, pz] = predatorSeparationPush(-119, 0, 1, [{ x: 119.5, z: 0, rad: 1 }], SPAN);
   assert.ok(px !== 0, 'must detect the seam-adjacent overlap, not read raw ~238.5 as "far apart"');
   assert.equal(pz, 0);
+});
+
+// ---- shouldWindPause (LUL-4893) -----------------------------------------------
+
+test('shouldWindPause fires when approach is perpendicular to facing and downwind', () => {
+  // player facing (0,-1); predator approaching along (-1,0) -- 90 degrees off facing.
+  // wind blowing (-1,0), same direction the predator is travelling -- wind at its back.
+  assert.equal(shouldWindPause(-1, 0, 0, -1, -1, 0), true);
+});
+
+test('shouldWindPause does not fire when approach is head-on, even downwind', () => {
+  // predator approaching straight at the player's facing -- not perpendicular.
+  assert.equal(shouldWindPause(0, -1, 0, -1, 0, -1), false);
+});
+
+test('shouldWindPause does not fire when perpendicular but upwind (wind in the predator\'s face)', () => {
+  assert.equal(shouldWindPause(-1, 0, 0, -1, 1, 0), false);
+});
+
+test('shouldWindPause perpendicular threshold is exclusive at the boundary', () => {
+  // dot(approach, facing) exactly at the threshold magnitude must not fire.
+  const fx = 0, fz = -1;
+  const ux = WIND_PAUSE_PERPENDICULAR_THRESHOLD, uz = -Math.sqrt(1 - WIND_PAUSE_PERPENDICULAR_THRESHOLD ** 2);
+  assert.equal(shouldWindPause(ux, uz, fx, fz, -1, 0), false);
+});
+
+test('shouldWindPause downwind threshold is exclusive at the boundary', () => {
+  assert.equal(shouldWindPause(-1, 0, 0, -1, WIND_PAUSE_DOWNWIND_THRESHOLD, 0), false);
+});
+
+test('shouldWindPause fires just past the downwind threshold', () => {
+  // ux=-1 (approach direction); wind must point the same way (negative x) to read as "at its back".
+  assert.equal(shouldWindPause(-1, 0, 0, -1, -(WIND_PAUSE_DOWNWIND_THRESHOLD + 0.01), 0), true);
 });
