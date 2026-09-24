@@ -256,6 +256,8 @@ declare global {
         sightFlicker: number;
         /** LUL-4893: seconds remaining in an active Predator Pause wind-freeze, 0 otherwise. */
         windPauseT: number;
+        /** LUL-4996: seconds remaining in the post-freeze re-arm cooldown, 0 otherwise. */
+        windPauseCooldownT: number;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a

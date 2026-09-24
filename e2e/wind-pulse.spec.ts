@@ -4,6 +4,15 @@
 // resuming. See wiki game/mechanics/predator-pause.md (Q1.5/Q11 corrected
 // 2026-09-24) and decisions/predator-pause-roost-scare-dusk-stealth-accepted-2026-09-23.md.
 //
+// LUL-4996: the original ELEMENTS.md "Known limitation" claiming this was
+// "not reachable in ordinary play" was wrong -- a stationary player facing a
+// chasing predator (exactly what e2e/missions-fire-tower.spec.ts and
+// e2e/positional-hiding.spec.ts's catch-path cases script) leaves the
+// approach/facing/wind geometry unchanged forever, so the freeze re-triggered
+// the instant it decayed and froze the predator permanently, breaking both
+// specs' catch assertions. Fixed with a WIND_PAUSE_COOLDOWN (2.0s) re-arm
+// cooldown, `p.windPauseCooldownT` -- see the dedicated test below.
+//
 // Real, non-QA chase: qaBuildScene's `state: 'chase'` is the same precedented
 // staging predator-steering.spec.ts and sight-flicker.spec.ts already use to
 // drive a predator through the live `p.state === 'chase'` branch in
@@ -63,12 +72,9 @@ test.describe('Predator Pause (LUL-4893): wind-gated freeze for downwind-perpend
     // Flip the wind now, immediately after the trigger -- the decay branch
     // (`p.windPauseT > 0`) doesn't re-consult shouldWindPause, so the freeze
     // still runs its full remaining duration unaffected. This is what lets
-    // "resumes" be observed deterministically below: with the static
-    // geometry here (player never moves), leaving the wind downwind would
-    // have the trigger re-fire the instant windPauseT decays back to 0,
-    // freezing the predator forever -- a real run never hits this because
-    // the player is virtually never perfectly stationary against a live
-    // predator for seconds at a stretch.
+    // "resumes" be observed deterministically below regardless of the
+    // re-arm cooldown's own length (LUL-4996, see the dedicated cooldown
+    // test below for the case where the wind is left downwind instead).
     await qaHook(page, 'qaSetWindDirection', 1, 0);   // now upwind
 
     // Still inside the 0.3s window -- position must not have moved.
@@ -84,6 +90,47 @@ test.describe('Predator Pause (LUL-4893): wind-gated freeze for downwind-perpend
     const resumed = await qaHook(page, 'qaPredatorState', LION_IDX);
     expect(resumed.windPauseT).toBe(0);
     expect(Math.hypot(resumed.x - fx, resumed.z - fz), 'must resume closing distance once the wind no longer gates it').toBeGreaterThan(0.1);
+  });
+
+  test('LUL-4996: the re-arm cooldown stops the freeze retriggering forever when the geometry never changes', async ({ page }) => {
+    // Same rig as the first test above, but the wind is deliberately left
+    // downwind the whole time -- the exact static geometry (stationary
+    // player, unchanged facing/wind) that e2e/missions-fire-tower.spec.ts and
+    // e2e/positional-hiding.spec.ts's catch-path cases hit in real play.
+    // Pre-LUL-4996, `shouldWindPause` re-fired the instant `windPauseT`
+    // decayed to 0, so `windPauseT` would already read greater-than-zero
+    // again (not exactly 0) at the `afterFreeze` checkpoint below and the
+    // lion would never close any further distance -- the production bug.
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await qaHook(page, 'qaSetLookYaw', 0);   // facing (0,-1)
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'lion', x: 5, z: 0, state: 'chase' }] });
+    await qaHook(page, 'qaSetWindDirection', -1, 0);   // stays downwind throughout, never flipped
+
+    await qaHook(page, 'qaAdvance', 1, true);
+    const triggered = await qaHook(page, 'qaPredatorState', LION_IDX);
+    expect(triggered.windPauseT, 'must trigger the freeze').toBeGreaterThan(0);
+    expect(triggered.windPauseCooldownT, 'must arm the re-arm cooldown on trigger').toBeGreaterThan(0);
+
+    // Just past the full 0.3s freeze window (a few ticks of margin so the
+    // moved distance below is comfortably measurable) -- geometry is still
+    // exactly perpendicular+downwind, so this is the exact frame the bug
+    // retriggered on. dist starts at 5 and isCaught's contact range is only
+    // ~2.3 (rad 1.0 + CATCH_MARGIN 1.3), so this stays deliberately short --
+    // enough to prove sustained movement, not a full chase to the catch.
+    await qaHook(page, 'qaAdvance', stepsFor(0.36));
+    const afterFreeze = await qaHook(page, 'qaPredatorState', LION_IDX);
+    expect(afterFreeze.windPauseT, 'LUL-4996: must not refreeze the instant the first freeze decays, even with unchanged geometry').toBe(0);
+    expect(afterFreeze.windPauseCooldownT, 'the re-arm cooldown must still be counting down').toBeGreaterThan(0);
+    expect(afterFreeze.dist, 'must have resumed closing distance').toBeLessThan(triggered.dist - 0.1);
+
+    // A bit further, still well inside the 2.0s cooldown window -- must keep
+    // closing distance, not freeze again.
+    await qaHook(page, 'qaAdvance', stepsFor(0.1));
+    const stillClosing = await qaHook(page, 'qaPredatorState', LION_IDX);
+    expect(stillClosing.windPauseT, 'still inside the cooldown window, geometry still unchanged').toBe(0);
+    expect(stillClosing.dist, 'must keep closing distance through the whole cooldown window').toBeLessThan(afterFreeze.dist - 0.1);
   });
 
   test('a lion sprinting head-on (not perpendicular) never freezes, even downwind', async ({ page }) => {
@@ -122,19 +169,17 @@ test.describe('Predator Pause (LUL-4893): wind-gated freeze for downwind-perpend
     await expect(caption).toContainText('nearby predators pause their sprint when moving across the wind');
 
     // Freeze clears -> hint dismisses via the timer-expiry path (same
-    // caveImmune/veilOverload precedent) and is marked seen. The static
-    // scene here (player never moves, wind never changes) means the freeze
-    // itself keeps re-triggering every ~0.3s indefinitely (a known corner
-    // case of the trigger having no re-arm cooldown -- flagged, not fixed,
-    // in this ticket), but `hintSeen()`'s one-shot latch means that doesn't
-    // reshow the caption once it has dismissed once.
+    // caveImmune/veilOverload precedent) and is marked seen. `hintSeen()`'s
+    // one-shot latch means it doesn't reshow the caption once dismissed,
+    // regardless of whether the freeze itself ever retriggers (LUL-4996's
+    // re-arm cooldown means it now won't, for WIND_PAUSE_COOLDOWN=2.0s).
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
     probe = await qaHook(page, 'qaProbeHints');
     expect(probe.activeKey).not.toBe('windPulse');
     expect(probe.seen.windPulse).toBe(true);
 
-    // Advance through another full re-trigger cycle -- an already-seen hint
-    // must not reshow.
+    // Advance well past the window a second freeze cycle would have used --
+    // an already-seen hint must not reshow.
     await qaHook(page, 'qaAdvance', stepsFor(0.5));
     expect((await qaHook(page, 'qaProbeHints')).activeKey, 'an already-seen hint must not retrigger').not.toBe('windPulse');
   });
