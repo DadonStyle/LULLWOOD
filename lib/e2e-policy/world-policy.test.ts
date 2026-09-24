@@ -26,7 +26,6 @@ const E2E = join(ROOT, 'e2e');
 
 // Files allowed to load the full map, and why. Keep this list SHRINKING.
 export const FULLMAP_ALLOWLIST: Record<string, string> = {
-  'e2e/bog-zone.spec.ts': 'bog is zeroed in the micro preset',
   'e2e/map-seed.spec.ts': 'seeded generator reproduces the real layout',
   'e2e/lul211-founder-report.spec.ts': "founder's walk-into-cover replays on the pinned full layout",
   'e2e/prop-density.spec.ts': 'per-chunk caps over the full 8x8 grid',
@@ -36,7 +35,6 @@ export const FULLMAP_ALLOWLIST: Record<string, string> = {
   'e2e/predator-determinism.spec.ts': 'byte-identical traces across two full-map boots',
   'e2e/qa-probe-perf.spec.ts': 'boot-cost probe of the real map',
   'e2e/tree-pathing.spec.ts': "go-around against the pinned seed's trunk clusters",
-  'e2e/mobile/bog-zone.spec.ts': 'bog is zeroed in the micro preset (phone viewport)',
   'e2e/mobile/prop-density.spec.ts': 'per-chunk caps over the full grid (phone viewport)',
   'e2e/mobile/minimap.spec.ts': 'w2m clamping past the forest/bog seam (phone viewport)',
   'e2e/mission-landmark-sync.spec.ts': 'full-map-only mission/landmark sync path -- the micro world\'s mission target is a different, intentionally-decoupled synthetic position (LUL-2578)',

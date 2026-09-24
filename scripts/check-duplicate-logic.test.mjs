@@ -86,16 +86,17 @@ test('fail on purpose: injecting a real, currently-clean lib/game export as a du
   const { exports, violations: before } = checkDuplicateLogic({ engineSrc });
   assert.deepEqual(before, [], 'precondition: the real tree must be clean before injecting the fault');
 
-  // BOG_SPEED_MULTIPLIER (lib/game/bog.ts) is real, currently exported, and
-  // has zero engine consumer -- bogSpeedMultiplier() is the only thing the
-  // engine imports from bog.ts, and it wraps the constant internally. That
-  // makes it a live member of the "measured population" this gate scans,
-  // not a synthetic name the scanner would never have looked at.
-  const victim = exports.find((e) => e.name === 'BOG_SPEED_MULTIPLIER' && e.module === 'bog.ts');
-  assert.ok(victim, 'expected BOG_SPEED_MULTIPLIER to be part of the scanned lib/game export population');
+  // WIND_HIGH_SPEED_LIFETIME_MULTIPLIER (lib/game/scent.ts) is real, currently
+  // exported, and has zero engine consumer by name -- the engine never
+  // references it directly. That makes it a live member of the "measured
+  // population" this gate scans, not a synthetic name the scanner would
+  // never have looked at. (BOG_SPEED_MULTIPLIER filled this role until
+  // LUL-4676 deleted lib/game/bog.ts entirely.)
+  const victim = exports.find((e) => e.name === 'WIND_HIGH_SPEED_LIFETIME_MULTIPLIER' && e.module === 'scent.ts');
+  assert.ok(victim, 'expected WIND_HIGH_SPEED_LIFETIME_MULTIPLIER to be part of the scanned lib/game export population');
 
-  const faulted = engineSrc + '\nconst BOG_SPEED_MULTIPLIER = 0.5; // injected duplicate, LUL-641 self-test\n';
+  const faulted = engineSrc + '\nconst WIND_HIGH_SPEED_LIFETIME_MULTIPLIER = 0.5; // injected duplicate, LUL-641 self-test\n';
   const { violations: after } = checkDuplicateLogic({ engineSrc: faulted });
   assert.equal(after.length, 1);
-  assert.deepEqual(after[0], { name: 'BOG_SPEED_MULTIPLIER', module: 'bog.ts' });
+  assert.deepEqual(after[0], { name: 'WIND_HIGH_SPEED_LIFETIME_MULTIPLIER', module: 'scent.ts' });
 });
