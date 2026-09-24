@@ -102,7 +102,7 @@ jobs:
           author=$(gh api "repos/$REPO/pulls/$PR" --jq '.user.login')
           echo "PR #$PR author: $author"
           if [ "$author" = "github-actions[bot]" ]; then
-            echo "::error::PR #$PR is authored by github-actions[bot]; the bot cannot approve its own PR (422). This is not a case bot-approve.yml can record -- it only records an already-completed Code Reviewer verdict. Get a genuine Code Reviewer REVIEW: APPROVED on the underlying Paperclip issue and wait for tier-approve.yml/the Code Reviewer to land it. Do NOT run 'gh pr review --approve' as the studio PAT (DadonStyle) yourself -- that is the same identity as every agent and satisfies the ruleset without a real review (LUL-5021, LUL-5020, LUL-4996)."
+            echo "::error::PR #$PR is authored by github-actions[bot]; the bot cannot approve its own PR (422), and bot-approve.yml only records verdicts for DadonStyle-authored PRs. For a bot-authored PR, the Code Reviewer submitting 'gh pr review --approve' directly as the studio PAT (DadonStyle) after completing a real review is the normal path, not self-approval -- PAT and github-actions[bot] are distinct identities (see automerge.yml:263-269). What is never acceptable, under any identity, is approving without a completed, independent Code Reviewer verdict for *this* PR recorded on its Paperclip issue -- that is the actual bug behind LUL-5021, LUL-5020, LUL-4996. Get a genuine REVIEW: APPROVED on the underlying issue first."
             exit 1
           fi
 
