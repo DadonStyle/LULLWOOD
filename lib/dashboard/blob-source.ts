@@ -4,7 +4,7 @@
 // aggregate.ts does the rest in memory. Fine at current traffic; revisit
 // if volume ever makes this slow (note the limit, don't solve it now).
 
-import { list } from '@vercel/blob';
+import { get, list } from '@vercel/blob';
 import { parseRawEvent, type RawEvent } from './events.ts';
 
 export type Range = '24h' | '7d' | '30d';
@@ -41,7 +41,7 @@ export function enumerateDayPrefixes(since: number, until: number): string[] {
 }
 
 interface BlobRef {
-  url: string;
+  pathname: string;
 }
 
 async function listAllForPrefix(prefix: string): Promise<BlobRef[]> {
@@ -57,9 +57,13 @@ async function listAllForPrefix(prefix: string): Promise<BlobRef[]> {
 
 async function fetchAndParse(blob: BlobRef): Promise<RawEvent | null> {
   try {
-    const res = await fetch(blob.url);
-    if (!res.ok) return null;
-    const json = await res.json();
+    // Events are written with `access: 'private'` (LUL-4342, app/api/telemetry/route.ts)
+    // so a plain fetch of the object's URL 403s -- must go through `get()`,
+    // authenticated with the same BLOB_READ_WRITE_TOKEN the write used. Mirrors
+    // lib/suggestions/blob-source.ts's fetchAndParse.
+    const result = await get(blob.pathname, { access: 'private' });
+    if (!result || !result.stream) return null;
+    const json = await new Response(result.stream).json();
     return parseRawEvent(json);
   } catch {
     // One unreadable object must not fail the whole dashboard load.

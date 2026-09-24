@@ -24,6 +24,11 @@ mock.module('@vercel/blob', {
         .map((p) => ({ url: `fake-blob://${p}`, pathname: p }));
       return { blobs, hasMore: false };
     },
+    get: async (pathname: string) => {
+      const body = store.get(pathname);
+      if (body === undefined) return null;
+      return { stream: new Response(body).body, blob: {} };
+    },
   },
 } as Parameters<typeof mock.module>[1]);
 
@@ -47,14 +52,6 @@ function postEvent(payload: Record<string, unknown>): Promise<Response> {
 test('all 7 event types: POST -> Blob -> dashboard read -> non-trivial aggregates', async (t) => {
   process.env.BLOB_READ_WRITE_TOKEN = 'test-token';
   t.after(() => delete process.env.BLOB_READ_WRITE_TOKEN);
-
-  // node's fetch is real; point it at the fake blob store instead of the network.
-  t.mock.method(globalThis, 'fetch', async (url: string) => {
-    const pathname = url.replace('fake-blob://', '');
-    const body = store.get(pathname);
-    if (body === undefined) return { ok: false, json: async () => null } as Response;
-    return { ok: true, json: async () => JSON.parse(body) } as Response;
-  });
 
   const now = Date.now();
   const envelope = (event: string, extra: Record<string, unknown> = {}, anon_id = 'seed-anon') => ({

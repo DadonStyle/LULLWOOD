@@ -6,10 +6,11 @@
 // the telemetry dashboard this does not need a date-range window: it always
 // returns the whole queue.
 //
-// Unlike the telemetry dashboard (public blobs, read with a plain `fetch` of
-// the object's public URL), suggestions are written with `access: 'private'`
-// (route.ts, LUL-2993 founder review) so a reader must go through `get()`,
-// which is authenticated with the same BLOB_READ_WRITE_TOKEN the write used.
+// Both this store and the telemetry dashboard's (lib/dashboard/blob-source.ts)
+// are written with `access: 'private'` (route.ts, LUL-2993 founder review; and
+// LUL-4342 for telemetry), so a reader must go through `get()`, authenticated
+// with the same BLOB_READ_WRITE_TOKEN the write used -- a plain `fetch` of the
+// object's URL 403s.
 
 import { get, list } from '@vercel/blob';
 
