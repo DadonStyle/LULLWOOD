@@ -552,18 +552,50 @@ function findAssignedBacklogNoGate(backlogIssues) {
   return backlogIssues.filter(isAssignedBacklogNoGate);
 }
 
+// LUL-4868: a pending request_confirmation/ask_user_questions interaction with
+// a live continuationPolicy (LIVE_CONTINUATION_POLICIES, defined above for
+// isTombstone/LUL-2638) is a real wake path, same as blockedByIssueIds --
+// the question itself is what "is waiting on it", just expressed via
+// .interactions instead of the structural blockedByIssueIds field. Kind is
+// restricted to the two that represent a human-confirmation gate (unlike
+// hasLiveInteraction, which isTombstone deliberately applies to any kind) so
+// this stays narrow: a suggest_tasks interaction, for instance, doesn't mean
+// nobody has to touch blockedByIssueIds. Concrete repeat case: LUL-3058
+// ("FOUNDER ACTION: confirm BLOB_READ_WRITE_TOKEN Production scoping") has
+// had a live pending request_confirmation (continuationPolicy wake_assignee)
+// since 2026-09-22 and was re-flagged 4x in 2 days (LUL-4453/4623/4866) even
+// though nothing about it had changed -- each flag cost a CTO run to
+// re-verify the exact same live gate.
+const WAKE_GATE_INTERACTION_KINDS = new Set(['request_confirmation', 'ask_user_questions']);
+
+function hasPendingWakeAssigneeConfirmation(interactions) {
+  return (interactions ?? []).some(
+    (i) =>
+      i.status === 'pending' &&
+      WAKE_GATE_INTERACTION_KINDS.has(i.kind) &&
+      LIVE_CONTINUATION_POLICIES.has(i.continuationPolicy),
+  );
+}
+
 // ---- Alarm F: blocked issue with zero blockers -----------------------------
 // Founder directive LUL-3018, observed 6x (LUL-2570/2998/3009/2831/2818/2813).
-// Deliberately does NOT reuse isTombstone's suppressions -- a fresh heartbeat,
-// an active recovery action, or a pending interaction are reasons a *tombstone*
-// might still be about to move; none of them make `blocked` with an empty
-// blockedByIssueIds any less structurally wrong (nothing is waiting on it
-// either way). Excludes anything isTombstone() already flags, so Alarm B's
+// Deliberately does NOT reuse isTombstone's other suppressions -- a fresh
+// heartbeat, an active recovery action, or a live successfulRunHandoff are
+// reasons a *tombstone* might still be about to move; none of them make
+// `blocked` with an empty blockedByIssueIds any less structurally wrong
+// (nothing is waiting on it either way). A pending wake-gate confirmation
+// (hasPendingWakeAssigneeConfirmation, LUL-4868) is the one exception: it IS
+// something waiting on the ticket, it just isn't expressed as
+// blockedByIssueIds, so alarming on it produces zero actionable signal --
+// the assignee already has a live wake path and nothing needs to change on
+// the ticket. Excludes anything isTombstone() already flags, so Alarm B's
 // own STRANDED/SHIPPED wake ticket is the one that fires for that overlap --
 // this alarm only earns its keep on the cases Alarm B's suppressions hide.
 function isBlockedNoBlockers(issue) {
   if (issue.status !== 'blocked') return false;
-  return (issue.blockedBy ?? []).length === 0;
+  if ((issue.blockedBy ?? []).length !== 0) return false;
+  if (hasPendingWakeAssigneeConfirmation(issue.interactions)) return false;
+  return true;
 }
 
 // LUL-3311 (founder 2026-09-18): Alarm F must never fire on this detector's OWN
@@ -1423,6 +1455,7 @@ export {
   assignedBacklogNoGateWakeMarker,
   isBlockedNoBlockers,
   findBlockedNoBlockers,
+  hasPendingWakeAssigneeConfirmation,
   isOwnWakeTicket,
   blockedNoBlockersWakeMarker,
   authJsonPath,
