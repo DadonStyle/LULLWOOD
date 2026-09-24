@@ -1,5 +1,5 @@
 import { wrapCoord, wrapDelta, wrapCellIndex } from './wrap.ts';
-import { BRAMBLE_SNAG_SPEED_MUL } from '../../engine/tuning.js';
+import { BRAMBLE_SNAG_SPEED_MUL, LOG_CRAWL_ENTER_RADIUS } from '../../engine/tuning.js';
 
 // LUL-450 (resumes LUL-383b/LUL-387): geometry helpers for the hiding-
 // collision bug class, lifted out of engine/forest-engine.js so they are
@@ -800,4 +800,55 @@ export function rollCoverPropShape(roll: number, rng: RNG): CoverPropShape {
 // explicit-arg shape rather than reading engine state internally.
 export function brambleSnagSpeedMultiplier(brambleSnagT: number): number {
   return brambleSnagT > 0 ? BRAMBLE_SNAG_SPEED_MUL : 1;
+}
+
+// LUL-4527: finds the log the player is walking into. Mirrors findHideSpot()'s
+// neighbourhood()/rotation-local-coordinate pattern (cover.ts above) but filters
+// kind==='log' specifically — not HIDE_KINDS (empty for log since LUL-2311) and not
+// WALKABLE_KINDS (also true for bramble; this needs log's two-mouth geometry, which
+// bramble/rock/reed don't have). A log's long axis is always its local `hx` (QA_COVER_SHAPE's
+// own convention, engine/forest-engine.js's qaBuildScene block: "log always renders long
+// along x; callers wanting the other orientation pass ry = Math.PI/2") — mouths sit at
+// c.x ± cos(ry)*hx, c.z ± sin(ry)*hx in world space, the same rotation transform
+// findHideSpot()/insideHideFootprint() already use, just applied outward instead of inward.
+//
+// Trigger condition: the player's next movement step (mvx,mvz, already-normalized world-space
+// heading, computed by the caller from real input) must (a) put them within
+// LOG_CRAWL_ENTER_RADIUS of one of the log's two mouths, and (b) be heading generally inward
+// (dot product of the movement heading with the mouth->log-center direction > 0) — so walking
+// past a log's end without turning toward it never triggers a crawl.
+//
+// Returns the world-space unit direction from the entered mouth to the far mouth (dirX,dirZ)
+// and the far mouth's world point (exitX,exitZ), or null if no log qualifies. Ties (player
+// near two mouths of different logs at once) break the same way findHideSpot() does: nearest
+// candidate wins, first-encountered wins an exact tie.
+export function findLogCrawlEntry(
+  x: number, z: number, mvx: number, mvz: number,
+  coverGrid: SpatialGrid<CoverAABB>,
+  cell: number = CELL, span: number = Infinity,
+): { dirX: number; dirZ: number; exitX: number; exitZ: number } | null {
+  let best: { dirX: number; dirZ: number; exitX: number; exitZ: number } | null = null;
+  let bestD = Infinity;
+  for (const c of neighbourhood(coverGrid, x, z, cell, span)) {
+    if (c.kind !== 'log') continue;
+    const ry = c.ry ?? 0, co = Math.cos(ry), si = Math.sin(ry);
+    const mouths = [
+      { x: c.x + co * c.hx, z: c.z + si * c.hx },
+      { x: c.x - co * c.hx, z: c.z - si * c.hx },
+    ];
+    for (let i = 0; i < 2; i++) {
+      const near = mouths[i], far = mouths[1 - i];
+      const dx = wrapDelta(x, near.x, span), dz = wrapDelta(z, near.z, span);
+      const d = Math.hypot(dx, dz);
+      if (d >= LOG_CRAWL_ENTER_RADIUS || d >= bestD) continue;
+      const toCenterX = c.x - near.x, toCenterZ = c.z - near.z;
+      const toCenterLen = Math.hypot(toCenterX, toCenterZ) || 1;
+      const dot = (mvx * toCenterX + mvz * toCenterZ) / toCenterLen;
+      if (dot <= 0) continue;
+      const dirLen = Math.hypot(far.x - near.x, far.z - near.z) || 1;
+      bestD = d;
+      best = { dirX: (far.x - near.x) / dirLen, dirZ: (far.z - near.z) / dirLen, exitX: far.x, exitZ: far.z };
+    }
+  }
+  return best;
 }

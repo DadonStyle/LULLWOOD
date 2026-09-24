@@ -256,6 +256,12 @@ declare global {
         sightFlicker: number;
         /** LUL-4893: seconds remaining in an active Predator Pause wind-freeze, 0 otherwise. */
         windPauseT: number;
+        /** LUL-4897: 'beaconHunter' for that variant, undefined for every ordinary predator. */
+        variant?: 'beaconHunter';
+        /** LUL-4897: true while this predator is mid-chase via the wind-signal lock-on channel. */
+        beaconHunterLocked: boolean;
+        /** LUL-4996: seconds remaining in the post-freeze re-arm cooldown, 0 otherwise. */
+        windPauseCooldownT: number;
       } | null;
       /** LUL-213: forces the first `wolf`/`lion` straight into a charge telegraph,
        * deterministically (the real trigger is a per-frame probability roll, which a
@@ -294,6 +300,7 @@ declare global {
         x: number; z: number; yaw: number; pitch: number; mode: 'desktop' | 'mobile';
         jumping: boolean; paused: boolean; toggleRunOn: boolean; veilHeld: boolean;
         hidden: boolean; brambleSnagT: number;
+        inLogCrawl: boolean; logCrawlExitX: number; logCrawlExitZ: number;
       };
       /** LUL-388: places `kind` in a blind scent-chase (state='chase', scentLock=SCENT_TRACK_TIME)
        * within catch range (dist < rad+CATCH_MARGIN) of the player, with a real cover prop's
@@ -577,7 +584,7 @@ declare global {
       qaBuildScene?: (scene: {
         trees?: { x: number; z: number; s?: number }[];
         props?: { kind: 'log' | 'rock' | 'bramble'; x: number; z: number; ry?: number }[];
-        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string }[];
+        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string; variant?: 'beaconHunter' }[];
         child?: { x: number; z: number };
         home?: { x: number; z: number };
       }) => { trees: number; props: number; predators: number };
