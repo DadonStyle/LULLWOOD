@@ -115,4 +115,42 @@ test.describe('H hide toggle', () => {
     const after = await page.evaluate((i) => window.ForestEngine?.qaPredatorState?.(i) ?? null, idx);
     expect(after?.canSee, "lion must lose sight of the player once hidden inside the hide spot's footprint").toBe(false);
   });
+
+  // LUL-4526: Thorn Snag -- sprint-diving into bramble costs a brief stumble (brambleSnagT
+  // speed penalty); walking in costs nothing. Both halves staged back to back on the same
+  // micro scene so "walking in is free" is a real negative control, not just asserted from
+  // the code.
+  //
+  // LUL-4872 review: this test originally also staged a wolf and asserted it got alerted by
+  // a dedicated Thorn Snag noise burst (BRAMBLE_SNAG_NOISE_RADIUS=5). That assertion passed
+  // for the wrong reason -- enterHide()/exitHide() already run an unconditional predator-alert
+  // loop at HIDE_ALERT_RADIUS=20 on every hide entry/exit regardless of sprint (LUL-2547), and
+  // 5 < 20 always, so any predator close enough to trip the narrower radius was already caught
+  // by the wider one; the assertion would have passed identically with Thorn Snag's alert code
+  // deleted (coverage that can't fail). The redundant loop has been removed from the engine
+  // (see docs/ELEMENTS.md's LUL-4526 paragraph) -- brambleSnagT is the one observable this
+  // mechanic alone controls, so it's the only thing asserted below; no predator needed.
+  test('sprint-diving into bramble triggers Thorn Snag stumble (brambleSnagT); walking in costs nothing', async ({ page }) => {
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await enter(page);
+
+    await qaHook(page, 'qaBuildScene', { props: [{ kind: 'bramble', x: 10, z: 0 }] });
+    const spot = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.() ?? null);
+    if (spot === null) {
+      throw new Error('qaTeleportToHideSpot returned null -- no bramble hiding spot was found for this seed');
+    }
+
+    // walk-in first (control): no sprint key held.
+    await page.keyboard.press('KeyH');
+    let ps = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
+    expect(ps?.brambleSnagT ?? 0).toBe(0);
+    await page.keyboard.press('KeyH');   // exit, still no sprint
+
+    // sprint-dive: hold Shift through entry.
+    await page.keyboard.down('ShiftLeft');
+    await page.keyboard.press('KeyH');
+    ps = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
+    expect(ps?.brambleSnagT ?? 0).toBeGreaterThan(0);
+    await page.keyboard.up('ShiftLeft');
+  });
 });

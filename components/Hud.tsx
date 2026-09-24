@@ -303,7 +303,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
 // LUL-1258: display names for MISSION_POOL kinds -- a later ticket adding
 // M1/M3/M4/M5 extends this map, not the render logic below.
 const MISSION_NAMES: Record<MissionKind, string> = {
-  deepwater: 'Deepwater',
+  deepwater: 'Fire Tower',
   oakHollow: 'Oak Hollow',
 };
 
@@ -902,7 +902,7 @@ export default function Hud({
                 <br />
                 <b>Veil</b> &nbsp;·&nbsp; holds off what is hunting you
                 <br />
-                <b>Deepwater</b> tag, top-left &nbsp;·&nbsp; reach the marked zone for a bonus Embers payout on a successful run
+                <b>Fire Tower</b> tag, top-left &nbsp;·&nbsp; reach the marked zone for a bonus Embers payout on a successful run
               </>
             ) : (
               <>
@@ -917,7 +917,7 @@ export default function Hud({
                 <br />
                 <b>F11</b> / <b>Alt+Enter</b> — fullscreen
                 <br />
-                <b>Deepwater</b> tag, top-left — reach the marked zone for a bonus Embers payout on a
+                <b>Fire Tower</b> tag, top-left — reach the marked zone for a bonus Embers payout on a
                 successful run
               </>
             )}

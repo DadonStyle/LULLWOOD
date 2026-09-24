@@ -288,10 +288,20 @@ export const FORCE_HUNT_LOCK = 25;
 // activePerSpecies stays 3 and startHunting/minimap stay unchanged so
 // blackout remains recognizably the hardest tier (still ~1.6x night's
 // hazard-seconds by the same model, from the unchanged longer route alone).
+// LUL-4790: rustleThresholdMul/rustleIntervalMul scale lib/game/noise.ts's
+// COVER_RUSTLE_THRESHOLD_S/COVER_RUSTLE_INTERVAL_S (12s/5s, the 'night' baseline) the same
+// multiplier-on-a-base-value shape detectMul already uses against p.spec.detect -- not a
+// second source of truth, night's 1/1 keeps this preset's long-standing "every multiplier
+// is a no-op" property (see the comment above this object). lantern gets more grace (longer
+// threshold, slower interval) to match its forgiving detectMul/activePerSpecies; blackout
+// gets less (shorter threshold, faster interval) to match its startHunting/full-roster
+// pressure -- same "thematically consistent, not just a balance knob" reasoning the
+// LUL-1440 detectMul comment above already uses for this object. Resulting absolute values:
+// lantern 16s/6s, night 12s/5s (unchanged), blackout 8s/4s.
 export const DIFFICULTY_PRESETS = {
-  lantern:  { activePerSpecies: 1, detectMul: 0.7, glowMul: 1.6, startHunting: false, minimap: true },
-  night:    { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: false, minimap: true },
-  blackout: { activePerSpecies: 3, detectMul: 0.7, glowMul: 1,   startHunting: true,  minimap: false },
+  lantern:  { activePerSpecies: 1, detectMul: 0.7, glowMul: 1.6, startHunting: false, minimap: true,  rustleThresholdMul: 4/3, rustleIntervalMul: 6/5 },
+  night:    { activePerSpecies: 3, detectMul: 1,   glowMul: 1,   startHunting: false, minimap: true,  rustleThresholdMul: 1,   rustleIntervalMul: 1   },
+  blackout: { activePerSpecies: 3, detectMul: 0.7, glowMul: 1,   startHunting: true,  minimap: false, rustleThresholdMul: 2/3, rustleIntervalMul: 4/5 },
 };
 
 // LUL-213: once a charge resolves (either way) the same predator can't
@@ -313,3 +323,14 @@ export const SCALE = [523.25, 587.33, 659.25, 783.99, 880.0, 987.77];   // twink
 
 // ---- Death cutscene -------------------------------------------------------------
 export const CUT_END = 3.7;   // death video length; reveal the loss text at the end
+
+// ---- Bramble Thorn Snag (LUL-4526) ---------------------------------------------
+// Sprint-diving into the sole hide spot (bramble) costs a brief stumble; walking in stays
+// free. Pricing owned by the Game Economist in parallel (LUL-4526) -- these are the
+// proposal's example values, not final tuning; retune here, no call site changes needed.
+// LUL-4872 review: dropped a third tuning const, BRAMBLE_SNAG_NOISE_RADIUS -- it gated a
+// second predator-alert loop that could never fire independently of the pre-existing
+// unconditional HIDE_ALERT_RADIUS(20) hide-entry alert (5 < 20 always), so it was dead code
+// with misleading intent, not a real mechanic. See engine/forest-engine.js's enterHide().
+export const BRAMBLE_SNAG_DURATION_S = 0.3;   // seconds of reduced-speed "stumble" after a sprint entry/exit
+export const BRAMBLE_SNAG_SPEED_MUL = 0.4;    // movement-speed multiplier applied for that window

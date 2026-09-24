@@ -11,11 +11,11 @@ import {
   DEEPER_LUNGS_HOLD_SECONDS,
   DEEPER_LUNGS_COSTS,
   DEEPER_LUNGS_MAX_TIER,
-  MISSION_DEEPWATER_REWARD,
+  MISSION_FIREPOWER_REWARD,
   MISSION_OAKHOLLOW_REWARD,
   MISSION_REWARDS,
-  DEEPWATER_RETRIEVAL_BONUS,
-  DEEPWATER_SPEEDRUN_BONUS,
+  FIREPOWER_RETRIEVAL_BONUS,
+  FIREPOWER_SPEEDRUN_BONUS,
   purchase,
   nextCost,
   tierOf,
@@ -151,17 +151,17 @@ test('computeWinPayout defaults missionBonus to zero -- an unrelated win pays no
   assert.equal(withBonus.total, computeWinPayout(212, 50, 'lantern', 0).total);
 });
 
-test('completing M2 Deepwater and reaching home adds MISSION_DEEPWATER_REWARD on top of the win total', () => {
+test('completing M2 Deepwater and reaching home adds MISSION_FIREPOWER_REWARD on top of the win total', () => {
   const base = computeWinPayout(212, 50);
-  const withMission = computeWinPayout(212, 50, 'lantern', MISSION_DEEPWATER_REWARD);
-  assert.equal(withMission.total, base.total + MISSION_DEEPWATER_REWARD);
+  const withMission = computeWinPayout(212, 50, 'lantern', MISSION_FIREPOWER_REWARD);
+  assert.equal(withMission.total, base.total + MISSION_FIREPOWER_REWARD);
 });
 
 // ---- MISSION_REWARDS (LUL-3010) ------------------------------------------
 
 test('MISSION_REWARDS has exactly one entry per MissionKind, keyed correctly', () => {
   assert.deepEqual(Object.keys(MISSION_REWARDS).sort(), ['deepwater', 'oakHollow']);
-  assert.equal(MISSION_REWARDS.deepwater, MISSION_DEEPWATER_REWARD);
+  assert.equal(MISSION_REWARDS.deepwater, MISSION_FIREPOWER_REWARD);
   assert.equal(MISSION_REWARDS.oakHollow, MISSION_OAKHOLLOW_REWARD);
 });
 
@@ -181,31 +181,31 @@ test('computeWinPayout defaults secondaryBonus to zero -- a win with no secondar
   assert.equal(withBonus.total, computeWinPayout(212, 50, 'lantern', 0, 0).total);
 });
 
-test('completing the retrieval secondary adds DEEPWATER_RETRIEVAL_BONUS on top of the win total', () => {
+test('completing the retrieval secondary adds FIREPOWER_RETRIEVAL_BONUS on top of the win total', () => {
   const base = computeWinPayout(212, 50);
-  const withSecondary = computeWinPayout(212, 50, 'lantern', 0, DEEPWATER_RETRIEVAL_BONUS);
-  assert.equal(withSecondary.total, base.total + DEEPWATER_RETRIEVAL_BONUS);
+  const withSecondary = computeWinPayout(212, 50, 'lantern', 0, FIREPOWER_RETRIEVAL_BONUS);
+  assert.equal(withSecondary.total, base.total + FIREPOWER_RETRIEVAL_BONUS);
 });
 
-test('completing the speedrun secondary adds DEEPWATER_SPEEDRUN_BONUS on top of the win total', () => {
+test('completing the speedrun secondary adds FIREPOWER_SPEEDRUN_BONUS on top of the win total', () => {
   const base = computeWinPayout(212, 50);
-  const withSecondary = computeWinPayout(212, 50, 'lantern', 0, DEEPWATER_SPEEDRUN_BONUS);
-  assert.equal(withSecondary.total, base.total + DEEPWATER_SPEEDRUN_BONUS);
+  const withSecondary = computeWinPayout(212, 50, 'lantern', 0, FIREPOWER_SPEEDRUN_BONUS);
+  assert.equal(withSecondary.total, base.total + FIREPOWER_SPEEDRUN_BONUS);
 });
 
 test('missionBonus and secondaryBonus stack additively -- deepwater + retrieval both complete', () => {
   const base = computeWinPayout(212, 50);
-  const both = computeWinPayout(212, 50, 'lantern', MISSION_DEEPWATER_REWARD, DEEPWATER_RETRIEVAL_BONUS);
-  assert.equal(both.total, base.total + MISSION_DEEPWATER_REWARD + DEEPWATER_RETRIEVAL_BONUS);
+  const both = computeWinPayout(212, 50, 'lantern', MISSION_FIREPOWER_REWARD, FIREPOWER_RETRIEVAL_BONUS);
+  assert.equal(both.total, base.total + MISSION_FIREPOWER_REWARD + FIREPOWER_RETRIEVAL_BONUS);
 });
 
 test('secondaryBonus is scaled by the tier multiplier, same as missionBonus (LUL-1412)', () => {
-  const lantern = computeWinPayout(212, 50, 'lantern', 0, DEEPWATER_RETRIEVAL_BONUS);
-  const night = computeWinPayout(212, 50, 'night', 0, DEEPWATER_RETRIEVAL_BONUS);
+  const lantern = computeWinPayout(212, 50, 'lantern', 0, FIREPOWER_RETRIEVAL_BONUS);
+  const night = computeWinPayout(212, 50, 'night', 0, FIREPOWER_RETRIEVAL_BONUS);
   const base = computeWinPayout(212, 50, 'lantern');
   const baseNight = computeWinPayout(212, 50, 'night');
-  assert.equal(lantern.total - base.total, Math.round(DEEPWATER_RETRIEVAL_BONUS * 1.0));
-  assert.equal(night.total - baseNight.total, Math.round(DEEPWATER_RETRIEVAL_BONUS * 1.75));
+  assert.equal(lantern.total - base.total, Math.round(FIREPOWER_RETRIEVAL_BONUS * 1.0));
+  assert.equal(night.total - baseNight.total, Math.round(FIREPOWER_RETRIEVAL_BONUS * 1.75));
 });
 
 test('the secondary bonus is not payable on death -- computeDeathPayout has no secondaryBonus argument', () => {

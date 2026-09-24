@@ -44,6 +44,7 @@ import {
   assignedBacklogNoGateWakeMarker,
   isBlockedNoBlockers,
   findBlockedNoBlockers,
+  hasPendingWakeAssigneeConfirmation,
   isOwnWakeTicket,
   blockedNoBlockersWakeMarker,
   authJsonPath,
@@ -1566,8 +1567,10 @@ test('fileWakeTickets never assigns an assigned-backlog-no-gate wake ticket to a
 //
 // Founder directive LUL-3018, observed 6x (LUL-2570/2998/3009/2831/2818/2813):
 // status `blocked` with an empty `blockedByIssueIds` -- nothing is waiting on
-// it either way, so it never wakes automatically. Unconditional: no
-// heartbeat/recovery/interaction carve-out, unlike isTombstone.
+// it either way, so it never wakes automatically. No heartbeat/recovery
+// carve-out, unlike isTombstone. LUL-4868 added one narrow exception: a live
+// pending wake-gate interaction (hasPendingWakeAssigneeConfirmation) IS
+// something waiting on the ticket, just not via blockedByIssueIds.
 
 test('LUL-2570 shape: blocked + empty blockedBy + no tombstone-suppression signal -> alarm fires', () => {
   const issue = { identifier: 'LUL-2570', status: 'blocked', blockedBy: [], assigneeAgentId: null };
@@ -1587,6 +1590,74 @@ test('blocked with a real blockedBy entry -> not this alarm', () => {
 test('a status outside blocked is never this alarm, regardless of blockedBy', () => {
   const issue = { identifier: 'LUL-1', status: 'todo', blockedBy: [] };
   assert.equal(isBlockedNoBlockers(issue), false);
+});
+
+// LUL-4868: LUL-3058 ground truth ("FOUNDER ACTION: confirm
+// BLOB_READ_WRITE_TOKEN Production scoping"), captured live 2026-09-24 via
+// GET /api/issues/LUL-3058/interactions -- status blocked, blockedBy [], and
+// exactly this pending request_confirmation shape. Re-flagged 4x in 2 days
+// (LUL-4453/4623/4866) before this fix.
+test('hasPendingWakeAssigneeConfirmation: LUL-3058 ground truth shape -> true', () => {
+  const interactions = [
+    {
+      kind: 'request_confirmation',
+      status: 'expired',
+      continuationPolicy: 'wake_assignee',
+    },
+    {
+      kind: 'request_confirmation',
+      status: 'pending',
+      continuationPolicy: 'wake_assignee',
+    },
+  ];
+  assert.equal(hasPendingWakeAssigneeConfirmation(interactions), true);
+});
+
+test('hasPendingWakeAssigneeConfirmation: wake_assignee_on_accept also counts -- LUL-2638 live enum value', () => {
+  const interactions = [{ kind: 'ask_user_questions', status: 'pending', continuationPolicy: 'wake_assignee_on_accept' }];
+  assert.equal(hasPendingWakeAssigneeConfirmation(interactions), true);
+});
+
+test('hasPendingWakeAssigneeConfirmation: continuationPolicy none does not count', () => {
+  const interactions = [{ kind: 'request_confirmation', status: 'pending', continuationPolicy: 'none' }];
+  assert.equal(hasPendingWakeAssigneeConfirmation(interactions), false);
+});
+
+test('hasPendingWakeAssigneeConfirmation: resolved (non-pending) status does not count', () => {
+  const interactions = [{ kind: 'request_confirmation', status: 'accepted', continuationPolicy: 'wake_assignee' }];
+  assert.equal(hasPendingWakeAssigneeConfirmation(interactions), false);
+});
+
+test('hasPendingWakeAssigneeConfirmation: a pending suggest_tasks interaction does not count -- narrower than isTombstone\'s hasLiveInteraction', () => {
+  const interactions = [{ kind: 'suggest_tasks', status: 'pending', continuationPolicy: 'wake_assignee' }];
+  assert.equal(hasPendingWakeAssigneeConfirmation(interactions), false);
+});
+
+test('hasPendingWakeAssigneeConfirmation: no interactions at all -> false', () => {
+  assert.equal(hasPendingWakeAssigneeConfirmation(undefined), false);
+  assert.equal(hasPendingWakeAssigneeConfirmation([]), false);
+});
+
+test('LUL-3058 shape: blocked + empty blockedBy + live pending wake_assignee confirmation -> alarm does NOT fire', () => {
+  const issue = {
+    identifier: 'LUL-3058',
+    status: 'blocked',
+    blockedBy: [],
+    assigneeAgentId: 'agent-cto',
+    interactions: [{ kind: 'request_confirmation', status: 'pending', continuationPolicy: 'wake_assignee' }],
+  };
+  assert.equal(isBlockedNoBlockers(issue), false);
+});
+
+test('same shape but the confirmation already resolved -> alarm fires again', () => {
+  const issue = {
+    identifier: 'LUL-3058',
+    status: 'blocked',
+    blockedBy: [],
+    assigneeAgentId: 'agent-cto',
+    interactions: [{ kind: 'request_confirmation', status: 'accepted', continuationPolicy: 'wake_assignee' }],
+  };
+  assert.equal(isBlockedNoBlockers(issue), true);
 });
 
 test('findBlockedNoBlockers excludes anything isTombstone() already flags -- Alarm B owns that overlap', () => {

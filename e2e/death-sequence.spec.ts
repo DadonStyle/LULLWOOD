@@ -114,6 +114,35 @@ test.describe('death sequence (qaForceDeath / qaProbeDeath)', () => {
     await expect(page.locator('#deathScreen')).toBeHidden();
   });
 
+  // LUL-4860: playDeathVideo() (engine/forest-engine.js) used to call revealLoss()
+  // unconditionally whenever #deathVideo has no `src` -- bypassing the unskippable-
+  // first-death guarantee entirely, since that early-return path never checked
+  // cutsceneSkippable. #deathVideo always ships with src="/death.mp4" in markup
+  // (components/GameCanvas.tsx), so this only fires if the asset element is missing
+  // its src at runtime (e.g. a load failure clearing it) -- reproduced here directly
+  // by stripping the attribute before the first death.
+  test('first death is still unskippable even if #deathVideo has no src', async ({ page }) => {
+    test.setTimeout(30_000);
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    await page.evaluate(() => document.getElementById('deathVideo')?.removeAttribute('src'));
+
+    expect(await qaHook(page, 'qaForceDeath', 'wolf', 'hunt')).toBe(true);
+    await expect(page.locator('#deathScreen')).toBeVisible({ timeout: 5_000 });
+    expect((await qaHook(page, 'qaProbeDeath')).cutsceneSkippable).toBe(false);
+
+    // No src, no input at all yet -- must not have revealed itself immediately.
+    expect((await qaHook(page, 'qaProbeDeath')).deathShown).toBe(false);
+
+    // An input in flight during the unskippable cutscene must still not reveal early.
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(300);
+    expect((await qaHook(page, 'qaProbeDeath')).deathShown).toBe(false);
+
+    await expect(page.locator('#deathText')).toHaveCSS('opacity', '1', { timeout: 10_000 });
+  });
+
   // LUL-2461: distanceFromHomeAtDeathM feeds the same-name loss telemetry field
   // the Economist's LUL-1413 blackout-pricing model reads -- assert the engine
   // actually computes distance-from-home at the moment of death, not some other

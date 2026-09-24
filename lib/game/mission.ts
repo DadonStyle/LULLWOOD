@@ -29,15 +29,15 @@ export interface MissionTarget {
 }
 
 export const MISSION_POOL: readonly MissionTarget[] = [
-  // LUL-1483/LUL-2740: (x,z) here is the LANDMARKS `drownedCar` entry's *nominal*
-  // (pre-clearLandmarkSpot) position (engine/tuning.js:81) -- used only as the fallback
+  // LUL-1483/LUL-2740: (x,z) here is the LANDMARKS `fireTower` entry's *nominal*
+  // (pre-clearLandmarkSpot) position (engine/tuning.js:77) -- used only as the fallback
   // for CONFIG.missionScaleMul !== 1 (the micro QA world's intentionally-decoupled synthetic
   // target, docs/specs/lul-2578-mission-scale-micro-world.md) and as pickMission()'s return
   // value before generateMap() calls syncMissionTargetToLandmark(). On the full map
   // (missionScaleMul === 1) generateMap() always overwrites x/z with the landmark's real
   // post-placement position via `landmarkKind` below, so drift between this constant and
   // LANDMARKS can no longer produce an unreachable target -- see LUL-2740.
-  { kind: 'deepwater', x: -95, z: 46, zoneRadius: 20, interactRadius: 4, landmarkKind: 'drownedCar', timeLimitSeconds: 60 },
+  { kind: 'deepwater', x: -95, z: -95, zoneRadius: 20, interactRadius: 4, landmarkKind: 'fireTower', timeLimitSeconds: 60 },
   // LUL-3010: near/untimed variant, keyed to the `oak` LANDMARKS entry (engine/tuning.js:80),
   // placed unconditionally every round like drownedCar and not referenced by any other
   // mission or mechanic.
@@ -158,7 +158,7 @@ export const RETRIEVAL_ITEM = { x: 30, z: 175, interactRadius: 4 } as const;
 
 // LUL-1666: first-cut tuning value, not playtest-derived -- see spec S7 for
 // rationale. Retune here only; nothing else references the raw number.
-export const MISSION_DEEPWATER_SPEEDRUN_SECONDS = 240;
+export const MISSION_FIREPOWER_SPEEDRUN_SECONDS = 240;
 
 export interface RetrievalSecondaryData {
   kind: 'retrieval';
@@ -176,7 +176,7 @@ export interface MissionSecondaryState {
 
 function freshSecondary(kind: SecondaryKind): MissionSecondaryState {
   if (kind === 'retrieval') return { data: { kind: 'retrieval', retrieved: false } };
-  return { data: { kind: 'speedrun', timeLimitSeconds: MISSION_DEEPWATER_SPEEDRUN_SECONDS } };
+  return { data: { kind: 'speedrun', timeLimitSeconds: MISSION_FIREPOWER_SPEEDRUN_SECONDS } };
 }
 
 /** Mirrors canCompleteMission's shape/boundary contract exactly (strict `<`). */

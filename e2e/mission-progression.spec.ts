@@ -1,5 +1,5 @@
 // LUL-3010: coverage for the two mission variants -- oakHollow (near, untimed,
-// MISSION_OAKHOLLOW_REWARD) and deepwater (far, 60s timer, MISSION_DEEPWATER_REWARD) --
+// MISSION_OAKHOLLOW_REWARD) and deepwater (far, 60s timer, MISSION_FIREPOWER_REWARD) --
 // and the expiry path that forfeits the bonus without failing the run. See
 // docs/specs/lul-3010-mission-progression.md.
 //
