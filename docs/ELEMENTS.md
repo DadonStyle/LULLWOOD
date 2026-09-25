@@ -1821,17 +1821,20 @@ not final tuning.
 ### Missions (detour objectives)
 
 **What it is**
-- **Implemented (LUL-1259, widened LUL-3010).** `MISSION_POOL` (`lib/game/mission.ts`): a pool of
-  optional detour objectives, one active per run, drawn from the run's own seeded RNG (never
-  player-selected). Three members: `deepwater` — a fixed waypoint at the fire tower landmark
-  (`x: -95, z: -95`, matching `LANDMARKS`' `fireTower` entry, `engine/tuning.js:77`) —
-  `oakHollow` — a near waypoint at the `oak` landmark (`x: 22, z: 4`, `engine/tuning.js:80`) —
-  and `slackWater` (LUL-4958) — no world target at all, completes on pickup during Fog Tide's
-  active phase (see below). Per-run state (`mission: MissionState | null`) lives alongside
-  `baby` at `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every
-  other rng() consumer, so it never shifts the stream any existing seed/replay depends on.
+- **Implemented (LUL-1259, widened LUL-3010, LUL-4958, LUL-4900).** `MISSION_POOL`
+  (`lib/game/mission.ts`): a pool of optional detour objectives, one active per run, drawn from
+  the run's own seeded RNG (never player-selected). Five members: `deepwater` — a fixed waypoint
+  at the fire tower landmark (`x: -95, z: -95`, matching `LANDMARKS`' `fireTower` entry,
+  `engine/tuning.js:77`) — `oakHollow` — a near waypoint at the `oak` landmark (`x: 22, z: 4`,
+  `engine/tuning.js:80`) — `slackWater` (LUL-4958) — no world target at all, completes on pickup
+  during Fog Tide's active phase (see below) — `stoneMarker` (LUL-4900) — a fixed waypoint at
+  the `stoneMarker` landmark (`x: 100, z: -75`, `engine/tuning.js:65`) — and `radioMast`
+  (LUL-4900) — a fixed waypoint at the `radioMast` landmark (`x: 30, z: 175`,
+  `engine/tuning.js:68`). Per-run state (`mission: MissionState | null`) lives alongside `baby`
+  at `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every other rng()
+  consumer, so it never shifts the stream any existing seed/replay depends on.
 
-**Three variants (LUL-3010, LUL-4958)**
+**Five variants (LUL-3010, LUL-4958, LUL-4900)**
 - `oakHollow` — near (≈22.4m from spawn), untimed, `MISSION_OAKHOLLOW_REWARD` = 6 Embers.
   Always eligible.
 - `deepwater` — far (≈134.4m from spawn), `timeLimitSeconds: 60`, `MISSION_FIREPOWER_REWARD` = 8
@@ -1865,11 +1868,19 @@ not final tuning.
   instant `pickup()` is accepted (`pickingUp: true` excludes `isPlaying()`, and the `if(playing)`
   HUD-state gate nulls `missionKind`/`missionStatus` in the same tick) — the `●` complete glyph
   never actually renders for any mission kind, pre-existing behavior unchanged by this ticket.
+- `stoneMarker` and `radioMast` (LUL-4900, LUL-4646) — both fixed-landmark/timed like
+  `deepwater` (`timeLimitSeconds: 90` / `45`), so `eligibleMissionPool()`'s existing
+  `timeLimitSeconds == null` filter gates both behind the same `MISSION_FAR_UNLOCK_WINS`
+  threshold as `deepwater` with no new gating code. `MISSION_STONE_MARKER_REWARD` = 7 Embers,
+  `MISSION_RADIO_MAST_REWARD` = 3 Embers. Both reuse the existing generic `#missionPanel`,
+  interact-to-complete path, and `missionWaypointHum()`'s bearing-pan/proximity-pitch audio cue
+  (`engine/forest-engine.js:2482-2500`) with zero new HUD or audio code.
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
   (`lib/game/economy.ts`, `deepwater: MISSION_FIREPOWER_REWARD = 8`, `oakHollow:
-  MISSION_OAKHOLLOW_REWARD = 6`, `slackWater: MISSION_SLACKWATER_REWARD = 10`), passed as
+  MISSION_OAKHOLLOW_REWARD = 6`, `slackWater: MISSION_SLACKWATER_REWARD = 10`, `stoneMarker:
+  MISSION_STONE_MARKER_REWARD = 7`, `radioMast: MISSION_RADIO_MAST_REWARD = 3`), passed as
   `computeWinPayout()`'s optional fourth argument at the `finishPickup()` call site.
   **Forfeited on death or expiry** — `computeDeathPayout()` is
   unmodified, so reaching the mission target but dying before reaching home banks no bonus; a

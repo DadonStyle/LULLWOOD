@@ -53,7 +53,7 @@ export function pickHardBabyPosition(
   return { x, z };
 }
 
-export type MissionKind = 'deepwater' | 'oakHollow' | 'slackWater';
+export type MissionKind = 'deepwater' | 'oakHollow' | 'slackWater' | 'stoneMarker' | 'radioMast';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -102,6 +102,13 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // interactRadius: 0 keeps the existing E-key/canCompleteMission() path permanently false
   // for this kind (0 < 0 is false), spatial: false keeps the nav-cue hum from firing at (0,0).
   { kind: 'slackWater', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false },
+  // LUL-4900/LUL-4646: keyed to the `stoneMarker` LANDMARKS entry (engine/tuning.js:65) --
+  // same fixed-landmark/timed shape as deepwater, just a shorter round trip.
+  { kind: 'stoneMarker', x: 100, z: -75, zoneRadius: 10, interactRadius: 4, landmarkKind: 'stoneMarker', timeLimitSeconds: 90 },
+  // LUL-4900/LUL-4646: keyed to the `radioMast` LANDMARKS entry (engine/tuning.js:68) --
+  // reuses missionWaypointHum()'s existing bearing-pan/proximity-pitch cue for free
+  // (engine/forest-engine.js:2482-2500), no new audio code.
+  { kind: 'radioMast', x: 30, z: 175, zoneRadius: 8, interactRadius: 4, landmarkKind: 'radioMast', timeLimitSeconds: 45 },
 ];
 
 export interface MissionState {

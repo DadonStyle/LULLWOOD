@@ -14,6 +14,8 @@ import {
   MISSION_FIREPOWER_REWARD,
   MISSION_OAKHOLLOW_REWARD,
   MISSION_SLACKWATER_REWARD,
+  MISSION_STONE_MARKER_REWARD,
+  MISSION_RADIO_MAST_REWARD,
   MISSION_REWARDS,
   FIREPOWER_RETRIEVAL_BONUS,
   FIREPOWER_SPEEDRUN_BONUS,
@@ -162,10 +164,15 @@ test('completing M2 Deepwater and reaching home adds MISSION_FIREPOWER_REWARD on
 // ---- MISSION_REWARDS (LUL-3010) ------------------------------------------
 
 test('MISSION_REWARDS has exactly one entry per MissionKind, keyed correctly', () => {
-  assert.deepEqual(Object.keys(MISSION_REWARDS).sort(), ['deepwater', 'oakHollow', 'slackWater']);
+  assert.deepEqual(
+    Object.keys(MISSION_REWARDS).sort(),
+    ['deepwater', 'oakHollow', 'radioMast', 'slackWater', 'stoneMarker'],
+  );
   assert.equal(MISSION_REWARDS.deepwater, MISSION_FIREPOWER_REWARD);
   assert.equal(MISSION_REWARDS.oakHollow, MISSION_OAKHOLLOW_REWARD);
   assert.equal(MISSION_REWARDS.slackWater, MISSION_SLACKWATER_REWARD);
+  assert.equal(MISSION_REWARDS.stoneMarker, MISSION_STONE_MARKER_REWARD);
+  assert.equal(MISSION_REWARDS.radioMast, MISSION_RADIO_MAST_REWARD);
 });
 
 test('the mission bonus is not payable on death -- computeDeathPayout has no missionBonus argument', () => {

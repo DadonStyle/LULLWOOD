@@ -85,10 +85,22 @@ export const MISSION_OAKHOLLOW_REWARD = 6;
 // exploit, but priced at the floor as a watch-item per that doc.
 export const MISSION_SLACKWATER_REWARD = 10;
 
+// LUL-4900/LUL-4646: Stone Marker -- deepwater was retargeted to `fireTower` by LUL-4822
+// and now pays MISSION_FIREPOWER_REWARD (8), inverting the intended tier order against
+// this mission's original 9E. Priced at 7 as a placeholder that preserves
+// oakHollow (6) < stoneMarker (7) < deepwater (8); Game Economist ticket will confirm/adjust.
+export const MISSION_STONE_MARKER_REWARD = 7;
+
+// LUL-4900/LUL-4646: Radio Mast -- cheapest of the two LUL-4646 slices (shorter timer,
+// shorter round trip than Stone Marker).
+export const MISSION_RADIO_MAST_REWARD = 3;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
   slackWater: MISSION_SLACKWATER_REWARD,
+  stoneMarker: MISSION_STONE_MARKER_REWARD,
+  radioMast: MISSION_RADIO_MAST_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
