@@ -167,12 +167,26 @@ test.describe('scent acquisition behind cover (LUL-196)', () => {
   test('a fresh scent trail triggers acquisition even when player is behind cover (out of LOS)', async ({
     page,
   }) => {
-    // LUL-2329: left on the full map -- qaHideBehindCoverKind needs a real,
-    // naturally-generated non-tree cover prop, and this test's up-to-15s
-    // retry loop has no isolation against unrelated predators (qaBuildScene
-    // would guarantee isolation but also wipes the natural cover this hook
-    // depends on). See docs/specs/lul-2329-e2e-migrate-qaworld-micro.md.
-    await boot(page, { qaHooks: true });
+    // LUL-2329: qaHideBehindCoverKind needs a real, naturally-generated non-tree cover
+    // prop, and this test's up-to-15s retry loop has no isolation against unrelated
+    // predators (qaBuildScene would guarantee isolation but also wipes the natural cover
+    // this hook depends on). See docs/specs/lul-2329-e2e-migrate-qaworld-micro.md, which
+    // planned to leave this describe on the full map -- LUL-2377 (2026-09-11) flipped
+    // boot()'s qaWorld default to micro the same day and this call site was never updated
+    // to opt back into the full-size map explicitly, so it has been running on the (still
+    // naturally-generated, just smaller) micro map ever since; re-verified empirically
+    // (LUL-5146) that the micro map's cover has enough natural candidates for this hook
+    // without restoring the full-size map.
+    //
+    // LUL-5146: `qaHour` must be pinned for the same reason as e2e/beacon-hunter.spec.ts.
+    // qaHideBehindCoverKind's own LUL-2878 gate rejects any cover candidate whose
+    // separation doesn't fit inside effectiveDetect(p) (engine/forest-engine.js:4689),
+    // and effectiveDetect() folds in timeOfDayDetectMul(timeOfDay) -- without `?qaHour=`
+    // that reads the real wall-clock hour (forest-engine.js:334). At 'night' (0.8x) there
+    // were reliably zero valid candidates left ("qaHideBehindCoverKind must find a valid
+    // cover placement, Received: null" -- exactly local-qa's nightly signature); qaHour: 12
+    // keeps this deterministic regardless of what real hour the suite runs at.
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     // LUL-2539: seeds/reads a scent point without asserting an exact lifetime, but force wind
     // off anyway as cheap, consistent insurance against the new 50/50 roll.
