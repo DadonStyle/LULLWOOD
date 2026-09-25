@@ -1195,6 +1195,13 @@ function generateMap(seed){
   }
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
                   // reasoning as the LUL-374 buildGrid() call above
+  repositionBeaconHunterForMission(mission);   // LUL-5134: after placeCave(), not before --
+                                                 // placeCave()'s own comment says it "must
+                                                 // stay last, after mission"; this is a second,
+                                                 // separate rng consumer gated on a kind that
+                                                 // never existed before this ticket, so its
+                                                 // exact position past that point cannot
+                                                 // perturb any existing seed either way.
   // LUL-2249: hand off from "every populated chunk instantiated up front" to
   // the streamed ring, now that treeData/coverData are all at their final,
   // post-thin state. Drop whatever the PREVIOUS seed left live (those meshes
@@ -1928,6 +1935,43 @@ function relocateParkedHunter(pcx, pcz){
   target.parked = false; target.g.visible = true; target.g.position.set(x, 0, z);
   logChronicle('hunter_relocated', { kind: target.kind });
 }
+// LUL-5134: post-mission-draw-only repositioning for the Beacon Hunter Evasion mission.
+// placePredators() (:1819) runs BEFORE the mission is drawn (see the LUL-1258 comment at
+// generateMap()'s tail), so "spawn ~50u from the mission target" cannot be expressed as
+// MISSION_POOL data -- it needs this second placement pass. Only ever called when
+// mission.target.kind === 'beaconEvasion', so it can never perturb the tree/predator/mission
+// rng stream any other seed depends on -- it is new, additive rng consumption gated on a kind
+// that didn't exist before this ticket. Mirrors placePredators()'s own do/while shape
+// (:1848-1850) for the position draw, and its post-draw reset field list (:1850-1854)
+// verbatim, so this hunter starts this round exactly as "fresh" as it would from a normal
+// placePredators() draw, not mid-chase from wherever it was first placed.
+function repositionBeaconHunterForMission(mission){
+  if(mission.target.kind !== 'beaconEvasion') return;
+  const hunter = predators.find(p => p.variant === 'beaconHunter');
+  if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803)
+  let x, z, tries = 0;
+  do {
+    const ang = rng()*Math.PI*2;
+    x = mission.target.x + Math.cos(ang)*50;
+    z = mission.target.z + Math.sin(ang)*50;
+    tries++;
+  } while(blockedR(x, z, hunter.rad+0.5) && tries < 60);
+  hunter.x = x; hunter.z = z; hunter.wpx = x; hunter.wpz = z; hunter.vx = 0; hunter.vz = 0; hunter.yaw = rng()*Math.PI*2;
+  const [ccx, ccz] = chunkXZ(x, z), [pcx, pcz] = chunkXZ(player.x, player.z);
+  hunter.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
+  hunter.g.visible = !hunter.parked;
+  // Verbatim placePredators() reset list (:1850-1854) -- do not add fields beyond this list
+  // (e.g. beaconHunterLocked/eye color need no reset here: :2443 already clears both on the
+  // first tick whenever state !== 'chase', the same way a normal placePredators() restart
+  // relies on, with no explicit reset there either).
+  hunter.state='roam'; hunter.spotted=false; hunter.inv=''; hunter.sniffsLeft=0; hunter.sniffTimer=0; hunter.callTimer=0;
+  hunter.stuckT=0; hunter.trail=[]; hunter.trailT=0; hunter.reroute=0; hunter.hunt=DIFFICULTY_PRESETS[difficulty].startHunting; hunter.alert=0; hunter.windPauseT=0; hunter.windPauseCooldownT=0; hunter.scentLock=0; hunter.scentCalls=0; hunter.scentVeilReady=false;
+  hunter.packTimer=0; hunter.flankX=0; hunter.flankZ=0; hunter.sniffImmuneT=0; hunter.sightFlicker=0;
+  hunter.lkpX=0; hunter.lkpZ=0; hunter.lkpSweeps=0;
+  hunter.charge=null; hunter.chargeDirX=0; hunter.chargeDirZ=0; hunter.chargeCooldown=0; hunter.chargeRecoveryT=0;
+  hunter.gaveUpAt=null;
+  hunter.g.position.set(x, 0, z); hunter.g.rotation.set(0, hunter.yaw, 0);
+}
 // steer a desired direction around trees the predator would otherwise walk into
 // LUL-593: the angle-fallback scan itself now lives in lib/game/cover.ts
 // (pickAvoidDirection, unit tested there) -- this stays a thin wrapper that
@@ -2001,7 +2045,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // a fresh install), and a higher-priority key preempts a lower-priority one
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
-const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow',
+const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion',
   'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
@@ -2016,6 +2060,7 @@ const HINT_TEXT = {
   landmark:   'landmarks in the fog are safe to navigate by',
   deepwater:  'the fire tower — a bonus payout, but only if you reach it within the time limit',
   oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
+  beaconEvasion: 'the fire tower — a Beacon Hunter patrols the approach. veil (F) breaks its lock if it catches your scent on the wind',
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
@@ -7630,6 +7675,7 @@ function stepFrame(dt, t, skipRender){
         case 'landmark': return [true, null];
         case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active', null];
         case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active', null];
+        case 'beaconEvasion': return [!!mission && mission.target.kind === 'beaconEvasion' && mission.status === 'active', null];
         case 'wolf': case 'bear': case 'lion': {
           for(const p of predators){
             if(p.inert || p.kind !== key) continue;
@@ -7668,6 +7714,7 @@ function stepFrame(dt, t, skipRender){
         case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
+        case 'beaconEvasion': return missionCanComplete;
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
         default: return false;   // landmark: time-only

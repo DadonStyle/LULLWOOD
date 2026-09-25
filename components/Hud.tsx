@@ -348,6 +348,7 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   slackWater: 'Slack Water',
   stoneMarker: 'Stone Marker',
   radioMast: 'Radio Mast',
+  beaconEvasion: 'Beacon Evasion',
   flush: 'Flush',
 };
 

@@ -576,12 +576,12 @@ declare global {
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
        * is active. */
-      qaTeleportNearMission?: () => { kind: 'deepwater' | 'oakHollow'; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
+      qaTeleportNearMission?: () => { kind: MissionKind; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
       /** LUL-2884: sibling of qaTeleportNearMission, but places the player
        * already inside the mission target's interactRadius -- no wall-clock
        * movement needed to close the gap. Returns the target, or null if no
        * mission is active. */
-      qaTeleportAtMissionTarget?: () => { kind: 'deepwater' | 'oakHollow'; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
+      qaTeleportAtMissionTarget?: () => { kind: MissionKind; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
       /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
        * fields qaTeleportNearMission returns as a side effect, for a test that
        * only needs to read, not teleport. */

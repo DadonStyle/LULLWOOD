@@ -104,7 +104,15 @@ export async function boot(
     qaWorld?: 'micro' | 'full';
     qaNoRender?: boolean;
     qaHour?: number | null;
-    qaMissionKind?: 'deepwater' | 'oakHollow' | 'slackWater' | 'stoneMarker' | 'radioMast' | 'flush' | null;
+    qaMissionKind?:
+      | 'deepwater'
+      | 'oakHollow'
+      | 'slackWater'
+      | 'stoneMarker'
+      | 'radioMast'
+      | 'beaconEvasion'
+      | 'flush'
+      | null;
     qaRoostIndex?: number | null;
     seedWelcomeSplashSeen?: boolean;
   } = {},
