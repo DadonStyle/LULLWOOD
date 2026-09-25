@@ -15,6 +15,17 @@
 // match either -- both ordinary channels are dark, so any lock-on can only
 // be the beacon channel. Wind blows +Z; sprinting forward (0,-1) is directly
 // against it, and closes distance on the wolf at the same time.
+//
+// LUL-5146: `boot()` must pin `qaHour` here. effectiveDetect() (forest-engine.js:2381)
+// folds in timeOfDayDetectMul(timeOfDay), and without `?qaHour=` the engine falls back to
+// `new Date().getHours()` (forest-engine.js:334) -- the real wall-clock hour the test
+// happens to run at. 'night' (hours 0-4, 20-24) is a 0.8x detect multiplier, which shrinks
+// the ~9.7u detect range this file's whole geometry is built around to ~7.7u, under the
+// fixed distance-8 wolf placement -- the beacon channel's `dist < effectiveDetect(p) *
+// BEACON_HUNTER_LOCK_MUL` gate (forest-engine.js:2615) then never fires and the wolf stays
+// in 'roam'. That is the exact failure local-qa's nightly run (always inside that window)
+// hit every night, while any daytime run passed -- not an engine defect. qaHour: 12 matches
+// the pin e2e/predator-steering.spec.ts already uses for the same reason.
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
@@ -36,7 +47,7 @@ async function sprintAgainstWind(page: import('@playwright/test').Page, steps: n
 
 test.describe('Beacon Hunter (LUL-4897): wind-signal wolf lock-on, cheap slice', () => {
   test('locks onto a sprinting-against-wind player through cover, with no scent trail -- bypassing sight and scent', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaBuildScene', {
@@ -63,7 +74,7 @@ test.describe('Beacon Hunter (LUL-4897): wind-signal wolf lock-on, cheap slice',
   });
 
   test('give-up: once the scentLock decays with sight still blocked, the chase downgrades and the lock clears', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaBuildScene', {
@@ -95,7 +106,7 @@ test.describe('Beacon Hunter (LUL-4897): wind-signal wolf lock-on, cheap slice',
   });
 
   test('negative control: an ordinary wolf (no variant) does not lock on to the identical wind signal', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaBuildScene', {
