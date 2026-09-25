@@ -8,6 +8,15 @@
 // qaProbeTimeOfRun() (the engine-visible effect: timeOfRun, fogDensity,
 // hemiIntensity, detectMul, clock) rather than only the #timeOfRunClock DOM
 // text, per e2e/README.md's "assert the effect, not the DOM node" rule.
+//
+// LUL-4889 (Dusk Stealth, lion-only): duskLionDetectMul(runElapsed) is a
+// second, separate curve on the same live clock, kept in this file (not a
+// new dusk.spec.ts) per the ticket's own instruction -- one clock, one
+// coverage file. lionDetectMul is asserted the same way as detectMul above:
+// through qaProbeTimeOfRun(), the engine-visible effect, not a live
+// predator race (predators are cleared here exactly like the other two
+// tests -- see their LUL-2457 comment on why a mid-poll kill would silently
+// stop runElapsed and read as a dusk-stealth bug it isn't).
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook, advanceChunked, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
 
@@ -113,6 +122,49 @@ test.describe('day/night cycle (timeOfRun)', () => {
     const night = await qaHook(page, 'qaProbeTimeOfRun');
     expect(night.clock).toBe('9:00 PM');
     await expect(page.locator('#timeOfRunClock')).toContainText('9:00 PM');
+
+    expectNoConsoleErrors(errs);
+  });
+
+  test('lion-only dusk sight decay: lionDetectMul ramps 1.0 -> 0.5 from 90s to 150s runElapsed, ambient detectMul (wolf/bear) unaffected, duskLion hint fires once', async ({ page }) => {
+    // LUL-2802: see the first test's comment on the 45s->75s bump -- this test
+    // advances 160 fixed-dt steps total (7 ADVANCE_CHUNK(25) chunks) vs. the
+    // other tests' single 120-step (5-chunk) call, so it gets proportionally
+    // more worst-case budget: 90s.
+    test.setTimeout(90_000);
+    const errs = trackConsoleErrors(page);
+    await boot(page, { qaHooks: true });
+    await qaHook(page, 'qaSetFixedStep', 1);
+    await enter(page);
+    await qaHook(page, 'qaClearAllPredators'); // LUL-2457: see the ramp test's comment
+
+    const before = await qaHook(page, 'qaProbeTimeOfRun');
+    expect(before.lionDetectMul).toBe(1); // below DUSK_LION_SIGHT_START_S (90s)
+
+    await advanceChunked(page, 80);
+    const at80 = await qaHook(page, 'qaProbeTimeOfRun');
+    expect(at80.lionDetectMul).toBe(1); // still below 90s
+
+    await advanceChunked(page, 40); // runElapsed == 120s, the 90-150s ramp's midpoint
+    const at120 = await qaHook(page, 'qaProbeTimeOfRun');
+    expect(at120.lionDetectMul).toBeCloseTo(0.75, 5); // 1 + 0.5 * (0.5 - 1)
+    // Regression guard for the p.kind === 'lion' branch in timeOfRunDetectMulFor():
+    // detectMul (what wolf/bear still call) keeps following the unrelated ambient
+    // ramp -- it must not have been cut by the lion-only curve above.
+    expect(at120.detectMul).toBeCloseTo(1 + (120 / 120) * 0.3, 5);
+
+    await advanceChunked(page, 40); // runElapsed == 160s, past the 150s floor
+    const at160 = await qaHook(page, 'qaProbeTimeOfRun');
+    expect(at160.lionDetectMul).toBe(0.5); // clamped at DUSK_LION_SIGHT_MUL, not still falling
+
+    // Cue (Q15): the duskLion hint fires once, naming the lion specifically (not
+    // "predators'" -- wolf/bear are unaffected, see wiki/game/mechanics/dusk-stealth.md's
+    // Engineering Resolution). By 160s of an otherwise-empty micro world every
+    // earlier-priority self/panel-anchored hint (landmark, the drawn mission kind)
+    // has already had its 8s turn and been marked seen, so duskLion has reliably
+    // had a chance to claim the slot.
+    const hints = await qaHook(page, 'qaProbeHints');
+    expect(hints.seen.duskLion).toBe(true);
 
     expectNoConsoleErrors(errs);
   });

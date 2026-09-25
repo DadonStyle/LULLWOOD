@@ -190,7 +190,7 @@ import {
   TIME_OF_DAY_VISUALS,
   TIME_OF_DAY_AUDIO, timeOfDayDetectMul,
 } from '@/lib/game/timeOfDay';
-import { timeOfRunDetectMul } from '@/lib/game/dayNight';
+import { timeOfRunDetectMul, duskLionDetectMul, DUSK_LION_SIGHT_START_S } from '@/lib/game/dayNight';
 import { nearestLandmarkName } from '@/lib/game/chronicle';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
@@ -1986,7 +1986,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2013,6 +2013,7 @@ const HINT_TEXT = {
   veilOverload: 'burn all veil charge (Q) for a detection-proof escape',
   throwable:  'a stone — E to pick up, throw to break a chase',
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
+  duskLion:   "as night falls, the lion's sight weakens — darkness favors the quiet",
 };
 const HINT_KEY_PREFIX = 'lullwood:hints:';
 // LUL-2230's key, read (never written) as a migration fallback for the 'scent' entry
@@ -2378,13 +2379,19 @@ function findRockMountSpot(x,z){ return geoFindRockMountSpot(x,z,coverGrid,CELL,
 // resource vs. a free world event -- and nothing says they shouldn't
 // compound). LUL-1486: the tide amount is now sampled at the predator's own
 // position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
+// LUL-4889 (Dusk Stealth): lion replaces the ambient timeOfRunDetectMul(timeOfRun)
+// ramp with its own duskLionDetectMul(runElapsed) curve -- see dayNight.ts's
+// comment on why the two aren't stacked. Wolf/bear are unaffected.
+function timeOfRunDetectMulFor(p){
+  return p.kind === 'lion' ? duskLionDetectMul(runElapsed) : timeOfRunDetectMul(timeOfRun);
+}
 function effectiveDetect(p){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return 0;
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime });
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -4069,9 +4076,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // "assert the effect, not the DOM node" rule), not just the HUD's
   // #timeOfRunClock text. Adds no new state -- timeOfRun, hemiLight, and
   // timeOfRunDetectMul/formatTimeOfRunClock are already in scope in init().
+  // LUL-4889: detectMul stays the ambient ramp (still what wolf/bear use);
+  // lionDetectMul is the separate duskLionDetectMul(runElapsed) curve that
+  // replaces it for lion only -- see timeOfRunDetectMulFor() above.
   window.ForestEngine.qaProbeTimeOfRun = function(){
     return { timeOfRun, fogDensity: scene.fog.density, hemiIntensity: hemiLight.intensity,
-             detectMul: timeOfRunDetectMul(timeOfRun), clock: formatTimeOfRunClock(timeOfRun) };
+             detectMul: timeOfRunDetectMul(timeOfRun), lionDetectMul: duskLionDetectMul(runElapsed),
+             clock: formatTimeOfRunClock(timeOfRun) };
   };
 
   // LUL-2071: deterministic test clock. qaSetFixedStep() parks the real RAF
@@ -7611,6 +7622,7 @@ function stepFrame(dt, t, skipRender){
         case 'veilOverload': return [veilOverloadChargeT > 0, null];
         case 'throwable': return [throwableHintEligible, throwableHintAnchor];
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
+        case 'duskLion': return [runElapsed >= DUSK_LION_SIGHT_START_S, null];   // LUL-4889: time-only, no world anchor
         default: return [false, null];
       }
     }

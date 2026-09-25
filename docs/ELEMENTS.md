@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7788 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6840, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7800 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6851, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1110,6 +1110,25 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
   cue reads as responsive. Only applied to this calm-bed audio mix — a
   chase already wins the audio outright, so the tide never fights the hunt
   cue.
+- **As of `LUL-4889`** (Dusk Stealth, lion-only), the lion **replaces**
+  `timeOfRunDetectMul(timeOfRun)` in the product above with
+  `duskLionDetectMul(runElapsed)` (`lib/game/dayNight.ts`, unit tested — see
+  `lib/game/dayNight.test.ts`) via `timeOfRunDetectMulFor(p)`
+  (`engine/forest-engine.js`, just above `effectiveDetect()`/`canSee()`) —
+  wolf/bear are untouched and keep the ambient +30% ramp above unchanged.
+  Unlike that ramp, this one *cuts* sight range: 1.0 (no change) below
+  `DUSK_LION_SIGHT_START_S` (90s of real elapsed run time, not `timeOfRun`'s
+  0-1 fraction — it keeps moving past `TIME_OF_RUN_DURATION_S`=120s while
+  `timeOfRun` clamps at 1), linear down to `DUSK_LION_SIGHT_MUL` (0.5) at
+  `DUSK_LION_SIGHT_END_S` (150s+). Not stacked with the ambient ramp on
+  lion — see `wiki/game/mechanics/dusk-stealth.md`'s Engineering Resolution
+  for why (a +30% up curve fighting a new -50% down curve on the same
+  predator in the same window reads as incoherent). Cued once via the
+  `duskLion` `HINT_PRIORITY` entry (`engine/forest-engine.js`, `HINT_TEXT`)
+  firing the first time `runElapsed` crosses 90s: "as night falls, the
+  lion's sight weakens — darkness favors the quiet" — self/panel-anchored
+  (no world position, time-only trigger), same one-shot-per-install pattern
+  as every other hint key.
 - **As of `LUL-1486`**, both `fogTideBuild`/`fogTideAmount` above are sampled
   at **the player's position** (`fogTideBuildAt`/`fogTideAmountAt(player.x,
   player.z, ...)`, `lib/game/fogTide.ts`) rather than being whole-world
@@ -1611,15 +1630,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6072-6133, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6444-6485). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6083-6144, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6455-6496). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6444-6485) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6455-6496) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6452) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -2673,7 +2692,7 @@ engine flag is genuinely true.
 `running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
 re-deriving it (`engine/forest-engine.js` L6790) -- stacking on top of the LUL-3009 scent
 effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
-speed bonus applied to `spd` inside `stepFrame()` (L6796), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+speed bonus applied to `spd` inside `stepFrame()` (L6801), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
 footstep-radius reduction applied to `noiseRadius` (L6814), replacing the plain sprint radius
 only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
 is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
@@ -2684,7 +2703,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7607 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6370) and `windAssistEndCue()` (L6379), edge-triggers on the combined
+`windAssistStartCue()` (L6381) and `windAssistEndCue()` (L6390), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
