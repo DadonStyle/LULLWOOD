@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7762 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6820, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7788 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6840, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1611,16 +1611,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6068-6128, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6425-6466). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6072-6133, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6444-6485). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6425-6466) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6433) rather than recomputed later, since `player.x/z` can move on
+  (L6444-6485) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6452) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -2183,6 +2183,56 @@ See wiki `game/mechanics/chapel-sanctuary.md`.
 
 ---
 
+### Cold Walk (LUL-4960, M5 outbound-leg walk-only constraint)
+
+**What it is**
+- Opt-in run modifier: if `coldWalkOptIn` is set (Settings, persisted, applied at the next
+  `enter()`/`restart()`), the player forfeits a win-only `COLD_WALK_REWARD` (8, placeholder,
+  `lib/game/economy.ts:100`) the instant they sprint before accepting the child pickup.
+- State (`engine/forest-engine.js:597`): `coldWalkOptIn` (persisted setting), `coldWalkBroken`
+  (per-run, sticky once true, reset in `enter()`).
+- Pure predicate `coldWalkJustBroke()` (`lib/game/coldWalk.ts`) — true when opted in, not
+  already broken, not mid-pickup (`!pickingUp`), and `running` — checked every frame right
+  after `running` is computed (`engine/forest-engine.js:6812`, inside the `if(playing &&
+  !hidden)` movement block).
+- `setColdWalkOptIn()` (`engine/forest-engine.js:6470`) mirrors `setCaptions`/
+  `setReducedMotion`'s shape.
+- Reward folded into `computeWinPayout()`'s `total` as a 6th optional arg, `coldWalkBonus`
+  (`lib/game/economy.ts:116-131`), same additive-only shape as `missionBonus`/`secondaryBonus`
+  — no new `RunPayout` field. Computed in `finishPickup()` (`engine/forest-engine.js:6048`):
+  `(coldWalkOptIn && !coldWalkBroken) ? COLD_WALK_REWARD : 0`.
+
+**What it can do**
+- Sprinting is never blocked — opting in only changes whether the bonus survives.
+- The constraint window is `enter()` to `pickup()` (not `finishPickup()`): sprinting during the
+  ~11.3s pickup cinematic does not break it, since `coldWalkJustBroke()` gates on `!pickingUp`.
+
+**What it CANNOT do**
+- No countdown, no readout for `COLD_WALK_REWARD` itself — follows the `missionBonus`/
+  `secondaryBonus` precedent of no independent payout-screen line item.
+- Never pre-selected — defaults `false`, single checkbox, not a list (2026-09-01 acceptance).
+
+**Behaviours & logic**
+- Reset per-run in `enter()` (`engine/forest-engine.js`, next to `embersSpent = 0`):
+  `coldWalkBroken = false`.
+- HUD: `#coldWalkPanel` (`components/Hud.tsx:1036`), sibling of `#rockClimbPanel`/
+  `#veilOverloadPanel` outside `#panel` (stays visible with `adminMode` off, Q3), text swap
+  only — "Cold Walk — silent" / "Cold Walk — broken" — visible while `coldWalkActive`
+  (`coldWalkOptIn && !pickingUp`, per-frame `pushState`). Settings checkbox in the new "Run
+  modifiers" `<fieldset>` (`components/SettingsPanel.tsx`).
+- Cue: `coldWalkBrokenCue()` (`engine/forest-engine.js:6315`) — one-shot falling sine
+  (320→140Hz), gated by `soundOn`, plus a caption ("sprinted — the cold walk is broken") gated
+  by `captionsOn`, fired the frame the constraint first breaks.
+- No `qaXxx` hook — driven entirely by the real Settings/localStorage path and the real sprint
+  key, per the SPEC's Q1.5/Q11.
+
+**Collision & physics profile**
+- N/A — player-input-only mechanic, no world geometry.
+
+See `docs/specs/lul-4960-cold-walk.md`.
+
+---
+
 ## The interaction matrix
 
 Every pairwise combination of the 17 elements above, physical/geometric
@@ -2620,10 +2670,10 @@ it already fires correctly for the sprint-bonus window; both the `title` and the
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L7341 for the eligibility case), positioned below the danger hints
+(`engine/forest-engine.js` L7607 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6365) and `windAssistEndCue()` (L6374), edge-triggers on the combined
+`windAssistStartCue()` (L6370) and `windAssistEndCue()` (L6379), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

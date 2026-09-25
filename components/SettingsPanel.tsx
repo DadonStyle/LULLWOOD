@@ -20,6 +20,9 @@ interface PersistedSettings {
   invertY: boolean;
   reducedMotion: boolean;
   captionsOn: boolean;
+  // LUL-4960: M5 Cold Walk opt-in -- defaults false (never pre-selected, per the
+  // 2026-09-01 acceptance's own constraint), applied at the next enter()/restart().
+  coldWalkOptIn: boolean;
   // LUL-2230: default on -- see readSettings()'s `?? true` below, since an
   // absent/never-persisted key must not read as "off" the way the other
   // boolean settings above correctly default to falsy.
@@ -103,6 +106,7 @@ export default function SettingsPanel({
     if (typeof s.invertY === 'boolean') actions.setInvertY(s.invertY);
     if (typeof s.reducedMotion === 'boolean') actions.setReducedMotion(s.reducedMotion);
     if (typeof s.captionsOn === 'boolean') actions.setCaptions(s.captionsOn);
+    if (typeof s.coldWalkOptIn === 'boolean') actions.setColdWalkOptIn(s.coldWalkOptIn);
     // LUL-2230: default on, so a never-persisted key (new player, or an
     // existing player's first load after this ships) doesn't turn the trail
     // off -- only an explicit `false` in storage does.
@@ -141,6 +145,7 @@ export default function SettingsPanel({
       invertY: state.invertY,
       reducedMotion: state.reducedMotion,
       captionsOn: state.captionsOn,
+      coldWalkOptIn: state.coldWalkOptIn,
       scentTrailVisible: state.scentTrailVisible,
       hintsEnabled: state.hintsEnabled,
       highContrast,
@@ -153,6 +158,7 @@ export default function SettingsPanel({
     state.invertY,
     state.reducedMotion,
     state.captionsOn,
+    state.coldWalkOptIn,
     state.scentTrailVisible,
     state.hintsEnabled,
     highContrast,
@@ -263,6 +269,18 @@ export default function SettingsPanel({
         {/* Fog density already has an adjustable control -- the "Mist" slider
             in the main #panel (components/Hud.tsx) -- which is exactly the
             low-vision knob this ticket's spec asks for. Not duplicated here. */}
+      </fieldset>
+
+      <fieldset>
+        <legend>Run modifiers</legend>
+        <label className="radioRow">
+          <input
+            type="checkbox"
+            checked={state.coldWalkOptIn}
+            onChange={(e) => actions?.setColdWalkOptIn(e.target.checked)}
+          />
+          Cold Walk — never sprint before you find the child, for bonus Embers on a win
+        </label>
       </fieldset>
     </div>
   );
