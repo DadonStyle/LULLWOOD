@@ -85,10 +85,22 @@ export const MISSION_OAKHOLLOW_REWARD = 6;
 // exploit, but priced at the floor as a watch-item per that doc.
 export const MISSION_SLACKWATER_REWARD = 10;
 
+// LUL-4900/LUL-4646: Stone Marker -- deepwater was retargeted to `fireTower` by LUL-4822
+// and now pays MISSION_FIREPOWER_REWARD (8), inverting the intended tier order against
+// this mission's original 9E. Priced at 7 as a placeholder that preserves
+// oakHollow (6) < stoneMarker (7) < deepwater (8); Game Economist ticket will confirm/adjust.
+export const MISSION_STONE_MARKER_REWARD = 7;
+
+// LUL-4900/LUL-4646: Radio Mast -- cheapest of the two LUL-4646 slices (shorter timer,
+// shorter round trip than Stone Marker).
+export const MISSION_RADIO_MAST_REWARD = 3;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
   slackWater: MISSION_SLACKWATER_REWARD,
+  stoneMarker: MISSION_STONE_MARKER_REWARD,
+  radioMast: MISSION_RADIO_MAST_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
@@ -99,6 +111,12 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
 // them here without a MISSION_POOL entry to key them off.
 export const FIREPOWER_RETRIEVAL_BONUS = 8;
 export const FIREPOWER_SPEEDRUN_BONUS = 10;
+
+// LUL-4960: M5 Cold Walk's win-only bonus -- independent of MISSION_REWARDS (Cold Walk is
+// not a MissionKind, decisions/m5-cold-walk-retarget-2026-09-24's architecture note), same
+// additive-only shape as secondaryBonus below. NOT FINAL -- placeholder pending Game
+// Economist repricing for the outbound-leg tension profile (see the SPEC's Design call).
+export const COLD_WALK_REWARD = 8;
 
 // LUL-1210: Stone Marker veil-charm, priced against Deeper Lungs I (120) so it reads as
 // worse value than saving -- game/economy/veil-charm-price. 125-unit landmark distance ->
@@ -119,6 +137,7 @@ export function computeWinPayout(
   tier: DifficultyTier = 'lantern',
   missionBonus = 0,
   secondaryBonus = 0,
+  coldWalkBonus = 0,
 ): RunPayout {
   const mult = TIER_MULTIPLIERS[tier].win;
   const cappedDepth = Math.min(computeDepth(maxDistFromHome), 62); // caps blackout's 2.0x win multiplier at 476E (post-LUL-1806 CARRIED/RESCUE); inert for lantern/night, whose max depth is 48
@@ -126,7 +145,7 @@ export function computeWinPayout(
   const survival = Math.round(computeSurvival(survivedSeconds) * mult);
   const carried = Math.round(CARRIED * mult);
   const rescue = Math.round(RESCUE * mult);
-  const total = depth + survival + carried + rescue + Math.round(missionBonus * mult) + Math.round(secondaryBonus * mult);
+  const total = depth + survival + carried + rescue + Math.round(missionBonus * mult) + Math.round(secondaryBonus * mult) + Math.round(coldWalkBonus * mult);
   return { depth, survival, carried, rescue, spent: 0, total };
 }
 

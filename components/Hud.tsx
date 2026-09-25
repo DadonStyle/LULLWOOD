@@ -79,6 +79,11 @@ export interface EngineHudState {
   chapelSanctuaryActive: boolean;
   chapelSanctuaryChargeT: number;
   chapelSanctuaryPromptVisible: boolean;
+  // LUL-4960: M5 Cold Walk -- coldWalkOptIn is the persisted setting; coldWalkActive/
+  // coldWalkBroken drive #coldWalkPanel, same shape as caveImmuneActive/veilOverloadActive.
+  coldWalkOptIn: boolean;
+  coldWalkActive: boolean;
+  coldWalkBroken: boolean;
   // LUL-3150: carry-leg panic button -- burns all veil charge for a detection-proof window.
   veilOverloadActive:  boolean;
   veilOverloadTimeLeft: number;
@@ -228,6 +233,7 @@ export interface EngineActions {
   setInvertY: (v: boolean) => void;
   setReducedMotion: (v: boolean) => void;
   setCaptions: (v: boolean) => void;
+  setColdWalkOptIn: (v: boolean) => void;
   // LUL-1043
   setEmbers: (balance: number, tiers: Record<string, number>) => void;
   purchase: (id: string) => void;
@@ -280,6 +286,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   chapelSanctuaryActive: false,
   chapelSanctuaryChargeT: 0,
   chapelSanctuaryPromptVisible: false,
+  coldWalkOptIn: false,
+  coldWalkActive: false,
+  coldWalkBroken: false,
   veilOverloadActive: false,
   veilOverloadTimeLeft: 0,
   veilOverloadVisible: false,
@@ -337,6 +346,8 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   deepwater: 'Fire Tower',
   oakHollow: 'Oak Hollow',
   slackWater: 'Slack Water',
+  stoneMarker: 'Stone Marker',
+  radioMast: 'Radio Mast',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the
@@ -1026,6 +1037,16 @@ export default function Hud({
       {state.mountedOnRock && (
         <div id="rockClimbPanel">
           Exposed · {Math.ceil(state.rockClimbTimeLeft)}s
+        </div>
+      )}
+
+      {/* LUL-4960: M5 Cold Walk -- sibling of #rockClimbPanel/#veilOverloadPanel, same
+          always-visible-while-active treatment, OUTSIDE #panel so it stays visible with
+          adminMode off (Q3). Text swap (not a countdown) is the only visual cue -- see
+          the SPEC's ## Cues, "static text swap, no animation to reduce". */}
+      {state.coldWalkActive && (
+        <div id="coldWalkPanel">
+          Cold Walk — {state.coldWalkBroken ? 'broken' : 'silent'}
         </div>
       )}
 

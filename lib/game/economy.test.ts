@@ -14,9 +14,12 @@ import {
   MISSION_FIREPOWER_REWARD,
   MISSION_OAKHOLLOW_REWARD,
   MISSION_SLACKWATER_REWARD,
+  MISSION_STONE_MARKER_REWARD,
+  MISSION_RADIO_MAST_REWARD,
   MISSION_REWARDS,
   FIREPOWER_RETRIEVAL_BONUS,
   FIREPOWER_SPEEDRUN_BONUS,
+  COLD_WALK_REWARD,
   purchase,
   nextCost,
   tierOf,
@@ -161,10 +164,15 @@ test('completing M2 Deepwater and reaching home adds MISSION_FIREPOWER_REWARD on
 // ---- MISSION_REWARDS (LUL-3010) ------------------------------------------
 
 test('MISSION_REWARDS has exactly one entry per MissionKind, keyed correctly', () => {
-  assert.deepEqual(Object.keys(MISSION_REWARDS).sort(), ['deepwater', 'oakHollow', 'slackWater']);
+  assert.deepEqual(
+    Object.keys(MISSION_REWARDS).sort(),
+    ['deepwater', 'oakHollow', 'radioMast', 'slackWater', 'stoneMarker'],
+  );
   assert.equal(MISSION_REWARDS.deepwater, MISSION_FIREPOWER_REWARD);
   assert.equal(MISSION_REWARDS.oakHollow, MISSION_OAKHOLLOW_REWARD);
   assert.equal(MISSION_REWARDS.slackWater, MISSION_SLACKWATER_REWARD);
+  assert.equal(MISSION_REWARDS.stoneMarker, MISSION_STONE_MARKER_REWARD);
+  assert.equal(MISSION_REWARDS.radioMast, MISSION_RADIO_MAST_REWARD);
 });
 
 test('the mission bonus is not payable on death -- computeDeathPayout has no missionBonus argument', () => {
@@ -214,6 +222,40 @@ test('the secondary bonus is not payable on death -- computeDeathPayout has no s
   // dying before reaching home forfeits the secondary bonus entirely, same
   // rule and same mechanism as the mission bonus above (S2's forfeiture rule
   // extended to secondaries by LUL-1666).
+  const p = computeDeathPayout(212, 50, 78);
+  assert.equal(p.carried, 0);
+  assert.equal(p.rescue, 0);
+});
+
+// ---- Cold Walk (LUL-4960) ------------------------------------------------
+
+test('computeWinPayout defaults coldWalkBonus to zero -- existing call sites are unaffected', () => {
+  const withBonus = computeWinPayout(212, 50);
+  assert.equal(withBonus.total, computeWinPayout(212, 50, 'lantern', 0, 0, 0).total);
+});
+
+test('a silent Cold Walk run adds COLD_WALK_REWARD on top of the win total', () => {
+  const base = computeWinPayout(212, 50);
+  const withColdWalk = computeWinPayout(212, 50, 'lantern', 0, 0, COLD_WALK_REWARD);
+  assert.equal(withColdWalk.total, base.total + COLD_WALK_REWARD);
+});
+
+test('coldWalkBonus stacks additively with missionBonus and secondaryBonus', () => {
+  const base = computeWinPayout(212, 50);
+  const all = computeWinPayout(212, 50, 'lantern', MISSION_FIREPOWER_REWARD, FIREPOWER_RETRIEVAL_BONUS, COLD_WALK_REWARD);
+  assert.equal(all.total, base.total + MISSION_FIREPOWER_REWARD + FIREPOWER_RETRIEVAL_BONUS + COLD_WALK_REWARD);
+});
+
+test('coldWalkBonus is scaled by the tier multiplier, same as secondaryBonus (LUL-1412)', () => {
+  const lantern = computeWinPayout(212, 50, 'lantern', 0, 0, COLD_WALK_REWARD);
+  const night = computeWinPayout(212, 50, 'night', 0, 0, COLD_WALK_REWARD);
+  const base = computeWinPayout(212, 50, 'lantern');
+  const baseNight = computeWinPayout(212, 50, 'night');
+  assert.equal(lantern.total - base.total, Math.round(COLD_WALK_REWARD * 1.0));
+  assert.equal(night.total - baseNight.total, Math.round(COLD_WALK_REWARD * 1.75));
+});
+
+test('the Cold Walk bonus is not payable on death -- computeDeathPayout has no coldWalkBonus argument', () => {
   const p = computeDeathPayout(212, 50, 78);
   assert.equal(p.carried, 0);
   assert.equal(p.rescue, 0);

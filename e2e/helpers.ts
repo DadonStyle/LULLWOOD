@@ -12,9 +12,12 @@
 // that auto-navigates would take that choice away.
 import { expect, type Page, type ConsoleMessage, type Locator } from '@playwright/test';
 
-// Centre of the 1280x720 viewport configured in playwright.config.ts. The gate
-// covers the whole viewport, so any point works -- centre is just the honest
-// "where a player would click".
+// Centre of the 1280x720 viewport configured in playwright.config.ts. Kept
+// only for specs that need a viewport-relative point for something other than
+// the entry gate -- `enter()` itself clicks `#gateTitle` (see LUL-5118): a
+// fixed coordinate can land on interactive content (e.g. EmbersShop buy
+// buttons, which call stopPropagation()) once a project configures a small
+// enough viewport, silently breaking every downstream step in that spec.
 export const VIEW_X = 640;
 export const VIEW_Y = 360;
 
@@ -97,7 +100,7 @@ export async function boot(
     qaWorld?: 'micro' | 'full';
     qaNoRender?: boolean;
     qaHour?: number | null;
-    qaMissionKind?: 'deepwater' | 'oakHollow' | 'slackWater' | null;
+    qaMissionKind?: 'deepwater' | 'oakHollow' | 'slackWater' | 'stoneMarker' | 'radioMast' | null;
     seedWelcomeSplashSeen?: boolean;
   } = {},
 ) {
@@ -121,9 +124,14 @@ export async function boot(
   );
 }
 
-/** Click the entry gate and let the fade + pointer-lock request settle. */
+/**
+ * Click the entry gate and let the fade + pointer-lock request settle.
+ * Clicks `#gateTitle` rather than a viewport coordinate -- it's inert copy
+ * inside `#gate` (components/Hud.tsx) that no small viewport can ever place
+ * over interactive content, unlike a fixed (VIEW_X, VIEW_Y) point.
+ */
 export async function enter(page: Page) {
-  await page.mouse.click(VIEW_X, VIEW_Y);
+  await page.locator('#gateTitle').click();
   await page.waitForTimeout(1200); // gate fade + requestPointerLock settle
 }
 
