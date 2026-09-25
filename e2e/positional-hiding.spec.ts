@@ -395,7 +395,20 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
   test('lion: hiding inside a bramble footprint in the open survives at range, dies within 5s of moving (LUL-2320)', async ({
     page,
   }) => {
-    test.setTimeout(30_000);
+    // LUL-5149: was 30_000, left over from before LUL-5117 replaced the
+    // wall-clock kill-wait with a 50-round-trip qaSetFixedStep/qaAdvance
+    // chunked loop on the full (non-micro) map -- every *other*
+    // qaAdvance-chunked test in this file (lines above, e.g. the
+    // wolf-bramble case right below, which chunks 100 round trips over the
+    // same shape) already budgets 60_000 for exactly this round-trip
+    // overhead; this test was never bumped to match when LUL-5117 added its
+    // own chunking loop, so on a contended/render-heavy rig the 50 round
+    // trips plus this test's extra real 5s wait (LUL-2841, below) blew the
+    // unchanged 30s outer wall-clock cap even though the 5-simulated-second
+    // kill budget itself (`maxSeconds: 5` below, unchanged) was never close
+    // to exceeded. This raises only the wall-clock harness allowance to
+    // match file convention -- the simulated pass/fail budget is untouched.
+    test.setTimeout(60_000);
     await boot(page, { qaHooks: true });
     await enter(page);
 
