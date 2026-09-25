@@ -1611,16 +1611,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6068-6128, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6425-6466). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6072-6133, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6444-6485). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6425-6466) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6433) rather than recomputed later, since `player.x/z` can move on
+  (L6444-6485) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6452) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -2670,10 +2670,10 @@ it already fires correctly for the sprint-bonus window; both the `title` and the
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L7341 for the eligibility case), positioned below the danger hints
+(`engine/forest-engine.js` L7607 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6365) and `windAssistEndCue()` (L6374), edge-triggers on the combined
+`windAssistStartCue()` (L6370) and `windAssistEndCue()` (L6379), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
