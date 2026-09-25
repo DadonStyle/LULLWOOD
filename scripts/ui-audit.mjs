@@ -67,39 +67,60 @@ const COLLECT = `(${function () {
     const parts = m[1].split(',').map(Number);
     return parts.length > 3 ? parts[3] : 1;
   };
+  const tagCounts = new Map();
   const keyOf = (e) => {
     const t = e.getAttribute('data-testid');
     if (t) return '[' + t + ']';
     if (e.id) return '#' + e.id;
     const c = typeof e.className === 'string' ? e.className.trim() : '';
-    return c ? '.' + c.split(/\s+/)[0] : e.tagName.toLowerCase();
+    if (c) return '.' + c.split(/\s+/)[0];
+    // No id/class/testid: a bare tag name collapses every untagged sibling of
+    // the same tag (every <b> in #gateKeys) into one indistinguishable
+    // defect key. A running per-tag counter keeps them apart in defect
+    // messages without perturbing other tags' numbering.
+    const tag = e.tagName.toLowerCase();
+    const n = (tagCounts.get(tag) || 0) + 1;
+    tagCounts.set(tag, n);
+    return tag + ':' + n;
   };
-  const walk = (root) => {
+  // zIndex: inherited from the nearest enclosing full-viewport opaque overlay
+  // (#gate, #orientationGate, win/death screens), not this element's own CSS
+  // z-index -- only the overlay root itself ever sets one, so a flat "own
+  // z-index" would leave every one of its descendants (and hence any
+  // cross-overlay comparison) at the same 'auto' value. 0 means "not inside
+  // such an overlay". Kept in sync with e2e/ui-hygiene-collect.ts.
+  const walk = (root, layerZ) => {
     for (const c of Array.from(root.children)) {
       const cs = getComputedStyle(c), r = c.getBoundingClientRect();
       const visible = cs.display !== 'none' && cs.visibility !== 'hidden' &&
         parseFloat(cs.opacity) > 0.01 && r.width > 1 && r.height > 1;
       const onScreen = r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw;
+      let childLayerZ = layerZ;
       if (visible && onScreen) {
         const ownText = Array.from(c.childNodes).filter(n => n.nodeType === 3)
           .map(n => (n.textContent || '').trim()).join(' ').trim();
         const parentCs = c.parentElement ? getComputedStyle(c.parentElement) : null;
         const ownsPointer = cs.cursor === 'pointer' && (!parentCs || parentCs.cursor !== 'pointer');
+        const opaqueBg = alphaOf(cs.backgroundColor) >= 0.35;
+        const isBackdrop = (r.width * r.height) >= vw * vh * 0.7;
+        const isOverlayRoot = (cs.position === 'fixed' || cs.position === 'absolute') && opaqueBg && isBackdrop;
+        if (isOverlayRoot) childLayerZ = parseFloat(cs.zIndex) || 0;
         els.push({
           key: keyOf(c), x: r.x, y: r.y, w: r.width, h: r.height,
           fontPx: parseFloat(cs.fontSize),
           tappable: cs.pointerEvents !== 'none' &&
             (['BUTTON', 'A', 'INPUT', 'SELECT'].includes(c.tagName) || c.hasAttribute('data-testid') || ownsPointer),
           pointerEvents: cs.pointerEvents, position: cs.position,
-          opaqueBg: alphaOf(cs.backgroundColor) >= 0.35,
+          opaqueBg,
           isText: ownText.length > 0,
-          isBackdrop: (r.width * r.height) >= vw * vh * 0.7,
+          isBackdrop,
+          zIndex: isOverlayRoot ? childLayerZ : layerZ,
         });
       }
-      walk(c);
+      walk(c, childLayerZ);
     }
   };
-  walk(document.body);
+  walk(document.body, 0);
   return { vp: { w: vw, h: vh }, els };
 }})()`;
 

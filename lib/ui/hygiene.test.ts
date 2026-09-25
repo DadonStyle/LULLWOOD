@@ -15,7 +15,7 @@ function el(over: Partial<Elem> & { key: string }): Elem {
   return {
     x: 0, y: 0, w: 60, h: 60, fontPx: 14, tappable: false,
     pointerEvents: 'auto', position: 'fixed', opaqueBg: false,
-    isText: false, isBackdrop: false,
+    isText: false, isBackdrop: false, zIndex: 0,
     ...over,
   };
 }
@@ -52,6 +52,20 @@ test('overlap: full containment is composition, not a collision', () => {
     el({ key: '#gateTitle', x: 313, y: 85, w: 225, h: 35, isText: true }),
   ]);
   assert.deepEqual(d, []);
+});
+
+test('overlap: content under two different full-screen overlays does not collide, same-layer still does', () => {
+  // Measured (mobile-portrait 393x851, repeat visit): components/OrientationGate.tsx's
+  // rotate prompt <p> (under #orientationGate, z-index 50) geometrically
+  // overlaps #embersShop (under #gate, z-index 20) by 60% -- but #orientationGate
+  // fully covers #gate, so a real player never sees both. LUL-1567.
+  const p = el({ key: 'p:1', x: 56.5, y: 443.5, w: 280, h: 36, isText: true, zIndex: 50 });
+  const embersShop = el({ key: '#embersShop', x: 24, y: 457.96875, w: 345, h: 177, zIndex: 20 });
+  assert.deepEqual(checkOverlaps([p, embersShop]), []);
+  // Same rect pair, but now both read as belonging to the same layer (e.g.
+  // two elements inside the same dialog): the real collision still fires.
+  const d = checkOverlaps([{ ...p, zIndex: 20 }, embersShop]);
+  assert.equal(d.length, 1);
 });
 
 test('overlap: a wrapper sharing its child rect is reported once, under the named key', () => {

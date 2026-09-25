@@ -19,6 +19,13 @@ export interface Elem {
   opaqueBg: boolean;      // background alpha >= OPAQUE_ALPHA
   isText: boolean;        // has its own (non-descendant) text
   isBackdrop: boolean;    // covers >= BACKDROP_COVERAGE of the viewport (gate, win, death, dialog scrim)
+  // Inherited from the nearest enclosing full-viewport opaque overlay this
+  // element is painted inside (see isBackdrop) -- not this element's own CSS
+  // z-index, which is almost always 'auto' since only the overlay root
+  // itself sets one. 0 means "not inside such an overlay". Computed by the
+  // walker (e2e/ui-hygiene-collect.ts / scripts/ui-audit.mjs), which has the
+  // real DOM tree; this flat Elem[] does not.
+  zIndex: number;
 }
 
 export interface Viewport { w: number; h: number; }
@@ -67,6 +74,7 @@ function collidable(e: Elem): boolean {
   return !e.isBackdrop && e.pointerEvents !== 'none' ? true : !e.isBackdrop && e.isText;
 }
 
+
 export function checkTapTargets(els: Elem[]): Defect[] {
   return els
     .filter(e => e.tappable && !e.isBackdrop && (e.w < MIN_TAP_PX || e.h < MIN_TAP_PX))
@@ -104,6 +112,13 @@ export function checkOverlaps(els: Elem[]): Defect[] {
       if (smaller === 0) continue;
       if (inter >= smaller * 0.995) continue;   // full containment
       if (inter / smaller < OVERLAP_TOLERANCE) continue;
+      // Different enclosing overlays (e.g. #orientationGate's content vs
+      // #gate's content) are two independently-stacked full-screen layers --
+      // a real player only ever sees the topmost one, so an overlap between
+      // their contents is not a defect. Same layer (equal zIndex, including
+      // the common case of neither being inside an overlay) still applies
+      // the normal check above.
+      if (a.zIndex !== b.zIndex) continue;
       out.push({
         rule: 'overlap',
         severity: 'error',
