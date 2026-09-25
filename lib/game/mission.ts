@@ -53,7 +53,7 @@ export function pickHardBabyPosition(
   return { x, z };
 }
 
-export type MissionKind = 'deepwater' | 'oakHollow' | 'slackWater' | 'stoneMarker' | 'radioMast';
+export type MissionKind = 'deepwater' | 'oakHollow' | 'slackWater' | 'stoneMarker' | 'radioMast' | 'beaconEvasion';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -109,6 +109,12 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // reuses missionWaypointHum()'s existing bearing-pan/proximity-pitch cue for free
   // (engine/forest-engine.js:2482-2500), no new audio code.
   { kind: 'radioMast', x: 30, z: 175, zoneRadius: 8, interactRadius: 4, landmarkKind: 'radioMast', timeLimitSeconds: 45 },
+  // LUL-5134: Beacon Hunter Evasion (M1) -- same fireTower target/timing as deepwater, but a
+  // Beacon Hunter wolf is repositioned ~50u from it after the mission draw (see
+  // repositionBeaconHunterForMission() in engine/forest-engine.js) instead of a new spatial
+  // shape here. timeLimitSeconds (non-null) already excludes this from eligibleMissionPool()
+  // pre-3-wins via the existing `timeLimitSeconds == null` filter (~:154) -- no gating change.
+  { kind: 'beaconEvasion', x: -95, z: -95, zoneRadius: 20, interactRadius: 4, landmarkKind: 'fireTower', timeLimitSeconds: 60 },
 ];
 
 export interface MissionState {

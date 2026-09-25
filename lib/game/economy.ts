@@ -95,12 +95,19 @@ export const MISSION_STONE_MARKER_REWARD = 7;
 // shorter round trip than Stone Marker).
 export const MISSION_RADIO_MAST_REWARD = 3;
 
+// LUL-5131 (Game Economist repricing, wiki game/economy/beacon-hunter-evasion-repriced-2026-09-25):
+// priced level with MISSION_FIREPOWER_REWARD (8) despite the added threat -- "timed + threat +
+// stamina pressure" against vanilla Fire Tower's "timed, no threat", conservative pending
+// telemetry on a mechanic (Scent Veil) that shipped one day before this pricing.
+export const MISSION_BEACON_HUNTER_EVASION_REWARD = 8;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
   slackWater: MISSION_SLACKWATER_REWARD,
   stoneMarker: MISSION_STONE_MARKER_REWARD,
   radioMast: MISSION_RADIO_MAST_REWARD,
+  beaconEvasion: MISSION_BEACON_HUNTER_EVASION_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

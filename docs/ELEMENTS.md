@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7800 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6851, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7847 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6896, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1630,15 +1630,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6083-6144, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6455-6496). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6128-6189, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6500-6541). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6455-6496) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6500-6541) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6452) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1695,11 +1695,11 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3871),
-  reset to 0 on `enter()` (L3961) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3919),
+  reset to 0 on `enter()` (L4010) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L6745: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1840,20 +1840,23 @@ not final tuning.
 ### Missions (detour objectives)
 
 **What it is**
-- **Implemented (LUL-1259, widened LUL-3010, LUL-4958, LUL-4900).** `MISSION_POOL`
+- **Implemented (LUL-1259, widened LUL-3010, LUL-4958, LUL-4900, LUL-5134).** `MISSION_POOL`
   (`lib/game/mission.ts`): a pool of optional detour objectives, one active per run, drawn from
-  the run's own seeded RNG (never player-selected). Five members: `deepwater` — a fixed waypoint
+  the run's own seeded RNG (never player-selected). Six members: `deepwater` — a fixed waypoint
   at the fire tower landmark (`x: -95, z: -95`, matching `LANDMARKS`' `fireTower` entry,
   `engine/tuning.js:77`) — `oakHollow` — a near waypoint at the `oak` landmark (`x: 22, z: 4`,
   `engine/tuning.js:80`) — `slackWater` (LUL-4958) — no world target at all, completes on pickup
   during Fog Tide's active phase (see below) — `stoneMarker` (LUL-4900) — a fixed waypoint at
-  the `stoneMarker` landmark (`x: 100, z: -75`, `engine/tuning.js:65`) — and `radioMast`
+  the `stoneMarker` landmark (`x: 100, z: -75`, `engine/tuning.js:65`) — `radioMast`
   (LUL-4900) — a fixed waypoint at the `radioMast` landmark (`x: 30, z: 175`,
-  `engine/tuning.js:68`). Per-run state (`mission: MissionState | null`) lives alongside `baby`
+  `engine/tuning.js:68`) — and `beaconEvasion` (LUL-5134) — the same `fireTower` waypoint as
+  `deepwater`, but with the permanent `beaconHunter`-variant wolf (`wolf.0`,
+  `engine/forest-engine.js:1810`) repositioned ~50u from it after the mission draw (see below).
+  Per-run state (`mission: MissionState | null`) lives alongside `baby`
   at `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every other rng()
   consumer, so it never shifts the stream any existing seed/replay depends on.
 
-**Five variants (LUL-3010, LUL-4958, LUL-4900)**
+**Six variants (LUL-3010, LUL-4958, LUL-4900, LUL-5134)**
 - `oakHollow` — near (≈22.4m from spawn), untimed, `MISSION_OAKHOLLOW_REWARD` = 6 Embers.
   Always eligible.
 - `deepwater` — far (≈134.4m from spawn), `timeLimitSeconds: 60`, `MISSION_FIREPOWER_REWARD` = 8
@@ -1894,12 +1897,23 @@ not final tuning.
   `MISSION_RADIO_MAST_REWARD` = 3 Embers. Both reuse the existing generic `#missionPanel`,
   interact-to-complete path, and `missionWaypointHum()`'s bearing-pan/proximity-pitch audio cue
   (`engine/forest-engine.js:2482-2500`) with zero new HUD or audio code.
+- `beaconEvasion` (LUL-5134) — same `fireTower` waypoint/timing as `deepwater`
+  (`timeLimitSeconds: 60`, `MISSION_BEACON_HUNTER_EVASION_REWARD` = 8 Embers, gated behind
+  `MISSION_FAR_UNLOCK_WINS` by the same `timeLimitSeconds == null` filter), but with the
+  permanent `beaconHunter`-variant wolf repositioned ~50u from the target after the mission
+  draw (`repositionBeaconHunterForMission()`, `engine/forest-engine.js`, called from
+  `generateMap()` right after `placeCave()` — `placeCave()` must stay the last rng() consumer
+  tied to map layout, so this reposition is a second, separate draw gated on a kind that never
+  existed before this ticket and cannot perturb any other seed). Reuses the existing Beacon
+  Hunter detection/lock and Scent Veil break mechanics verbatim — no new predator behavior, no
+  new HUD element, no new key.
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
   (`lib/game/economy.ts`, `deepwater: MISSION_FIREPOWER_REWARD = 8`, `oakHollow:
   MISSION_OAKHOLLOW_REWARD = 6`, `slackWater: MISSION_SLACKWATER_REWARD = 10`, `stoneMarker:
-  MISSION_STONE_MARKER_REWARD = 7`, `radioMast: MISSION_RADIO_MAST_REWARD = 3`), passed as
+  MISSION_STONE_MARKER_REWARD = 7`, `radioMast: MISSION_RADIO_MAST_REWARD = 3`,
+  `beaconEvasion: MISSION_BEACON_HUNTER_EVASION_REWARD = 8`), passed as
   `computeWinPayout()`'s optional fourth argument at the `finishPickup()` call site.
   **Forfeited on death or expiry** — `computeDeathPayout()` is
   unmodified, so reaching the mission target but dying before reaching home banks no bonus; a
@@ -2690,20 +2704,20 @@ engine flag is genuinely true.
 
 **LUL-3149 (Wind-Assisted Evasion)** adds two new, always-on effects to this same trigger --
 `running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
-re-deriving it (`engine/forest-engine.js` L6790) -- stacking on top of the LUL-3009 scent
+re-deriving it (`engine/forest-engine.js` L7035) -- stacking on top of the LUL-3009 scent
 effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
-speed bonus applied to `spd` inside `stepFrame()` (L6801), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
-footstep-radius reduction applied to `noiseRadius` (L6814), replacing the plain sprint radius
+speed bonus applied to `spd` inside `stepFrame()` (L7041), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+footstep-radius reduction applied to `noiseRadius` (L7057), replacing the plain sprint radius
 only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
 is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
 it already fires correctly for the sprint-bonus window; both the `title` and the always-visible
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L7607 for the eligibility case), positioned below the danger hints
+(`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6381) and `windAssistEndCue()` (L6390), edge-triggers on the combined
+`windAssistStartCue()` (L6426) and `windAssistEndCue()` (L6435), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
