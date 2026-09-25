@@ -7,6 +7,7 @@ import {
   distToMissionTarget,
   canCompleteMission,
   canCompleteSlackWater,
+  canCompleteFlush,
   completeMission,
   canCompleteRetrieval,
   completeRetrieval,
@@ -163,6 +164,30 @@ test('canCompleteSlackWater is false once the mission is already complete', () =
 test('canCompleteSlackWater is false for a non-slackWater mission even with fog-tide active', () => {
   const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
   assert.equal(canCompleteSlackWater(m, true), false);
+});
+
+// ---- canCompleteFlush (LUL-5116) -----------------------------------------
+
+const flushTarget = MISSION_POOL.find((t) => t.kind === 'flush')!;
+
+test('canCompleteFlush is true when active, flush, and the flushed roost matches', () => {
+  const m: MissionState = { target: { ...flushTarget, roostIndex: 2 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 2), true);
+});
+
+test('canCompleteFlush is false when a different (valid) roostIndex was flushed', () => {
+  const m: MissionState = { target: { ...flushTarget, roostIndex: 2 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 3), false);
+});
+
+test('canCompleteFlush is false once the mission is already complete', () => {
+  const m: MissionState = { target: { ...flushTarget, roostIndex: 2 }, status: 'complete', secondary: null };
+  assert.equal(canCompleteFlush(m, 2), false);
+});
+
+test('canCompleteFlush is false for a non-flush mission even with a matching roostIndex', () => {
+  const m: MissionState = { target: { ...MISSION_POOL[0], roostIndex: 2 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 2), false);
 });
 
 // ---- completeMission idempotence ----------------------------------------
@@ -412,6 +437,21 @@ test('eligibleMissionPool checks only the given difficulty tier', () => {
   const pool = eligibleMissionPool(progression, 'lantern');
   // LUL-5069: see the pre-win-gate test above -- slackWater stays excluded here too.
   assert.deepEqual(pool.map((m) => m.kind), ['oakHollow']);
+});
+
+test('eligibleMissionPool excludes flush below MISSION_FAR_UNLOCK_WINS', () => {
+  // LUL-5116: flush shares slackWater's untimed/no-landmarkKind shape and would reproduce
+  // the identical e2e/hints.spec.ts regression (LUL-5069) without the same exclusion.
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'flush'), false);
+});
+
+test('eligibleMissionPool includes flush at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'flush'), true);
 });
 
 // ---- pickMission with an explicit pool (LUL-3010) ------------------------

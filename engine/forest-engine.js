@@ -156,6 +156,7 @@ import {
   canCompleteMission,
   completeMission,
   canCompleteSlackWater,
+  canCompleteFlush,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -340,6 +341,12 @@ const TOD_AUDIO = TIME_OF_DAY_AUDIO[timeOfDay];
 // specific variant -- same read pattern as ?qaHour= above. Read once at module init,
 // same lifetime as the other ?qa*= boot overrides.
 const qaForcedMissionKind = qaParams ? qaParams.get('qaMissionKind') : null;
+// LUL-5116: ?qaRoostIndex=<0-4> forces generateMap()'s flush-mission roost draw to a known
+// index, same read-once-at-module-init shape as qaMissionKind above -- for a test that needs
+// a specific roost deterministically instead of fighting the rng draw. Only takes effect
+// when the drawn mission is 'flush'; ignored (parsed but unused) otherwise, same as
+// qaMissionKind has no effect when a test doesn't also force that kind.
+const qaForcedRoostIndex = qaParams ? qaParams.get('qaRoostIndex') : null;
 
 // ---- Scene / camera / renderer -------------------------------------------
 const scene = new THREE.Scene();
@@ -1177,6 +1184,15 @@ function generateMap(seed){
   }
   missionHumTimer = 2;
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
+  // LUL-5116: draws which of the 5 ROOSTS this run's flush mission targets -- the new last
+  // rng() consumer, appended after placeCave() per LUL-1904's stream-ordering rule (this
+  // SPEC's Design call §2). No-op for every other mission kind. Respects ?qaRoostIndex for
+  // deterministic e2e staging, falling back to the real draw when absent/out of range.
+  if(mission.target.kind === 'flush'){
+    const forced = qaForcedRoostIndex !== null ? parseInt(qaForcedRoostIndex, 10) : NaN;
+    const idx = (forced >= 0 && forced < ROOSTS.length) ? forced : Math.floor(rng() * ROOSTS.length);
+    mission = { ...mission, target: { ...mission.target, roostIndex: idx } };
+  }
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
                   // reasoning as the LUL-374 buildGrid() call above
   repositionBeaconHunterForMission(mission);   // LUL-5134: after placeCave(), not before --
@@ -4297,7 +4313,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // returns the same fields as a side effect of teleporting, this is for a
   // test that wants to read mission state without also moving the player.
   window.ForestEngine.qaProbeMission = function(){
-    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z };
+    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z, roostIndex: mission.target.roostIndex };
   };
 
   // [QA-HOOK] LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e
@@ -5681,6 +5697,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.state = 'roam'; p.hunt = false;
     return { idx, x: p.x, z: p.z };
   };
+  // [QA-HOOK] LUL-5116: flips predators[kind]'s FIRST live entry into 'chase' state without
+  // repositioning it -- composes with qaStagePredatorNearPlayer's existing dx/dz placement
+  // (call that first, then this) instead of duplicating its positioning logic. Needed because
+  // qaStagePredatorNearPlayer deliberately stages 'roam' (:5652, eight existing specs depend
+  // on that), and updateRoosts()'s ambient roost trigger only fires for 'chase'. Mirrors
+  // qaStageRockClimb's existing "set p.state directly" pattern.
+  window.ForestEngine.qaSetPredatorChasing = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    p.state = 'chase'; p.hunt = false;
+    return { idx };
+  };
   // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
   // an e2e spec can't wait out 14s+ of real decay, so it asserts the tier's effect on this
   // number instead of on live scent-point aging.
@@ -6119,6 +6148,9 @@ function throwThrowable(){
   if(nearestRoost >= 0 && roostCooldown[nearestRoost] <= 0){
     flushRoost(nearestRoost);
     roostCooldown[nearestRoost] = ROOST_COOLDOWN;
+    // LUL-5116: nearestRoost is the roost THIS throw just flushed -- the only call site
+    // that can make canCompleteFlush true, per this mission's Q1.5 answer.
+    if(mission && canCompleteFlush(mission, nearestRoost)) mission = completeMission(mission);
     if(!hintSeen('roostThrowCue')){
       markHintSeen('roostThrowCue');
       if(captionsOn) pushState({ caption: 'throw a stone at a roost to startle it', captionId: ++captionSeq });

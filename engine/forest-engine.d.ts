@@ -514,6 +514,10 @@ declare global {
        * plain roaming state. Returns its predators index and placed position, or null if that
        * species didn't spawn this seed. */
       qaStagePredatorNearPlayer?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
+      // LUL-5116: flips predators[kind]'s FIRST live entry into 'chase' state without
+      // repositioning it -- see engine/forest-engine.js's qaSetPredatorChasing for the
+      // full rationale (composes with qaStagePredatorNearPlayer, doesn't replace it).
+      qaSetPredatorChasing?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number } | null;
       /** LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
        * lets a test assert the tier's effect without waiting out real decay. */
       qaProbeScentLifetime?: () => number;
@@ -581,7 +585,7 @@ declare global {
       /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
        * fields qaTeleportNearMission returns as a side effect, for a test that
        * only needs to read, not teleport. */
-      qaProbeMission?: () => { kind: MissionKind; status: 'active' | 'complete' | 'expired'; x: number; z: number } | null;
+      qaProbeMission?: () => { kind: MissionKind; status: 'active' | 'complete' | 'expired'; x: number; z: number; roostIndex?: number } | null;
       /** LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e staging.
        * See engine/forest-engine.js's qaSetFogTideClock for the full rationale. */
       qaSetFogTideClock?: (seconds: number) => void;

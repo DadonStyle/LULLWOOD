@@ -101,6 +101,16 @@ export const MISSION_RADIO_MAST_REWARD = 3;
 // telemetry on a mechanic (Scent Veil) that shipped one day before this pricing.
 export const MISSION_BEACON_HUNTER_EVASION_REWARD = 8;
 
+// LUL-5116: Flush -- placeholder pending the Game Economist's number (same placeholder
+// convention MISSION_STONE_MARKER_REWARD (:92) already uses -- "confirm/adjust" is the
+// Economist's call, not re-derived here). Priced provisionally at 9, between
+// deepwater(8)/slackWater(10) and oakHollow(6)/stoneMarker(7): flush costs a throwable
+// (opportunity cost, unlike a plain walk) plus aim-and-timing, closer in effort to the
+// former pair per the wiki proposal's own Scope section (game/mechanics/roost-decoy-mission,
+// "closer in effort to Oak Hollow than to Slack Water" -- flagged there as an observation,
+// not a proposed number).
+export const MISSION_FLUSH_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -108,6 +118,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   stoneMarker: MISSION_STONE_MARKER_REWARD,
   radioMast: MISSION_RADIO_MAST_REWARD,
   beaconEvasion: MISSION_BEACON_HUNTER_EVASION_REWARD,
+  flush: MISSION_FLUSH_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
