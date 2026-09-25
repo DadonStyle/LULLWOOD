@@ -346,6 +346,8 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   deepwater: 'Fire Tower',
   oakHollow: 'Oak Hollow',
   slackWater: 'Slack Water',
+  stoneMarker: 'Stone Marker',
+  radioMast: 'Radio Mast',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the
