@@ -461,12 +461,16 @@ declare global {
        * to 1 full night), the fog density and hemisphere-light intensity it
        * feeds, the resulting predator detect-radius multiplier, and the HUD
        * clock label -- in one call, so a test can assert the engine-visible
-       * effect directly instead of only the #timeOfRunClock DOM text. */
+       * effect directly instead of only the #timeOfRunClock DOM text.
+       * LUL-4889: `detectMul` is still the ambient ramp used by wolf/bear;
+       * `lionDetectMul` is the separate runElapsed-keyed curve (1.0 below
+       * 90s, down to 0.5 at 150s+) that replaces it for lion only. */
       qaProbeTimeOfRun?: () => {
         timeOfRun: number;
         fogDensity: number;
         hemiIntensity: number;
         detectMul: number;
+        lionDetectMul: number;
         clock: string;
       };
       /** LUL-2071: deterministic test clock -- parks the real RAF loop so a
