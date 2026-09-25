@@ -433,22 +433,51 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     ).toHaveCount(0);
 
     await page.keyboard.down('KeyW');
-    // LUL-2978: this test runs on the real RAF loop (see the LUL-2841 comment
-    // above), so the very next macrotask after dispatching KeyW is not
-    // guaranteed to have run a single game frame yet -- under host load,
-    // reading qaPlayerState() here raced the engine and caught `hidden`
-    // still true because nothing had processed the keydown at all (not the
-    // exitHide() path, not triggerDeath(), which also clears `hidden`).
-    // Poll for the frame to land instead of asserting on an un-ticked state.
+    // LUL-2978: this test runs on the real RAF loop up to this point (see the
+    // LUL-2841 comment above), so the very next macrotask after dispatching
+    // KeyW is not guaranteed to have run a single game frame yet -- under
+    // host load, reading qaPlayerState() here raced the engine and caught
+    // `hidden` still true because nothing had processed the keydown at all
+    // (not the exitHide() path, not triggerDeath(), which also clears
+    // `hidden`). Poll for the frame to land instead of asserting on an
+    // un-ticked state.
     await page.waitForFunction(() => window.ForestEngine?.qaPlayerState?.()?.hidden === false, {
       timeout: 2_000,
     });
     const afterMove = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
     expect(afterMove?.hidden, 'KeyW should have exited `hidden`').toBe(false);
 
-    await expect(page.locator('#deathScreen'), 'un-hiding while still on the bramble must not stay a safe zone').toBeVisible({
-      timeout: 5_000,
-    });
+    // LUL-5117: from here to the end of the test, drive via
+    // qaSetFixedStep/qaAdvance instead of the real RAF loop -- the same fix
+    // shape LUL-5046 used for qaStageAndTraceBehindTreeFixed and the wolf
+    // case earlier in this file. The lion's detect (post investigate->chase
+    // revert) and its ~6-unit close-and-kill both cost a fixed amount of
+    // *simulated* time, but the un-fixed version of this wait budgeted that
+    // in *wall-clock* milliseconds (`toBeVisible({ timeout: 5_000 })`)
+    // against a frame `dt` that's clamped to DT_CLAMP_CEILING=0.05s
+    // regardless of how long a frame actually took to render -- exactly the
+    // dt-clamp-vs-walltime mismatch LUL-5046 root-caused for tree-pathing
+    // (wiki: systems/dt-clamp-vs-walltime). Confirmed as this same class, not
+    // a logic regression: LUL-5111's nightly run 2026-09-24-2251 failed this
+    // exact wait on retry0 (21685ms) and passed on retry1 of the identical
+    // run (21147ms) with zero code change in between, and `git log -p`
+    // across the last 5 commits touching canSee()/hasLOS()/
+    // insideHideFootprint() (lib/game/cover.ts) and the investigate->chase
+    // revert (engine/forest-engine.js, lib/game/predator.ts) turned up
+    // nothing relevant. qaAdvance's chunked steps below keep the exact same
+    // 5-second budget LUL-2320 originally required -- expressed in simulated
+    // seconds instead of wall-clock ones, never raised, per founder rule that
+    // a failing test is a finding, not a license to widen the timeout.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    const killed = await advanceUntil(
+      page,
+      () => page.evaluate(() => !!document.querySelector('#deathScreen')),
+      { chunkSeconds: 0.1, maxSeconds: 5 },
+    );
+    expect(
+      killed,
+      'un-hiding while still on the bramble must not stay a safe zone within 5 simulated seconds',
+    ).toBe(true);
     await expect(page.locator('#deathKind')).toHaveText('lion');
   });
 });
