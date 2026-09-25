@@ -97,7 +97,7 @@ export async function boot(
     qaWorld?: 'micro' | 'full';
     qaNoRender?: boolean;
     qaHour?: number | null;
-    qaMissionKind?: 'deepwater' | 'oakHollow' | null;
+    qaMissionKind?: 'deepwater' | 'oakHollow' | 'slackWater' | null;
     seedWelcomeSplashSeen?: boolean;
   } = {},
 ) {

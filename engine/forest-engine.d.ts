@@ -138,10 +138,11 @@ declare global {
       /** LUL-65: state + distance-to-player + scentOnto() re-trigger count for `kind`. Null if not found.
        * LUL-99: `t` is clock.elapsedTime -- game time, not wall time (see wiki: systems/dt-clamp-vs-walltime).
        * LUL-2667: `alertedBy` names which hearing channel set 'investigate' ('cry' via hearCry(), or null
-       * for sight/scent/footstep) -- state alone can't distinguish them. */
+       * for sight/scent/footstep) -- state alone can't distinguish them.
+       * LUL-5004: `scentLock`/`scentVeilReady` are the real predator fields Scent Veil reads/clears. */
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
-      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; t: number } | null;
+      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number } | null;
       /** LUL-2878: `kind`'s scaled effectiveDetect() this tick (veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul applied on top of tuning.js's unscaled spec.detect), or null if not spawned. Use this, not the tuning constant, to stage a distance that will actually pass canSee()'s detect gate. */
       qaProbeEffectiveDetect?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
@@ -169,6 +170,13 @@ declare global {
       qaHideBehindCoverKind?: (
         kind: 'wolf' | 'bear' | 'lion',
       ) => { idx: number; kind: 'wolf' | 'bear' | 'lion'; playerX: number; playerZ: number; detect: number } | null;
+      /** LUL-4528: rock-climb staging hook, mirrors qaHideBehindCoverKind's LOS-clear-ray
+       * check shape but keyed on kind === 'rock' directly (rock is not in HIDE_KINDS).
+       * Places the first live predator at (nearestRock.x + dx, nearestRock.z + dz), staged
+       * into 'chase' so qaProbeEffectiveDetect(kind) reads a real detect roll immediately.
+       * Returns the predator's staged {x,z}, or null if that offset is movement-blocked,
+       * the ray back to the rock isn't LOS-clear, or there is no rock / no live predator. */
+      qaStageRockClimb?: (dx: number, dz: number) => { x: number; z: number } | null;
       /** LUL-196: reset predator[idx] to roam without relocating it; returns {x,z} so callers can verify position unchanged, or null if idx doesn't resolve. */
       qaSetPredatorRoam?: (idx: number) => { x: number; z: number } | null;
       /** LUL-1620: read predator[idx]'s last-known-position return-sweep memory, or null if idx doesn't resolve. */
@@ -534,6 +542,27 @@ declare global {
       qaProbeVeil?: () => { charge: number; locked: boolean; reserve: boolean; releaseCueCount: number };
       /** Read-only: veil-overload countdown, per-round use flag (LUL-4663 -- was per-carry-leg), and denied-cue count. */
       qaProbeVeilOverload?: () => { chargeT: number; usedThisRound: boolean; deniedCueCount: number };
+      /** LUL-5004: read-only Scent Veil state, mirrors qaProbeVeilOverload's shape. `staminaCharge`
+       * is the unrounded 0..1 value (pushState's HUD copy rounds to 2 decimals); `deniedCueCount`
+       * is the blocked-tone refusal cue's fire count. */
+      qaProbeScentVeil?: () => { staminaCharge: number; deniedCueCount: number };
+      /** LUL-4528: read-only rock-climb state, mirrors qaProbeVeilOverload's shape. Includes
+       * all three cues' fire counts so a test can assert e.g. rockClimbEndCue fired exactly
+       * once on countdown expiry, without decoding WebAudio output. */
+      qaProbeRockClimb?: () => {
+        mountedOnRock: boolean; rockClimbT: number;
+        startCueCount: number; endCueCount: number; deniedCueCount: number;
+      };
+      /** LUL-5005: read-only chapel-sanctuary state, mirrors qaProbeRockClimb's shape.
+       * veilReserve itself is read via qaProbeVeil() -- not duplicated here, a test reads
+       * both hooks together to confirm the grant came from this feature specifically. */
+      qaProbeChapelSanctuary?: () => {
+        chapelSanctuaryActive: boolean; chapelSanctuaryChargeT: number; chapelSanctuaryUsedThisRun: boolean;
+        promptVisible: boolean; startCueCount: number; deniedCueCount: number; earlyExitCueCount: number;
+      };
+      /** LUL-5005: places the player 2 units off the chapel steeple's live position -- mirrors
+       * qaTeleportNearStoneMarker exactly (the micro QA world leaves LANDMARKS untouched). */
+      qaTeleportNearChapel?: () => { x: number; z: number };
       /** LUL-2123: teleports just outside the active mission target's
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
@@ -548,6 +577,9 @@ declare global {
        * fields qaTeleportNearMission returns as a side effect, for a test that
        * only needs to read, not teleport. */
       qaProbeMission?: () => { kind: 'deepwater' | 'oakHollow'; status: 'active' | 'complete' | 'expired'; x: number; z: number } | null;
+      /** LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e staging.
+       * See engine/forest-engine.js's qaSetFogTideClock for the full rationale. */
+      qaSetFogTideClock?: (seconds: number) => void;
       /** LUL-3010: shrinks the current mission's own timeLimitSeconds so the real per-tick
        * checkMissionExpiry() trips on the next frame. No-op (null) if the mission has no
        * timer (near variant / already resolved). */

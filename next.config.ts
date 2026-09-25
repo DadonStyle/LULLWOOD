@@ -7,6 +7,21 @@ const nextConfig: NextConfig = {
   // double-invoked dev effects leave exactly one running instance.
   reactStrictMode: true,
 
+  // LUL-5089: `lib/analytics.ts`'s `track()` reads `process.env.NEXT_PUBLIC_BUILD_SHA`
+  // and falls back to `'dev'` when unset -- and it has been unset in every production
+  // build to date (no env var of that name was ever set in Vercel or here), so every
+  // telemetry event ever emitted has `build_sha: 'dev'`, permanently excluded by
+  // scripts/win-rate-by-tier.mjs's `isAtOrAfter` (docs/TELEMETRY_SCHEMA.md's own
+  // "unknown shas are excluded rather than assumed eligible" policy). `VERCEL_GIT_COMMIT_SHA`
+  // is a Vercel System Environment Variable, always populated at build time (no
+  // dashboard toggle needed -- that toggle only gates *runtime* function access to
+  // System Environment Variables, per Vercel's docs); this inlines it under a
+  // `NEXT_PUBLIC_` name so the client bundle can read it, same mechanism Vercel's own
+  // docs recommend for exposing the commit sha to the browser.
+  env: {
+    NEXT_PUBLIC_BUILD_SHA: process.env.VERCEL_GIT_COMMIT_SHA,
+  },
+
   // Next 16 refuses to serve /_next/* to a dev request whose Host it does not
   // recognise, and answers 403 -- so hitting the dev server on 127.0.0.1 rather
   // than "localhost" 403s every chunk, no JS evaluates, and the engine never

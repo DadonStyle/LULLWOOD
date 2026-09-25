@@ -67,10 +67,28 @@ export interface EngineHudState {
   // LUL-1904: cave detection-immunity countdown -- 0 while inactive.
   caveImmuneActive:   boolean;
   caveImmuneTimeLeft: number;
+  // LUL-4528: Rock -- Vantage Climb. mountedOnRock/rockClimbTimeLeft drive
+  // #rockClimbPanel's countdown; climbPromptVisible drives the climbPrompt row.
+  mountedOnRock: boolean;
+  rockClimbTimeLeft: number;
+  climbPromptVisible: boolean;
+  // LUL-5005: Chapel Sanctuary -- a free, one-shot-per-run route to veilReserve=true.
+  // chapelSanctuaryActive/chapelSanctuaryChargeT drive #chapelSanctuaryPanel's countdown
+  // (same shape as mountedOnRock/rockClimbTimeLeft above); chapelSanctuaryPromptVisible
+  // drives the chapelSanctuaryPrompt row (same shape as climbPromptVisible above).
+  chapelSanctuaryActive: boolean;
+  chapelSanctuaryChargeT: number;
+  chapelSanctuaryPromptVisible: boolean;
   // LUL-3150: carry-leg panic button -- burns all veil charge for a detection-proof window.
   veilOverloadActive:  boolean;
   veilOverloadTimeLeft: number;
   veilOverloadVisible: boolean;
+  // LUL-5004: Scent Veil -- #veilPrompt. Visible whenever a live scentLock is
+  // ready to break (regardless of stamina, Q5); Enabled gates whether pressing
+  // G actually breaks it or plays the blocked-tone refusal, and which tone
+  // (urgent vs disabled+grayed) the row renders in.
+  scentVeilPromptVisible: boolean;
+  scentVeilPromptEnabled: boolean;
   // LUL-1089: contextual action prompts for hide and veil mechanics.
   coverPromptVisible: boolean;
   coverPromptUrgent:  boolean;
@@ -188,6 +206,8 @@ export interface EngineActions {
   setTouchLook: (x: number, y: number) => void;
   setTouchSprint: (v: boolean) => void;
   triggerTouchHide: () => void;
+  // LUL-4528: mobile parity for KeyC (Rock -- Vantage Climb).
+  triggerTouchClimb: () => void;
   triggerTouchShuffle: () => void;
   triggerTouchInteract: () => void;
   triggerTouchThrow: () => void;
@@ -196,6 +216,8 @@ export interface EngineActions {
   // and setTouchVeil.
   triggerTouchJump: () => void;
   triggerTouchVeilOverload: () => void;
+  // LUL-5004: mobile parity for KeyG (Scent Veil).
+  triggerTouchScentVeil: () => void;
   triggerTouchPause: () => void;
   triggerTouchToggleRun: () => void;
   setTouchVeil: (v: boolean) => void;
@@ -252,9 +274,17 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   veilReserve: false,
   caveImmuneActive: false,
   caveImmuneTimeLeft: 0,
+  mountedOnRock: false,
+  rockClimbTimeLeft: 0,
+  climbPromptVisible: false,
+  chapelSanctuaryActive: false,
+  chapelSanctuaryChargeT: 0,
+  chapelSanctuaryPromptVisible: false,
   veilOverloadActive: false,
   veilOverloadTimeLeft: 0,
   veilOverloadVisible: false,
+  scentVeilPromptVisible: false,
+  scentVeilPromptEnabled: false,
   coverPromptVisible: false,
   coverPromptUrgent: false,
   coverPromptKind: null,
@@ -306,6 +336,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
 const MISSION_NAMES: Record<MissionKind, string> = {
   deepwater: 'Fire Tower',
   oakHollow: 'Oak Hollow',
+  slackWater: 'Slack Water',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the
@@ -988,11 +1019,32 @@ export default function Hud({
         </div>
       )}
 
+      {/* LUL-4528: Rock -- Vantage Climb countdown -- sibling of #caveImmunePanel, same
+          always-visible-while-active treatment, OUTSIDE #panel so it stays visible with
+          adminMode off (Q3, GameCanvas.tsx's `body[data-admin-mode="0"] #panel { display:
+          none !important; }` rule only reaches #panel's actual descendants). */}
+      {state.mountedOnRock && (
+        <div id="rockClimbPanel">
+          Exposed · {Math.ceil(state.rockClimbTimeLeft)}s
+        </div>
+      )}
+
       {/* LUL-3150: veil-overload countdown -- sibling of #caveImmunePanel, same
           always-visible-while-active treatment. */}
       {state.veilOverloadActive && (
         <div id="veilOverloadPanel">
           Overload · {Math.ceil(state.veilOverloadTimeLeft)}s
+        </div>
+      )}
+
+      {/* LUL-5005: Chapel Sanctuary dwell countdown -- sibling of #caveImmunePanel/
+          #rockClimbPanel/#veilOverloadPanel, same always-visible-while-active treatment
+          (outside #panel, so it stays visible with adminMode off, Q3). The interact
+          prompt itself is a separate #actionSlot row (chapelSanctuaryPrompt, below) --
+          this panel only shows once the dwell has actually started. */}
+      {state.chapelSanctuaryActive && (
+        <div id="chapelSanctuaryPanel">
+          Sanctuary · {Math.ceil(state.chapelSanctuaryChargeT)}s
         </div>
       )}
 
@@ -1009,7 +1061,17 @@ export default function Hud({
           // direction, same element, no new one (Q7/Q8 duplicate-proof, docs/ELEMENTS.md).
           // Skipped outright under reducedMotion, same precedent as veilRefillFlash
           // (useVeilMeterRamp above) -- not just left to the CSS media query fallback.
-          className={state.movingAgainstWind && !state.reducedMotion ? 'windIndicatorActive' : undefined}
+          // LUL-5004: windIndicatorVeilActive (4x pulse) composes alongside
+          // windIndicatorActive rather than overwriting it -- movingAgainstWind
+          // and scentVeilPromptVisible can both be true the same frame (the
+          // latter requires the former), so this can't be a single either/or
+          // ternary the way it used to be.
+          className={
+            [
+              state.movingAgainstWind && !state.reducedMotion ? 'windIndicatorActive' : null,
+              state.scentVeilPromptVisible && !state.reducedMotion ? 'windIndicatorVeilActive' : null,
+            ].filter(Boolean).join(' ') || undefined
+          }
           title="Wind direction -- move into the arrow to mask your scent; sprint into it for extra speed and quiet"
           style={{ transform: `rotate(${Math.atan2(state.windZ, state.windX)}rad)` }}
         >
@@ -1131,6 +1193,23 @@ export default function Hud({
           text="Burn veil for a detection-proof escape"
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchVeilOverload(); } : undefined}
         />
+        {/* LUL-5004: Scent Veil -- breaks a live scentLock (real scent pickup or
+            LUL-4897 Beacon Hunter's wind-signal channel) while moving against the
+            wind. Own row, not merged into veilOverloadPrompt/actionPrompt above --
+            distinct trigger (scentLock, not `state === 'chase'`/cover), distinct
+            key (G, not Q/F -- decisions/scent-veil-key-collision-retarget-2026-09-24),
+            can be visible at the same time as either. tone switches to "disabled"
+            (grayed, not hidden -- Q5) rather than gating `visible` when stamina is
+            the only thing blocking the press. */}
+        <ActionPrompt
+          id="veilPrompt"
+          visible={state.scentVeilPromptVisible && hudLive}
+          tone={state.scentVeilPromptEnabled ? 'urgent' : 'disabled'}
+          keycap="G"
+          text="Press  "
+          suffix="  to break the scent trail"
+          onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchScentVeil(); } : undefined}
+        />
         {/* LUL-1623: holding-a-throwable affordance -- there's no held-item
             mesh in first person, so this is the only way the player knows
             they're carrying a stone. tone="ready" unconditionally, matching
@@ -1156,6 +1235,31 @@ export default function Hud({
           visible={state.canGrabThrowable && hudLive}
           tone="calm"
           text="Press  E  to pick up the stone"
+        />
+        {/* LUL-4528: Rock -- Vantage Climb prompt -- a contextual "something to do" row
+            like pickupPrompt just above, not the terminal status row, so it's placed
+            after pickupPrompt and before status. Mobile taps the row itself (no separate
+            floating button, matching throwPrompt/veilOverloadPrompt's existing pattern --
+            CEO-accepted cut, no directional ping/compass). */}
+        <ActionPrompt
+          id="climbPrompt"
+          visible={state.climbPromptVisible && hudLive}
+          tone="calm"
+          text="Press  C  to climb the rock"
+          keycap={mobile ? 'Climb' : undefined}
+          onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchClimb(); } : undefined}
+        />
+        {/* LUL-5005: Chapel Sanctuary interact prompt -- a contextual "something to do"
+            row like pickupPrompt above, not a held tap target of its own: E-key/
+            triggerTouchInteract() (the shared MobileControls "E" button, same as
+            pickup/buyVeilCharm) is what actually starts the dwell, so this row carries
+            no onPointerDown, matching pickupPrompt's shape rather than climbPrompt's
+            (climbPrompt has its own dedicated KeyC with no shared button to defer to). */}
+        <ActionPrompt
+          id="chapelSanctuaryPrompt"
+          visible={state.chapelSanctuaryPromptVisible && hudLive}
+          tone="calm"
+          text="Press  E  for chapel sanctuary — shelter 15s for a free charm against the mist"
         />
         {/* `hiding` is not a second flag: status only ever appears while hidden
             (LUL-35 pass 2 removed the `statusHiding` field, which the engine

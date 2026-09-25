@@ -77,9 +77,18 @@ export const MISSION_FIREPOWER_REWARD = 8;
 // "greed comes from depth, not the flat bonus" pricing rule as the original.
 export const MISSION_OAKHOLLOW_REWARD = 6;
 
+// LUL-4958: Slack Water -- +10 Embers, the smallest reward in the full M1-M5 mission set
+// (M4 Ghost 18, M2 Deepwater 12, M5 Cold Walk 22, M3 Slack Water 10 -- wiki
+// game/economy/mission-rewards:135-139). Deliberate floor price: this is the only mission
+// that pays the player to stand still, which SURVIVAL_CAP is designed to discourage: "it
+// pays once, for one 20-second window, and waiting past 120s still earns nothing" -- not an
+// exploit, but priced at the floor as a watch-item per that doc.
+export const MISSION_SLACKWATER_REWARD = 10;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
+  slackWater: MISSION_SLACKWATER_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

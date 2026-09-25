@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7364 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6485, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7762 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6820, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -561,7 +561,11 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What it CANNOT do**
 - Cannot be a hiding spot — not in `HIDE_KINDS`. Ducking behind a rock
-  blocks sight but never enables `hidden`.
+  blocks sight but never enables `hidden`. This is a separate, narrower
+  concept from the LUL-4528 vantage-climb *mount* below: mounting a rock
+  does not add it to `HIDE_KINDS`, and mounting/hiding are mutually
+  exclusive by construction (see below) — a rock is never simultaneously
+  a hide spot and a mount spot.
 - Not guaranteed clear of tree trunks at placement (see matrix).
 
 **Behaviours & logic**
@@ -573,6 +577,81 @@ one geometry builder (`makePredator()`), differentiated by the
   `ry`) — `blocked()` (player) and `blockedForPredator()` (predator,
   **LUL-1643**) both route through the same `coverBlockedR()`.
 - LOS: same AABB, both actors.
+
+## Vantage Climb (LUL-4528)
+
+Sightline-only cut of the Feature Scout's Prop Powers proposal (LUL-3254) —
+CEO-accepted with the Scout's own self-imposed cut: no directional ping, no
+compass indicator, no Threat Beacon (LUL-3009) widget reuse, to avoid
+duplicating that feature. Pure camera-height + detection-weight exposure.
+
+**Trigger** — tap `KeyC` (desktop) or `triggerTouchClimb()` (mobile), not
+held. `toggleRockClimb()` gates on `canMountRock()` (`lib/game/rockClimb.ts`):
+not already hidden, not already mounted, and a rock within `ROCK_MOUNT_RADIUS`
+(3 units, found via `findRockMountSpot()` — same rotated-AABB edge-distance
+query `findHideSpot()` uses, next to it in `lib/game/cover.ts`). A refused
+attempt (no rock in range, or hidden) fires `rockClimbDeniedCue()` — a short
+declined-interact sound plus a caption ("can't climb here" / "can't climb
+while hidden"), never a silent no-op.
+
+**State** — `mountedOnRock` (boolean) / `rockClimbT` (countdown seconds,
+module-level lets in `engine/forest-engine.js`). Mounting starts a fixed
+`ROCK_MOUNT_DURATION` (2s) window; `rockClimbT` decrements every frame while
+playing and auto-dismounts at 0 (`rockClimbEndCue()` fires exactly once on
+that edge, "never lapse silently"). Manual KeyC/`triggerTouchClimb()` while
+mounted dismounts immediately, same end cue. Reset to `false`/`0` at all
+three `hidden = false` sites (`pickup()`, `triggerDeath()`, `restart()`).
+
+**Effect** — while `mountedOnRock`:
+- `rockClimbDetectMul(mountedOnRock)` (`lib/game/rockClimb.ts`) multiplies
+  into both `effectiveDetect()` and `canSee()`'s shared multiplier chain
+  (`ROCK_CLIMB_DETECT_MUL = 1.6`, alongside `veilDetectMul`/
+  `fogTideDetectMul`/`timeOfRunDetectMul`/`timeOfDayDetectMul`) — the
+  player is more exposed to every predator while up on the rock. Returns
+  exactly `1` (no-op) whenever `mountedOnRock` is false.
+- `eyeH` eases toward `CONFIG.eye + ROCK_MOUNT_HEIGHT` (1.4 added) instead of
+  its usual hidden/standing targets. Since `blocked()` already forwards the
+  live `eyeH` into `canopyBlockedR()` every frame, the raised camera also
+  improves the player's own outward canopy clearance — a real sightline
+  benefit, not just a number going up.
+
+**Mutual exclusion with hiding** — `canMountRock`'s own `!hidden` gate refuses
+a mount while hidden; symmetrically, `toggleHidden()` now also refuses while
+`mountedOnRock` (a rock-mounted player has no reachable hide spot logically,
+but the code says so rather than relying on geometry to make it impossible).
+
+**HUD** — `climbPrompt` row inside `#actionSlot` ("Press  C  to climb the
+rock", contextual — visible whenever a rock is in range, not hidden, not
+already mounted). `#rockClimbPanel` countdown ("Exposed · Ns"), a sibling of
+`#caveImmunePanel` outside `#panel` so both stay visible with `adminMode` off.
+
+**Explanation** — `HINT_PRIORITY`'s `rockClimb` entry shows the one-shot
+`#hintCaption` pill ("climb the rock to see farther — but you're exposed
+while you're up there") the first time it becomes eligible, same precedent
+as `caveImmune`/`veilOverload`. The refusal captions ("can't climb here" /
+"can't climb while hidden") are separate — fired unconditionally on every
+declined KeyC press, not gated by `hintSeen`/first-encounter, since they are
+a repeated-input tell rather than a one-time explanation.
+
+**QA hooks**: `qaStageRockClimb(dx, dz)` (stages a predator with LOS to the
+nearest rock at a fixed clear distance, mirrors `qaHideBehindCoverKind` but
+keyed on `kind === 'rock'` directly since rock is outside `HIDE_KINDS`),
+`qaProbeRockClimb()` (`{ mountedOnRock, rockClimbT, startCueCount,
+endCueCount, deniedCueCount }`, mirrors `qaProbeVeilOverload`'s shape).
+
+See `docs/specs/lul-4528-rock-vantage-climb.md`.
+
+**What it still CANNOT do**
+- Still not a `HIDE_KINDS` spot — see "What it CANNOT do" above. Mounting and
+  hiding are two distinct, mutually exclusive interactions with the same prop.
+- No directional ping / compass — explicitly cut, not deferred (see the
+  proposal's CEO decision). Sightline (camera height + exposure) only.
+- No per-rock mount-height lookup — `ROCK_MOUNT_HEIGHT` is one fixed constant
+  for every rock, even though the underlying mesh height (`y: r*0.55`,
+  `generateCover()`) varies per rock.
+- No predator-AI-specific reaction to a mounted player beyond the existing
+  detection-weight chain (no "converge on last-seen-mounted position"
+  behaviour) — no exposure state has that today.
 
 ---
 
@@ -1532,16 +1611,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L5849-5909, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6090-6131). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6068-6128, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6425-6466). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6090-6131) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6050) rather than recomputed later, since `player.x/z` can move on
+  (L6425-6466) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6433) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1597,8 +1676,8 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3956),
-  reset to 0 on `enter()` (L3868) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3871),
+  reset to 0 on `enter()` (L3961) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L6745: `computeDepth(maxDistFromHome) +
@@ -1721,7 +1800,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6548, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6884, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1744,14 +1823,15 @@ not final tuning.
 **What it is**
 - **Implemented (LUL-1259, widened LUL-3010).** `MISSION_POOL` (`lib/game/mission.ts`): a pool of
   optional detour objectives, one active per run, drawn from the run's own seeded RNG (never
-  player-selected). Two members: `deepwater` — a fixed waypoint at the fire tower landmark
-  (`x: -95, z: -95`, matching `LANDMARKS`' `fireTower` entry, `engine/tuning.js:77`) — and
-  `oakHollow` — a near waypoint at the `oak` landmark (`x: 22, z: 4`, `engine/tuning.js:80`).
-  Per-run state (`mission: MissionState | null`) lives alongside `baby` at
-  `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every other rng()
-  consumer, so it never shifts the stream any existing seed/replay depends on.
+  player-selected). Three members: `deepwater` — a fixed waypoint at the fire tower landmark
+  (`x: -95, z: -95`, matching `LANDMARKS`' `fireTower` entry, `engine/tuning.js:77`) —
+  `oakHollow` — a near waypoint at the `oak` landmark (`x: 22, z: 4`, `engine/tuning.js:80`) —
+  and `slackWater` (LUL-4958) — no world target at all, completes on pickup during Fog Tide's
+  active phase (see below). Per-run state (`mission: MissionState | null`) lives alongside
+  `baby` at `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every
+  other rng() consumer, so it never shifts the stream any existing seed/replay depends on.
 
-**Two variants (LUL-3010)**
+**Three variants (LUL-3010, LUL-4958)**
 - `oakHollow` — near (≈22.4m from spawn), untimed, `MISSION_OAKHOLLOW_REWARD` = 6 Embers.
   Always eligible.
 - `deepwater` — far (≈134.4m from spawn), `timeLimitSeconds: 60`, `MISSION_FIREPOWER_REWARD` = 8
@@ -1770,20 +1850,37 @@ not final tuning.
   (`engine/forest-engine.js:1689`) / `triggerTouchInteract()` (`:3635`), the same key/button
   that already lifts the child), gated on a `missionCanComplete` check computed alongside
   `canPickup` (`:3430`).
+- `slackWater` — no world target (`spatial: false`, `lib/game/mission.ts`); completes when
+  the player accepts the child pickup (`pickup()`, `engine/forest-engine.js`) while Fog Tide
+  (LUL-27) is in its `'active'` phase, `MISSION_SLACKWATER_REWARD` = 10 Embers. Checked once,
+  at the instant `pickup()` is accepted, not re-checked or expirable afterward -- there is
+  only one pickup per run (`decisions/lul-2281-pickup-is-the-win-2026-09-09`). No secondary
+  support (`SECONDARY_SUPPORTED_MISSIONS` unchanged). Produces no mission-nav hum (the
+  `spatial: false` gate on `missionWaypointHum`'s call site). Renders in the existing, generic
+  `#missionPanel` like every other mission kind while active (`MISSION_NAMES.slackWater` =
+  "Slack Water", glyph `○` — see "show a two-line collapsed HUD panel ... whenever a mission
+  exists" below, which already covers this kind with no gating by name) — this ticket ships no
+  *new* HUD code (LUL-1098's territory is a new panel/copy system for missions generally), but
+  the panel is real and player-visible today. Like every mission kind, the panel unmounts the
+  instant `pickup()` is accepted (`pickingUp: true` excludes `isPlaying()`, and the `if(playing)`
+  HUD-state gate nulls `missionKind`/`missionStatus` in the same tick) — the `●` complete glyph
+  never actually renders for any mission kind, pre-existing behavior unchanged by this ticket.
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
   (`lib/game/economy.ts`, `deepwater: MISSION_FIREPOWER_REWARD = 8`, `oakHollow:
-  MISSION_OAKHOLLOW_REWARD = 6`), passed as `computeWinPayout()`'s optional fourth argument at
-  the `finishPickup()` call site. **Forfeited on death or expiry** — `computeDeathPayout()` is
+  MISSION_OAKHOLLOW_REWARD = 6`, `slackWater: MISSION_SLACKWATER_REWARD = 10`), passed as
+  `computeWinPayout()`'s optional fourth argument at the `finishPickup()` call site.
+  **Forfeited on death or expiry** — `computeDeathPayout()` is
   unmodified, so reaching the mission target but dying before reaching home banks no bonus; a
   `deepwater` mission that times out (`status: 'expired'`) also forfeits the bonus even on a
   win, since the payout site only pays `status === 'complete'` (the detour's real payout is the
   `depth` term, already uncapped on win / capped on death; the mission bonus is a small addition
   on top, not the source of the risk/reward).
 - Emit a repeating, non-predator-audible navigational audio cue (tempo-shortens with proximity,
-  same shape as Ship 1's `childCry` wayfinding pattern) whenever the mission is active
-  (`missionWaypointHum()`, `engine/forest-engine.js`).
+  same shape as Ship 1's `childCry` wayfinding pattern) whenever a *spatial* mission is active
+  (`missionWaypointHum()`, `engine/forest-engine.js`, gated on `mission.target.spatial !==
+  false` — `slackWater` has no target to hum toward, so it produces none).
 - Fire a one-time unconditional caption + audio sting on completion, and show a two-line
   collapsed HUD panel (name + progress glyph) top-left whenever a mission exists — mirrors the
   Embers/Stamina HUD-reflection pattern above, not a new panel system. **LUL-2442:** also hidden
@@ -1997,6 +2094,93 @@ not final tuning.
   decorative/navigational collision profile (`landmarkGroups.stoneMarker.position`, live post-nudge
   position), unchanged by this entry.
 
+### Chapel Sanctuary (LUL-5005, free `veilReserve` refuge)
+
+**What it is**
+- **Implemented (LUL-5005, cheap slice).** A second, free route to the same `veilReserve = true`
+  the Stone Marker charm above sells for Embers: shelter at the `chapelSteeple` landmark
+  (`x:20, z:-178`, `engine/tuning.js:69`) for a full `CHAPEL_SANCTUARY_DURATION` (15s,
+  `engine/tuning.js:94`) dwell and leave with the charm, no Embers spent. One-shot per run --
+  once granted, the chapel offers nothing more that round. Retargeted 2026-09-24 from an earlier
+  `veilCharge` premise the CEO ruled false (`veilCharge` free-regenerates unconditionally in
+  ~10s, `stepVeilCharge()`, `lib/game/veil.ts:47-71`) -- see wiki
+  `decisions/chapel-sanctuary-retarget-veilreserve-2026-09-24`.
+- State (`engine/forest-engine.js:601`): `chapelSanctuaryActive` (live dwell gate),
+  `chapelSanctuaryChargeT` (countdown, decremented in `tick()`), `chapelSanctuaryUsedThisRun`
+  (one-shot gate -- true ONLY once the full dwell actually completes, see below).
+- Prompt gate `chapelSanctuaryPromptVisible`, computed every tick alongside `canBuyVeilCharm`
+  (`engine/forest-engine.js:7135`): `chapelSanctuaryInRadius && !chapelSanctuaryUsedThisRun &&
+  !chapelSanctuaryActive`, where `chapelSanctuaryInRadius` is `distChapel <
+  CHAPEL_SANCTUARY_INTERACT_RADIUS` (4 units, `engine/tuning.js:93`, same radius shape as
+  `VEIL_CHARM_INTERACT_RADIUS`).
+- `startChapelSanctuary()` (`engine/forest-engine.js:5947`): sets `chapelSanctuaryActive = true`,
+  `chapelSanctuaryChargeT = CHAPEL_SANCTUARY_DURATION`, fires an entry caption + start cue. Does
+  **not** grant anything itself -- the grant only happens in `tick()`'s active-dwell branch
+  (`engine/forest-engine.js:7242`) on the full-countdown edge, so the one-shot gate can only close
+  on a real completed dwell (Q1.5), never on the E-press that starts it.
+- Two exits from the active-dwell branch: full dwell (`chapelSanctuaryChargeT` reaches 0) sets
+  `veilReserve = true`, `chapelSanctuaryUsedThisRun = true`, fires the caption + cue and a
+  one-shot beacon-glow pulse (`chapelSanctuaryPulseT`, mirrors `stoneMarkerPulseT`); leaving the
+  interact radius by more than 1.5x before the countdown completes cancels the dwell
+  (`chapelSanctuaryActive = false`, `chapelSanctuaryChargeT = 0`) and grants nothing -- the
+  one-shot gate stays open for a later retry the same run.
+- **Cue triple.** Explain: entry caption (`startChapelSanctuary()`) names the mechanic and the
+  one-time-per-run rule. Grant tell: reuses `buyVeilCharm()`'s own `embersPurchaseCue()`
+  (`engine/forest-engine.js:6058`) and caption (`'a charm against the mist'`) so the charm reads
+  identically whichever route granted it, plus the beacon-glow pulse above. Refusal tell
+  (`chapelSanctuaryDeniedCue()`, `engine/forest-engine.js:6213`): pressing `KeyE` in radius after
+  the gate is already closed fires the same square/100Hz/~0.17s buzz as
+  `rockClimbDeniedCue()` (`:6137`, "the codebase's one existing 'input was refused' cue") plus a
+  caption, gated on `captionsOn` same as that precedent. Early-exit tell
+  (`chapelSanctuaryEarlyExitCue()`, `:6226`): a distinct, quieter triangle tone + caption --
+  explicitly NOT the denied buzz, since leaving early is a non-event, not a refusal.
+
+**What it can do**
+- Reachable via both interact paths: desktop `KeyE` and mobile `triggerTouchInteract()` (the
+  existing shared "E" tap target, `components/MobileControls.tsx:342`) -- identical priority
+  slot to `canBuyVeilCharm`, right after it in both the keydown handler
+  (`engine/forest-engine.js:3082-3095`) and `triggerTouchInteract()` (`:7658-7667`).
+- Can be attempted, abandoned, and re-attempted freely in the same run as long as the full dwell
+  never completes -- only a completed grant closes the gate.
+
+**What it CANNOT do**
+- Cannot double-grant: `canBuyVeilCharm` already reads `!veilReserve`, so once the chapel grants
+  it, the Stone Marker purchase prompt correctly stops offering itself, and vice versa.
+- Cannot fire both routes' triggers in the same frame -- the two landmarks are placed >100 units
+  apart (`engine/tuning.js` `LANDMARKS`), so `distStoneMarker` and `distChapel` can't both be
+  inside their respective radii at once.
+- No new HUD readout for `veilReserve` itself -- reuses the existing Stone Marker `#veilCharmPip`
+  tell unchanged; this feature only adds a second way to flip the same flag.
+- No animated shelter pose, no interior-glow mesh, no wind-chime ambience loop -- deferred to a
+  Tier B full-feature pass (the cheap slice's visual/audio tell is the existing landmark
+  beacon-glow pulse, boosted on grant, same mechanism as the Stone Marker's `stoneMarkerPulseT`).
+
+**Behaviours & logic**
+- Reset per-run, same site as `veilOverloadUsedThisRound` (`engine/forest-engine.js:1402`, inside
+  `enter()`, called by both initial boot and `restart()`): `chapelSanctuaryActive = false;
+  chapelSanctuaryChargeT = 0; chapelSanctuaryUsedThisRun = false;`. Deliberately NOT reset on
+  `arriveHome()`/child set-down -- that carry-leg path is dead in real play
+  (`decisions/lul-2281-pickup-is-the-win-2026-09-09`), so there is no in-run scenario needing an
+  earlier reset.
+- HUD: `#chapelSanctuaryPrompt` row in `#actionSlot` (`components/Hud.tsx:1222`,
+  "Press  E  for chapel sanctuary — shelter 15s for a free charm against the mist"), visible
+  while `chapelSanctuaryPromptVisible`. `#chapelSanctuaryPanel` (`components/Hud.tsx:1036`),
+  sibling of `#caveImmunePanel`/`#rockClimbPanel`/`#veilOverloadPanel` outside `#panel` (stays
+  visible with `adminMode` off, Q3), "Sanctuary · Xs" countdown while `chapelSanctuaryActive`.
+- QA hooks: `qaProbeChapelSanctuary()` (`engine/forest-engine.js:5652`, mirrors
+  `qaProbeRockClimb()`'s shape -- `{ chapelSanctuaryActive, chapelSanctuaryChargeT,
+  chapelSanctuaryUsedThisRun, promptVisible, startCueCount, deniedCueCount,
+  earlyExitCueCount }`), `qaTeleportNearChapel()` (`:5664`, mirrors
+  `qaTeleportNearStoneMarker()` -- 2 units off the landmark's live position, unaffected by
+  `applyQaWorldMicroPreset()` since `LANDMARKS` positions are untouched in the micro world).
+
+**Collision & physics profile**
+- N/A — not a spatial/world object of its own. Uses the `chapelSteeple` landmark's existing
+  decorative/navigational collision profile (`landmarkGroups.chapelSteeple.position`, live
+  post-nudge position), unchanged by this entry.
+
+See wiki `game/mechanics/chapel-sanctuary.md`.
+
 ---
 
 ## The interaction matrix
@@ -2021,7 +2205,7 @@ Matrix is symmetric for `C`/`LOS`; filled upper-triangle, lower mirrors it.
 
 | | PL | CH | WO | BE | LI | TR | RO | LO | BR | GR | HO | FO | FL | MI | UI | EM |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS | LOS²⁰ | LOS+HIDE²² | STAND | TRIG⁵ | – | ATT | TRIG²⁴ | TRIG⁶ | TRIG²¹ |
+| **PL** Player | · | TRIG¹ | TRIG² | TRIG² | TRIG² | C+LOS³ | C+LOS+TRIG²⁵ | LOS²⁰ | LOS+HIDE²² | STAND | TRIG⁵ | – | ATT | TRIG²⁴ | TRIG⁶ | TRIG²¹ |
 | **CH** Child | | · | **U**⁷ | **U**⁷ | **U**⁷ | – | – | – | – | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
 | **WO** Wolf | | | C⁹ | C¹⁰ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
 | **BE** Bear | | | | C¹³ | C¹⁰ | C(trunk)+LOS³ | C+LOS²³ | LOS only¹¹ | LOS only¹¹ | STAND | – | – | – | – | TRIG⁶ | TRIG²¹ |
@@ -2169,6 +2353,15 @@ the mission's target waypoint (or, for the `retrieval` secondary, the
 press the shared interact key/button (`KeyE`, `:3348` / `triggerTouchInteract()`,
 `:7513`, the same one that lifts the child). No new keybinding, no new touch
 target, no `blocked()`/`blockedR()` call against the player at all.
+²⁵ **Added, LUL-4528 (Vantage Climb).** `KeyC`/`triggerTouchClimb()` proximity
+trigger, on top of Rock's unchanged `C+LOS` collider — `findRockMountSpot()`
+(`ROCK_MOUNT_RADIUS`=3, `lib/game/cover.ts`) is a distance query, not a new
+collider; a mounted player still physically collides with the same rock AABB
+as before. Directional effect (detection-weight exposure, camera-height
+easing toward the rock) is *not* pairwise-geometric — see the Rock section's
+"Vantage Climb" subsection above rather than a new matrix column, same
+treatment `caveImmune`/`veilOverload` get (player-state features, not new
+spatial elements).
 
 ---
 
@@ -2230,7 +2423,9 @@ event (single caption slot, last `pushState()` wins). Slice (c)
 One small engine-side registry (`HINT_PRIORITY`/`HINT_TEXT`, `engine/forest-engine.js`)
 replaces LUL-2230's bespoke scent-only caption with a `{key -> text/trigger}` table covering
 eleven keys: `scent`, `landmark`, `deepwater`, `wolf`/`bear`/`lion`,
-`stamina`, `cover` (hollow log/bramble), `caveImmune`, `throwable`, `veil`. Each key fires
+`stamina`, `cover` (hollow log/bramble), `caveImmune`, `rockClimb` (LUL-4528), `throwable`,
+`veil` — plus `windAssist`/`windPulse`/`beaconHunter`/`veilOverload`, added later (see their
+own sections below). Each key fires
 once per install, the first time its trigger condition is true while `entered && !hidden &&
 !win && !death` and the `Show hints` setting is on. Only one hint shows at a time;
 `HINT_PRIORITY` order both breaks same-frame ties and lets a higher-priority key preempt a
@@ -2322,6 +2517,63 @@ deniedCueCount }`).
 
 See `docs/specs/lul-3150-veil-overload.md`.
 
+### Scent Veil (LUL-5004, LUL-4895 accepted/retargeted)
+
+**What it is**
+- A one-time-per-lock break: pressing `KeyG` (desktop) or tapping `#veilPrompt` (mobile,
+  `triggerTouchScentVeil()`) while at least one live predator has an active scent/beacon lock
+  (`p.scentLock > 0`), the player is moving against the wind (`movingAgainstWind`), and the
+  lock hasn't already been broken this cycle (`p.scentVeilReady`) spends `SCENT_VEIL_STAMINA_COST`
+  (`lib/game/scent.ts`, placeholder 0.3 of the 0..1 stamina bar, Economist retuning is a
+  deliberate follow-up) and clears `scentLock`/`scentVeilReady` on every predator that currently
+  matches (`breakScentVeil()`, `engine/forest-engine.js`) -- not just the nearest one, since the
+  HUD gate itself is a `.some()` across all predators and there's no way for the player to aim
+  the press at a single animal.
+  LUL-5004 ticket note: the original spec text gated this on `carrying`, which
+  decisions/lul-2281-pickup-is-the-win-2026-09-09 already made permanently false in real play
+  (same dead-gate class LUL-4662/LUL-4663 found on Veil Overload) -- dropped entirely rather than
+  shipped dead, verified `checkScent()`/`scentOnto()` (`engine/forest-engine.js`) read no
+  `carrying` reference before dropping it.
+- `scentLock` is the one shared leash both real scent pickup (`scentOnto()`) and LUL-4897 Beacon
+  Hunter's wind-signal channel (`beaconOnto()`) arm -- both set `p.scentVeilReady = true` alongside
+  `p.scentLock = SCENT_TRACK_TIME`, so a break works on either detection channel without a second
+  gate.
+- Key binding: `KeyG`, not `KeyF` -- decisions/scent-veil-key-collision-retarget-2026-09-24. `KeyF`
+  is already the mist veil's own hold key (`veilHeld`, this file's Veil section) and both are
+  eligible the same real-play frame (hunted + downwind + charge/stamina available), so holding F
+  would be ambiguous between two unrelated systems.
+- Gate expression (`scentVeilPromptActive`, recomputed every frame, `engine/forest-engine.js`):
+  `movingAgainstWind && predators.some(p => !p.inert && p.scentLock > 0 && p.scentVeilReady)`.
+  Deliberately excludes the stamina check -- `#veilPrompt` stays visible, rendered `tone="disabled"`
+  (grayed, not hidden) rather than unmounted, whenever stamina is the only thing blocking the
+  press (Q5: a refused input needs a positive tell). A press while grayed fires
+  `scentVeilDeniedCue()`, never a silent no-op.
+
+**Cue triple**
+- Visual: `#veilPrompt` row in `#actionSlot` (`components/Hud.tsx`, keycap `G`, "Press G to break
+  the scent trail"), `tone="urgent"` when stamina-eligible, `tone="disabled"` (grayed) when not.
+  `#windIndicator`'s `windIndicatorVeilActive` class (4x `windIndicatorPulse`'s default 900ms
+  rate = 225ms, `components/GameCanvas.tsx`) composes alongside the existing `windIndicatorActive`
+  class rather than overwriting it -- `movingAgainstWind` is a precondition of
+  `scentVeilPromptVisible`, so both classes can be (and always are, when this one applies) present
+  the same frame; `className` is built by joining an array of conditional class names, not a
+  ternary. Visible with `adminMode` off -- `#actionSlot` is not inside `#panel`.
+- Audio: `scentVeilBreakCue()` on a successful break (sine, 440->880Hz rising), `scentVeilDeniedCue()`
+  on a refused press (square, 300->100Hz descending) -- both gated `if(!audio || !soundOn) return`,
+  distinct register from Veil Overload's pair (sawtooth 140<->560Hz) so the two "something happened
+  to my veil" sounds stay distinguishable.
+- Explanation: none yet -- no `HINT_PRIORITY` entry filed with this cheap slice (out of scope per
+  the ticket; a follow-up can add one the same way `veilOverload`'s entry works).
+
+**QA hooks**: `qaProbePredatorState(kind)` extended with `scentLock`/`scentVeilReady` (real
+predator fields, not a fake shadow copy). `qaProbeScentVeil()` (`{ staminaCharge,
+deniedCueCount }`, mirrors `qaProbeVeilOverload`'s shape). Staging a real lock for a test reuses
+the existing `qaSeedScentPoint`/`qaProbeScentOnOldest` pair (this file's LUL-65 scent-chase
+coverage) -- no new "fake a lock" hook.
+
+Wiki spec `game/mechanics/scent-veil.md`, decisions/scent-veil-accepted-retargeted-2026-09-24,
+decisions/scent-veil-key-collision-retarget-2026-09-24.
+
 ### LUL-3009: Threat Beacon (active pulse on `#windIndicator`)
 
 Scout proposal (LUL-3007), CEO-accepted cheap slice. Adds one new read-only `EngineHudState`
@@ -2371,7 +2623,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7341 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6030) and `windAssistEndCue()` (L6039), edge-triggers on the combined
+`windAssistStartCue()` (L6365) and `windAssistEndCue()` (L6374), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

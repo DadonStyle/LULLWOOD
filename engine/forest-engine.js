@@ -50,6 +50,8 @@ import {
   isMovingAgainstWind,
   scentLifetimeWithWind,
   WIND_AGAINST_RADIUS_MULTIPLIER,
+  scentVeilTriggerActive,
+  SCENT_VEIL_STAMINA_COST,
 } from '@/lib/game/scent';
 import {
   coverKindBlocksMovement,
@@ -72,6 +74,7 @@ import {
   blockedForPredator as geoBlockedForPredator,
   hasLOS as geoHasLOS,
   findHideSpot as geoFindHideSpot,
+  findRockMountSpot as geoFindRockMountSpot,
   effectiveDetect as geoEffectiveDetect,
   canSee as geoCanSee,
   COVER_URGENT_RANGE,
@@ -115,6 +118,7 @@ import {
 import { stepVeilCharge, veilDetectMul, veilFogDensity, VEIL_PROMPT_MIN_CHARGE } from '@/lib/game/veil';
 import { CAVE_IMMUNITY_TIME, isCaveImmune } from '@/lib/game/cave';
 import { VEIL_OVERLOAD_DURATION, isVeilOverloadActive } from '@/lib/game/veilOverload';
+import { ROCK_MOUNT_RADIUS, ROCK_MOUNT_DURATION, ROCK_MOUNT_HEIGHT, isRockClimbActive, canMountRock, rockClimbDetectMul } from '@/lib/game/rockClimb';
 import { stepStamina, sprintSpeedMul, STAMINA_SPRINT_MUL, WIND_ASSIST_SPEED_MUL } from '@/lib/game/stamina';
 import { idleGlowIntensity, idleHaloOpacity } from '@/lib/game/childGlow';
 import {
@@ -149,6 +153,7 @@ import {
   distToMissionTarget,
   canCompleteMission,
   completeMission,
+  canCompleteSlackWater,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -192,6 +197,7 @@ import {
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, ROOSTS, ROOST_COOLDOWN,
+  CHAPEL_SANCTUARY_INTERACT_RADIUS, CHAPEL_SANCTUARY_DURATION,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
   BEACON_HUNTER_LOCK_MUL, BEACON_HUNTER_EYE_COLOR,
@@ -433,11 +439,13 @@ let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, stami
 // LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
 // decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
 let stoneMarkerPulseT = 0, brambleSnagT = 0;   // LUL-4526: Thorn Snag stumble countdown
+let chapelSanctuaryPulseT = 0;   // LUL-5005: same one-shot beacon-glow boost shape as stoneMarkerPulseT, set on grant
 let inLogCrawl = false, logCrawlDirX = 0, logCrawlDirZ = 0,
     logCrawlExitX = 0, logCrawlExitZ = 0, logCrawlDeniedLatch = false;   // LUL-4527
 // LUL-1089: throttled cover probe (COVER_PROBE_HZ). lastHideSpot holds the
 // last result between probes; coverProbeAccum counts elapsed seconds.
 let lastHideSpot = null, coverProbeAccum = 0, coverRustleAccum = 0;   // LUL-2856
+let lastRockMountSpot = null;   // LUL-4528: same throttled-probe shape as lastHideSpot above
 let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil ramps up from this, not a hardcoded floor
 
 // LUL-27: Fog Tide, the first recurring world event (lib/game/eventScheduler.ts
@@ -586,6 +594,17 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 // tick() alongside the other per-frame timers.
 let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
 let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
+// LUL-5005: Chapel Sanctuary -- chapelSanctuaryActive is the live dwell gate,
+// chapelSanctuaryChargeT the countdown (decremented in tick() alongside the other
+// per-frame timers, same shape as caveImmuneT/veilOverloadChargeT above).
+// chapelSanctuaryUsedThisRun is the one-shot gate -- set true ONLY once the full
+// dwell completes and the charm is actually granted (see the tick() branch below);
+// leaving early resets chargeT/active but leaves this false so the player can retry.
+let chapelSanctuaryActive = false, chapelSanctuaryChargeT = 0, chapelSanctuaryUsedThisRun = false;
+// LUL-4528: Rock -- Vantage Climb. mountedOnRock is the live gate (mutually exclusive
+// with hidden by construction); rockClimbT is the countdown, decremented in tick()
+// alongside the other per-frame timers (same shape as caveImmuneT above).
+let mountedOnRock = false, rockClimbT = 0;
 // LUL-4663: whether the retargeted trigger (any live predator in `state ===
 // 'chase'`) is true this frame -- recomputed in the `playing` block of
 // stepFrame() alongside veilActive/coverPromptVisible, read by both the
@@ -593,6 +612,14 @@ let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
 // access to that block's locals, same reason canPickup/canBuyVeilCharm are
 // module-level lets rather than block-scoped consts).
 let veilOverloadTriggerActive = false;
+// LUL-5004: same module-level-let shape as veilOverloadTriggerActive just
+// above, for the same reason -- recomputed every frame in stepFrame()'s
+// `playing` block, read by both the KeyG keydown handler and
+// triggerTouchScentVeil() below, neither of which has access to that block's
+// locals. Stamina sufficiency is deliberately NOT folded in here (Q5: the
+// prompt must stay visible, rendered disabled+grayed, not hidden, when
+// stamina is the only thing blocking it) -- see scentVeilPromptEnabled.
+let scentVeilPromptActive = false;
 let windAssistActive = false;   // LUL-3149: previous frame's (running && movingAgainstWind), for edge-triggered start/end cues
 let grid = new Map();
 let coverData = [];            // {x,z,hx,hz,kind} -- LOS-blocking AABBs (tagged trees + new props)
@@ -1378,6 +1405,11 @@ function placeCave(){
   // "resets on reset" half of the CEO ruling needs an explicit per-round site;
   // it used to live in setDown(), which real play never reaches either.
   veilOverloadChargeT = 0; veilOverloadUsedThisRound = false; veilOverloadTriggerActive = false;
+  // LUL-5005: same per-run reset site as veilOverloadUsedThisRound above --
+  // chapelSanctuaryUsedThisRun deliberately does NOT reset on arriveHome()/child
+  // set-down (that carry-leg path is dead in real play, decisions/lul-2281-pickup-
+  // is-the-win-2026-09-09), only at run start.
+  chapelSanctuaryActive = false; chapelSanctuaryChargeT = 0; chapelSanctuaryUsedThisRun = false;
   if(caveSpawned){
     const [x, z] = clearLandmarkSpot(CAVE.x, CAVE.z, CAVE.clear);
     caveData = { x, z };
@@ -1746,7 +1778,7 @@ function makePredator(kind){
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:rng()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0, standX:0, standZ:0,
-    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0,
+    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0, scentVeilReady:false,
     commitDir: null, commitT: 0, lastSteerState: 'roam', searchPath: null,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0, sightFlicker:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
@@ -1819,7 +1851,7 @@ function placePredators(){
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
     if(p.parked) p.g.visible = false;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
-    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.windPauseCooldownT=0; p.scentLock=0; p.scentCalls=0;
+    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.windPauseCooldownT=0; p.scentLock=0; p.scentCalls=0; p.scentVeilReady=false;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0; p.sightFlicker=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
@@ -1951,7 +1983,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','veilOverload','throwable','veil'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -1974,6 +2006,7 @@ const HINT_TEXT = {
   windPulse:  'wind pulse — nearby predators pause their sprint when moving across the wind',
   cover:      'a bush — predators lose sight of you while you hold still',
   caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
+  rockClimb:  'climb the rock to see farther — but you\'re exposed while you\'re up there',
   veilOverload: 'burn all veil charge (Q) for a detection-proof escape',
   throwable:  'a stone — E to pick up, throw to break a chase',
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
@@ -2127,6 +2160,7 @@ function scentOnto(p){
   }
   p.alertedBy = null;   // LUL-1857: scent-driven, not the carried cry
   p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
+  p.scentVeilReady = true;   // LUL-5004: a fresh lock cycle re-arms the one-time-per-lock break
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
   predatorCall(p.kind, false, p);
@@ -2142,11 +2176,37 @@ function beaconOnto(p){
   if(p.state === 'chase') return;   // already chasing (any channel) -- don't re-trigger the cue/roar
   p.alertedBy = null;
   p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2); p.beaconHunterLocked = true;
+  p.scentVeilReady = true;   // LUL-5004: scentLock is the shared leash both channels arm -- see scentVeilTriggerActive's own comment (lib/game/scent.ts)
   p.eyeMat.color.setHex(BEACON_HUNTER_EYE_COLOR);   // cold blue-teal rim glow, visible under reducedMotion since it's a static color, not an animation
   if(!p.spotted) p.spotted = true;
   predatorCall(p.kind, false, p);
   beaconLockCue();
   logChronicle('beacon_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home) });
+}
+
+// LUL-5004: Scent Veil -- spends stamina to break every currently-ready
+// scent/beacon lock at once (KeyG / triggerTouchScentVeil below). Iterates
+// `predators` rather than a single target: scentVeilTriggerActive() (lib/game/
+// scent.ts) is evaluated with `.some()` across all of them for the HUD gate,
+// so a press while more than one predator is scent-locked breaks every one
+// it applies to in the same frame, not just the nearest -- there's no way for
+// the player to aim this at a single animal, and leaving the others locked
+// after a successful press would silently fail to deliver what the prompt
+// promised.
+// Only called once the caller has already confirmed scentVeilTriggerActive()
+// is true for at least one predator (movingAgainstWind is a single player-wide
+// condition, already satisfied) -- the per-predator check here is just
+// scentLock/scentVeilReady, the two fields that actually vary predator to
+// predator.
+function breakScentVeil(){
+  staminaCharge = Math.max(0, staminaCharge - SCENT_VEIL_STAMINA_COST);
+  for(const p of predators){
+    if(p.scentLock > 0 && p.scentVeilReady){
+      p.scentLock = 0;         // Design Q1: reset to 0, not paused -- the leash releases outright
+      p.scentVeilReady = false;   // Design Q2: one-time per lock cycle, re-armed only by the next scentOnto()/beaconOnto()
+    }
+  }
+  scentVeilBreakCue();
 }
 
 // ---- Sound: footstep noise as a third detection channel (LUL-39) ---------
@@ -2307,6 +2367,7 @@ function missionWaypointHum(m, distToPlayer){
 // play (LUL-23/LUL-65) meaningful.
 function hasLOS(x0,z0,x1,z1){ return geoHasLOS(x0,z0,x1,z1,coverGrid,CELL,WRAP_SPAN); }
 function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN); }
+function findRockMountSpot(x,z){ return geoFindRockMountSpot(x,z,coverGrid,CELL,WRAP_SPAN); }
 // LUL-27: fogTideDetectMul(fogTideAmountAt(p.x, p.z, ...)) stacks the same way
 // veilDetectMul does -- multiplicatively, sight only. A player who's also
 // holding the veil during a tide gets both cuts; that's intended, not a
@@ -2316,11 +2377,11 @@ function findHideSpot(x,z){ return geoFindHideSpot(x,z,coverGrid,CELL,WRAP_SPAN)
 // position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
 function effectiveDetect(p){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return 0;
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * timeOfDayDetectMul(timeOfDay) * CONFIG.detectScaleMul, { hidden, hideTime });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime });
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * timeOfDayDetectMul(timeOfDay) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -2941,7 +3002,13 @@ let entered = false, walk = CONFIG.walk, won = false, canPickup = false,
     jumping = false, jumpElapsed = 0, jumpPressed = false,   // LUL-213: see beginJump() / tick()'s jumpY
     missionCanComplete = false,   // LUL-1258: recomputed every tick alongside canPickup, below
     secondaryCanComplete = false,   // LUL-1666: same shape, for the retrieval item
-    canBuyVeilCharm = false;   // LUL-1210: recomputed every tick alongside canPickup, below
+    canBuyVeilCharm = false,   // LUL-1210: recomputed every tick alongside canPickup, below
+    // LUL-5005: both recomputed every tick alongside canBuyVeilCharm, below.
+    // chapelSanctuaryInRadius is NOT gated on the one-shot flag (the KeyE denied-cue
+    // branch reads it directly so a refused re-entry still gets a tell); PromptVisible
+    // additionally gates on !chapelSanctuaryUsedThisRun/!chapelSanctuaryActive for the HUD row.
+    chapelSanctuaryInRadius = false,
+    chapelSanctuaryPromptVisible = false;
 let shuffleCooldownAccum = 0;   // LUL-3066: seconds remaining before the next shuffleHide() is allowed
 let heldThrowable = false;
 let throwablesReserve = 0;   // LUL-2351: Pocket Stones -- free re-arms of heldThrowable for this run
@@ -3049,9 +3116,16 @@ on(window, 'keydown', e => {
     toggleRunOn = !toggleRunOn;
   }
   // LUL-1258: no new key -- mission completion reuses the interact action.
+  // LUL-5005: chapelSanctuaryPromptVisible slots in right after canBuyVeilCharm --
+  // both are "E-key grants veilReserve" actions, mutually exclusive by location
+  // (landmarks >100u apart, Q7). The denied branch fires whenever the player is in
+  // radius but the one-shot gate is already closed and mid-dwell isn't already
+  // running, so a repeat E-press after the charm is granted still gets a tell.
   if(e.code === 'KeyE' && playing && !paused){
     if(canPickup) pickup();
     else if(canBuyVeilCharm) buyVeilCharm();
+    else if(chapelSanctuaryPromptVisible) startChapelSanctuary();
+    else if(chapelSanctuaryInRadius && chapelSanctuaryUsedThisRun && !chapelSanctuaryActive) chapelSanctuaryDeniedCue();
     else if(missionCanComplete) completeMissionSequence();
     else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
@@ -3075,7 +3149,20 @@ on(window, 'keydown', e => {
     if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound) activateVeilOverload();
     else veilOverloadDeniedCue();
   }
+  // LUL-5004/LUL-4895: Scent Veil. Retargeted off `carrying` (permanently false in
+  // real play since LUL-2281, decisions/lul-2281-pickup-is-the-win-2026-09-09) to
+  // scentLock/movingAgainstWind/stamina, same shape as KeyQ's retarget just above.
+  // Bound to G, not F -- decisions/scent-veil-key-collision-retarget-2026-09-24: F
+  // is already the mist veil's own hold key (veilHeld below), and both are eligible
+  // in the same real-play frame (hunted + downwind + charge/stamina available), so
+  // holding F would be ambiguous between two unrelated systems.
+  if(e.code === 'KeyG' && playing && !paused && scentVeilPromptActive){
+    if(staminaCharge >= SCENT_VEIL_STAMINA_COST) breakScentVeil();
+    else scentVeilDeniedCue();
+  }
   if(e.code === 'KeyH' && playing && !paused) toggleHidden();
+  // LUL-4528: Rock -- Vantage Climb. Tap, not held (mirrors KeyH's shape above).
+  if(e.code === 'KeyC' && playing && !paused) toggleRockClimb();
   // LUL-3066: hide-reposition shuffle -- only while already hidden, off cooldown.
   if(e.code === 'KeyR' && playing && !paused && hidden && shuffleCooldownAccum <= 0) shuffleHide();
   // LUL-213: jumping stands you up first (same as any movement key already
@@ -3405,8 +3492,27 @@ function rollCoverRustle(){
 }
 function toggleHidden(){
   if(hidden){ exitHide(); return; }
+  if(mountedOnRock) return;   // LUL-4528: mutually exclusive with the rock vantage climb
   const spot = findHideSpot(player.x, player.z);
   if(spot) enterHide(spot);
+}
+// LUL-4528: Rock -- Vantage Climb (sightline-only cut, no directional ping). Tap-trigger
+// (KeyC / triggerTouchClimb()), not held -- mirrors enterHide/exitHide/toggleHidden's shape
+// just above but as a fixed-duration mount rather than a held/geometry-gated state.
+function enterRockClimb(spot){
+  mountedOnRock = true; rockClimbT = ROCK_MOUNT_DURATION;
+  rockClimbStartCue();
+}
+function exitRockClimb(){
+  if(!mountedOnRock) return;
+  mountedOnRock = false; rockClimbT = 0;
+  rockClimbEndCue();
+}
+function toggleRockClimb(){
+  if(mountedOnRock){ exitRockClimb(); return; }
+  const spot = findRockMountSpot(player.x, player.z);
+  if(canMountRock(hidden, mountedOnRock, spot ? 0 : Infinity, ROCK_MOUNT_RADIUS) && spot) enterRockClimb(spot);
+  else rockClimbDeniedCue(hidden ? 'hidden' : 'noRock');   // Q5: declined-interact tell, not silence -- see Cues
 }
 // LUL-3066: hide-reposition / wind-gated shuffle. Only ever called while `hidden` with
 // `hideSpot` set (the KeyR handler and triggerTouchShuffle() both guard on that already),
@@ -3729,6 +3835,9 @@ let hudState = {
   chargeVisible: false, chargeToken: 0,
   caveImmuneActive: false, caveImmuneTimeLeft: 0,
   veilOverloadActive: false, veilOverloadTimeLeft: 0, veilOverloadVisible: false,
+  // LUL-5004: Scent Veil -- #veilPrompt's visible/enabled pair (Q5: stays
+  // visible, disabled+grayed, when only stamina blocks it).
+  scentVeilPromptVisible: false, scentVeilPromptEnabled: false,
   // LUL-1089: contextual action prompts
   coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null,
   veilPromptVisible: false, veilPromptUrgent: false,
@@ -4131,6 +4240,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z };
   };
 
+  // [QA-HOOK] LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e
+  // staging -- the real cycle is a 90s wall/game-clock loop (lib/game/fogTide.ts
+  // FOG_TIDE_CONFIG), too slow to drive through qaAdvance() one real dt-step at a time for a
+  // per-test setup. Takes effect on the next tick's fogTidePhase() re-evaluation, same
+  // as a real elapsed-time crossing would -- not a force-set of fogTideActive itself, so the
+  // existing phase-transition tracking still fires correctly off this value, unlike a hook
+  // that set the derived boolean directly would.
+  window.ForestEngine.qaSetFogTideClock = function(seconds){
+    fogTideClock = Math.max(0, seconds % FOG_TIDE_CONFIG.period);
+  };
+
   // LUL-2189/LUL-2207: exposes the module-scope wind unit vector (set once per
   // generateMap() by generateWind(), engine/forest-engine.js:1810/1812) so a test
   // can derive #windIndicator's expected rotation instead of hardcoding an angle.
@@ -4295,7 +4415,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // hearing channel (`hearCry()`, `:2488`) from every other route into 'investigate'
     // (scent/footstep/sight all leave it null) -- state alone can't tell a test which
     // detection channel actually fired.
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, t: clock.elapsedTime };
+    // LUL-5004: scentLock/scentVeilReady added for the Scent Veil e2e coverage --
+    // real values off the real predator object, not a fake/QA-only shadow copy.
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime };
   };
   // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
   // stage a "first sighted" scenario -- effectiveDetect() applies
@@ -4579,6 +4701,42 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       return { idx, kind, playerX: qx, playerZ: qz, detect };
     }
     return null;
+  };
+
+  // [QA-HOOK] LUL-4528: rock-climb staging hook, mirrors qaHideBehindCoverKind's
+  // LOS-clear-ray check shape just above but keyed on kind === 'rock' directly --
+  // rock is not in HIDE_KINDS, so qaHideBehindCoverKind cannot be reused as-is.
+  // Places the first live predator at (nearestRock.x + dx, nearestRock.z + dz),
+  // staged into 'chase' the same way qaHideBehindCoverKind does, so
+  // qaProbeEffectiveDetect(kind) reads a real, non-zero detect roll immediately.
+  // Returns the predator's staged {x,z} on success, null if that offset is
+  // movement-blocked or the ray back to the rock isn't LOS-clear (caller picked
+  // a bad dx/dz) or there is no rock / no live predator in this world.
+  window.ForestEngine.qaStageRockClimb = function(dx, dz){
+    let rock = null, bestD = Infinity;
+    for(const c of coverData){
+      if(c.kind !== 'rock') continue;
+      const d = Math.hypot(c.x - player.x, c.z - player.z);
+      if(d < bestD){ bestD = d; rock = c; }
+    }
+    if(!rock) return null;
+    const idx = predators.findIndex(p => !p.inert);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    const px = rock.x + dx, pz = rock.z + dz;
+    if(predatorBlocked(px, pz, p.rad)) return null;
+    let clear = true;
+    const STEPS = 12;
+    for(let i = 1; i < STEPS; i++){
+      const u = i / STEPS;
+      if(blockedR(rock.x + (px - rock.x) * u, rock.z + (pz - rock.z) * u, p.rad)){ clear = false; break; }
+    }
+    if(!clear) return null;
+    p.noiseTarget = null; p.noiseTargetT = 0;
+    p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
+    p.state = 'chase'; p.hunt = false;
+    p.x = px; p.z = pz;
+    return { x: px, z: pz };
   };
 
   // LUL-196: reset a predator to roam without moving it. Existing hooks that
@@ -5528,6 +5686,46 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeVeilOverload = function(){
     return { chargeT: veilOverloadChargeT, usedThisRound: veilOverloadUsedThisRound, deniedCueCount: qaVeilOverloadDeniedCueCount };
   };
+  // [QA-HOOK] LUL-5004: raw Scent Veil state, mirrors qaProbeVeilOverload's shape --
+  // the denied cue's fire count so a spec can assert the blocked-tone refusal path
+  // without decoding WebAudio output, plus the unrounded stamina value pushState's
+  // HUD copy rounds to 2 decimals.
+  window.ForestEngine.qaProbeScentVeil = function(){
+    return { staminaCharge, deniedCueCount: qaScentVeilDeniedCueCount };
+  };
+  // [QA-HOOK] LUL-4528: raw rock-climb state, mirrors qaProbeVeilOverload's shape.
+  // Includes all three cues' fire counts so a spec can assert e.g. rockClimbEndCue
+  // fired exactly once on countdown expiry (never lapse silently, never re-fire)
+  // without decoding WebAudio output.
+  window.ForestEngine.qaProbeRockClimb = function(){
+    return {
+      mountedOnRock, rockClimbT,
+      startCueCount: qaRockClimbStartCueCount,
+      endCueCount: qaRockClimbEndCueCount,
+      deniedCueCount: qaRockClimbDeniedCueCount,
+    };
+  };
+  // [QA-HOOK] LUL-5005: raw chapel-sanctuary state, mirrors qaProbeRockClimb's shape.
+  // veilReserve is already exposed via qaProbeVeil() -- not duplicated here, a spec
+  // reads both hooks together to assert the grant crossed from this feature specifically
+  // (e.g. earlyExitCueCount fired but veilReserve stayed false).
+  window.ForestEngine.qaProbeChapelSanctuary = function(){
+    return {
+      chapelSanctuaryActive, chapelSanctuaryChargeT, chapelSanctuaryUsedThisRun,
+      promptVisible: chapelSanctuaryPromptVisible,
+      startCueCount: qaChapelSanctuaryStartCueCount,
+      deniedCueCount: qaChapelSanctuaryDeniedCueCount,
+      earlyExitCueCount: qaChapelSanctuaryEarlyExitCueCount,
+    };
+  };
+  // [QA-HOOK] LUL-5005: places the player 2 units off the chapel steeple's live position --
+  // mirrors qaTeleportNearStoneMarker exactly (LANDMARKS positions are untouched by
+  // applyQaWorldMicroPreset(), engine/tuning.js, so this works in the micro world too).
+  window.ForestEngine.qaTeleportNearChapel = function(){
+    const p = landmarkGroups.chapelSteeple.position;
+    player.x = p.x + 2; player.z = p.z;
+    return { x: p.x, z: p.z };
+  };
   // [QA-HOOK] stand just outside the mission target's interactRadius so #missionPanel, the
   // mission prompt and the objective are all on screen at once. Returns the target or null.
   window.ForestEngine.qaTeleportNearMission = function(){
@@ -5682,7 +5880,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.variant = spec.variant;   // LUL-4897: additive, e.g. 'beaconHunter' for a wolf; undefined for every ordinary predator
       p.beaconHunterLocked = false;
       p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
-      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = 0; p.scentCalls = 0;
+      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = 0; p.scentCalls = 0; p.scentVeilReady = false;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0; p.sightFlicker = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
       p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;
@@ -5748,6 +5946,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       coverPromptVisible: true,
       heldThrowable: true,
       statusVisible: true, statusText: 'Hidden · 0.0s   (moving breaks cover)',
+      // LUL-5004: added so the overlap-safety check below actually exercises
+      // #veilPrompt too, not just the five rows this hook covered when it
+      // was named (LUL-2336, before veilOverload/climb/pickup/this one existed).
+      scentVeilPromptVisible: true, scentVeilPromptEnabled: true,
     });
   };
 }
@@ -5780,8 +5982,12 @@ if(deathVideo) on(deathVideo, 'ended', () => { if(dead) revealLoss(); });
 function pickup(){
   const next = beginPickup(runState());
   if(next.pickingUp === pickingUp) return;   // rejected -- see pickupAllowed() in lib/game/outcome.ts
+  // LUL-4958: snapshot fog-tide state at the instant the lift is ACCEPTED, not at
+  // finishPickup() ~11.3s later -- see docs/specs/lul-4958-slack-water.md's Design-call §1
+  // for why the timing matters (Fog Tide's window is 20s, the cinematic is ~11.3s).
+  if(mission && canCompleteSlackWater(mission, fogTideActive)) mission = completeMission(mission);
   baby.taken = next.babyTaken; pickingUp = next.pickingUp;
-  pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0;
+  pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found
   pushState({ objectiveVisible: false, statusVisible: false });
   if(locked) document.exitPointerLock();
@@ -5797,6 +6003,19 @@ function buyVeilCharm(){
   embersPurchaseCue();
   stoneMarkerPulseT = 0.6;   // LUL-2331: one-shot beacon-glow boost, decayed in tick()
   track({ event: 'feature_engagement', feature: 'veil_charm', action: 'purchased' });
+}
+// LUL-5005: Chapel Sanctuary -- starts the 15s dwell. Does NOT grant anything itself;
+// the grant (veilReserve=true/chapelSanctuaryUsedThisRun=true) only happens in tick()'s
+// active-dwell branch, on the full-countdown edge -- see the comment there for why
+// (Q1.5: the gate must only close on a real completed dwell, not on E-press).
+function startChapelSanctuary(){
+  chapelSanctuaryActive = true;
+  chapelSanctuaryChargeT = CHAPEL_SANCTUARY_DURATION;
+  pushState({
+    caption: 'Chapel sanctuary — shelter 15s for a free charm against the mist. One-time per run.',
+    captionId: ++captionSeq,
+  });
+  chapelSanctuaryStartCue();
 }
 function grabThrowable(){
   if(heldThrowable) return;
@@ -5990,6 +6209,97 @@ function caveImmuneEndCue(){
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.6);
 }
+// LUL-4528: Rock -- Vantage Climb cues. Climb-up / descent-thud pair, distinct register
+// from caveImmuneStartCue/EndCue (triangle scramble-up/down vs. this sine sweep) so the
+// two aren't confused. All three functions bump a qa*CueCount counter before the
+// audio-gate check (same counter-before-audio-gate idiom as veilOverloadDeniedCue) so
+// the e2e spec can assert a cue fired -- including exactly-once, not-on-every-frame --
+// without decoding WebAudio output, exposed via qaProbeRockClimb below.
+// rockClimbDeniedCue additionally pushes a caption (Q5: "can't climb here" / "can't
+// climb while hidden" per which condition failed), fired unconditionally, not gated by
+// hintSeen/first-encounter, since a declined-interact tell is a repeated-input signal,
+// not a one-time explanation.
+let qaRockClimbStartCueCount = 0, qaRockClimbEndCueCount = 0, qaRockClimbDeniedCueCount = 0;
+function rockClimbStartCue(){
+  qaRockClimbStartCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(520, t + 0.3);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.22, t + 0.04); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.45);
+}
+function rockClimbEndCue(){
+  qaRockClimbEndCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(60, t + 0.2);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.26, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.32);
+}
+function rockClimbDeniedCue(reason){
+  qaRockClimbDeniedCueCount++;
+  if(captionsOn){
+    pushState({
+      caption: reason === 'hidden' ? "can't climb while hidden" : "can't climb here",
+      captionId: ++captionSeq,
+    });
+  }
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(100, t);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.17);
+}
+// LUL-5005: Chapel Sanctuary cues. The grant cue is NOT here -- it deliberately reuses
+// embersPurchaseCue() (above) so the charm reads identically whichever route granted it.
+// deniedCue mirrors rockClimbDeniedCue's shape exactly (same square/100Hz/~0.17s buzz,
+// same counter-before-audio-gate idiom, same unconditional-on-every-press caption) since
+// this is "the codebase's one existing 'input was refused' cue" pattern, not a new one.
+// earlyExitCue is deliberately distinct -- leaving early is a non-event, not a refusal,
+// so it gets its own quieter triangle tone instead of the denied buzz.
+let qaChapelSanctuaryStartCueCount = 0, qaChapelSanctuaryDeniedCueCount = 0, qaChapelSanctuaryEarlyExitCueCount = 0;
+function chapelSanctuaryStartCue(){
+  qaChapelSanctuaryStartCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(330, t + 0.3);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.16, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.55);
+}
+function chapelSanctuaryDeniedCue(){
+  qaChapelSanctuaryDeniedCueCount++;
+  if(captionsOn){
+    pushState({ caption: 'Sanctuary unavailable -- one-time per run', captionId: ++captionSeq });
+  }
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(100, t);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.17);
+}
+function chapelSanctuaryEarlyExitCue(){
+  qaChapelSanctuaryEarlyExitCueCount++;
+  if(captionsOn){
+    pushState({ caption: 'left the chapel early -- nothing happened', captionId: ++captionSeq });
+  }
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'triangle';
+  o.frequency.setValueAtTime(260, t); o.frequency.exponentialRampToValueAtTime(180, t + 0.15);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.06, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.22);
+}
 // LUL-3150: veil-overload cues -- distinct register from caveImmuneStartCue/EndCue (which
 // sweep low<->high sine) so the two immunity sources stay audibly distinguishable. Denied
 // cue mirrors veilCharmReleaseCue()'s counter-before-audio-gate idiom so the e2e spec can
@@ -6022,6 +6332,31 @@ function veilOverloadDeniedCue(){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.2);
+}
+// LUL-5004: Scent Veil cues -- distinct register from veilOverload's pair above
+// (that one sweeps sawtooth 140<->560Hz) so the two "something happened to my
+// veil" sounds stay distinguishable. qaScentVeilDeniedCueCount mirrors
+// qaVeilOverloadDeniedCueCount's counter-before-audio-gate idiom so the e2e
+// blocked-tone assertion works with soundOn:false too.
+let qaScentVeilDeniedCueCount = 0;
+function scentVeilBreakCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(440, t); o.frequency.exponentialRampToValueAtTime(880, t + 0.25);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.2, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.4);
+}
+function scentVeilDeniedCue(){
+  qaScentVeilDeniedCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(300, t); o.frequency.exponentialRampToValueAtTime(100, t + 0.2);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.26);
 }
 // LUL-3149: Wind-Assisted Evasion cues -- same rising-start/falling-end shape as
 // caveImmuneStartCue/EndCue above, but a shorter, quieter pair: this is a continuous
@@ -6090,7 +6425,7 @@ function completeSecondarySequence(){
 function triggerDeath(kind, cause, killerIdx){
   const next = outcomeTriggerDeath(runState());
   if(next.dead === dead) return;   // rejected -- see canTriggerDeath() in lib/game/outcome.ts
-  dead = next.dead; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; deathStart = clock.elapsedTime; deathShown = false;
+  dead = next.dead; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0; deathStart = clock.elapsedTime; deathShown = false;
   lastDeathKillerIdx = killerIdx ?? null;   // LUL-2853: only stamped on the call that actually wins the guard above
   // LUL-2461: distance from home at the moment of death, not maxDistFromHome
   // (the run's furthest point) -- the Economist's blackout-pricing model
@@ -6144,7 +6479,7 @@ function restart(){
   if(deathVideo){ deathVideo.pause(); deathVideo.style.display = 'none'; }
   const fresh = freshRunState();
   won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; baby.taken = fresh.babyTaken;
-  hidden = false; hideTime = 0; hideKind = null; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; eyeH = CONFIG.eye; deathShown = false;
+  hidden = false; hideTime = 0; hideKind = null; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
@@ -6465,7 +6800,7 @@ function stepFrame(dt, t, skipRender){
     coverRustleAccum = 0;
     rollCoverRustle();
   }
-  eyeH += (((hidden || inLogCrawl) ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
+  eyeH += ((mountedOnRock ? CONFIG.eye + ROCK_MOUNT_HEIGHT : (hidden || inLogCrawl) ? 1.05 : CONFIG.eye) - eyeH) * Math.min(1, dt*8);
 
   // LUL-213: advance in game time (dt is already clamped above -- see wiki
   // systems/dt-clamp-vs-walltime) so the arc can't drift relative to
@@ -6505,6 +6840,7 @@ function stepFrame(dt, t, skipRender){
   dimAmount += ((lightDimmed ? 1 : 0) - dimAmount) * Math.min(1, dt*6);
   applyVignette(dimAmount);
   if(stoneMarkerPulseT > 0) stoneMarkerPulseT = Math.max(0, stoneMarkerPulseT - dt);   // LUL-2331
+  if(chapelSanctuaryPulseT > 0) chapelSanctuaryPulseT = Math.max(0, chapelSanctuaryPulseT - dt);   // LUL-5005
   if(brambleSnagT > 0) brambleSnagT = Math.max(0, brambleSnagT - dt);   // LUL-4526
   // LUL-382: mist ramp is deliberately slower than the vignette above (VEIL_RAMP
   // 1.6s vs. dimAmount's ~0.5s) -- the light pool reacts fast, the world's mist
@@ -6878,6 +7214,14 @@ function stepFrame(dt, t, skipRender){
   const distStoneMarker = Math.hypot(player.x - landmarkGroups.stoneMarker.position.x, player.z - landmarkGroups.stoneMarker.position.z);
   canBuyVeilCharm = !veilReserve && distStoneMarker < VEIL_CHARM_INTERACT_RADIUS
     && computeDepth(maxDistFromHome) >= VEIL_CHARM_PRICE;
+  // LUL-5005: Chapel Sanctuary -- distChapel drives both the prompt gate here and the
+  // early-exit check in the active-dwell branch below (tick()'s caveImmuneT/
+  // veilOverloadChargeT decay block). chapelSanctuaryInRadius (not gated on the
+  // one-shot flag) is what the KeyE denied-cue branch reads, so pressing E in radius
+  // after the charm is already granted still gets a refusal tell instead of silence.
+  const distChapel = Math.hypot(player.x - landmarkGroups.chapelSteeple.position.x, player.z - landmarkGroups.chapelSteeple.position.z);
+  chapelSanctuaryInRadius = distChapel < CHAPEL_SANCTUARY_INTERACT_RADIUS;
+  chapelSanctuaryPromptVisible = chapelSanctuaryInRadius && !chapelSanctuaryUsedThisRun && !chapelSanctuaryActive;
   // LUL-1623: nearest-throwable distance computed once per frame, reused only
   // for the HUD gate below -- grabThrowable() re-scans on its own discrete
   // keypress/tap event, not every frame.
@@ -6919,6 +7263,8 @@ function stepFrame(dt, t, skipRender){
     if(coverProbeAccum >= 1 / COVER_PROBE_HZ){
       coverProbeAccum = 0;
       lastHideSpot = !hidden ? geoFindHideSpot(player.x, player.z, coverGrid, CELL, WRAP_SPAN) : null;
+      // LUL-4528: same throttled-probe shape as lastHideSpot just above.
+      lastRockMountSpot = (!hidden && !mountedOnRock) ? findRockMountSpot(player.x, player.z) : null;
     }
     // LUL-1089: contextual action prompts
     const coverPromptVisible = !hidden && lastHideSpot !== null;
@@ -6935,9 +7281,19 @@ function stepFrame(dt, t, skipRender){
     // while already spotted in the open. `state === 'chase'` alone (no `p.hunt`)
     // per the CEO ruling's tighter option -- see the KeyQ handler's own comment.
     veilOverloadTriggerActive = predators.some(function(p){ return !p.inert && p.state === 'chase'; });
+    // LUL-5004: Scent Veil's own broad gate, same shape as veilOverloadTriggerActive
+    // just above -- movingAgainstWind is a player-wide signal (already computed this
+    // frame in the movement block), so only scentLock/scentVeilReady vary per
+    // predator. Deliberately excludes the stamina check (scentVeilPromptEnabled,
+    // below) so the row stays visible, rendered disabled+grayed, when stamina is
+    // the only thing blocking it (Q5).
+    scentVeilPromptActive = predators.some(function(p){ return !p.inert && scentVeilTriggerActive(p.scentLock, p.scentVeilReady, movingAgainstWind); });
+    const scentVeilPromptEnabled = staminaCharge >= SCENT_VEIL_STAMINA_COST;
     // LUL-1258: the mission's nav-cue hum, only while active -- reuses
     // childCry's tempo-carries-distance shape (Ship 1 spec S3d).
-    if(mission?.status === 'active'){
+    // LUL-4958: `spatial !== false` -- a mission with no real target position (slackWater)
+    // must not hum the player toward (0,0), a meaningless location.
+    if(mission?.status === 'active' && mission.target.spatial !== false){
       missionHumTimer -= dt;
       if(missionHumTimer <= 0){
         missionWaypointHum(mission, distMission);
@@ -6966,6 +7322,35 @@ function stepFrame(dt, t, skipRender){
       if(veilOverloadChargeT === 0) veilOverloadJustEnded = true;
     }
     if(veilOverloadJustEnded) veilOverloadEndCue();
+    // LUL-4528: Rock -- Vantage Climb countdown, same "never lapse silently" shape as the
+    // caveImmuneT/veilOverloadChargeT pair just above.
+    let rockClimbJustEnded = false;
+    if(rockClimbT > 0){
+      rockClimbT = Math.max(0, rockClimbT - dt);
+      if(rockClimbT === 0){ rockClimbJustEnded = true; mountedOnRock = false; }
+    }
+    if(rockClimbJustEnded) rockClimbEndCue();
+    // LUL-5005: Chapel Sanctuary -- decrements while active, same "never lapse
+    // silently" shape as the three countdowns just above. Two distinct exits:
+    // full dwell (chargeT hits 0) grants the charm for free and closes the
+    // one-shot gate; leaving the radius early (1.5x the interact radius, same
+    // margin CAVE.interactR-style hysteresis uses elsewhere) cancels the dwell
+    // and grants nothing, leaving the gate open for a later retry this run.
+    if(chapelSanctuaryActive){
+      chapelSanctuaryChargeT = Math.max(0, chapelSanctuaryChargeT - dt);
+      if(chapelSanctuaryChargeT === 0){
+        veilReserve = true;
+        chapelSanctuaryUsedThisRun = true;
+        chapelSanctuaryActive = false;
+        pushState({ caption: 'a charm against the mist', captionId: ++captionSeq });
+        embersPurchaseCue();   // LUL-5005: reuses buyVeilCharm()'s own grant cue -- same charm, same tell
+        chapelSanctuaryPulseT = 0.6;   // LUL-5005: mirrors buyVeilCharm()'s stoneMarkerPulseT boost
+      } else if(distChapel > CHAPEL_SANCTUARY_INTERACT_RADIUS * 1.5){
+        chapelSanctuaryActive = false;
+        chapelSanctuaryChargeT = 0;
+        chapelSanctuaryEarlyExitCue();
+      }
+    }
     pushState({
       objectiveVisible: true, objectiveReady: canPickup || canBuyVeilCharm,
       // LUL-2281: collapsed to the single pre-pickup prompt -- completePickup()
@@ -7002,9 +7387,17 @@ function stepFrame(dt, t, skipRender){
       veilOverloadActive: veilOverloadChargeT > 0,
       veilOverloadTimeLeft: veilOverloadChargeT,
       veilOverloadVisible: veilOverloadTriggerActive && veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound,
+      scentVeilPromptVisible: scentVeilPromptActive,
+      scentVeilPromptEnabled,
+      mountedOnRock,
+      rockClimbTimeLeft: rockClimbT,
+      climbPromptVisible: !hidden && !mountedOnRock && lastRockMountSpot !== null,
+      chapelSanctuaryActive,
+      chapelSanctuaryChargeT,
+      chapelSanctuaryPromptVisible,
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false });
   }
   // the child's idle glow, outside the pickup cinematic.
   if(!baby.taken){
@@ -7075,6 +7468,11 @@ function stepFrame(dt, t, skipRender){
     // of the ambient pulse above, decayed by stoneMarkerPulseT (set in buyVeilCharm()).
     if(kind === 'stoneMarker' && stoneMarkerPulseT > 0){
       opacity += motionReduced() ? 0.35 : 0.5 * (stoneMarkerPulseT / 0.6);
+    }
+    // LUL-5005: same one-shot grant-moment tell, mirrored for the chapel's free route
+    // to the same veilReserve charm -- see chapelSanctuaryPulseT (set on full-dwell grant).
+    if(kind === 'chapelSteeple' && chapelSanctuaryPulseT > 0){
+      opacity += motionReduced() ? 0.35 : 0.5 * (chapelSanctuaryPulseT / 0.6);
     }
     landmarkBeaconGlows[kind].material.opacity = opacity;
   }
@@ -7366,6 +7764,11 @@ tick();
     const playing = isPlaying(runState());
     if(playing && !paused) toggleHidden();
   }
+  // LUL-4528: touch parity for KeyC -- same guard shape as triggerTouchHide.
+  function triggerTouchClimb() {
+    const playing = isPlaying(runState());
+    if(playing && !paused) toggleRockClimb();
+  }
   // LUL-3066: touch parity for KeyR -- same guard shape as triggerTouchHide, plus the
   // hidden/cooldown gate the KeyR keydown handler applies.
   function triggerTouchShuffle() {
@@ -7377,6 +7780,8 @@ tick();
     if(!playing || paused) return;
     if(canPickup) pickup();
     else if(canBuyVeilCharm) buyVeilCharm();
+    else if(chapelSanctuaryPromptVisible) startChapelSanctuary();   // LUL-5005: touch parity, mirrors the KeyE handler
+    else if(chapelSanctuaryInRadius && chapelSanctuaryUsedThisRun && !chapelSanctuaryActive) chapelSanctuaryDeniedCue();
     else if(missionCanComplete) completeMissionSequence();
     else if(secondaryCanComplete) completeSecondarySequence();
     else grabThrowable();
@@ -7405,6 +7810,14 @@ tick();
     if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound) activateVeilOverload();
     else veilOverloadDeniedCue();
   }
+  // LUL-5004: mobile has no physical KeyG to synthesize -- same guard/branch shape
+  // as the KeyQ/triggerTouchVeilOverload pair just above.
+  function triggerTouchScentVeil() {
+    const playing = entered && !won && !dead && !pickingUp;
+    if(!playing || paused || !scentVeilPromptActive) return;
+    if(staminaCharge >= SCENT_VEIL_STAMINA_COST) breakScentVeil();
+    else scentVeilDeniedCue();
+  }
   // LUL-529: touch analogue of Escape. Desktop's Escape only ever pauses --
   // resuming happens by re-acquiring pointer lock (a mousedown handler that's
   // desktop-only, see the `mode === 'desktop'` block above), which has no
@@ -7428,9 +7841,9 @@ tick();
   }
 
   return { enter, restart, setPace, setFog, toggleSound, regenMap,
-           setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchShuffle, triggerTouchInteract,
+           setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchClimb, triggerTouchShuffle, triggerTouchInteract,
            triggerTouchThrow,
-           triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload,
+           triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload, triggerTouchScentVeil,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions,
            setEmbers, purchase,
            // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.
