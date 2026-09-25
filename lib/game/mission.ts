@@ -53,7 +53,7 @@ export function pickHardBabyPosition(
   return { x, z };
 }
 
-export type MissionKind = 'deepwater' | 'oakHollow' | 'slackWater' | 'stoneMarker' | 'radioMast';
+export type MissionKind = 'deepwater' | 'oakHollow' | 'slackWater' | 'stoneMarker' | 'radioMast' | 'flush';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -80,6 +80,13 @@ export interface MissionTarget {
    * a non-spatial mission's interactRadius is 0, which already makes that path's strict
    * `<` permanently false by construction. */
   spatial?: boolean;
+  /** LUL-5116: which of the 5 fixed ROOSTS (engine/tuning.js:75) this run's flush mission
+   * targets. Resolved once per generateMap(), in the new rng() draw right after placeCave()
+   * (see engine/forest-engine.js's generateMap()) -- this module has no rng import, so it
+   * cannot draw the index itself. Only meaningful when target.kind === 'flush'; undefined
+   * for every other kind. The value on this MISSION_POOL entry (0) is an inert placeholder,
+   * always overwritten before a flush mission can be read in real play. */
+  roostIndex?: number;
 }
 
 export const MISSION_POOL: readonly MissionTarget[] = [
@@ -109,6 +116,14 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // reuses missionWaypointHum()'s existing bearing-pan/proximity-pitch cue for free
   // (engine/forest-engine.js:2482-2500), no new audio code.
   { kind: 'radioMast', x: 30, z: 175, zoneRadius: 8, interactRadius: 4, landmarkKind: 'radioMast', timeLimitSeconds: 45 },
+  // LUL-5116: no real target position, same non-spatial shape as slackWater (:104) --
+  // completion is "the roost at ROOSTS[roostIndex] just got flushed by a player throw"
+  // (see canCompleteFlush below), checked at engine/forest-engine.js's throwThrowable(),
+  // not through canCompleteMission(). interactRadius: 0 keeps the E-key path permanently
+  // false for this kind, same reasoning as slackWater's own comment. roostIndex: 0 is a
+  // placeholder immediately overwritten by generateMap()'s post-placeCave() rng draw (or
+  // ?qaRoostIndex for e2e) -- never read from this pool entry directly.
+  { kind: 'flush', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
 ];
 
 export interface MissionState {
@@ -157,8 +172,10 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // (no oakHollow/deepwater HINT_PRIORITY entry matches slackWater, so no hint ever took the
   // slot after 'landmark' expired) and shifted downstream charge-dodge timing via the changed
   // mission draw. slackWater stays reachable at/above the win threshold via the MISSION_POOL
-  // branch above, same as deepwater.
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater');
+  // branch above, same as deepwater. LUL-5116: flush shares the exact same untimed/no-
+  // landmarkKind shape as slackWater and would reproduce the identical regression without
+  // the same exclusion, so it is excluded here too.
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
@@ -208,6 +225,17 @@ export function canCompleteMission(mission: MissionState, distToTarget: number):
  * for that boolean; this function only decides what to do with it). */
 export function canCompleteSlackWater(mission: MissionState, fogTideActive: boolean): boolean {
   return mission.status === 'active' && mission.target.kind === 'slackWater' && fogTideActive;
+}
+
+/** LUL-5116: the roost a player-thrown stone just flushed (throwThrowable()'s
+ * nearestRoost, engine/forest-engine.js:6063) is the SAME roost this run's flush mission
+ * named. Mirrors canCompleteSlackWater's shape exactly -- one pure predicate, checked at
+ * the one real-play call site that can make it true. The ambient chase-proximity trigger
+ * (updateRoosts(), engine/forest-engine.js:2964) never calls this function at all, so a
+ * DIFFERENT (unmarked) roost being flushed by a wandering predator cannot complete this
+ * mission by construction -- not by an extra guard here, by that call site never existing. */
+export function canCompleteFlush(mission: MissionState, flushedRoostIndex: number): boolean {
+  return mission.status === 'active' && mission.target.kind === 'flush' && mission.target.roostIndex === flushedRoostIndex;
 }
 
 export function completeMission(mission: MissionState): MissionState {

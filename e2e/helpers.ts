@@ -69,6 +69,9 @@ export function expectNoConsoleErrors({
  * kind, bypassing both the eligibility gate (MISSION_FAR_UNLOCK_WINS) and the
  * rng draw -- for a test that needs a specific variant (e.g. 'deepwater')
  * deterministically, on a fresh boot where progression has no wins yet.
+ * `qaRoostIndex` (LUL-5116) forces generateMap()'s flush-mission roost-index draw to a
+ * known `ROOSTS` index instead of the real rng() draw; only meaningful when `qaMissionKind`
+ * is also `'flush'`.
  * `seedWelcomeSplashSeen` (LUL-2612) pre-seeds `lullwood:welcomeSeen` in
  * localStorage before the first byte loads, same technique as the
  * `RETURNING_PLAYER` init script in returning-player.spec.ts -- every
@@ -93,6 +96,7 @@ export async function boot(
     qaNoRender = false,
     qaHour = null,
     qaMissionKind = null,
+    qaRoostIndex = null,
     seedWelcomeSplashSeen = true,
   }: {
     qaHooks?: boolean;
@@ -100,7 +104,8 @@ export async function boot(
     qaWorld?: 'micro' | 'full';
     qaNoRender?: boolean;
     qaHour?: number | null;
-    qaMissionKind?: 'deepwater' | 'oakHollow' | 'slackWater' | 'stoneMarker' | 'radioMast' | null;
+    qaMissionKind?: 'deepwater' | 'oakHollow' | 'slackWater' | 'stoneMarker' | 'radioMast' | 'flush' | null;
+    qaRoostIndex?: number | null;
     seedWelcomeSplashSeen?: boolean;
   } = {},
 ) {
@@ -114,6 +119,7 @@ export async function boot(
   if (qaNoRender) params.set('qaNoRender', '1');
   if (qaHour !== null) params.set('qaHour', String(qaHour));
   if (qaMissionKind !== null) params.set('qaMissionKind', qaMissionKind);
+  if (qaRoostIndex !== null) params.set('qaRoostIndex', String(qaRoostIndex));
   const query = params.toString();
   await page.goto(query ? `/?${query}` : '/', { waitUntil: 'networkidle', timeout: 120_000 });
   // Both canvases exist = the engine's WebGL canvas joined the minimap canvas
