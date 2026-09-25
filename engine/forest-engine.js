@@ -190,7 +190,7 @@ import {
   TIME_OF_DAY_VISUALS,
   TIME_OF_DAY_AUDIO, timeOfDayDetectMul,
 } from '@/lib/game/timeOfDay';
-import { timeOfRunDetectMul } from '@/lib/game/dayNight';
+import { timeOfRunDetectMul, duskLionDetectMul, DUSK_LION_SIGHT_START_S } from '@/lib/game/dayNight';
 import { nearestLandmarkName } from '@/lib/game/chronicle';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
@@ -1179,6 +1179,13 @@ function generateMap(seed){
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
                   // reasoning as the LUL-374 buildGrid() call above
+  repositionBeaconHunterForMission(mission);   // LUL-5134: after placeCave(), not before --
+                                                 // placeCave()'s own comment says it "must
+                                                 // stay last, after mission"; this is a second,
+                                                 // separate rng consumer gated on a kind that
+                                                 // never existed before this ticket, so its
+                                                 // exact position past that point cannot
+                                                 // perturb any existing seed either way.
   // LUL-2249: hand off from "every populated chunk instantiated up front" to
   // the streamed ring, now that treeData/coverData are all at their final,
   // post-thin state. Drop whatever the PREVIOUS seed left live (those meshes
@@ -1912,6 +1919,43 @@ function relocateParkedHunter(pcx, pcz){
   target.parked = false; target.g.visible = true; target.g.position.set(x, 0, z);
   logChronicle('hunter_relocated', { kind: target.kind });
 }
+// LUL-5134: post-mission-draw-only repositioning for the Beacon Hunter Evasion mission.
+// placePredators() (:1819) runs BEFORE the mission is drawn (see the LUL-1258 comment at
+// generateMap()'s tail), so "spawn ~50u from the mission target" cannot be expressed as
+// MISSION_POOL data -- it needs this second placement pass. Only ever called when
+// mission.target.kind === 'beaconEvasion', so it can never perturb the tree/predator/mission
+// rng stream any other seed depends on -- it is new, additive rng consumption gated on a kind
+// that didn't exist before this ticket. Mirrors placePredators()'s own do/while shape
+// (:1848-1850) for the position draw, and its post-draw reset field list (:1850-1854)
+// verbatim, so this hunter starts this round exactly as "fresh" as it would from a normal
+// placePredators() draw, not mid-chase from wherever it was first placed.
+function repositionBeaconHunterForMission(mission){
+  if(mission.target.kind !== 'beaconEvasion') return;
+  const hunter = predators.find(p => p.variant === 'beaconHunter');
+  if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803)
+  let x, z, tries = 0;
+  do {
+    const ang = rng()*Math.PI*2;
+    x = mission.target.x + Math.cos(ang)*50;
+    z = mission.target.z + Math.sin(ang)*50;
+    tries++;
+  } while(blockedR(x, z, hunter.rad+0.5) && tries < 60);
+  hunter.x = x; hunter.z = z; hunter.wpx = x; hunter.wpz = z; hunter.vx = 0; hunter.vz = 0; hunter.yaw = rng()*Math.PI*2;
+  const [ccx, ccz] = chunkXZ(x, z), [pcx, pcz] = chunkXZ(player.x, player.z);
+  hunter.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
+  hunter.g.visible = !hunter.parked;
+  // Verbatim placePredators() reset list (:1850-1854) -- do not add fields beyond this list
+  // (e.g. beaconHunterLocked/eye color need no reset here: :2443 already clears both on the
+  // first tick whenever state !== 'chase', the same way a normal placePredators() restart
+  // relies on, with no explicit reset there either).
+  hunter.state='roam'; hunter.spotted=false; hunter.inv=''; hunter.sniffsLeft=0; hunter.sniffTimer=0; hunter.callTimer=0;
+  hunter.stuckT=0; hunter.trail=[]; hunter.trailT=0; hunter.reroute=0; hunter.hunt=DIFFICULTY_PRESETS[difficulty].startHunting; hunter.alert=0; hunter.windPauseT=0; hunter.windPauseCooldownT=0; hunter.scentLock=0; hunter.scentCalls=0; hunter.scentVeilReady=false;
+  hunter.packTimer=0; hunter.flankX=0; hunter.flankZ=0; hunter.sniffImmuneT=0; hunter.sightFlicker=0;
+  hunter.lkpX=0; hunter.lkpZ=0; hunter.lkpSweeps=0;
+  hunter.charge=null; hunter.chargeDirX=0; hunter.chargeDirZ=0; hunter.chargeCooldown=0; hunter.chargeRecoveryT=0;
+  hunter.gaveUpAt=null;
+  hunter.g.position.set(x, 0, z); hunter.g.rotation.set(0, hunter.yaw, 0);
+}
 // steer a desired direction around trees the predator would otherwise walk into
 // LUL-593: the angle-fallback scan itself now lives in lib/game/cover.ts
 // (pickAvoidDirection, unit tested there) -- this stays a thin wrapper that
@@ -1985,8 +2029,8 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // a fresh install), and a higher-priority key preempts a lower-priority one
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
-const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil'];
+const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion',
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2000,6 +2044,7 @@ const HINT_TEXT = {
   landmark:   'landmarks in the fog are safe to navigate by',
   deepwater:  'the fire tower — a bonus payout, but only if you reach it within the time limit',
   oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
+  beaconEvasion: 'the fire tower — a Beacon Hunter patrols the approach. veil (F) breaks its lock if it catches your scent on the wind',
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
@@ -2013,6 +2058,7 @@ const HINT_TEXT = {
   veilOverload: 'burn all veil charge (Q) for a detection-proof escape',
   throwable:  'a stone — E to pick up, throw to break a chase',
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
+  duskLion:   "as night falls, the lion's sight weakens — darkness favors the quiet",
 };
 const HINT_KEY_PREFIX = 'lullwood:hints:';
 // LUL-2230's key, read (never written) as a migration fallback for the 'scent' entry
@@ -2378,13 +2424,19 @@ function findRockMountSpot(x,z){ return geoFindRockMountSpot(x,z,coverGrid,CELL,
 // resource vs. a free world event -- and nothing says they shouldn't
 // compound). LUL-1486: the tide amount is now sampled at the predator's own
 // position (D2), not a whole-world constant -- see lib/game/fogTide.ts.
+// LUL-4889 (Dusk Stealth): lion replaces the ambient timeOfRunDetectMul(timeOfRun)
+// ramp with its own duskLionDetectMul(runElapsed) curve -- see dayNight.ts's
+// comment on why the two aren't stacked. Wolf/bear are unaffected.
+function timeOfRunDetectMulFor(p){
+  return p.kind === 'lion' ? duskLionDetectMul(runElapsed) : timeOfRunDetectMul(timeOfRun);
+}
 function effectiveDetect(p){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return 0;
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime });
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMul(timeOfRun) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -4069,9 +4121,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // "assert the effect, not the DOM node" rule), not just the HUD's
   // #timeOfRunClock text. Adds no new state -- timeOfRun, hemiLight, and
   // timeOfRunDetectMul/formatTimeOfRunClock are already in scope in init().
+  // LUL-4889: detectMul stays the ambient ramp (still what wolf/bear use);
+  // lionDetectMul is the separate duskLionDetectMul(runElapsed) curve that
+  // replaces it for lion only -- see timeOfRunDetectMulFor() above.
   window.ForestEngine.qaProbeTimeOfRun = function(){
     return { timeOfRun, fogDensity: scene.fog.density, hemiIntensity: hemiLight.intensity,
-             detectMul: timeOfRunDetectMul(timeOfRun), clock: formatTimeOfRunClock(timeOfRun) };
+             detectMul: timeOfRunDetectMul(timeOfRun), lionDetectMul: duskLionDetectMul(runElapsed),
+             clock: formatTimeOfRunClock(timeOfRun) };
   };
 
   // LUL-2071: deterministic test clock. qaSetFixedStep() parks the real RAF
@@ -5931,18 +5987,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // once (charge-dodge only fires mid-hunt-charge, cover and veil are
   // mutually exclusive, status only shows while hidden), so
   // e2e/action-prompt.spec.ts could previously only assert pairwise
-  // non-overlap. This forces the five underlying EngineHudState flags true
+  // non-overlap. This forces the underlying EngineHudState flags true
   // directly on the real state object via pushState() -- not fake DOM -- so
-  // a spec can assert none of #actionSlot's five rows' bounding boxes
-  // intersect with real content in every row at once. statusText is forced
-  // to a representative string since the real one is only ever non-empty
-  // while `hidden` (stepFrame's own pushState above); the other four rows'
-  // text is left to whatever the real per-frame state already computed
-  // (objectiveText, the cover/veil copy in Hud.tsx's hideVeilPromptContent,
-  // and throwPrompt's template string are all unconditionally non-empty
-  // once `playing`). Call qaSetFixedStep() first so the next real
-  // stepFrame() tick doesn't immediately recompute these five back from
-  // live game state.
+  // a spec can assert none of #actionSlot's rows' bounding boxes intersect
+  // with real content in every row at once. statusText is forced to a
+  // representative string since the real one is only ever non-empty while
+  // `hidden` (stepFrame's own pushState above); the other rows' text is
+  // left to whatever the real per-frame state already computed (or, for
+  // veilOverloadPrompt/climbPrompt/chapelSanctuaryPrompt, is a Hud.tsx
+  // literal that needs no extra text state -- see their JSX). Call
+  // qaSetFixedStep() first so the next real stepFrame() tick doesn't
+  // immediately recompute these back from live game state.
   window.ForestEngine.qaForceAllActionRows = function(){
     pushState({
       chargeVisible: true,
@@ -5954,6 +6009,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // #veilPrompt too, not just the five rows this hook covered when it
       // was named (LUL-2336, before veilOverload/climb/pickup/this one existed).
       scentVeilPromptVisible: true, scentVeilPromptEnabled: true,
+      // LUL-5166: veilOverloadPrompt/climbPrompt/chapelSanctuaryPrompt were
+      // added to #actionSlot (LUL-3150/LUL-4528/LUL-5005) but never to this
+      // hook, so the "all rows non-overlapping" e2e coverage never actually
+      // exercised them together with the rest -- exactly the row combination
+      // (charge + hide/veil + climb) the local-qa tester caught offscreen
+      // (layout-a9ddf9368c). pickupPrompt stays excluded: it's mutually
+      // exclusive with throwPrompt by construction (Hud.tsx), so the two can
+      // never be live at once and forcing both would be testing a state the
+      // real game can't reach.
+      veilOverloadVisible: true,
+      climbPromptVisible: true,
+      chapelSanctuaryPromptVisible: true,
     });
   };
 }
@@ -7587,6 +7654,7 @@ function stepFrame(dt, t, skipRender){
         case 'landmark': return [true, null];
         case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active', null];
         case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active', null];
+        case 'beaconEvasion': return [!!mission && mission.target.kind === 'beaconEvasion' && mission.status === 'active', null];
         case 'wolf': case 'bear': case 'lion': {
           for(const p of predators){
             if(p.inert || p.kind !== key) continue;
@@ -7611,6 +7679,7 @@ function stepFrame(dt, t, skipRender){
         case 'veilOverload': return [veilOverloadChargeT > 0, null];
         case 'throwable': return [throwableHintEligible, throwableHintAnchor];
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
+        case 'duskLion': return [runElapsed >= DUSK_LION_SIGHT_START_S, null];   // LUL-4889: time-only, no world anchor
         default: return [false, null];
       }
     }
@@ -7624,6 +7693,7 @@ function stepFrame(dt, t, skipRender){
         case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
+        case 'beaconEvasion': return missionCanComplete;
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
         default: return false;   // landmark: time-only

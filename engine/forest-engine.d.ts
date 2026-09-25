@@ -6,6 +6,7 @@
 // consumer that cares most about the exact fields) and re-used here so
 // there's a single source of truth.
 import type { EngineActions, EngineHudState } from '@/components/Hud';
+import type { MissionKind } from '@/lib/game/mission';
 
 // LUL-276: inputMode picks which listeners the engine binds -- 'desktop'
 // (default) wires pointer-lock/mouse, 'mobile' leaves those unbound and
@@ -461,12 +462,16 @@ declare global {
        * to 1 full night), the fog density and hemisphere-light intensity it
        * feeds, the resulting predator detect-radius multiplier, and the HUD
        * clock label -- in one call, so a test can assert the engine-visible
-       * effect directly instead of only the #timeOfRunClock DOM text. */
+       * effect directly instead of only the #timeOfRunClock DOM text.
+       * LUL-4889: `detectMul` is still the ambient ramp used by wolf/bear;
+       * `lionDetectMul` is the separate runElapsed-keyed curve (1.0 below
+       * 90s, down to 0.5 at 150s+) that replaces it for lion only. */
       qaProbeTimeOfRun?: () => {
         timeOfRun: number;
         fogDensity: number;
         hemiIntensity: number;
         detectMul: number;
+        lionDetectMul: number;
         clock: string;
       };
       /** LUL-2071: deterministic test clock -- parks the real RAF loop so a
@@ -567,16 +572,16 @@ declare global {
        * interactRadius so #missionPanel, the mission prompt and the objective
        * are all on screen together. Returns the target, or null if no mission
        * is active. */
-      qaTeleportNearMission?: () => { kind: 'deepwater' | 'oakHollow'; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
+      qaTeleportNearMission?: () => { kind: MissionKind; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
       /** LUL-2884: sibling of qaTeleportNearMission, but places the player
        * already inside the mission target's interactRadius -- no wall-clock
        * movement needed to close the gap. Returns the target, or null if no
        * mission is active. */
-      qaTeleportAtMissionTarget?: () => { kind: 'deepwater' | 'oakHollow'; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
+      qaTeleportAtMissionTarget?: () => { kind: MissionKind; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
       /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
        * fields qaTeleportNearMission returns as a side effect, for a test that
        * only needs to read, not teleport. */
-      qaProbeMission?: () => { kind: 'deepwater' | 'oakHollow'; status: 'active' | 'complete' | 'expired'; x: number; z: number } | null;
+      qaProbeMission?: () => { kind: MissionKind; status: 'active' | 'complete' | 'expired'; x: number; z: number } | null;
       /** LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e staging.
        * See engine/forest-engine.js's qaSetFogTideClock for the full rationale. */
       qaSetFogTideClock?: (seconds: number) => void;

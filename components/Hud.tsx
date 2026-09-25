@@ -348,6 +348,7 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   slackWater: 'Slack Water',
   stoneMarker: 'Stone Marker',
   radioMast: 'Radio Mast',
+  beaconEvasion: 'Beacon Evasion',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the
@@ -1137,7 +1138,7 @@ export default function Hud({
         </div>
       )}
 
-      {/* LUL-2312: the one fixed bottom action slot -- a CSS grid of five
+      {/* LUL-2312: the one fixed bottom action slot -- a CSS grid of
           always-mounted rows (GameCanvas.tsx's #actionSlot), each an
           <ActionPrompt>, in the founder's stated priority order top-to-bottom:
           charge dodge > objective (E) > hide-or-veil > throwable > status.
@@ -1145,13 +1146,19 @@ export default function Hud({
           pop-in layout shift when one appears/disappears) -- ActionPrompt
           itself decides whether to render a pill inside that track.
           Every row is gated on !winVisible && !deathVisible: engine state for
-          all five is only recomputed `if(playing)` (forest-engine.js's tick())
+          each is only recomputed `if(playing)` (forest-engine.js's tick())
           and resets one frame after triggerDeath()/arriveHome() flip
           winVisible/deathVisible, so without the gate a prompt live at the
           exact moment of win/death would render over the end screen for that
           frame (LUL-2131 precedent -- previously only actionPrompt/throwPrompt
-          carried this gate; extended to all five here for consistency, not a
-          previously-reported bug on the other three). */}
+          carried this gate; extended to every row here for consistency, not a
+          previously-reported bug on the other three).
+          LUL-5166: this grid now mounts 10 rows (1 charge + 9 regular --
+          objective, actionPrompt, veilOverloadPrompt, veilPrompt, throwPrompt,
+          pickupPrompt, climbPrompt, chapelSanctuaryPrompt, status), not the
+          five it started with -- #actionSlot's grid-template-rows/
+          --action-slot-height (GameCanvas.tsx) must be kept in lockstep with
+          this count. Add a row here => add a track there in the same PR. */}
       <div id="actionSlot">
         {/* LUL-213/LUL-304/LUL-617: charge-dodge keycap + countdown bar. `key`
             on chargeToken forces the drain bar's CSS animation to restart from

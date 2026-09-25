@@ -56,7 +56,17 @@ const OVERLAY_STYLE = `
     --action-slot-row-charge: 48px;
     --action-slot-gap: 6px;
     --action-slot-bottom: 24px;
-    --action-slot-height: calc(var(--action-slot-row-charge) + (5 * var(--action-slot-row)) + (5 * var(--action-slot-gap))); }
+    /* LUL-5166: 9 regular rows, not 5 -- #actionSlot (Hud.tsx) mounts charge,
+       objective, actionPrompt, veilOverloadPrompt, veilPrompt, throwPrompt,
+       pickupPrompt, climbPrompt, chapelSanctuaryPrompt and status (10 rows
+       total, 1 charge-height + 9 regular-height). This constant and
+       grid-template-rows/row-gap below (#actionSlot) must always agree with
+       Hud.tsx's actual <ActionPrompt> count -- when they drift, extra rows
+       fall into implicit grid tracks sized to content, which grows
+       #actionSlot taller than every pixel-math comment in this file assumes
+       and can push its topmost (charge/JUMP) row off the top of a short
+       viewport (layout-a9ddf9368c, mobile-pixel5-landscape). */
+    --action-slot-height: calc(var(--action-slot-row-charge) + (9 * var(--action-slot-row)) + (9 * var(--action-slot-gap))); }
   canvas { display: block; }
 
   #vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none;
@@ -571,8 +581,11 @@ const OVERLAY_STYLE = `
        5*3.2 = 176, was 40 + 4*30 + 4*4 = 176) -- every downstream pixel-math
        comment below (LUL-2410/2418/2459/2594) was tuned against that 176px
        figure with as little as 1px of margin, so preserving the total instead
-       of letting it grow with the row count avoids re-deriving all of it blind. */
-    html, body { --action-slot-row: 24px; --action-slot-row-charge: 40px; --action-slot-gap: 3.2px; }
+       of letting it grow with the row count avoids re-deriving all of it blind.
+       LUL-5166: row re-solved for 9 regular rows (was 5) at the same 176px
+       total -- 40 + 9*11.91 + 9*3.2 = 175.99 (gap left at 3.2px, only row
+       re-derived: (176 - 40 - 9*3.2) / 9 = 11.911, rounded to 11.91). */
+    html, body { --action-slot-row: 11.91px; --action-slot-row-charge: 40px; --action-slot-gap: 3.2px; }
   }
   @media (max-height: 420px) and (pointer: coarse) and (hover: none),
          (max-height: 420px) and (max-width: 768px) {
@@ -775,7 +788,9 @@ const OVERLAY_STYLE = `
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
     z-index: 12; display: grid;
-    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
+    /* LUL-5166: 10 tracks (1 charge + 9 regular) to match Hud.tsx's actual
+       <ActionPrompt> count -- see the --action-slot-height comment above. */
+    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
     row-gap: var(--action-slot-gap); justify-items: center; pointer-events: none; }
 
   .actionPromptRow { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; }
