@@ -5987,18 +5987,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // once (charge-dodge only fires mid-hunt-charge, cover and veil are
   // mutually exclusive, status only shows while hidden), so
   // e2e/action-prompt.spec.ts could previously only assert pairwise
-  // non-overlap. This forces the five underlying EngineHudState flags true
+  // non-overlap. This forces the underlying EngineHudState flags true
   // directly on the real state object via pushState() -- not fake DOM -- so
-  // a spec can assert none of #actionSlot's five rows' bounding boxes
-  // intersect with real content in every row at once. statusText is forced
-  // to a representative string since the real one is only ever non-empty
-  // while `hidden` (stepFrame's own pushState above); the other four rows'
-  // text is left to whatever the real per-frame state already computed
-  // (objectiveText, the cover/veil copy in Hud.tsx's hideVeilPromptContent,
-  // and throwPrompt's template string are all unconditionally non-empty
-  // once `playing`). Call qaSetFixedStep() first so the next real
-  // stepFrame() tick doesn't immediately recompute these five back from
-  // live game state.
+  // a spec can assert none of #actionSlot's rows' bounding boxes intersect
+  // with real content in every row at once. statusText is forced to a
+  // representative string since the real one is only ever non-empty while
+  // `hidden` (stepFrame's own pushState above); the other rows' text is
+  // left to whatever the real per-frame state already computed (or, for
+  // veilOverloadPrompt/climbPrompt/chapelSanctuaryPrompt, is a Hud.tsx
+  // literal that needs no extra text state -- see their JSX). Call
+  // qaSetFixedStep() first so the next real stepFrame() tick doesn't
+  // immediately recompute these back from live game state.
   window.ForestEngine.qaForceAllActionRows = function(){
     pushState({
       chargeVisible: true,
@@ -6010,6 +6009,18 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // #veilPrompt too, not just the five rows this hook covered when it
       // was named (LUL-2336, before veilOverload/climb/pickup/this one existed).
       scentVeilPromptVisible: true, scentVeilPromptEnabled: true,
+      // LUL-5166: veilOverloadPrompt/climbPrompt/chapelSanctuaryPrompt were
+      // added to #actionSlot (LUL-3150/LUL-4528/LUL-5005) but never to this
+      // hook, so the "all rows non-overlapping" e2e coverage never actually
+      // exercised them together with the rest -- exactly the row combination
+      // (charge + hide/veil + climb) the local-qa tester caught offscreen
+      // (layout-a9ddf9368c). pickupPrompt stays excluded: it's mutually
+      // exclusive with throwPrompt by construction (Hud.tsx), so the two can
+      // never be live at once and forcing both would be testing a state the
+      // real game can't reach.
+      veilOverloadVisible: true,
+      climbPromptVisible: true,
+      chapelSanctuaryPromptVisible: true,
     });
   };
 }

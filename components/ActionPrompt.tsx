@@ -11,9 +11,12 @@
 // GameCanvas.tsx's OVERLAY_STYLE (`--action-pill-*` custom properties) so
 // there is exactly one place that defines what the pill looks like.
 //
-// `visible` never unmounts the row -- callers render a fixed five rows inside
-// #actionSlot (Hud.tsx) so the CSS grid's row tracks stay put whether or not a
-// given row currently has content; only the pill inside fades.
+// `visible` never unmounts the row -- callers render a fixed set of rows
+// inside #actionSlot (Hud.tsx, 10 as of LUL-5166) so the CSS grid's row
+// tracks stay put whether or not a given row currently has content; only the
+// pill inside fades. GameCanvas.tsx's grid-template-rows/--action-slot-height
+// must have exactly as many tracks as Hud.tsx has <ActionPrompt> rows --
+// LUL-5166 was a real offscreen-row bug from that count drifting.
 
 // LUL-5004: 'disabled' -- a row that's visible (something to do) but not
 // currently actionable (insufficient stamina). Grayed rather than hidden --
