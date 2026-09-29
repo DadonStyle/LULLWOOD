@@ -156,6 +156,7 @@ import {
   canCompleteMission,
   completeMission,
   canCompleteSlackWater,
+  canCompleteFlush,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -251,7 +252,16 @@ function init(onStateChange, inputMode) {
   // players; neither requires `?qaHooks=1` -- they change what generateMap()
   // builds, not what's exposed on window.ForestEngine.
   const qaParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-  if(qaParams && qaParams.get('qaWorld') === 'micro') applyQaWorldMicroPreset();
+  if(qaParams && qaParams.get('qaWorld') === 'micro'){
+    applyQaWorldMicroPreset();
+    // LUL-5346: roostGroups (below) is built once at module load, from ROOSTS' raw
+    // (unscaled) positions, strictly before this qaWorld branch ever runs -- so the
+    // burst mesh has to be re-pinned here, once, to CONFIG.roostScaleMul's now-live
+    // value, or the visible burst would sit at the old full-map spot while every
+    // distance check (updateRoosts(), qaTeleportNearRoost()) already agrees on the
+    // scaled one. No-op outside qaWorld=micro (this branch never runs).
+    roostGroups.forEach((g, i) => g.position.set(ROOSTS[i].x * CONFIG.roostScaleMul, 14, ROOSTS[i].z * CONFIG.roostScaleMul));
+  }
   // Skips updateStreamedChunks()/layoutThrowableMeshes() inside generateMap()
   // below -- LUL-2249: streaming replaced the old direct layoutTreeChunks()/
   // layoutCoverMeshes() instantiate-everything calls with a ring-limited
@@ -341,6 +351,12 @@ const TOD_AUDIO = TIME_OF_DAY_AUDIO[timeOfDay];
 // specific variant -- same read pattern as ?qaHour= above. Read once at module init,
 // same lifetime as the other ?qa*= boot overrides.
 const qaForcedMissionKind = qaParams ? qaParams.get('qaMissionKind') : null;
+// LUL-5116: ?qaRoostIndex=<0-4> forces generateMap()'s flush-mission roost draw to a known
+// index, same read-once-at-module-init shape as qaMissionKind above -- for a test that needs
+// a specific roost deterministically instead of fighting the rng draw. Only takes effect
+// when the drawn mission is 'flush'; ignored (parsed but unused) otherwise, same as
+// qaMissionKind has no effect when a test doesn't also force that kind.
+const qaForcedRoostIndex = qaParams ? qaParams.get('qaRoostIndex') : null;
 
 // ---- Scene / camera / renderer -------------------------------------------
 const scene = new THREE.Scene();
@@ -1178,6 +1194,15 @@ function generateMap(seed){
   }
   missionHumTimer = 2;
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
+  // LUL-5116: draws which of the 5 ROOSTS this run's flush mission targets -- the new last
+  // rng() consumer, appended after placeCave() per LUL-1904's stream-ordering rule (this
+  // SPEC's Design call §2). No-op for every other mission kind. Respects ?qaRoostIndex for
+  // deterministic e2e staging, falling back to the real draw when absent/out of range.
+  if(mission.target.kind === 'flush'){
+    const forced = qaForcedRoostIndex !== null ? parseInt(qaForcedRoostIndex, 10) : NaN;
+    const idx = (forced >= 0 && forced < ROOSTS.length) ? forced : Math.floor(rng() * ROOSTS.length);
+    mission = { ...mission, target: { ...mission.target, roostIndex: idx } };
+  }
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
                   // reasoning as the LUL-374 buildGrid() call above
   repositionBeaconHunterForMission(mission);   // LUL-5134: after placeCave(), not before --
@@ -1706,7 +1731,9 @@ function roostFlushSound(x, z){
 }
 function flushRoost(i){
   triggerRoostBurst(i);
-  roostFlushSound(ROOSTS[i].x, ROOSTS[i].z);
+  // LUL-5346: matches roostGroups[i]'s own scaled position (init(), where CONFIG.roostScaleMul
+  // is applied to the burst mesh) so the pan/near-far read matches where the burst actually plays.
+  roostFlushSound(ROOSTS[i].x * CONFIG.roostScaleMul, ROOSTS[i].z * CONFIG.roostScaleMul);
 }
 const lookM = new THREE.Matrix4(), lookQ = new THREE.Quaternion();
 function key3(time, keys){   // smoothstep-interpolated keyframes
@@ -3023,9 +3050,12 @@ function updateRoosts(dt, running){
   for(let i=0;i<ROOSTS.length;i++){
     if(roostCooldown[i] > 0){ roostCooldown[i] -= dt; continue; }
     const r = ROOSTS[i];
+    // LUL-5346: CONFIG.roostScaleMul (1 on every real map) -- see its own comment,
+    // engine/tuning.js -- so this stays a no-op outside qaWorld=micro.
+    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
     for(const p of predators){
       if(p.inert || p.state !== 'chase') continue;
-      if(Math.hypot(p.x-r.x, p.z-r.z) < r.radius){
+      if(Math.hypot(p.x-rx, p.z-rz) < r.radius){
         flushRoost(i);
         roostCooldown[i] = ROOST_COOLDOWN;
         break;
@@ -4311,7 +4341,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // returns the same fields as a side effect of teleporting, this is for a
   // test that wants to read mission state without also moving the player.
   window.ForestEngine.qaProbeMission = function(){
-    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z };
+    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z, roostIndex: mission.target.roostIndex };
   };
 
   // [QA-HOOK] LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e
@@ -5707,6 +5737,22 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.state = 'roam'; p.hunt = false;
     return { idx, x: p.x, z: p.z };
   };
+  // [QA-HOOK] LUL-5116: flips predators[kind]'s FIRST live entry into 'chase' state without
+  // repositioning it -- composes with qaStagePredatorNearPlayer's existing dx/dz placement
+  // (call that first, then this) instead of duplicating its positioning logic. Needed because
+  // qaStagePredatorNearPlayer deliberately stages 'roam' (:5652, eight existing specs depend
+  // on that), and updateRoosts()'s ambient roost trigger only fires for 'chase'. Mirrors
+  // qaStageRockClimb's existing "set p.state directly" pattern.
+  window.ForestEngine.qaSetPredatorChasing = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    // Mirrors every real chase-entry site's p.scentLock = SCENT_TRACK_TIME (e.g. :2227, :4898) --
+    // without it, shouldDowngradeChase() reverts 'chase' to 'investigate' on the very next tick
+    // if canSee() reads false for even one frame, before ambient consumers ever observe 'chase'.
+    p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+    return { idx };
+  };
   // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
   // an e2e spec can't wait out 14s+ of real decay, so it asserts the tier's effect on this
   // number instead of on live scent-point aging.
@@ -5738,24 +5784,26 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // (-sin(0),-cos(0)) = (0,-1), i.e. -z) means a throw from here lands 16u short of the
   // player, straight at the roost (18u throw - 2u offset), well inside its 20u radius,
   // so a spec can throw immediately with no extra facing setup. Mirrors
-  // qaTeleportNearStoneMarker/qaTeleportNearThrowable otherwise, since
-  // applyQaWorldMicroPreset() (engine/tuning.js) doesn't scale ROOSTS, so a roost keeps
-  // its full-map position even in the micro world. Defaults to the nearest roost to the
-  // player's current position so a spec doesn't have to know indices; returns null if
-  // that index doesn't exist.
+  // qaTeleportNearStoneMarker/qaTeleportNearThrowable otherwise. LUL-5346: scaled by
+  // CONFIG.roostScaleMul (a no-op, mul=1, on every real map) so the landing spot matches
+  // every other roost distance check (updateRoosts(), throwThrowable()'s nearestRoost scan) --
+  // the ROOSTS export itself still isn't touched, see roostScaleMul's own comment,
+  // engine/tuning.js. Defaults to the nearest roost to the player's current position so a
+  // spec doesn't have to know indices; returns null if that index doesn't exist.
   window.ForestEngine.qaTeleportNearRoost = function(i){
     if(i === undefined){
       let best = -1, bestD = Infinity;
       for(let k=0;k<ROOSTS.length;k++){
-        const d = Math.hypot(ROOSTS[k].x - player.x, ROOSTS[k].z - player.z);
+        const d = Math.hypot(ROOSTS[k].x * CONFIG.roostScaleMul - player.x, ROOSTS[k].z * CONFIG.roostScaleMul - player.z);
         if(d < bestD){ best = k; bestD = d; }
       }
       i = best;
     }
     const r = ROOSTS[i];
     if(!r) return null;
-    player.x = r.x; player.z = r.z + 2;
-    return { i, x: r.x, z: r.z };
+    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
+    player.x = rx; player.z = rz + 2;
+    return { i, x: rx, z: rz };
   };
   // [QA-HOOK] LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a
   // spec assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
@@ -6150,12 +6198,17 @@ function throwThrowable(){
   // two paths can't double-fire the same roost in quick succession.
   let nearestRoost = -1, nearestRoostDist = Infinity;
   for(let i=0;i<ROOSTS.length;i++){
-    const dist = Math.hypot(ROOSTS[i].x - landX, ROOSTS[i].z - landZ);
+    // LUL-5346: CONFIG.roostScaleMul -- matches qaTeleportNearRoost()'s own scaled landing spot,
+    // see its comment; a no-op (mul=1) on every real map.
+    const dist = Math.hypot(ROOSTS[i].x * CONFIG.roostScaleMul - landX, ROOSTS[i].z * CONFIG.roostScaleMul - landZ);
     if(dist < ROOSTS[i].radius && dist < nearestRoostDist){ nearestRoost = i; nearestRoostDist = dist; }
   }
   if(nearestRoost >= 0 && roostCooldown[nearestRoost] <= 0){
     flushRoost(nearestRoost);
     roostCooldown[nearestRoost] = ROOST_COOLDOWN;
+    // LUL-5116: nearestRoost is the roost THIS throw just flushed -- the only call site
+    // that can make canCompleteFlush true, per this mission's Q1.5 answer.
+    if(mission && canCompleteFlush(mission, nearestRoost)) mission = completeMission(mission);
     if(!hintSeen('roostThrowCue')){
       markHintSeen('roostThrowCue');
       if(captionsOn) pushState({ caption: 'throw a stone at a roost to startle it', captionId: ++captionSeq });

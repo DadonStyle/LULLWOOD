@@ -28,6 +28,15 @@ export const CONFIG = {
                           // scales this down so the deepwater mission's fixed MISSION_POOL
                           // coordinates land inside the shrunk map's movement-clamp bounds.
                           // 1 = full-map, no-op default.
+  roostScaleMul: 1,       // LUL-5346: ROOSTS position multiplier for distance checks only (the
+                          // ROOSTS export itself, below, stays untouched -- same "scale the read,
+                          // not the source" shape missionScaleMul already uses for LANDMARKS).
+                          // Without this, a chasing predator -- movement-clamped to +-half every
+                          // tick (forest-engine.js's updatePredators()) -- can never reach any of
+                          // the 5 ROOSTS sites (all ~140-152u from origin) in the shrunk map, so
+                          // updateRoosts()'s ambient chase-proximity trigger had no way to fire in
+                          // a micro-world spec. applyQaWorldMicroPreset() scales this down too.
+                          // 1 = full-map, no-op default.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
@@ -180,7 +189,11 @@ export const BSP = 70;            // win-burst particles
 // LANDMARKS/CAVE are deliberately left untouched -- tuning.js's own
 // LANDMARKS comment already documents they're placed unconditionally
 // regardless of map size, so at this scale they simply sit at or past the
-// map edge; not worth a special case for six fixed props.
+// map edge; not worth a special case for six fixed props. ROOSTS (below)
+// is the one exception: CONFIG.roostScaleMul scales every ROOSTS distance
+// check at the read site (forest-engine.js), not the ROOSTS export itself --
+// see roostScaleMul's own comment above for why a fixed prop needed this
+// treatment where LANDMARKS/CAVE didn't.
 //
 // Idempotent: always assigns the same target values (never scales off the
 // current value), so calling it more than once in one page life is safe.
@@ -196,6 +209,9 @@ export function applyQaWorldMicroPreset(){
   CONFIG.missionScaleMul = 0.2;  // LUL-2578: same 96/480 ratio -- keeps the deepwater mission's
                                   // target inside the shrunk map's movement-clamp bounds so it
                                   // stays completable (and qaTeleportNearMission() lands legally).
+  CONFIG.roostScaleMul = 0.2;    // LUL-5346: same 96/480 ratio -- keeps a ROOSTS site inside the
+                                  // shrunk map's movement-clamp bounds so a chasing predator can
+                                  // actually reach one (and qaTeleportNearRoost() lands legally).
 }
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two
