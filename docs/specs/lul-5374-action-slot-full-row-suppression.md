@@ -12,6 +12,16 @@ pattern in the identical file.
 includes merged LUL-5246/PR#917). Re-derive every `file:line` below from the branch you
 actually implement on if it has moved.
 
+**Also fixes LUL-5380** (found after this SPEC's first pass, by the very `readActionRows()`
+correction this SPEC itself specifies below): a real, separate 2px overlap between
+`#objective` and `#actionPrompt` at the **base breakpoint** (1280x720 desktop, outside the
+`max-height: 420px` query entirely) — see "LUL-5380: base-breakpoint 2px overlap" below. Land
+its one-line CSS fix in this same implementation PR; it touches only the unconditional base
+declaration (`:55`), never the short-landscape override, so it does not conflict with the
+"zero changes" constraint below (which protects the short-landscape query's own math from
+*this* SPEC's `:has()` rules specifically — see the constraint note for why the base value is
+a different, unprotected surface).
+
 **CTO decision (LUL-5373):** option (b) — generalize the priority-suppression pattern
 LUL-5246/LUL-2410/LUL-2418 already use to every row pair that can actually collide, instead
 of reintroducing layout shift, relying on CSS shrink alone (LUL-5246's own SPEC proved that
@@ -165,10 +175,77 @@ body:has(#chapelSanctuaryPrompt[data-visible="1"]) #status .actionPromptLine { d
 existing `Hud.tsx` comment on that row), so it can never geometrically co-occur with its
 neighbors in a way this fix needs to touch; leave it untouched.
 
+## LUL-5380: base-breakpoint (1280x720 desktop) 2px overlap — real, separate bug, real fix
+
+**Finding.** LUL-5380 root-caused this from the `readActionRows()` correction above (item 1,
+"Test changes"), *outside* the `max-height: 420px` query this SPEC's own 9 rules live in. At
+the base declaration (`:55-57`, no media query — this is what a 1280x720 desktop viewport
+actually uses): `--action-slot-row: 36px` + `--action-slot-gap: 6px` = 42px combined
+track+gap per row. `.actionPromptLine`'s chip variant (any row whose `.actionPromptKey`
+child is present) renders ~44px regardless of breakpoint — same "no font-size/padding
+override exists for this class" fact this SPEC's own live measurement already relied on
+(`:23-24` above), just costing 2px instead of the short-landscape query's 16-29px because the
+base track is so much closer to the pill's real height. `.actionPromptRow`'s
+`justify-content: flex-end` (`:809`) bottom-anchors the pill in its track, so the 2px the pill
+needs beyond its own 42px track+gap allotment overflows *upward* into whatever sits in the
+row above — LUL-5380's live repro: `#objective .actionPromptLine top=344 bottom=360` (empty
+text, collapses to a ~16px box) vs. `#actionPrompt .actionPromptLine top=358 bottom=402` (chip
+pill, 44px) — `358 < 360`, 2px intersection.
+
+**Design decision (this SPEC, superseding LUL-5380's open question — option 1 of the three it
+posed):** grow `--action-slot-row`'s **base declaration only** (`:55`) from `36px` to `40px`
+(+4px). `--action-slot-gap` (`:57`) and `--action-slot-row-charge` (`:56`) are untouched. New
+combined track+gap = `40 + 6 = 46px` vs. the 44px chip — 2px of real margin, not a
+bare-minimum 0px fit. Rejected the other two options LUL-5380 raised: shrinking the chip
+pill's rendered height has no existing per-breakpoint override to hang it on (would mean
+adding one, a bigger and more error-prone change for a 2px gap) and would also shrink it at
+every breakpoint including short-landscape, where LUL-5246's own SPEC already proved the pill
+can't shrink enough to fit without breaking touch-target size; "something else" (e.g.
+`:has()`-suppressing this pair at desktop too) would suppress `#objective` for a mismatch of
+2px when the short-landscape suppression exists because there is *no* pixel budget left at
+all (LUL-5246 SPEC: `40 + 9*44 = 436px` needed vs `185px` available) — desktop has no such
+budget constraint, so removing information the player can see for free is the wrong tool here.
+
+**Why the "zero changes to `--action-slot-row`" constraint below does not block this.** That
+constraint (written for *this SPEC's own* 9 `:has()` rules) protects `@media (max-height:
+420px)`'s (`:588`) short-landscape override values, which LUL-2410/2414/2418/2743's formulas
+(`:437/459/477/643-651/669`) all read. That media query fully re-declares all three vars with
+its own literal values (`:588`), which win by source order/specificity inside the query
+regardless of what the base declaration says — so a change to the base declaration alone,
+outside the query, is invisible to every one of those formulas. Confirmed by reading each:
+they all key off the same `--action-slot-bottom`/`--action-slot-height` custom properties,
+never a literal `36px`/`426px`, so they recompute correctly at whatever breakpoint they
+actually evaluate at.
+
+**Downstream effect at the base (desktop) breakpoint only.** `--action-slot-height` (`:69`
+formula) grows from `48 + 9*36 + 9*6 = 426px` to `48 + 9*40 + 9*6 = 462px` (+36px). Every
+element positioned off it at this breakpoint reads the same CSS var, none hardcodes the old
+figure:
+- `#captionToast` (`:311`, `bottom: calc(action-slot-bottom + action-slot-height + 10px)`) —
+  shifts up 36px; nothing above it at 1280x720 to collide with.
+- `#scentTrailCaption`/`#hintCaption` ceiling (`:459`,
+  `min(var(--hint-top,50%), calc(100% - action-slot-bottom - action-slot-height - 24px))`) —
+  the calc term drops from `720-24-426-24=246` to `720-24-462-24=210` at a 1280x720 viewport,
+  still positive and still below the default `--hint-top: 50%` (360px), so `min()` keeps
+  resolving to the calc term exactly as before — no sign flip, nothing pushed offscreen.
+- Self-anchored `#hintCaption` family bottom (`:477`) — same +36px upward shift; box top still
+  lands around y=553 inside a 720px-tall viewport, nowhere near the top edge.
+No e2e spec pins an exact pixel value for any of these at 1280x720 (`grep -rn "captionToast"
+e2e/` finds only text-content assertions — `mission-progression.spec.ts:101`,
+`hide-alert.spec.ts:99` — nothing geometric), so none of them are silent re-derivations this
+fix could break unnoticed.
+
+**Result:** with this one-line base-declaration change landed in the same PR, the corrected
+`readActionRows()` (item 1 above) makes the `1280x720 desktop: no two rows overlap` test pass
+for real — no test exception is needed, narrow or otherwise. Do not add one; that would mask
+a fixed bug as a tolerated one.
+
 ## Files
 
 - `components/GameCanvas.tsx` — edited: the 9 CSS rules above, inserted after `:633`
-  (the existing `body:has(#actionPrompt...) #objective` rule), inside the same media block.
+  (the existing `body:has(#actionPrompt...) #objective` rule), inside the same media block;
+  plus the LUL-5380 base-declaration change, `--action-slot-row: 36px` → `40px` (`:55`), one
+  line, outside any media query.
 - `e2e/action-prompt.spec.ts` — edited: three changes (below).
 - `components/Hud.tsx` — edited: one comment update (below).
 
@@ -185,8 +262,14 @@ neighbors in a way this fix needs to touch; leave it untouched.
 
 2. **`assertAllForcedRowsNonOverlapping()` (`:425-441`) asserts a premise this fix
    deliberately breaks.** It currently requires *every* forced row to render non-empty
-   *visible* content — correct at `1280x720` desktop (`:443-459`, outside the
-   `max-height:420px` query, nothing is suppressed there, no change needed) but **wrong** at
+   *visible* content — still the correct premise at `1280x720` desktop (`:443-459`, outside
+   the `max-height:420px` query — nothing is *suppressed* there, so every row does stay
+   visible) but with the corrected rect source (item 1 above) that call site now also needs
+   the LUL-5380 base-declaration fix documented above (`--action-slot-row: 36px → 40px`,
+   `:55`) landed in the same PR, or it fails on a real 2px `#objective`/`#actionPrompt`
+   overlap the old (wrong-element) rect read was blind to. With that fix in, the assertion
+   stays exactly as strict as it is today — no exception, no weakening. Separately, it is
+   **wrong** at
    the `narrow mobile landscape (844x390)` viewport (`:460-478`, inside the query) once this
    fix ships: by design, at that breakpoint only the single highest-priority currently-live
    row keeps a visible `.actionPromptLine` when several are forced at once — that is the
@@ -243,7 +326,10 @@ priority undocumented until a bug forced someone to re-derive it).
   production type surface).
 - `npm run build` — clean.
 - `npx playwright test action-prompt.spec.ts` — full file green, including the restructured
-  `narrow mobile landscape` case and the two `LUL-5374` cases added below.
+  `narrow mobile landscape` case, the `1280x720 desktop` case (only passes with the LUL-5380
+  base-declaration fix landed — verify it fails without that one-line change before landing,
+  to prove the corrected `readActionRows()` actually catches it), and the two `LUL-5374` cases
+  added below.
 - Live-render re-check (same technique this SPEC's numbers came from): force all 9 rows via
   `qaForceAllActionRows()` at both `mobile-pixel5-landscape` (727x393) and
   `mobile-iphone-se-landscape` (667x375) with real touch/mobile context, read every
@@ -258,9 +344,11 @@ priority undocumented until a bug forced someone to re-derive it).
 
 **Specs.** `e2e/action-prompt.spec.ts`:
 - `#actionSlot — all forceable rows live at once (LUL-2336, LUL-5166)` → `1280x720 desktop`
-  test unchanged (still strict, outside the media query). `narrow mobile landscape (844x390)`
-  test extended: real `isMobile`/`hasTouch` context (new), relaxed/corrected assertion per
-  "Test changes" #2 above (extended, not new).
+  test's own assertion is unchanged (still strict — every row visible, no overlaps), but it
+  now exercises a real fix: LUL-5380's base-declaration change (`--action-slot-row: 36px →
+  40px`) must land in this same PR or this test fails for real, not hypothetically. `narrow
+  mobile landscape (844x390)` test extended: real `isMobile`/`hasTouch` context (new),
+  relaxed/corrected assertion per "Test changes" #2 above (extended, not new).
 - Two new tests, same shape as the existing `LUL-5246: #objective yields to #actionPrompt at
   short-landscape mobile` describe block (`:333-383`): stage each newly-suppressed pair with
   a real engine trigger (not a QA-hook force) and assert (a) the lower-priority row's
@@ -308,10 +396,14 @@ the reasoning above, called out explicitly rather than silently decided.
 
 ## Constraints
 
-- Zero changes to `--action-slot-row`, `--action-slot-gap`, `--action-slot-bottom`,
-  `--action-slot-height`, or the `grid-template-rows` track count — every downstream formula
-  that reads them (LUL-2410/LUL-2414/LUL-2418/LUL-2743, `GameCanvas.tsx:437/459/477/643-
-  651/669`) stays untouched, same constraint LUL-5246's SPEC stated and verified.
+- Zero changes to the `@media (max-height: 420px)` query's own `--action-slot-row`,
+  `--action-slot-gap`, `--action-slot-bottom`, `--action-slot-height` values (`:588` and
+  around), or the `grid-template-rows` track count — every downstream formula that reads them
+  (LUL-2410/LUL-2414/LUL-2418/LUL-2743, `GameCanvas.tsx:437/459/477/643-651/669`) stays
+  untouched, same constraint LUL-5246's SPEC stated and verified. **Explicit carve-out
+  (LUL-5380):** the *unconditional base* declaration of `--action-slot-row` (`:55`, outside
+  any media query) is a different, unprotected surface — see "LUL-5380: base-breakpoint 2px
+  overlap" above for why changing it to `40px` does not reach the query this bullet protects.
 - Every new `:has()` selector targets `[data-visible="1"]` (React-set logical state), never
   another row's own CSS-controlled `display` — this is what makes the 9 rules compose safely
   regardless of evaluation order; do not "simplify" this to chain off rendered `display`
