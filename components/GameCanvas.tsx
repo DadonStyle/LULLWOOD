@@ -618,6 +618,19 @@ const OVERLAY_STYLE = `
        must-stay-visible set (only landmark is, per LUL-2414) -- hide it here the
        same way #hint is. */
     #hintCaption[data-hint-key="deepwater"] { display: none !important; }
+    /* LUL-5246: .actionPromptLine renders ~31px (plain text) to ~44px (rows with a
+       .actionPromptKey chip) regardless of breakpoint (no font-size/padding override exists
+       for this class) but --action-slot-row above shrinks the track to 11.91px, so any two
+       adjacent populated rows overlap by ~16-29px. Uniform row-height growth to fix this
+       generally is mathematically infeasible in the remaining --action-slot-bottom budget
+       on both target viewports (docs/specs/lul-5246-action-slot-objective-hide-overlap.md
+       has the numbers) -- same "stop repositioning, nothing left to reposition to" call as
+       #hint/#hintCaption[deepwater] above, narrowed to the one pair local-qa actually caught
+       colliding (layout-4a62437dbe): objective vs. hide-or-veil. hide/veil is the
+       survival-critical affordance and already wins a collision at this breakpoint per the
+       deepwater precedent just above -- objective's distance readout yields. #objective's
+       own grid track is untouched (still reserved, just empty) so nothing below it shifts. */
+    body:has(#actionPrompt[data-visible="1"]) #objective .actionPromptLine { display: none !important; }
     /* LUL-2414: the bottom self-anchored #hintCaption family (bog/stamina/
        veil/landmark, see the "Self/panel-anchored keys" rule above) positions
        itself at bottom: action-slot-bottom + action-slot-height + 10px --
