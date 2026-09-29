@@ -631,6 +631,31 @@ const OVERLAY_STYLE = `
        deepwater precedent just above -- objective's distance readout yields. #objective's
        own grid track is untouched (still reserved, just empty) so nothing below it shifts. */
     body:has(#actionPrompt[data-visible="1"]) #objective .actionPromptLine { display: none !important; }
+    /* LUL-5374: generalizes the rule above to every other pair that (a) can really co-occur
+       per Hud.tsx/forest-engine.js's own trigger conditions and (b) was live-measured to
+       actually overlap at this breakpoint -- see docs/specs/lul-5374-action-slot-full-row-
+       suppression.md for both the collision matrix and the per-pair real-co-occurrence check.
+       Priority order (highest wins, CTO decision on LUL-5373): chargePrompt > objective >
+       actionPrompt > veilOverloadPrompt > veilPrompt > throwPrompt > pickupPrompt > climbPrompt
+       > chapelSanctuaryPrompt > status -- see Hud.tsx's own priority comment above #actionSlot.
+       climbPrompt/status is deliberately NOT suppressed here: climbPromptVisible requires
+       !hidden and statusVisible only turns true inside if(hidden), so they can never both be
+       true in real play -- the two only "collide" under qaForceAllActionRows's unconditional
+       force, a synthetic-only state (see the e2e test change note below). Every rule keys off
+       [data-visible="1"] (React-set from real engine state), never another row's rendered
+       display, so these compose safely with each other and with the rule above regardless of
+       evaluation order -- verified live: re-measuring with all 9 rules applied plus
+       qaForceAllActionRows() (worst case, all rows forced at once) shows zero remaining
+       .actionPromptLine overlaps on both mobile-pixel5-landscape and mobile-iphone-se-landscape. */
+    body:has(#chargePrompt[data-visible="1"]) #actionPrompt .actionPromptLine { display: none !important; }
+    body:has(#actionPrompt[data-visible="1"]) #veilOverloadPrompt .actionPromptLine { display: none !important; }
+    body:has(#actionPrompt[data-visible="1"]) #veilPrompt .actionPromptLine { display: none !important; }
+    body:has(#veilOverloadPrompt[data-visible="1"]) #veilPrompt .actionPromptLine { display: none !important; }
+    body:has(#veilOverloadPrompt[data-visible="1"]) #throwPrompt .actionPromptLine { display: none !important; }
+    body:has(#veilPrompt[data-visible="1"]) #throwPrompt .actionPromptLine { display: none !important; }
+    body:has(#throwPrompt[data-visible="1"]) #climbPrompt .actionPromptLine { display: none !important; }
+    body:has(#climbPrompt[data-visible="1"]) #chapelSanctuaryPrompt .actionPromptLine { display: none !important; }
+    body:has(#chapelSanctuaryPrompt[data-visible="1"]) #status .actionPromptLine { display: none !important; }
     /* LUL-2414: the bottom self-anchored #hintCaption family (bog/stamina/
        veil/landmark, see the "Self/panel-anchored keys" rule above) positions
        itself at bottom: action-slot-bottom + action-slot-height + 10px --

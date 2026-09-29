@@ -1141,7 +1141,15 @@ export default function Hud({
       {/* LUL-2312: the one fixed bottom action slot -- a CSS grid of
           always-mounted rows (GameCanvas.tsx's #actionSlot), each an
           <ActionPrompt>, in the founder's stated priority order top-to-bottom:
-          charge dodge > objective (E) > hide-or-veil > throwable > status.
+          charge dodge > objective (E) > hide-or-veil > veil-overload panic >
+          scent-veil break > throwable > pickup (E) > vantage climb > chapel
+          sanctuary > status (LUL-5374: names all 10 rows -- this comment
+          previously named only 5 of them, which is how LUL-5373 happened, an
+          ambiguous partial list left the other 4 rows' relative priority
+          undocumented until a bug forced someone to re-derive it. See
+          docs/specs/lul-5374-action-slot-full-row-suppression.md for the
+          short-landscape :has() suppression rules in GameCanvas.tsx that
+          enforce this same order when two rows would otherwise overlap).
           Rows with nothing to show still occupy their grid track (no
           pop-in layout shift when one appears/disappears) -- ActionPrompt
           itself decides whether to render a pill inside that track.
