@@ -71,7 +71,7 @@ export function expectNoConsoleErrors({
  * deterministically, on a fresh boot where progression has no wins yet.
  * `qaRoostIndex` (LUL-5116) forces generateMap()'s flush-mission roost-index draw to a
  * known `ROOSTS` index instead of the real rng() draw; only meaningful when `qaMissionKind`
- * is also `'flush'`.
+ * is also `'flush'` or (LUL-5160) `'beaconRoostFlush'`.
  * `seedWelcomeSplashSeen` (LUL-2612) pre-seeds `lullwood:welcomeSeen` in
  * localStorage before the first byte loads, same technique as the
  * `RETURNING_PLAYER` init script in returning-player.spec.ts -- every
@@ -112,6 +112,7 @@ export async function boot(
       | 'radioMast'
       | 'beaconEvasion'
       | 'flush'
+      | 'beaconRoostFlush'
       | null;
     qaRoostIndex?: number | null;
     seedWelcomeSplashSeen?: boolean;

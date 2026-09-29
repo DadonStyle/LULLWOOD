@@ -190,6 +190,20 @@ test('canCompleteFlush is false for a non-flush mission even with a matching roo
   assert.equal(canCompleteFlush(m, 2), false);
 });
 
+// ---- canCompleteFlush for beaconRoostFlush (LUL-5160) ---------------------
+
+const beaconRoostFlushTarget = MISSION_POOL.find((t) => t.kind === 'beaconRoostFlush')!;
+
+test('canCompleteFlush is true for a beaconRoostFlush mission when the flushed roost matches', () => {
+  const m: MissionState = { target: { ...beaconRoostFlushTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 3), true);
+});
+
+test('canCompleteFlush is false for a beaconRoostFlush mission when a different roostIndex was flushed', () => {
+  const m: MissionState = { target: { ...beaconRoostFlushTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 1), false);
+});
+
 // ---- completeMission idempotence ----------------------------------------
 
 test('completeMission flips an active mission to complete', () => {
@@ -452,6 +466,21 @@ test('eligibleMissionPool includes flush at MISSION_FAR_UNLOCK_WINS', () => {
   progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
   const pool = eligibleMissionPool(progression, 'lantern');
   assert.equal(pool.some((m) => m.kind === 'flush'), true);
+});
+
+test('eligibleMissionPool excludes beaconRoostFlush below MISSION_FAR_UNLOCK_WINS', () => {
+  // LUL-5160: beaconRoostFlush shares flush's untimed/no-landmarkKind shape and would
+  // reproduce the identical LUL-5069 regression without the same exclusion.
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'beaconRoostFlush'), false);
+});
+
+test('eligibleMissionPool includes beaconRoostFlush at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'beaconRoostFlush'), true);
 });
 
 // ---- pickMission with an explicit pool (LUL-3010) ------------------------
