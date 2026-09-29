@@ -2480,37 +2480,52 @@ registry's own merge.
 - ~~**LUL-396**~~ — **Fixed, LUL-450.** Cover-prop placement (`generateCover()`)
   now checks tree clearance before placing; see footnote 14 above.
 
-## Startled roosts (LUL-1914 slice a, LUL-4894 slice b) — ambient + player-triggered flush
+## Startled roosts (LUL-1914 ambient, LUL-4894 player-thrown, LUL-2389 player-sprint) — three triggers, one flush
 
-Five fixed canopy sites (`ROOSTS`, `engine/tuning.js`, static list alongside
-`LANDMARKS` — no `rng()` draw, seeds stay byte-identical). Two independent
-triggers share the same per-site `flushRoost(i)`/`roostCooldown[i]` machinery,
-so they cannot double-fire the same roost in quick succession:
+Five fixed canopy sites (`ROOSTS`, `lib/game/roostSites.ts`, `EventSite`-typed,
+static list — no `rng()` draw, seeds stay byte-identical; registration moved out
+of `engine/tuning.js` under LUL-2389 slice c). Three independent triggers share
+the same per-site `flushRoost(i)`/`roostCooldown[i]` machinery, so they cannot
+double-fire the same roost in quick succession:
 
-- **Ambient (slice a, LUL-1914):** each tick, `updateRoosts(dt)`
+- **Ambient (LUL-1914):** each tick, `updateRoosts(dt, running)`
   (`engine/forest-engine.js`) checks active, non-`inert` predators in
-  `state === 'chase'` against each site's radius (20 units).
-- **Player-thrown (slice b, LUL-4894):** `throwThrowable()`
+  `state === 'chase'` against each site's radius (20 units, `ROOSTS[i].radius`).
+- **Player-thrown stone ("Roost Scare", LUL-4894):** `throwThrowable()`
   (`engine/forest-engine.js`) checks the stone's analytic landing point
   (`player pos + facing * THROWABLE_THROW_DISTANCE`) against the nearest
   roost's radius, after the existing predator-noise loop. Reuses `ROOSTS[i].radius`
-  — no new `roostInteractRadius` constant.
+  — no new `roostInteractRadius` constant. Feedback/presentation only, see below.
+- **Player-sprint noise (LUL-2389 slice b):** the same `updateRoosts()` also
+  checks the live player position each tick — sprinting (`running`, not merely
+  moving) within `ROOST_TRIGGER_RADIUS` (6 units) of a roost's `(x,z)` fires the
+  flush *and* calls `hearThrowableNoise(p, r.x, r.z, ROOST_INVESTIGATE_TIME)` for
+  every non-inert predator within `ROOST_NOISE_RADIUS` (14 units) of the roost —
+  a real investigate-state detection event, targeted at the roost's fixed
+  position, never the player's own. Ties the mechanic to the already-shipped,
+  already-invisible `NOISE_RADIUS_WALK`/`NOISE_RADIUS_RUN` cost: a walking player
+  inside the trigger radius never flushes.
 
 On a hit, `flushRoost(i)` fires a small upward `THREE.Points` burst (fog-exempt,
 reads above the fog line) and a positional wing-clatter (`roostFlushSound()`,
 modeled on `scheduleBirdChirp`'s synthesis graph and `missionWaypointHum`'s
 panner/falloff math), then puts that site on a 32s cooldown (`ROOST_COOLDOWN`).
-No new engine state for either trigger.
+No new engine state for the ambient or player-thrown triggers.
 
-**Player-thrown path only**: no `hearThrowableNoise()`-style detection event is
-created — a flush is a feedback/presentation layer, same class as `#bearingPulse`
-(LUL-1308) and LUL-1855's beacon glow, for both triggers. First player-thrown
-flush ever also shows a one-shot `#hintCaption` pill ("throw a stone at a roost
-to startle it", key `roostThrowCue`, `hintSeen`/`markHintSeen`, LUL-2230 model),
-which supersedes `roostFlushSound()`'s own "birds scatter" caption for that one
-event (single caption slot, last `pushState()` wins). Slice (c)
-(`lib/game/eventSites.ts`-registered) remains deferred — see wiki
-`decisions/startled-roosts-2026-09-07`.
+**Ambient and player-thrown paths only**: no `hearThrowableNoise()`-style
+detection event is created for those two — a flush is a feedback/presentation
+layer, same class as `#bearingPulse` (LUL-1308) and LUL-1855's beacon glow. The
+player-sprint trigger is the one exception (above) — it is a real predator
+detection event, by design (§8 of `decisions/startled-roosts-slice-b-accepted-2026-09-11`:
+a fairness improvement making an already-paid noise cost visible, not free
+clairvoyance about the player's location, since the target is always the
+roost's fixed point). First player-thrown flush ever also shows a one-shot
+`#hintCaption` pill ("throw a stone at a roost to startle it", key
+`roostThrowCue`, `hintSeen`/`markHintSeen`, LUL-2230 model), which supersedes
+`roostFlushSound()`'s own "birds scatter" caption for that one event (single
+caption slot, last `pushState()` wins). The player-sprint trigger's investigate
+reuses `hearThrowableNoise()`'s own existing caption ("`${p.kind} investigates a
+noise`"), no separate hint.
 
 ## Hints — first-encounter explanations (LUL-2307, generalizes LUL-2230)
 
