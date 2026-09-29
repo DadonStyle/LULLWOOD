@@ -23,6 +23,10 @@
 //    playthrough state does; pickupPrompt is the one exception, mutually
 //    exclusive with throwPrompt by construction) -- none of their bounding
 //    boxes intersect, at 1280x720 and at a narrow mobile landscape width.
+// 8. LUL-5246: at a real short-landscape mobile viewport (Pixel 5 / iPhone SE
+//    landscape), with both #objective and #actionPrompt (hide/veil) populated
+//    at once, #objective's .actionPromptLine collapses to display:none and
+//    the two rows' visible boxes never intersect.
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, expectRowVisible, expectRowHidden } from './helpers';
@@ -317,6 +321,75 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
   });
 });
 
+// LUL-5246: local-qa's layout-4a62437dbe finding -- #objective's
+// .actionPromptLine (~31px, plain text) and #actionPrompt's (hide/veil,
+// ~44px with a .actionPromptKey chip) both sit inside the short-landscape
+// --action-slot-row: 11.91px track (GameCanvas.tsx:588) when both rows are
+// populated at once, and physically overlap. Fix: GameCanvas.tsx's
+// `body:has(#actionPrompt[data-visible="1"]) #objective .actionPromptLine`
+// rule collapses the objective pill's text (not its row -- data-visible on
+// #objective stays whatever the engine set it to) whenever the hide/veil row
+// has real content. See docs/specs/lul-5246-action-slot-objective-hide-overlap.md.
+test.describe('LUL-5246: #objective yields to #actionPrompt at short-landscape mobile', () => {
+  async function assertObjectiveYieldsToActionPrompt(page: Page, width: number, height: number) {
+    await page.setViewportSize({ width, height });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await page.mouse.click(width / 2, height / 2);
+    await page.waitForTimeout(1200); // gate fade settle (mobile has no pointer-lock to wait on)
+
+    // LUL-2804/LUL-2283 ordering: qaSetFixedStep() before the staging hook --
+    // same hazard as the "urgent cover prompt" test above.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    const staged = await page.evaluate(() => window.ForestEngine?.qaOpenHideNearLionAtHideSpot?.() ?? null);
+    expect(staged, 'qaOpenHideNearLionAtHideSpot returned null — no hide spot or lion at this seed').not.toBeNull();
+    await qaHook(page, 'qaAdvance', stepsFor(0.5));
+
+    await expectRowVisible(page, 'actionPrompt');
+    const objectiveWasActive = (await page.locator('#objective').getAttribute('data-visible')) === '1';
+    expect(objectiveWasActive, 'this test only proves the suppression when a real objective is active').toBe(true);
+
+    const objectiveLineDisplay = await page.evaluate(() => {
+      const el = document.querySelector('#objective .actionPromptLine');
+      return el ? window.getComputedStyle(el).display : null;
+    });
+    expect(objectiveLineDisplay, '#objective .actionPromptLine must collapse to display:none while #actionPrompt has content').toBe('none');
+
+    const actionPromptText = await page.evaluate(() => document.querySelector('#actionPrompt .actionPromptLine')?.textContent?.trim() ?? null);
+    expect(actionPromptText, '#actionPrompt .actionPromptLine must still render real content').not.toBeNull();
+    expect(actionPromptText!.length).toBeGreaterThan(0);
+
+    const overlap = await page.evaluate(() => {
+      const a = document.querySelector('#objective .actionPromptLine');
+      const b = document.querySelector('#actionPrompt .actionPromptLine');
+      const boxes = [a, b]
+        .filter((el): el is Element => !!el && window.getComputedStyle(el).display !== 'none')
+        .map((el) => el.getBoundingClientRect());
+      if (boxes.length < 2) return false;
+      const [x, y] = boxes;
+      return x.left < y.right && x.right > y.left && x.top < y.bottom && x.bottom > y.top;
+    });
+    expect(overlap, '#objective and #actionPrompt .actionPromptLine boxes must never intersect').toBe(false);
+  }
+
+  test('mobile-pixel5-landscape (727x393)', async ({ page }) => {
+    await assertObjectiveYieldsToActionPrompt(page, 727, 393);
+  });
+
+  test('mobile-iphone-se-landscape (667x375)', async ({ page }) => {
+    await assertObjectiveYieldsToActionPrompt(page, 667, 375);
+  });
+});
+
+// LUL-5246: the describe block above uses plain setViewportSize, not real
+// touch/device emulation (same as the LUL-2410 test above) -- the media
+// query branch that matches here (`(max-height: 420px) and (max-width:
+// 768px)`, GameCanvas.tsx:590-591) has no `pointer`/`hover` condition, so it
+// engages identically with or without touch emulation. The "all forceable
+// rows live at once" describe block below is desktop-only / plain-viewport
+// too (no touch emulation) -- it does not exercise the real mobile
+// --action-slot-bottom: 190px budget this fix targets (LUL-5246 SPEC,
+// "Files" section).
+//
 // LUL-2336 (extended LUL-5166): the nine rows this hook forces -- deliberately
 // excludes pickupPrompt/winVisible/deathVisible, which qaForceAllActionRows
 // doesn't touch (pickupPrompt is mutually exclusive with throwPrompt by
