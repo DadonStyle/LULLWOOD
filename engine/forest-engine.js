@@ -192,13 +192,14 @@ import {
 } from '@/lib/game/timeOfDay';
 import { timeOfRunDetectMul, duskLionDetectMul, DUSK_LION_SIGHT_START_S } from '@/lib/game/dayNight';
 import { nearestLandmarkName } from '@/lib/game/chronicle';
+import { ROOSTS } from '@/lib/game/roostSites';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
   STAR, DUST, BW, BSP, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
-  VEIL_CHARM_INTERACT_RADIUS, ROOSTS, ROOST_COOLDOWN,
+  VEIL_CHARM_INTERACT_RADIUS, ROOST_COOLDOWN, ROOST_TRIGGER_RADIUS, ROOST_NOISE_RADIUS, ROOST_INVESTIGATE_TIME,
   CHAPEL_SANCTUARY_INTERACT_RADIUS, CHAPEL_SANCTUARY_DURATION,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
@@ -2299,11 +2300,11 @@ function hearNoise(p){
 // live player -- see the noiseTarget override in updatePredators()'s approach
 // branch below. No new p.state/p.inv value; see spec §4.6 for the correctness
 // fix this makes to the CTO plan's literal "reuse hearNoise() unchanged."
-function hearThrowableNoise(p, tx, tz){
+function hearThrowableNoise(p, tx, tz, investigateTime = THROWABLE_INVESTIGATE_TIME){
   p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: tx, z: tz };
-  p.noiseTargetT = rnd(THROWABLE_INVESTIGATE_TIME[0], THROWABLE_INVESTIGATE_TIME[1]);
+  p.noiseTargetT = rnd(investigateTime[0], investigateTime[1]);
   if(captionsOn) pushState({ caption: `${p.kind} investigates a noise`, captionId: ++captionSeq });
 }
 // LUL-1255 (Ship 1 wayfinding S3): modeled on hearThrowableNoise() above, not
@@ -3009,11 +3010,15 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     p.g.position.x = p.x; p.g.position.z = p.z;
   }
 }
-// LUL-1914: slice (a), one-way feedback only. Reads p.x/p.z/p.state/p.inert on each
-// active predator; writes nothing on any predator. Does not call effectiveDetect(),
-// canSee(), or hearThrowableNoise() -- this is a spectator of predator state, not a
-// participant. Cooldown array is reset in restart().
-function updateRoosts(dt){
+// LUL-1914 (ambient) + LUL-2389 slice (b, player-sprint): the ambient branch below is
+// one-way feedback only -- reads p.x/p.z/p.state/p.inert on each active predator, writes
+// nothing on any predator. The player branch is the one participant: a sprint through
+// ROOST_TRIGGER_RADIUS fires hearThrowableNoise() at the roost's own (x,z), never the
+// player's, for every non-inert predator within ROOST_NOISE_RADIUS. Both branches share
+// roostCooldown[i] -- one physical flush event per roost regardless of cause (also shared
+// with LUL-4894's separate player-thrown-stone trigger in throwThrowable()). Cooldown
+// array is reset in restart().
+function updateRoosts(dt, running){
   updateRoostBursts(dt);
   for(let i=0;i<ROOSTS.length;i++){
     if(roostCooldown[i] > 0){ roostCooldown[i] -= dt; continue; }
@@ -3024,6 +3029,15 @@ function updateRoosts(dt){
         flushRoost(i);
         roostCooldown[i] = ROOST_COOLDOWN;
         break;
+      }
+    }
+    if(roostCooldown[i] > 0) continue;   // the predator branch above may have just set it this tick
+    if(running && Math.hypot(player.x-r.x, player.z-r.z) < ROOST_TRIGGER_RADIUS){
+      flushRoost(i);
+      roostCooldown[i] = ROOST_COOLDOWN;
+      for(const p of predators){
+        if(p.inert) continue;
+        if(Math.hypot(p.x-r.x, p.z-r.z) < ROOST_NOISE_RADIUS) hearThrowableNoise(p, r.x, r.z, ROOST_INVESTIGATE_TIME);
       }
     }
   }
@@ -4486,7 +4500,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // detection channel actually fired.
     // LUL-5004: scentLock/scentVeilReady added for the Scent Veil e2e coverage --
     // real values off the real predator object, not a fake/QA-only shadow copy.
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime };
+    // LUL-2389: noiseTarget distinguishes "investigates the roost's position" (slice b,
+    // player-sprint flush) from "investigates the player's own position" -- both leave
+    // state==='investigate', only the target point tells them apart.
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null };
   };
   // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
   // stage a "first sighted" scenario -- effectiveDetect() applies
@@ -7236,7 +7253,7 @@ function stepFrame(dt, t, skipRender){
     }
   }
   if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
-  if(playing) updateRoosts(dt);   // LUL-1914: roost feedback, same gate as predator AI
+  if(playing) updateRoosts(dt, running);   // LUL-1914/LUL-2389: roost feedback, same gate as predator AI
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
