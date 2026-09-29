@@ -4408,6 +4408,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // it cannot pin the death sequence to a specific species without hoping the
   // right one spawned closest. This is the same lure, filtered to a chosen kind,
   // so the suite can cover all three death sequences deterministically.
+  // LUL-5298: marks every other predator `inert`, same fix shape LUL-2841 already
+  // applied to qaIsolatePredatorKind below for this exact symptom ("an unrelated
+  // species can reach and kill the player before the lured one does" -- that
+  // hook's own comment cites a live 30/30 repro) -- confirmed live here too
+  // (LUL-5218: qaLurePredatorKind('wolf') kill reported #deathKind as 'bear').
+  // Without this, an ambient predator with no relation to the lure can still
+  // land the kill first and the test's premise (this call pins the killer's
+  // species) silently doesn't hold.
   window.ForestEngine.qaLurePredatorKind = function(kind){
     let nearest = null, best = 1e9;
     for(const p of predators){
@@ -4419,6 +4427,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     nearest.x = player.x + 6; nearest.z = player.z;
     nearest.vx = nearest.vz = 0;
     nearest.hunt = true;
+    for(const other of predators){ if(other !== nearest){ other.inert = true; } }
     return nearest.kind;
   };
 
@@ -6568,6 +6577,13 @@ function restart(){
   hidden = false; hideTime = 0; hideKind = null; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false;
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
+  // LUL-5298: a death/win that lands mid-crawl (LUL-4527) left inLogCrawl true and
+  // logCrawlDirX/Z/logCrawlExitX/Z pointed at the OLD map's tunnel -- the next round's
+  // forced-movement branch (stepFrame's `if(inLogCrawl)`) then steers every WASD input
+  // toward those stale, now-regenerated-map coordinates, which blocked() typically
+  // rejects outright, reading as a fully frozen player (0.00u movement) after restart.
+  inLogCrawl = false; logCrawlDirX = 0; logCrawlDirZ = 0; logCrawlExitX = 0; logCrawlExitZ = 0; logCrawlDeniedLatch = false;
+  brambleSnagT = 0;   // LUL-5298: same stale-timer-into-new-round class as the jump/hide resets above
   heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
