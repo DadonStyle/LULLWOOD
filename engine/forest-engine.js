@@ -5707,7 +5707,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const idx = predators.findIndex(p => p.kind === kind);
     if(idx < 0) return null;
     const p = predators[idx];
-    p.state = 'chase'; p.hunt = false;
+    // Mirrors every real chase-entry site's p.scentLock = SCENT_TRACK_TIME (e.g. :2227, :4898) --
+    // without it, shouldDowngradeChase() reverts 'chase' to 'investigate' on the very next tick
+    // if canSee() reads false for even one frame, before ambient consumers ever observe 'chase'.
+    p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
     return { idx };
   };
   // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
