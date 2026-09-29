@@ -18,10 +18,11 @@
 // 6. #actionSlot's rows are always mounted, in the founder's stated
 //    priority order (charge > objective > hide/veil > veil-overload > throwable > status),
 //    regardless of which currently have content.
-// 7. LUL-2336: qaForceAllActionRows() puts all five rows live with real
-//    content at once (no real playthrough state does) -- none of their
-//    bounding boxes intersect, at 1280x720 and at a narrow mobile landscape
-//    width.
+// 7. LUL-2336 (extended LUL-5166): qaForceAllActionRows() puts nine of
+//    #actionSlot's ten rows live with real content at once (no real
+//    playthrough state does; pickupPrompt is the one exception, mutually
+//    exclusive with throwPrompt by construction) -- none of their bounding
+//    boxes intersect, at 1280x720 and at a narrow mobile landscape width.
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
 import { boot, enter, trackConsoleErrors, expectNoConsoleErrors, qaHook, expectRowVisible, expectRowHidden } from './helpers';
@@ -316,11 +317,11 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
   });
 });
 
-// LUL-2336: the five rows this hook forces -- deliberately excludes
-// pickupPrompt/winVisible/deathVisible, which qaForceAllActionRows doesn't
-// touch (pickupPrompt is mutually exclusive with throwPrompt by
+// LUL-2336 (extended LUL-5166): the nine rows this hook forces -- deliberately
+// excludes pickupPrompt/winVisible/deathVisible, which qaForceAllActionRows
+// doesn't touch (pickupPrompt is mutually exclusive with throwPrompt by
 // construction, per Hud.tsx's own comment on that row).
-const FORCED_ROW_IDS = ['chargePrompt', 'objective', 'actionPrompt', 'throwPrompt', 'status'] as const;
+const FORCED_ROW_IDS = ['chargePrompt', 'objective', 'actionPrompt', 'veilOverloadPrompt', 'veilPrompt', 'throwPrompt', 'climbPrompt', 'chapelSanctuaryPrompt', 'status'] as const;
 
 /** One evaluate() round-trip: each forced row's data-visible flag, trimmed
  * text content and viewport-relative bounding box, read together so the
@@ -345,10 +346,10 @@ function rectsOverlap(a: { left: number; right: number; top: number; bottom: num
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
-/** Shared body for both viewport sizes below: force all five rows, assert
- * each is visible with real (non-empty) content, then assert no two of
- * their boxes intersect. */
-async function assertAllFiveRowsNonOverlapping(page: Page) {
+/** Shared body for both viewport sizes below: force all nine forceable rows,
+ * assert each is visible with real (non-empty) content, then assert no two
+ * of their boxes intersect. */
+async function assertAllForcedRowsNonOverlapping(page: Page) {
   await qaHook(page, 'qaForceAllActionRows');
 
   const rows = await readActionRows(page);
@@ -360,12 +361,12 @@ async function assertAllFiveRowsNonOverlapping(page: Page) {
   for (let i = 0; i < rows.length; i++) {
     for (let j = i + 1; j < rows.length; j++) {
       const a = rows[i], b = rows[j];
-      expect(rectsOverlap(a.rect!, b.rect!), `#${a.id} and #${b.id} must not overlap when all five rows are live`).toBe(false);
+      expect(rectsOverlap(a.rect!, b.rect!), `#${a.id} and #${b.id} must not overlap when all forced rows are live`).toBe(false);
     }
   }
 }
 
-test.describe('#actionSlot — all five rows forced live at once (LUL-2336)', () => {
+test.describe('#actionSlot — all forceable rows live at once (LUL-2336, LUL-5166)', () => {
   test('1280x720 desktop: no two rows overlap with real content in every row', async ({ page }) => {
     const errs = trackConsoleErrors(page);
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
@@ -373,13 +374,13 @@ test.describe('#actionSlot — all five rows forced live at once (LUL-2336)', ()
 
     // LUL-2107: freeze the real RAF loop first -- qaForceAllActionRows's own
     // doc comment requires this so the next real stepFrame() tick doesn't
-    // immediately recompute the five flags back from live game state
+    // immediately recompute the forced flags back from live game state
     // (coverPromptVisible/heldThrowable/statusVisible would all revert to
     // false at this empty patch of the micro world).
     await qaHook(page, 'qaSetFixedStep', 0.02);
     await qaHook(page, 'qaAdvance', 1); // one real frame so objectiveText is the live computed string, not the boot default
 
-    await assertAllFiveRowsNonOverlapping(page);
+    await assertAllForcedRowsNonOverlapping(page);
     expectNoConsoleErrors(errs);
   });
 
@@ -399,7 +400,7 @@ test.describe('#actionSlot — all five rows forced live at once (LUL-2336)', ()
     await qaHook(page, 'qaSetFixedStep', 0.02);
     await qaHook(page, 'qaAdvance', 1);
 
-    await assertAllFiveRowsNonOverlapping(page);
+    await assertAllForcedRowsNonOverlapping(page);
     expectNoConsoleErrors(errs);
   });
 });
@@ -409,7 +410,7 @@ test.describe('#actionSlot — all five rows forced live at once (LUL-2336)', ()
 // staging, so it can never silently drift if a future edit reorders the JSX
 // inside #actionSlot (components/Hud.tsx).
 test.describe('#actionSlot row order', () => {
-  test('nine rows are always mounted, top to bottom in priority order', async ({ page }) => {
+  test('ten rows are always mounted, top to bottom in priority order', async ({ page }) => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
