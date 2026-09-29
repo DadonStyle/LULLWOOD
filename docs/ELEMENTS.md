@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7874 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6923, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7891 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6940, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1630,16 +1630,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6148-6209, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6520-6561). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6165-6226, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6537-6578). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6520-6561) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6452) rather than recomputed later, since `player.x/z` can move on
+  (L6537-6578) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6469) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1695,8 +1695,8 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3919),
-  reset to 0 on `enter()` (L4010) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3933),
+  reset to 0 on `enter()` (L4024) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
@@ -1819,7 +1819,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L6884, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L6901, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2480,37 +2480,52 @@ registry's own merge.
 - ~~**LUL-396**~~ — **Fixed, LUL-450.** Cover-prop placement (`generateCover()`)
   now checks tree clearance before placing; see footnote 14 above.
 
-## Startled roosts (LUL-1914 slice a, LUL-4894 slice b) — ambient + player-triggered flush
+## Startled roosts (LUL-1914 ambient, LUL-4894 player-thrown, LUL-2389 player-sprint) — three triggers, one flush
 
-Five fixed canopy sites (`ROOSTS`, `engine/tuning.js`, static list alongside
-`LANDMARKS` — no `rng()` draw, seeds stay byte-identical). Two independent
-triggers share the same per-site `flushRoost(i)`/`roostCooldown[i]` machinery,
-so they cannot double-fire the same roost in quick succession:
+Five fixed canopy sites (`ROOSTS`, `lib/game/roostSites.ts`, `EventSite`-typed,
+static list — no `rng()` draw, seeds stay byte-identical; registration moved out
+of `engine/tuning.js` under LUL-2389 slice c). Three independent triggers share
+the same per-site `flushRoost(i)`/`roostCooldown[i]` machinery, so they cannot
+double-fire the same roost in quick succession:
 
-- **Ambient (slice a, LUL-1914):** each tick, `updateRoosts(dt)`
+- **Ambient (LUL-1914):** each tick, `updateRoosts(dt, running)`
   (`engine/forest-engine.js`) checks active, non-`inert` predators in
-  `state === 'chase'` against each site's radius (20 units).
-- **Player-thrown (slice b, LUL-4894):** `throwThrowable()`
+  `state === 'chase'` against each site's radius (20 units, `ROOSTS[i].radius`).
+- **Player-thrown stone ("Roost Scare", LUL-4894):** `throwThrowable()`
   (`engine/forest-engine.js`) checks the stone's analytic landing point
   (`player pos + facing * THROWABLE_THROW_DISTANCE`) against the nearest
   roost's radius, after the existing predator-noise loop. Reuses `ROOSTS[i].radius`
-  — no new `roostInteractRadius` constant.
+  — no new `roostInteractRadius` constant. Feedback/presentation only, see below.
+- **Player-sprint noise (LUL-2389 slice b):** the same `updateRoosts()` also
+  checks the live player position each tick — sprinting (`running`, not merely
+  moving) within `ROOST_TRIGGER_RADIUS` (6 units) of a roost's `(x,z)` fires the
+  flush *and* calls `hearThrowableNoise(p, r.x, r.z, ROOST_INVESTIGATE_TIME)` for
+  every non-inert predator within `ROOST_NOISE_RADIUS` (14 units) of the roost —
+  a real investigate-state detection event, targeted at the roost's fixed
+  position, never the player's own. Ties the mechanic to the already-shipped,
+  already-invisible `NOISE_RADIUS_WALK`/`NOISE_RADIUS_RUN` cost: a walking player
+  inside the trigger radius never flushes.
 
 On a hit, `flushRoost(i)` fires a small upward `THREE.Points` burst (fog-exempt,
 reads above the fog line) and a positional wing-clatter (`roostFlushSound()`,
 modeled on `scheduleBirdChirp`'s synthesis graph and `missionWaypointHum`'s
 panner/falloff math), then puts that site on a 32s cooldown (`ROOST_COOLDOWN`).
-No new engine state for either trigger.
+No new engine state for the ambient or player-thrown triggers.
 
-**Player-thrown path only**: no `hearThrowableNoise()`-style detection event is
-created — a flush is a feedback/presentation layer, same class as `#bearingPulse`
-(LUL-1308) and LUL-1855's beacon glow, for both triggers. First player-thrown
-flush ever also shows a one-shot `#hintCaption` pill ("throw a stone at a roost
-to startle it", key `roostThrowCue`, `hintSeen`/`markHintSeen`, LUL-2230 model),
-which supersedes `roostFlushSound()`'s own "birds scatter" caption for that one
-event (single caption slot, last `pushState()` wins). Slice (c)
-(`lib/game/eventSites.ts`-registered) remains deferred — see wiki
-`decisions/startled-roosts-2026-09-07`.
+**Ambient and player-thrown paths only**: no `hearThrowableNoise()`-style
+detection event is created for those two — a flush is a feedback/presentation
+layer, same class as `#bearingPulse` (LUL-1308) and LUL-1855's beacon glow. The
+player-sprint trigger is the one exception (above) — it is a real predator
+detection event, by design (§8 of `decisions/startled-roosts-slice-b-accepted-2026-09-11`:
+a fairness improvement making an already-paid noise cost visible, not free
+clairvoyance about the player's location, since the target is always the
+roost's fixed point). First player-thrown flush ever also shows a one-shot
+`#hintCaption` pill ("throw a stone at a roost to startle it", key
+`roostThrowCue`, `hintSeen`/`markHintSeen`, LUL-2230 model), which supersedes
+`roostFlushSound()`'s own "birds scatter" caption for that one event (single
+caption slot, last `pushState()` wins). The player-sprint trigger's investigate
+reuses `hearThrowableNoise()`'s own existing caption ("`${p.kind} investigates a
+noise`"), no separate hint.
 
 ## Hints — first-encounter explanations (LUL-2307, generalizes LUL-2230)
 
@@ -2717,7 +2732,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6446) and `windAssistEndCue()` (L6455), edge-triggers on the combined
+`windAssistStartCue()` (L6463) and `windAssistEndCue()` (L6472), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
