@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7927 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6976, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7944 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L6993, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1630,16 +1630,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6201-6262, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6573-6614). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6218-6279, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6590-6631). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6573-6614) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6581) rather than recomputed later, since `player.x/z` can move on
+  (L6590-6631) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6469) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1695,11 +1695,11 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3942),
-  reset to 0 on `enter()` (L4033) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L3933),
+  reset to 0 on `enter()` (L4061) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L7140: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1819,7 +1819,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7007, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7061, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1840,25 +1840,23 @@ not final tuning.
 ### Missions (detour objectives)
 
 **What it is**
-- **Implemented (LUL-1259, widened LUL-3010, LUL-4958, LUL-4900, LUL-5134, LUL-5116).**
-  `MISSION_POOL` (`lib/game/mission.ts`): a pool of optional detour objectives, one active per
-  run, drawn from the run's own seeded RNG (never player-selected). Seven members: `deepwater` —
-  a fixed waypoint at the fire tower landmark (`x: -95, z: -95`, matching `LANDMARKS`'
-  `fireTower` entry, `engine/tuning.js:77`) — `oakHollow` — a near waypoint at the `oak` landmark
-  (`x: 22, z: 4`, `engine/tuning.js:80`) — `slackWater` (LUL-4958) — no world target at all,
-  completes on pickup during Fog Tide's active phase (see below) — `stoneMarker` (LUL-4900) — a
-  fixed waypoint at the `stoneMarker` landmark (`x: 100, z: -75`, `engine/tuning.js:65`) —
-  `radioMast` (LUL-4900) — a fixed waypoint at the `radioMast` landmark (`x: 30, z: 175`,
-  `engine/tuning.js:68`) — `beaconEvasion` (LUL-5134) — the same `fireTower` waypoint as
+- **Implemented (LUL-1259, widened LUL-3010, LUL-4958, LUL-4900, LUL-5134).** `MISSION_POOL`
+  (`lib/game/mission.ts`): a pool of optional detour objectives, one active per run, drawn from
+  the run's own seeded RNG (never player-selected). Six members: `deepwater` — a fixed waypoint
+  at the fire tower landmark (`x: -95, z: -95`, matching `LANDMARKS`' `fireTower` entry,
+  `engine/tuning.js:77`) — `oakHollow` — a near waypoint at the `oak` landmark (`x: 22, z: 4`,
+  `engine/tuning.js:80`) — `slackWater` (LUL-4958) — no world target at all, completes on pickup
+  during Fog Tide's active phase (see below) — `stoneMarker` (LUL-4900) — a fixed waypoint at
+  the `stoneMarker` landmark (`x: 100, z: -75`, `engine/tuning.js:65`) — `radioMast`
+  (LUL-4900) — a fixed waypoint at the `radioMast` landmark (`x: 30, z: 175`,
+  `engine/tuning.js:68`) — and `beaconEvasion` (LUL-5134) — the same `fireTower` waypoint as
   `deepwater`, but with the permanent `beaconHunter`-variant wolf (`wolf.0`,
-  `engine/forest-engine.js:1810`) repositioned ~50u from it after the mission draw (see below) —
-  and `flush` (LUL-5116) — no world target, completes when a player-thrown stone flushes one
-  specific roost of the 5 fixed `ROOSTS` (`engine/tuning.js:75`), named at mission-draw time.
-  Per-run state (`mission: MissionState | null`) lives alongside `baby` at
-  `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every other rng()
+  `engine/forest-engine.js:1810`) repositioned ~50u from it after the mission draw (see below).
+  Per-run state (`mission: MissionState | null`) lives alongside `baby`
+  at `engine/forest-engine.js:885`, drawn once per `generateMap()` call, after every other rng()
   consumer, so it never shifts the stream any existing seed/replay depends on.
 
-**Seven variants (LUL-3010, LUL-4958, LUL-4900, LUL-5134, LUL-5116)**
+**Six variants (LUL-3010, LUL-4958, LUL-4900, LUL-5134)**
 - `oakHollow` — near (≈22.4m from spawn), untimed, `MISSION_OAKHOLLOW_REWARD` = 6 Embers.
   Always eligible.
 - `deepwater` — far (≈134.4m from spawn), `timeLimitSeconds: 60`, `MISSION_FIREPOWER_REWARD` = 8
@@ -1909,26 +1907,13 @@ not final tuning.
   existed before this ticket and cannot perturb any other seed). Reuses the existing Beacon
   Hunter detection/lock and Scent Veil break mechanics verbatim — no new predator behavior, no
   new HUD element, no new key.
-- `flush` (LUL-5116) — no world target (`spatial: false`, `lib/game/mission.ts`), same
-  non-spatial shape as `slackWater`. `generateMap()` draws which of the 5 fixed `ROOSTS`
-  (`engine/tuning.js:75`) this run's mission targets in a new `rng()` consumer right after
-  `placeCave()` (the new last consumer in the stream, per LUL-1904 — `repositionBeaconHunterForMission()`'s
-  own draw is gated on `beaconEvasion` specifically, so the two new consumers cannot both fire
-  in the same run). Completes on the player-thrown roost-flush branch of `throwThrowable()`
-  (`canCompleteFlush()`, `lib/game/mission.ts`) — deliberately NOT on the pre-existing ambient
-  chase-proximity `updateRoosts()` path, which never calls `canCompleteFlush()` at all, so a
-  different (unmarked) roost being flushed by a wandering predator cannot complete this mission.
-  `MISSION_FLUSH_REWARD` = 9 Embers (placeholder, Game Economist's number pending). No
-  secondary support. Produces no mission-nav hum (`spatial: false` gate). Renders in the
-  existing generic `#missionPanel` (`MISSION_NAMES.flush` = "Flush").
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
   (`lib/game/economy.ts`, `deepwater: MISSION_FIREPOWER_REWARD = 8`, `oakHollow:
   MISSION_OAKHOLLOW_REWARD = 6`, `slackWater: MISSION_SLACKWATER_REWARD = 10`, `stoneMarker:
   MISSION_STONE_MARKER_REWARD = 7`, `radioMast: MISSION_RADIO_MAST_REWARD = 3`,
-  `beaconEvasion: MISSION_BEACON_HUNTER_EVASION_REWARD = 8`, `flush: MISSION_FLUSH_REWARD = 9`
-  (placeholder)), passed as
+  `beaconEvasion: MISSION_BEACON_HUNTER_EVASION_REWARD = 8`), passed as
   `computeWinPayout()`'s optional fourth argument at the `finishPickup()` call site.
   **Forfeited on death or expiry** — `computeDeathPayout()` is
   unmodified, so reaching the mission target but dying before reaching home banks no bonus; a
@@ -2495,37 +2480,52 @@ registry's own merge.
 - ~~**LUL-396**~~ — **Fixed, LUL-450.** Cover-prop placement (`generateCover()`)
   now checks tree clearance before placing; see footnote 14 above.
 
-## Startled roosts (LUL-1914 slice a, LUL-4894 slice b) — ambient + player-triggered flush
+## Startled roosts (LUL-1914 ambient, LUL-4894 player-thrown, LUL-2389 player-sprint) — three triggers, one flush
 
-Five fixed canopy sites (`ROOSTS`, `engine/tuning.js`, static list alongside
-`LANDMARKS` — no `rng()` draw, seeds stay byte-identical). Two independent
-triggers share the same per-site `flushRoost(i)`/`roostCooldown[i]` machinery,
-so they cannot double-fire the same roost in quick succession:
+Five fixed canopy sites (`ROOSTS`, `lib/game/roostSites.ts`, `EventSite`-typed,
+static list — no `rng()` draw, seeds stay byte-identical; registration moved out
+of `engine/tuning.js` under LUL-2389 slice c). Three independent triggers share
+the same per-site `flushRoost(i)`/`roostCooldown[i]` machinery, so they cannot
+double-fire the same roost in quick succession:
 
-- **Ambient (slice a, LUL-1914):** each tick, `updateRoosts(dt)`
+- **Ambient (LUL-1914):** each tick, `updateRoosts(dt, running)`
   (`engine/forest-engine.js`) checks active, non-`inert` predators in
-  `state === 'chase'` against each site's radius (20 units).
-- **Player-thrown (slice b, LUL-4894):** `throwThrowable()`
+  `state === 'chase'` against each site's radius (20 units, `ROOSTS[i].radius`).
+- **Player-thrown stone ("Roost Scare", LUL-4894):** `throwThrowable()`
   (`engine/forest-engine.js`) checks the stone's analytic landing point
   (`player pos + facing * THROWABLE_THROW_DISTANCE`) against the nearest
   roost's radius, after the existing predator-noise loop. Reuses `ROOSTS[i].radius`
-  — no new `roostInteractRadius` constant.
+  — no new `roostInteractRadius` constant. Feedback/presentation only, see below.
+- **Player-sprint noise (LUL-2389 slice b):** the same `updateRoosts()` also
+  checks the live player position each tick — sprinting (`running`, not merely
+  moving) within `ROOST_TRIGGER_RADIUS` (6 units) of a roost's `(x,z)` fires the
+  flush *and* calls `hearThrowableNoise(p, r.x, r.z, ROOST_INVESTIGATE_TIME)` for
+  every non-inert predator within `ROOST_NOISE_RADIUS` (14 units) of the roost —
+  a real investigate-state detection event, targeted at the roost's fixed
+  position, never the player's own. Ties the mechanic to the already-shipped,
+  already-invisible `NOISE_RADIUS_WALK`/`NOISE_RADIUS_RUN` cost: a walking player
+  inside the trigger radius never flushes.
 
 On a hit, `flushRoost(i)` fires a small upward `THREE.Points` burst (fog-exempt,
 reads above the fog line) and a positional wing-clatter (`roostFlushSound()`,
 modeled on `scheduleBirdChirp`'s synthesis graph and `missionWaypointHum`'s
 panner/falloff math), then puts that site on a 32s cooldown (`ROOST_COOLDOWN`).
-No new engine state for either trigger.
+No new engine state for the ambient or player-thrown triggers.
 
-**Player-thrown path only**: no `hearThrowableNoise()`-style detection event is
-created — a flush is a feedback/presentation layer, same class as `#bearingPulse`
-(LUL-1308) and LUL-1855's beacon glow, for both triggers. First player-thrown
-flush ever also shows a one-shot `#hintCaption` pill ("throw a stone at a roost
-to startle it", key `roostThrowCue`, `hintSeen`/`markHintSeen`, LUL-2230 model),
-which supersedes `roostFlushSound()`'s own "birds scatter" caption for that one
-event (single caption slot, last `pushState()` wins). Slice (c)
-(`lib/game/eventSites.ts`-registered) remains deferred — see wiki
-`decisions/startled-roosts-2026-09-07`.
+**Ambient and player-thrown paths only**: no `hearThrowableNoise()`-style
+detection event is created for those two — a flush is a feedback/presentation
+layer, same class as `#bearingPulse` (LUL-1308) and LUL-1855's beacon glow. The
+player-sprint trigger is the one exception (above) — it is a real predator
+detection event, by design (§8 of `decisions/startled-roosts-slice-b-accepted-2026-09-11`:
+a fairness improvement making an already-paid noise cost visible, not free
+clairvoyance about the player's location, since the target is always the
+roost's fixed point). First player-thrown flush ever also shows a one-shot
+`#hintCaption` pill ("throw a stone at a roost to startle it", key
+`roostThrowCue`, `hintSeen`/`markHintSeen`, LUL-2230 model), which supersedes
+`roostFlushSound()`'s own "birds scatter" caption for that one event (single
+caption slot, last `pushState()` wins). The player-sprint trigger's investigate
+reuses `hearThrowableNoise()`'s own existing caption ("`${p.kind} investigates a
+noise`"), no separate hint.
 
 ## Hints — first-encounter explanations (LUL-2307, generalizes LUL-2230)
 
@@ -2721,18 +2721,18 @@ engine flag is genuinely true.
 `running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
 re-deriving it (`engine/forest-engine.js` L7035) -- stacking on top of the LUL-3009 scent
 effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
-speed bonus applied to `spd` inside `stepFrame()` (L7084), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
-footstep-radius reduction applied to `noiseRadius` (L7100), replacing the plain sprint radius
+speed bonus applied to `spd` inside `stepFrame()` (L7041), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+footstep-radius reduction applied to `noiseRadius` (L7057), replacing the plain sprint radius
 only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
 is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
 it already fires correctly for the sprint-bonus window; both the `title` and the always-visible
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L7744 for the eligibility case), positioned below the danger hints
+(`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6499) and `windAssistEndCue()` (L6508), edge-triggers on the combined
+`windAssistStartCue()` (L6516) and `windAssistEndCue()` (L6525), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
