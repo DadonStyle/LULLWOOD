@@ -1198,7 +1198,9 @@ function generateMap(seed){
   // rng() consumer, appended after placeCave() per LUL-1904's stream-ordering rule (this
   // SPEC's Design call §2). No-op for every other mission kind. Respects ?qaRoostIndex for
   // deterministic e2e staging, falling back to the real draw when absent/out of range.
-  if(mission.target.kind === 'flush'){
+  // LUL-5160: 'beaconRoostFlush' needs the same roost draw -- it's flush's own non-spatial
+  // target kind, reused verbatim (see canCompleteFlush()).
+  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush'){
     const forced = qaForcedRoostIndex !== null ? parseInt(qaForcedRoostIndex, 10) : NaN;
     const idx = (forced >= 0 && forced < ROOSTS.length) ? forced : Math.floor(rng() * ROOSTS.length);
     mission = { ...mission, target: { ...mission.target, roostIndex: idx } };
@@ -1951,21 +1953,29 @@ function relocateParkedHunter(pcx, pcz){
 // placePredators() (:1819) runs BEFORE the mission is drawn (see the LUL-1258 comment at
 // generateMap()'s tail), so "spawn ~50u from the mission target" cannot be expressed as
 // MISSION_POOL data -- it needs this second placement pass. Only ever called when
-// mission.target.kind === 'beaconEvasion', so it can never perturb the tree/predator/mission
-// rng stream any other seed depends on -- it is new, additive rng consumption gated on a kind
-// that didn't exist before this ticket. Mirrors placePredators()'s own do/while shape
-// (:1848-1850) for the position draw, and its post-draw reset field list (:1850-1854)
-// verbatim, so this hunter starts this round exactly as "fresh" as it would from a normal
-// placePredators() draw, not mid-chase from wherever it was first placed.
+// mission.target.kind === 'beaconEvasion' or (LUL-5160) 'beaconRoostFlush', so it can never
+// perturb the tree/predator/mission rng stream any other seed depends on -- it is new,
+// additive rng consumption gated on kinds that didn't exist before these tickets. Mirrors
+// placePredators()'s own do/while shape (:1848-1850) for the position draw, and its post-draw
+// reset field list (:1850-1854) verbatim, so this hunter starts this round exactly as "fresh"
+// as it would from a normal placePredators() draw, not mid-chase from wherever it was first
+// placed.
 function repositionBeaconHunterForMission(mission){
-  if(mission.target.kind !== 'beaconEvasion') return;
+  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush') return;
   const hunter = predators.find(p => p.variant === 'beaconHunter');
   if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803)
+  // LUL-5160: 'beaconRoostFlush' has no real target.x/z (non-spatial, placeholder 0/0, same
+  // shape as 'flush') -- anchor on the drawn ROOSTS[roostIndex] site instead, scaled the same
+  // way every other ROOSTS distance-check site is (CONFIG.roostScaleMul, a no-op on the real
+  // map -- see its own comment, engine/tuning.js).
+  const anchor = mission.target.kind === 'beaconRoostFlush'
+    ? { x: ROOSTS[mission.target.roostIndex].x * CONFIG.roostScaleMul, z: ROOSTS[mission.target.roostIndex].z * CONFIG.roostScaleMul }
+    : { x: mission.target.x, z: mission.target.z };
   let x, z, tries = 0;
   do {
     const ang = rng()*Math.PI*2;
-    x = mission.target.x + Math.cos(ang)*50;
-    z = mission.target.z + Math.sin(ang)*50;
+    x = anchor.x + Math.cos(ang)*50;
+    z = anchor.z + Math.sin(ang)*50;
     tries++;
   } while(blockedR(x, z, hunter.rad+0.5) && tries < 60);
   hunter.x = x; hunter.z = z; hunter.wpx = x; hunter.wpz = z; hunter.vx = 0; hunter.vz = 0; hunter.yaw = rng()*Math.PI*2;

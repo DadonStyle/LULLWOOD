@@ -60,7 +60,8 @@ export type MissionKind =
   | 'stoneMarker'
   | 'radioMast'
   | 'beaconEvasion'
-  | 'flush';
+  | 'flush'
+  | 'beaconRoostFlush';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -90,9 +91,10 @@ export interface MissionTarget {
   /** LUL-5116: which of the 5 fixed ROOSTS (engine/tuning.js:75) this run's flush mission
    * targets. Resolved once per generateMap(), in the new rng() draw right after placeCave()
    * (see engine/forest-engine.js's generateMap()) -- this module has no rng import, so it
-   * cannot draw the index itself. Only meaningful when target.kind === 'flush'; undefined
-   * for every other kind. The value on this MISSION_POOL entry (0) is an inert placeholder,
-   * always overwritten before a flush mission can be read in real play. */
+   * cannot draw the index itself. Only meaningful when target.kind === 'flush' or
+   * (LUL-5160) 'beaconRoostFlush'; undefined for every other kind. The value on this
+   * MISSION_POOL entry (0) is an inert placeholder, always overwritten before a flush
+   * mission can be read in real play. */
   roostIndex?: number;
 }
 
@@ -137,6 +139,15 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // placeholder immediately overwritten by generateMap()'s post-placeCave() rng draw (or
   // ?qaRoostIndex for e2e) -- never read from this pool entry directly.
   { kind: 'flush', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
+  // LUL-5160: Beacon Roost Flush (M7) -- composes 'flush's non-spatial roost-target shape
+  // above with 'beaconEvasion's post-draw predator repositioning (repositionBeaconHunterForMission()
+  // in engine/forest-engine.js, extended to this kind to reposition ~50u from ROOSTS[roostIndex]
+  // instead of a fixed landmark). Untimed like flush, not fixed-landmark-timed like beaconEvasion --
+  // this mission's threat comes from the repositioned Beacon Hunter, not a clock. x/z/zoneRadius/
+  // interactRadius: 0/spatial: false/roostIndex: 0 placeholder follow flush's own reasoning
+  // (:139 above) verbatim -- never read directly, always overwritten by generateMap()'s
+  // post-placeCave() roost draw.
+  { kind: 'beaconRoostFlush', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
 ];
 
 export interface MissionState {
@@ -187,8 +198,11 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // mission draw. slackWater stays reachable at/above the win threshold via the MISSION_POOL
   // branch above, same as deepwater. LUL-5116: flush shares the exact same untimed/no-
   // landmarkKind shape as slackWater and would reproduce the identical regression without
-  // the same exclusion, so it is excluded here too.
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush');
+  // the same exclusion, so it is excluded here too. LUL-5160: beaconRoostFlush shares that
+  // same untimed/no-landmarkKind shape (it's flush's own non-spatial target plus a
+  // repositioned predator, no new timing field) and would reproduce the identical regression,
+  // so it is excluded here too.
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
@@ -246,9 +260,15 @@ export function canCompleteSlackWater(mission: MissionState, fogTideActive: bool
  * the one real-play call site that can make it true. The ambient chase-proximity trigger
  * (updateRoosts(), engine/forest-engine.js:2964) never calls this function at all, so a
  * DIFFERENT (unmarked) roost being flushed by a wandering predator cannot complete this
- * mission by construction -- not by an extra guard here, by that call site never existing. */
+ * mission by construction -- not by an extra guard here, by that call site never existing.
+ * LUL-5160: 'beaconRoostFlush' shares the exact same roost-target/completion shape as
+ * 'flush' (only the post-draw predator repositioning differs, handled entirely in
+ * repositionBeaconHunterForMission()) -- reuses this same predicate rather than a
+ * near-duplicate, per the proposal's own "no new engine code" scope. */
 export function canCompleteFlush(mission: MissionState, flushedRoostIndex: number): boolean {
-  return mission.status === 'active' && mission.target.kind === 'flush' && mission.target.roostIndex === flushedRoostIndex;
+  return mission.status === 'active'
+    && (mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush')
+    && mission.target.roostIndex === flushedRoostIndex;
 }
 
 export function completeMission(mission: MissionState): MissionState {

@@ -111,6 +111,14 @@ export const MISSION_BEACON_HUNTER_EVASION_REWARD = 8;
 // not a proposed number).
 export const MISSION_FLUSH_REWARD = 9;
 
+// LUL-5160: Beacon Roost Flush -- placeholder pending the Game Economist's number, same
+// convention MISSION_FLUSH_REWARD (above) already uses. Scout's proposal (wiki
+// game/mechanics/beacon-roost-flush-mission) recommends 9-10E; priced provisionally at the
+// top of that range -- strictly harder than either component alone (Flush's roost-targeting
+// AND Beacon Evasion's predator-threat/Scent-Veil pressure in the same mission), not a
+// derived formula. Economist's call to confirm/adjust, not re-derived here.
+export const MISSION_BEACON_ROOST_FLUSH_REWARD = 10;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -119,6 +127,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   radioMast: MISSION_RADIO_MAST_REWARD,
   beaconEvasion: MISSION_BEACON_HUNTER_EVASION_REWARD,
   flush: MISSION_FLUSH_REWARD,
+  beaconRoostFlush: MISSION_BEACON_ROOST_FLUSH_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

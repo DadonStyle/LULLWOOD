@@ -350,6 +350,7 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   radioMast: 'Radio Mast',
   beaconEvasion: 'Beacon Evasion',
   flush: 'Flush',
+  beaconRoostFlush: 'Beacon Roost Flush',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the

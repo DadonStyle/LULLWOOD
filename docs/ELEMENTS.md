@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7944 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L6993, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L7954 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7003, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1630,15 +1630,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6218-6279, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6590-6631). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6228-6289, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6600-6641). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6590-6631) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6600-6641) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6469) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1907,6 +1907,26 @@ not final tuning.
   existed before this ticket and cannot perturb any other seed). Reuses the existing Beacon
   Hunter detection/lock and Scent Veil break mechanics verbatim — no new predator behavior, no
   new HUD element, no new key.
+- `beaconRoostFlush` (LUL-5160, "M7 Beacon Roost Flush") — composes `flush`'s non-spatial
+  roost-target shape (`spatial: false`, `roostIndex` drawn from the 5 fixed `ROOSTS` right after
+  `placeCave()`, `engine/forest-engine.js:1197-1206`) with `beaconEvasion`'s post-draw predator
+  repositioning: `repositionBeaconHunterForMission()` (`engine/forest-engine.js:1963`) is
+  extended to also fire for this kind, anchoring the ~50u offset on
+  `ROOSTS[mission.target.roostIndex]` (scaled by `CONFIG.roostScaleMul`, a no-op on the real
+  map) instead of a fixed landmark, since this kind's own `target.x/z` are the same inert (0,0)
+  placeholder `flush` uses. Completion reuses `canCompleteFlush()` (`lib/game/mission.ts:268`,
+  unmodified call site `engine/forest-engine.js:6211`) unchanged — its kind check now accepts
+  either `flush` or `beaconRoostFlush`, so a thrown stone landing on
+  `mission.target.roostIndex` completes either kind through the identical predicate. Untimed
+  (no `timeLimitSeconds`, unlike `beaconEvasion`'s fixed-landmark 60s) — the mission's threat is
+  the repositioned Beacon Hunter, not a clock — so `eligibleMissionPool()` excludes it
+  pre-`MISSION_FAR_UNLOCK_WINS` by name (`lib/game/mission.ts:205`), the same explicit
+  exclusion `flush`/`slackWater` already needed for this exact untimed/no-`landmarkKind` shape.
+  `MISSION_BEACON_ROOST_FLUSH_REWARD` = 10 Embers (`lib/game/economy.ts`, provisional — Game
+  Economist's call, Scout's proposal recommended 9–10E). Reuses the existing Beacon Hunter
+  detection/lock, Scent Veil break, and roost-burst mechanics verbatim — no new predator
+  behavior, no new HUD element, no new key, no new cue (see `docs/CUES.md`'s existing Beacon
+  Hunter lock-on / Scent Veil rows, unmodified by this kind).
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
@@ -2732,7 +2752,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6516) and `windAssistEndCue()` (L6525), edge-triggers on the combined
+`windAssistStartCue()` (L6526) and `windAssistEndCue()` (L6535), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
