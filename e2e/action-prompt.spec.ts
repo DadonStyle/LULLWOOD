@@ -616,6 +616,53 @@ test.describe('#actionSlot short-landscape suppression (LUL-5374)', () => {
     expectNoConsoleErrors(errs);
   });
 
+  // LUL-5179: chargePrompt/objective is a *direct* adjacent pair (rows 1 and 2 of
+  // #actionSlot) that LUL-5374's own qaForceAllActionRows() measurement couldn't isolate --
+  // forcing every row forces actionPrompt too, which hides objective via the existing
+  // LUL-5246 chain regardless of whether a direct chargePrompt->objective rule exists.
+  // chargeVisible (a real predator charge) has no !hidden/coverPromptVisible gate, so a
+  // charge with no hide spot nearby leaves actionPrompt at data-visible="0" and the chain
+  // never fires -- this stages exactly that: qaTriggerCharge with an empty micro scene
+  // (no cover props at all) guarantees coverPromptVisible stays false.
+  test('chargePrompt survives over objective when no cover is nearby', async ({ page }) => {
+    const errs = trackConsoleErrors(page);
+    await page.setViewportSize({ width: WIDTH, height: HEIGHT });
+    await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    await page.mouse.click(WIDTH / 2, HEIGHT / 2);
+    await page.waitForTimeout(1200); // gate fade settle (mobile has no pointer-lock to wait on)
+
+    await qaHook(page, 'qaBuildScene', { props: [] });
+    const idx = await qaHook(page, 'qaTriggerCharge', 'wolf');
+    expect(idx, "qaTriggerCharge('wolf') returned null -- wolf isn't spawned").not.toBeNull();
+    await expectRowVisible(page, 'chargePrompt');
+
+    const actionPromptVisible = await page.evaluate(() => document.querySelector('#actionPrompt')?.getAttribute('data-visible'));
+    expect(actionPromptVisible, '#actionPrompt must stay hidden (no cover nearby) so this test actually isolates the direct chargePrompt/objective pair').toBe('0');
+
+    const objText = await page.evaluate(() => document.querySelector('#objective .actionPromptLine')?.textContent?.trim() ?? null);
+    expect(objText, '#objective must have real content (the mission is always active)').not.toBeNull();
+
+    const objLineDisplay = await page.evaluate(() => {
+      const el = document.querySelector('#objective .actionPromptLine');
+      return el ? window.getComputedStyle(el).display : null;
+    });
+    expect(objLineDisplay, '#objective .actionPromptLine must collapse to display:none while #chargePrompt has content').toBe('none');
+
+    const overlap = await page.evaluate(() => {
+      const a = document.querySelector('#chargePrompt .actionPromptLine');
+      const b = document.querySelector('#objective .actionPromptLine');
+      const boxes = [a, b]
+        .filter((el): el is Element => !!el && window.getComputedStyle(el).display !== 'none')
+        .map((el) => el.getBoundingClientRect());
+      if (boxes.length < 2) return false;
+      const [x, y] = boxes;
+      return x.left < y.right && x.right > y.left && x.top < y.bottom && x.bottom > y.top;
+    });
+    expect(overlap, '#chargePrompt and #objective .actionPromptLine boxes must never intersect').toBe(false);
+
+    expectNoConsoleErrors(errs);
+  });
+
   // LUL-5374 SPEC's own flagged gap: chapelSanctuaryPrompt/status needs a real hide spot
   // inside CHAPEL_SANCTUARY_INTERACT_RADIUS (4 units, engine/tuning.js) of the chapel
   // steeple's micro-world position, which qaBuildScene cannot stage in one call (the

@@ -646,8 +646,25 @@ const OVERLAY_STYLE = `
        display, so these compose safely with each other and with the rule above regardless of
        evaluation order -- verified live: re-measuring with all 9 rules applied plus
        qaForceAllActionRows() (worst case, all rows forced at once) shows zero remaining
-       .actionPromptLine overlaps on both mobile-pixel5-landscape and mobile-iphone-se-landscape. */
+       .actionPromptLine overlaps on both mobile-pixel5-landscape and mobile-iphone-se-landscape.
+       (LUL-5179 below adds a 10th rule for the one real, non-forced pair this all-forced
+       measurement couldn't expose -- see its own comment.) */
     body:has(#chargePrompt[data-visible="1"]) #actionPrompt .actionPromptLine { display: none !important; }
+    /* LUL-5179: the rule above only covers chargePrompt<->actionPrompt; it does not reach
+       objective, and LUL-5374's own suppression of objective keys off #actionPrompt's
+       [data-visible], not #chargePrompt's. chargeVisible (engine/forest-engine.js's
+       qaTriggerCharge / the real predator-charge trigger) has no !hidden or coverPromptVisible
+       gate, so a real charge with no hide spot nearby leaves actionPrompt at data-visible="0"
+       -- the actionPrompt->objective chain never fires and the two adjacent rows (1 and 2)
+       overlap directly. LUL-5374's own live-measurement missed this because
+       qaForceAllActionRows() always forces actionPrompt visible too, which hid objective via
+       the existing chain regardless of this rule's presence -- confirmed live with a real
+       qaTriggerCharge('wolf') call at player (0,0) (no cover in the spawn clearing):
+       #chargePrompt/#objective .actionPromptLine boxes overlapped by ~10px vertically before
+       this rule existed. Matches the already-decided priority order (chargePrompt > objective,
+       CTO decision on LUL-5373) -- this closes the one pair that order named but no rule
+       enforced. */
+    body:has(#chargePrompt[data-visible="1"]) #objective .actionPromptLine { display: none !important; }
     body:has(#actionPrompt[data-visible="1"]) #veilOverloadPrompt .actionPromptLine { display: none !important; }
     body:has(#actionPrompt[data-visible="1"]) #veilPrompt .actionPromptLine { display: none !important; }
     body:has(#veilOverloadPrompt[data-visible="1"]) #veilPrompt .actionPromptLine { display: none !important; }
