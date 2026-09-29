@@ -69,8 +69,12 @@ test.describe('flush mission (LUL-5116)', () => {
 
     await advanceChunked(page, stepsFor(2));
 
+    // burstActive is a ~0.9s transient (triggerRoostBurst()/updateRoostBursts(), forest-engine.js)
+    // that has already decayed back to idle well before this 2s window ends -- cooldown is the
+    // durable (32s, ROOST_COOLDOWN) signal the flush actually happened, same proof
+    // e2e/roost.spec.ts's own "shares cooldown" test uses for the identical timing reason.
     const roost1State = await qaHook(page, 'qaProbeRoostState', 1);
-    expect(roost1State.burstActive, 'the ambient chase-proximity path must have actually fired').toBe(true);
+    expect(roost1State.cooldown, 'the ambient chase-proximity path must have actually fired').toBeGreaterThan(0);
 
     const stillActive = await qaHook(page, 'qaProbeMission');
     expect(stillActive?.status, 'flushing the WRONG roost must not complete the mission').toBe('active');

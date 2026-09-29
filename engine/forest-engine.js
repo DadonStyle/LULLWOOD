@@ -251,7 +251,16 @@ function init(onStateChange, inputMode) {
   // players; neither requires `?qaHooks=1` -- they change what generateMap()
   // builds, not what's exposed on window.ForestEngine.
   const qaParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-  if(qaParams && qaParams.get('qaWorld') === 'micro') applyQaWorldMicroPreset();
+  if(qaParams && qaParams.get('qaWorld') === 'micro'){
+    applyQaWorldMicroPreset();
+    // LUL-5346: roostGroups (below) is built once at module load, from ROOSTS' raw
+    // (unscaled) positions, strictly before this qaWorld branch ever runs -- so the
+    // burst mesh has to be re-pinned here, once, to CONFIG.roostScaleMul's now-live
+    // value, or the visible burst would sit at the old full-map spot while every
+    // distance check (updateRoosts(), qaTeleportNearRoost()) already agrees on the
+    // scaled one. No-op outside qaWorld=micro (this branch never runs).
+    roostGroups.forEach((g, i) => g.position.set(ROOSTS[i].x * CONFIG.roostScaleMul, 14, ROOSTS[i].z * CONFIG.roostScaleMul));
+  }
   // Skips updateStreamedChunks()/layoutThrowableMeshes() inside generateMap()
   // below -- LUL-2249: streaming replaced the old direct layoutTreeChunks()/
   // layoutCoverMeshes() instantiate-everything calls with a ring-limited
@@ -1721,7 +1730,9 @@ function roostFlushSound(x, z){
 }
 function flushRoost(i){
   triggerRoostBurst(i);
-  roostFlushSound(ROOSTS[i].x, ROOSTS[i].z);
+  // LUL-5346: matches roostGroups[i]'s own scaled position (init(), where CONFIG.roostScaleMul
+  // is applied to the burst mesh) so the pan/near-far read matches where the burst actually plays.
+  roostFlushSound(ROOSTS[i].x * CONFIG.roostScaleMul, ROOSTS[i].z * CONFIG.roostScaleMul);
 }
 const lookM = new THREE.Matrix4(), lookQ = new THREE.Quaternion();
 function key3(time, keys){   // smoothstep-interpolated keyframes
@@ -3034,9 +3045,12 @@ function updateRoosts(dt){
   for(let i=0;i<ROOSTS.length;i++){
     if(roostCooldown[i] > 0){ roostCooldown[i] -= dt; continue; }
     const r = ROOSTS[i];
+    // LUL-5346: CONFIG.roostScaleMul (1 on every real map) -- see its own comment,
+    // engine/tuning.js -- so this stays a no-op outside qaWorld=micro.
+    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
     for(const p of predators){
       if(p.inert || p.state !== 'chase') continue;
-      if(Math.hypot(p.x-r.x, p.z-r.z) < r.radius){
+      if(Math.hypot(p.x-rx, p.z-rz) < r.radius){
         flushRoost(i);
         roostCooldown[i] = ROOST_COOLDOWN;
         break;
@@ -5744,24 +5758,26 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // (-sin(0),-cos(0)) = (0,-1), i.e. -z) means a throw from here lands 16u short of the
   // player, straight at the roost (18u throw - 2u offset), well inside its 20u radius,
   // so a spec can throw immediately with no extra facing setup. Mirrors
-  // qaTeleportNearStoneMarker/qaTeleportNearThrowable otherwise, since
-  // applyQaWorldMicroPreset() (engine/tuning.js) doesn't scale ROOSTS, so a roost keeps
-  // its full-map position even in the micro world. Defaults to the nearest roost to the
-  // player's current position so a spec doesn't have to know indices; returns null if
-  // that index doesn't exist.
+  // qaTeleportNearStoneMarker/qaTeleportNearThrowable otherwise. LUL-5346: scaled by
+  // CONFIG.roostScaleMul (a no-op, mul=1, on every real map) so the landing spot matches
+  // every other roost distance check (updateRoosts(), throwThrowable()'s nearestRoost scan) --
+  // the ROOSTS export itself still isn't touched, see roostScaleMul's own comment,
+  // engine/tuning.js. Defaults to the nearest roost to the player's current position so a
+  // spec doesn't have to know indices; returns null if that index doesn't exist.
   window.ForestEngine.qaTeleportNearRoost = function(i){
     if(i === undefined){
       let best = -1, bestD = Infinity;
       for(let k=0;k<ROOSTS.length;k++){
-        const d = Math.hypot(ROOSTS[k].x - player.x, ROOSTS[k].z - player.z);
+        const d = Math.hypot(ROOSTS[k].x * CONFIG.roostScaleMul - player.x, ROOSTS[k].z * CONFIG.roostScaleMul - player.z);
         if(d < bestD){ best = k; bestD = d; }
       }
       i = best;
     }
     const r = ROOSTS[i];
     if(!r) return null;
-    player.x = r.x; player.z = r.z + 2;
-    return { i, x: r.x, z: r.z };
+    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
+    player.x = rx; player.z = rz + 2;
+    return { i, x: rx, z: rz };
   };
   // [QA-HOOK] LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a
   // spec assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
@@ -6156,7 +6172,9 @@ function throwThrowable(){
   // two paths can't double-fire the same roost in quick succession.
   let nearestRoost = -1, nearestRoostDist = Infinity;
   for(let i=0;i<ROOSTS.length;i++){
-    const dist = Math.hypot(ROOSTS[i].x - landX, ROOSTS[i].z - landZ);
+    // LUL-5346: CONFIG.roostScaleMul -- matches qaTeleportNearRoost()'s own scaled landing spot,
+    // see its comment; a no-op (mul=1) on every real map.
+    const dist = Math.hypot(ROOSTS[i].x * CONFIG.roostScaleMul - landX, ROOSTS[i].z * CONFIG.roostScaleMul - landZ);
     if(dist < ROOSTS[i].radius && dist < nearestRoostDist){ nearestRoost = i; nearestRoostDist = dist; }
   }
   if(nearestRoost >= 0 && roostCooldown[nearestRoost] <= 0){
