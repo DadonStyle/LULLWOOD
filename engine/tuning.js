@@ -37,6 +37,12 @@ export const CONFIG = {
                           // updateRoosts()'s ambient chase-proximity trigger had no way to fire in
                           // a micro-world spec. applyQaWorldMicroPreset() scales this down too.
                           // 1 = full-map, no-op default.
+  scentMaskScaleMul: 1,   // LUL-5493: same "scale the read, not the source" shape as roostScaleMul
+                          // -- SCENT_MASK_SITES (lib/game/scentMaskSites.ts) stays untouched; every
+                          // engine read site scales x/z by this. Without it a real walk in the
+                          // shrunk micro map (movement-clamped to +-half) can never reach any of the
+                          // 3 sites (up to 160u from origin). applyQaWorldMicroPreset() scales this
+                          // down too, same ratio as roostScaleMul/missionScaleMul. 1 = full-map, no-op.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
@@ -212,6 +218,9 @@ export function applyQaWorldMicroPreset(){
   CONFIG.roostScaleMul = 0.2;    // LUL-5346: same 96/480 ratio -- keeps a ROOSTS site inside the
                                   // shrunk map's movement-clamp bounds so a chasing predator can
                                   // actually reach one (and qaTeleportNearRoost() lands legally).
+  CONFIG.scentMaskScaleMul = 0.2; // LUL-5493: same 96/480 ratio -- keeps a scent-masking site
+                                  // inside the shrunk map's movement-clamp bounds so a real walk
+                                  // (not just qaTeleportTo) can enter and leave one.
 }
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two
