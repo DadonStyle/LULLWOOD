@@ -483,6 +483,7 @@ const OVERLAY_STYLE = `
   #hintCaption[data-hint-key="bog"],
   #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
   #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
+  #hintCaption[data-hint-key="skyCompassNavigation"],
   #hintCaption[data-hint-key="scentMask"] {
     left: 50%; top: auto; transform: translateX(-50%);
     bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px);
@@ -728,6 +729,7 @@ const OVERLAY_STYLE = `
     #hintCaption[data-hint-key="bog"],
     #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
     #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
+  #hintCaption[data-hint-key="skyCompassNavigation"],
     #hintCaption[data-hint-key="scentMask"],
     #scentTrailCaption,
     #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
@@ -845,6 +847,7 @@ const OVERLAY_STYLE = `
     #hintCaption[data-hint-key="bog"],
     #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
     #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
+  #hintCaption[data-hint-key="skyCompassNavigation"],
     #hintCaption[data-hint-key="scentMask"],
     #scentTrailCaption,
     #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
