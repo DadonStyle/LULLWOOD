@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8297 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7278, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8386 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7336, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1705,15 +1705,15 @@ not final tuning.
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
   both `track()` call sites, in `finishPickup()` (L6501, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6875). The `difficulty` module-level
+  `LUL-2281`) and `triggerDeath()` (L6970). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6875) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6855) rather than recomputed later, since `player.x/z` can move on
+  (L6940) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L3310) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1770,7 +1770,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4245) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4290) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
@@ -1893,7 +1893,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7228, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7404, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -3057,7 +3057,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6775) and `windAssistEndCue()` (L6784), edge-triggers on the combined
+`windAssistStartCue()` (L6820) and `windAssistEndCue()` (L6830), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3293,3 +3293,69 @@ at the entry/exit edges and never re-fire while continuously inside; a wolf stag
 site next to the player (a real predator, not a flag check) never reaches `scentLock > 0` -- the
 scent-specific detection channel this feature gates -- regardless of whatever sight-based state
 its own `canSee()` channel reaches, which this feature doesn't touch.
+
+## Scent-Decoy Site (LUL-5566, cheap slice, plan LUL-5560)
+
+One fixed, static world location (`DECOY_SCENT_SITES`, `lib/game/decoyScentSites.ts:20-22`,
+registered as `EventSite[]` the same way `ROOSTS`/`SCENT_MASK_SITES` are) where leaving the site
+redirects every nearby hunting predator onto the site's own fixed point instead of the real
+player -- an active counter-tool, distinct from Scent-Masking Sites' passive "don't lay a trail
+here" above. Corrected from the original proposal's literal `checkScent()`/`scentOnto()` hook:
+`scentPoints` has no location-redirect capability (a chase off that array always beelines to the
+live player), so this reuses `hearThrowableNoise()`'s `noiseTarget` override instead -- the same
+mechanism `updateRoosts()` (`engine/forest-engine.js:3207-3256`) already uses to redirect a live
+chase off the real player, proven mid-chase.
+
+**Trigger** -- `playerInDecoyScentSiteIndex` (`engine/forest-engine.js:675`), the index into
+`DECOY_SCENT_SITES` the player currently stands inside or `-1`, recomputed unconditionally every
+`stepFrame()` tick (`:7552`, same "after every `player.x`/`z` write" placement
+`playerInScentMaskSiteIndex` already uses) via `findDecoyScentSiteIndex()`
+(`lib/game/decoyScentSites.ts`), wrap-aware, radius 8u. Positions are read through
+`scaledDecoyScentSites()` (`engine/forest-engine.js:679-681`), which multiplies by
+`CONFIG.decoyScaleMul` (`engine/tuning.js`, default `1`, `0.2` under `qaWorld=micro` -- same
+"scale the read, not the source" shape `scentMaskScaleMul` already established) -- the site's own
+`radius` is left unscaled, same precedent as `ROOST_TRIGGER_RADIUS`.
+
+**Effect** -- on the `-1<->index` transition from inside to outside (`engine/forest-engine.js:7550-7568`),
+if `decoyCooldown[i]` (a `Float32Array`, one entry per site, same shape as `roostCooldown`) is not
+still counting down, every non-inert predator within `DECOY_SCENT_RADIUS` (18u, `engine/tuning.js`)
+of the site's own (already-scaled) `x`/`z` gets `hearThrowableNoise(p, site.x, site.z,
+DECOY_INVESTIGATE_TIME)` -- the exact call `updateRoosts()`'s player-sprint branch makes at a
+roost -- which overwrites `p.noiseTarget` and commits the predator's current `investigate`/`approach`
+phase to the site's point, off the live player, even mid-chase. `decoyCooldown[i]` is then set to
+`DECOY_COOLDOWN` (30s) so one exit fires at most one redirect per cooldown window; reset in
+`restart()` alongside `roostCooldown`.
+
+**Visual + audio (full cue triple)**:
+- Glow: one static `THREE.Mesh` ring (`RingGeometry` + additive-blended `MeshBasicMaterial`,
+  `engine/forest-engine.js:1361`, same "static ring, module scope" recipe as `scentMaskGlowMeshes`),
+  a distinct red (`DECOY_SCENT_GLOW_COLOR`) so the two "scent" site kinds stay visually
+  distinguishable. Opacity brightens toward the site's own center (`decoyScentGlowWeight()`, 0..1
+  proximity falloff) plus a slow ambient sine pulse that drops out entirely under `reducedMotion`
+  (the proximity brightening does not) -- `:8076-8083`. Rendered directly into `scene`, not a
+  child of `#panel`, so visible with `adminMode` off.
+- Caption: new `'decoyScent'` entry in `HINT_PRIORITY`/`HINT_TEXT`/`hintCandidate`
+  (`engine/forest-engine.js:2233`, `:2257`), self/panel-anchored (bottom-center, same fixed CSS
+  family as `scentMask`/`landmark` -- `components/GameCanvas.tsx`), one-shot per install: *"a
+  scent-decoy site -- leave it behind you and nearby predators will investigate it instead of
+  you."* Dismisses (without marking seen) the instant the player leaves the site
+  (`hintDismissedByEvent`'s `'decoyScent'` case), same shape as `scentMask`'s own
+  `playerInScentMaskSiteIndex === -1` dismissal.
+- Audio: `decoyScentExitCue()` (`engine/forest-engine.js:6866-6874`), a falling 180->90Hz
+  sawtooth -- a lower, harsher register than `scentMaskExitCue()`'s sine so "you just threw the
+  hunt off your scent" reads distinctly from "you just left a masking site." Fires exactly when
+  the redirect itself fires (the exit transition, cooldown-permitting), not on every exit.
+
+**QA hooks**: `qaProbeDecoyScentSite()` (`engine/forest-engine.js:6154-6161`) -- live site index,
+the site's own (already-scaled) `id`/`x`/`z`/`radius`, per-site `cooldown` remaining, and
+cumulative `exitCueCount` (counted before the `audio`/`soundOn` gate, same "counter-before-gate"
+idiom as `qaScentMaskExitCueCount`, so assertions work with `soundOn:false` too). A predator's
+live `noiseTarget`/`x`/`z` is already exposed by the pre-existing `qaProbePredatorState(kind)`
+(`engine/forest-engine.js:4749`) -- no new hook needed to observe the redirect itself.
+`qaTeleportTo`/`qaBuildScene`/`qaAdvance` (all pre-existing) drive the rest.
+
+Covered by `e2e/scent-decoy-site.spec.ts`: a wolf staged mid-chase (a real predator, not a flag
+check) with its `noiseTarget` locked onto the live player; the player walks into the site and out
+the far side, and the wolf's `noiseTarget` snaps to the site's own `x`/`z` with `exitCueCount`
+incrementing exactly once on the exit edge -- proving the redirect actually retargets a live chase,
+not just that the flag transitions.
