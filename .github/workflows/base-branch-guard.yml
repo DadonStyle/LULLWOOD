@@ -37,6 +37,15 @@ name: Base branch guard
 #   retargeted to `release/next`, had no path back to green until the
 #   sweep started looking at more than just base:main PRs.
 #
+#   (LUL-5595) The schedule trigger above is unreliable in practice --
+#   GitHub silently drops scheduled runs under platform load, observed
+#   gapping 3-6.5h against its documented 20-min cadence with no
+#   repo-side fix available. version-cut.yml now force-dispatches this
+#   workflow via `workflow_dispatch` right after it opens or refreshes
+#   the release/next -> main cut PR, so that path no longer depends on
+#   the schedule firing on time. The schedule trigger still matters for
+#   LUL-841 (revisiting a PR retargeted off `main`), just not for cut PRs.
+#
 # Either trigger reports under the SAME context name, so `main`'s required
 # status checks only need to name it once.
 
