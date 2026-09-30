@@ -1203,8 +1203,10 @@ function generateMap(seed){
   // LUL-5160: 'beaconRoostFlush' needs the same roost draw -- it's flush's own non-spatial
   // target kind, reused verbatim (see canCompleteFlush()). LUL-5426: 'lionRoostFlush' (M8)
   // is the same non-spatial roost-target shape again, only the repositioned predator differs
-  // (a lion, not the beaconHunter wolf -- see repositionBeaconHunterForMission()).
-  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush'){
+  // (a lion, not the beaconHunter wolf -- see repositionBeaconHunterForMission()). LUL-5447/
+  // LUL-5446: 'roostRecoveryEvasion' shares the same non-spatial roost-target shape too (only
+  // its completion trigger differs -- see updateRoosts()'s cooldown-expiry branch).
+  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion'){
     const forced = qaForcedRoostIndex !== null ? parseInt(qaForcedRoostIndex, 10) : NaN;
     const idx = (forced >= 0 && forced < ROOSTS.length) ? forced : Math.floor(rng() * ROOSTS.length);
     mission = { ...mission, target: { ...mission.target, roostIndex: idx } };
@@ -1741,6 +1743,14 @@ function flushRoost(i){
   // LUL-5346: matches roostGroups[i]'s own scaled position (init(), where CONFIG.roostScaleMul
   // is applied to the burst mesh) so the pan/near-far read matches where the burst actually plays.
   roostFlushSound(ROOSTS[i].x * CONFIG.roostScaleMul, ROOSTS[i].z * CONFIG.roostScaleMul);
+  // LUL-5447/LUL-5446: this flush is the moment `roostCooldown[i]` starts counting down --
+  // the exact window the Roost Recovery Evasion mission is about. Only cue the mission's own
+  // roost (mission.target.roostIndex === i), and only for this mission kind -- every other
+  // flush (ambient, beaconRoostFlush, lionRoostFlush, a plain player throw) must stay silent
+  // here, same as before this ticket.
+  if(mission && mission.target.kind === 'roostRecoveryEvasion' && mission.target.roostIndex === i && mission.status === 'active' && captionsOn){
+    pushState({ caption: 'the roost is cooling — hold upwind until it resets', captionId: ++captionSeq });
+  }
 }
 const lookM = new THREE.Matrix4(), lookQ = new THREE.Quaternion();
 function key3(time, keys){   // smoothstep-interpolated keyframes
@@ -1967,22 +1977,25 @@ function relocateParkedHunter(pcx, pcz){
 // as it would from a normal placePredators() draw, not mid-chase from wherever it was first
 // placed.
 function repositionBeaconHunterForMission(mission){
-  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush' && mission.target.kind !== 'upwindRefuge') return;
+  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush' && mission.target.kind !== 'upwindRefuge' && mission.target.kind !== 'roostRecoveryEvasion') return;
   // LUL-5426/LUL-5432: 'lionRoostFlush' (M8) and 'upwindRefuge' (Fire Tower variant) both
   // reposition a lion, not the permanent beaconHunter wolf -- the mid-difficulty
   // balanced-stat predator the proposal asks for, distinct from the sight-biased
   // beaconHunter. predators.find(p => p.kind === 'lion') is the same lookup already used by
   // qa hooks that stage a lion (:4631), picking the first of the 3 lions placePredators()
-  // (:1835) always spawns -- never expected to be missing.
-  const hunter = (mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'upwindRefuge')
+  // (:1835) always spawns -- never expected to be missing. LUL-5447/LUL-5446:
+  // 'roostRecoveryEvasion' also repositions a lion, same reasoning as 'lionRoostFlush'
+  // (this mission only spawns after a lion-present roost flush).
+  const hunter = (mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'upwindRefuge' || mission.target.kind === 'roostRecoveryEvasion')
     ? predators.find(p => p.kind === 'lion')
     : predators.find(p => p.variant === 'beaconHunter');
   if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803); lions are always placed (:1835)
   // LUL-5160/LUL-5426: 'beaconRoostFlush'/'lionRoostFlush' have no real target.x/z (non-spatial,
   // placeholder 0/0, same shape as 'flush') -- anchor on the drawn ROOSTS[roostIndex] site
   // instead, scaled the same way every other ROOSTS distance-check site is (CONFIG.roostScaleMul,
-  // a no-op on the real map -- see its own comment, engine/tuning.js).
-  const anchor = (mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush')
+  // a no-op on the real map -- see its own comment, engine/tuning.js). LUL-5447/LUL-5446:
+  // 'roostRecoveryEvasion' shares the exact same non-spatial roost-anchor shape.
+  const anchor = (mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion')
     ? { x: ROOSTS[mission.target.roostIndex].x * CONFIG.roostScaleMul, z: ROOSTS[mission.target.roostIndex].z * CONFIG.roostScaleMul }
     : { x: mission.target.x, z: mission.target.z };
   let x, z, tries = 0;
@@ -3099,7 +3112,15 @@ function updateRoosts(dt, running){
       const nearWhileRunning = running && Math.hypot(player.x-r.x, player.z-r.z) < ROOST_TRIGGER_RADIUS;
       if(nearWhileRunning && !roostSprintDeniedPlayed[i]) roostFlushDeniedCue();
       roostSprintDeniedPlayed[i] = nearWhileRunning ? 1 : 0;
-      roostCooldown[i] -= dt; continue;
+      roostCooldown[i] -= dt;
+      // LUL-5447/LUL-5446: Roost Recovery Evasion auto-completes the instant this roost's
+      // cooldown reaches 0 while its mission is still active -- no E-key/canCompleteMission()
+      // path for this kind (same non-spatial shape as flush/beaconRoostFlush/lionRoostFlush),
+      // this is the one call site that can make it true.
+      if(roostCooldown[i] <= 0 && mission && mission.status === 'active' && mission.target.kind === 'roostRecoveryEvasion' && mission.target.roostIndex === i){
+        mission = completeMission(mission);
+      }
+      continue;
     }
     // LUL-5346: CONFIG.roostScaleMul (1 on every real map) -- see its own comment,
     // engine/tuning.js -- so this stays a no-op outside qaWorld=micro.

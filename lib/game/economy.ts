@@ -134,6 +134,12 @@ export const MISSION_LION_ROOST_FLUSH_REWARD = 9;
 // roost-flushing. Level with flush (9). Confirmed by the Economist, not a placeholder.
 export const MISSION_UPWIND_REFUGE_REWARD = 9;
 
+// LUL-5447/LUL-5446: Roost Recovery Evasion -- placeholder pending the Game Economist's
+// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Wiki proposal
+// (game/mechanics/roost-recovery-evasion) frames this as "similar tier to flush(9)/
+// upwindRefuge(9)" (expected 8-10E) -- priced provisionally level with both at 9.
+export const MISSION_ROOST_RECOVERY_EVASION_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -145,6 +151,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   beaconRoostFlush: MISSION_BEACON_ROOST_FLUSH_REWARD,
   lionRoostFlush: MISSION_LION_ROOST_FLUSH_REWARD,
   upwindRefuge: MISSION_UPWIND_REFUGE_REWARD,
+  roostRecoveryEvasion: MISSION_ROOST_RECOVERY_EVASION_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
