@@ -466,6 +466,50 @@ const STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD = 3;
 // own cooldown already makes.
 const STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS = STALE_CONFIRMATION_DAYS;
 
+// LUL-5538: the escalation cooldown above only recognizes wake tickets THIS
+// detector filed itself (isRecentWakeTicketSuppressed matches on the
+// `Board-integrity:` marker prefix) -- a hand-created tracking ticket like
+// LUL-3056 (CTO closed LUL-4805 and LUL-5536 as duplicates of it, 7 days
+// apart -- exactly the cooldown window) carries no such marker and is
+// invisible to that check, so elapsed time was the only thing standing
+// between re-fires and it is not a reliable gate. Key off whether a LIVE
+// tracker exists for this exact interaction instead: search issues still in
+// a non-terminal status for a title/description that names the interaction's
+// own id or the source issue's own identifier (e.g. "LUL-359"), the same
+// self-attribution convention prAttributedToIssue already uses for PRs.
+const LIVE_TRACKER_STATUSES = new Set(['todo', 'in_progress', 'blocked', 'in_review', 'backlog']);
+
+// Paperclip issue/interaction ids are full UUIDs, but agents and founders
+// refer to them in prose by an 8-char short form (e.g. "b37d6080", as cited
+// on LUL-5538 itself) -- match on that same short form so a hand-written
+// tracking ticket's prose is found the same way a human reading it would.
+function interactionShortId(interactionId) {
+  return (interactionId ?? '').slice(0, 8);
+}
+
+function issueTextReferencesInteraction(candidate, issue, interaction) {
+  const text = `${candidate.title ?? ''}\n${candidate.description ?? ''}`;
+  const shortId = interactionShortId(interaction.id);
+  if (shortId && text.includes(shortId)) return true;
+  const sourceId = issue.identifier;
+  if (!sourceId) return false;
+  const re = new RegExp(`(?:^|[^0-9A-Za-z-])${escapeRegExp(sourceId)}(?:[^0-9]|$)`);
+  return re.test(text);
+}
+
+// candidateIssues: issues already in hand this run (callers pass
+// todo/in_progress + blocked/in_review) that could be a live tracker.
+// LIVE_TRACKER_STATUSES filters out anything terminal defensively -- a
+// tracker that was itself closed (e.g. as a duplicate of a THIRD ticket) is
+// not a live dedup target and must not suppress a real escalation.
+function findExistingTrackingTicket(candidateIssues, issue, interaction) {
+  for (const candidate of candidateIssues ?? []) {
+    if (!LIVE_TRACKER_STATUSES.has(candidate.status)) continue;
+    if (issueTextReferencesInteraction(candidate, issue, interaction)) return candidate;
+  }
+  return null;
+}
+
 // closedWakeIssues: done/cancelled issues (title + description is all this needs).
 // marker: the ROUTINE marker (staleConfirmationWakeMarker(issue)), never the
 // escalation marker -- an escalation ticket's own close must not inflate
@@ -1152,6 +1196,19 @@ async function fileWakeTickets(
 
     const priorFireCount = countPriorStaleConfirmationWakes(closedWakeIssues, marker, interaction.id);
     if (priorFireCount >= STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD) {
+      // LUL-5538: a live hand-created tracker (e.g. LUL-3056) already covers
+      // this exact interaction -- filing a second founder-facing escalation
+      // for it is pure churn, and the cooldown below cannot see it (no
+      // Board-integrity: marker on a hand-filed ticket).
+      const existingTracker = findExistingTrackingTicket([...openIssues, ...otherStatusIssues], issue, interaction);
+      if (existingTracker) {
+        filed.push({
+          kind: 'stale-confirmation-escalation-deduped',
+          identifier: issue.identifier ?? issue.id,
+          trackerId: existingTracker.identifier ?? existingTracker.id,
+        });
+        continue;
+      }
       if (isRecentWakeTicketSuppressed(allKnownWakeIssues, escalationMarker, nowMs, STALE_CONFIRMATION_ESCALATION_COOLDOWN_DAYS)) continue;
       const assigneeAgentId = resolveCeoAgentId(agentsById) ?? (await resolveSelfId());
       await createWakeIssue(apiBase, companyId, apiKey, {
@@ -1463,4 +1520,7 @@ export {
   resolveSelfAgentId,
   fileWakeTickets,
   nonPausedAssigneeId,
+  interactionShortId,
+  issueTextReferencesInteraction,
+  findExistingTrackingTicket,
 };

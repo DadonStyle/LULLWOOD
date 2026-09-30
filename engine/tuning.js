@@ -37,6 +37,18 @@ export const CONFIG = {
                           // updateRoosts()'s ambient chase-proximity trigger had no way to fire in
                           // a micro-world spec. applyQaWorldMicroPreset() scales this down too.
                           // 1 = full-map, no-op default.
+  scentMaskScaleMul: 1,   // LUL-5493: same "scale the read, not the source" shape as roostScaleMul
+                          // -- SCENT_MASK_SITES (lib/game/scentMaskSites.ts) stays untouched; every
+                          // engine read site scales x/z by this. Without it a real walk in the
+                          // shrunk micro map (movement-clamped to +-half) can never reach any of the
+                          // 3 sites (up to 160u from origin). applyQaWorldMicroPreset() scales this
+                          // down too, same ratio as roostScaleMul/missionScaleMul. 1 = full-map, no-op.
+  decoyScaleMul: 1,       // LUL-5566: same "scale the read, not the source" shape as scentMaskScaleMul
+                          // -- DECOY_SCENT_SITES (lib/game/decoyScentSites.ts) stays untouched; every
+                          // engine read site scales x/z by this. Without it a real walk in the
+                          // shrunk micro map (movement-clamped to +-half) can never reach the one site
+                          // (~205u from origin). applyQaWorldMicroPreset() scales this down too, same
+                          // ratio as scentMaskScaleMul. 1 = full-map, no-op.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
@@ -87,6 +99,14 @@ export const ROOST_COOLDOWN = 32;   // seconds a roost stays quiet after firing
 export const ROOST_TRIGGER_RADIUS = 6;   // player-side flush trigger radius
 export const ROOST_NOISE_RADIUS = 14;    // predators within this of the roost (x,z) hear the flush
 export const ROOST_INVESTIGATE_TIME = [1.5, 2.5]; // rnd() range, seconds -- not a THROWABLE_INVESTIGATE_TIME reuse
+
+// LUL-5566: Scent Decoy Site -- leaving the site fires hearThrowableNoise() at
+// the site's own (x,z) for every nearby non-inert predator, same "one physical
+// event per cooldown" shape as ROOST_COOLDOWN/ROOST_NOISE_RADIUS above, but
+// triggered on exit rather than ambient chase-proximity.
+export const DECOY_COOLDOWN = 30;   // seconds the site stays quiet after firing
+export const DECOY_SCENT_RADIUS = 18;    // predators within this of the site (x,z) hear the redirect
+export const DECOY_INVESTIGATE_TIME = [2, 3]; // rnd() range, seconds -- distinct from ROOST_INVESTIGATE_TIME
 
 // LUL-1210: Stone Marker veil-charm interact radius -- same shape as
 // MISSION_POOL's interactRadius (lib/game/mission.ts).
@@ -212,6 +232,12 @@ export function applyQaWorldMicroPreset(){
   CONFIG.roostScaleMul = 0.2;    // LUL-5346: same 96/480 ratio -- keeps a ROOSTS site inside the
                                   // shrunk map's movement-clamp bounds so a chasing predator can
                                   // actually reach one (and qaTeleportNearRoost() lands legally).
+  CONFIG.scentMaskScaleMul = 0.2; // LUL-5493: same 96/480 ratio -- keeps a scent-masking site
+                                  // inside the shrunk map's movement-clamp bounds so a real walk
+                                  // (not just qaTeleportTo) can enter and leave one.
+  CONFIG.decoyScaleMul = 0.2;    // LUL-5566: same 96/480 ratio -- keeps the decoy site inside the
+                                  // shrunk map's movement-clamp bounds so a real walk can enter and
+                                  // leave it.
 }
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two

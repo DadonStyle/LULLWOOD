@@ -482,7 +482,10 @@ const OVERLAY_STYLE = `
      for these (Hud.tsx), so the position rule lives entirely here. */
   #hintCaption[data-hint-key="bog"],
   #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
-  #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"] {
+  #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
+  #hintCaption[data-hint-key="skyCompassNavigation"],
+  #hintCaption[data-hint-key="scentMask"],
+  #hintCaption[data-hint-key="decoyScent"] {
     left: 50%; top: auto; transform: translateX(-50%);
     bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px);
   }
@@ -727,6 +730,9 @@ const OVERLAY_STYLE = `
     #hintCaption[data-hint-key="bog"],
     #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
     #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
+  #hintCaption[data-hint-key="skyCompassNavigation"],
+    #hintCaption[data-hint-key="scentMask"],
+    #hintCaption[data-hint-key="decoyScent"],
     #scentTrailCaption,
     #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
     #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],
@@ -843,6 +849,9 @@ const OVERLAY_STYLE = `
     #hintCaption[data-hint-key="bog"],
     #hintCaption[data-hint-key="stamina"], #hintCaption[data-hint-key="veil"],
     #hintCaption[data-hint-key="landmark"], #hintCaption[data-hint-key="oakHollow"],
+  #hintCaption[data-hint-key="skyCompassNavigation"],
+    #hintCaption[data-hint-key="scentMask"],
+    #hintCaption[data-hint-key="decoyScent"],
     #scentTrailCaption,
     #hintCaption[data-hint-key="wolf"], #hintCaption[data-hint-key="bear"],
     #hintCaption[data-hint-key="lion"], #hintCaption[data-hint-key="cover"],

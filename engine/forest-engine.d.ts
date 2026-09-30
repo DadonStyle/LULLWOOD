@@ -73,6 +73,11 @@ declare global {
        * LANDMARKS kind, so a test can assert the sprite exists and reads past the fog line
        * without a screenshot. */
       qaProbeLandmarkBeacons?: () => Array<{ kind: string; x: number; z: number; visible: boolean; fog: boolean | null }>;
+      /** LUL-5486: the 4 cardinal glyph sprites' real world positions, so a test
+       * can assert they sit at the cardinal unit vectors * radius and that
+       * rotating the camera does not move them (proves they're genuine
+       * world-space objects, not baked into scene.background). */
+      qaGetSkyCompassPositions?: () => Record<'N' | 'E' | 'S' | 'W', { x: number; y: number; z: number }>;
       /** LUL-2667: the resolved timeOfDay state plus the exact TOD_VISUAL/TOD_AUDIO
        * values init() applied, so a test can assert against the six documented
        * states without scraping renderer internals. Read-only snapshot -- see
@@ -315,6 +320,8 @@ declare global {
         jumping: boolean; paused: boolean; toggleRunOn: boolean; veilHeld: boolean;
         hidden: boolean; brambleSnagT: number;
         inLogCrawl: boolean; logCrawlExitX: number; logCrawlExitZ: number;
+        /** LUL-5564: Mud Zone -- true when the player's current x/z falls inside any mudZones circle. */
+        inMudZone: boolean;
       };
       /** LUL-388: places `kind` in a blind scent-chase (state='chase', scentLock=SCENT_TRACK_TIME)
        * within catch range (dist < rad+CATCH_MARGIN) of the player, with a real cover prop's
@@ -622,6 +629,29 @@ declare global {
         windX: number;
         windZ: number;
       };
+      /** LUL-5493: the live scent-masking site index (matches SCENT_MASK_SITES' own
+       * order, -1 if outside every site) plus the fixed site list itself, so a test
+       * can teleport to a known site's x/z (qaTeleportTo) without hardcoding
+       * SCENT_MASK_SITES a second time. */
+      qaProbeScentMaskSite?: () => {
+        index: number;
+        sites: { id: string; type: 'marsh' | 'pine'; x: number; z: number; radius: number }[];
+        /** LUL-5530: cumulative scentMaskEnterCue()/scentMaskExitCue() fire counts --
+         * counted before the audio/soundOn gate, mirrors qaScentVeilDeniedCueCount's
+         * idiom, so the e2e assertion works with soundOn:false too. */
+        enterCueCount: number;
+        exitCueCount: number;
+      };
+      /** LUL-5566: the live decoy-site index, the fixed site list, per-site cooldown
+       * remaining (0 = ready to fire again), and the cumulative decoyScentExitCue()
+       * fire count (counted before the audio/soundOn gate, same idiom as
+       * qaProbeScentMaskSite's enterCueCount/exitCueCount above). */
+      qaProbeDecoyScentSite?: () => {
+        index: number;
+        sites: { id: string; x: number; z: number; radius: number }[];
+        cooldown: number[];
+        exitCueCount: number;
+      };
       /** LUL-2230: sets the camera yaw directly (the same `player.yaw` every
        * look-input path writes) so a test can turn to face its own scent
        * trail without pointer lock. Read-only otherwise -- no movement. */
@@ -657,6 +687,11 @@ declare global {
       qaBuildScene?: (scene: {
         trees?: { x: number; z: number; s?: number }[];
         props?: { kind: 'log' | 'rock' | 'bramble'; x: number; z: number; ry?: number }[];
+        /** LUL-5564: Mud Zone -- stages one or more terrain-hazard circles in the micro
+         * world so an e2e spec can drive isInMudZone()'s speed/noise effects without
+         * @fullmap. Replaces whatever generateMap() last populated, same reset shape as
+         * `trees` above. */
+        mudZones?: { x: number; z: number; r: number }[];
         /** LUL-5402: `inv`/`scentLock` are additive overrides (default ''/0, same
          * as before) -- stage `state: 'investigate', inv: 'approach', scentLock: 1`
          * to exercise biasTowardWind()'s scentLock>0 gate directly, since every
