@@ -1205,8 +1205,10 @@ function generateMap(seed){
   // is the same non-spatial roost-target shape again, only the repositioned predator differs
   // (a lion, not the beaconHunter wolf -- see repositionBeaconHunterForMission()). LUL-5447/
   // LUL-5446: 'roostRecoveryEvasion' shares the same non-spatial roost-target shape too (only
-  // its completion trigger differs -- see updateRoosts()'s cooldown-expiry branch).
-  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion'){
+  // its completion trigger differs -- see updateRoosts()'s cooldown-expiry branch). LUL-5456:
+  // 'bearRoostAmbush' shares the same non-spatial roost-target shape too (only the repositioned
+  // predator differs -- a bear instead of a lion, see repositionBeaconHunterForMission()).
+  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion' || mission.target.kind === 'bearRoostAmbush'){
     const forced = qaForcedRoostIndex !== null ? parseInt(qaForcedRoostIndex, 10) : NaN;
     const idx = (forced >= 0 && forced < ROOSTS.length) ? forced : Math.floor(rng() * ROOSTS.length);
     mission = { ...mission, target: { ...mission.target, roostIndex: idx } };
@@ -1977,7 +1979,7 @@ function relocateParkedHunter(pcx, pcz){
 // as it would from a normal placePredators() draw, not mid-chase from wherever it was first
 // placed.
 function repositionBeaconHunterForMission(mission){
-  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush' && mission.target.kind !== 'upwindRefuge' && mission.target.kind !== 'roostRecoveryEvasion') return;
+  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush' && mission.target.kind !== 'upwindRefuge' && mission.target.kind !== 'roostRecoveryEvasion' && mission.target.kind !== 'bearRoostAmbush') return;
   // LUL-5426/LUL-5432: 'lionRoostFlush' (M8) and 'upwindRefuge' (Fire Tower variant) both
   // reposition a lion, not the permanent beaconHunter wolf -- the mid-difficulty
   // balanced-stat predator the proposal asks for, distinct from the sight-biased
@@ -1985,17 +1987,22 @@ function repositionBeaconHunterForMission(mission){
   // qa hooks that stage a lion (:4631), picking the first of the 3 lions placePredators()
   // (:1835) always spawns -- never expected to be missing. LUL-5447/LUL-5446:
   // 'roostRecoveryEvasion' also repositions a lion, same reasoning as 'lionRoostFlush'
-  // (this mission only spawns after a lion-present roost flush).
-  const hunter = (mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'upwindRefuge' || mission.target.kind === 'roostRecoveryEvasion')
+  // (this mission only spawns after a lion-present roost flush). LUL-5456: 'bearRoostAmbush'
+  // repositions a bear instead -- the scent-weighted predator (:2114/isScentDetected()
+  // call site :2217), the first roost mission not anchored on the lion.
+  const hunter = mission.target.kind === 'bearRoostAmbush'
+    ? predators.find(p => p.kind === 'bear')
+    : (mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'upwindRefuge' || mission.target.kind === 'roostRecoveryEvasion')
     ? predators.find(p => p.kind === 'lion')
     : predators.find(p => p.variant === 'beaconHunter');
-  if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803); lions are always placed (:1835)
+  if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803); lions/bears are always placed (:1835)
   // LUL-5160/LUL-5426: 'beaconRoostFlush'/'lionRoostFlush' have no real target.x/z (non-spatial,
   // placeholder 0/0, same shape as 'flush') -- anchor on the drawn ROOSTS[roostIndex] site
   // instead, scaled the same way every other ROOSTS distance-check site is (CONFIG.roostScaleMul,
   // a no-op on the real map -- see its own comment, engine/tuning.js). LUL-5447/LUL-5446:
-  // 'roostRecoveryEvasion' shares the exact same non-spatial roost-anchor shape.
-  const anchor = (mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion')
+  // 'roostRecoveryEvasion' shares the exact same non-spatial roost-anchor shape. LUL-5456:
+  // 'bearRoostAmbush' shares the exact same non-spatial roost-anchor shape too.
+  const anchor = (mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion' || mission.target.kind === 'bearRoostAmbush')
     ? { x: ROOSTS[mission.target.roostIndex].x * CONFIG.roostScaleMul, z: ROOSTS[mission.target.roostIndex].z * CONFIG.roostScaleMul }
     : { x: mission.target.x, z: mission.target.z };
   let x, z, tries = 0;

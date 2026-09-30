@@ -235,6 +235,20 @@ test('roostRecoveryEvasion MISSION_POOL entry shares flush/lionRoostFlush\'s non
   assert.equal(roostRecoveryEvasionTarget.timeLimitSeconds, undefined);
 });
 
+// ---- canCompleteFlush for bearRoostAmbush (LUL-5456/LUL-5454) --------------
+
+const bearRoostAmbushTarget = MISSION_POOL.find((t) => t.kind === 'bearRoostAmbush')!;
+
+test('canCompleteFlush is true for a bearRoostAmbush mission when the flushed roost matches', () => {
+  const m: MissionState = { target: { ...bearRoostAmbushTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 3), true);
+});
+
+test('canCompleteFlush is false for a bearRoostAmbush mission when a different roostIndex was flushed', () => {
+  const m: MissionState = { target: { ...bearRoostAmbushTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 1), false);
+});
+
 // ---- completeMission idempotence ----------------------------------------
 
 test('completeMission flips an active mission to complete', () => {
@@ -542,6 +556,21 @@ test('eligibleMissionPool includes roostRecoveryEvasion at MISSION_FAR_UNLOCK_WI
   progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
   const pool = eligibleMissionPool(progression, 'lantern');
   assert.equal(pool.some((m) => m.kind === 'roostRecoveryEvasion'), true);
+});
+
+test('eligibleMissionPool excludes bearRoostAmbush below MISSION_FAR_UNLOCK_WINS', () => {
+  // LUL-5456/LUL-5454: bearRoostAmbush shares flush's untimed/no-landmarkKind shape and
+  // would reproduce the identical LUL-5069 regression without the same exclusion.
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'bearRoostAmbush'), false);
+});
+
+test('eligibleMissionPool includes bearRoostAmbush at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'bearRoostAmbush'), true);
 });
 
 // ---- pickMission with an explicit pool (LUL-3010) ------------------------
