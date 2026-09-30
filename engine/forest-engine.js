@@ -88,6 +88,7 @@ import {
   findLogCrawlEntry as geoFindLogCrawlEntry,
   SHUFFLE_OFFSET,
 } from '@/lib/game/cover';
+import { mudSpeedMultiplier, mudNoiseMultiplier, isInMudZone } from '@/lib/game/mud';
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { spawnClearanceScale } from '@/lib/game/spawnClearance';
@@ -505,6 +506,7 @@ let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, stami
 // LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
 // decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
 let stoneMarkerPulseT = 0, brambleSnagT = 0;   // LUL-4526: Thorn Snag stumble countdown
+let wasInMud = false;   // LUL-5564: edge-detect for mudEnterCue()/hint -- last tick's mud-zone state
 let chapelSanctuaryPulseT = 0;   // LUL-5005: same one-shot beacon-glow boost shape as stoneMarkerPulseT, set on grant
 let inLogCrawl = false, logCrawlDirX = 0, logCrawlDirZ = 0,
     logCrawlExitX = 0, logCrawlExitZ = 0, logCrawlDeniedLatch = false;   // LUL-4527
@@ -649,6 +651,7 @@ scene.add(throwableMesh);
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
 let treeData = [];            // {x,z,s,cr,crCanopy}
+let mudZones = [];             // LUL-5564: {x,z,r} -- terrain hazard circles, generateMudZones()
 let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders for the four fixed
                                  // landmark meshes, populated by placeLandmarks() post-nudge. No
                                  // crCanopy (canopyBlockedR() skips entries that lack it) and never
@@ -857,6 +860,28 @@ function generateThrowables(){
     if(Math.hypot(x - CONFIG.home.x, z - CONFIG.home.z) < 12) continue;
     if(throwableData.some(t => Math.hypot(t.x - x, t.z - z) < 6)) continue;
     throwableData.push({ x, z, taken: false });
+    placed++;
+  }
+}
+// LUL-5564: Mud Zone terrain hazard placement. Called from generateMap() after every other
+// rng() consumer in the stream (see the call site's own comment) so it can never reshuffle
+// an existing seed's trees/predators/cover/throwables/wind/mission/cave/roost draws --
+// LUL-791 precedent. Rejection-samples against landmarks (nearLandmarks(), below) and
+// against every already-placed mud zone (no overlap), mirroring generateThrowables()'
+// rejection-sample shape above.
+const MUD_ZONE_COUNT = 5;
+const MUD_ZONE_MIN_R = 6, MUD_ZONE_MAX_R = 9;
+const MUD_ZONE_LANDMARK_PAD = 6;
+function generateMudZones(){
+  mudZones = [];
+  let placed = 0, tries = 0;
+  while(placed < MUD_ZONE_COUNT && tries < MUD_ZONE_COUNT * 40){
+    tries++;
+    const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
+    const r = MUD_ZONE_MIN_R + rng() * (MUD_ZONE_MAX_R - MUD_ZONE_MIN_R);
+    if(nearLandmarks(x, z, MUD_ZONE_LANDMARK_PAD)) continue;
+    if(mudZones.some(m => Math.hypot(m.x - x, m.z - z) < m.r + r)) continue;
+    mudZones.push({ x, z, r });
     placed++;
   }
 }
@@ -1198,6 +1223,7 @@ function generateMap(seed){
   placeBabyWisps();
 
   treeData = [];
+  mudZones = [];   // LUL-5564: reset alongside treeData -- generateMudZones() repopulates below
   let tries = 0;
   while(treeData.length < CONFIG.trees && tries < CONFIG.trees*25){
     tries++;
@@ -1296,6 +1322,16 @@ function generateMap(seed){
                                                  // never existed before this ticket, so its
                                                  // exact position past that point cannot
                                                  // perturb any existing seed either way.
+  // LUL-5564: deviation from the ticket's suggested call site (right after
+  // generateThrowables()) -- that spot is NOT actually the last rng() consumer in this
+  // function: generateWind()/placeLandmarks()/pickMission()/placeCave()/the roost-index
+  // draw above and repositionBeaconHunterForMission() itself all consume rng() after
+  // generateThrowables() runs. Inserting there would have reshuffled wind direction,
+  // landmark placement, mission pick, cave placement and roost index for every existing
+  // seed -- exactly the LUL-791/LUL-43 class of bug this ticket's own §2 warns about.
+  // This is the true last rng() consumer in generateMap() today; appending here is the
+  // only spot that "appends, doesn't reorder" the stream for real.
+  generateMudZones();
   // LUL-2249: hand off from "every populated chunk instantiated up front" to
   // the streamed ring, now that treeData/coverData are all at their final,
   // post-thin state. Drop whatever the PREVIOUS seed left live (those meshes
@@ -3107,6 +3143,15 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
 
     if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz, dt);
 
+    // LUL-5564: Mud Zone predator slowdown -- folded in once here, after every roam/chase/
+    // investigate/flank/charge/hunt branch above has set `speed`, rather than at each
+    // branch's own `p.spec.speed*pSpeedScaleMul` site (the ticket's suggested shape). This is
+    // the one point every branch's speed converges through before becoming actual movement
+    // (dvx/dvz below), so it can't miss a branch or apply inconsistently by AI state the way
+    // patching each call site individually risked.
+    const predInMud = isInMudZone(p.x, p.z, mudZones);
+    speed *= mudSpeedMultiplier(predInMud);
+
     // smooth velocity + collide with trees (axis-separated slide)
     const dvx = desx*speed, dvz = desz*speed, accel = speed > 0 ? 3.6 : 6;
     p.vx += (dvx - p.vx) * Math.min(1, dt*accel);
@@ -3708,6 +3753,22 @@ function logCrawlEnterCue(){
   g.gain.exponentialRampToValueAtTime(0.0001, t+0.22);
   src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
   src.start(t); src.stop(t+0.24);
+}
+// LUL-5564: same procedural-noise-burst shape as logCrawlEnterCue()/thornSnagSound() -- a
+// squelchy, heavily low-passed burst so it reads as a wet footstep, not a rustle or a scrape.
+// One-shot on the false->true edge only (see the tick() call site), not a sustained loop --
+// this file has no sustained per-zone ambience convention (see logCrawlEnterCue()'s own note).
+function mudEnterCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.22, false);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 320;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.18, t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.2);
+  src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
+  src.start(t); src.stop(t+0.22);
 }
 function logCrawlExitCue(){
   if(!audio || !soundOn) return;
@@ -5513,6 +5574,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       jumping: jumping, paused: paused, toggleRunOn: toggleRunOn,
       veilHeld: (entered && !won && !dead && !pickingUp) && (!!keys['KeyF'] || touchVeil),
       hidden: hidden, brambleSnagT: brambleSnagT,
+      inMudZone: isInMudZone(player.x, player.z, mudZones),
       inLogCrawl: inLogCrawl, logCrawlExitX: logCrawlExitX, logCrawlExitZ: logCrawlExitZ,
     };
   };
@@ -6239,6 +6301,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       const s = t.s ?? 1.2;
       return { x: t.x, z: t.z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled: false, rot: 0, tint: 1 };
     });
+
+    // LUL-5564: required so LUL-5559's e2e spec can stage a mud zone in the micro world
+    // (Q12: must run without @fullmap) -- same reset-from-opts shape as treeData above.
+    mudZones = (opts.mudZones || []).map(m => ({ x: m.x, z: m.z, r: m.r }));
 
     coverData = (opts.props || [])
       .filter(p => QA_COVER_SHAPE[p.kind])
@@ -6996,6 +7062,7 @@ function restart(){
   // rejects outright, reading as a fully frozen player (0.00u movement) after restart.
   inLogCrawl = false; logCrawlDirX = 0; logCrawlDirZ = 0; logCrawlExitX = 0; logCrawlExitZ = 0; logCrawlDeniedLatch = false;
   brambleSnagT = 0;   // LUL-5298: same stale-timer-into-new-round class as the jump/hide resets above
+  wasInMud = false;   // LUL-5564: same stale-flag-into-new-round class as brambleSnagT above
   heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
@@ -7393,6 +7460,20 @@ function stepFrame(dt, t, skipRender){
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0, movingAgainstWind = false;
   if(playing && !hidden){
+    // LUL-5564: Mud Zone -- read once per tick, ahead of maxSpd/noiseRadius, both of which
+    // fold in the multiplier below. Edge-detected against wasInMud (module-scope, reset on
+    // restart -- see LUL-5298-style reset above) for the one-shot enter cue/chronicle/hint,
+    // same shape as logCrawlEnterCue()'s call site.
+    const inMud = isInMudZone(player.x, player.z, mudZones);
+    if(inMud && !wasInMud){
+      mudEnterCue();
+      logChronicle('mud_zone_enter', {});
+      if(!hintSeen('mudZone')){
+        markHintSeen('mudZone');
+        if(captionsOn) pushState({ caption: 'Mud — slower, louder: predators can hear you farther', captionId: ++captionSeq });
+      }
+    }
+    wasInMud = inMud;
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
     if(coldWalkJustBroke(coldWalkOptIn, coldWalkBroken, pickingUp, running)){
       coldWalkBroken = true;
@@ -7401,7 +7482,7 @@ function stepFrame(dt, t, skipRender){
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
-    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * brambleSnagSpeedMultiplier(brambleSnagT);
+    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * brambleSnagSpeedMultiplier(brambleSnagT) * mudSpeedMultiplier(inMud);
     // LUL-4527: entry check -- only when not already crawling, using this frame's actual
     // input heading (computed below as mvx/mvz normally would be) is circular, so entry uses
     // the player's last real facing/movement intent instead: any movement key held this frame,
@@ -7458,7 +7539,7 @@ function stepFrame(dt, t, skipRender){
       // LUL-4527: scent suppressed entirely while crawling -- no depositScent() call here at
       // all (the gate below on the normal branch is belt-and-suspenders in case both branches
       // ever run the same frame at a transition boundary; see the exit check's own comment).
-      noiseRadius = NOISE_RADIUS_WALK;   // still makes a little noise -- crawling isn't silent, just untracked by scent
+      noiseRadius = NOISE_RADIUS_WALK * mudNoiseMultiplier(inMud);   // still makes a little noise -- crawling isn't silent, just untracked by scent
       const past = (player.x - logCrawlExitX) * logCrawlDirX + (player.z - logCrawlExitZ) * logCrawlDirZ;
       if(past >= 0){
         inLogCrawl = false;
@@ -7505,7 +7586,7 @@ function stepFrame(dt, t, skipRender){
         if(scentEmitT <= 0){ depositScent(running, movingAgainstWind); scentEmitT = SCENT_DEPOSIT_INTERVAL; }   // dedup: was a second isMovingAgainstWind() call, no behavior change
         // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
         // shape as scent, sized off the same running flag rather than a new one.
-        noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK));
+        noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK)) * mudNoiseMultiplier(inMud);
       }
     }
   }
@@ -7938,6 +8019,7 @@ function stepFrame(dt, t, skipRender){
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,
       heldThrowable, canGrabThrowable: canGrabThrowable(heldThrowable, nearestThrowableD, THROWABLE_PICKUP_RADIUS), throwablesReserve,
+      inMudZone: isInMudZone(player.x, player.z, mudZones),
       missionKind: mission ? mission.target.kind : null,
       missionStatus: mission ? mission.status : null,
       // LUL-3010: only the far/timed variant carries a timer; null for oakHollow (untimed).

@@ -320,6 +320,8 @@ declare global {
         jumping: boolean; paused: boolean; toggleRunOn: boolean; veilHeld: boolean;
         hidden: boolean; brambleSnagT: number;
         inLogCrawl: boolean; logCrawlExitX: number; logCrawlExitZ: number;
+        /** LUL-5564: Mud Zone -- true when the player's current x/z falls inside any mudZones circle. */
+        inMudZone: boolean;
       };
       /** LUL-388: places `kind` in a blind scent-chase (state='chase', scentLock=SCENT_TRACK_TIME)
        * within catch range (dist < rad+CATCH_MARGIN) of the player, with a real cover prop's
@@ -685,6 +687,11 @@ declare global {
       qaBuildScene?: (scene: {
         trees?: { x: number; z: number; s?: number }[];
         props?: { kind: 'log' | 'rock' | 'bramble'; x: number; z: number; ry?: number }[];
+        /** LUL-5564: Mud Zone -- stages one or more terrain-hazard circles in the micro
+         * world so an e2e spec can drive isInMudZone()'s speed/noise effects without
+         * @fullmap. Replaces whatever generateMap() last populated, same reset shape as
+         * `trees` above. */
+        mudZones?: { x: number; z: number; r: number }[];
         /** LUL-5402: `inv`/`scentLock` are additive overrides (default ''/0, same
          * as before) -- stage `state: 'investigate', inv: 'approach', scentLock: 1`
          * to exercise biasTowardWind()'s scentLock>0 gate directly, since every
