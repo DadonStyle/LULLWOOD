@@ -15,6 +15,10 @@ import { track } from '@/lib/analytics';
 import { jumpOffset, JUMP_DURATION } from '@/lib/game/jump';
 import { toggleFullscreen } from '@/lib/game/fullscreen';
 import {
+  SKY_COMPASS_GLYPHS, skyCompassPosition, drawSkyCompassGlyph,
+  SKY_COMPASS_CANVAS_SIZE, SKY_COMPASS_MIN_OPACITY, SKY_COMPASS_MAX_OPACITY,
+} from '@/lib/game/skyCompass';
+import {
   freshRunState,
   isPlaying,
   canPickUp,
@@ -440,6 +444,32 @@ moonGroup.add(
   new THREE.Mesh(new THREE.CircleGeometry(15, 40), new THREE.MeshBasicMaterial({ color: TOD_VISUAL.sunMoonColor, fog: false }))
 );
 scene.add(moonGroup);
+// LUL-5486: Sky Compass -- four cardinal glyphs (N/E/S/W), real world-space
+// sprites at fixed absolute positions, same trick as `stars` two blocks above
+// (never re-centered on the camera like moonGroup is): rotating the camera
+// moves them across the screen exactly like turning to face a real landmark
+// would, unlike scene.background (a flat, non-rotating backdrop) -- which is
+// why the original LUL-5485 "bake glyphs into the sky gradient" proposal
+// couldn't work. fog:false/depthWrite:false read through fog and never
+// occlude/get occluded by nearer geometry, same as stars/moon.
+const skyCompassIsNight = timeOfDay === 'night';
+const skyCompassColor = '#' + TOD_VISUAL.sunMoonColor.toString(16).padStart(6, '0');
+const skyCompassOpacity = SKY_COMPASS_MIN_OPACITY + (SKY_COMPASS_MAX_OPACITY - SKY_COMPASS_MIN_OPACITY) * TOD_VISUAL.starOpacity;
+const skyCompassSprites = {};
+for (const skyCompassGlyph of SKY_COMPASS_GLYPHS) {
+  const skyCompassCanvas = document.createElement('canvas');
+  skyCompassCanvas.width = skyCompassCanvas.height = SKY_COMPASS_CANVAS_SIZE;
+  drawSkyCompassGlyph(skyCompassCanvas.getContext('2d'), skyCompassGlyph, skyCompassIsNight, skyCompassColor);
+  const skyCompassTex = new THREE.CanvasTexture(skyCompassCanvas); skyCompassTex.colorSpace = THREE.SRGBColorSpace;
+  const skyCompassSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: skyCompassTex, transparent: true, opacity: skyCompassOpacity, depthWrite: false, fog: false,
+  }));
+  const skyCompassPos = skyCompassPosition(skyCompassGlyph);
+  skyCompassSprite.position.set(skyCompassPos.x, skyCompassPos.y, skyCompassPos.z);
+  skyCompassSprite.scale.set(24, 24, 1);
+  scene.add(skyCompassSprite);
+  skyCompassSprites[skyCompassGlyph] = skyCompassSprite;
+}
 const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20, 2); camera.add(playerLight);
 // LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
 // LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
@@ -4262,6 +4292,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       kind: l.kind, x: l.x, z: l.z,
       visible: landmarkGroups[l.kind].children.some(c => c.isSprite),
       fog: landmarkGroups[l.kind].children.find(c => c.isSprite)?.material.fog ?? null,
+    }));
+  };
+  // LUL-5486: exposes the 4 cardinal glyph sprites' real world positions (not
+  // screen projections -- flaky, unnecessary) so a test can assert they sit at
+  // the cardinal unit vectors * radius and, critically, that rotating the
+  // camera does NOT move them -- proving they're genuine world-space objects,
+  // not baked into scene.background the way the rejected LUL-5485 proposal was.
+  window.ForestEngine.qaGetSkyCompassPositions = function(){
+    return Object.fromEntries(SKY_COMPASS_GLYPHS.map(glyph => {
+      const p = skyCompassSprites[glyph].position;
+      return [glyph, { x: p.x, y: p.y, z: p.z }];
     }));
   };
   // LUL-2667: exposes the resolved timeOfDay state plus the exact TOD_VISUAL/
