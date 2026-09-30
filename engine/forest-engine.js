@@ -165,6 +165,8 @@ import {
   canCompleteFlush,
   canCompleteGhost,
   canCompleteChapelSanctuary,
+  canCompleteChapelVeilEscapeStage1,
+  canCompleteChapelVeilEscapeStage2,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -671,6 +673,12 @@ let coldWalkOptIn = false, coldWalkBroken = false;
 // dwell completes and the charm is actually granted (see the tick() branch below);
 // leaving early resets chargeT/active but leaves this false so the player can retry.
 let chapelSanctuaryActive = false, chapelSanctuaryChargeT = 0, chapelSanctuaryUsedThisRun = false;
+// LUL-5529: Chapel Refuge + Veil Escape Combo's stage-1 flag -- flips true on the same
+// full-dwell grant edge as chapelSanctuaryUsedThisRun above, read by stage 2's
+// canCompleteChapelVeilEscapeStage2 call at the chase give-up branch. Reset alongside
+// chapelSanctuaryUsedThisRun at both per-run reset sites (deliberately not on
+// arriveHome()/child pickup either, same reasoning as that flag).
+let chapelVeilEscapeChapelDone = false;
 // LUL-4528: Rock -- Vantage Climb. mountedOnRock is the live gate (mutually exclusive
 // with hidden by construction); rockClimbT is the countdown, decremented in tick()
 // alongside the other per-frame timers (same shape as caveImmuneT above).
@@ -1522,6 +1530,7 @@ function placeCave(){
   // set-down (that carry-leg path is dead in real play, decisions/lul-2281-pickup-
   // is-the-win-2026-09-09), only at run start.
   chapelSanctuaryActive = false; chapelSanctuaryChargeT = 0; chapelSanctuaryUsedThisRun = false;
+  chapelVeilEscapeChapelDone = false;
   if(caveSpawned){
     const [x, z] = clearLandmarkSpot(CAVE.x, CAVE.z, CAVE.clear);
     caveData = { x, z };
@@ -2185,7 +2194,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion','skyCompassNavigation',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','veil','duskLion'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2217,6 +2226,8 @@ const HINT_TEXT = {
   scentMask:  "a scent-masking site — your footsteps are hidden here; predators can't track your trail while you stay inside",
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
   duskLion:   "as night falls, the lion's sight weakens — darkness favors the quiet",
+  chapelVeilEscapeStage1: 'the chapel offers refuge — dwell inside to earn a veil reserve, then survive a chase with veil overload',
+  chapelVeilEscapeStage2: 'you gained a veil reserve — now burn all veil charge (Q) to escape a chase and complete the mission',
 };
 const HINT_KEY_PREFIX = 'lullwood:hints:';
 // LUL-2230's key, read (never written) as a migration fallback for the 'scent' entry
@@ -2932,7 +2943,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.windPauseT = WIND_PAUSE_DURATION; p.windPauseCooldownT = WIND_PAUSE_COOLDOWN; speed = 0; windPulseCue();
         }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
-        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; if(mission && canCompleteGhost(mission, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); }
+        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; if(mission && canCompleteGhost(mission, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); if(mission && canCompleteChapelVeilEscapeStage2(mission, chapelVeilEscapeChapelDone, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -7827,6 +7838,9 @@ function stepFrame(dt, t, skipRender){
         // named this landmark (canCompleteChapelSanctuary's own kind guard), same shape
         // as canCompleteSlackWater/canCompleteGhost's call sites just above.
         if(mission && canCompleteChapelSanctuary(mission, true)) mission = completeMission(mission);
+        // LUL-5529: Chapel Refuge + Veil Escape Combo stage 1 -- same grant edge, does not
+        // complete the mission itself (see canCompleteChapelVeilEscapeStage1's own comment).
+        if(mission && canCompleteChapelVeilEscapeStage1(mission, true)) chapelVeilEscapeChapelDone = true;
       } else if(distChapel > CHAPEL_SANCTUARY_INTERACT_RADIUS * 1.5){
         chapelSanctuaryActive = false;
         chapelSanctuaryChargeT = 0;
@@ -8068,6 +8082,8 @@ function stepFrame(dt, t, skipRender){
         case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active', null];
         case 'beaconEvasion': return [!!mission && mission.target.kind === 'beaconEvasion' && mission.status === 'active', null];
         case 'skyCompassNavigation': return [!!mission && mission.target.kind === 'skyCompassNavigation' && mission.status === 'active', null];
+        case 'chapelVeilEscapeStage1': return [!!mission && mission.target.kind === 'chapelVeilEscape' && mission.status === 'active' && !chapelVeilEscapeChapelDone, null];
+        case 'chapelVeilEscapeStage2': return [!!mission && mission.target.kind === 'chapelVeilEscape' && mission.status === 'active' && chapelVeilEscapeChapelDone, null];
         case 'wolf': case 'bear': case 'lion': {
           for(const p of predators){
             if(p.inert || p.kind !== key) continue;
@@ -8115,6 +8131,8 @@ function stepFrame(dt, t, skipRender){
         case 'oakHollow': return missionCanComplete;
         case 'beaconEvasion': return missionCanComplete;
         case 'skyCompassNavigation': return missionCanComplete;
+        case 'chapelVeilEscapeStage1': return chapelVeilEscapeChapelDone;
+        case 'chapelVeilEscapeStage2': return !mission || mission.target.kind !== 'chapelVeilEscape' || mission.status !== 'active';
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
         default: return false;   // landmark: time-only

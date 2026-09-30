@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8279 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7267, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8297 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7278, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1705,15 +1705,15 @@ not final tuning.
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
   both `track()` call sites, in `finishPickup()` (L6501, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6871). The `difficulty` module-level
+  `LUL-2281`) and `triggerDeath()` (L6875). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6864) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6469) rather than recomputed later, since `player.x/z` can move on
+  (L6875) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6855) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1893,7 +1893,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7217, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7228, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -2476,6 +2476,51 @@ See wiki `game/mechanics/chapel-sanctuary.md` and `game/mechanics/chapel-sanctua
 
 ---
 
+### Chapel Refuge + Veil Escape Combo (LUL-5529/LUL-5524, two-stage mission)
+
+**What it is**
+- `MissionKind` gains `'chapelVeilEscape'` (`lib/game/mission.ts`), a non-spatial `MISSION_POOL`
+  entry (`x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false`), same shape as `ghost`/
+  `slackWater` — no target position drives completion.
+- Excluded from `eligibleMissionPool()`'s pre-`MISSION_FAR_UNLOCK_WINS` draw, same reasoning as
+  `chapelSanctuary`/`skyCompassNavigation`: keeps `oakHollow` the one deterministic pre-win draw
+  `e2e/hints.spec.ts`'s landmark test relies on.
+- Stage 1: the LUL-5005 shrine's own full-dwell grant edge (`engine/forest-engine.js`'s `tick()`,
+  the same site `canCompleteChapelSanctuary()` is checked at) flips a new engine-local flag,
+  `chapelVeilEscapeChapelDone`, via `canCompleteChapelVeilEscapeStage1()` (`lib/game/mission.ts`)
+  — does not complete the mission itself.
+- Stage 2: mirrors `canCompleteGhost()`'s shape — a chase's `shouldGiveUpChase()` transition
+  while Veil Overload's detection-immunity window is active — gated additionally on
+  `chapelVeilEscapeChapelDone`, via `canCompleteChapelVeilEscapeStage2()`, checked at the same
+  chase give-up call site `canCompleteGhost()` already is.
+- `chapelVeilEscapeChapelDone` (`engine/forest-engine.js`, next to `chapelSanctuaryActive`) is
+  per-run state, reset at the same site `chapelSanctuaryUsedThisRun` resets (deliberately not on
+  `arriveHome()`/child pickup, same reasoning as that flag).
+- `MISSION_NAMES.chapelVeilEscape` (`components/Hud.tsx`): `'Chapel Refuge + Veil Escape'`.
+  `MISSION_CHAPEL_VEIL_ESCAPE_REWARD` (`lib/game/economy.ts`): placeholder `9`, same convention
+  as the other untimed missions pending a Game Economist pricing ticket.
+- Cue triple: two sequential `HINT_PRIORITY` captions (`engine/forest-engine.js`) —
+  `chapelVeilEscapeStage1` (eligible while the mission is active and the dwell hasn't been
+  granted yet, dismissed when `chapelVeilEscapeChapelDone` flips true) and
+  `chapelVeilEscapeStage2` (eligible once that flag is true, dismissed when the mission leaves
+  `'active'` status) — reusing the standing `#hintCaption`/`HINT_TEXT` mechanism, not
+  `#actionSlot` (this mission adds no new `<ActionPrompt>` row; both stages ride existing
+  shrine/chase UI). Framed sequentially per the CEO's 2026-09-24 `veilReserve` ruling — Chapel
+  grants a reserve charm, Veil Overload burns charge directly and never reads it — the two
+  captions read "you gained a veil reserve" / "now escape a chase with veil overload", not
+  "spend the reserve to escape".
+- e2e: new `e2e/chapel-veil-escape-combo-mission.spec.ts`, composing
+  `e2e/chapel-sanctuary.spec.ts`'s real dwell staging (`qaTeleportNearChapel` + `KeyE` +
+  `qaAdvance` for the 15s) with `e2e/ghost-veil-escape-mission.spec.ts`'s real chase staging
+  (`qaBuildScene` + `qaSetFixedStep`/`qaAdvance` to decay `scentLock` + `KeyQ`) — no new QA
+  hooks. Asserts stage-1-only leaves the mission `'active'`, and both stages in order complete
+  it; a second test proves stage 2 alone (no prior dwell) does not complete it.
+
+See wiki `decisions/lul-5524-3proposals-accepted-2026-09-30` and
+`game/mechanics/chapel-veil-escape-combo.md`.
+
+---
+
 ### Cold Walk (LUL-4960, M5 outbound-leg walk-only constraint)
 
 **What it is**
@@ -3012,7 +3057,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6764) and `windAssistEndCue()` (L6773), edge-triggers on the combined
+`windAssistStartCue()` (L6775) and `windAssistEndCue()` (L6784), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
