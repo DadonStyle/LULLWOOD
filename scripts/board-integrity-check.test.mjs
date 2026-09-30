@@ -52,6 +52,9 @@ import {
   resolveSelfAgentId,
   fileWakeTickets,
   nonPausedAssigneeId,
+  interactionShortId,
+  issueTextReferencesInteraction,
+  findExistingTrackingTicket,
 } from './board-integrity-check.mjs';
 
 // ---- isTombstone / findTombstones ------------------------------------------
@@ -1346,6 +1349,178 @@ test('fileWakeTickets: an already-open escalation ticket suppresses the routine 
     );
 
     assert.equal(filed.length, 0);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+// ---- LUL-5538: dedupe an escalation against an existing hand-created tracker
+//
+// Live case: interaction b37d6080 (request_confirmation on LUL-359) is a
+// genuine founder-only blocker already tracked by LUL-3056 (status blocked,
+// assigned CTO). The escalation still fired twice more for it -- LUL-4805
+// (2026-09-23) and LUL-5536 (2026-09-30), 7 days apart, both closed by CTO as
+// duplicates of LUL-3056. The cooldown alone can't catch this because it only
+// recognizes its OWN prior escalation tickets, not a hand-filed tracker.
+
+test('interactionShortId: takes the first 8 chars of the full id', () => {
+  assert.equal(interactionShortId('b37d6080-1234-5678-9abc-def012345678'), 'b37d6080');
+  assert.equal(interactionShortId(undefined), '');
+});
+
+test('issueTextReferencesInteraction: matches on the interaction short id in the description', () => {
+  const candidate = { title: 'Founder decision needed', description: 'Tracks interaction b37d6080-1234 on LUL-359.' };
+  const issue = { identifier: 'LUL-359' };
+  const interaction = { id: 'b37d6080-1234-5678-9abc-def012345678' };
+  assert.equal(issueTextReferencesInteraction(candidate, issue, interaction), true);
+});
+
+test('issueTextReferencesInteraction: matches on the source issue identifier when the short id is absent', () => {
+  const candidate = { title: 'PAT Administration:write scope gap (LUL-359)', description: 'Founder must grant scope.' };
+  const issue = { identifier: 'LUL-359' };
+  const interaction = { id: 'zzzzzzzz-not-present-anywhere' };
+  assert.equal(issueTextReferencesInteraction(candidate, issue, interaction), true);
+});
+
+test('issueTextReferencesInteraction: does not false-match a longer identifier ("LUL-3591" vs "LUL-359")', () => {
+  const candidate = { title: 'Unrelated ticket LUL-3591', description: 'no relation to any other ticket' };
+  const issue = { identifier: 'LUL-359' };
+  const interaction = { id: 'zzzzzzzz-not-present-anywhere' };
+  assert.equal(issueTextReferencesInteraction(candidate, issue, interaction), false);
+});
+
+test('findExistingTrackingTicket: finds a live tracker among candidates', () => {
+  const issue = { identifier: 'LUL-359' };
+  const interaction = { id: 'b37d6080-1234-5678-9abc-def012345678' };
+  const candidates = [
+    { identifier: 'LUL-100', status: 'todo', title: 'unrelated', description: '' },
+    { identifier: 'LUL-3056', status: 'blocked', title: 'FOUNDER ACTION needed', description: 'interaction b37d6080 pending, PAT Administration:write scope gap' },
+  ];
+  const found = findExistingTrackingTicket(candidates, issue, interaction);
+  assert.equal(found?.identifier, 'LUL-3056');
+});
+
+test('findExistingTrackingTicket: a tracker that was itself closed does not count', () => {
+  const issue = { identifier: 'LUL-359' };
+  const interaction = { id: 'b37d6080-1234-5678-9abc-def012345678' };
+  const candidates = [
+    { identifier: 'LUL-3056', status: 'done', title: 'FOUNDER ACTION needed', description: 'interaction b37d6080 pending' },
+  ];
+  assert.equal(findExistingTrackingTicket(candidates, issue, interaction), null);
+});
+
+test('findExistingTrackingTicket: no match -> null', () => {
+  const issue = { identifier: 'LUL-359' };
+  const interaction = { id: 'b37d6080-1234-5678-9abc-def012345678' };
+  assert.equal(findExistingTrackingTicket([{ identifier: 'LUL-1', status: 'todo', title: 'x', description: 'y' }], issue, interaction), null);
+});
+
+test('fileWakeTickets: past the re-flag threshold, skips filing a second escalation when a live hand-created tracker already covers this interaction (LUL-5538)', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      throw new Error(`must not file anything -- LUL-3056 already tracks this: ${url}`);
+    };
+
+    const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+    const closedWakeIssues = Array.from({ length: STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD }, (_, i) => ({
+      title: `${marker} (LUL-810 detector)`,
+      description: 'has a `request_confirmation` (id b37d6080-1234-5678-9abc-def012345678) that has been `pending`',
+      updatedAt: `2026-08-2${i}T00:00:00.000Z`,
+    }));
+    const agentsById = new Map([['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }]]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-359', identifier: 'LUL-359', title: 'Merge lane', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'b37d6080-1234-5678-9abc-def012345678', createdAt: '2026-08-28T13:13:58.566Z' },
+        ageDays: 33,
+      },
+    ];
+    // LUL-3056: a real tracking ticket, filed by hand -- no Board-integrity:
+    // marker, so isRecentWakeTicketSuppressed alone would never see it.
+    const otherStatusIssues = [
+      {
+        identifier: 'LUL-3056',
+        status: 'blocked',
+        title: 'FOUNDER ACTION: PAT Administration:write scope gap',
+        description: 'Tracks the pending request_confirmation (interaction b37d6080) on LUL-359.',
+      },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      staleConfirmations,
+      closedWakeIssues,
+      NOW_MS,
+      [],
+      agentsById,
+      otherStatusIssues,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].kind, 'stale-confirmation-escalation-deduped');
+    assert.equal(filed[0].trackerId, 'LUL-3056');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test('fileWakeTickets: still escalates when no live tracker exists, even with otherStatusIssues populated', async () => {
+  const prevFetch = globalThis.fetch;
+  try {
+    let postedIssue = null;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/api/companies/') && u.endsWith('/issues') && opts?.method === 'POST') {
+        postedIssue = JSON.parse(opts.body);
+        return { ok: true, json: async () => ({ id: 'wake-issue-1' }) };
+      }
+      throw new Error(`unexpected fetch: ${u}`);
+    };
+
+    const marker = 'Board-integrity: LUL-359 has a stale request_confirmation';
+    const closedWakeIssues = Array.from({ length: STALE_CONFIRMATION_REFIRE_ESCALATION_THRESHOLD }, (_, i) => ({
+      title: `${marker} (LUL-810 detector)`,
+      description: 'has a `request_confirmation` (id ix-1) that has been `pending`',
+      updatedAt: `2026-08-2${i}T00:00:00.000Z`,
+    }));
+    const agentsById = new Map([['ceo-1', { id: 'ceo-1', name: 'CEO', status: 'idle' }]]);
+    const staleConfirmations = [
+      {
+        issue: { id: 'issue-359', identifier: 'LUL-359', title: 'Merge lane', assigneeAgentId: 'founding-engineer' },
+        interaction: { id: 'ix-1', createdAt: '2026-08-28T13:13:58.566Z' },
+        ageDays: 19,
+      },
+    ];
+    const otherStatusIssues = [
+      { identifier: 'LUL-999', status: 'blocked', title: 'totally unrelated', description: 'nothing here' },
+    ];
+
+    const filed = await fileWakeTickets(
+      'http://api.invalid',
+      'company-1',
+      'durable-token',
+      [],
+      [],
+      [],
+      { alarm: false },
+      staleConfirmations,
+      closedWakeIssues,
+      NOW_MS,
+      [],
+      agentsById,
+      otherStatusIssues,
+    );
+
+    assert.equal(filed.length, 1);
+    assert.equal(filed[0].kind, 'stale-confirmation-escalation');
+    assert.equal(postedIssue.assigneeAgentId, 'ceo-1');
   } finally {
     globalThis.fetch = prevFetch;
   }
