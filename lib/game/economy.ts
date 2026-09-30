@@ -148,6 +148,14 @@ export const MISSION_ROOST_RECOVERY_EVASION_REWARD = 9;
 // not a placeholder.
 export const MISSION_BEAR_ROOST_AMBUSH_REWARD = 9;
 
+// LUL-5462/LUL-5460: Beacon Hunter Deepwater -- Game Economist priced this at 9E (LUL-5463,
+// done): base deepwater(8E) is the floor, beaconEvasion(8E) already showed a passive Beacon
+// Hunter threat alone isn't worth a premium over the base mission, and the +1E Beacon-threat
+// premium pattern (beaconRoostFlush 10 vs flush 9, upwindRefuge 9 vs fire-tower-active-lion 8)
+// puts this passive-threat fire-tower variant one above deepwater's 8. Confirmed by the
+// Economist, not a placeholder.
+export const MISSION_BEACON_DEEPWATER_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -161,6 +169,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   upwindRefuge: MISSION_UPWIND_REFUGE_REWARD,
   roostRecoveryEvasion: MISSION_ROOST_RECOVERY_EVASION_REWARD,
   bearRoostAmbush: MISSION_BEAR_ROOST_AMBUSH_REWARD,
+  beaconDeepwater: MISSION_BEACON_DEEPWATER_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

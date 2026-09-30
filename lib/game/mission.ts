@@ -65,7 +65,8 @@ export type MissionKind =
   | 'lionRoostFlush'
   | 'upwindRefuge'
   | 'roostRecoveryEvasion'
-  | 'bearRoostAmbush';
+  | 'bearRoostAmbush'
+  | 'beaconDeepwater';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -192,6 +193,16 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // verbatim -- never read directly, always overwritten by generateMap()'s post-placeCave()
   // roost draw.
   { kind: 'bearRoostAmbush', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
+  // LUL-5462/LUL-5460: Beacon Hunter Deepwater -- 'beaconEvasion's own fixed-fireTower-
+  // landmark/timed shape verbatim (same x/z/zoneRadius/interactRadius/timeLimitSeconds), drawn
+  // from the far-mission pool (gated behind MISSION_FAR_UNLOCK_WINS by the same
+  // `timeLimitSeconds == null` filter, no exclusion needed here) alongside deepwater/
+  // stoneMarker/radioMast/beaconEvasion/upwindRefuge, instead of being a separate always-
+  // eligible named mission like 'beaconEvasion' itself. repositionBeaconHunterForMission()
+  // (engine/forest-engine.js) extended to this kind reuses its existing 'beaconEvasion'
+  // branch verbatim (spatial anchor on target.x/z, beaconHunter-variant wolf lookup) -- no new
+  // engine behavior, no new HUD element, no new key, no new cue.
+  { kind: 'beaconDeepwater', x: -95, z: -95, zoneRadius: 20, interactRadius: 4, landmarkKind: 'fireTower', timeLimitSeconds: 60 },
 ];
 
 export interface MissionState {
