@@ -28,6 +28,15 @@ export const CONFIG = {
                           // scales this down so the deepwater mission's fixed MISSION_POOL
                           // coordinates land inside the shrunk map's movement-clamp bounds.
                           // 1 = full-map, no-op default.
+  roostScaleMul: 1,       // LUL-5346: ROOSTS position multiplier for distance checks only (the
+                          // ROOSTS export itself, below, stays untouched -- same "scale the read,
+                          // not the source" shape missionScaleMul already uses for LANDMARKS).
+                          // Without this, a chasing predator -- movement-clamped to +-half every
+                          // tick (forest-engine.js's updatePredators()) -- can never reach any of
+                          // the 5 ROOSTS sites (all ~140-152u from origin) in the shrunk map, so
+                          // updateRoosts()'s ambient chase-proximity trigger had no way to fire in
+                          // a micro-world spec. applyQaWorldMicroPreset() scales this down too.
+                          // 1 = full-map, no-op default.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
@@ -69,17 +78,15 @@ export const LANDMARKS = [
   { kind: 'chapelSteeple', x: 20,  z: -178, clear: 11, cr: 1.8 },
 ];
 
-// LUL-1914: startled roosts, slice (a) -- fixed canopy sites that flush when a
-// predator passes through at speed. Same "static list, no rng() draw" contract
-// as LANDMARKS immediately above -- generateMap() stays byte-identical per seed.
-export const ROOSTS = [
-  { kind: 'canopyNE', x: 110,  z: 90,   radius: 20 },
-  { kind: 'canopyN',  x: 55,   z: 135,  radius: 20 },
-  { kind: 'canopyW',  x: -140, z: 15,   radius: 20 },
-  { kind: 'canopyS',  x: -30,  z: -140, radius: 20 },
-  { kind: 'canopyE',  x: 150,  z: -25,  radius: 20 },
-];
+// LUL-1914: startled roosts -- fixed canopy sites that flush on trigger. ROOSTS itself
+// moved to lib/game/roostSites.ts (LUL-2389 slice c: EventSite-typed registration); this
+// file keeps only the shared cooldown and the per-trigger tuning constants.
 export const ROOST_COOLDOWN = 32;   // seconds a roost stays quiet after firing
+// LUL-2389 slice (b): player-sprint flush -- distinct from ROOSTS[i].radius (20,
+// predator-only ambient trigger) and from LUL-4894's separate player-thrown-stone trigger.
+export const ROOST_TRIGGER_RADIUS = 6;   // player-side flush trigger radius
+export const ROOST_NOISE_RADIUS = 14;    // predators within this of the roost (x,z) hear the flush
+export const ROOST_INVESTIGATE_TIME = [1.5, 2.5]; // rnd() range, seconds -- not a THROWABLE_INVESTIGATE_TIME reuse
 
 // LUL-1210: Stone Marker veil-charm interact radius -- same shape as
 // MISSION_POOL's interactRadius (lib/game/mission.ts).
@@ -182,7 +189,11 @@ export const BSP = 70;            // win-burst particles
 // LANDMARKS/CAVE are deliberately left untouched -- tuning.js's own
 // LANDMARKS comment already documents they're placed unconditionally
 // regardless of map size, so at this scale they simply sit at or past the
-// map edge; not worth a special case for six fixed props.
+// map edge; not worth a special case for six fixed props. ROOSTS (below)
+// is the one exception: CONFIG.roostScaleMul scales every ROOSTS distance
+// check at the read site (forest-engine.js), not the ROOSTS export itself --
+// see roostScaleMul's own comment above for why a fixed prop needed this
+// treatment where LANDMARKS/CAVE didn't.
 //
 // Idempotent: always assigns the same target values (never scales off the
 // current value), so calling it more than once in one page life is safe.
@@ -198,6 +209,9 @@ export function applyQaWorldMicroPreset(){
   CONFIG.missionScaleMul = 0.2;  // LUL-2578: same 96/480 ratio -- keeps the deepwater mission's
                                   // target inside the shrunk map's movement-clamp bounds so it
                                   // stays completable (and qaTeleportNearMission() lands legally).
+  CONFIG.roostScaleMul = 0.2;    // LUL-5346: same 96/480 ratio -- keeps a ROOSTS site inside the
+                                  // shrunk map's movement-clamp bounds so a chasing predator can
+                                  // actually reach one (and qaTeleportNearRoost() lands legally).
 }
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two

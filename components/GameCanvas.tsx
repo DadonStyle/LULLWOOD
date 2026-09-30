@@ -411,6 +411,16 @@ const OVERLAY_STYLE = `
      movingAgainstWind is a precondition of scentVeilPromptVisible and both
      are true whenever this one is. */
   #windIndicator.windIndicatorVeilActive { animation: windIndicatorPulse 225ms ease-in-out infinite; }
+  /* LUL-5402: a predator's scent-originated approach is currently biased downwind
+     (state.investigationDownwindActive) -- reuses #windIndicator's own arrow/pulse
+     visual language (Q9) rather than a new element, composing alongside the two
+     classes above the same way they compose with each other. Distinct color (amber,
+     not the teal/green of the wind-assist cues) so "a predator is hunting downwind of
+     you" doesn't read as another wind-assist prompt. */
+  #windIndicator.windIndicatorInvestigationActive { animation: windIndicatorInvestigationPulse 700ms ease-in-out infinite; }
+  @keyframes windIndicatorInvestigationPulse {
+    0%, 100% { filter: brightness(1) drop-shadow(0 0 0 rgba(240,176,96,0)); }
+    50% { filter: brightness(1.6) drop-shadow(0 0 8px rgba(240,176,96,0.9)); } }
 
   #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
     font-size: 12px; line-height: 1.3; text-align: center; color: #9fb2cd;
@@ -618,6 +628,61 @@ const OVERLAY_STYLE = `
        must-stay-visible set (only landmark is, per LUL-2414) -- hide it here the
        same way #hint is. */
     #hintCaption[data-hint-key="deepwater"] { display: none !important; }
+    /* LUL-5246: .actionPromptLine renders ~31px (plain text) to ~44px (rows with a
+       .actionPromptKey chip) regardless of breakpoint (no font-size/padding override exists
+       for this class) but --action-slot-row above shrinks the track to 11.91px, so any two
+       adjacent populated rows overlap by ~16-29px. Uniform row-height growth to fix this
+       generally is mathematically infeasible in the remaining --action-slot-bottom budget
+       on both target viewports (docs/specs/lul-5246-action-slot-objective-hide-overlap.md
+       has the numbers) -- same "stop repositioning, nothing left to reposition to" call as
+       #hint/#hintCaption[deepwater] above, narrowed to the one pair local-qa actually caught
+       colliding (layout-4a62437dbe): objective vs. hide-or-veil. hide/veil is the
+       survival-critical affordance and already wins a collision at this breakpoint per the
+       deepwater precedent just above -- objective's distance readout yields. #objective's
+       own grid track is untouched (still reserved, just empty) so nothing below it shifts. */
+    body:has(#actionPrompt[data-visible="1"]) #objective .actionPromptLine { display: none !important; }
+    /* LUL-5374: generalizes the rule above to every other pair that (a) can really co-occur
+       per Hud.tsx/forest-engine.js's own trigger conditions and (b) was live-measured to
+       actually overlap at this breakpoint -- see docs/specs/lul-5374-action-slot-full-row-
+       suppression.md for both the collision matrix and the per-pair real-co-occurrence check.
+       Priority order (highest wins, CTO decision on LUL-5373): chargePrompt > objective >
+       actionPrompt > veilOverloadPrompt > veilPrompt > throwPrompt > pickupPrompt > climbPrompt
+       > chapelSanctuaryPrompt > status -- see Hud.tsx's own priority comment above #actionSlot.
+       climbPrompt/status is deliberately NOT suppressed here: climbPromptVisible requires
+       !hidden and statusVisible only turns true inside if(hidden), so they can never both be
+       true in real play -- the two only "collide" under qaForceAllActionRows's unconditional
+       force, a synthetic-only state (see the e2e test change note below). Every rule keys off
+       [data-visible="1"] (React-set from real engine state), never another row's rendered
+       display, so these compose safely with each other and with the rule above regardless of
+       evaluation order -- verified live: re-measuring with all 9 rules applied plus
+       qaForceAllActionRows() (worst case, all rows forced at once) shows zero remaining
+       .actionPromptLine overlaps on both mobile-pixel5-landscape and mobile-iphone-se-landscape.
+       (LUL-5179 below adds a 10th rule for the one real, non-forced pair this all-forced
+       measurement couldn't expose -- see its own comment.) */
+    body:has(#chargePrompt[data-visible="1"]) #actionPrompt .actionPromptLine { display: none !important; }
+    /* LUL-5179: the rule above only covers chargePrompt<->actionPrompt; it does not reach
+       objective, and LUL-5374's own suppression of objective keys off #actionPrompt's
+       [data-visible], not #chargePrompt's. chargeVisible (engine/forest-engine.js's
+       qaTriggerCharge / the real predator-charge trigger) has no !hidden or coverPromptVisible
+       gate, so a real charge with no hide spot nearby leaves actionPrompt at data-visible="0"
+       -- the actionPrompt->objective chain never fires and the two adjacent rows (1 and 2)
+       overlap directly. LUL-5374's own live-measurement missed this because
+       qaForceAllActionRows() always forces actionPrompt visible too, which hid objective via
+       the existing chain regardless of this rule's presence -- confirmed live with a real
+       qaTriggerCharge('wolf') call at player (0,0) (no cover in the spawn clearing):
+       #chargePrompt/#objective .actionPromptLine boxes overlapped by ~10px vertically before
+       this rule existed. Matches the already-decided priority order (chargePrompt > objective,
+       CTO decision on LUL-5373) -- this closes the one pair that order named but no rule
+       enforced. */
+    body:has(#chargePrompt[data-visible="1"]) #objective .actionPromptLine { display: none !important; }
+    body:has(#actionPrompt[data-visible="1"]) #veilOverloadPrompt .actionPromptLine { display: none !important; }
+    body:has(#actionPrompt[data-visible="1"]) #veilPrompt .actionPromptLine { display: none !important; }
+    body:has(#veilOverloadPrompt[data-visible="1"]) #veilPrompt .actionPromptLine { display: none !important; }
+    body:has(#veilOverloadPrompt[data-visible="1"]) #throwPrompt .actionPromptLine { display: none !important; }
+    body:has(#veilPrompt[data-visible="1"]) #throwPrompt .actionPromptLine { display: none !important; }
+    body:has(#throwPrompt[data-visible="1"]) #climbPrompt .actionPromptLine { display: none !important; }
+    body:has(#climbPrompt[data-visible="1"]) #chapelSanctuaryPrompt .actionPromptLine { display: none !important; }
+    body:has(#chapelSanctuaryPrompt[data-visible="1"]) #status .actionPromptLine { display: none !important; }
     /* LUL-2414: the bottom self-anchored #hintCaption family (bog/stamina/
        veil/landmark, see the "Self/panel-anchored keys" rule above) positions
        itself at bottom: action-slot-bottom + action-slot-height + 10px --
@@ -832,7 +897,8 @@ const OVERLAY_STYLE = `
     /* LUL-3009: Hud.tsx already skips the class under reducedMotion -- this is the same
        belt-and-suspenders fallback #actionPromptLine gets above, not the primary gate. */
     #windIndicator.windIndicatorActive { animation: none; }
-    #windIndicator.windIndicatorVeilActive { animation: none; } }
+    #windIndicator.windIndicatorVeilActive { animation: none; }
+    #windIndicator.windIndicatorInvestigationActive { animation: none; } }
 
   /* LUL-2331: mist-charm activation tell -- Hud.tsx toggles this class for the same
      400ms window it eases #veilState's displayed number up in (useVeilMeterRamp),

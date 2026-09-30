@@ -67,6 +67,12 @@ export interface EngineHudState {
   // LUL-1904: cave detection-immunity countdown -- 0 while inactive.
   caveImmuneActive:   boolean;
   caveImmuneTimeLeft: number;
+  // LUL-5412: roost cooldown -- true while the nearest roost within throw/ambient-trigger
+  // range is still cooling down from a prior flush (any of the three Startled Roosts
+  // triggers, docs/ELEMENTS.md "Startled roosts"). Drives #roostCooldownPanel, same shape
+  // as caveImmuneActive/caveImmuneTimeLeft above.
+  roostCooldownActive:   boolean;
+  roostCooldownTimeLeft: number;
   // LUL-4528: Rock -- Vantage Climb. mountedOnRock/rockClimbTimeLeft drive
   // #rockClimbPanel's countdown; climbPromptVisible drives the climbPrompt row.
   mountedOnRock: boolean;
@@ -168,6 +174,12 @@ export interface EngineHudState {
   // moving against windX/windZ (isMovingAgainstWind()), pushed every frame unlike
   // windX/windZ above. Drives #windIndicator's pulse class, no new element.
   movingAgainstWind: boolean;
+  // LUL-5402: true while any live predator's scent-originated investigation
+  // approach is favoring downwind (biasTowardWind() gate at the engine's
+  // 'approach' call site). Drives #investigationDownwindIndicator, a sibling
+  // of #windIndicator below -- see engine/forest-engine.js's pushState call
+  // for the re-derivation.
+  investigationDownwindActive: boolean;
   // LUL-1103: The Run Chronicle. Engine-owned {t, code, args} buffer, handed
   // over once in the same pushState() call as winVisible/deathVisible (never
   // streamed per-frame -- see engine/forest-engine.js's logChronicle()
@@ -280,6 +292,8 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   veilReserve: false,
   caveImmuneActive: false,
   caveImmuneTimeLeft: 0,
+  roostCooldownActive: false,
+  roostCooldownTimeLeft: 0,
   mountedOnRock: false,
   rockClimbTimeLeft: 0,
   climbPromptVisible: false,
@@ -330,6 +344,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   windX: 1,
   windZ: 0,
   movingAgainstWind: false,
+  investigationDownwindActive: false,
   chronicle: [],
   scentTrailVisible: true,
   hintsEnabled: true,
@@ -349,6 +364,9 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   stoneMarker: 'Stone Marker',
   radioMast: 'Radio Mast',
   beaconEvasion: 'Beacon Evasion',
+  flush: 'Flush',
+  beaconRoostFlush: 'Beacon Roost Flush',
+  lionRoostFlush: 'Lion Roost Flush',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the
@@ -1070,6 +1088,18 @@ export default function Hud({
         </div>
       )}
 
+      {/* LUL-5412: roost cooldown -- sibling of #caveImmunePanel/#rockClimbPanel/
+          #veilOverloadPanel/#chapelSanctuaryPanel, same always-visible-while-active
+          treatment (outside #panel, stays visible with adminMode off, Q3). Tells the
+          player a throw at the nearest roost would be refused right now -- the denial
+          itself (roostFlushDeniedCue()) fires only on the throw attempt, so this panel is
+          the only tell available before that attempt. */}
+      {state.roostCooldownActive && (
+        <div id="roostCooldownPanel">
+          Roost quiet · {Math.ceil(state.roostCooldownTimeLeft)}s
+        </div>
+      )}
+
       {/* LUL-2131: gate on !winVisible/!deathVisible too -- entered stays true
           through the end screens (restart() never clears it), so this used to
           keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
@@ -1092,6 +1122,10 @@ export default function Hud({
             [
               state.movingAgainstWind && !state.reducedMotion ? 'windIndicatorActive' : null,
               state.scentVeilPromptVisible && !state.reducedMotion ? 'windIndicatorVeilActive' : null,
+              // LUL-5402: composes alongside the two above (all three conditions
+              // can coexist -- a predator hunting downwind doesn't stop the
+              // player's own wind-assist state from also being true).
+              state.investigationDownwindActive && !state.reducedMotion ? 'windIndicatorInvestigationActive' : null,
             ].filter(Boolean).join(' ') || undefined
           }
           title="Wind direction -- move into the arrow to mask your scent; sprint into it for extra speed and quiet"
@@ -1141,7 +1175,15 @@ export default function Hud({
       {/* LUL-2312: the one fixed bottom action slot -- a CSS grid of
           always-mounted rows (GameCanvas.tsx's #actionSlot), each an
           <ActionPrompt>, in the founder's stated priority order top-to-bottom:
-          charge dodge > objective (E) > hide-or-veil > throwable > status.
+          charge dodge > objective (E) > hide-or-veil > veil-overload panic >
+          scent-veil break > throwable > pickup (E) > vantage climb > chapel
+          sanctuary > status (LUL-5374: names all 10 rows -- this comment
+          previously named only 5 of them, which is how LUL-5373 happened, an
+          ambiguous partial list left the other 4 rows' relative priority
+          undocumented until a bug forced someone to re-derive it. See
+          docs/specs/lul-5374-action-slot-full-row-suppression.md for the
+          short-landscape :has() suppression rules in GameCanvas.tsx that
+          enforce this same order when two rows would otherwise overlap).
           Rows with nothing to show still occupy their grid track (no
           pop-in layout shift when one appears/disappears) -- ActionPrompt
           itself decides whether to render a pill inside that track.

@@ -140,10 +140,15 @@ declare global {
        * LUL-99: `t` is clock.elapsedTime -- game time, not wall time (see wiki: systems/dt-clamp-vs-walltime).
        * LUL-2667: `alertedBy` names which hearing channel set 'investigate' ('cry' via hearCry(), or null
        * for sight/scent/footstep) -- state alone can't distinguish them.
-       * LUL-5004: `scentLock`/`scentVeilReady` are the real predator fields Scent Veil reads/clears. */
+       * LUL-5004: `scentLock`/`scentVeilReady` are the real predator fields Scent Veil reads/clears.
+       * LUL-2389: `noiseTarget` is the point a hearThrowableNoise()-driven investigate is aimed at
+       * (roost (x,z) for slice-b's player-sprint flush, thrown-object landing point, or null).
+       * LUL-5402: `x`/`z`/`inv` added for the downwind-investigation bias e2e coverage --
+       * `inv` confirms the predator is still in the 'approach' sub-phase biasTowardWind()
+       * gates on, `x`/`z` are its real per-tick position for measuring path drift. */
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
-      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number } | null;
+      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number; noiseTarget: { x: number; z: number } | null; x: number; z: number; inv: string } | null;
       /** LUL-2878: `kind`'s scaled effectiveDetect() this tick (veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul applied on top of tuning.js's unscaled spec.detect), or null if not spawned. Use this, not the tuning constant, to stage a distance that will actually pass canSee()'s detect gate. */
       qaProbeEffectiveDetect?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
@@ -514,6 +519,10 @@ declare global {
        * plain roaming state. Returns its predators index and placed position, or null if that
        * species didn't spawn this seed. */
       qaStagePredatorNearPlayer?: (kind: 'wolf' | 'bear' | 'lion', dx: number, dz: number) => { idx: number; x: number; z: number } | null;
+      // LUL-5116: flips predators[kind]'s FIRST live entry into 'chase' state without
+      // repositioning it -- see engine/forest-engine.js's qaSetPredatorChasing for the
+      // full rationale (composes with qaStagePredatorNearPlayer, doesn't replace it).
+      qaSetPredatorChasing?: (kind: 'wolf' | 'bear' | 'lion') => { idx: number } | null;
       /** LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
        * lets a test assert the tier's effect without waiting out real decay. */
       qaProbeScentLifetime?: () => number;
@@ -539,8 +548,9 @@ declare global {
       qaTeleportNearRoost?: (i?: number) => { i: number; x: number; z: number } | null;
       /** LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a test
        * assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
-       * that a second throw within the cooldown window does not re-flush it. */
-      qaProbeRoostState?: (i: number) => { cooldown: number; burstActive: boolean };
+       * that a second throw within the cooldown window does not re-flush it. LUL-5412:
+       * deniedCueCount is global (roostFlushDeniedCue()'s fire count), not per-roost. */
+      qaProbeRoostState?: (i: number) => { cooldown: number; burstActive: boolean; deniedCueCount: number };
       /** LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. `releaseCueCount` is
        * the mist-charm activation cue's fire count, so a test can assert it fired without
        * decoding actual WebAudio output. */
@@ -581,7 +591,7 @@ declare global {
       /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
        * fields qaTeleportNearMission returns as a side effect, for a test that
        * only needs to read, not teleport. */
-      qaProbeMission?: () => { kind: MissionKind; status: 'active' | 'complete' | 'expired'; x: number; z: number } | null;
+      qaProbeMission?: () => { kind: MissionKind; status: 'active' | 'complete' | 'expired'; x: number; z: number; roostIndex?: number } | null;
       /** LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e staging.
        * See engine/forest-engine.js's qaSetFogTideClock for the full rationale. */
       qaSetFogTideClock?: (seconds: number) => void;
@@ -647,7 +657,12 @@ declare global {
       qaBuildScene?: (scene: {
         trees?: { x: number; z: number; s?: number }[];
         props?: { kind: 'log' | 'rock' | 'bramble'; x: number; z: number; ry?: number }[];
-        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string; variant?: 'beaconHunter' }[];
+        /** LUL-5402: `inv`/`scentLock` are additive overrides (default ''/0, same
+         * as before) -- stage `state: 'investigate', inv: 'approach', scentLock: 1`
+         * to exercise biasTowardWind()'s scentLock>0 gate directly, since every
+         * other predator field this hook resets already force-sets real state the
+         * same way. */
+        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string; inv?: string; scentLock?: number; variant?: 'beaconHunter' }[];
         child?: { x: number; z: number };
         home?: { x: number; z: number };
       }) => { trees: number; props: number; predators: number };

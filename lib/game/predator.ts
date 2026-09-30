@@ -384,6 +384,25 @@ export function shouldRevertInvestigateToChase(
 // multiplier, SNIFF_APPROACH_MARGIN, or give the 'sniff' sub-phase its own
 // movement -- it only stops 'approach' from skipping the movement it was
 // already entitled to on its own transition tick.
+// ---- downwind investigation bias (LUL-5402) --------------------------------
+// scentOnto() sets p.scentLock but the approach heading it hands to
+// stepApproach() (aux/auz at the call site) is a pure straight line at the
+// live player or noiseTarget -- no wind term. Callers blend that heading
+// toward the wind vector before calling stepApproach(), gated on
+// `p.scentLock > 0` so only a scent-originated approach (not a noise/sight
+// downgrade) favors downwind -- see wiki
+// game/mechanics/predator-investigation-asymmetry for why the narrative
+// ("predators hunt downwind of scent") only holds for the scent channel.
+// `strength` is the wind vector's weight in the blend, not an angle: 0 keeps
+// the heading unchanged, larger values pull it further toward pure downwind.
+// Re-normalized so callers can keep treating the result as a unit heading.
+export const INVESTIGATION_DOWNWIND_BIAS = 0.3;
+export function biasTowardWind(ux: number, uz: number, windX: number, windZ: number, strength: number): { ux: number; uz: number } {
+  const bx = ux + windX * strength, bz = uz + windZ * strength;
+  const bd = Math.hypot(bx, bz) || 0.0001;
+  return { ux: bx / bd, uz: bz / bd };
+}
+
 export interface ApproachStep {
   desx: number;
   desz: number;

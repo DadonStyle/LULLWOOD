@@ -93,8 +93,10 @@ import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
   armReturnSweep,
   backOffPoint,
+  biasTowardWind,
   canCatchInChase,
   CATCH_MARGIN,
+  INVESTIGATION_DOWNWIND_BIAS,
   isCaught,
   isSniffImmune,
   pickRoamWaypoint,
@@ -156,6 +158,7 @@ import {
   canCompleteMission,
   completeMission,
   canCompleteSlackWater,
+  canCompleteFlush,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -192,13 +195,14 @@ import {
 } from '@/lib/game/timeOfDay';
 import { timeOfRunDetectMul, duskLionDetectMul, DUSK_LION_SIGHT_START_S } from '@/lib/game/dayNight';
 import { nearestLandmarkName } from '@/lib/game/chronicle';
+import { ROOSTS } from '@/lib/game/roostSites';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
   STAR, DUST, BW, BSP, DUST_WIND_SPEED, WARM,
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
-  VEIL_CHARM_INTERACT_RADIUS, ROOSTS, ROOST_COOLDOWN,
+  VEIL_CHARM_INTERACT_RADIUS, ROOST_COOLDOWN, ROOST_TRIGGER_RADIUS, ROOST_NOISE_RADIUS, ROOST_INVESTIGATE_TIME,
   CHAPEL_SANCTUARY_INTERACT_RADIUS, CHAPEL_SANCTUARY_DURATION,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
@@ -250,7 +254,16 @@ function init(onStateChange, inputMode) {
   // players; neither requires `?qaHooks=1` -- they change what generateMap()
   // builds, not what's exposed on window.ForestEngine.
   const qaParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
-  if(qaParams && qaParams.get('qaWorld') === 'micro') applyQaWorldMicroPreset();
+  if(qaParams && qaParams.get('qaWorld') === 'micro'){
+    applyQaWorldMicroPreset();
+    // LUL-5346: roostGroups (below) is built once at module load, from ROOSTS' raw
+    // (unscaled) positions, strictly before this qaWorld branch ever runs -- so the
+    // burst mesh has to be re-pinned here, once, to CONFIG.roostScaleMul's now-live
+    // value, or the visible burst would sit at the old full-map spot while every
+    // distance check (updateRoosts(), qaTeleportNearRoost()) already agrees on the
+    // scaled one. No-op outside qaWorld=micro (this branch never runs).
+    roostGroups.forEach((g, i) => g.position.set(ROOSTS[i].x * CONFIG.roostScaleMul, 14, ROOSTS[i].z * CONFIG.roostScaleMul));
+  }
   // Skips updateStreamedChunks()/layoutThrowableMeshes() inside generateMap()
   // below -- LUL-2249: streaming replaced the old direct layoutTreeChunks()/
   // layoutCoverMeshes() instantiate-everything calls with a ring-limited
@@ -340,6 +353,12 @@ const TOD_AUDIO = TIME_OF_DAY_AUDIO[timeOfDay];
 // specific variant -- same read pattern as ?qaHour= above. Read once at module init,
 // same lifetime as the other ?qa*= boot overrides.
 const qaForcedMissionKind = qaParams ? qaParams.get('qaMissionKind') : null;
+// LUL-5116: ?qaRoostIndex=<0-4> forces generateMap()'s flush-mission roost draw to a known
+// index, same read-once-at-module-init shape as qaMissionKind above -- for a test that needs
+// a specific roost deterministically instead of fighting the rng draw. Only takes effect
+// when the drawn mission is 'flush'; ignored (parsed but unused) otherwise, same as
+// qaMissionKind has no effect when a test doesn't also force that kind.
+const qaForcedRoostIndex = qaParams ? qaParams.get('qaRoostIndex') : null;
 
 // ---- Scene / camera / renderer -------------------------------------------
 const scene = new THREE.Scene();
@@ -1177,6 +1196,19 @@ function generateMap(seed){
   }
   missionHumTimer = 2;
   placeCave();   // LUL-1904: new rng consumer -- must stay last, after mission
+  // LUL-5116: draws which of the 5 ROOSTS this run's flush mission targets -- the new last
+  // rng() consumer, appended after placeCave() per LUL-1904's stream-ordering rule (this
+  // SPEC's Design call §2). No-op for every other mission kind. Respects ?qaRoostIndex for
+  // deterministic e2e staging, falling back to the real draw when absent/out of range.
+  // LUL-5160: 'beaconRoostFlush' needs the same roost draw -- it's flush's own non-spatial
+  // target kind, reused verbatim (see canCompleteFlush()). LUL-5426: 'lionRoostFlush' (M8)
+  // is the same non-spatial roost-target shape again, only the repositioned predator differs
+  // (a lion, not the beaconHunter wolf -- see repositionBeaconHunterForMission()).
+  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush'){
+    const forced = qaForcedRoostIndex !== null ? parseInt(qaForcedRoostIndex, 10) : NaN;
+    const idx = (forced >= 0 && forced < ROOSTS.length) ? forced : Math.floor(rng() * ROOSTS.length);
+    mission = { ...mission, target: { ...mission.target, roostIndex: idx } };
+  }
   buildGrid();   // landmarkData just changed (placeCave() may have pushed to it); same
                   // reasoning as the LUL-374 buildGrid() call above
   repositionBeaconHunterForMission(mission);   // LUL-5134: after placeCave(), not before --
@@ -1705,7 +1737,9 @@ function roostFlushSound(x, z){
 }
 function flushRoost(i){
   triggerRoostBurst(i);
-  roostFlushSound(ROOSTS[i].x, ROOSTS[i].z);
+  // LUL-5346: matches roostGroups[i]'s own scaled position (init(), where CONFIG.roostScaleMul
+  // is applied to the burst mesh) so the pan/near-far read matches where the burst actually plays.
+  roostFlushSound(ROOSTS[i].x * CONFIG.roostScaleMul, ROOSTS[i].z * CONFIG.roostScaleMul);
 }
 const lookM = new THREE.Matrix4(), lookQ = new THREE.Quaternion();
 function key3(time, keys){   // smoothstep-interpolated keyframes
@@ -1923,21 +1957,37 @@ function relocateParkedHunter(pcx, pcz){
 // placePredators() (:1819) runs BEFORE the mission is drawn (see the LUL-1258 comment at
 // generateMap()'s tail), so "spawn ~50u from the mission target" cannot be expressed as
 // MISSION_POOL data -- it needs this second placement pass. Only ever called when
-// mission.target.kind === 'beaconEvasion', so it can never perturb the tree/predator/mission
-// rng stream any other seed depends on -- it is new, additive rng consumption gated on a kind
-// that didn't exist before this ticket. Mirrors placePredators()'s own do/while shape
-// (:1848-1850) for the position draw, and its post-draw reset field list (:1850-1854)
-// verbatim, so this hunter starts this round exactly as "fresh" as it would from a normal
-// placePredators() draw, not mid-chase from wherever it was first placed.
+// mission.target.kind === 'beaconEvasion', (LUL-5160) 'beaconRoostFlush', or (LUL-5426)
+// 'lionRoostFlush', so it can never perturb the tree/predator/mission rng stream any other
+// seed depends on -- it is new, additive rng consumption gated on kinds that didn't exist
+// before these tickets. Mirrors
+// placePredators()'s own do/while shape (:1848-1850) for the position draw, and its post-draw
+// reset field list (:1850-1854) verbatim, so this hunter starts this round exactly as "fresh"
+// as it would from a normal placePredators() draw, not mid-chase from wherever it was first
+// placed.
 function repositionBeaconHunterForMission(mission){
-  if(mission.target.kind !== 'beaconEvasion') return;
-  const hunter = predators.find(p => p.variant === 'beaconHunter');
-  if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803)
+  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush') return;
+  // LUL-5426: 'lionRoostFlush' (M8) repositions a lion, not the permanent beaconHunter wolf --
+  // the mid-difficulty balanced-stat predator the proposal asks for, distinct from the
+  // sight-biased beaconHunter. predators.find(p => p.kind === 'lion') is the same lookup
+  // already used by qa hooks that stage a lion (:4631), picking the first of the 3 lions
+  // placePredators() (:1835) always spawns -- never expected to be missing.
+  const hunter = mission.target.kind === 'lionRoostFlush'
+    ? predators.find(p => p.kind === 'lion')
+    : predators.find(p => p.variant === 'beaconHunter');
+  if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803); lions are always placed (:1835)
+  // LUL-5160/LUL-5426: 'beaconRoostFlush'/'lionRoostFlush' have no real target.x/z (non-spatial,
+  // placeholder 0/0, same shape as 'flush') -- anchor on the drawn ROOSTS[roostIndex] site
+  // instead, scaled the same way every other ROOSTS distance-check site is (CONFIG.roostScaleMul,
+  // a no-op on the real map -- see its own comment, engine/tuning.js).
+  const anchor = (mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush')
+    ? { x: ROOSTS[mission.target.roostIndex].x * CONFIG.roostScaleMul, z: ROOSTS[mission.target.roostIndex].z * CONFIG.roostScaleMul }
+    : { x: mission.target.x, z: mission.target.z };
   let x, z, tries = 0;
   do {
     const ang = rng()*Math.PI*2;
-    x = mission.target.x + Math.cos(ang)*50;
-    z = mission.target.z + Math.sin(ang)*50;
+    x = anchor.x + Math.cos(ang)*50;
+    z = anchor.z + Math.sin(ang)*50;
     tries++;
   } while(blockedR(x, z, hunter.rad+0.5) && tries < 60);
   hunter.x = x; hunter.z = z; hunter.wpx = x; hunter.wpz = z; hunter.vx = 0; hunter.vz = 0; hunter.yaw = rng()*Math.PI*2;
@@ -2030,7 +2080,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2051,6 +2101,7 @@ const HINT_TEXT = {
   beaconHunter: 'a Beacon Hunter — locks onto you the instant you sprint into the wind, sight and scent don\'t matter to it. hide (H) or veil (F), or stop sprinting into the wind.',
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
   windAssist: 'sprinting into the wind moves you faster and quieter',
+  downwindInvestigation: 'predators hunt downwind of your scent — position yourself upwind to escape',
   windPulse:  'wind pulse — nearby predators pause their sprint when moving across the wind',
   cover:      'a bush — predators lose sight of you while you hold still',
   caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
@@ -2212,7 +2263,13 @@ function scentOnto(p){
   p.scentVeilReady = true;   // LUL-5004: a fresh lock cycle re-arms the one-time-per-lock break
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
-  predatorCall(p.kind, false, p);
+  // LUL-5402: pan the scent-lock growl toward downwind of this predator's own
+  // position -- the same direction the biased approach (biasTowardWind(), lib/
+  // game/predator.ts) will favor once this lock reaches the 'approach' sub-
+  // phase -- so the audio telegraphs the mechanic at the moment scent contact
+  // actually happens, not just once the predator is already closing in.
+  const downwindBearing = bearingOf(p.x + windX*10, p.z + windZ*10, player.x, player.z, player.yaw);
+  predatorCall(p.kind, false, p, bearingPan(downwindBearing));
   logChronicle('scent_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home) });
   scentLockEventCount++;   // LUL-2230: the trail caption dismisses itself on the first one of these
 }
@@ -2299,11 +2356,11 @@ function hearNoise(p){
 // live player -- see the noiseTarget override in updatePredators()'s approach
 // branch below. No new p.state/p.inv value; see spec §4.6 for the correctness
 // fix this makes to the CTO plan's literal "reuse hearNoise() unchanged."
-function hearThrowableNoise(p, tx, tz){
+function hearThrowableNoise(p, tx, tz, investigateTime = THROWABLE_INVESTIGATE_TIME){
   p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: tx, z: tz };
-  p.noiseTargetT = rnd(THROWABLE_INVESTIGATE_TIME[0], THROWABLE_INVESTIGATE_TIME[1]);
+  p.noiseTargetT = rnd(investigateTime[0], investigateTime[1]);
   if(captionsOn) pushState({ caption: `${p.kind} investigates a noise`, captionId: ++captionSeq });
 }
 // LUL-1255 (Ship 1 wayfinding S3): modeled on hearThrowableNoise() above, not
@@ -2820,6 +2877,17 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           adist = Math.hypot(ndx, ndz) || 0.0001;
           aux = ndx / adist; auz = ndz / adist;
         }
+        // LUL-5402: a scent-originated approach (p.scentLock > 0) favors closing in
+        // from downwind of the target -- see biasTowardWind()'s comment in
+        // lib/game/predator.ts for why this is gated on scentLock and not fired for
+        // a noise/sight-loss downgrade into the same 'approach' sub-phase. No
+        // separate p.investigationDownwindActive flag to reset elsewhere: the HUD
+        // push below (LUL-5402) re-derives the same `scentLock > 0` condition from
+        // live predator state every frame instead of caching a stale copy of it.
+        if(p.scentLock > 0){
+          const biased = biasTowardWind(aux, auz, windX, windZ, INVESTIGATION_DOWNWIND_BIAS);
+          aux = biased.ux; auz = biased.uz;
+        }
         const step = stepApproach(aux, auz, p.spec.speed*pSpeedScaleMul, adist, p.rad);
         desx = step.desx; desz = step.desz; speed = step.speed;
         if(step.enterSniff){
@@ -3009,21 +3077,37 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     p.g.position.x = p.x; p.g.position.z = p.z;
   }
 }
-// LUL-1914: slice (a), one-way feedback only. Reads p.x/p.z/p.state/p.inert on each
-// active predator; writes nothing on any predator. Does not call effectiveDetect(),
-// canSee(), or hearThrowableNoise() -- this is a spectator of predator state, not a
-// participant. Cooldown array is reset in restart().
-function updateRoosts(dt){
+// LUL-1914 (ambient) + LUL-2389 slice (b, player-sprint): the ambient branch below is
+// one-way feedback only -- reads p.x/p.z/p.state/p.inert on each active predator, writes
+// nothing on any predator. The player branch is the one participant: a sprint through
+// ROOST_TRIGGER_RADIUS fires hearThrowableNoise() at the roost's own (x,z), never the
+// player's, for every non-inert predator within ROOST_NOISE_RADIUS. Both branches share
+// roostCooldown[i] -- one physical flush event per roost regardless of cause (also shared
+// with LUL-4894's separate player-thrown-stone trigger in throwThrowable()). Cooldown
+// array is reset in restart().
+function updateRoosts(dt, running){
   updateRoostBursts(dt);
   for(let i=0;i<ROOSTS.length;i++){
     if(roostCooldown[i] > 0){ roostCooldown[i] -= dt; continue; }
     const r = ROOSTS[i];
+    // LUL-5346: CONFIG.roostScaleMul (1 on every real map) -- see its own comment,
+    // engine/tuning.js -- so this stays a no-op outside qaWorld=micro.
+    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
     for(const p of predators){
       if(p.inert || p.state !== 'chase') continue;
-      if(Math.hypot(p.x-r.x, p.z-r.z) < r.radius){
+      if(Math.hypot(p.x-rx, p.z-rz) < r.radius){
         flushRoost(i);
         roostCooldown[i] = ROOST_COOLDOWN;
         break;
+      }
+    }
+    if(roostCooldown[i] > 0) continue;   // the predator branch above may have just set it this tick
+    if(running && Math.hypot(player.x-r.x, player.z-r.z) < ROOST_TRIGGER_RADIUS){
+      flushRoost(i);
+      roostCooldown[i] = ROOST_COOLDOWN;
+      for(const p of predators){
+        if(p.inert) continue;
+        if(Math.hypot(p.x-r.x, p.z-r.z) < ROOST_NOISE_RADIUS) hearThrowableNoise(p, r.x, r.z, ROOST_INVESTIGATE_TIME);
       }
     }
   }
@@ -3715,12 +3799,20 @@ function announceCaption(kind, big, p){
   }
   pushState({ caption: `${kind} ${verb}${big ? ' (close)' : ''} · ${where}`, captionId: ++captionSeq });
 }
-function predatorCall(kind, big, p){
+// LUL-5402: `panVal` (-1..1, StereoPannerNode convention) is optional and only
+// passed by scentOnto() -- see its call site's comment for why the scent-lock
+// growl is the one caller that pans toward the downwind bias direction. Every
+// other caller omits it and keeps the original centered routing straight to
+// `master`; only the dry signal is panned; the `conv` reverb send stays
+// centered same as before, so the room tone doesn't move with it.
+function predatorCall(kind, big, p, panVal){
   if(captionsOn) announceCaption(kind, big, p);
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t = ctx.currentTime;
   const baseVol = big ? 1.0 : 0.6;
   const vol = p ? baseVol * callVolumeMul(Math.hypot(p.x - player.x, p.z - player.z)) : baseVol;
+  let dest = master;
+  if(panVal != null){ const pan = ctx.createStereoPanner(); pan.pan.value = Math.max(-1, Math.min(1, panVal)); pan.connect(master); dest = pan; }
   if(kind === 'wolf'){                              // howl: gliding tone with vibrato
     const o=ctx.createOscillator(); o.type='sawtooth';
     o.frequency.setValueAtTime(300,t); o.frequency.linearRampToValueAtTime(560,t+0.4);
@@ -3730,18 +3822,18 @@ function predatorCall(kind, big, p){
     const bp=ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=820; bp.Q.value=1.4;
     const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.22*vol,t+0.15);
     g.gain.setValueAtTime(0.22*vol,t+1.1); g.gain.exponentialRampToValueAtTime(0.0001,t+1.6);
-    o.connect(bp); bp.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+1.65);
+    o.connect(bp); bp.connect(g); g.connect(dest); g.connect(conv); o.start(t); o.stop(t+1.65);
   } else if(kind === 'bear'){                       // low guttural roar + noise
     [70,96].forEach(f => { const o=ctx.createOscillator(); o.type='sawtooth';
       o.frequency.setValueAtTime(f*1.2,t); o.frequency.exponentialRampToValueAtTime(f*0.8,t+0.9);
       const lp=ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=420; lp.Q.value=4;
       const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.28*vol,t+0.1);
       g.gain.setValueAtTime(0.28*vol,t+0.7); g.gain.exponentialRampToValueAtTime(0.0001,t+1.1);
-      o.connect(lp); lp.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+1.15); });
+      o.connect(lp); lp.connect(g); g.connect(dest); g.connect(conv); o.start(t); o.stop(t+1.15); });
     const nb=ctx.createBufferSource(); nb.buffer=noise(ctx,1.0,false);
     const nf=ctx.createBiquadFilter(); nf.type='lowpass'; nf.frequency.value=520;
     const ng=ctx.createGain(); ng.gain.setValueAtTime(0.0001,t); ng.gain.exponentialRampToValueAtTime(0.12*vol,t+0.1); ng.gain.exponentialRampToValueAtTime(0.0001,t+0.9);
-    nb.connect(nf); nf.connect(ng); ng.connect(master); nb.start(t); nb.stop(t+1.0);
+    nb.connect(nf); nf.connect(ng); ng.connect(dest); nb.start(t); nb.stop(t+1.0);
   } else {                                          // lion: rasping roar (fast AM + filter sweep)
     const o=ctx.createOscillator(); o.type='sawtooth';
     o.frequency.setValueAtTime(220,t); o.frequency.exponentialRampToValueAtTime(150,t+1.1);
@@ -3751,7 +3843,7 @@ function predatorCall(kind, big, p){
     g.gain.setValueAtTime(0.24*vol,t+0.8); g.gain.exponentialRampToValueAtTime(0.0001,t+1.2);
     const am=ctx.createOscillator(); am.type='sine'; am.frequency.value=30;
     const amg=ctx.createGain(); amg.gain.value=0.12*vol; am.connect(amg); amg.connect(g.gain); am.start(t); am.stop(t+1.25);
-    o.connect(lp); lp.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+1.25);
+    o.connect(lp); lp.connect(g); g.connect(dest); g.connect(conv); o.start(t); o.stop(t+1.25);
   }
 }
 // two quick snorts as it sniffs you out
@@ -3889,6 +3981,9 @@ let hudState = {
   veilCharge: 1, veilLocked: false, veilReserve: false,
   chargeVisible: false, chargeToken: 0,
   caveImmuneActive: false, caveImmuneTimeLeft: 0,
+  // LUL-5412: roost cooldown -- true while the nearest roost within ROOST_TRIGGER_RADIUS
+  // is still cooling down from a prior flush (any of the three Startled Roosts triggers).
+  roostCooldownActive: false, roostCooldownTimeLeft: 0,
   veilOverloadActive: false, veilOverloadTimeLeft: 0, veilOverloadVisible: false,
   // LUL-5004: Scent Veil -- #veilPrompt's visible/enabled pair (Q5: stays
   // visible, disabled+grayed, when only stamina blocks it).
@@ -3944,6 +4039,11 @@ let hudState = {
   // pushed every frame unlike windX/windZ above (map-constant, pushed once).
   // Drives #windIndicator's pulse class; not itself persisted or rationed.
   movingAgainstWind: false,
+  // LUL-5402: true while any live predator's scent-originated investigation
+  // approach is favoring downwind (biasTowardWind() gate). Drives
+  // #investigationDownwindIndicator, a sibling of #windIndicator -- see that
+  // pushState call in stepFrame() for how it's re-derived every frame.
+  investigationDownwindActive: false,
 };
 function pushState(patch){
   let changed = false;
@@ -4297,7 +4397,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // returns the same fields as a side effect of teleporting, this is for a
   // test that wants to read mission state without also moving the player.
   window.ForestEngine.qaProbeMission = function(){
-    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z };
+    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z, roostIndex: mission.target.roostIndex };
   };
 
   // [QA-HOOK] LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e
@@ -4486,7 +4586,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // detection channel actually fired.
     // LUL-5004: scentLock/scentVeilReady added for the Scent Veil e2e coverage --
     // real values off the real predator object, not a fake/QA-only shadow copy.
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime };
+    // LUL-2389: noiseTarget distinguishes "investigates the roost's position" (slice b,
+    // player-sprint flush) from "investigates the player's own position" -- both leave
+    // state==='investigate', only the target point tells them apart.
+    // LUL-5402: x/z/inv added for the downwind-investigation e2e coverage -- a test
+    // staging scentLock>0 in 'approach' needs the predator's own real position over
+    // several ticks to measure whether its path drifts downwind, and `inv` to confirm
+    // it's still in the 'approach' sub-phase this bias only applies to.
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null, x: p.x, z: p.z, inv: p.inv };
   };
   // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
   // stage a "first sighted" scenario -- effectiveDetect() applies
@@ -5690,6 +5797,22 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     p.state = 'roam'; p.hunt = false;
     return { idx, x: p.x, z: p.z };
   };
+  // [QA-HOOK] LUL-5116: flips predators[kind]'s FIRST live entry into 'chase' state without
+  // repositioning it -- composes with qaStagePredatorNearPlayer's existing dx/dz placement
+  // (call that first, then this) instead of duplicating its positioning logic. Needed because
+  // qaStagePredatorNearPlayer deliberately stages 'roam' (:5652, eight existing specs depend
+  // on that), and updateRoosts()'s ambient roost trigger only fires for 'chase'. Mirrors
+  // qaStageRockClimb's existing "set p.state directly" pattern.
+  window.ForestEngine.qaSetPredatorChasing = function(kind){
+    const idx = predators.findIndex(p => p.kind === kind);
+    if(idx < 0) return null;
+    const p = predators[idx];
+    // Mirrors every real chase-entry site's p.scentLock = SCENT_TRACK_TIME (e.g. :2227, :4898) --
+    // without it, shouldDowngradeChase() reverts 'chase' to 'investigate' on the very next tick
+    // if canSee() reads false for even one frame, before ambient consumers ever observe 'chase'.
+    p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+    return { idx };
+  };
   // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
   // an e2e spec can't wait out 14s+ of real decay, so it asserts the tier's effect on this
   // number instead of on live scent-point aging.
@@ -5721,31 +5844,34 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // (-sin(0),-cos(0)) = (0,-1), i.e. -z) means a throw from here lands 16u short of the
   // player, straight at the roost (18u throw - 2u offset), well inside its 20u radius,
   // so a spec can throw immediately with no extra facing setup. Mirrors
-  // qaTeleportNearStoneMarker/qaTeleportNearThrowable otherwise, since
-  // applyQaWorldMicroPreset() (engine/tuning.js) doesn't scale ROOSTS, so a roost keeps
-  // its full-map position even in the micro world. Defaults to the nearest roost to the
-  // player's current position so a spec doesn't have to know indices; returns null if
-  // that index doesn't exist.
+  // qaTeleportNearStoneMarker/qaTeleportNearThrowable otherwise. LUL-5346: scaled by
+  // CONFIG.roostScaleMul (a no-op, mul=1, on every real map) so the landing spot matches
+  // every other roost distance check (updateRoosts(), throwThrowable()'s nearestRoost scan) --
+  // the ROOSTS export itself still isn't touched, see roostScaleMul's own comment,
+  // engine/tuning.js. Defaults to the nearest roost to the player's current position so a
+  // spec doesn't have to know indices; returns null if that index doesn't exist.
   window.ForestEngine.qaTeleportNearRoost = function(i){
     if(i === undefined){
       let best = -1, bestD = Infinity;
       for(let k=0;k<ROOSTS.length;k++){
-        const d = Math.hypot(ROOSTS[k].x - player.x, ROOSTS[k].z - player.z);
+        const d = Math.hypot(ROOSTS[k].x * CONFIG.roostScaleMul - player.x, ROOSTS[k].z * CONFIG.roostScaleMul - player.z);
         if(d < bestD){ best = k; bestD = d; }
       }
       i = best;
     }
     const r = ROOSTS[i];
     if(!r) return null;
-    player.x = r.x; player.z = r.z + 2;
-    return { i, x: r.x, z: r.z };
+    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
+    player.x = rx; player.z = rz + 2;
+    return { i, x: rx, z: rz };
   };
   // [QA-HOOK] LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a
   // spec assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
   // that a second throw within ROOST_COOLDOWN does NOT re-flush it (shared-cooldown proof
-  // with the ambient updateRoosts() trigger). No new engine state.
+  // with the ambient updateRoosts() trigger). LUL-5412: deniedCueCount is global (the tell
+  // doesn't vary by roost), included here rather than a new hook.
   window.ForestEngine.qaProbeRoostState = function(i){
-    return { cooldown: roostCooldown[i], burstActive: roostBurstStart[i] >= 0 };
+    return { cooldown: roostCooldown[i], burstActive: roostBurstStart[i] >= 0, deniedCueCount: qaRoostFlushDeniedCueCount };
   };
   // [QA-HOOK] LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. Includes the
   // activation cue's fire count so a spec can assert it without decoding WebAudio output.
@@ -5948,8 +6074,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.x = spec.x; p.z = spec.z; p.wpx = spec.x; p.wpz = spec.z; p.vx = 0; p.vz = 0; p.yaw = 0;
       p.variant = spec.variant;   // LUL-4897: additive, e.g. 'beaconHunter' for a wolf; undefined for every ordinary predator
       p.beaconHunterLocked = false;
-      p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
-      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = 0; p.scentCalls = 0; p.scentVeilReady = false;
+      // LUL-5402: `spec.inv`/`spec.scentLock` are additive overrides (default '' /0,
+      // same as before) -- direct-to-'investigate'/'approach' staging otherwise can't
+      // exercise biasTowardWind()'s scentLock>0 gate, since every other field this
+      // block force-resets already. Not a "fake state" hook (see the module-level
+      // hooks-must-use-real-path rule): this just force-sets p.state/p.inv/p.scentLock
+      // directly, the same way every other field on this predator already is here.
+      p.state = spec.state || 'roam'; p.spotted = false; p.inv = spec.inv || ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
+      p.approachEnteredHidden = false;
+      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = spec.scentLock || 0; p.scentCalls = 0; p.scentVeilReady = false;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0; p.sightFlicker = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
       p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;
@@ -6133,16 +6266,26 @@ function throwThrowable(){
   // two paths can't double-fire the same roost in quick succession.
   let nearestRoost = -1, nearestRoostDist = Infinity;
   for(let i=0;i<ROOSTS.length;i++){
-    const dist = Math.hypot(ROOSTS[i].x - landX, ROOSTS[i].z - landZ);
+    // LUL-5346: CONFIG.roostScaleMul -- matches qaTeleportNearRoost()'s own scaled landing spot,
+    // see its comment; a no-op (mul=1) on every real map.
+    const dist = Math.hypot(ROOSTS[i].x * CONFIG.roostScaleMul - landX, ROOSTS[i].z * CONFIG.roostScaleMul - landZ);
     if(dist < ROOSTS[i].radius && dist < nearestRoostDist){ nearestRoost = i; nearestRoostDist = dist; }
   }
   if(nearestRoost >= 0 && roostCooldown[nearestRoost] <= 0){
     flushRoost(nearestRoost);
     roostCooldown[nearestRoost] = ROOST_COOLDOWN;
+    // LUL-5116: nearestRoost is the roost THIS throw just flushed -- the only call site
+    // that can make canCompleteFlush true, per this mission's Q1.5 answer.
+    if(mission && canCompleteFlush(mission, nearestRoost)) mission = completeMission(mission);
     if(!hintSeen('roostThrowCue')){
       markHintSeen('roostThrowCue');
       if(captionsOn) pushState({ caption: 'throw a stone at a roost to startle it', captionId: ++captionSeq });
     }
+  } else if(nearestRoost >= 0){
+    // LUL-5412: the roost that would have caught this throw is already on cooldown -- a
+    // denial tell instead of the silent no-op the throw used to be (Q5: refused input
+    // needs a positive tell, not the absence of a prompt).
+    roostFlushDeniedCue();
   }
 }
 function finishPickup(){
@@ -6438,6 +6581,26 @@ function scentVeilDeniedCue(){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.26);
+}
+// LUL-5412: Roost cooldown -- denial tell for a player throw that lands on a roost already
+// on cooldown (throwThrowable()'s nearestRoost branch below). Mirrors rockClimbDeniedCue()'s
+// exact shape (:6448 area) -- same square/100Hz/~0.17s buzz, same counter-before-audio-gate
+// idiom, same unconditional-on-every-press caption -- "the codebase's one existing 'input
+// was refused' cue" pattern, not a new one. qaRoostFlushDeniedCueCount is global (not
+// per-roost) since the tell itself doesn't vary by which roost was targeted.
+let qaRoostFlushDeniedCueCount = 0;
+function roostFlushDeniedCue(){
+  qaRoostFlushDeniedCueCount++;
+  if(captionsOn){
+    pushState({ caption: 'that roost is still resettling from the last flush', captionId: ++captionSeq });
+  }
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(100, t);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.17);
 }
 // LUL-3149: Wind-Assisted Evasion cues -- same rising-start/falling-end shape as
 // caveImmuneStartCue/EndCue above, but a shorter, quieter pair: this is a continuous
@@ -7236,7 +7399,7 @@ function stepFrame(dt, t, skipRender){
     }
   }
   if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
-  if(playing) updateRoosts(dt);   // LUL-1914: roost feedback, same gate as predator AI
+  if(playing) updateRoosts(dt, running);   // LUL-1914/LUL-2389: roost feedback, same gate as predator AI
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
   // ---- threat metrics: nearest predator + who's actively coming for you ----
@@ -7329,6 +7492,22 @@ function stepFrame(dt, t, skipRender){
   const distChapel = Math.hypot(player.x - landmarkGroups.chapelSteeple.position.x, player.z - landmarkGroups.chapelSteeple.position.z);
   chapelSanctuaryInRadius = distChapel < CHAPEL_SANCTUARY_INTERACT_RADIUS;
   chapelSanctuaryPromptVisible = chapelSanctuaryInRadius && !chapelSanctuaryUsedThisRun && !chapelSanctuaryActive;
+  // LUL-5412: roost cooldown cue -- re-derived fresh every frame from the live
+  // roostCooldown[] array (no persisted per-roost flag, same reasoning as
+  // investigationDownwindActive below), so there is no state to reset when the player
+  // walks out of range. Reuses ROOST_TRIGGER_RADIUS -- the same "near a roost" radius the
+  // player-sprint ambient trigger already uses -- rather than adding a second roost-
+  // proximity constant. Nearest roost only: two roosts can't both be within this radius on
+  // any real map (they're placed well over ROOST_TRIGGER_RADIUS*2 apart).
+  let nearestRoostCooldownT = 0;
+  {
+    let bestD = Infinity;
+    for(let ri = 0; ri < ROOSTS.length; ri++){
+      const rx = ROOSTS[ri].x * CONFIG.roostScaleMul, rz = ROOSTS[ri].z * CONFIG.roostScaleMul;
+      const d = Math.hypot(player.x - rx, player.z - rz);
+      if(d < ROOST_TRIGGER_RADIUS && d < bestD){ bestD = d; nearestRoostCooldownT = roostCooldown[ri]; }
+    }
+  }
   // LUL-1623: nearest-throwable distance computed once per frame, reused only
   // for the HUD gate below -- grabThrowable() re-scans on its own discrete
   // keypress/tap event, not every frame.
@@ -7491,6 +7670,8 @@ function stepFrame(dt, t, skipRender){
         : null,
       caveImmuneActive: caveImmuneT > 0,
       caveImmuneTimeLeft: caveImmuneT,
+      roostCooldownActive: nearestRoostCooldownT > 0,
+      roostCooldownTimeLeft: nearestRoostCooldownT,
       veilOverloadActive: veilOverloadChargeT > 0,
       veilOverloadTimeLeft: veilOverloadChargeT,
       veilOverloadVisible: veilOverloadTriggerActive && veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound,
@@ -7504,9 +7685,15 @@ function stepFrame(dt, t, skipRender){
       chapelSanctuaryPromptVisible,
       coldWalkActive: coldWalkOptIn && !pickingUp,
       coldWalkBroken,
+      // LUL-5402: re-derived fresh every frame from live predator state (state
+      // === 'investigate' && inv === 'approach' && scentLock > 0 is exactly
+      // biasTowardWind()'s gate at the engine call site) -- no persisted
+      // per-predator flag to keep in sync, so nothing to reset when a
+      // predator leaves 'approach'.
+      investigationDownwindActive: predators.some(function(p){ return !p.inert && p.state === 'investigate' && p.inv === 'approach' && p.scentLock > 0; }),
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false, coldWalkActive: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, roostCooldownActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false, coldWalkActive: false, investigationDownwindActive: false });
   }
   // the child's idle glow, outside the pickup cinematic.
   if(!baby.taken){
@@ -7689,6 +7876,11 @@ function stepFrame(dt, t, skipRender){
         }
         case 'stamina': return [staminaCharge <= 0, null];
         case 'windAssist': return [running && movingAgainstWind, null];
+        // LUL-5402: same gate as biasTowardWind()'s call site (state === 'investigate'
+        // && inv === 'approach' && scentLock > 0) -- self/panel-anchored like windAssist,
+        // re-derived here rather than sharing a variable with the pushState computation
+        // above (out of scope at this point in stepFrame()).
+        case 'downwindInvestigation': return [predators.some(function(p){ return !p.inert && p.state === 'investigate' && p.inv === 'approach' && p.scentLock > 0; }), null];
         case 'windPulse': return [predators.some(p => p.windPauseT > 0), null];
         case 'cover': return [coverHintVisible, lastHideSpot ? { x: lastHideSpot.x, y: 1, z: lastHideSpot.z } : null];
         case 'caveImmune': return [caveImmuneT > 0, null];
