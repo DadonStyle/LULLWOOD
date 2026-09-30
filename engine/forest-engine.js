@@ -206,6 +206,7 @@ import { timeOfRunDetectMul, duskLionDetectMul, DUSK_LION_SIGHT_START_S } from '
 import { nearestLandmarkName } from '@/lib/game/chronicle';
 import { ROOSTS } from '@/lib/game/roostSites';
 import { SCENT_MASK_SITES, findScentMaskSiteIndex, scentMaskGlowWeight } from '@/lib/game/scentMaskSites';
+import { DECOY_SCENT_SITES, findDecoyScentSiteIndex, decoyScentGlowWeight } from '@/lib/game/decoyScentSites';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -213,6 +214,7 @@ import {
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, ROOST_COOLDOWN, ROOST_TRIGGER_RADIUS, ROOST_NOISE_RADIUS, ROOST_INVESTIGATE_TIME,
+  DECOY_COOLDOWN, DECOY_SCENT_RADIUS, DECOY_INVESTIGATE_TIME,
   CHAPEL_SANCTUARY_INTERACT_RADIUS, CHAPEL_SANCTUARY_DURATION,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
@@ -277,6 +279,10 @@ function init(onStateChange, inputMode) {
     // module load from SCENT_MASK_SITES' raw (unscaled) positions, strictly before this
     // qaWorld branch ever runs.
     scentMaskGlowMeshes.forEach((m, i) => m.position.set(SCENT_MASK_SITES[i].x * CONFIG.scentMaskScaleMul, 0.04, SCENT_MASK_SITES[i].z * CONFIG.scentMaskScaleMul));
+    // LUL-5566: same re-pin, same reason -- decoyScentGlowMeshes (below) is built once at
+    // module load from DECOY_SCENT_SITES' raw (unscaled) positions, strictly before this
+    // qaWorld branch ever runs.
+    decoyScentGlowMeshes.forEach((m, i) => m.position.set(DECOY_SCENT_SITES[i].x * CONFIG.decoyScaleMul, 0.04, DECOY_SCENT_SITES[i].z * CONFIG.decoyScaleMul));
   }
   // Skips updateStreamedChunks()/layoutThrowableMeshes() inside generateMap()
   // below -- LUL-2249: streaming replaced the old direct layoutTreeChunks()/
@@ -666,6 +672,15 @@ let playerInScentMaskSiteIndex = -1;
 // ROOSTS' x/z position scales down for the micro world's movement-clamp bounds.
 function scaledScentMaskSites(){
   return SCENT_MASK_SITES.map(s => ({ ...s, x: s.x * CONFIG.scentMaskScaleMul, z: s.z * CONFIG.scentMaskScaleMul }));
+}
+// LUL-5566: index into DECOY_SCENT_SITES the player currently stands inside, or -1.
+// Same "fixed site, recomputed every tick" shape as playerInScentMaskSiteIndex above.
+let playerInDecoyScentSiteIndex = -1;
+// LUL-5566: one physical redirect event per cooldown, same shape as roostCooldown
+// (below) -- shared Float32Array-per-site convention even though there's only one
+// site today, so a second site needs no shape change here. Reset in restart().
+function scaledDecoyScentSites(){
+  return DECOY_SCENT_SITES.map(s => ({ ...s, x: s.x * CONFIG.decoyScaleMul, z: s.z * CONFIG.decoyScaleMul }));
 }
 let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
 let coldWalkOptIn = false, coldWalkBroken = false;
@@ -1374,6 +1389,20 @@ const scentMaskGlowMeshes = SCENT_MASK_SITES.map(s => {
   return mesh;
 });
 
+// ---- Scent-decoy site (LUL-5566 cheap slice) ------------------------------
+// Same "static ring + additive blend" recipe as the scent-masking sites above,
+// one fixed world position (lib/game/decoyScentSites.ts). Distinct color so
+// the two "scent" site kinds stay visually distinguishable.
+const DECOY_SCENT_GLOW_COLOR = 0xc9432f;
+const decoyScentGlowMeshes = DECOY_SCENT_SITES.map(s => {
+  const mesh = new THREE.Mesh(new THREE.RingGeometry(s.radius*0.7, s.radius*1.05, 40),
+    new THREE.MeshBasicMaterial({ color: DECOY_SCENT_GLOW_COLOR, transparent: true, opacity: 0.18,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  mesh.rotation.x = -Math.PI/2; mesh.position.set(s.x, 0.04, s.z);
+  scene.add(mesh);
+  return mesh;
+});
+
 // ---- Navigational landmarks (LUL-25) --------------------------------------
 // Same "static group + a light to read through the fog" recipe as the home
 // beacon above, just four distinct low-poly silhouettes instead of a
@@ -1725,6 +1754,7 @@ let boomStart = -1;
 // few seconds from different predators, so each site needs its own timer).
 const ROOST_BURST_PTS = 10;   // bird-lift silhouette, not an explosion -- keep small
 const roostCooldown = new Float32Array(ROOSTS.length);      // seconds remaining, 0 = ready
+const decoyCooldown = new Float32Array(DECOY_SCENT_SITES.length);   // LUL-5566: seconds remaining, 0 = ready
 const roostSprintDeniedPlayed = new Uint8Array(ROOSTS.length);  // LUL-5442: debounce flag, mirrors staminaLowCuePlayed hysteresis pattern
 const roostBurstStart = new Float32Array(ROOSTS.length).fill(-1);  // seconds since flush, -1 = idle
 const roostBurstVel = ROOSTS.map(() => []);
@@ -2230,7 +2260,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion','skyCompassNavigation',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2260,6 +2290,7 @@ const HINT_TEXT = {
   veilOverload: 'burn all veil charge (Q) for a detection-proof escape',
   throwable:  'a stone — E to pick up, throw to break a chase',
   scentMask:  "a scent-masking site — your footsteps are hidden here; predators can't track your trail while you stay inside",
+  decoyScent: "a scent-decoy site — leave it behind you and nearby predators will investigate it instead of you",
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
   duskLion:   "as night falls, the lion's sight weakens — darkness favors the quiet",
   chapelVeilEscapeStage1: 'the chapel offers refuge — dwell inside to earn a veil reserve, then survive a chase with veil overload',
@@ -6179,6 +6210,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       exitCueCount: qaScentMaskExitCueCount,
     };
   };
+  // [QA-HOOK] LUL-5566: the live decoy-site index, the fixed site list (x/z already
+  // scaled by CONFIG.decoyScaleMul, same convention as qaProbeScentMaskSite above),
+  // per-site cooldown remaining, and the exit-cue count the redirect fires alongside.
+  window.ForestEngine.qaProbeDecoyScentSite = function(){
+    return {
+      index: playerInDecoyScentSiteIndex,
+      sites: scaledDecoyScentSites().map(s => ({ id: s.id, x: s.x, z: s.z, radius: s.radius })),
+      cooldown: Array.from(decoyCooldown),
+      exitCueCount: qaDecoyScentExitCueCount,
+    };
+  };
 
   // [QA-HOOK] LUL-2230: sets the camera yaw directly (the same player.yaw
   // every look-input path writes, see camera.rotation.set(player.pitch,
@@ -6882,6 +6924,21 @@ function scentMaskExitCue(){
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.24);
 }
+// LUL-5566: Scent Decoy Site's exit cue -- fires the same frame as the redirect
+// itself (stepFrame() below), a lower, harsher register than scentMaskExitCue()
+// so "you just threw the hunt off your scent" reads distinctly from "you just
+// left a masking site."
+let qaDecoyScentExitCueCount = 0;
+function decoyScentExitCue(){
+  qaDecoyScentExitCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sawtooth';
+  o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(90, t + 0.18);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.28);
+}
 // LUL-4893: Predator Pause's cue -- a rising chime distinct in register from
 // windAssistStartCue's 440->660Hz pair so the two wind-driven effects (player
 // sprint bonus vs. predator freeze) stay audibly distinguishable.
@@ -7012,6 +7069,7 @@ function restart(){
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   winPendingActive = false; winPendingT = 0; if(winPendingEl) winPendingEl.style.opacity = '0';   // LUL-1633
   roostCooldown.fill(0); roostSprintDeniedPlayed.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
+  decoyCooldown.fill(0);   // LUL-5566
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
@@ -7570,6 +7628,26 @@ function stepFrame(dt, t, skipRender){
     if(prevScentMaskSiteIndex === -1 && playerInScentMaskSiteIndex !== -1) scentMaskEnterCue();
     else if(prevScentMaskSiteIndex !== -1 && playerInScentMaskSiteIndex === -1) scentMaskExitCue();
   }
+  // LUL-5566: Scent Decoy Site -- on exit, if the site isn't cooling down, every
+  // non-inert predator within DECOY_SCENT_RADIUS of the site hears a throwable-style
+  // noise at the site's own (x,z) (hearThrowableNoise()'s noiseTarget override --
+  // proven to redirect a live chase off the real player, see updateRoosts() above).
+  // One physical event per cooldown, same shape as ROOSTS' flush trigger.
+  {
+    const prevDecoyScentSiteIndex = playerInDecoyScentSiteIndex;
+    const scaledDecoySites = scaledDecoyScentSites();
+    playerInDecoyScentSiteIndex = findDecoyScentSiteIndex(player.x, player.z, scaledDecoySites, WRAP_SPAN, WRAP_SPAN);
+    for(let i=0;i<decoyCooldown.length;i++) if(decoyCooldown[i] > 0) decoyCooldown[i] -= dt;
+    if(prevDecoyScentSiteIndex !== -1 && playerInDecoyScentSiteIndex === -1 && decoyCooldown[prevDecoyScentSiteIndex] <= 0){
+      const site = scaledDecoySites[prevDecoyScentSiteIndex];
+      for(const p of predators){
+        if(p.inert) continue;
+        if(Math.hypot(p.x-site.x, p.z-site.z) < DECOY_SCENT_RADIUS) hearThrowableNoise(p, site.x, site.z, DECOY_INVESTIGATE_TIME);
+      }
+      decoyCooldown[prevDecoyScentSiteIndex] = DECOY_COOLDOWN;
+      decoyScentExitCue();
+    }
+  }
 
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this
@@ -8077,6 +8155,15 @@ function stepFrame(dt, t, skipRender){
       scentMaskGlowMeshes[i].material.opacity = 0.12 + pulse + w*0.35;
     }
   }
+  // LUL-5566: same proximity-brightening recipe as the scent-masking sites above.
+  {
+    const scaledDecoySites = scaledDecoyScentSites();
+    for(let i=0;i<scaledDecoySites.length;i++){
+      const w = decoyScentGlowWeight(player.x, player.z, scaledDecoySites[i], WRAP_SPAN, WRAP_SPAN);
+      const pulse = motionReduced() ? 0 : Math.sin(t*1.1)*0.05;
+      decoyScentGlowMeshes[i].material.opacity = 0.12 + pulse + w*0.35;
+    }
+  }
 
   // ambient dust follows you, drifting downwind (LUL-195, see setup above)
   const amp = motionReduced() ? 0.3 : 1, dp = dustGeo.attributes.position.array;
@@ -8195,6 +8282,7 @@ function stepFrame(dt, t, skipRender){
         case 'veilOverload': return [veilOverloadChargeT > 0, null];
         case 'throwable': return [throwableHintEligible, throwableHintAnchor];
         case 'scentMask': return [playerInScentMaskSiteIndex !== -1, null];
+        case 'decoyScent': return [playerInDecoyScentSiteIndex !== -1, null];
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
         case 'duskLion': return [runElapsed >= DUSK_LION_SIGHT_START_S, null];   // LUL-4889: time-only, no world anchor
         default: return [false, null];
@@ -8207,6 +8295,7 @@ function stepFrame(dt, t, skipRender){
         case 'throwable': return throwableGrabCount > baseline;
         case 'caveImmune': return caveImmuneT <= 0;
         case 'scentMask': return playerInScentMaskSiteIndex === -1;
+        case 'decoyScent': return playerInDecoyScentSiteIndex === -1;
         case 'windPulse': return !predators.some(p => p.windPauseT > 0);
         case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'deepwater': return missionCanComplete;
