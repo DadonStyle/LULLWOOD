@@ -200,6 +200,7 @@ import {
 import { timeOfRunDetectMul, duskLionDetectMul, DUSK_LION_SIGHT_START_S } from '@/lib/game/dayNight';
 import { nearestLandmarkName } from '@/lib/game/chronicle';
 import { ROOSTS } from '@/lib/game/roostSites';
+import { SCENT_MASK_SITES, findScentMaskSiteIndex, scentMaskGlowWeight } from '@/lib/game/scentMaskSites';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -267,6 +268,10 @@ function init(onStateChange, inputMode) {
     // distance check (updateRoosts(), qaTeleportNearRoost()) already agrees on the
     // scaled one. No-op outside qaWorld=micro (this branch never runs).
     roostGroups.forEach((g, i) => g.position.set(ROOSTS[i].x * CONFIG.roostScaleMul, 14, ROOSTS[i].z * CONFIG.roostScaleMul));
+    // LUL-5493: same re-pin, same reason -- scentMaskGlowMeshes (below) is built once at
+    // module load from SCENT_MASK_SITES' raw (unscaled) positions, strictly before this
+    // qaWorld branch ever runs.
+    scentMaskGlowMeshes.forEach((m, i) => m.position.set(SCENT_MASK_SITES[i].x * CONFIG.scentMaskScaleMul, 0.04, SCENT_MASK_SITES[i].z * CONFIG.scentMaskScaleMul));
   }
   // Skips updateStreamedChunks()/layoutThrowableMeshes() inside generateMap()
   // below -- LUL-2249: streaming replaced the old direct layoutTreeChunks()/
@@ -644,6 +649,17 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 // gate; caveImmuneT is the live countdown (0 = inactive), decremented in
 // tick() alongside the other per-frame timers.
 let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
+// LUL-5493: index into SCENT_MASK_SITES the player currently stands inside, or -1.
+// Fixed sites (not part of generateMap()'s procedural draw), so no per-round reset --
+// recomputed every stepFrame() tick below, after player.x/z are final for the frame.
+let playerInScentMaskSiteIndex = -1;
+// LUL-5493: SCENT_MASK_SITES scaled by CONFIG.scentMaskScaleMul (see tuning.js -- same
+// "scale the read, not the source" shape as ROOSTS/roostScaleMul). Radius is left
+// unscaled on purpose, same precedent as ROOST_TRIGGER_RADIUS staying fixed while only
+// ROOSTS' x/z position scales down for the micro world's movement-clamp bounds.
+function scaledScentMaskSites(){
+  return SCENT_MASK_SITES.map(s => ({ ...s, x: s.x * CONFIG.scentMaskScaleMul, z: s.z * CONFIG.scentMaskScaleMul }));
+}
 let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
 let coldWalkOptIn = false, coldWalkBroken = false;
 // LUL-5005: Chapel Sanctuary -- chapelSanctuaryActive is the live dwell gate,
@@ -1296,6 +1312,21 @@ const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG
   new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
 homeRing.rotation.x = -Math.PI/2; homeRing.position.set(CONFIG.home.x, 0.04, CONFIG.home.z); scene.add(homeRing);
+
+// ---- Scent-masking sites (LUL-5493 cheap slice) ---------------------------
+// Same "static ring + additive blend" recipe as homeRing above -- three fixed
+// world positions (lib/game/scentMaskSites.ts), one mesh per site (not a single
+// shared ring) so each site's glow can brighten independently as the player
+// nears its own center (scentMaskGlowWeight(), read in tick() below).
+const SCENT_MASK_GLOW_COLOR = { marsh: 0x2fae8a, pine: 0xd98a3d };
+const scentMaskGlowMeshes = SCENT_MASK_SITES.map(s => {
+  const mesh = new THREE.Mesh(new THREE.RingGeometry(s.radius*0.7, s.radius*1.05, 40),
+    new THREE.MeshBasicMaterial({ color: SCENT_MASK_GLOW_COLOR[s.type], transparent: true, opacity: 0.18,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  mesh.rotation.x = -Math.PI/2; mesh.position.set(s.x, 0.04, s.z);
+  scene.add(mesh);
+  return mesh;
+});
 
 // ---- Navigational landmarks (LUL-25) --------------------------------------
 // Same "static group + a light to read through the fog" recipe as the home
@@ -2152,7 +2183,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','veil','duskLion'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2180,6 +2211,7 @@ const HINT_TEXT = {
   rockClimb:  'climb the rock to see farther — but you\'re exposed while you\'re up there',
   veilOverload: 'burn all veil charge (Q) for a detection-proof escape',
   throwable:  'a stone — E to pick up, throw to break a chase',
+  scentMask:  "a scent-masking site — your footsteps are hidden here; predators can't track your trail while you stay inside",
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
   duskLion:   "as night falls, the lion's sight weakens — darkness favors the quiet",
 };
@@ -2252,6 +2284,7 @@ function projectToScreen(x, y, z){
 }
 
 function depositScent(hot, againstWind){
+  if(playerInScentMaskSiteIndex !== -1) return;   // LUL-5493: a scent-masking site hides footstep scent entirely
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
   const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
   scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
@@ -6057,6 +6090,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // math in the page context. `points`/`livePoints` let a test cross-check
   // "the array decayed" against "the picture decayed" independently.
   window.ForestEngine.qaProbeScentTrail = function(){ return scentTrailLastFrame; };
+  // [QA-HOOK] LUL-5493: the live scent-masking site index (matches SCENT_MASK_SITES'
+  // own order) plus the fixed site list itself -- x/z already scaled by
+  // CONFIG.scentMaskScaleMul (1 on the full map, 0.2 under qaWorld=micro, same as every
+  // other engine read of these sites), so a test can qaTeleportTo(sites[i].x, sites[i].z)
+  // or walk there directly without re-deriving the scale factor itself.
+  window.ForestEngine.qaProbeScentMaskSite = function(){
+    return {
+      index: playerInScentMaskSiteIndex,
+      sites: scaledScentMaskSites().map(s => ({ id: s.id, type: s.type, x: s.x, z: s.z, radius: s.radius })),
+    };
+  };
 
   // [QA-HOOK] LUL-2230: sets the camera yaw directly (the same player.yaw
   // every look-input path writes, see camera.rotation.set(player.pitch,
@@ -7392,6 +7436,10 @@ function stepFrame(dt, t, skipRender){
   // every tick regardless of movement, or a stationary player's fully-decayed
   // scent points never leave the array.
   pruneScentPoints();
+  // LUL-5493: same "once per stepFrame(), after every player.x/z write" placement
+  // as updateStreamedChunks(false) above -- a QA teleport into a site is picked up
+  // next frame with zero movement input, same as real walking into one.
+  playerInScentMaskSiteIndex = findScentMaskSiteIndex(player.x, player.z, scaledScentMaskSites(), WRAP_SPAN, WRAP_SPAN);
 
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this
@@ -7879,6 +7927,19 @@ function stepFrame(dt, t, skipRender){
     landmarkBeaconGlows[kind].material.opacity = opacity;
   }
 
+  // LUL-5493: brightens as the player nears a site's own center (Q15: glow intensity
+  // increases on approach); the ambient sine pulse degrades to static under
+  // reducedMotion, same as everywhere else in this file, but the proximity term does
+  // not -- losing the pulse shouldn't also hide "you're getting close."
+  {
+    const scaledSites = scaledScentMaskSites();
+    for(let i=0;i<scaledSites.length;i++){
+      const w = scentMaskGlowWeight(player.x, player.z, scaledSites[i], WRAP_SPAN, WRAP_SPAN);
+      const pulse = motionReduced() ? 0 : Math.sin(t*1.1)*0.05;
+      scentMaskGlowMeshes[i].material.opacity = 0.12 + pulse + w*0.35;
+    }
+  }
+
   // ambient dust follows you, drifting downwind (LUL-195, see setup above)
   const amp = motionReduced() ? 0.3 : 1, dp = dustGeo.attributes.position.array;
   const wdx = windX * dt * DUST_WIND_SPEED * amp, wdz = windZ * dt * DUST_WIND_SPEED * amp;
@@ -7992,6 +8053,7 @@ function stepFrame(dt, t, skipRender){
         case 'caveImmune': return [caveImmuneT > 0, null];
         case 'veilOverload': return [veilOverloadChargeT > 0, null];
         case 'throwable': return [throwableHintEligible, throwableHintAnchor];
+        case 'scentMask': return [playerInScentMaskSiteIndex !== -1, null];
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
         case 'duskLion': return [runElapsed >= DUSK_LION_SIGHT_START_S, null];   // LUL-4889: time-only, no world anchor
         default: return [false, null];
@@ -8003,6 +8065,7 @@ function stepFrame(dt, t, skipRender){
         case 'wolf': case 'bear': case 'lion': case 'beaconHunter': case 'cover': return hideEventCount > baseline;
         case 'throwable': return throwableGrabCount > baseline;
         case 'caveImmune': return caveImmuneT <= 0;
+        case 'scentMask': return playerInScentMaskSiteIndex === -1;
         case 'windPulse': return !predators.some(p => p.windPauseT > 0);
         case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'deepwater': return missionCanComplete;

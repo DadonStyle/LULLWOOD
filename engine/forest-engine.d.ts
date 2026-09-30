@@ -627,6 +627,14 @@ declare global {
         windX: number;
         windZ: number;
       };
+      /** LUL-5493: the live scent-masking site index (matches SCENT_MASK_SITES' own
+       * order, -1 if outside every site) plus the fixed site list itself, so a test
+       * can teleport to a known site's x/z (qaTeleportTo) without hardcoding
+       * SCENT_MASK_SITES a second time. */
+      qaProbeScentMaskSite?: () => {
+        index: number;
+        sites: { id: string; type: 'marsh' | 'pine'; x: number; z: number; radius: number }[];
+      };
       /** LUL-2230: sets the camera yaw directly (the same `player.yaw` every
        * look-input path writes) so a test can turn to face its own scent
        * trail without pointer lock. Read-only otherwise -- no movement. */

@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8172 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7192, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8235 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7236, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1677,15 +1677,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6397, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6789). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6501, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6871). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6789) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6841) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6469) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1743,7 +1743,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4193) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4245) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
@@ -2761,7 +2761,7 @@ already saw the scent caption doesn't see it a second time under the new key.
 **Anchoring**: `scent`/`wolf`/`bear`/`lion`/`cover`/`throwable` are world-anchored — a real 3D
 point (the mote/animal/prop/stone), projected to a viewport fraction via the same
 camera-frustum math LUL-2230 introduced (`projectToScreen()`, generalized out of the
-scent-only inline version). `deepwater`/`stamina`/`caveImmune`/`veil`/`landmark`
+scent-only inline version). `deepwater`/`stamina`/`caveImmune`/`veil`/`landmark`/`scentMask`
 have no natural 3D point (or, for stamina/veil, no player-facing meter to anchor to at all —
 see `SettingsPanel.tsx`'s own note that `#panel`'s stamina/veil readouts are dev-only;
 `landmark` fires unconditionally on entry with nothing specific to point at, same as the old
@@ -2942,7 +2942,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6715) and `windAssistEndCue()` (L6724), edge-triggers on the combined
+`windAssistStartCue()` (L6759) and `windAssistEndCue()` (L6768), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3113,3 +3113,61 @@ once `scentLock` decays and the player is teleported out of sight/leash range, w
 `beaconHunterLocked` clearing; an ordinary wolf (no `variant`) never reaches `'chase'` from the
 identical wind signal in the same single-tick window, proving no accidental duplication of the
 channel onto ordinary wolves.
+
+## Scent-Masking Sites (LUL-5493, cheap slice, proposal LUL-5491)
+
+Three fixed, static world locations (`SCENT_MASK_SITES`, `lib/game/scentMaskSites.ts:19-23`,
+registered as `EventSite[]` the same way `ROOSTS`/`FOG_TIDE_SITES` are) where standing inside
+gates the player's own scent deposit entirely -- "proactive navigation strategy" distinct from
+every existing detection-suppression mechanic (cave immunity, veil, Rock Climb's exposure
+trade), all of which react to a threat already present rather than letting the player pre-empt
+one by route choice. Not a duplicate of the wolf-only Bog scent-mask (LUL-1902/2082): that
+mechanic, and the Bog biome itself, were deleted whole (`docs/specs/lul-4676-delete-bog.md`)
+before this feature was designed -- confirmed live by grepping `playerBogMask`/`bogMaskLevel`,
+neither of which exists in `release/next` any more.
+
+**Trigger** -- `playerInScentMaskSiteIndex` (`engine/forest-engine.js:655`), the index into
+`SCENT_MASK_SITES` the player currently stands inside or `-1`, recomputed unconditionally every
+`stepFrame()` tick (`:7442`, same "after every `player.x`/`z` write, picks up a QA teleport too"
+placement `updateStreamedChunks(false)` already uses) via `findScentMaskSiteIndex()`
+(`lib/game/scentMaskSites.ts`), wrap-aware, radius ~8u. Positions are read through
+`scaledScentMaskSites()` (`engine/forest-engine.js:660-662`), which multiplies by
+`CONFIG.scentMaskScaleMul` (`engine/tuning.js`, default `1`, `0.2` under `qaWorld=micro` --
+same "scale the read, not the source" shape `roostScaleMul` already established, needed so a
+real walk in the shrunk QA map can reach a site at all) -- the site's own `radius` is left
+unscaled, same precedent as `ROOST_TRIGGER_RADIUS`.
+
+**Effect** -- `depositScent()` (`engine/forest-engine.js:2287`) early-returns while
+`playerInScentMaskSiteIndex !== -1`: no new scent point is pushed. Existing points laid before
+entering (or laid elsewhere) are untouched -- masking stops new deposits, it does not erase or
+accelerate the decay of a trail already down. `checkScent()`/`scentOnto()` (predator tracking)
+are unmodified; a masked player is simply never adding anything for them to find.
+
+**Visual (cue triple, no audio in this slice)**:
+- Glow: one static `THREE.Mesh` ring per site (`RingGeometry` + additive-blended
+  `MeshBasicMaterial`, `engine/forest-engine.js:1322`, same "static ring, module scope" recipe
+  as `homeRing`), teal for `marsh` sites and amber for `pine` (`SCENT_MASK_GLOW_COLOR`).
+  Opacity brightens toward each site's own center (`scentMaskGlowWeight()`, 0..1 proximity
+  falloff) plus a slow ambient sine pulse that drops out entirely under `reducedMotion` (the
+  proximity brightening does not) -- `:7935-7939`. Rendered directly into `scene`, not a child
+  of `#panel`, so visible with `adminMode` off.
+- Caption: new `'scentMask'` entry in `HINT_PRIORITY`/`HINT_TEXT`/`hintCandidate`
+  (`engine/forest-engine.js:2214`, `:8056`), self/panel-anchored (bottom-center, same fixed CSS
+  family as `landmark`/`caveImmune` -- `components/GameCanvas.tsx`), one-shot per install:
+  *"a scent-masking site -- your footsteps are hidden here; predators can't track your trail
+  while you stay inside."* Dismisses (without marking seen) the instant the player leaves the
+  site (`hintDismissedByEvent`'s `'scentMask'` case, `:8068`), same shape as `caveImmune`'s own
+  `caveImmuneT <= 0` dismissal.
+- No audio in this cheap slice (deferred to the full slice per the wiki proposal).
+
+**QA hooks**: `qaProbeScentMaskSite()` (`engine/forest-engine.js:6093-6102`) -- live site index
+plus the three sites' own (already-scaled) `id`/`type`/`x`/`z`/`radius`, so a spec never
+hardcodes `SCENT_MASK_SITES`' raw coordinates. `qaTeleportTo`/`qaSetLookYaw`/`qaAdvance` (all
+pre-existing) drive the rest.
+
+Covered by `e2e/scent-masking.spec.ts` (new): walking a straight line through a site deposits
+zero new scent motes for several `SCENT_DEPOSIT_INTERVAL` (0.3s) ticks while inside, and resumes
+within one interval of exiting the far side; a wolf staged inside the same site next to the
+player (a real predator, not a flag check) never reaches `scentLock > 0` -- the scent-specific
+detection channel this feature gates -- regardless of whatever sight-based state its own
+`canSee()` channel reaches, which this feature doesn't touch.
