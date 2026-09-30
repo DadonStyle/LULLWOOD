@@ -4576,7 +4576,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // LUL-2389: noiseTarget distinguishes "investigates the roost's position" (slice b,
     // player-sprint flush) from "investigates the player's own position" -- both leave
     // state==='investigate', only the target point tells them apart.
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null };
+    // LUL-5402: x/z/inv added for the downwind-investigation e2e coverage -- a test
+    // staging scentLock>0 in 'approach' needs the predator's own real position over
+    // several ticks to measure whether its path drifts downwind, and `inv` to confirm
+    // it's still in the 'approach' sub-phase this bias only applies to.
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null, x: p.x, z: p.z, inv: p.inv };
   };
   // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
   // stage a "first sighted" scenario -- effectiveDetect() applies
@@ -6056,8 +6060,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.x = spec.x; p.z = spec.z; p.wpx = spec.x; p.wpz = spec.z; p.vx = 0; p.vz = 0; p.yaw = 0;
       p.variant = spec.variant;   // LUL-4897: additive, e.g. 'beaconHunter' for a wolf; undefined for every ordinary predator
       p.beaconHunterLocked = false;
-      p.state = spec.state || 'roam'; p.spotted = false; p.inv = ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
-      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = 0; p.scentCalls = 0; p.scentVeilReady = false;
+      // LUL-5402: `spec.inv`/`spec.scentLock` are additive overrides (default '' /0,
+      // same as before) -- direct-to-'investigate'/'approach' staging otherwise can't
+      // exercise biasTowardWind()'s scentLock>0 gate, since every other field this
+      // block force-resets already. Not a "fake state" hook (see the module-level
+      // hooks-must-use-real-path rule): this just force-sets p.state/p.inv/p.scentLock
+      // directly, the same way every other field on this predator already is here.
+      p.state = spec.state || 'roam'; p.spotted = false; p.inv = spec.inv || ''; p.sniffsLeft = 0; p.sniffTimer = 0; p.callTimer = 0;
+      p.approachEnteredHidden = false;
+      p.stuckT = 0; p.trail = []; p.trailT = 0; p.reroute = 0; p.hunt = false; p.alert = 0; p.windPauseT = 0; p.windPauseCooldownT = 0; p.scentLock = spec.scentLock || 0; p.scentCalls = 0; p.scentVeilReady = false;
       p.packTimer = 0; p.flankX = 0; p.flankZ = 0; p.sniffImmuneT = 0; p.sightFlicker = 0;
       p.lkpX = 0; p.lkpZ = 0; p.lkpSweeps = 0;
       p.charge = null; p.chargeDirX = 0; p.chargeDirZ = 0; p.chargeCooldown = 0; p.chargeRecoveryT = 0;

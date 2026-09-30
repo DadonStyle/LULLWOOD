@@ -142,10 +142,13 @@ declare global {
        * for sight/scent/footstep) -- state alone can't distinguish them.
        * LUL-5004: `scentLock`/`scentVeilReady` are the real predator fields Scent Veil reads/clears.
        * LUL-2389: `noiseTarget` is the point a hearThrowableNoise()-driven investigate is aimed at
-       * (roost (x,z) for slice-b's player-sprint flush, thrown-object landing point, or null). */
+       * (roost (x,z) for slice-b's player-sprint flush, thrown-object landing point, or null).
+       * LUL-5402: `x`/`z`/`inv` added for the downwind-investigation bias e2e coverage --
+       * `inv` confirms the predator is still in the 'approach' sub-phase biasTowardWind()
+       * gates on, `x`/`z` are its real per-tick position for measuring path drift. */
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
-      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number; noiseTarget: { x: number; z: number } | null } | null;
+      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number; noiseTarget: { x: number; z: number } | null; x: number; z: number; inv: string } | null;
       /** LUL-2878: `kind`'s scaled effectiveDetect() this tick (veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul applied on top of tuning.js's unscaled spec.detect), or null if not spawned. Use this, not the tuning constant, to stage a distance that will actually pass canSee()'s detect gate. */
       qaProbeEffectiveDetect?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
@@ -653,7 +656,12 @@ declare global {
       qaBuildScene?: (scene: {
         trees?: { x: number; z: number; s?: number }[];
         props?: { kind: 'log' | 'rock' | 'bramble'; x: number; z: number; ry?: number }[];
-        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string; variant?: 'beaconHunter' }[];
+        /** LUL-5402: `inv`/`scentLock` are additive overrides (default ''/0, same
+         * as before) -- stage `state: 'investigate', inv: 'approach', scentLock: 1`
+         * to exercise biasTowardWind()'s scentLock>0 gate directly, since every
+         * other predator field this hook resets already force-sets real state the
+         * same way. */
+        predators?: { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number; state?: string; inv?: string; scentLock?: number; variant?: 'beaconHunter' }[];
         child?: { x: number; z: number };
         home?: { x: number; z: number };
       }) => { trees: number; props: number; predators: number };
