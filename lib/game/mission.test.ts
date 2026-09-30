@@ -204,6 +204,20 @@ test('canCompleteFlush is false for a beaconRoostFlush mission when a different 
   assert.equal(canCompleteFlush(m, 1), false);
 });
 
+// ---- canCompleteFlush for lionRoostFlush (LUL-5426) ------------------------
+
+const lionRoostFlushTarget = MISSION_POOL.find((t) => t.kind === 'lionRoostFlush')!;
+
+test('canCompleteFlush is true for a lionRoostFlush mission when the flushed roost matches', () => {
+  const m: MissionState = { target: { ...lionRoostFlushTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 3), true);
+});
+
+test('canCompleteFlush is false for a lionRoostFlush mission when a different roostIndex was flushed', () => {
+  const m: MissionState = { target: { ...lionRoostFlushTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 1), false);
+});
+
 // ---- completeMission idempotence ----------------------------------------
 
 test('completeMission flips an active mission to complete', () => {
@@ -481,6 +495,21 @@ test('eligibleMissionPool includes beaconRoostFlush at MISSION_FAR_UNLOCK_WINS',
   progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
   const pool = eligibleMissionPool(progression, 'lantern');
   assert.equal(pool.some((m) => m.kind === 'beaconRoostFlush'), true);
+});
+
+test('eligibleMissionPool excludes lionRoostFlush below MISSION_FAR_UNLOCK_WINS', () => {
+  // LUL-5426: lionRoostFlush shares flush's untimed/no-landmarkKind shape and would
+  // reproduce the identical LUL-5069 regression without the same exclusion.
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'lionRoostFlush'), false);
+});
+
+test('eligibleMissionPool includes lionRoostFlush at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'lionRoostFlush'), true);
 });
 
 // ---- pickMission with an explicit pool (LUL-3010) ------------------------
