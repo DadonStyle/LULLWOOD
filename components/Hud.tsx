@@ -375,6 +375,7 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   ghost: 'Ghost',
   chapelSanctuary: 'Chapel Sanctuary',
   skyCompassNavigation: 'Sky Compass Navigation',
+  chapelVeilEscape: 'Chapel Refuge + Veil Escape',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the

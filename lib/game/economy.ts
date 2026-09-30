@@ -181,6 +181,11 @@ export const MISSION_CHAPEL_SANCTUARY_REWARD = 9;
 // provisionally level with the other untimed missions (9).
 export const MISSION_SKY_COMPASS_NAVIGATION_REWARD = 9;
 
+// LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo -- placeholder pending the Game
+// Economist's confirmed number, same convention as the other untimed missions above.
+// Filing a parallel non-blocking pricing ticket, same pattern as LUL-5462/LUL-5532.
+export const MISSION_CHAPEL_VEIL_ESCAPE_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -199,6 +204,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   ghost: MISSION_GHOST_REWARD,
   chapelSanctuary: MISSION_CHAPEL_SANCTUARY_REWARD,
   skyCompassNavigation: MISSION_SKY_COMPASS_NAVIGATION_REWARD,
+  chapelVeilEscape: MISSION_CHAPEL_VEIL_ESCAPE_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
