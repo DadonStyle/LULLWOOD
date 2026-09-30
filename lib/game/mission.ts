@@ -70,7 +70,8 @@ export type MissionKind =
   | 'beaconRoostRecoveryEvasion'
   | 'ghost'
   | 'chapelSanctuary'
-  | 'skyCompassNavigation';
+  | 'skyCompassNavigation'
+  | 'chapelVeilEscape';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -242,6 +243,12 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // fixed-landmark entry -- only a HINT_PRIORITY caption (engine/forest-engine.js)
   // nudges the player to use the compass to find the target.
   { kind: 'skyCompassNavigation', x: -95, z: 46, zoneRadius: 10, interactRadius: 4, landmarkKind: 'drownedCar' },
+  // LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo -- two-stage, non-spatial like
+  // ghost/slackWater: stage 1 is the LUL-5005 shrine's dwell grant (chapelSanctuaryUsedThisRun
+  // flipping true), stage 2 is a chase give-up while Veil Overload is active (same
+  // real-play edge as ghost's canCompleteGhost). No target position drives completion,
+  // so interactRadius: 0/spatial: false follow ghost's reasoning verbatim.
+  { kind: 'chapelVeilEscape', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false },
 ];
 
 export interface MissionState {
@@ -321,7 +328,7 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // LUL-5528/LUL-5524: skyCompassNavigation is excluded here too, same reasoning as
   // chapelSanctuary immediately above (a real drownedCar target, but a second untimed kind
   // in this pool would still break oakHollow's determinism).
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion' && m.kind !== 'ghost' && m.kind !== 'chapelSanctuary' && m.kind !== 'skyCompassNavigation');
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion' && m.kind !== 'ghost' && m.kind !== 'chapelSanctuary' && m.kind !== 'skyCompassNavigation' && m.kind !== 'chapelVeilEscape');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
@@ -415,6 +422,23 @@ export function canCompleteGhost(mission: MissionState, overloadActive: boolean)
  * first -- this predicate is the only path that ever completes this mission kind. */
 export function canCompleteChapelSanctuary(mission: MissionState, justGranted: boolean): boolean {
   return mission.status === 'active' && mission.target.kind === 'chapelSanctuary' && justGranted;
+}
+
+/** LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo, stage 1 -- the LUL-5005 shrine's
+ * one-shot grant just fired (same real-play edge as canCompleteChapelSanctuary above), for
+ * the 'chapelVeilEscape' kind. Does not complete the mission -- the caller flips the engine's
+ * own chapelVeilEscapeChapelDone stage flag on true, mirroring canCompleteChapelSanctuary's
+ * shape without reusing its literal-kind check. */
+export function canCompleteChapelVeilEscapeStage1(mission: MissionState, justGranted: boolean): boolean {
+  return mission.status === 'active' && mission.target.kind === 'chapelVeilEscape' && justGranted;
+}
+
+/** LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo, stage 2 -- mirrors canCompleteGhost's
+ * shape (a chase give-up while Veil Overload is active), gated additionally on stage 1 having
+ * already fired this run (chapelDone, the engine's chapelVeilEscapeChapelDone flag passed in
+ * at the same shouldGiveUpChase() call site canCompleteGhost is checked at). */
+export function canCompleteChapelVeilEscapeStage2(mission: MissionState, chapelDone: boolean, overloadActive: boolean): boolean {
+  return mission.status === 'active' && mission.target.kind === 'chapelVeilEscape' && chapelDone && overloadActive;
 }
 
 export function completeMission(mission: MissionState): MissionState {

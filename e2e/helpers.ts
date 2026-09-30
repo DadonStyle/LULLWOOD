@@ -122,6 +122,7 @@ export async function boot(
       | 'ghost'
       | 'chapelSanctuary'
       | 'skyCompassNavigation'
+      | 'chapelVeilEscape'
       | null;
     qaRoostIndex?: number | null;
     seedWelcomeSplashSeen?: boolean;
