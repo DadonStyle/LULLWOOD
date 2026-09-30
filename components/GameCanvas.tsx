@@ -411,6 +411,16 @@ const OVERLAY_STYLE = `
      movingAgainstWind is a precondition of scentVeilPromptVisible and both
      are true whenever this one is. */
   #windIndicator.windIndicatorVeilActive { animation: windIndicatorPulse 225ms ease-in-out infinite; }
+  /* LUL-5402: a predator's scent-originated approach is currently biased downwind
+     (state.investigationDownwindActive) -- reuses #windIndicator's own arrow/pulse
+     visual language (Q9) rather than a new element, composing alongside the two
+     classes above the same way they compose with each other. Distinct color (amber,
+     not the teal/green of the wind-assist cues) so "a predator is hunting downwind of
+     you" doesn't read as another wind-assist prompt. */
+  #windIndicator.windIndicatorInvestigationActive { animation: windIndicatorInvestigationPulse 700ms ease-in-out infinite; }
+  @keyframes windIndicatorInvestigationPulse {
+    0%, 100% { filter: brightness(1) drop-shadow(0 0 0 rgba(240,176,96,0)); }
+    50% { filter: brightness(1.6) drop-shadow(0 0 8px rgba(240,176,96,0.9)); } }
 
   #windIndicatorHint { position: fixed; top: 64px; right: 8px; width: 76px; z-index: 12;
     font-size: 12px; line-height: 1.3; text-align: center; color: #9fb2cd;
@@ -887,7 +897,8 @@ const OVERLAY_STYLE = `
     /* LUL-3009: Hud.tsx already skips the class under reducedMotion -- this is the same
        belt-and-suspenders fallback #actionPromptLine gets above, not the primary gate. */
     #windIndicator.windIndicatorActive { animation: none; }
-    #windIndicator.windIndicatorVeilActive { animation: none; } }
+    #windIndicator.windIndicatorVeilActive { animation: none; }
+    #windIndicator.windIndicatorInvestigationActive { animation: none; } }
 
   /* LUL-2331: mist-charm activation tell -- Hud.tsx toggles this class for the same
      400ms window it eases #veilState's displayed number up in (useVeilMeterRamp),

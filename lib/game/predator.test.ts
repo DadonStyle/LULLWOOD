@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   armReturnSweep,
   backOffPoint,
+  biasTowardWind,
   canCatchInChase,
   CATCH_MARGIN,
   hasReachedSniffRange,
+  INVESTIGATION_DOWNWIND_BIAS,
   isCaught,
   isSniffImmune,
   LKP_MAX_SWEEPS,
@@ -322,6 +324,30 @@ test('shouldRevertInvestigateToChase is true for "standoff" (LUL-1090) when not 
 
 test('shouldRevertInvestigateToChase is false for "standoff" while still hidden', () => {
   assert.equal(shouldRevertInvestigateToChase('standoff', true), false);
+});
+
+// ---- biasTowardWind (LUL-5402) -----------------------------------------------------
+
+test('biasTowardWind with strength 0 returns the input heading unchanged', () => {
+  const { ux, uz } = biasTowardWind(1, 0, 0, 1, 0);
+  assert.equal(ux, 1);
+  assert.equal(uz, 0);
+});
+
+test('biasTowardWind blends the heading toward the wind vector and re-normalizes to a unit vector', () => {
+  const { ux, uz } = biasTowardWind(1, 0, 0, 1, INVESTIGATION_DOWNWIND_BIAS);
+  // input (1,0) blended with wind (0,1) at strength 0.3 -> (1, 0.3), normalized
+  const mag = Math.hypot(1, 0.3);
+  assert.ok(Math.abs(ux - 1 / mag) < 1e-9);
+  assert.ok(Math.abs(uz - 0.3 / mag) < 1e-9);
+  assert.ok(Math.abs(Math.hypot(ux, uz) - 1) < 1e-9);
+});
+
+test('biasTowardWind still returns a unit vector when the wind partially opposes the heading', () => {
+  const { ux, uz } = biasTowardWind(1, 0, -1, 0, INVESTIGATION_DOWNWIND_BIAS);
+  assert.ok(Math.abs(Math.hypot(ux, uz) - 1) < 1e-9);
+  assert.equal(ux, 1); // wind directly opposes -- blend shrinks the heading but doesn't rotate it
+  assert.equal(uz, 0);
 });
 
 // ---- stepApproach (LUL-658) -------------------------------------------------------

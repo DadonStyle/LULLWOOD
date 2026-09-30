@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L7954 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7003, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8009 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7047, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1630,15 +1630,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6228-6289, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6600-6641). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6272-6333, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6644-6685). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6600-6641) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6644-6685) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6469) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1696,7 +1696,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4061) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4085-4128) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
@@ -2752,7 +2752,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6526) and `windAssistEndCue()` (L6535), edge-triggers on the combined
+`windAssistStartCue()` (L6570-6578) and `windAssistEndCue()` (L6579-6587), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -2766,6 +2766,52 @@ ground than sprinting with it over a fixed window; a wolf at a distance inside
 wind-assisted one; walking against the wind triggers neither the speed nor the noise bonus
 (scent-only, per LUL-3009); both updated copy strings; the `windAssist` hint caption appears
 once and not again after being marked seen.
+
+### LUL-5402: Predator Investigation Asymmetry (downwind investigation bias)
+
+Scout proposal (LUL-5401), CTO-accepted cheap slice (`decisions/lul-5401-predator-investigation-asymmetry-accepted-2026-09-30`).
+Wolf/bear/lion investigating on a scent lock now favor closing in from downwind of the target
+instead of walking a pure straight line at it. `biasTowardWind(ux, uz, windX, windZ, strength)`
+(`lib/game/predator.ts` L400) blends a unit heading toward the wind vector by `strength`
+(`INVESTIGATION_DOWNWIND_BIAS`=0.3, L399), re-normalized so callers keep treating the result as
+a unit heading. Wired at the `'approach'` sub-phase's heading computation inside `stepFrame()`
+(`engine/forest-engine.js` L2871-2879), gated on `p.scentLock > 0` -- a noise- or sight-originated
+approach into the same `'approach'` sub-phase is untouched, only a scent-originated one favors
+downwind, matching the narrative ("predators hunt downwind of scent") the wiki spec cites.
+
+No new persisted per-predator flag: the HUD push re-derives the identical `state === 'investigate'
+&& inv === 'approach' && scentLock > 0` condition every frame (`engine/forest-engine.js` L7636)
+into a new read-only `EngineHudState` field, `investigationDownwindActive` (`components/Hud.tsx`).
+
+Cue triple. **Visual**: reuses `#windIndicator`'s arrow/pulse language (Q9 duplicate-proof) rather
+than a new element -- a third CSS class, `windIndicatorInvestigationActive`, composes alongside
+the existing `windIndicatorActive`/`windIndicatorVeilActive` classes (`components/Hud.tsx` L1107,
+all three `.filter(Boolean).join(' ')`'d together, so any subset can be true the same frame). A
+distinct amber `windIndicatorInvestigationPulse` keyframe (`components/GameCanvas.tsx` L420,
+700ms, reduced-motion-safe -- `state.reducedMotion` withholds the class at the Hud.tsx call site,
+same precedent as LUL-3009's `windIndicatorActive`) keeps the color off the teal/green wind-assist
+family so it doesn't read as another wind-assist prompt. **Audio**: `scentOnto()`'s existing
+`predatorCall`/growl cue (`leafRustle(false)`) gained an optional `panVal` parameter panned toward
+the downwind direction. **Caption**: a new one-shot `'downwindInvestigation'` entry in
+`HINT_PRIORITY` (`engine/forest-engine.js` L2073) and its eligibility check (L7826, the identical
+gate expression as the HUD field above), positioned in the priority list between `'windAssist'`
+and `'windPulse'`. Exact copy: `"predators hunt downwind of your scent — position yourself upwind
+to escape"` (L2094).
+
+**QA hooks**: `qaBuildScene()`'s per-predator spec gained additive `inv`/`scentLock` overrides
+(`engine/forest-engine.js` L6063-6071) -- direct-to-`'investigate'`/`'approach'` staging otherwise
+can't exercise the `scentLock > 0` gate, since every other field this block force-resets already;
+not a fake-state hook, it sets the same real fields every other `qaBuildScene` field already sets.
+`qaProbePredatorState()` gained `x`/`z`/`inv` (L4579-4583) so a test can measure real positional
+drift over several ticks and confirm the predator is still in the `'approach'` sub-phase this bias
+applies to.
+
+Covered by `e2e/investigation-downwind.spec.ts` (new, micro world, no `@fullmap`): a scent-locked
+approaching wolf drifts off the player-straight-line toward downwind; the bias is withheld at
+`scentLock=0` in the same sub-phase; `#windIndicator`'s class lifecycle tracks the gate exactly
+(gained while live, lost the instant `scentLock` decays to 0); the class is withheld under
+`reducedMotion` even with a genuinely live gate; the hint caption fires once with the exact copy
+above.
 
 ### LUL-4893: Predator Pause (wind-gated freeze on downwind-perpendicular chase)
 
