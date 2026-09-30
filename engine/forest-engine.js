@@ -164,6 +164,7 @@ import {
   canCompleteSlackWater,
   canCompleteFlush,
   canCompleteGhost,
+  canCompleteChapelSanctuary,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -7786,6 +7787,10 @@ function stepFrame(dt, t, skipRender){
         pushState({ caption: 'a charm against the mist', captionId: ++captionSeq });
         embersPurchaseCue();   // LUL-5005: reuses buyVeilCharm()'s own grant cue -- same charm, same tell
         chapelSanctuaryPulseT = 0.6;   // LUL-5005: mirrors buyVeilCharm()'s stoneMarkerPulseT boost
+        // LUL-5498: mission-mode completion -- only fires if the drawn mission actually
+        // named this landmark (canCompleteChapelSanctuary's own kind guard), same shape
+        // as canCompleteSlackWater/canCompleteGhost's call sites just above.
+        if(mission && canCompleteChapelSanctuary(mission, true)) mission = completeMission(mission);
       } else if(distChapel > CHAPEL_SANCTUARY_INTERACT_RADIUS * 1.5){
         chapelSanctuaryActive = false;
         chapelSanctuaryChargeT = 0;

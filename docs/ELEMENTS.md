@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8236 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7237, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8241 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7238, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -2418,7 +2418,34 @@ not final tuning.
   decorative/navigational collision profile (`landmarkGroups.chapelSteeple.position`, live
   post-nudge position), unchanged by this entry.
 
-See wiki `game/mechanics/chapel-sanctuary.md`.
+**Mission mode (LUL-5498/LUL-5495)**
+- `MissionKind` gains `'chapelSanctuary'` (`lib/game/mission.ts`), a `MISSION_POOL` entry
+  keyed to the `chapelSteeple` landmark (`landmarkKind: 'chapelSteeple'`, untimed,
+  `interactRadius: 4` matching `CHAPEL_SANCTUARY_INTERACT_RADIUS`). `syncMissionTargetToLandmark()` overwrites the pool
+  entry's nominal x/z with the landmark's real post-placement position on the full map, same
+  as `oakHollow`/`radioMast`/`stoneMarker`.
+- Excluded from `eligibleMissionPool()`'s pre-`MISSION_FAR_UNLOCK_WINS` draw (`lib/game/
+  mission.ts`) to keep `oakHollow` the one deterministic pre-win draw
+  `e2e/hints.spec.ts`'s landmark test relies on.
+- Completion does NOT go through `canCompleteMission()`/`completeMissionSequence()` — the
+  `KeyE` handler always claims an in-radius press for `chapelSanctuaryPromptVisible`/
+  `chapelSanctuaryDeniedCue` first (same interact radius, so `missionCanComplete` for this
+  kind is a dead branch in practice). Real completion is `canCompleteChapelSanctuary()`
+  (`lib/game/mission.ts`), called at the existing full-dwell grant edge
+  (`engine/forest-engine.js`'s `tick()`, right after `chapelSanctuaryUsedThisRun = true`) —
+  no new engine completion logic beyond that one call.
+- `MISSION_NAMES.chapelSanctuary` (`components/Hud.tsx`): `'Chapel Sanctuary'`.
+  `MISSION_CHAPEL_SANCTUARY_REWARD` (`lib/game/economy.ts`): placeholder `9`, same convention
+  as the other untimed missions pending a Game Economist pricing ticket.
+- Cue triple: reuses the shrine's own existing visual (beacon-glow pulse via
+  `chapelSanctuaryPulseT`), audio (`missionWaypointHum()` nav cue while the mission is active
+  and un-entered, `embersPurchaseCue()` on grant), and caption (`chapelSanctuaryStartCue()`'s
+  entry caption, HINT_PRIORITY's generic `'landmark'` slot) — no new cue assets.
+- e2e: `e2e/chapel-sanctuary.spec.ts` extended with a mission-mode case (mission drawn via
+  `?qaMissionKind=chapelSanctuary`, dwell completed while a predator hunts, asserts
+  `mission.status === 'complete'`).
+
+See wiki `game/mechanics/chapel-sanctuary.md` and `game/mechanics/chapel-sanctuary-mission`.
 
 ---
 
@@ -2958,7 +2985,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6760) and `windAssistEndCue()` (L6769), edge-triggers on the combined
+`windAssistStartCue()` (L6761) and `windAssistEndCue()` (L6770), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

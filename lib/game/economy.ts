@@ -169,6 +169,13 @@ export const MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD = 9;
 // Game Economist requests the real number.
 export const MISSION_GHOST_REWARD = 9;
 
+// LUL-5498/LUL-5495: Chapel Sanctuary -- placeholder pending the Game Economist's confirmed
+// number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced provisionally
+// level with the other untimed missions (9); MISSION_REWARDS is Record<MissionKind, number>
+// so every kind needs a row here regardless of the ticket's "no Economist ticket needed"
+// scope note -- that note only means no NEW reward path, not that this row can be skipped.
+export const MISSION_CHAPEL_SANCTUARY_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -185,6 +192,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   beaconDeepwater: MISSION_BEACON_DEEPWATER_REWARD,
   beaconRoostRecoveryEvasion: MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD,
   ghost: MISSION_GHOST_REWARD,
+  chapelSanctuary: MISSION_CHAPEL_SANCTUARY_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

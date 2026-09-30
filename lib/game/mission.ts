@@ -68,7 +68,8 @@ export type MissionKind =
   | 'bearRoostAmbush'
   | 'beaconDeepwater'
   | 'beaconRoostRecoveryEvasion'
-  | 'ghost';
+  | 'ghost'
+  | 'chapelSanctuary';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -225,6 +226,14 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // kind, spatial: false keeps the nav-cue hum from firing at (0,0) -- both follow
   // slackWater's own reasoning verbatim. No roostIndex/landmarkKind/timeLimitSeconds.
   { kind: 'ghost', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false },
+  // LUL-5498/LUL-5495: Chapel Sanctuary -- keyed to the `chapelSteeple` LANDMARKS entry
+  // (engine/tuning.js), same fixed-landmark shape as oakHollow/radioMast/stoneMarker.
+  // Untimed (no timeLimitSeconds) like oakHollow -- the existing LUL-5005 shrine mechanic
+  // (chapelSanctuaryActive/chapelSanctuaryChargeT/chapelSanctuaryUsedThisRun,
+  // engine/forest-engine.js) already gates completion on a 15s dwell, so this mission just
+  // rides that mechanic's existing grant edge (see canCompleteChapelSanctuary below) --
+  // no new engine completion logic, no new HUD prompt, no new key.
+  { kind: 'chapelSanctuary', x: 20, z: -178, zoneRadius: 4, interactRadius: 4, landmarkKind: 'chapelSteeple' },
 ];
 
 export interface MissionState {
@@ -294,7 +303,14 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // it is excluded here too -- same regression this filter exists to prevent (a fresh boot()
   // drawing a mission kind with no matching HINT_PRIORITY entry breaks e2e/hints.spec.ts's
   // landmark->deepwater hint-slot handoff, see the LUL-4958/LUL-5069 comment above).
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion' && m.kind !== 'ghost');
+  // LUL-5498/LUL-5495: chapelSanctuary is excluded here too -- not because it shares the
+  // untimed/no-landmarkKind shape (it doesn't -- it has a real chapelSteeple target), but to
+  // preserve the LUL-3010 invariant this filter's own name states: oakHollow is the ONE
+  // deterministic pre-win draw e2e/hints.spec.ts's landmark test relies on. Letting a second
+  // untimed kind into this pool would make that draw non-deterministic under a fixed seed,
+  // same class of regression as LUL-5069's slackWater incident even though the failure mode
+  // here is draw-nondeterminism, not an unreachable target.
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion' && m.kind !== 'ghost' && m.kind !== 'chapelSanctuary');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
@@ -375,6 +391,19 @@ export function canCompleteFlush(mission: MissionState, flushedRoostIndex: numbe
  * canCompleteSlackWater's fogTideActive param (this module has no engine-state import). */
 export function canCompleteGhost(mission: MissionState, overloadActive: boolean): boolean {
   return mission.status === 'active' && mission.target.kind === 'ghost' && overloadActive;
+}
+
+/** LUL-5498/LUL-5495: Chapel Sanctuary -- the LUL-5005 shrine's own one-shot grant just
+ * fired (chapelSanctuaryUsedThisRun flipped true on the full-dwell edge, engine/forest-
+ * engine.js's tick()). Mirrors canCompleteSlackWater/canCompleteGhost's exact shape --
+ * one pure predicate, checked at the one real-play call site that can make it true. The
+ * mission's own interactRadius (4, same as CHAPEL_SANCTUARY_INTERACT_RADIUS) never drives
+ * completion through canCompleteMission()/completeMissionSequence() in practice: the KeyE
+ * handler checks chapelSanctuaryPromptVisible/chapelSanctuaryInRadius before missionCanComplete,
+ * so every E-press in range is claimed by the shrine's own dwell-start/denied-cue branches
+ * first -- this predicate is the only path that ever completes this mission kind. */
+export function canCompleteChapelSanctuary(mission: MissionState, justGranted: boolean): boolean {
+  return mission.status === 'active' && mission.target.kind === 'chapelSanctuary' && justGranted;
 }
 
 export function completeMission(mission: MissionState): MissionState {
