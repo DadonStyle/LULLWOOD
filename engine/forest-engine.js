@@ -1966,13 +1966,14 @@ function relocateParkedHunter(pcx, pcz){
 // as it would from a normal placePredators() draw, not mid-chase from wherever it was first
 // placed.
 function repositionBeaconHunterForMission(mission){
-  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush') return;
-  // LUL-5426: 'lionRoostFlush' (M8) repositions a lion, not the permanent beaconHunter wolf --
-  // the mid-difficulty balanced-stat predator the proposal asks for, distinct from the
-  // sight-biased beaconHunter. predators.find(p => p.kind === 'lion') is the same lookup
-  // already used by qa hooks that stage a lion (:4631), picking the first of the 3 lions
-  // placePredators() (:1835) always spawns -- never expected to be missing.
-  const hunter = mission.target.kind === 'lionRoostFlush'
+  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush' && mission.target.kind !== 'upwindRefuge') return;
+  // LUL-5426/LUL-5432: 'lionRoostFlush' (M8) and 'upwindRefuge' (Fire Tower variant) both
+  // reposition a lion, not the permanent beaconHunter wolf -- the mid-difficulty
+  // balanced-stat predator the proposal asks for, distinct from the sight-biased
+  // beaconHunter. predators.find(p => p.kind === 'lion') is the same lookup already used by
+  // qa hooks that stage a lion (:4631), picking the first of the 3 lions placePredators()
+  // (:1835) always spawns -- never expected to be missing.
+  const hunter = (mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'upwindRefuge')
     ? predators.find(p => p.kind === 'lion')
     : predators.find(p => p.variant === 'beaconHunter');
   if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803); lions are always placed (:1835)

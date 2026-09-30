@@ -62,7 +62,8 @@ export type MissionKind =
   | 'beaconEvasion'
   | 'flush'
   | 'beaconRoostFlush'
-  | 'lionRoostFlush';
+  | 'lionRoostFlush'
+  | 'upwindRefuge';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -158,6 +159,17 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // flush's own reasoning (:139 above) verbatim -- never read directly, always overwritten by
   // generateMap()'s post-placeCave() roost draw.
   { kind: 'lionRoostFlush', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
+  // LUL-5432: Upwind Refuge (Fire Tower variant, LUL-5424) -- same fixed-landmark/timed
+  // fireTower shape as 'beaconEvasion' (:134 above), with repositionBeaconHunterForMission()
+  // (engine/forest-engine.js) extended to reposition a lion (same lookup 'lionRoostFlush'
+  // uses) ~50u from this target instead of a roost -- anchored on target.x/z like
+  // 'beaconEvasion', not on a ROOSTS entry like 'lionRoostFlush'. Teaches upwind positioning
+  // as a counter to the downwind investigation bias (LUL-5402): a scent-locked investigating
+  // lion drifts downwind of its true heading, so a player holding an upwind fireTower
+  // overshoots the lion's approach. timeLimitSeconds (non-null) already excludes this from
+  // eligibleMissionPool() pre-3-wins via the existing `timeLimitSeconds == null` filter --
+  // no gating change needed.
+  { kind: 'upwindRefuge', x: -95, z: -95, zoneRadius: 20, interactRadius: 4, landmarkKind: 'fireTower', timeLimitSeconds: 60 },
 ];
 
 export interface MissionState {
