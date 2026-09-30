@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8009 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7047, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8056 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7076, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1630,15 +1630,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6272-6333, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6644-6685). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6281-6342, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6673-6714). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6644-6685) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6673-6714) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6469) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1696,7 +1696,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4085-4128) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4088-4131) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
@@ -2547,6 +2547,25 @@ caption slot, last `pushState()` wins). The player-sprint trigger's investigate
 reuses `hearThrowableNoise()`'s own existing caption ("`${p.kind} investigates a
 noise`"), no separate hint.
 
+**Cooldown cue (LUL-5412)**: before this ticket, `roostCooldown[i]` had no HUD readout at
+all, so a player-thrown stone at an already-cooling-down roost (set by either the ambient or
+player-thrown trigger above) silently no-op'd — no sound/caption differed from a normal
+throw. Two additions close that gap, both re-derived fresh every frame/press, no new
+persisted per-roost flag:
+- **Readout**: each frame, the nearest roost within `ROOST_TRIGGER_RADIUS` (6 units — reused
+  from the player-sprint trigger above, not a new constant) of the player has its live
+  `roostCooldown[]` value pushed as `roostCooldownActive`/`roostCooldownTimeLeft`
+  (`engine/forest-engine.js:7492-7499,7663-7664`). `#roostCooldownPanel`
+  (`components/Hud.tsx:1096-1099`), sibling of `#caveImmunePanel`/`#chapelSanctuaryPanel`
+  outside `#panel` (stays visible with `adminMode` off, Q3): "Roost quiet · Xs" countdown.
+- **Denial tell**: `roostFlushDeniedCue()` (`engine/forest-engine.js:6582-6592`) mirrors
+  `rockClimbDeniedCue()`'s exact shape (square/100Hz/~0.17s buzz + caption, both
+  unconditional on every denied press) — wired into `throwThrowable()`'s existing
+  `nearestRoost` branch (`:6263-6283`) as the `else if(nearestRoost >= 0)` case: a throw that
+  lands on a roost already on cooldown fires the refusal tell instead of the prior silent
+  no-op. `qaProbeRoostState(i)`'s `deniedCueCount` field (global, not per-roost) lets a spec
+  assert it fired. See `docs/specs/lul-5412-roost-cooldown-cue.md`.
+
 ## Hints — first-encounter explanations (LUL-2307, generalizes LUL-2230)
 
 One small engine-side registry (`HINT_PRIORITY`/`HINT_TEXT`, `engine/forest-engine.js`)
@@ -2752,7 +2771,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6570-6578) and `windAssistEndCue()` (L6579-6587), edge-triggers on the combined
+`windAssistStartCue()` (L6599-6607) and `windAssistEndCue()` (L6608-6616), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

@@ -3971,6 +3971,9 @@ let hudState = {
   veilCharge: 1, veilLocked: false, veilReserve: false,
   chargeVisible: false, chargeToken: 0,
   caveImmuneActive: false, caveImmuneTimeLeft: 0,
+  // LUL-5412: roost cooldown -- true while the nearest roost within ROOST_TRIGGER_RADIUS
+  // is still cooling down from a prior flush (any of the three Startled Roosts triggers).
+  roostCooldownActive: false, roostCooldownTimeLeft: 0,
   veilOverloadActive: false, veilOverloadTimeLeft: 0, veilOverloadVisible: false,
   // LUL-5004: Scent Veil -- #veilPrompt's visible/enabled pair (Q5: stays
   // visible, disabled+grayed, when only stamina blocks it).
@@ -5855,9 +5858,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // [QA-HOOK] LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a
   // spec assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
   // that a second throw within ROOST_COOLDOWN does NOT re-flush it (shared-cooldown proof
-  // with the ambient updateRoosts() trigger). No new engine state.
+  // with the ambient updateRoosts() trigger). LUL-5412: deniedCueCount is global (the tell
+  // doesn't vary by roost), included here rather than a new hook.
   window.ForestEngine.qaProbeRoostState = function(i){
-    return { cooldown: roostCooldown[i], burstActive: roostBurstStart[i] >= 0 };
+    return { cooldown: roostCooldown[i], burstActive: roostBurstStart[i] >= 0, deniedCueCount: qaRoostFlushDeniedCueCount };
   };
   // [QA-HOOK] LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. Includes the
   // activation cue's fire count so a spec can assert it without decoding WebAudio output.
@@ -6267,6 +6271,11 @@ function throwThrowable(){
       markHintSeen('roostThrowCue');
       if(captionsOn) pushState({ caption: 'throw a stone at a roost to startle it', captionId: ++captionSeq });
     }
+  } else if(nearestRoost >= 0){
+    // LUL-5412: the roost that would have caught this throw is already on cooldown -- a
+    // denial tell instead of the silent no-op the throw used to be (Q5: refused input
+    // needs a positive tell, not the absence of a prompt).
+    roostFlushDeniedCue();
   }
 }
 function finishPickup(){
@@ -6562,6 +6571,26 @@ function scentVeilDeniedCue(){
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.26);
+}
+// LUL-5412: Roost cooldown -- denial tell for a player throw that lands on a roost already
+// on cooldown (throwThrowable()'s nearestRoost branch below). Mirrors rockClimbDeniedCue()'s
+// exact shape (:6448 area) -- same square/100Hz/~0.17s buzz, same counter-before-audio-gate
+// idiom, same unconditional-on-every-press caption -- "the codebase's one existing 'input
+// was refused' cue" pattern, not a new one. qaRoostFlushDeniedCueCount is global (not
+// per-roost) since the tell itself doesn't vary by which roost was targeted.
+let qaRoostFlushDeniedCueCount = 0;
+function roostFlushDeniedCue(){
+  qaRoostFlushDeniedCueCount++;
+  if(captionsOn){
+    pushState({ caption: 'that roost is still resettling from the last flush', captionId: ++captionSeq });
+  }
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'square';
+  o.frequency.setValueAtTime(100, t);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.17);
 }
 // LUL-3149: Wind-Assisted Evasion cues -- same rising-start/falling-end shape as
 // caveImmuneStartCue/EndCue above, but a shorter, quieter pair: this is a continuous
@@ -7453,6 +7482,22 @@ function stepFrame(dt, t, skipRender){
   const distChapel = Math.hypot(player.x - landmarkGroups.chapelSteeple.position.x, player.z - landmarkGroups.chapelSteeple.position.z);
   chapelSanctuaryInRadius = distChapel < CHAPEL_SANCTUARY_INTERACT_RADIUS;
   chapelSanctuaryPromptVisible = chapelSanctuaryInRadius && !chapelSanctuaryUsedThisRun && !chapelSanctuaryActive;
+  // LUL-5412: roost cooldown cue -- re-derived fresh every frame from the live
+  // roostCooldown[] array (no persisted per-roost flag, same reasoning as
+  // investigationDownwindActive below), so there is no state to reset when the player
+  // walks out of range. Reuses ROOST_TRIGGER_RADIUS -- the same "near a roost" radius the
+  // player-sprint ambient trigger already uses -- rather than adding a second roost-
+  // proximity constant. Nearest roost only: two roosts can't both be within this radius on
+  // any real map (they're placed well over ROOST_TRIGGER_RADIUS*2 apart).
+  let nearestRoostCooldownT = 0;
+  {
+    let bestD = Infinity;
+    for(let ri = 0; ri < ROOSTS.length; ri++){
+      const rx = ROOSTS[ri].x * CONFIG.roostScaleMul, rz = ROOSTS[ri].z * CONFIG.roostScaleMul;
+      const d = Math.hypot(player.x - rx, player.z - rz);
+      if(d < ROOST_TRIGGER_RADIUS && d < bestD){ bestD = d; nearestRoostCooldownT = roostCooldown[ri]; }
+    }
+  }
   // LUL-1623: nearest-throwable distance computed once per frame, reused only
   // for the HUD gate below -- grabThrowable() re-scans on its own discrete
   // keypress/tap event, not every frame.
@@ -7615,6 +7660,8 @@ function stepFrame(dt, t, skipRender){
         : null,
       caveImmuneActive: caveImmuneT > 0,
       caveImmuneTimeLeft: caveImmuneT,
+      roostCooldownActive: nearestRoostCooldownT > 0,
+      roostCooldownTimeLeft: nearestRoostCooldownT,
       veilOverloadActive: veilOverloadChargeT > 0,
       veilOverloadTimeLeft: veilOverloadChargeT,
       veilOverloadVisible: veilOverloadTriggerActive && veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound,
@@ -7636,7 +7683,7 @@ function stepFrame(dt, t, skipRender){
       investigationDownwindActive: predators.some(function(p){ return !p.inert && p.state === 'investigate' && p.inv === 'approach' && p.scentLock > 0; }),
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false, coldWalkActive: false, investigationDownwindActive: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, roostCooldownActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false, coldWalkActive: false, investigationDownwindActive: false });
   }
   // the child's idle glow, outside the pickup cinematic.
   if(!baby.taken){

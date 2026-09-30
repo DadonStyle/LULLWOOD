@@ -67,6 +67,12 @@ export interface EngineHudState {
   // LUL-1904: cave detection-immunity countdown -- 0 while inactive.
   caveImmuneActive:   boolean;
   caveImmuneTimeLeft: number;
+  // LUL-5412: roost cooldown -- true while the nearest roost within throw/ambient-trigger
+  // range is still cooling down from a prior flush (any of the three Startled Roosts
+  // triggers, docs/ELEMENTS.md "Startled roosts"). Drives #roostCooldownPanel, same shape
+  // as caveImmuneActive/caveImmuneTimeLeft above.
+  roostCooldownActive:   boolean;
+  roostCooldownTimeLeft: number;
   // LUL-4528: Rock -- Vantage Climb. mountedOnRock/rockClimbTimeLeft drive
   // #rockClimbPanel's countdown; climbPromptVisible drives the climbPrompt row.
   mountedOnRock: boolean;
@@ -286,6 +292,8 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   veilReserve: false,
   caveImmuneActive: false,
   caveImmuneTimeLeft: 0,
+  roostCooldownActive: false,
+  roostCooldownTimeLeft: 0,
   mountedOnRock: false,
   rockClimbTimeLeft: 0,
   climbPromptVisible: false,
@@ -1076,6 +1084,18 @@ export default function Hud({
       {state.chapelSanctuaryActive && (
         <div id="chapelSanctuaryPanel">
           Sanctuary · {Math.ceil(state.chapelSanctuaryChargeT)}s
+        </div>
+      )}
+
+      {/* LUL-5412: roost cooldown -- sibling of #caveImmunePanel/#rockClimbPanel/
+          #veilOverloadPanel/#chapelSanctuaryPanel, same always-visible-while-active
+          treatment (outside #panel, stays visible with adminMode off, Q3). Tells the
+          player a throw at the nearest roost would be refused right now -- the denial
+          itself (roostFlushDeniedCue()) fires only on the throw attempt, so this panel is
+          the only tell available before that attempt. */}
+      {state.roostCooldownActive && (
+        <div id="roostCooldownPanel">
+          Roost quiet · {Math.ceil(state.roostCooldownTimeLeft)}s
         </div>
       )}
 
