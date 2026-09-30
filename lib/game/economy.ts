@@ -127,6 +127,13 @@ export const MISSION_BEACON_ROOST_FLUSH_REWARD = 10;
 // above) -- confirmed by the Economist, not a placeholder.
 export const MISSION_LION_ROOST_FLUSH_REWARD = 9;
 
+// LUL-5432 (Game Economist priced, LUL-5436 / wiki
+// decisions/lul-5424-lul-5426-3proposals-accepted-2026-09-30): between beaconEvasion's 8
+// (passive threat) and beaconRoostFlush's 10 -- an active-hunt lion is more demanding than
+// the Beacon Hunter's passive lock, but Fire Tower needs less mechanical skill than
+// roost-flushing. Level with flush (9). Confirmed by the Economist, not a placeholder.
+export const MISSION_UPWIND_REFUGE_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -137,6 +144,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   flush: MISSION_FLUSH_REWARD,
   beaconRoostFlush: MISSION_BEACON_ROOST_FLUSH_REWARD,
   lionRoostFlush: MISSION_LION_ROOST_FLUSH_REWARD,
+  upwindRefuge: MISSION_UPWIND_REFUGE_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
