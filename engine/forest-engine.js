@@ -1201,8 +1201,10 @@ function generateMap(seed){
   // SPEC's Design call §2). No-op for every other mission kind. Respects ?qaRoostIndex for
   // deterministic e2e staging, falling back to the real draw when absent/out of range.
   // LUL-5160: 'beaconRoostFlush' needs the same roost draw -- it's flush's own non-spatial
-  // target kind, reused verbatim (see canCompleteFlush()).
-  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush'){
+  // target kind, reused verbatim (see canCompleteFlush()). LUL-5426: 'lionRoostFlush' (M8)
+  // is the same non-spatial roost-target shape again, only the repositioned predator differs
+  // (a lion, not the beaconHunter wolf -- see repositionBeaconHunterForMission()).
+  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush'){
     const forced = qaForcedRoostIndex !== null ? parseInt(qaForcedRoostIndex, 10) : NaN;
     const idx = (forced >= 0 && forced < ROOSTS.length) ? forced : Math.floor(rng() * ROOSTS.length);
     mission = { ...mission, target: { ...mission.target, roostIndex: idx } };
@@ -1955,22 +1957,30 @@ function relocateParkedHunter(pcx, pcz){
 // placePredators() (:1819) runs BEFORE the mission is drawn (see the LUL-1258 comment at
 // generateMap()'s tail), so "spawn ~50u from the mission target" cannot be expressed as
 // MISSION_POOL data -- it needs this second placement pass. Only ever called when
-// mission.target.kind === 'beaconEvasion' or (LUL-5160) 'beaconRoostFlush', so it can never
-// perturb the tree/predator/mission rng stream any other seed depends on -- it is new,
-// additive rng consumption gated on kinds that didn't exist before these tickets. Mirrors
+// mission.target.kind === 'beaconEvasion', (LUL-5160) 'beaconRoostFlush', or (LUL-5426)
+// 'lionRoostFlush', so it can never perturb the tree/predator/mission rng stream any other
+// seed depends on -- it is new, additive rng consumption gated on kinds that didn't exist
+// before these tickets. Mirrors
 // placePredators()'s own do/while shape (:1848-1850) for the position draw, and its post-draw
 // reset field list (:1850-1854) verbatim, so this hunter starts this round exactly as "fresh"
 // as it would from a normal placePredators() draw, not mid-chase from wherever it was first
 // placed.
 function repositionBeaconHunterForMission(mission){
-  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush') return;
-  const hunter = predators.find(p => p.variant === 'beaconHunter');
-  if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803)
-  // LUL-5160: 'beaconRoostFlush' has no real target.x/z (non-spatial, placeholder 0/0, same
-  // shape as 'flush') -- anchor on the drawn ROOSTS[roostIndex] site instead, scaled the same
-  // way every other ROOSTS distance-check site is (CONFIG.roostScaleMul, a no-op on the real
-  // map -- see its own comment, engine/tuning.js).
-  const anchor = mission.target.kind === 'beaconRoostFlush'
+  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush') return;
+  // LUL-5426: 'lionRoostFlush' (M8) repositions a lion, not the permanent beaconHunter wolf --
+  // the mid-difficulty balanced-stat predator the proposal asks for, distinct from the
+  // sight-biased beaconHunter. predators.find(p => p.kind === 'lion') is the same lookup
+  // already used by qa hooks that stage a lion (:4631), picking the first of the 3 lions
+  // placePredators() (:1835) always spawns -- never expected to be missing.
+  const hunter = mission.target.kind === 'lionRoostFlush'
+    ? predators.find(p => p.kind === 'lion')
+    : predators.find(p => p.variant === 'beaconHunter');
+  if(!hunter) return;   // never expected: wolf.0 is a permanent beaconHunter (:1810), never inert (:1800-1803); lions are always placed (:1835)
+  // LUL-5160/LUL-5426: 'beaconRoostFlush'/'lionRoostFlush' have no real target.x/z (non-spatial,
+  // placeholder 0/0, same shape as 'flush') -- anchor on the drawn ROOSTS[roostIndex] site
+  // instead, scaled the same way every other ROOSTS distance-check site is (CONFIG.roostScaleMul,
+  // a no-op on the real map -- see its own comment, engine/tuning.js).
+  const anchor = (mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush')
     ? { x: ROOSTS[mission.target.roostIndex].x * CONFIG.roostScaleMul, z: ROOSTS[mission.target.roostIndex].z * CONFIG.roostScaleMul }
     : { x: mission.target.x, z: mission.target.z };
   let x, z, tries = 0;

@@ -119,6 +119,14 @@ export const MISSION_FLUSH_REWARD = 9;
 // derived formula. Economist's call to confirm/adjust, not re-derived here.
 export const MISSION_BEACON_ROOST_FLUSH_REWARD = 10;
 
+// LUL-5426: Lion Roost Flush -- Game Economist priced this at 9E (wiki
+// decisions/lul-5424-lul-5426-3proposals-accepted-2026-09-30): between Flush's plain 9 and
+// Beacon Roost Flush's 10, matching the proposal's own framing of the lion as a
+// mid-difficulty balanced-stat predator strictly between the ambient roost (easy, no
+// predator) and the Beacon Hunter's sight-biased threat (hard, MISSION_BEACON_ROOST_FLUSH_REWARD
+// above) -- confirmed by the Economist, not a placeholder.
+export const MISSION_LION_ROOST_FLUSH_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -128,6 +136,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   beaconEvasion: MISSION_BEACON_HUNTER_EVASION_REWARD,
   flush: MISSION_FLUSH_REWARD,
   beaconRoostFlush: MISSION_BEACON_ROOST_FLUSH_REWARD,
+  lionRoostFlush: MISSION_LION_ROOST_FLUSH_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
