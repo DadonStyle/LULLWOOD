@@ -640,6 +640,16 @@ declare global {
         enterCueCount: number;
         exitCueCount: number;
       };
+      /** LUL-5566: the live decoy-site index, the fixed site list, per-site cooldown
+       * remaining (0 = ready to fire again), and the cumulative decoyScentExitCue()
+       * fire count (counted before the audio/soundOn gate, same idiom as
+       * qaProbeScentMaskSite's enterCueCount/exitCueCount above). */
+      qaProbeDecoyScentSite?: () => {
+        index: number;
+        sites: { id: string; x: number; z: number; radius: number }[];
+        cooldown: number[];
+        exitCueCount: number;
+      };
       /** LUL-2230: sets the camera yaw directly (the same `player.yaw` every
        * look-input path writes) so a test can turn to face its own scent
        * trail without pointer lock. Read-only otherwise -- no movement. */
