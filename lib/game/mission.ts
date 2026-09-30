@@ -63,7 +63,8 @@ export type MissionKind =
   | 'flush'
   | 'beaconRoostFlush'
   | 'lionRoostFlush'
-  | 'upwindRefuge';
+  | 'upwindRefuge'
+  | 'roostRecoveryEvasion';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -170,6 +171,15 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // eligibleMissionPool() pre-3-wins via the existing `timeLimitSeconds == null` filter --
   // no gating change needed.
   { kind: 'upwindRefuge', x: -95, z: -95, zoneRadius: 20, interactRadius: 4, landmarkKind: 'fireTower', timeLimitSeconds: 60 },
+  // LUL-5447/LUL-5446: Roost Recovery Evasion -- 'lionRoostFlush's own composition (LUL-5426,
+  // above) verbatim: same non-spatial roost-target shape as 'flush'/'beaconRoostFlush', same
+  // repositionBeaconHunterForMission() lion repositioning as 'lionRoostFlush'. The only
+  // difference is completion: this mission auto-completes when `roostCooldown[roostIndex]`
+  // reaches 0 (engine/forest-engine.js's updateRoosts()), not via canCompleteFlush() on a
+  // fresh throw -- it is spawned by a flush that already happened (a lion-present flush),
+  // not waiting for one. x/z/zoneRadius/interactRadius: 0/spatial: false/roostIndex: 0
+  // placeholder follows flush's own reasoning (:139 above) verbatim -- never read directly.
+  { kind: 'roostRecoveryEvasion', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
 ];
 
 export interface MissionState {
@@ -225,8 +235,12 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // repositioned predator, no new timing field) and would reproduce the identical regression,
   // so it is excluded here too. LUL-5426: lionRoostFlush shares that same untimed/no-
   // landmarkKind shape too (beaconRoostFlush's own composition, only the repositioned
-  // predator differs), so it is excluded here too.
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush');
+  // predator differs), so it is excluded here too. LUL-5447/LUL-5446: roostRecoveryEvasion
+  // shares that same untimed/no-landmarkKind shape too (lionRoostFlush's own composition,
+  // only its completion trigger differs), so it is excluded here too -- it is also never
+  // drawn by pickMission() in real play (spawned directly by a lion-present flush), but this
+  // keeps the invariant true regardless.
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
