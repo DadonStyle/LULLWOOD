@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8235 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7236, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8236 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7237, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -2086,6 +2086,22 @@ not final tuning.
   Hunter detection/chase, roost-burst/cooldown, and mission timer/objective UI
   (`#roostCooldownPanel`, `#missionTimerSeconds`) verbatim — no new engine state, no new HUD
   element, no new key, no new audio.
+- `ghost` (LUL-5497/LUL-5495, "M4 Ghost — veil-escape") — no real target position, same
+  non-spatial shape as `slackWater` (`lib/game/mission.ts`): completion is "a chase's
+  `shouldGiveUpChase()` transition fired while Veil Overload's detection-immunity window
+  (LUL-2281) was active", checked at the one real-play call site in the `chase`-state
+  predator loop (`engine/forest-engine.js`, `if(shouldGiveUpChase(...)){ ... }`), not through
+  `canCompleteMission()`. `canCompleteGhost()` (`lib/game/mission.ts`) mirrors
+  `canCompleteSlackWater()`'s exact shape — one pure predicate, given the engine's own
+  `isVeilOverloadActive(veilOverloadChargeT)` boolean read at the instant the give-up fires.
+  Untimed, excluded from `eligibleMissionPool()` pre-`MISSION_FAR_UNLOCK_WINS` by name
+  (`lib/game/mission.ts`) — shares `slackWater`'s exact untimed/no-`landmarkKind` shape, so it
+  would reproduce the same LUL-5069 landmark-hint-slot regression without the same exclusion.
+  `MISSION_GHOST_REWARD` = 9 Embers (`lib/game/economy.ts`, provisional — pending Game
+  Economist confirmation, same convention as every other provisional mission reward), level
+  with `flush`/`lionRoostFlush`/`roostRecoveryEvasion`/`bearRoostAmbush`. No new HUD element,
+  no new engine state, no new key, no new audio, no new cue — wraps the existing Veil Overload
+  detection-immunity edge (LUL-2281) unchanged.
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
@@ -2942,7 +2958,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6759) and `windAssistEndCue()` (L6768), edge-triggers on the combined
+`windAssistStartCue()` (L6760) and `windAssistEndCue()` (L6769), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

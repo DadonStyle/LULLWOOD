@@ -67,7 +67,8 @@ export type MissionKind =
   | 'roostRecoveryEvasion'
   | 'bearRoostAmbush'
   | 'beaconDeepwater'
-  | 'beaconRoostRecoveryEvasion';
+  | 'beaconRoostRecoveryEvasion'
+  | 'ghost';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -216,6 +217,14 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // verbatim -- never read directly, always overwritten by generateMap()'s post-placeCave()
   // roost draw.
   { kind: 'beaconRoostRecoveryEvasion', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
+  // LUL-5497/LUL-5495: M4 Ghost (veil-escape) -- no real target position, same non-spatial
+  // shape as slackWater (:126 above): completion is "a chase's shouldGiveUpChase() transition
+  // fired while Veil Overload was active" (see canCompleteGhost below), checked at
+  // engine/forest-engine.js's chase give-up branch, not through canCompleteMission().
+  // interactRadius: 0 keeps the E-key/canCompleteMission() path permanently false for this
+  // kind, spatial: false keeps the nav-cue hum from firing at (0,0) -- both follow
+  // slackWater's own reasoning verbatim. No roostIndex/landmarkKind/timeLimitSeconds.
+  { kind: 'ghost', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false },
 ];
 
 export interface MissionState {
@@ -280,8 +289,12 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // repositioned predator differs), so it is excluded here too. LUL-5465/LUL-5455:
   // beaconRoostRecoveryEvasion shares that same untimed/no-landmarkKind shape too
   // (roostRecoveryEvasion's own composition, only the repositioned predator differs), so it is
-  // excluded here too.
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion');
+  // excluded here too. LUL-5497/LUL-5495: ghost shares that same untimed/no-landmarkKind shape
+  // too (slackWater's own non-spatial-target shape, only its completion trigger differs), so
+  // it is excluded here too -- same regression this filter exists to prevent (a fresh boot()
+  // drawing a mission kind with no matching HINT_PRIORITY entry breaks e2e/hints.spec.ts's
+  // landmark->deepwater hint-slot handoff, see the LUL-4958/LUL-5069 comment above).
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion' && m.kind !== 'ghost');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
@@ -351,6 +364,17 @@ export function canCompleteFlush(mission: MissionState, flushedRoostIndex: numbe
   return mission.status === 'active'
     && (mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'bearRoostAmbush')
     && mission.target.roostIndex === flushedRoostIndex;
+}
+
+/** LUL-5497/LUL-5495: M4 Ghost -- a chase this mission's target names just gave up
+ * (shouldGiveUpChase() transitioned, engine/forest-engine.js's chase branch) while Veil
+ * Overload's detection-immunity window (LUL-2281) was active. Mirrors canCompleteSlackWater's
+ * exact shape -- one pure predicate, checked at the one real-play call site that can make it
+ * true. Caller passes the engine's own isVeilOverloadActive(veilOverloadChargeT) boolean,
+ * read at the exact instant the give-up fires -- not re-derived here, same reasoning as
+ * canCompleteSlackWater's fogTideActive param (this module has no engine-state import). */
+export function canCompleteGhost(mission: MissionState, overloadActive: boolean): boolean {
+  return mission.status === 'active' && mission.target.kind === 'ghost' && overloadActive;
 }
 
 export function completeMission(mission: MissionState): MissionState {

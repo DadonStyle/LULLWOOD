@@ -372,6 +372,7 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   bearRoostAmbush: 'Bear Roost Ambush',
   beaconDeepwater: 'Beacon Deepwater',
   beaconRoostRecoveryEvasion: 'Beacon Roost Recovery',
+  ghost: 'Ghost',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the
