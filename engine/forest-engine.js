@@ -2184,7 +2184,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // a fresh install), and a higher-priority key preempts a lower-priority one
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
-const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion',
+const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion','skyCompassNavigation',
   'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','veil','duskLion'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
@@ -2200,6 +2200,7 @@ const HINT_TEXT = {
   deepwater:  'the fire tower — a bonus payout, but only if you reach it within the time limit',
   oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
   beaconEvasion: 'the fire tower — a Beacon Hunter patrols the approach. veil (F) breaks its lock if it catches your scent on the wind',
+  skyCompassNavigation: 'the sky compass overhead points true north — use it to navigate straight to the target without a landmark in sight',
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
@@ -8066,6 +8067,7 @@ function stepFrame(dt, t, skipRender){
         case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active', null];
         case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active', null];
         case 'beaconEvasion': return [!!mission && mission.target.kind === 'beaconEvasion' && mission.status === 'active', null];
+        case 'skyCompassNavigation': return [!!mission && mission.target.kind === 'skyCompassNavigation' && mission.status === 'active', null];
         case 'wolf': case 'bear': case 'lion': {
           for(const p of predators){
             if(p.inert || p.kind !== key) continue;
@@ -8112,6 +8114,7 @@ function stepFrame(dt, t, skipRender){
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
         case 'beaconEvasion': return missionCanComplete;
+        case 'skyCompassNavigation': return missionCanComplete;
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
         default: return false;   // landmark: time-only

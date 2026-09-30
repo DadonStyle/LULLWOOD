@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8276 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7266, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8279 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7267, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1090,6 +1090,33 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
 - N/A — not a spatial object with a collider; `fog: false`/`depthWrite: false`
   so it always reads through fog and never occludes or is occluded by nearer
   geometry, same as stars/moon.
+
+**Mission mode (LUL-5528/LUL-5524)**
+- `MissionKind` gains `'skyCompassNavigation'` (`lib/game/mission.ts`), a `MISSION_POOL`
+  entry keyed to the `drownedCar` landmark (`landmarkKind: 'drownedCar'`, untimed,
+  `interactRadius: 4`). `syncMissionTargetToLandmark()` overwrites the pool entry's
+  nominal x/z with the landmark's real post-placement position on the full map, same as
+  `oakHollow`/`radioMast`/`stoneMarker`/`chapelSanctuary`.
+- Excluded from `eligibleMissionPool()`'s pre-`MISSION_FAR_UNLOCK_WINS` draw (`lib/game/
+  mission.ts`), same reasoning as `chapelSanctuary`: a second untimed kind in that pool
+  would make `oakHollow`'s pre-win draw non-deterministic under a fixed seed.
+- Completion reuses `canCompleteMission()` unchanged — no new completion logic, this is a
+  plain fixed-landmark target like `oakHollow`/`radioMast`/`stoneMarker`.
+- `MISSION_NAMES.skyCompassNavigation` (`components/Hud.tsx`): `'Sky Compass Navigation'`.
+  `MISSION_SKY_COMPASS_NAVIGATION_REWARD` (`lib/game/economy.ts`): placeholder `9`, same
+  convention as the other untimed missions pending a Game Economist pricing ticket.
+- Cue triple: a new `HINT_PRIORITY`/`HINT_TEXT` entry (`engine/forest-engine.js`) —
+  self/panel-anchored like `oakHollow`, eligible while `mission.target.kind ===
+  'skyCompassNavigation' && mission.status === 'active'`, dismissed on
+  `missionCanComplete` — teaches the player to use the Sky Compass (above) to find the
+  target without a landmark in sight. `GameCanvas.tsx`'s generic hint-key CSS group
+  (shared with `landmark`/`oakHollow`/`scentMask`) gains the matching selector; no new
+  audio (reuses `missionWaypointHum()`'s existing nav-cue hum while the mission is active
+  and un-entered).
+- e2e: `e2e/mission-sky-compass-navigation.spec.ts` (mission drawn via
+  `?qaMissionKind=skyCompassNavigation`, mirrors `mission-progression.spec.ts`'s
+  `oakHollow` case: panel name/glyph, no timer element, completion via
+  `qaTeleportAtMissionTarget`).
 
 ---
 
@@ -2985,7 +3012,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6763) and `windAssistEndCue()` (L6772), edge-triggers on the combined
+`windAssistStartCue()` (L6764) and `windAssistEndCue()` (L6773), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

@@ -121,6 +121,7 @@ export async function boot(
       | 'beaconRoostRecoveryEvasion'
       | 'ghost'
       | 'chapelSanctuary'
+      | 'skyCompassNavigation'
       | null;
     qaRoostIndex?: number | null;
     seedWelcomeSplashSeen?: boolean;

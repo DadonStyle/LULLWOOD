@@ -69,7 +69,8 @@ export type MissionKind =
   | 'beaconDeepwater'
   | 'beaconRoostRecoveryEvasion'
   | 'ghost'
-  | 'chapelSanctuary';
+  | 'chapelSanctuary'
+  | 'skyCompassNavigation';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -234,6 +235,13 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // rides that mechanic's existing grant edge (see canCompleteChapelSanctuary below) --
   // no new engine completion logic, no new HUD prompt, no new key.
   { kind: 'chapelSanctuary', x: 20, z: -178, zoneRadius: 4, interactRadius: 4, landmarkKind: 'chapelSteeple' },
+  // LUL-5528/LUL-5524: Sky Compass Navigation -- keyed to the `drownedCar` LANDMARKS entry
+  // (engine/tuning.js:82), same fixed-landmark/untimed shape as oakHollow (:122 above).
+  // A teaching mission for the shipped world-space Sky Compass (LUL-5486/PR#937): no new
+  // completion logic, this rides canCompleteMission() unchanged like every other
+  // fixed-landmark entry -- only a HINT_PRIORITY caption (engine/forest-engine.js)
+  // nudges the player to use the compass to find the target.
+  { kind: 'skyCompassNavigation', x: -95, z: 46, zoneRadius: 10, interactRadius: 4, landmarkKind: 'drownedCar' },
 ];
 
 export interface MissionState {
@@ -310,7 +318,10 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // untimed kind into this pool would make that draw non-deterministic under a fixed seed,
   // same class of regression as LUL-5069's slackWater incident even though the failure mode
   // here is draw-nondeterminism, not an unreachable target.
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion' && m.kind !== 'ghost' && m.kind !== 'chapelSanctuary');
+  // LUL-5528/LUL-5524: skyCompassNavigation is excluded here too, same reasoning as
+  // chapelSanctuary immediately above (a real drownedCar target, but a second untimed kind
+  // in this pool would still break oakHollow's determinism).
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion' && m.kind !== 'ghost' && m.kind !== 'chapelSanctuary' && m.kind !== 'skyCompassNavigation');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
