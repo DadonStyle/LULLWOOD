@@ -93,8 +93,10 @@ import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
 import {
   armReturnSweep,
   backOffPoint,
+  biasTowardWind,
   canCatchInChase,
   CATCH_MARGIN,
+  INVESTIGATION_DOWNWIND_BIAS,
   isCaught,
   isSniffImmune,
   pickRoamWaypoint,
@@ -2857,6 +2859,17 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           const ndx = p.noiseTarget.x - p.x, ndz = p.noiseTarget.z - p.z;
           adist = Math.hypot(ndx, ndz) || 0.0001;
           aux = ndx / adist; auz = ndz / adist;
+        }
+        // LUL-5402: a scent-originated approach (p.scentLock > 0) favors closing in
+        // from downwind of the target -- see biasTowardWind()'s comment in
+        // lib/game/predator.ts for why this is gated on scentLock and not fired for
+        // a noise/sight-loss downgrade into the same 'approach' sub-phase. No
+        // separate p.investigationDownwindActive flag to reset elsewhere: the HUD
+        // push below (LUL-5402) re-derives the same `scentLock > 0` condition from
+        // live predator state every frame instead of caching a stale copy of it.
+        if(p.scentLock > 0){
+          const biased = biasTowardWind(aux, auz, windX, windZ, INVESTIGATION_DOWNWIND_BIAS);
+          aux = biased.ux; auz = biased.uz;
         }
         const step = stepApproach(aux, auz, p.spec.speed*pSpeedScaleMul, adist, p.rad);
         desx = step.desx; desz = step.desz; speed = step.speed;
