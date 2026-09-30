@@ -156,6 +156,13 @@ export const MISSION_BEAR_ROOST_AMBUSH_REWARD = 9;
 // Economist, not a placeholder.
 export const MISSION_BEACON_DEEPWATER_REWARD = 9;
 
+// LUL-5465/LUL-5455: Beacon Roost Recovery Evasion -- placeholder pending the Game Economist's
+// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced
+// provisionally level with roostRecoveryEvasion/lionRoostFlush/bearRoostAmbush/flush (9) --
+// this ticket's own scope note leaves the reward as a placeholder pending a parallel Economist
+// pricing ticket, not re-derived here.
+export const MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -170,6 +177,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   roostRecoveryEvasion: MISSION_ROOST_RECOVERY_EVASION_REWARD,
   bearRoostAmbush: MISSION_BEAR_ROOST_AMBUSH_REWARD,
   beaconDeepwater: MISSION_BEACON_DEEPWATER_REWARD,
+  beaconRoostRecoveryEvasion: MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of
