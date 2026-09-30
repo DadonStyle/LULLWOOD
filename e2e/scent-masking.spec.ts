@@ -45,6 +45,8 @@ test.describe('scent-masking sites (LUL-5493)', () => {
     await walkUnits(page, 7);
     let probe = await qaHook(page, 'qaProbeScentMaskSite');
     expect(probe.index, 'must still be outside every site').toBe(-1);
+    expect(probe.enterCueCount, 'no enter cue before ever entering a site').toBe(0);
+    expect(probe.exitCueCount, 'no exit cue before ever entering a site').toBe(0);
     const outsideTrail = await qaHook(page, 'qaProbeScentTrail');
     expect(outsideTrail.livePoints, 'walking outside a site must deposit scent as normal').toBeGreaterThan(0);
 
@@ -52,6 +54,8 @@ test.describe('scent-masking sites (LUL-5493)', () => {
     await walkUnits(page, 3);
     probe = await qaHook(page, 'qaProbeScentMaskSite');
     expect(probe.index, 'must be inside site 0 now').toBe(0);
+    expect(probe.enterCueCount, 'crossing the entry edge fires the enter cue exactly once').toBe(1);
+    expect(probe.exitCueCount, 'no exit cue yet -- still inside').toBe(0);
     const insideEntryTrail = await qaHook(page, 'qaProbeScentTrail');
 
     // Phase 3: keep walking while still inside (11 units total traversed
@@ -60,6 +64,8 @@ test.describe('scent-masking sites (LUL-5493)', () => {
     await walkUnits(page, 9);
     probe = await qaHook(page, 'qaProbeScentMaskSite');
     expect(probe.index, 'must still be inside the same site').toBe(0);
+    expect(probe.enterCueCount, 'still just the one entry -- no re-fire while continuously inside').toBe(1);
+    expect(probe.exitCueCount, 'still inside -- no exit cue yet').toBe(0);
     const stillInsideTrail = await qaHook(page, 'qaProbeScentTrail');
     expect(stillInsideTrail.livePoints, 'no new motes must appear while masked, even after several deposit intervals')
       .toBe(insideEntryTrail.livePoints);
@@ -68,6 +74,8 @@ test.describe('scent-masking sites (LUL-5493)', () => {
     await walkUnits(page, 5);
     probe = await qaHook(page, 'qaProbeScentMaskSite');
     expect(probe.index, 'must be outside again after exiting the far side').toBe(-1);
+    expect(probe.enterCueCount, 'still just the one entry').toBe(1);
+    expect(probe.exitCueCount, 'crossing the exit edge fires the exit cue exactly once').toBe(1);
     const atExitTrail = await qaHook(page, 'qaProbeScentTrail');
 
     // Deposits resume: one full SCENT_DEPOSIT_INTERVAL (0.3s) of walking, with

@@ -634,6 +634,11 @@ declare global {
       qaProbeScentMaskSite?: () => {
         index: number;
         sites: { id: string; type: 'marsh' | 'pine'; x: number; z: number; radius: number }[];
+        /** LUL-5530: cumulative scentMaskEnterCue()/scentMaskExitCue() fire counts --
+         * counted before the audio/soundOn gate, mirrors qaScentVeilDeniedCueCount's
+         * idiom, so the e2e assertion works with soundOn:false too. */
+        enterCueCount: number;
+        exitCueCount: number;
       };
       /** LUL-2230: sets the camera yaw directly (the same `player.yaw` every
        * look-input path writes) so a test can turn to face its own scent

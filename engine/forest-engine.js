@@ -6113,6 +6113,8 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return {
       index: playerInScentMaskSiteIndex,
       sites: scaledScentMaskSites().map(s => ({ id: s.id, type: s.type, x: s.x, z: s.z, radius: s.radius })),
+      enterCueCount: qaScentMaskEnterCueCount,
+      exitCueCount: qaScentMaskExitCueCount,
     };
   };
 
@@ -6788,6 +6790,32 @@ function windAssistEndCue(){
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.2);
 }
+// LUL-5530: Scent-Masking site cues -- completes the cue triple (LUL-5493 already ships
+// the glow ring + one-shot HINT_PRIORITY caption). Same rising/falling sine pair shape as
+// windAssistStartCue/EndCue above, but a lower register so the two "quieting" effects
+// (wind-assisted sprint vs. scent-masking site) stay distinguishable.
+let qaScentMaskEnterCueCount = 0;
+function scentMaskEnterCue(){
+  qaScentMaskEnterCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(260, t); o.frequency.exponentialRampToValueAtTime(390, t + 0.15);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.24);
+}
+let qaScentMaskExitCueCount = 0;
+function scentMaskExitCue(){
+  qaScentMaskExitCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(390, t); o.frequency.exponentialRampToValueAtTime(260, t + 0.15);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.24);
+}
 // LUL-4893: Predator Pause's cue -- a rising chime distinct in register from
 // windAssistStartCue's 440->660Hz pair so the two wind-driven effects (player
 // sprint bonus vs. predator freeze) stay audibly distinguishable.
@@ -7453,7 +7481,14 @@ function stepFrame(dt, t, skipRender){
   // LUL-5493: same "once per stepFrame(), after every player.x/z write" placement
   // as updateStreamedChunks(false) above -- a QA teleport into a site is picked up
   // next frame with zero movement input, same as real walking into one.
-  playerInScentMaskSiteIndex = findScentMaskSiteIndex(player.x, player.z, scaledScentMaskSites(), WRAP_SPAN, WRAP_SPAN);
+  {
+    const prevScentMaskSiteIndex = playerInScentMaskSiteIndex;
+    playerInScentMaskSiteIndex = findScentMaskSiteIndex(player.x, player.z, scaledScentMaskSites(), WRAP_SPAN, WRAP_SPAN);
+    // LUL-5530: completes the cue triple -- glow ring + caption already fire on this
+    // same -1<->index transition (LUL-5493); this is the missing audio leg.
+    if(prevScentMaskSiteIndex === -1 && playerInScentMaskSiteIndex !== -1) scentMaskEnterCue();
+    else if(prevScentMaskSiteIndex !== -1 && playerInScentMaskSiteIndex === -1) scentMaskExitCue();
+  }
 
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this

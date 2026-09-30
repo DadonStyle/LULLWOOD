@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8262 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7250, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8297 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7278, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1705,14 +1705,14 @@ not final tuning.
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
   both `track()` call sites, in `finishPickup()` (L6501, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6871). The `difficulty` module-level
+  `LUL-2281`) and `triggerDeath()` (L6875). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6847) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6875) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6855) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1893,7 +1893,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7215, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7228, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -3057,7 +3057,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6773) and `windAssistEndCue()` (L6782), edge-triggers on the combined
+`windAssistStartCue()` (L6775) and `windAssistEndCue()` (L6784), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3258,31 +3258,38 @@ entering (or laid elsewhere) are untouched -- masking stops new deposits, it doe
 accelerate the decay of a trail already down. `checkScent()`/`scentOnto()` (predator tracking)
 are unmodified; a masked player is simply never adding anything for them to find.
 
-**Visual (cue triple, no audio in this slice)**:
+**Visual + audio (full cue triple as of LUL-5530)**:
 - Glow: one static `THREE.Mesh` ring per site (`RingGeometry` + additive-blended
   `MeshBasicMaterial`, `engine/forest-engine.js:1322`, same "static ring, module scope" recipe
   as `homeRing`), teal for `marsh` sites and amber for `pine` (`SCENT_MASK_GLOW_COLOR`).
   Opacity brightens toward each site's own center (`scentMaskGlowWeight()`, 0..1 proximity
   falloff) plus a slow ambient sine pulse that drops out entirely under `reducedMotion` (the
-  proximity brightening does not) -- `:7935-7939`. Rendered directly into `scene`, not a child
+  proximity brightening does not) -- `:7971-7980`. Rendered directly into `scene`, not a child
   of `#panel`, so visible with `adminMode` off.
 - Caption: new `'scentMask'` entry in `HINT_PRIORITY`/`HINT_TEXT`/`hintCandidate`
-  (`engine/forest-engine.js:2214`, `:8056`), self/panel-anchored (bottom-center, same fixed CSS
+  (`engine/forest-engine.js:2216`, `:8097`), self/panel-anchored (bottom-center, same fixed CSS
   family as `landmark`/`caveImmune` -- `components/GameCanvas.tsx`), one-shot per install:
   *"a scent-masking site -- your footsteps are hidden here; predators can't track your trail
   while you stay inside."* Dismisses (without marking seen) the instant the player leaves the
-  site (`hintDismissedByEvent`'s `'scentMask'` case, `:8068`), same shape as `caveImmune`'s own
+  site (`hintDismissedByEvent`'s `'scentMask'` case, `:8109`), same shape as `caveImmune`'s own
   `caveImmuneT <= 0` dismissal.
-- No audio in this cheap slice (deferred to the full slice per the wiki proposal).
+- Audio (LUL-5530): `scentMaskEnterCue()`/`scentMaskExitCue()` (`engine/forest-engine.js:6781-6804`),
+  a rising/falling 260<->390Hz sine pair -- same shape as `windAssistStartCue`/`windAssistEndCue`
+  but a lower register so the two "quieting" effects stay distinguishable. Fired once per
+  `playerInScentMaskSiteIndex` `-1<->index` transition, at the same `stepFrame()` recompute site
+  the glow/caption pair already reads (`:7469-7478`) -- all three legs of the cue triple now fire
+  off one shared edge-detect.
 
-**QA hooks**: `qaProbeScentMaskSite()` (`engine/forest-engine.js:6093-6102`) -- live site index
-plus the three sites' own (already-scaled) `id`/`type`/`x`/`z`/`radius`, so a spec never
-hardcodes `SCENT_MASK_SITES`' raw coordinates. `qaTeleportTo`/`qaSetLookYaw`/`qaAdvance` (all
-pre-existing) drive the rest.
+**QA hooks**: `qaProbeScentMaskSite()` (`engine/forest-engine.js:6100-6107`) -- live site index,
+the three sites' own (already-scaled) `id`/`type`/`x`/`z`/`radius`, and cumulative
+`enterCueCount`/`exitCueCount` (counted before the `audio`/`soundOn` gate, same
+"counter-before-gate" idiom as `qaScentVeilDeniedCueCount`, so assertions work with
+`soundOn:false` too). `qaTeleportTo`/`qaSetLookYaw`/`qaAdvance` (all pre-existing) drive the rest.
 
-Covered by `e2e/scent-masking.spec.ts` (new): walking a straight line through a site deposits
-zero new scent motes for several `SCENT_DEPOSIT_INTERVAL` (0.3s) ticks while inside, and resumes
-within one interval of exiting the far side; a wolf staged inside the same site next to the
-player (a real predator, not a flag check) never reaches `scentLock > 0` -- the scent-specific
-detection channel this feature gates -- regardless of whatever sight-based state its own
-`canSee()` channel reaches, which this feature doesn't touch.
+Covered by `e2e/scent-masking.spec.ts`: walking a straight line through a site deposits zero new
+scent motes for several `SCENT_DEPOSIT_INTERVAL` (0.3s) ticks while inside, and resumes within one
+interval of exiting the far side, asserting `enterCueCount`/`exitCueCount` fire exactly once each
+at the entry/exit edges and never re-fire while continuously inside; a wolf staged inside the same
+site next to the player (a real predator, not a flag check) never reaches `scentLock > 0` -- the
+scent-specific detection channel this feature gates -- regardless of whatever sight-based state
+its own `canSee()` channel reaches, which this feature doesn't touch.
