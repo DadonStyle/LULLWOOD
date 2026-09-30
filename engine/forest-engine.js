@@ -1208,7 +1208,10 @@ function generateMap(seed){
   // its completion trigger differs -- see updateRoosts()'s cooldown-expiry branch). LUL-5456:
   // 'bearRoostAmbush' shares the same non-spatial roost-target shape too (only the repositioned
   // predator differs -- a bear instead of a lion, see repositionBeaconHunterForMission()).
-  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion' || mission.target.kind === 'bearRoostAmbush'){
+  // LUL-5465/LUL-5455: 'beaconRoostRecoveryEvasion' shares the same non-spatial roost-target
+  // shape too (roostRecoveryEvasion's own cooldown-expiry completion, but repositions the
+  // Beacon Hunter wolf instead of a lion -- see repositionBeaconHunterForMission()).
+  if(mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion' || mission.target.kind === 'bearRoostAmbush' || mission.target.kind === 'beaconRoostRecoveryEvasion'){
     const forced = qaForcedRoostIndex !== null ? parseInt(qaForcedRoostIndex, 10) : NaN;
     const idx = (forced >= 0 && forced < ROOSTS.length) ? forced : Math.floor(rng() * ROOSTS.length);
     mission = { ...mission, target: { ...mission.target, roostIndex: idx } };
@@ -1753,6 +1756,13 @@ function flushRoost(i){
   if(mission && mission.target.kind === 'roostRecoveryEvasion' && mission.target.roostIndex === i && mission.status === 'active' && captionsOn){
     pushState({ caption: 'the roost is cooling — hold upwind until it resets', captionId: ++captionSeq });
   }
+  // LUL-5465/LUL-5455: same cooldown-window cue as roostRecoveryEvasion above, reusing this
+  // conditional-caption pattern verbatim -- only the wording differs, since the repositioned
+  // Beacon Hunter is sight-biased (see repositionBeaconHunterForMission()), not the
+  // scent/wind-biased lion 'hold upwind' warns against.
+  if(mission && mission.target.kind === 'beaconRoostRecoveryEvasion' && mission.target.roostIndex === i && mission.status === 'active' && captionsOn){
+    pushState({ caption: 'the roost is cooling — stay out of the Beacon Hunter\'s sight until it resets', captionId: ++captionSeq });
+  }
 }
 const lookM = new THREE.Matrix4(), lookQ = new THREE.Quaternion();
 function key3(time, keys){   // smoothstep-interpolated keyframes
@@ -1979,7 +1989,7 @@ function relocateParkedHunter(pcx, pcz){
 // as it would from a normal placePredators() draw, not mid-chase from wherever it was first
 // placed.
 function repositionBeaconHunterForMission(mission){
-  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush' && mission.target.kind !== 'upwindRefuge' && mission.target.kind !== 'roostRecoveryEvasion' && mission.target.kind !== 'bearRoostAmbush') return;
+  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush' && mission.target.kind !== 'upwindRefuge' && mission.target.kind !== 'roostRecoveryEvasion' && mission.target.kind !== 'bearRoostAmbush' && mission.target.kind !== 'beaconRoostRecoveryEvasion') return;
   // LUL-5426/LUL-5432: 'lionRoostFlush' (M8) and 'upwindRefuge' (Fire Tower variant) both
   // reposition a lion, not the permanent beaconHunter wolf -- the mid-difficulty
   // balanced-stat predator the proposal asks for, distinct from the sight-biased
@@ -1989,7 +1999,11 @@ function repositionBeaconHunterForMission(mission){
   // 'roostRecoveryEvasion' also repositions a lion, same reasoning as 'lionRoostFlush'
   // (this mission only spawns after a lion-present roost flush). LUL-5456: 'bearRoostAmbush'
   // repositions a bear instead -- the scent-weighted predator (:2114/isScentDetected()
-  // call site :2217), the first roost mission not anchored on the lion.
+  // call site :2217), the first roost mission not anchored on the lion. LUL-5465/LUL-5455:
+  // 'beaconRoostRecoveryEvasion' falls through to the default branch below (the sight-biased
+  // beaconHunter wolf, 'beaconRoostFlush's own lookup) -- roostRecoveryEvasion's cooldown-
+  // survival completion combined with the Beacon Hunter's detection advantage instead of the
+  // lion, the harder-to-fool predator variant of this same evasion window.
   const hunter = mission.target.kind === 'bearRoostAmbush'
     ? predators.find(p => p.kind === 'bear')
     : (mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'upwindRefuge' || mission.target.kind === 'roostRecoveryEvasion')
@@ -2001,8 +2015,10 @@ function repositionBeaconHunterForMission(mission){
   // instead, scaled the same way every other ROOSTS distance-check site is (CONFIG.roostScaleMul,
   // a no-op on the real map -- see its own comment, engine/tuning.js). LUL-5447/LUL-5446:
   // 'roostRecoveryEvasion' shares the exact same non-spatial roost-anchor shape. LUL-5456:
-  // 'bearRoostAmbush' shares the exact same non-spatial roost-anchor shape too.
-  const anchor = (mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion' || mission.target.kind === 'bearRoostAmbush')
+  // 'bearRoostAmbush' shares the exact same non-spatial roost-anchor shape too. LUL-5465/
+  // LUL-5455: 'beaconRoostRecoveryEvasion' shares the exact same non-spatial roost-anchor
+  // shape too.
+  const anchor = (mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'roostRecoveryEvasion' || mission.target.kind === 'bearRoostAmbush' || mission.target.kind === 'beaconRoostRecoveryEvasion')
     ? { x: ROOSTS[mission.target.roostIndex].x * CONFIG.roostScaleMul, z: ROOSTS[mission.target.roostIndex].z * CONFIG.roostScaleMul }
     : { x: mission.target.x, z: mission.target.z };
   let x, z, tries = 0;
@@ -3125,6 +3141,12 @@ function updateRoosts(dt, running){
       // path for this kind (same non-spatial shape as flush/beaconRoostFlush/lionRoostFlush),
       // this is the one call site that can make it true.
       if(roostCooldown[i] <= 0 && mission && mission.status === 'active' && mission.target.kind === 'roostRecoveryEvasion' && mission.target.roostIndex === i){
+        mission = completeMission(mission);
+      }
+      // LUL-5465/LUL-5455: Beacon Roost Recovery Evasion shares the exact same cooldown-expiry
+      // auto-completion as roostRecoveryEvasion above -- only the repositioned predator differs
+      // (repositionBeaconHunterForMission()), not the completion trigger.
+      if(roostCooldown[i] <= 0 && mission && mission.status === 'active' && mission.target.kind === 'beaconRoostRecoveryEvasion' && mission.target.roostIndex === i){
         mission = completeMission(mission);
       }
       continue;

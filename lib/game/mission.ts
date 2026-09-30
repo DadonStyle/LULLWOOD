@@ -65,7 +65,8 @@ export type MissionKind =
   | 'lionRoostFlush'
   | 'upwindRefuge'
   | 'roostRecoveryEvasion'
-  | 'bearRoostAmbush';
+  | 'bearRoostAmbush'
+  | 'beaconRoostRecoveryEvasion';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -192,6 +193,18 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // verbatim -- never read directly, always overwritten by generateMap()'s post-placeCave()
   // roost draw.
   { kind: 'bearRoostAmbush', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
+  // LUL-5465/LUL-5455: Beacon Roost Recovery Evasion -- 'roostRecoveryEvasion's own
+  // composition (LUL-5447/LUL-5446, above) verbatim: same non-spatial roost-target shape,
+  // same cooldown-expiry auto-completion (updateRoosts(), engine/forest-engine.js), reusing
+  // flushRoost()'s own conditional-caption pattern. The only difference is which predator
+  // repositionBeaconHunterForMission() repositions: the sight-biased Beacon Hunter wolf
+  // (predators.find(p => p.variant === 'beaconHunter'), 'beaconRoostFlush's own lookup) instead
+  // of a lion -- the harder-to-fool predator 'roostRecoveryEvasion' already taught the player
+  // to manage in this same cooldown-survival window. x/z/zoneRadius/interactRadius:
+  // 0/spatial: false/roostIndex: 0 placeholder follows flush's own reasoning (:139 above)
+  // verbatim -- never read directly, always overwritten by generateMap()'s post-placeCave()
+  // roost draw.
+  { kind: 'beaconRoostRecoveryEvasion', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
 ];
 
 export interface MissionState {
@@ -253,8 +266,11 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // drawn by pickMission() in real play (spawned directly by a lion-present flush), but this
   // keeps the invariant true regardless. LUL-5456: bearRoostAmbush shares that same
   // untimed/no-landmarkKind shape too (lionRoostFlush's own composition, only the
-  // repositioned predator differs), so it is excluded here too.
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush');
+  // repositioned predator differs), so it is excluded here too. LUL-5465/LUL-5455:
+  // beaconRoostRecoveryEvasion shares that same untimed/no-landmarkKind shape too
+  // (roostRecoveryEvasion's own composition, only the repositioned predator differs), so it is
+  // excluded here too.
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission

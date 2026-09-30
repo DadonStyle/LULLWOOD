@@ -249,6 +249,25 @@ test('canCompleteFlush is false for a bearRoostAmbush mission when a different r
   assert.equal(canCompleteFlush(m, 1), false);
 });
 
+// ---- beaconRoostRecoveryEvasion (LUL-5465/LUL-5455) ------------------------
+//
+// Same shape as roostRecoveryEvasion above -- completion is engine-owned (updateRoosts()'s
+// cooldown-expiry branch), not canCompleteFlush(). Also NOT covered by canCompleteFlush(): this
+// kind is deliberately absent from its kind-check, same as roostRecoveryEvasion.
+
+const beaconRoostRecoveryEvasionTarget = MISSION_POOL.find((t) => t.kind === 'beaconRoostRecoveryEvasion')!;
+
+test('beaconRoostRecoveryEvasion MISSION_POOL entry shares roostRecoveryEvasion\'s non-spatial roost-target shape', () => {
+  assert.equal(beaconRoostRecoveryEvasionTarget.spatial, false);
+  assert.equal(beaconRoostRecoveryEvasionTarget.interactRadius, 0);
+  assert.equal(beaconRoostRecoveryEvasionTarget.timeLimitSeconds, undefined);
+});
+
+test('canCompleteFlush is false for a beaconRoostRecoveryEvasion mission even when the roostIndex matches', () => {
+  const m: MissionState = { target: { ...beaconRoostRecoveryEvasionTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 3), false);
+});
+
 // ---- completeMission idempotence ----------------------------------------
 
 test('completeMission flips an active mission to complete', () => {
@@ -571,6 +590,21 @@ test('eligibleMissionPool includes bearRoostAmbush at MISSION_FAR_UNLOCK_WINS', 
   progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
   const pool = eligibleMissionPool(progression, 'lantern');
   assert.equal(pool.some((m) => m.kind === 'bearRoostAmbush'), true);
+});
+
+test('eligibleMissionPool excludes beaconRoostRecoveryEvasion below MISSION_FAR_UNLOCK_WINS', () => {
+  // LUL-5465/LUL-5455: beaconRoostRecoveryEvasion shares flush's untimed/no-landmarkKind shape
+  // and would reproduce the identical LUL-5069 regression without the same exclusion.
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'beaconRoostRecoveryEvasion'), false);
+});
+
+test('eligibleMissionPool includes beaconRoostRecoveryEvasion at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'beaconRoostRecoveryEvasion'), true);
 });
 
 // ---- pickMission with an explicit pool (LUL-3010) ------------------------
