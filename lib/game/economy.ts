@@ -176,6 +176,11 @@ export const MISSION_GHOST_REWARD = 9;
 // scope note -- that note only means no NEW reward path, not that this row can be skipped.
 export const MISSION_CHAPEL_SANCTUARY_REWARD = 9;
 
+// LUL-5528/LUL-5524: Sky Compass Navigation -- placeholder pending the Game Economist's
+// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced
+// provisionally level with the other untimed missions (9).
+export const MISSION_SKY_COMPASS_NAVIGATION_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -193,6 +198,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   beaconRoostRecoveryEvasion: MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD,
   ghost: MISSION_GHOST_REWARD,
   chapelSanctuary: MISSION_CHAPEL_SANCTUARY_REWARD,
+  skyCompassNavigation: MISSION_SKY_COMPASS_NAVIGATION_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

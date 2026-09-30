@@ -374,6 +374,7 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   beaconRoostRecoveryEvasion: 'Beacon Roost Recovery',
   ghost: 'Ghost',
   chapelSanctuary: 'Chapel Sanctuary',
+  skyCompassNavigation: 'Sky Compass Navigation',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the
