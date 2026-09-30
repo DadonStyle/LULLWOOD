@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8131 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7151, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8172 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7192, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1046,6 +1046,53 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
 
 ---
 
+### Sky Compass (LUL-5486, cheap slice off LUL-5485)
+
+**What it can do**
+- Paint four faint cardinal glyphs (N/E/S/W) as real `THREE.Sprite` objects at
+  fixed absolute world positions — the cardinal unit vectors × radius 280,
+  same sky-setup block as the star field/moon disc
+  (`engine/forest-engine.js`, right after `scene.add(moonGroup)`). Because
+  they are genuine world-space objects (not baked into `scene.background`,
+  which is a flat non-rotating `CanvasTexture` — the approach LUL-5485's
+  original proposal wanted and which cannot rotate with the camera), turning
+  to face a direction moves the glyph across the screen exactly like a real
+  landmark would.
+- Draw a filled serif glyph by day and a hollow (stroke-only) serif glyph by
+  night, colored from `TOD_VISUAL.sunMoonColor` so it reads as lit by the
+  same source as the sun/moon disc (`lib/game/skyCompass.ts`'s
+  `drawSkyCompassGlyph()`, unit tested in `skyCompass.test.ts`).
+- Fade in/out with `TOD_VISUAL.starOpacity` between 8–12% opacity
+  (`SKY_COMPASS_MIN_OPACITY`/`SKY_COMPASS_MAX_OPACITY`) — always faint,
+  never a HUD element.
+
+**What it CANNOT do**
+- No settings, no economy cost, no HUD entry, no `EngineActions`/`EngineHudState`
+  wiring — a passive always-on background object, so the LUL-1697 engine/React
+  contract rule does not apply (nothing added to `init()`'s return object).
+- Does not affect predator detection, hiding, scent, difficulty, or any other
+  gameplay system — purely atmospheric, same class as the star field.
+- Not interactive — no click/tap target, no prompt, no state that persists
+  across sessions.
+
+**Behaviours & logic**
+- Pure glyph-draw and world-position math lives in `lib/game/skyCompass.ts`
+  (`SKY_COMPASS_GLYPHS`, `skyCompassPosition()`, `drawSkyCompassGlyph()`), no
+  THREE import and no `document`/DOM access — testable with a plain recording
+  stub for the 2D context (`skyCompass.test.ts`).
+- QA hook `qaGetSkyCompassPositions()` (inside `?qaHooks=1`) returns the 4
+  sprites' real world positions, so a test can assert they sit at the cardinal
+  unit vectors × radius and that rotating the camera
+  (`qaSetLookYaw`) does not move them — proving world-space placement, not a
+  screen-locked overlay. See `e2e/sky-compass.spec.ts`.
+
+**Collision & physics profile**
+- N/A — not a spatial object with a collider; `fog: false`/`depthWrite: false`
+  so it always reads through fog and never occludes or is occluded by nearer
+  geometry, same as stars/moon.
+
+---
+
 ### Follow-light (player point light) / mist veil
 
 **What it can do**
@@ -1630,15 +1677,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6356, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6748). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6397, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6789). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6748) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6789) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6469) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1696,7 +1743,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4163) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4193) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
@@ -2895,7 +2942,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6674) and `windAssistEndCue()` (L6683), edge-triggers on the combined
+`windAssistStartCue()` (L6715) and `windAssistEndCue()` (L6724), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

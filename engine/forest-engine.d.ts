@@ -73,6 +73,11 @@ declare global {
        * LANDMARKS kind, so a test can assert the sprite exists and reads past the fog line
        * without a screenshot. */
       qaProbeLandmarkBeacons?: () => Array<{ kind: string; x: number; z: number; visible: boolean; fog: boolean | null }>;
+      /** LUL-5486: the 4 cardinal glyph sprites' real world positions, so a test
+       * can assert they sit at the cardinal unit vectors * radius and that
+       * rotating the camera does not move them (proves they're genuine
+       * world-space objects, not baked into scene.background). */
+      qaGetSkyCompassPositions?: () => Record<'N' | 'E' | 'S' | 'W', { x: number; y: number; z: number }>;
       /** LUL-2667: the resolved timeOfDay state plus the exact TOD_VISUAL/TOD_AUDIO
        * values init() applied, so a test can assert against the six documented
        * states without scraping renderer internals. Read-only snapshot -- see
