@@ -114,6 +114,11 @@ export async function boot(
       | 'flush'
       | 'beaconRoostFlush'
       | 'lionRoostFlush'
+      | 'upwindRefuge'
+      | 'roostRecoveryEvasion'
+      | 'bearRoostAmbush'
+      | 'beaconDeepwater'
+      | 'beaconRoostRecoveryEvasion'
       | null;
     qaRoostIndex?: number | null;
     seedWelcomeSplashSeen?: boolean;

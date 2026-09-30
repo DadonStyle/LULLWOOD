@@ -127,6 +127,42 @@ export const MISSION_BEACON_ROOST_FLUSH_REWARD = 10;
 // above) -- confirmed by the Economist, not a placeholder.
 export const MISSION_LION_ROOST_FLUSH_REWARD = 9;
 
+// LUL-5432 (Game Economist priced, LUL-5436 / wiki
+// decisions/lul-5424-lul-5426-3proposals-accepted-2026-09-30): between beaconEvasion's 8
+// (passive threat) and beaconRoostFlush's 10 -- an active-hunt lion is more demanding than
+// the Beacon Hunter's passive lock, but Fire Tower needs less mechanical skill than
+// roost-flushing. Level with flush (9). Confirmed by the Economist, not a placeholder.
+export const MISSION_UPWIND_REFUGE_REWARD = 9;
+
+// LUL-5447/LUL-5446: Roost Recovery Evasion -- placeholder pending the Game Economist's
+// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Wiki proposal
+// (game/mechanics/roost-recovery-evasion) frames this as "similar tier to flush(9)/
+// upwindRefuge(9)" (expected 8-10E) -- priced provisionally level with both at 9.
+export const MISSION_ROOST_RECOVERY_EVASION_REWARD = 9;
+
+// LUL-5456/LUL-5457: Bear Roost Ambush -- Game Economist priced this at 9E (LUL-5457 comment,
+// 2026-09-30): the bear trades the lion's speed dominance for scent-strength and can't charge,
+// making it not strictly harder than lionRoostFlush -- both force the same roost-defense/
+// veil-hide counterplay, so it is priced level with flush(9)/lionRoostFlush(9)/
+// roostRecoveryEvasion(9), below beaconRoostFlush's top-tier 10. Confirmed by the Economist,
+// not a placeholder.
+export const MISSION_BEAR_ROOST_AMBUSH_REWARD = 9;
+
+// LUL-5462/LUL-5460: Beacon Hunter Deepwater -- Game Economist priced this at 9E (LUL-5463,
+// done): base deepwater(8E) is the floor, beaconEvasion(8E) already showed a passive Beacon
+// Hunter threat alone isn't worth a premium over the base mission, and the +1E Beacon-threat
+// premium pattern (beaconRoostFlush 10 vs flush 9, upwindRefuge 9 vs fire-tower-active-lion 8)
+// puts this passive-threat fire-tower variant one above deepwater's 8. Confirmed by the
+// Economist, not a placeholder.
+export const MISSION_BEACON_DEEPWATER_REWARD = 9;
+
+// LUL-5465/LUL-5455: Beacon Roost Recovery Evasion -- placeholder pending the Game Economist's
+// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced
+// provisionally level with roostRecoveryEvasion/lionRoostFlush/bearRoostAmbush/flush (9) --
+// this ticket's own scope note leaves the reward as a placeholder pending a parallel Economist
+// pricing ticket, not re-derived here.
+export const MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -137,6 +173,11 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   flush: MISSION_FLUSH_REWARD,
   beaconRoostFlush: MISSION_BEACON_ROOST_FLUSH_REWARD,
   lionRoostFlush: MISSION_LION_ROOST_FLUSH_REWARD,
+  upwindRefuge: MISSION_UPWIND_REFUGE_REWARD,
+  roostRecoveryEvasion: MISSION_ROOST_RECOVERY_EVASION_REWARD,
+  bearRoostAmbush: MISSION_BEAR_ROOST_AMBUSH_REWARD,
+  beaconDeepwater: MISSION_BEACON_DEEPWATER_REWARD,
+  beaconRoostRecoveryEvasion: MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

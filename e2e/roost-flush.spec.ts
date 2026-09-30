@@ -114,3 +114,79 @@ test.describe('roost flush -- player-sprint noise event (LUL-2389 slice b)', () 
     expect(roost.cooldown).toBeGreaterThan(0);
   });
 });
+
+// LUL-5442: sprint-into-cooling-roost denial cue -- mirrors the already-shipped
+// throw-into-cooling-roost cue (LUL-5412, roostFlushDeniedCue()). Distance-gated to
+// ROOST_TRIGGER_RADIUS and edge-triggered (fires once per approach, not every tick)
+// via the roostSprintDeniedPlayed debounce flag.
+test.describe('roost flush -- sprint-into-cooldown denial cue (LUL-5442)', () => {
+  test('sprinting into a roost already on cooldown fires the denial cue exactly once', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: ROOST_X, z: ROOST_Z + 30, state: 'roam' }] });
+    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 3);
+
+    // First sprint flushes the roost and starts its cooldown.
+    await page.keyboard.down('ShiftLeft');
+    await qaHook(page, 'qaAdvance', 1);
+    await page.keyboard.up('ShiftLeft');
+
+    const afterFlush = await qaHook(page, 'qaProbeRoostState', ROOST_INDEX);
+    expect(afterFlush.cooldown).toBeGreaterThan(0);
+    const cueCountAfterFlush = afterFlush.deniedCueCount;
+
+    // Leave and re-approach while still on cooldown, then sprint again -- this should
+    // be denied and produce exactly one new cue firing, not one per tick.
+    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 40);
+    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 3);
+    await page.keyboard.down('ShiftLeft');
+    await qaHook(page, 'qaAdvance', stepsFor(2));
+    await page.keyboard.up('ShiftLeft');
+
+    const afterDenied = await qaHook(page, 'qaProbeRoostState', ROOST_INDEX);
+    expect(afterDenied.deniedCueCount).toBe(cueCountAfterFlush + 1);
+  });
+
+  test('holding sprint inside the radius does not refire the denial cue every tick', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: ROOST_X, z: ROOST_Z + 30, state: 'roam' }] });
+    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 3);
+
+    await page.keyboard.down('ShiftLeft');
+    await qaHook(page, 'qaAdvance', 1);
+    const cueCountAfterFlush = (await qaHook(page, 'qaProbeRoostState', ROOST_INDEX)).deniedCueCount;
+
+    // Still sprinting, still in radius, still on cooldown for several more seconds --
+    // a per-tick refire would inflate deniedCueCount by dozens here.
+    await qaHook(page, 'qaAdvance', stepsFor(3));
+    await page.keyboard.up('ShiftLeft');
+
+    const afterHold = await qaHook(page, 'qaProbeRoostState', ROOST_INDEX);
+    expect(afterHold.deniedCueCount).toBe(cueCountAfterFlush);
+  });
+
+  test('sprinting into a cooling roost from outside ROOST_TRIGGER_RADIUS does not fire the cue', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: ROOST_X, z: ROOST_Z + 30, state: 'roam' }] });
+    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 3);
+
+    await page.keyboard.down('ShiftLeft');
+    await qaHook(page, 'qaAdvance', 1);
+    await page.keyboard.up('ShiftLeft');
+    const cueCountAfterFlush = (await qaHook(page, 'qaProbeRoostState', ROOST_INDEX)).deniedCueCount;
+
+    // 18u from roost -- outside ROOST_TRIGGER_RADIUS(6), still while on cooldown.
+    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 18);
+    await page.keyboard.down('ShiftLeft');
+    await qaHook(page, 'qaAdvance', stepsFor(2));
+    await page.keyboard.up('ShiftLeft');
+
+    const afterFar = await qaHook(page, 'qaProbeRoostState', ROOST_INDEX);
+    expect(afterFar.deniedCueCount).toBe(cueCountAfterFlush);
+  });
+});

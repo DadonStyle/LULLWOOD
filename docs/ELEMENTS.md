@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8066 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7086, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8131 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7151, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1630,15 +1630,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6291-6352, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6683-6724). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6356, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6748). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6683-6724) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L6748) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L6469) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1696,7 +1696,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4098-4141) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4163) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
@@ -1819,7 +1819,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7061, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7215, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1941,6 +1941,104 @@ not final tuning.
   (`lib/game/economy.ts`, Game Economist's confirmed number, between `flush`'s 9 and
   `beaconRoostFlush`'s 10). Reuses the existing lion detection/chase and roost-burst mechanics
   verbatim — no new predator behavior, no new HUD element, no new key, no new cue.
+- `upwindRefuge` (LUL-5432, "Upwind Refuge", Fire Tower variant of LUL-5424) — same
+  fixed-`fireTower`-landmark/timed shape as `beaconEvasion` (`timeLimitSeconds: 60`,
+  `MISSION_UPWIND_REFUGE_REWARD` = 9 Embers, gated behind `MISSION_FAR_UNLOCK_WINS` by the
+  same `timeLimitSeconds == null` filter), except `repositionBeaconHunterForMission()`
+  (`engine/forest-engine.js:1968`) finds `predators.find(p => p.kind === 'lion')` for this
+  kind — same lookup `lionRoostFlush` uses — anchored on `mission.target.x/z` (the
+  `beaconEvasion` anchor style, not `lionRoostFlush`'s `ROOSTS[roostIndex]` anchor, since this
+  kind is spatial/fixed-landmark, not roost-based). Teaches upwind positioning as a counter
+  to the downwind investigation bias (LUL-5402/PR#923, `biasTowardWind()` in
+  `lib/game/predator.ts`): a scent-locked investigating lion's heading blends toward the wind
+  vector, so a player holding the upwind Fire Tower causes the lion's approach to drift past
+  rather than close the distance. Completion reuses the existing fixed-landmark/timed
+  reach-zone shape (`canCompleteMission()`, `lib/game/mission.ts:267`) unchanged. No new
+  caption — `downwindInvestigation` (`engine/forest-engine.js:2094`, gated on
+  `p.state==='investigate' && p.inv==='approach' && p.scentLock>0`) already fires under the
+  exact condition this mission creates, so a second caption for the same trigger would be a
+  duplicate (Q7/Q8). Reuses the existing scent-lock detection, `windX`/`windZ`
+  (`engine/forest-engine.js:2035-2039`), zone triggers, and mission timer/objective UI
+  verbatim — no new predator behavior, no new HUD element, no new key, no new tuning values.
+- `roostRecoveryEvasion` (LUL-5447/LUL-5446, "Roost Recovery Evasion") — `lionRoostFlush`'s own
+  composition verbatim (same non-spatial `flush` roost-target shape, same
+  `repositionBeaconHunterForMission()` post-draw lion reposition pass, ~50u from
+  `ROOSTS[mission.target.roostIndex]`), except completion does NOT reuse `canCompleteFlush()` —
+  this mission auto-completes when `roostCooldown[i]` (the timer the mission's own lion-present
+  flush just started) reaches 0 while the mission is still active, checked in
+  `updateRoosts()`'s cooldown-decrement branch (`engine/forest-engine.js`, `function
+  updateRoosts`) rather than at a fresh roost-throw. `flushRoost()` (`engine/forest-engine.js`,
+  `function flushRoost`) pushes the mission's caption — `'the roost is cooling — hold upwind
+  until it resets'` — only when the flushed roost is this mission's own `roostIndex` and the
+  mission is still active, so every other flush (ambient, `beaconRoostFlush`, `lionRoostFlush`,
+  a plain player throw at an unmarked roost) stays silent, same Q7/Q8 no-duplicate-cue
+  discipline `upwindRefuge` used above. Untimed, excluded from `eligibleMissionPool()`
+  pre-`MISSION_FAR_UNLOCK_WINS` by name (`lib/game/mission.ts`), same reasoning as
+  `flush`/`beaconRoostFlush`/`lionRoostFlush`. `MISSION_ROOST_RECOVERY_EVASION_REWARD` = 9
+  Embers (`lib/game/economy.ts`, provisional — Game Economist's call, wiki proposal recommended
+  8–10E, level with `flush`/`upwindRefuge`). Reuses the existing lion detection/chase,
+  roost-burst/cooldown, and mission timer/objective UI (`#roostCooldownPanel`,
+  `#missionTimerSeconds`) verbatim — no new engine state, no new HUD element, no new key.
+- `bearRoostAmbush` (LUL-5456/LUL-5454, "Bear Roost Ambush") — `lionRoostFlush`'s own
+  composition verbatim (same non-spatial `flush` roost-target shape, same
+  `repositionBeaconHunterForMission()` post-draw reposition pass, ~50u from
+  `ROOSTS[mission.target.roostIndex]`), except `repositionBeaconHunterForMission()`
+  (`engine/forest-engine.js`) finds `predators.find(p => p.kind === 'bear')` for this kind
+  instead of `predators.find(p => p.kind === 'lion')` — the scent-weighted predator
+  (`isScentDetected()` call site, `engine/forest-engine.js:2217`), and the first roost mission
+  not anchored on the lion. Completion reuses `canCompleteFlush()` (`lib/game/mission.ts`)
+  unchanged — its kind check now also accepts `bearRoostAmbush`. Untimed, excluded from
+  `eligibleMissionPool()` pre-`MISSION_FAR_UNLOCK_WINS` by name (`lib/game/mission.ts`), same
+  reasoning as `flush`/`beaconRoostFlush`/`lionRoostFlush`/`roostRecoveryEvasion`.
+  `MISSION_BEAR_ROOST_AMBUSH_REWARD` = 9 Embers (`lib/game/economy.ts`, Game Economist's
+  confirmed number, LUL-5457 — level with `flush`/`lionRoostFlush`/`roostRecoveryEvasion`,
+  below `beaconRoostFlush`'s top-tier 10). No new visual cue — reuses the existing
+  `#investigationDownwindIndicator` (LUL-5402) that already pulses when a scent-locked
+  predator closes from downwind, and the bear's existing guttural-roar audio cue
+  (`engine/forest-engine.js:2114`) and hint caption verbatim — no new predator behavior, no
+  new HUD element, no new key.
+- `beaconDeepwater` (LUL-5462/LUL-5460, "Beacon Deepwater") — `beaconEvasion`'s own
+  fixed-`fireTower`-landmark/timed shape verbatim (`x: -95, z: -95`, `zoneRadius: 20`,
+  `interactRadius: 4`, `timeLimitSeconds: 60`, `lib/game/mission.ts`), drawn from the
+  far-mission pool (gated behind `MISSION_FAR_UNLOCK_WINS` by the same
+  `timeLimitSeconds == null` filter, no exclusion needed) alongside `deepwater`/
+  `stoneMarker`/`radioMast`/`beaconEvasion`/`upwindRefuge`, instead of being a separate
+  always-eligible named mission like `beaconEvasion` itself.
+  `repositionBeaconHunterForMission()` (`engine/forest-engine.js:1982`) extended to this kind
+  falls through to its existing `beaconEvasion` branches unchanged — same spatial anchor on
+  `mission.target.x/z`, same `predators.find(p => p.variant === 'beaconHunter')` lookup.
+  Completion reuses the existing fixed-landmark/timed reach-zone shape
+  (`canCompleteMission()`, `lib/game/mission.ts:296`) unchanged.
+  `MISSION_BEACON_DEEPWATER_REWARD` = 9 Embers (`lib/game/economy.ts`, Game Economist's
+  confirmed number, LUL-5463 — one above `deepwater`'s 8, since `beaconEvasion` staying at 8
+  already showed a passive Beacon Hunter threat alone isn't worth a premium over the base
+  mission, and the mission's own +1E Beacon-threat-premium pattern puts this passive-threat
+  fire-tower variant one above `deepwater`). No new HUD element, no new key, no new audio, no
+  new cue — reuses the existing Beacon Hunter lock visual/audio and
+  `HINT_PRIORITY['beaconHunter']` verbatim.
+- `beaconRoostRecoveryEvasion` (LUL-5465/LUL-5455, "Beacon Roost Recovery") —
+  `roostRecoveryEvasion`'s own composition verbatim (same non-spatial `flush` roost-target
+  shape, same cooldown-expiry auto-completion in `updateRoosts()`'s cooldown-decrement branch,
+  `engine/forest-engine.js`), except `repositionBeaconHunterForMission()`
+  (`engine/forest-engine.js`) falls through to its default branch for this kind —
+  `predators.find(p => p.variant === 'beaconHunter')`, `beaconRoostFlush`'s own lookup —
+  instead of the lion `roostRecoveryEvasion` repositions, anchored the same ~50u from
+  `ROOSTS[mission.target.roostIndex]`. Teaches managing the sight-biased Beacon Hunter (harder
+  to fool than a lion) inside the same cooldown-survival window `roostRecoveryEvasion` already
+  taught. `flushRoost()` (`engine/forest-engine.js`, `function flushRoost`) pushes a second,
+  Beacon-Hunter-worded caption — `'the roost is cooling — stay out of the Beacon Hunter's sight
+  until it resets'` — gated the same way `roostRecoveryEvasion`'s own caption is (this
+  mission's own `roostIndex`, mission still `active`, `captionsOn`), so the two captions can
+  never both fire for the same flush (mutually exclusive `mission.target.kind` checks).
+  Untimed, excluded from `eligibleMissionPool()` pre-`MISSION_FAR_UNLOCK_WINS` by name
+  (`lib/game/mission.ts`), same reasoning as `flush`/`beaconRoostFlush`/`lionRoostFlush`/
+  `roostRecoveryEvasion`/`bearRoostAmbush`. `MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD` = 9
+  Embers (`lib/game/economy.ts`, provisional — pending Game Economist confirmation, same
+  convention as every other provisional mission reward), level with
+  `flush`/`lionRoostFlush`/`roostRecoveryEvasion`/`bearRoostAmbush`. Reuses the existing Beacon
+  Hunter detection/chase, roost-burst/cooldown, and mission timer/objective UI
+  (`#roostCooldownPanel`, `#missionTimerSeconds`) verbatim — no new engine state, no new HUD
+  element, no new key, no new audio.
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
@@ -2580,6 +2678,18 @@ persisted per-roost flag:
   no-op. `qaProbeRoostState(i)`'s `deniedCueCount` field (global, not per-roost) lets a spec
   assert it fired. See `docs/specs/lul-5412-roost-cooldown-cue.md`.
 
+**Sprint-path denial cue (LUL-5442)**: LUL-5412 closed the gap for the throw-into-cooling-roost
+path only — sprinting into a cooling roost still hit the silent early-`continue` in
+`updateRoosts()` with no cue, only the `#roostCooldownPanel` countdown. `updateRoosts()`
+(`engine/forest-engine.js:3093-3102`) now hoists `const r = ROOSTS[i]` above the cooldown
+check and, when `roostCooldown[i] > 0`, computes `nearWhileRunning` (sprinting within
+`ROOST_TRIGGER_RADIUS`) and calls the same `roostFlushDeniedCue()` used by the throw path,
+edge-triggered via a new per-roost debounce flag `roostSprintDeniedPlayed`
+(`:1613`, `Uint8Array`, mirrors `staminaLowCuePlayed`'s hysteresis idiom) so holding sprint
+inside the radius fires the cue once per approach, not every physics tick. Reset alongside
+`roostCooldown` in `restart()` (`:6766`). No new player-visible state — the flag itself is
+never rendered (Section 0 Q1/Q4). See `docs/specs/lul-5442-roost-sprint-denial-cue.md`.
+
 ## Hints — first-encounter explanations (LUL-2307, generalizes LUL-2230)
 
 One small engine-side registry (`HINT_PRIORITY`/`HINT_TEXT`, `engine/forest-engine.js`)
@@ -2772,10 +2882,10 @@ engine flag is genuinely true.
 
 **LUL-3149 (Wind-Assisted Evasion)** adds two new, always-on effects to this same trigger --
 `running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
-re-deriving it (`engine/forest-engine.js` L7035) -- stacking on top of the LUL-3009 scent
+re-deriving it (`engine/forest-engine.js` L7056) -- stacking on top of the LUL-3009 scent
 effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
-speed bonus applied to `spd` inside `stepFrame()` (L7041), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
-footstep-radius reduction applied to `noiseRadius` (L7057), replacing the plain sprint radius
+speed bonus applied to `spd` inside `stepFrame()` (L7303), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+footstep-radius reduction applied to `noiseRadius` (L7319), replacing the plain sprint radius
 only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
 is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
 it already fires correctly for the sprint-bonus window; both the `title` and the always-visible
@@ -2785,7 +2895,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6609-6617) and `windAssistEndCue()` (L6618-6626), edge-triggers on the combined
+`windAssistStartCue()` (L6674) and `windAssistEndCue()` (L6683), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 

@@ -218,6 +218,56 @@ test('canCompleteFlush is false for a lionRoostFlush mission when a different ro
   assert.equal(canCompleteFlush(m, 1), false);
 });
 
+// ---- roostRecoveryEvasion (LUL-5447/LUL-5446) ----------------------------
+//
+// Unlike flush/beaconRoostFlush/lionRoostFlush, this mission's completion is not driven
+// through canCompleteFlush() -- it auto-completes when roostCooldown[roostIndex] reaches 0
+// (engine/forest-engine.js's updateRoosts()), which is engine-owned state this module has no
+// import for. These tests only cover the MISSION_POOL shape and eligibleMissionPool exclusion,
+// the two pieces that do live in this module -- completeMission() itself is already covered by
+// "completeMission flips an active mission to complete" below, reused verbatim by the engine.
+
+const roostRecoveryEvasionTarget = MISSION_POOL.find((t) => t.kind === 'roostRecoveryEvasion')!;
+
+test('roostRecoveryEvasion MISSION_POOL entry shares flush/lionRoostFlush\'s non-spatial roost-target shape', () => {
+  assert.equal(roostRecoveryEvasionTarget.spatial, false);
+  assert.equal(roostRecoveryEvasionTarget.interactRadius, 0);
+  assert.equal(roostRecoveryEvasionTarget.timeLimitSeconds, undefined);
+});
+
+// ---- canCompleteFlush for bearRoostAmbush (LUL-5456/LUL-5454) --------------
+
+const bearRoostAmbushTarget = MISSION_POOL.find((t) => t.kind === 'bearRoostAmbush')!;
+
+test('canCompleteFlush is true for a bearRoostAmbush mission when the flushed roost matches', () => {
+  const m: MissionState = { target: { ...bearRoostAmbushTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 3), true);
+});
+
+test('canCompleteFlush is false for a bearRoostAmbush mission when a different roostIndex was flushed', () => {
+  const m: MissionState = { target: { ...bearRoostAmbushTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 1), false);
+});
+
+// ---- beaconRoostRecoveryEvasion (LUL-5465/LUL-5455) ------------------------
+//
+// Same shape as roostRecoveryEvasion above -- completion is engine-owned (updateRoosts()'s
+// cooldown-expiry branch), not canCompleteFlush(). Also NOT covered by canCompleteFlush(): this
+// kind is deliberately absent from its kind-check, same as roostRecoveryEvasion.
+
+const beaconRoostRecoveryEvasionTarget = MISSION_POOL.find((t) => t.kind === 'beaconRoostRecoveryEvasion')!;
+
+test('beaconRoostRecoveryEvasion MISSION_POOL entry shares roostRecoveryEvasion\'s non-spatial roost-target shape', () => {
+  assert.equal(beaconRoostRecoveryEvasionTarget.spatial, false);
+  assert.equal(beaconRoostRecoveryEvasionTarget.interactRadius, 0);
+  assert.equal(beaconRoostRecoveryEvasionTarget.timeLimitSeconds, undefined);
+});
+
+test('canCompleteFlush is false for a beaconRoostRecoveryEvasion mission even when the roostIndex matches', () => {
+  const m: MissionState = { target: { ...beaconRoostRecoveryEvasionTarget, roostIndex: 3 }, status: 'active', secondary: null };
+  assert.equal(canCompleteFlush(m, 3), false);
+});
+
 // ---- completeMission idempotence ----------------------------------------
 
 test('completeMission flips an active mission to complete', () => {
@@ -510,6 +560,51 @@ test('eligibleMissionPool includes lionRoostFlush at MISSION_FAR_UNLOCK_WINS', (
   progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
   const pool = eligibleMissionPool(progression, 'lantern');
   assert.equal(pool.some((m) => m.kind === 'lionRoostFlush'), true);
+});
+
+test('eligibleMissionPool excludes roostRecoveryEvasion below MISSION_FAR_UNLOCK_WINS', () => {
+  // LUL-5447/LUL-5446: roostRecoveryEvasion shares flush's untimed/no-landmarkKind shape and
+  // would reproduce the identical LUL-5069 regression without the same exclusion.
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'roostRecoveryEvasion'), false);
+});
+
+test('eligibleMissionPool includes roostRecoveryEvasion at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'roostRecoveryEvasion'), true);
+});
+
+test('eligibleMissionPool excludes bearRoostAmbush below MISSION_FAR_UNLOCK_WINS', () => {
+  // LUL-5456/LUL-5454: bearRoostAmbush shares flush's untimed/no-landmarkKind shape and
+  // would reproduce the identical LUL-5069 regression without the same exclusion.
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'bearRoostAmbush'), false);
+});
+
+test('eligibleMissionPool includes bearRoostAmbush at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'bearRoostAmbush'), true);
+});
+
+test('eligibleMissionPool excludes beaconRoostRecoveryEvasion below MISSION_FAR_UNLOCK_WINS', () => {
+  // LUL-5465/LUL-5455: beaconRoostRecoveryEvasion shares flush's untimed/no-landmarkKind shape
+  // and would reproduce the identical LUL-5069 regression without the same exclusion.
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'beaconRoostRecoveryEvasion'), false);
+});
+
+test('eligibleMissionPool includes beaconRoostRecoveryEvasion at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'beaconRoostRecoveryEvasion'), true);
 });
 
 // ---- pickMission with an explicit pool (LUL-3010) ------------------------
