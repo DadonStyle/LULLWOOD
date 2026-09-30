@@ -1989,7 +1989,7 @@ function relocateParkedHunter(pcx, pcz){
 // as it would from a normal placePredators() draw, not mid-chase from wherever it was first
 // placed.
 function repositionBeaconHunterForMission(mission){
-  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush' && mission.target.kind !== 'upwindRefuge' && mission.target.kind !== 'roostRecoveryEvasion' && mission.target.kind !== 'bearRoostAmbush' && mission.target.kind !== 'beaconRoostRecoveryEvasion') return;
+  if(mission.target.kind !== 'beaconEvasion' && mission.target.kind !== 'beaconRoostFlush' && mission.target.kind !== 'lionRoostFlush' && mission.target.kind !== 'upwindRefuge' && mission.target.kind !== 'roostRecoveryEvasion' && mission.target.kind !== 'bearRoostAmbush' && mission.target.kind !== 'beaconDeepwater' && mission.target.kind !== 'beaconRoostRecoveryEvasion') return;
   // LUL-5426/LUL-5432: 'lionRoostFlush' (M8) and 'upwindRefuge' (Fire Tower variant) both
   // reposition a lion, not the permanent beaconHunter wolf -- the mid-difficulty
   // balanced-stat predator the proposal asks for, distinct from the sight-biased
@@ -1999,11 +1999,15 @@ function repositionBeaconHunterForMission(mission){
   // 'roostRecoveryEvasion' also repositions a lion, same reasoning as 'lionRoostFlush'
   // (this mission only spawns after a lion-present roost flush). LUL-5456: 'bearRoostAmbush'
   // repositions a bear instead -- the scent-weighted predator (:2114/isScentDetected()
-  // call site :2217), the first roost mission not anchored on the lion. LUL-5465/LUL-5455:
-  // 'beaconRoostRecoveryEvasion' falls through to the default branch below (the sight-biased
-  // beaconHunter wolf, 'beaconRoostFlush's own lookup) -- roostRecoveryEvasion's cooldown-
-  // survival completion combined with the Beacon Hunter's detection advantage instead of the
-  // lion, the harder-to-fool predator variant of this same evasion window.
+  // call site :2217), the first roost mission not anchored on the lion. LUL-5462/LUL-5460:
+  // 'beaconDeepwater' falls through to the existing 'beaconEvasion' branches unchanged --
+  // same spatial target.x/z anchor (:2007), same beaconHunter-variant wolf lookup -- it is
+  // 'beaconEvasion's own fixed-fireTower shape drawn from the far-mission pool instead of a
+  // separate always-eligible named mission, not a new repositioning behavior. LUL-5465/
+  // LUL-5455: 'beaconRoostRecoveryEvasion' falls through to the same default branch below
+  // (the sight-biased beaconHunter wolf, 'beaconRoostFlush's own lookup) -- roostRecoveryEvasion's
+  // cooldown-survival completion combined with the Beacon Hunter's detection advantage instead
+  // of the lion, the harder-to-fool predator variant of this same evasion window.
   const hunter = mission.target.kind === 'bearRoostAmbush'
     ? predators.find(p => p.kind === 'bear')
     : (mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'upwindRefuge' || mission.target.kind === 'roostRecoveryEvasion')

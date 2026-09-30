@@ -370,6 +370,7 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   upwindRefuge: 'Upwind Refuge',
   roostRecoveryEvasion: 'Roost Recovery Evasion',
   bearRoostAmbush: 'Bear Roost Ambush',
+  beaconDeepwater: 'Beacon Deepwater',
   beaconRoostRecoveryEvasion: 'Beacon Roost Recovery',
 };
 

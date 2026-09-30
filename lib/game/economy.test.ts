@@ -23,6 +23,7 @@ import {
   MISSION_UPWIND_REFUGE_REWARD,
   MISSION_ROOST_RECOVERY_EVASION_REWARD,
   MISSION_BEAR_ROOST_AMBUSH_REWARD,
+  MISSION_BEACON_DEEPWATER_REWARD,
   MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD,
   MISSION_REWARDS,
   FIREPOWER_RETRIEVAL_BONUS,
@@ -174,7 +175,7 @@ test('completing M2 Deepwater and reaching home adds MISSION_FIREPOWER_REWARD on
 test('MISSION_REWARDS has exactly one entry per MissionKind, keyed correctly', () => {
   assert.deepEqual(
     Object.keys(MISSION_REWARDS).sort(),
-    ['beaconEvasion', 'beaconRoostFlush', 'beaconRoostRecoveryEvasion', 'bearRoostAmbush', 'deepwater', 'flush', 'lionRoostFlush', 'oakHollow', 'radioMast', 'roostRecoveryEvasion', 'slackWater', 'stoneMarker', 'upwindRefuge'],
+    ['beaconDeepwater', 'beaconEvasion', 'beaconRoostFlush', 'beaconRoostRecoveryEvasion', 'bearRoostAmbush', 'deepwater', 'flush', 'lionRoostFlush', 'oakHollow', 'radioMast', 'roostRecoveryEvasion', 'slackWater', 'stoneMarker', 'upwindRefuge'],
   );
   assert.equal(MISSION_REWARDS.deepwater, MISSION_FIREPOWER_REWARD);
   assert.equal(MISSION_REWARDS.oakHollow, MISSION_OAKHOLLOW_REWARD);
@@ -188,6 +189,7 @@ test('MISSION_REWARDS has exactly one entry per MissionKind, keyed correctly', (
   assert.equal(MISSION_REWARDS.upwindRefuge, MISSION_UPWIND_REFUGE_REWARD);
   assert.equal(MISSION_REWARDS.roostRecoveryEvasion, MISSION_ROOST_RECOVERY_EVASION_REWARD);
   assert.equal(MISSION_REWARDS.bearRoostAmbush, MISSION_BEAR_ROOST_AMBUSH_REWARD);
+  assert.equal(MISSION_REWARDS.beaconDeepwater, MISSION_BEACON_DEEPWATER_REWARD);
   assert.equal(MISSION_REWARDS.beaconRoostRecoveryEvasion, MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD);
 });
 
