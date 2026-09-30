@@ -2070,7 +2070,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2091,6 +2091,7 @@ const HINT_TEXT = {
   beaconHunter: 'a Beacon Hunter — locks onto you the instant you sprint into the wind, sight and scent don\'t matter to it. hide (H) or veil (F), or stop sprinting into the wind.',
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
   windAssist: 'sprinting into the wind moves you faster and quieter',
+  downwindInvestigation: 'predators hunt downwind of your scent — position yourself upwind to escape',
   windPulse:  'wind pulse — nearby predators pause their sprint when moving across the wind',
   cover:      'a bush — predators lose sight of you while you hold still',
   caveImmune: 'immune to detection for a short time',   // mirrors #caveImmunePanel's own copy, Hud.tsx
@@ -2252,7 +2253,13 @@ function scentOnto(p){
   p.scentVeilReady = true;   // LUL-5004: a fresh lock cycle re-arms the one-time-per-lock break
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
-  predatorCall(p.kind, false, p);
+  // LUL-5402: pan the scent-lock growl toward downwind of this predator's own
+  // position -- the same direction the biased approach (biasTowardWind(), lib/
+  // game/predator.ts) will favor once this lock reaches the 'approach' sub-
+  // phase -- so the audio telegraphs the mechanic at the moment scent contact
+  // actually happens, not just once the predator is already closing in.
+  const downwindBearing = bearingOf(p.x + windX*10, p.z + windZ*10, player.x, player.z, player.yaw);
+  predatorCall(p.kind, false, p, bearingPan(downwindBearing));
   logChronicle('scent_lock', { kind: p.kind, landmark: nearestLandmarkName(p.x, p.z, LANDMARKS, CONFIG.home) });
   scentLockEventCount++;   // LUL-2230: the trail caption dismisses itself on the first one of these
 }
@@ -3782,12 +3789,20 @@ function announceCaption(kind, big, p){
   }
   pushState({ caption: `${kind} ${verb}${big ? ' (close)' : ''} · ${where}`, captionId: ++captionSeq });
 }
-function predatorCall(kind, big, p){
+// LUL-5402: `panVal` (-1..1, StereoPannerNode convention) is optional and only
+// passed by scentOnto() -- see its call site's comment for why the scent-lock
+// growl is the one caller that pans toward the downwind bias direction. Every
+// other caller omits it and keeps the original centered routing straight to
+// `master`; only the dry signal is panned; the `conv` reverb send stays
+// centered same as before, so the room tone doesn't move with it.
+function predatorCall(kind, big, p, panVal){
   if(captionsOn) announceCaption(kind, big, p);
   if(!audio || !soundOn) return;
   const { ctx, master, conv } = audio, t = ctx.currentTime;
   const baseVol = big ? 1.0 : 0.6;
   const vol = p ? baseVol * callVolumeMul(Math.hypot(p.x - player.x, p.z - player.z)) : baseVol;
+  let dest = master;
+  if(panVal != null){ const pan = ctx.createStereoPanner(); pan.pan.value = Math.max(-1, Math.min(1, panVal)); pan.connect(master); dest = pan; }
   if(kind === 'wolf'){                              // howl: gliding tone with vibrato
     const o=ctx.createOscillator(); o.type='sawtooth';
     o.frequency.setValueAtTime(300,t); o.frequency.linearRampToValueAtTime(560,t+0.4);
@@ -3797,18 +3812,18 @@ function predatorCall(kind, big, p){
     const bp=ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=820; bp.Q.value=1.4;
     const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.22*vol,t+0.15);
     g.gain.setValueAtTime(0.22*vol,t+1.1); g.gain.exponentialRampToValueAtTime(0.0001,t+1.6);
-    o.connect(bp); bp.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+1.65);
+    o.connect(bp); bp.connect(g); g.connect(dest); g.connect(conv); o.start(t); o.stop(t+1.65);
   } else if(kind === 'bear'){                       // low guttural roar + noise
     [70,96].forEach(f => { const o=ctx.createOscillator(); o.type='sawtooth';
       o.frequency.setValueAtTime(f*1.2,t); o.frequency.exponentialRampToValueAtTime(f*0.8,t+0.9);
       const lp=ctx.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=420; lp.Q.value=4;
       const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.28*vol,t+0.1);
       g.gain.setValueAtTime(0.28*vol,t+0.7); g.gain.exponentialRampToValueAtTime(0.0001,t+1.1);
-      o.connect(lp); lp.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+1.15); });
+      o.connect(lp); lp.connect(g); g.connect(dest); g.connect(conv); o.start(t); o.stop(t+1.15); });
     const nb=ctx.createBufferSource(); nb.buffer=noise(ctx,1.0,false);
     const nf=ctx.createBiquadFilter(); nf.type='lowpass'; nf.frequency.value=520;
     const ng=ctx.createGain(); ng.gain.setValueAtTime(0.0001,t); ng.gain.exponentialRampToValueAtTime(0.12*vol,t+0.1); ng.gain.exponentialRampToValueAtTime(0.0001,t+0.9);
-    nb.connect(nf); nf.connect(ng); ng.connect(master); nb.start(t); nb.stop(t+1.0);
+    nb.connect(nf); nf.connect(ng); ng.connect(dest); nb.start(t); nb.stop(t+1.0);
   } else {                                          // lion: rasping roar (fast AM + filter sweep)
     const o=ctx.createOscillator(); o.type='sawtooth';
     o.frequency.setValueAtTime(220,t); o.frequency.exponentialRampToValueAtTime(150,t+1.1);
@@ -3818,7 +3833,7 @@ function predatorCall(kind, big, p){
     g.gain.setValueAtTime(0.24*vol,t+0.8); g.gain.exponentialRampToValueAtTime(0.0001,t+1.2);
     const am=ctx.createOscillator(); am.type='sine'; am.frequency.value=30;
     const amg=ctx.createGain(); amg.gain.value=0.12*vol; am.connect(amg); amg.connect(g.gain); am.start(t); am.stop(t+1.25);
-    o.connect(lp); lp.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t+1.25);
+    o.connect(lp); lp.connect(g); g.connect(dest); g.connect(conv); o.start(t); o.stop(t+1.25);
   }
 }
 // two quick snorts as it sniffs you out
@@ -4011,6 +4026,11 @@ let hudState = {
   // pushed every frame unlike windX/windZ above (map-constant, pushed once).
   // Drives #windIndicator's pulse class; not itself persisted or rationed.
   movingAgainstWind: false,
+  // LUL-5402: true while any live predator's scent-originated investigation
+  // approach is favoring downwind (biasTowardWind() gate). Drives
+  // #investigationDownwindIndicator, a sibling of #windIndicator -- see that
+  // pushState call in stepFrame() for how it's re-derived every frame.
+  investigationDownwindActive: false,
 };
 function pushState(patch){
   let changed = false;
@@ -7597,9 +7617,15 @@ function stepFrame(dt, t, skipRender){
       chapelSanctuaryPromptVisible,
       coldWalkActive: coldWalkOptIn && !pickingUp,
       coldWalkBroken,
+      // LUL-5402: re-derived fresh every frame from live predator state (state
+      // === 'investigate' && inv === 'approach' && scentLock > 0 is exactly
+      // biasTowardWind()'s gate at the engine call site) -- no persisted
+      // per-predator flag to keep in sync, so nothing to reset when a
+      // predator leaves 'approach'.
+      investigationDownwindActive: predators.some(function(p){ return !p.inert && p.state === 'investigate' && p.inv === 'approach' && p.scentLock > 0; }),
     });
   } else {
-    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false, coldWalkActive: false });
+    pushState({ objectiveVisible: false, statusVisible: false, coverPromptVisible: false, coverPromptUrgent: false, coverPromptKind: null, veilPromptVisible: false, veilPromptUrgent: false, heldThrowable, canGrabThrowable: false, throwablesReserve, missionKind: null, missionStatus: null, missionTimerSeconds: null, secondaryKind: null, secondaryStatus: null, secondaryProgress: null, caveImmuneActive: false, veilOverloadActive: false, veilOverloadVisible: false, scentVeilPromptVisible: false, scentVeilPromptEnabled: false, mountedOnRock: false, chapelSanctuaryActive: false, chapelSanctuaryPromptVisible: false, coldWalkActive: false, investigationDownwindActive: false });
   }
   // the child's idle glow, outside the pickup cinematic.
   if(!baby.taken){
@@ -7782,6 +7808,11 @@ function stepFrame(dt, t, skipRender){
         }
         case 'stamina': return [staminaCharge <= 0, null];
         case 'windAssist': return [running && movingAgainstWind, null];
+        // LUL-5402: same gate as biasTowardWind()'s call site (state === 'investigate'
+        // && inv === 'approach' && scentLock > 0) -- self/panel-anchored like windAssist,
+        // re-derived here rather than sharing a variable with the pushState computation
+        // above (out of scope at this point in stepFrame()).
+        case 'downwindInvestigation': return [predators.some(function(p){ return !p.inert && p.state === 'investigate' && p.inv === 'approach' && p.scentLock > 0; }), null];
         case 'windPulse': return [predators.some(p => p.windPauseT > 0), null];
         case 'cover': return [coverHintVisible, lastHideSpot ? { x: lastHideSpot.x, y: 1, z: lastHideSpot.z } : null];
         case 'caveImmune': return [caveImmuneT > 0, null];

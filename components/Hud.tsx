@@ -168,6 +168,12 @@ export interface EngineHudState {
   // moving against windX/windZ (isMovingAgainstWind()), pushed every frame unlike
   // windX/windZ above. Drives #windIndicator's pulse class, no new element.
   movingAgainstWind: boolean;
+  // LUL-5402: true while any live predator's scent-originated investigation
+  // approach is favoring downwind (biasTowardWind() gate at the engine's
+  // 'approach' call site). Drives #investigationDownwindIndicator, a sibling
+  // of #windIndicator below -- see engine/forest-engine.js's pushState call
+  // for the re-derivation.
+  investigationDownwindActive: boolean;
   // LUL-1103: The Run Chronicle. Engine-owned {t, code, args} buffer, handed
   // over once in the same pushState() call as winVisible/deathVisible (never
   // streamed per-frame -- see engine/forest-engine.js's logChronicle()
@@ -330,6 +336,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   windX: 1,
   windZ: 0,
   movingAgainstWind: false,
+  investigationDownwindActive: false,
   chronicle: [],
   scentTrailVisible: true,
   hintsEnabled: true,
@@ -1094,6 +1101,10 @@ export default function Hud({
             [
               state.movingAgainstWind && !state.reducedMotion ? 'windIndicatorActive' : null,
               state.scentVeilPromptVisible && !state.reducedMotion ? 'windIndicatorVeilActive' : null,
+              // LUL-5402: composes alongside the two above (all three conditions
+              // can coexist -- a predator hunting downwind doesn't stop the
+              // player's own wind-assist state from also being true).
+              state.investigationDownwindActive && !state.reducedMotion ? 'windIndicatorInvestigationActive' : null,
             ].filter(Boolean).join(' ') || undefined
           }
           title="Wind direction -- move into the arrow to mask your scent; sprint into it for extra speed and quiet"
