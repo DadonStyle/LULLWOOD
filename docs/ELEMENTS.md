@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8297 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7278, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8379 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7345, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1704,16 +1704,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6501, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6875). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6583, the win path since
+  `LUL-2281`) and `triggerDeath()` (L6979). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6875) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6855) rather than recomputed later, since `player.x/z` can move on
+  (L6949) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L6949) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1770,7 +1770,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4245) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4320) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
@@ -1893,7 +1893,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7228, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7427, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -3057,7 +3057,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6775) and `windAssistEndCue()` (L6784), edge-triggers on the combined
+`windAssistStartCue()` (L6841) and `windAssistEndCue()` (L6850), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3293,3 +3293,49 @@ at the entry/exit edges and never re-fire while continuously inside; a wolf stag
 site next to the player (a real predator, not a flag check) never reaches `scentLock > 0` -- the
 scent-specific detection channel this feature gates -- regardless of whatever sight-based state
 its own `canSee()` channel reaches, which this feature doesn't touch.
+
+## Mud Zone (LUL-5564, terrain hazard)
+
+Five circular terrain-hazard zones (`mudZones`, `{x,z,r}`, `engine/forest-engine.js:648`),
+placed by `generateMudZones()` (`:860-872`, `MUD_ZONE_COUNT=5`, radius `MUD_ZONE_MIN_R=6`..
+`MUD_ZONE_MAX_R=9`, `MUD_ZONE_LANDMARK_PAD=6` keep-out around landmarks, rejection-sampled
+against already-placed zones the same shape `generateThrowables()` uses) -- called from
+`generateMap()` after every other `rng()` consumer (`:1319`), and reset alongside `treeData`
+on `restart()` (`:1211`). Pure geometry/multiplier logic lives outside the engine in
+`lib/game/mud.ts` (`MUD_SPEED_MUL=0.6`, `MUD_NOISE_MUL=1.5`, `isInMudZone()`), unit-tested in
+`lib/game/mud.test.ts` (4 cases incl. the boundary -- `isInMudZone` uses strict `<`, so exactly
+on the radius counts as outside).
+
+**Effect** -- both the player and every predator slow down and get louder while their `x/z`
+falls inside any zone:
+- Player: `stepFrame()` reads `inMud` once per tick (`:7409`) ahead of the two places that fold
+  it in -- `maxSpd` (`:7427`, `mudSpeedMultiplier(inMud)` chained alongside
+  `brambleSnagSpeedMultiplier`) and `noiseRadius` for both the walk (`:7484`) and run/wind-assist
+  (`:7531`) branches (`mudNoiseMultiplier(inMud)`). Crawling isn't silent, just louder.
+- Predator: folded into the single point every AI branch's `speed` converges through before
+  becoming movement (`updatePredators()`, `:3121-3122`), not patched per-branch -- can't miss a
+  roam/chase/investigate/flank/charge/hunt branch or apply inconsistently by AI state.
+
+**Cue (one-shot, enter edge only)** -- `wasInMud` edge-detect (`:7410-7418`) fires on the
+`false->true` transition only, same shape `logCrawlEnterCue()`'s own call site uses:
+`mudEnterCue()` (`:3730-3741`, a lowpass-filtered noise burst -- "wet footstep", not a rustle),
+plus `logChronicle('mud_zone_enter', {})` and, first encounter only
+(`hintSeen`/`markHintSeen('mudZone')`, `:7413-7414`), a caption: *"Mud — slower, louder:
+predators can hear you farther"*. This bypasses the shared `HINT_PRIORITY`/`HINT_TEXT`
+candidate table other hints use (pushed directly via `pushState({ caption, captionId })`) --
+no exit cue, since there is nothing to announce on leaving (the slowdown/noise effect just stops).
+
+**HUD state** -- `inMudZone` is computed and pushed into the engine's per-frame `pushState()`
+call (`:7944`) but is not yet declared on the `EngineHudState` interface
+(`components/Hud.tsx:32`) and no component reads it -- there is no persistent on-screen "you are
+in mud" indicator today, only the one-shot enter cue/caption above. Also exposed on
+`qaPlayerState()` (`:5546`, typed at `engine/forest-engine.d.ts:324`) for tests. Per LUL-5564's
+own follow-up, a render site for this field is LUL-5565's scope, not this ticket's.
+
+**QA hooks**: `qaPlayerState().inMudZone` (live boolean) is the only hook; no zone-geometry or
+cue-count probe exists yet (compare `qaProbeScentMaskSite()`'s `enterCueCount`).
+
+**Coverage**: `lib/game/mud.test.ts` covers the pure multiplier/geometry functions only. No
+`e2e/` spec or `shared/local-qa/requests/` file exists yet -- LUL-5564 is engine-core only; e2e
+opposing-system coverage (a predator staged inside a zone) and the local-qa request file are
+LUL-5565's scope.
