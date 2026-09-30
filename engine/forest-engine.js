@@ -163,6 +163,7 @@ import {
   completeMission,
   canCompleteSlackWater,
   canCompleteFlush,
+  canCompleteGhost,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -2929,7 +2930,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.windPauseT = WIND_PAUSE_DURATION; p.windPauseCooldownT = WIND_PAUSE_COOLDOWN; speed = 0; windPulseCue();
         }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
-        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
+        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; if(mission && canCompleteGhost(mission, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){

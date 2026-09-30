@@ -163,6 +163,12 @@ export const MISSION_BEACON_DEEPWATER_REWARD = 9;
 // pricing ticket, not re-derived here.
 export const MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD = 9;
 
+// LUL-5497/LUL-5495: M4 Ghost (veil-escape) -- placeholder pending the Game Economist's
+// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced
+// provisionally level with the other untimed missions (9); a follow-up ticket to the
+// Game Economist requests the real number.
+export const MISSION_GHOST_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -178,6 +184,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   bearRoostAmbush: MISSION_BEAR_ROOST_AMBUSH_REWARD,
   beaconDeepwater: MISSION_BEACON_DEEPWATER_REWARD,
   beaconRoostRecoveryEvasion: MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD,
+  ghost: MISSION_GHOST_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

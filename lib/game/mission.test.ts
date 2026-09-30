@@ -8,6 +8,7 @@ import {
   canCompleteMission,
   canCompleteSlackWater,
   canCompleteFlush,
+  canCompleteGhost,
   completeMission,
   canCompleteRetrieval,
   completeRetrieval,
@@ -164,6 +165,30 @@ test('canCompleteSlackWater is false once the mission is already complete', () =
 test('canCompleteSlackWater is false for a non-slackWater mission even with fog-tide active', () => {
   const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
   assert.equal(canCompleteSlackWater(m, true), false);
+});
+
+// ---- canCompleteGhost (LUL-5497/LUL-5495) ---------------------------------
+
+const ghostTarget = MISSION_POOL.find((t) => t.kind === 'ghost')!;
+
+test('canCompleteGhost is true when active, ghost, and veil overload is active', () => {
+  const m: MissionState = { target: ghostTarget, status: 'active', secondary: null };
+  assert.equal(canCompleteGhost(m, true), true);
+});
+
+test('canCompleteGhost is false when veil overload is not active', () => {
+  const m: MissionState = { target: ghostTarget, status: 'active', secondary: null };
+  assert.equal(canCompleteGhost(m, false), false);
+});
+
+test('canCompleteGhost is false once the mission is already complete', () => {
+  const m: MissionState = { target: ghostTarget, status: 'complete', secondary: null };
+  assert.equal(canCompleteGhost(m, true), false);
+});
+
+test('canCompleteGhost is false for a non-ghost mission even with veil overload active', () => {
+  const m: MissionState = { target: MISSION_POOL[0], status: 'active', secondary: null };
+  assert.equal(canCompleteGhost(m, true), false);
 });
 
 // ---- canCompleteFlush (LUL-5116) -----------------------------------------
@@ -605,6 +630,21 @@ test('eligibleMissionPool includes beaconRoostRecoveryEvasion at MISSION_FAR_UNL
   progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
   const pool = eligibleMissionPool(progression, 'lantern');
   assert.equal(pool.some((m) => m.kind === 'beaconRoostRecoveryEvasion'), true);
+});
+
+test('eligibleMissionPool excludes ghost below MISSION_FAR_UNLOCK_WINS', () => {
+  // LUL-5497/LUL-5495: ghost shares slackWater's untimed/no-landmarkKind shape and would
+  // reproduce the identical LUL-5069 regression without the same exclusion.
+  const progression = freshProgression();
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'ghost'), false);
+});
+
+test('eligibleMissionPool includes ghost at MISSION_FAR_UNLOCK_WINS', () => {
+  const progression = freshProgression();
+  progression.lantern.wins = MISSION_FAR_UNLOCK_WINS;
+  const pool = eligibleMissionPool(progression, 'lantern');
+  assert.equal(pool.some((m) => m.kind === 'ghost'), true);
 });
 
 // ---- pickMission with an explicit pool (LUL-3010) ------------------------
