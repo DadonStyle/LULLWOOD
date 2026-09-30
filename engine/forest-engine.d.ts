@@ -548,8 +548,9 @@ declare global {
       qaTeleportNearRoost?: (i?: number) => { i: number; x: number; z: number } | null;
       /** LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a test
        * assert a throw flushed roost `i` (burstActive flips true, then cooldown > 0) and
-       * that a second throw within the cooldown window does not re-flush it. */
-      qaProbeRoostState?: (i: number) => { cooldown: number; burstActive: boolean };
+       * that a second throw within the cooldown window does not re-flush it. LUL-5412:
+       * deniedCueCount is global (roostFlushDeniedCue()'s fire count), not per-roost. */
+      qaProbeRoostState?: (i: number) => { cooldown: number; burstActive: boolean; deniedCueCount: number };
       /** LUL-2331: raw veil/charm state, mirrors qaProbeMission's shape. `releaseCueCount` is
        * the mist-charm activation cue's fire count, so a test can assert it fired without
        * decoding actual WebAudio output. */
