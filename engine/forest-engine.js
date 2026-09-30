@@ -1610,6 +1610,7 @@ let boomStart = -1;
 // few seconds from different predators, so each site needs its own timer).
 const ROOST_BURST_PTS = 10;   // bird-lift silhouette, not an explosion -- keep small
 const roostCooldown = new Float32Array(ROOSTS.length);      // seconds remaining, 0 = ready
+const roostSprintDeniedPlayed = new Uint8Array(ROOSTS.length);  // LUL-5442: debounce flag, mirrors staminaLowCuePlayed hysteresis pattern
 const roostBurstStart = new Float32Array(ROOSTS.length).fill(-1);  // seconds since flush, -1 = idle
 const roostBurstVel = ROOSTS.map(() => []);
 const roostGroups = ROOSTS.map(r => {
@@ -3089,8 +3090,17 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
 function updateRoosts(dt, running){
   updateRoostBursts(dt);
   for(let i=0;i<ROOSTS.length;i++){
-    if(roostCooldown[i] > 0){ roostCooldown[i] -= dt; continue; }
     const r = ROOSTS[i];
+    if(roostCooldown[i] > 0){
+      // LUL-5442: sprint-into-cooling-roost denial cue, mirrors the throw-path
+      // roostFlushDeniedCue() (LUL-5412). Distance-gated to this roost only, and
+      // edge-triggered (fires once per approach, not every tick) via the same
+      // hysteresis-flag idiom as staminaLowCuePlayed (~line 7150).
+      const nearWhileRunning = running && Math.hypot(player.x-r.x, player.z-r.z) < ROOST_TRIGGER_RADIUS;
+      if(nearWhileRunning && !roostSprintDeniedPlayed[i]) roostFlushDeniedCue();
+      roostSprintDeniedPlayed[i] = nearWhileRunning ? 1 : 0;
+      roostCooldown[i] -= dt; continue;
+    }
     // LUL-5346: CONFIG.roostScaleMul (1 on every real map) -- see its own comment,
     // engine/tuning.js -- so this stays a no-op outside qaWorld=micro.
     const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
@@ -6753,7 +6763,7 @@ function restart(){
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   winPendingActive = false; winPendingT = 0; if(winPendingEl) winPendingEl.style.opacity = '0';   // LUL-1633
-  roostCooldown.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
+  roostCooldown.fill(0); roostSprintDeniedPlayed.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
