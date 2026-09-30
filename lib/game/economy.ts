@@ -140,6 +140,14 @@ export const MISSION_UPWIND_REFUGE_REWARD = 9;
 // upwindRefuge(9)" (expected 8-10E) -- priced provisionally level with both at 9.
 export const MISSION_ROOST_RECOVERY_EVASION_REWARD = 9;
 
+// LUL-5456/LUL-5457: Bear Roost Ambush -- Game Economist priced this at 9E (LUL-5457 comment,
+// 2026-09-30): the bear trades the lion's speed dominance for scent-strength and can't charge,
+// making it not strictly harder than lionRoostFlush -- both force the same roost-defense/
+// veil-hide counterplay, so it is priced level with flush(9)/lionRoostFlush(9)/
+// roostRecoveryEvasion(9), below beaconRoostFlush's top-tier 10. Confirmed by the Economist,
+// not a placeholder.
+export const MISSION_BEAR_ROOST_AMBUSH_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -152,6 +160,7 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   lionRoostFlush: MISSION_LION_ROOST_FLUSH_REWARD,
   upwindRefuge: MISSION_UPWIND_REFUGE_REWARD,
   roostRecoveryEvasion: MISSION_ROOST_RECOVERY_EVASION_REWARD,
+  bearRoostAmbush: MISSION_BEAR_ROOST_AMBUSH_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

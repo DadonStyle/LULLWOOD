@@ -64,7 +64,8 @@ export type MissionKind =
   | 'beaconRoostFlush'
   | 'lionRoostFlush'
   | 'upwindRefuge'
-  | 'roostRecoveryEvasion';
+  | 'roostRecoveryEvasion'
+  | 'bearRoostAmbush';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -180,6 +181,17 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // not waiting for one. x/z/zoneRadius/interactRadius: 0/spatial: false/roostIndex: 0
   // placeholder follows flush's own reasoning (:139 above) verbatim -- never read directly.
   { kind: 'roostRecoveryEvasion', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
+  // LUL-5456/LUL-5454: Bear Roost Ambush -- 'lionRoostFlush's own composition (LUL-5426)
+  // verbatim: same non-spatial roost-target shape as 'flush'/'beaconRoostFlush'/
+  // 'lionRoostFlush', same repositionBeaconHunterForMission() post-draw reposition pass, and
+  // completion reuses canCompleteFlush() unchanged (a fresh roost-throw). The only difference
+  // is which predator gets repositioned: a bear instead of a lion -- the scent-weighted
+  // predator (engine/forest-engine.js:2114) anchoring a roost mission for the first time,
+  // instead of every roost mission defaulting to the lion. x/z/zoneRadius/interactRadius:
+  // 0/spatial: false/roostIndex: 0 placeholder follows flush's own reasoning (:139 above)
+  // verbatim -- never read directly, always overwritten by generateMap()'s post-placeCave()
+  // roost draw.
+  { kind: 'bearRoostAmbush', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
 ];
 
 export interface MissionState {
@@ -239,8 +251,10 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // shares that same untimed/no-landmarkKind shape too (lionRoostFlush's own composition,
   // only its completion trigger differs), so it is excluded here too -- it is also never
   // drawn by pickMission() in real play (spawned directly by a lion-present flush), but this
-  // keeps the invariant true regardless.
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion');
+  // keeps the invariant true regardless. LUL-5456: bearRoostAmbush shares that same
+  // untimed/no-landmarkKind shape too (lionRoostFlush's own composition, only the
+  // repositioned predator differs), so it is excluded here too.
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
@@ -303,10 +317,12 @@ export function canCompleteSlackWater(mission: MissionState, fogTideActive: bool
  * roost-target/completion shape as 'flush' (only the post-draw predator repositioning
  * differs, handled entirely in repositionBeaconHunterForMission()) -- reuses this same
  * predicate rather than a near-duplicate, per each proposal's own "no new engine code"
- * scope. */
+ * scope. LUL-5456: 'bearRoostAmbush' shares the exact same roost-target/completion shape too
+ * (only the repositioned predator differs -- a bear instead of a lion), so it reuses this
+ * predicate the same way. */
 export function canCompleteFlush(mission: MissionState, flushedRoostIndex: number): boolean {
   return mission.status === 'active'
-    && (mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush')
+    && (mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'bearRoostAmbush')
     && mission.target.roostIndex === flushedRoostIndex;
 }
 

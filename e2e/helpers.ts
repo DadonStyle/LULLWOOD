@@ -116,6 +116,7 @@ export async function boot(
       | 'lionRoostFlush'
       | 'upwindRefuge'
       | 'roostRecoveryEvasion'
+      | 'bearRoostAmbush'
       | null;
     qaRoostIndex?: number | null;
     seedWelcomeSplashSeen?: boolean;
