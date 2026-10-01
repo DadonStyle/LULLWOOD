@@ -411,7 +411,7 @@ function hideVeilPromptContent(
   state: EngineHudState,
   mobile: boolean,
 ): { text: string; suffix?: string; keycap: string; tone: 'ready' | 'urgent' } {
-  const noun = 'bush'; // LUL-2311: bramble is the only hide-eligible cover kind now
+  const noun = state.coverPromptKind ?? 'bush'; // LUL-5684: surface the real cover prop kind instead of a hardcoded noun; null fallback only matters if coverPromptVisible fires before coverPromptKind is populated
   if (state.coverPromptVisible) {
     if (state.coverPromptUrgent) {
       return mobile

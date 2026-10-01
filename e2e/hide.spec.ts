@@ -39,6 +39,12 @@ test.describe('H hide toggle', () => {
       throw new Error('qaTeleportToHideSpot returned null -- no bramble hiding spot was found for this seed');
     }
 
+    // LUL-5684: coverPromptKind ('bramble') is surfaced in the hide prompt
+    // noun instead of the old hardcoded 'bush' -- this fails on the
+    // pre-5684 text and passes once Hud.tsx:414 reads the real cover kind.
+    await expectRowVisible(page, 'actionPrompt');
+    await expect(page.locator('#actionPrompt')).toContainText('bramble');
+
     // Not hiding yet: the #status row is mounted (LUL-2312: #actionSlot's
     // five rows are always in the DOM) but data-visible="0" -- statusVisible
     // is driven 1:1 by `hidden` outside a sniff event.
