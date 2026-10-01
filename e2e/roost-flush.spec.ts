@@ -95,8 +95,14 @@ test.describe('roost flush -- player-sprint noise event (LUL-2389 slice b)', () 
 
     // Still sprinting, still inside ROOST_TRIGGER_RADIUS, well under the 32s cooldown --
     // a real second flush would reset roostCooldown[i] back up to ROOST_COOLDOWN(32) and
-    // re-roll noiseTargetT via a fresh hearThrowableNoise() call.
-    await qaHook(page, 'qaAdvance', stepsFor(2));
+    // re-roll noiseTargetT via a fresh hearThrowableNoise() call. Kept short (not the
+    // stepsFor(2) this used to be, LUL-5747): the first flush fires on the very first
+    // fixed step above, so total elapsed since it already sits near 1s by the time we get
+    // here -- a further 2s pushed the window past ROOST_INVESTIGATE_TIME's own 1.5-2.5s
+    // range (engine/tuning.js), so the investigate timer naturally expired and nulled
+    // noiseTarget on its own before the second probe below, independent of whether a
+    // second flush fired. 0.3s keeps total elapsed under the 1.5s floor with margin.
+    await qaHook(page, 'qaAdvance', stepsFor(0.3));
     await page.keyboard.up('ShiftLeft');
 
     const secondPredator = await qaHook(page, 'qaProbePredatorState', 'wolf');
