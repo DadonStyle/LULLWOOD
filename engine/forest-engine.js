@@ -860,16 +860,36 @@ function generateThrowables(){
 // LUL-791 precedent. Rejection-samples against landmarks (nearLandmarks(), below) and
 // against every already-placed mud zone (no overlap), mirroring generateThrowables()'
 // rejection-sample shape above.
+//
+// LUL-5627 (Mudbound Decoy Amplification): the first zone is reserved to land within
+// (r-1) of the Decoy Scent Site (scaledDecoyScentSites()[0]) instead of a uniform-random
+// draw -- a predator redirected onto the decoy by hearThrowableNoise() (forest-engine.js's
+// exit-transition block) then has to cross the mud to reach it, so the composition is
+// guaranteed every game instead of the ~1.7-2.8% a uniform draw would land there (LUL-5630,
+// CEO Option A). Still subject to the same nearLandmarks() rejection as every other draw --
+// the decoy site sits >100u from every LANDMARKS entry (nearest is drownedCar at ~109u vs.
+// MUD_ZONE_LANDMARK_PAD=6), so this resolves on the first try in practice. The remaining 4
+// zones keep today's uniform-random + overlap-rejection loop unchanged.
 const MUD_ZONE_COUNT = 5;
 const MUD_ZONE_MIN_R = 6, MUD_ZONE_MAX_R = 9;
 const MUD_ZONE_LANDMARK_PAD = 6;
 function generateMudZones(){
   mudZones = [];
   let placed = 0, tries = 0;
+  const decoySite = scaledDecoyScentSites()[0];
   while(placed < MUD_ZONE_COUNT && tries < MUD_ZONE_COUNT * 40){
     tries++;
-    const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
     const r = MUD_ZONE_MIN_R + rng() * (MUD_ZONE_MAX_R - MUD_ZONE_MIN_R);
+    let x, z;
+    if(placed === 0){
+      const angle = rng() * Math.PI * 2;
+      const dist = rng() * (r - 1);
+      x = decoySite.x + Math.cos(angle) * dist;
+      z = decoySite.z + Math.sin(angle) * dist;
+    } else {
+      x = rnd(-half+margin, half-margin);
+      z = rnd(-half+margin, half-margin);
+    }
     if(nearLandmarks(x, z, MUD_ZONE_LANDMARK_PAD)) continue;
     if(mudZones.some(m => Math.hypot(m.x - x, m.z - z) < m.r + r)) continue;
     mudZones.push({ x, z, r });
@@ -2268,7 +2288,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion','skyCompassNavigation',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','mudTrapDecoy','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2290,6 +2310,7 @@ const HINT_TEXT = {
   beaconHunter: 'a Beacon Hunter — locks onto you the instant you sprint into the wind, sight and scent don\'t matter to it. hide (H) or veil (F), or stop sprinting into the wind.',
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
   windAssist: 'sprinting into the wind moves you faster and quieter',
+  mudTrapDecoy: 'mudbound decoy — lure a predator here and it will slow in the mud, unable to catch you if you escape.',
   downwindInvestigation: 'predators hunt downwind of your scent — position yourself upwind to escape',
   windPulse:  'wind pulse — nearby predators pause their sprint when moving across the wind',
   cover:      'a bush — predators lose sight of you while you hold still',
@@ -6262,6 +6283,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       exitCueCount: qaDecoyScentExitCueCount,
     };
   };
+  // [QA-HOOK] LUL-5627: read-only snapshot of the live mudZones array ({x,z,r} world
+  // coordinates, already post-generateMudZones()/qaBuildScene -- no separate scale factor,
+  // mud zones are never scaled unlike the decoy/scent-mask/roost sites). Lets a reachability
+  // test drive the real generateMap() path (qaRegenerateMap) over several seeds and confirm
+  // a mud zone always lands near scaledDecoyScentSites()[0], without reproducing the
+  // forced-overlap gap qaBuildScene's own mudZones override would otherwise paper over.
+  window.ForestEngine.qaProbeMudZones = function(){
+    return mudZones.map(m => ({ x: m.x, z: m.z, r: m.r }));
+  };
 
   // [QA-HOOK] LUL-2230: sets the camera yaw directly (the same player.yaw
   // every look-input path writes, see camera.rotation.set(player.pitch,
@@ -8312,6 +8342,11 @@ function stepFrame(dt, t, skipRender){
         }
         case 'stamina': return [staminaCharge <= 0, null];
         case 'windAssist': return [running && movingAgainstWind, null];
+        // LUL-5627: self/panel-anchored like windAssist -- fires while the player stands
+        // inside both the decoy site and a mud zone at once (the overlap generateMudZones()
+        // now guarantees), not on decoy entry alone, so it only shows once the composed
+        // trap is actually relevant.
+        case 'mudTrapDecoy': return [playerInDecoyScentSiteIndex !== -1 && isInMudZone(player.x, player.z, mudZones), null];
         // LUL-5402: same gate as biasTowardWind()'s call site (state === 'investigate'
         // && inv === 'approach' && scentLock > 0) -- self/panel-anchored like windAssist,
         // re-derived here rather than sharing a variable with the pushState computation
@@ -8337,6 +8372,7 @@ function stepFrame(dt, t, skipRender){
         case 'caveImmune': return caveImmuneT <= 0;
         case 'scentMask': return playerInScentMaskSiteIndex === -1;
         case 'decoyScent': return playerInDecoyScentSiteIndex === -1;
+        case 'mudTrapDecoy': return playerInDecoyScentSiteIndex === -1 || !isInMudZone(player.x, player.z, mudZones);
         case 'windPulse': return !predators.some(p => p.windPauseT > 0);
         case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'deepwater': return missionCanComplete;
