@@ -4628,9 +4628,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // any mote is currently lit (distance-based falloff from the player), so a
   // test can assert presence/absence without scraping Three.js light
   // internals -- same shape as qaProbeTimeOfDay's own init-time snapshot.
+  // LUL-5736: maxIntensity added so a test can assert the rain-dim ramp
+  // (CONFIG.FIREFLY_RAIN_DIM) quantitatively -- anyVisible alone can't, since
+  // a dimmed-not-zeroed mote still reads intensity > 0.
   window.ForestEngine.qaProbeFireflyClusters = function(){
     return { clusterCount: activeFireflyClusters.length,
-             anyVisible: fireflyClusterMotes.some(function(m){ return m.light.intensity > 0; }) };
+             anyVisible: fireflyClusterMotes.some(function(m){ return m.light.intensity > 0; }),
+             maxIntensity: fireflyClusterMotes.reduce(function(acc, m){ return Math.max(acc, m.light.intensity); }, 0) };
   };
   // LUL-2225: generic teleport, for staging an arbitrary position that isn't
   // already a fixed named landmark like qaTeleportHome/qaTeleportNearBaby.
@@ -8391,7 +8395,7 @@ function stepFrame(dt, t, skipRender){
   // dusk/night -- fireflyClusterMotes is built empty then (see module scope above).
   for (const mote of fireflyClusterMotes) {
     const w = decoyScentGlowWeight(player.x, player.z, mote.cluster, WRAP_SPAN, WRAP_SPAN);
-    mote.light.intensity = 0.6 * w;
+    mote.light.intensity = 0.6 * w * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM);
     if (!motionReduced()) {
       mote.light.position.x = mote.baseX + Math.sin(t*0.3 + mote.phase) * 1.5;
       mote.light.position.z = mote.baseZ + Math.cos(t*0.23 + mote.phase) * 1.5;
