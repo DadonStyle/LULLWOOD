@@ -3324,12 +3324,23 @@ function updateRoosts(dt, running){
   updateRoostBursts(dt);
   for(let i=0;i<ROOSTS.length;i++){
     const r = ROOSTS[i];
+    // LUL-5346: CONFIG.roostScaleMul (1 on every real map) -- see its own comment,
+    // engine/tuning.js -- so this stays a no-op outside qaWorld=micro. Scaling r.radius
+    // alongside rx/rz (not just the position) matters: the radius describes the site's
+    // own geometric footprint, so shrinking the site without shrinking its footprint is
+    // what let qaWorld=micro's compressed roost spacing (~10-40u apart) fall inside an
+    // unscaled 20u radius meant for the full map's ~140-152u spacing -- the nearest-roost
+    // scan below (and throwThrowable()'s own copy) would then resolve throws/approaches
+    // meant for one roost onto whichever neighbor's unscaled radius happened to reach
+    // further, leaving the intended roost's burstActive permanently false.
+    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
+    const rRadius = r.radius * CONFIG.roostScaleMul;
     if(roostCooldown[i] > 0){
       // LUL-5442: sprint-into-cooling-roost denial cue, mirrors the throw-path
       // roostFlushDeniedCue() (LUL-5412). Distance-gated to this roost only, and
       // edge-triggered (fires once per approach, not every tick) via the same
       // hysteresis-flag idiom as staminaLowCuePlayed (~line 7150).
-      const nearWhileRunning = running && Math.hypot(player.x-r.x, player.z-r.z) < ROOST_TRIGGER_RADIUS;
+      const nearWhileRunning = running && Math.hypot(player.x-rx, player.z-rz) < ROOST_TRIGGER_RADIUS;
       if(nearWhileRunning && !roostSprintDeniedPlayed[i]) roostFlushDeniedCue();
       roostSprintDeniedPlayed[i] = nearWhileRunning ? 1 : 0;
       roostCooldown[i] -= dt;
@@ -3348,24 +3359,21 @@ function updateRoosts(dt, running){
       }
       continue;
     }
-    // LUL-5346: CONFIG.roostScaleMul (1 on every real map) -- see its own comment,
-    // engine/tuning.js -- so this stays a no-op outside qaWorld=micro.
-    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
     for(const p of predators){
       if(p.inert || p.state !== 'chase') continue;
-      if(Math.hypot(p.x-rx, p.z-rz) < r.radius){
+      if(Math.hypot(p.x-rx, p.z-rz) < rRadius){
         flushRoost(i);
         roostCooldown[i] = ROOST_COOLDOWN;
         break;
       }
     }
     if(roostCooldown[i] > 0) continue;   // the predator branch above may have just set it this tick
-    if(running && Math.hypot(player.x-r.x, player.z-r.z) < ROOST_TRIGGER_RADIUS){
+    if(running && Math.hypot(player.x-rx, player.z-rz) < ROOST_TRIGGER_RADIUS){
       flushRoost(i);
       roostCooldown[i] = ROOST_COOLDOWN;
       for(const p of predators){
         if(p.inert) continue;
-        if(Math.hypot(p.x-r.x, p.z-r.z) < ROOST_NOISE_RADIUS) hearThrowableNoise(p, r.x, r.z, ROOST_INVESTIGATE_TIME);
+        if(Math.hypot(p.x-rx, p.z-rz) < ROOST_NOISE_RADIUS) hearThrowableNoise(p, rx, rz, ROOST_INVESTIGATE_TIME);
       }
     }
   }
@@ -6614,7 +6622,11 @@ function throwThrowable(){
     // LUL-5346: CONFIG.roostScaleMul -- matches qaTeleportNearRoost()'s own scaled landing spot,
     // see its comment; a no-op (mul=1) on every real map.
     const dist = Math.hypot(ROOSTS[i].x * CONFIG.roostScaleMul - landX, ROOSTS[i].z * CONFIG.roostScaleMul - landZ);
-    if(dist < ROOSTS[i].radius && dist < nearestRoostDist){ nearestRoost = i; nearestRoostDist = dist; }
+    // LUL-5658: radius scaled alongside position, same reasoning as updateRoosts() --
+    // an unscaled 20u radius against qaWorld=micro's compressed spacing let a throw aimed
+    // at one roost resolve to a closer neighbor instead, leaving the intended roost's
+    // burstActive permanently false.
+    if(dist < ROOSTS[i].radius * CONFIG.roostScaleMul && dist < nearestRoostDist){ nearestRoost = i; nearestRoostDist = dist; }
   }
   if(nearestRoost >= 0 && roostCooldown[nearestRoost] <= 0){
     flushRoost(nearestRoost);
