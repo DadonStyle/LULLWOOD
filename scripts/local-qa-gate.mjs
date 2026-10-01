@@ -72,6 +72,10 @@ async function handleIssueComment(repo, token, event) {
     console.log('comment is on an issue, not a PR -- skipping');
     return;
   }
+  if (comment?.author_association !== 'OWNER') {
+    console.log(`comment author_association is ${comment?.author_association}, not OWNER -- this repo is public and the local-qa tester posts as the repo owner, so an untrusted commenter cannot flip the required status check -- ignoring`);
+    return;
+  }
   const match = (comment?.body || '').match(VERDICT_RE);
   if (!match) {
     console.log('comment does not match the local-qa verdict pattern -- skipping');
