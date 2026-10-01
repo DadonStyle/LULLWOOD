@@ -1,0 +1,68 @@
+name: local-qa gate
+
+# LUL-5620 -- PR #947 (the version-cut that caused the LUL-5612 production
+# outage) merged with zero local-qa comments and a cancelled combined-suite
+# run; nothing mechanical was waiting for the founder's GitHub-queue rule
+# (tester comments PASS|FAIL before a version-cut PR merges, QA_TESTER.md).
+# See decisions/lul-5616-local-qa-gate-not-ci-enforced-2026-10-01.
+#
+# This workflow drives a `local-qa` commit-status context that main's
+# ruleset lists as a required status check (added via a ruleset PATCH once
+# this workflow is confirmed live on release/next -- see LUL-5620). It
+# never runs Playwright itself; it only reflects the founder-owned local-qa
+# tester's own PASS|FAIL comment (shared/local-qa/bin/pr-e2e-watch.mjs)
+# onto the exact sha GitHub's merge button checks.
+#
+# Two triggers:
+#  - pull_request (base=main): arms `local-qa` back to pending on every new
+#    head sha, so a stale PASS can never cover a later push.
+#  - issue_comment: the only event GitHub fires for a PR comment regardless
+#    of who posts it (the tester posts as the repo owner via `gh`, not a
+#    GitHub App, so there is no check-run or workflow-run event to key off
+#    instead).
+#
+# scripts/local-qa-gate.mjs does the real work; see that file for the
+# sha-matching rules this depends on.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [main]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Open cut PR number to backfill a pending local-qa status for (e.g. right after this workflow first lands)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  gate:
+    name: local-qa
+    runs-on: ubuntu-latest
+    if: github.event_name != 'issue_comment' || github.event.issue.pull_request != null
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: backfill pending status for a manually-specified PR
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.pr_number != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          sha="$(gh pr view "${{ github.event.inputs.pr_number }}" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$sha" -f state=pending -f context=local-qa -f description='awaiting local-qa PASS|FAIL comment for this sha'
+      - name: update local-qa gate
+        if: github.event_name == 'pull_request' || github.event_name == 'issue_comment'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/local-qa-gate.mjs
