@@ -217,6 +217,7 @@ import { nearestLandmarkName } from '@/lib/game/chronicle';
 import { ROOSTS } from '@/lib/game/roostSites';
 import { SCENT_MASK_SITES, findScentMaskSiteIndex, scentMaskGlowWeight } from '@/lib/game/scentMaskSites';
 import { DECOY_SCENT_SITES, findDecoyScentSiteIndex, decoyScentGlowWeight } from '@/lib/game/decoyScentSites';
+import { FIREFLY_CLUSTERS, FIREFLY_MOBILE_CLUSTER_COUNT } from '@/lib/game/fireflyClusters';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -684,6 +685,12 @@ let playerInDecoyScentSiteIndex = -1;
 // site today, so a second site needs no shape change here. Reset in restart().
 function scaledDecoyScentSites(){
   return DECOY_SCENT_SITES.map(s => ({ ...s, x: s.x * CONFIG.decoyScaleMul, z: s.z * CONFIG.decoyScaleMul }));
+}
+// LUL-5707: FIREFLY_CLUSTERS scaled by CONFIG.fireflyScaleMul, same "scale the read,
+// not the source" shape as scaledDecoyScentSites() above. Radius is left unscaled on
+// purpose, same precedent as ROOST_TRIGGER_RADIUS/DECOY_SCENT_RADIUS staying fixed.
+function scaledFireflyClusters(){
+  return FIREFLY_CLUSTERS.map(c => ({ ...c, x: c.x * CONFIG.fireflyScaleMul, z: c.z * CONFIG.fireflyScaleMul }));
 }
 let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
 let coldWalkOptIn = false, coldWalkBroken = false;
@@ -1424,6 +1431,41 @@ const decoyScentGlowMeshes = DECOY_SCENT_SITES.map(s => {
   mesh.rotation.x = -Math.PI/2; mesh.position.set(s.x, 0.04, s.z);
   scene.add(mesh);
   return mesh;
+});
+
+// ---- Firefly swarms (LUL-5707 cheap slice) --------------------------------
+// Pure ambient dusk/night glow clusters -- no input, no HUD field, no save
+// state, no economy hook (docs/CUES.md:1-6 passive/ambient-texture cue-triple
+// exemption, same ruling as decisions/lul-2431-fire-tower-embers-cue-triple-
+// exempt-2026-09-11). `timeOfDay` is a per-session snapshot (LUL-1644, never
+// re-evaluated during play), so gating the cluster list once here -- instead
+// of per-frame in the tick loop below -- is correct, not an optimization that
+// could go stale mid-session.
+const activeFireflyClusters = (timeOfDay === 'evening' || timeOfDay === 'night')
+  ? (mode === 'mobile' ? scaledFireflyClusters().slice(0, FIREFLY_MOBILE_CLUSTER_COUNT) : scaledFireflyClusters())
+  : [];
+const FIREFLY_MOTE_COLOR = 0xcfe86a;
+// One THREE.PointLight per mote, built once here and never rebuilt -- empty
+// outside dusk/night so every loop below over fireflyClusterMotes is a cheap
+// no-op for a daytime session. Mote scatter around each cluster center uses a
+// deterministic sunflower-seed layout (index-derived angle/radius), not
+// rng() -- consuming a shared seeded draw here would shift every later
+// rng()-based system's sequence for the same seed (decoyScentSites.ts's own
+// header comment: "no rng() draw contract, so seeds stay byte-identical per
+// seed").
+const fireflyClusterMotes = activeFireflyClusters.flatMap((cluster, ci) => {
+  const motes = [];
+  for (let i = 0; i < cluster.moteCount; i++) {
+    const ang = i * 2.399963 + ci * 0.7;
+    const rad = cluster.radius * 0.35 * Math.sqrt((i + 0.5) / cluster.moteCount);
+    const baseX = cluster.x + Math.cos(ang) * rad;
+    const baseZ = cluster.z + Math.sin(ang) * rad;
+    const light = new THREE.PointLight(FIREFLY_MOTE_COLOR, 0, 6, 2);
+    light.position.set(baseX, 1.2 + (i % 3) * 0.5, baseZ);
+    scene.add(light);
+    motes.push({ light, cluster, baseX, baseZ, phase: ang });
+  }
+  return motes;
 });
 
 // ---- Navigational landmarks (LUL-25) --------------------------------------
@@ -4581,6 +4623,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // not plain values a test can diff cleanly).
   window.ForestEngine.qaProbeTimeOfDay = function(){
     return { state: timeOfDay, visual: TOD_VISUAL, audio: TOD_AUDIO };
+  };
+  // LUL-5707: active firefly-cluster count (0 outside dusk/night) plus whether
+  // any mote is currently lit (distance-based falloff from the player), so a
+  // test can assert presence/absence without scraping Three.js light
+  // internals -- same shape as qaProbeTimeOfDay's own init-time snapshot.
+  window.ForestEngine.qaProbeFireflyClusters = function(){
+    return { clusterCount: activeFireflyClusters.length,
+             anyVisible: fireflyClusterMotes.some(function(m){ return m.light.intensity > 0; }) };
   };
   // LUL-2225: generic teleport, for staging an arbitrary position that isn't
   // already a fixed named landmark like qaTeleportHome/qaTeleportNearBaby.
@@ -8333,6 +8383,19 @@ function stepFrame(dt, t, skipRender){
       const w = decoyScentGlowWeight(player.x, player.z, scaledDecoySites[i], WRAP_SPAN, WRAP_SPAN);
       const pulse = motionReduced() ? 0 : Math.sin(t*1.1)*0.05;
       decoyScentGlowMeshes[i].material.opacity = 0.12 + pulse + w*0.35;
+    }
+  }
+  // LUL-5707: distance-based intensity falloff (same decoyScentGlowWeight() math
+  // as the scent sites above, generic over any EventSite-shaped object) plus
+  // idle drift, degrading to static under reducedMotion. Empty loop outside
+  // dusk/night -- fireflyClusterMotes is built empty then (see module scope above).
+  for (const mote of fireflyClusterMotes) {
+    const w = decoyScentGlowWeight(player.x, player.z, mote.cluster, WRAP_SPAN, WRAP_SPAN);
+    mote.light.intensity = 0.6 * w;
+    if (!motionReduced()) {
+      mote.light.position.x = mote.baseX + Math.sin(t*0.3 + mote.phase) * 1.5;
+      mote.light.position.z = mote.baseZ + Math.cos(t*0.23 + mote.phase) * 1.5;
+      mote.light.position.y = 1.2 + Math.sin(t*0.5 + mote.phase) * 0.6;
     }
   }
 

@@ -12,17 +12,30 @@ import { boot, enter, qaHook } from './helpers';
 const FIXED_DT = 0.02;
 const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 
-// canopyNE, lib/game/roostSites.ts -- fixed, not part of generateMap()'s rng stream,
-// untouched by applyQaWorldMicroPreset() (same as qaTeleportNearRoost relies on).
+// canopyNE, lib/game/roostSites.ts -- fixed, not part of generateMap()'s rng stream.
+// ROOSTS[i].x/z (110, 90) are themselves untouched by applyQaWorldMicroPreset(), but
+// every distance check in updateRoosts() reads them through CONFIG.roostScaleMul
+// (0.2 in the default qaWorld=micro boot, LUL-5346) -- so the engine-internal roost
+// centre a predator/player must be near is (22, 18), not the raw (110, 90). Fetched
+// via qaTeleportNearRoost's own return value (same scaled x/z it uses internally)
+// rather than duplicating the 0.2 multiplier here.
 const ROOST_INDEX = 0;
-const ROOST_X = 110;
-const ROOST_Z = 90;
+
+/** Scaled (engine-internal) centre of ROOSTS[ROOST_INDEX]. Also repositions the player
+ * to throw distance as a side effect -- harmless, every caller re-teleports after. */
+async function roostCenter(page: import('@playwright/test').Page) {
+  const r = await qaHook(page, 'qaTeleportNearRoost', ROOST_INDEX);
+  expect(r?.i).toBe(ROOST_INDEX);
+  return { x: r.x as number, z: r.z as number };
+}
 
 async function stageAndApproach(page: import('@playwright/test').Page, predatorDz: number) {
-  await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: ROOST_X, z: ROOST_Z + predatorDz, state: 'roam' }] });
+  const { x, z } = await roostCenter(page);
+  await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x, z: z + predatorDz, state: 'roam' }] });
   // 3 units off the roost -- inside ROOST_TRIGGER_RADIUS(6), outside the roost's own
   // ambient-trigger radius(20) doesn't matter here since the player branch doesn't read it.
-  await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 3);
+  await qaHook(page, 'qaTeleportTo', x, z + 3);
+  return { x, z };
 }
 
 test.describe('roost flush -- player-sprint noise event (LUL-2389 slice b)', () => {
@@ -30,7 +43,7 @@ test.describe('roost flush -- player-sprint noise event (LUL-2389 slice b)', () 
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-    await stageAndApproach(page, 10);   // 10u from roost -- inside ROOST_NOISE_RADIUS(14)
+    const { x, z } = await stageAndApproach(page, 10);   // 10u from roost -- inside ROOST_NOISE_RADIUS(14)
 
     const before = await qaHook(page, 'qaProbePredatorState', 'wolf');
     expect(before.state).toBe('roam');
@@ -42,8 +55,8 @@ test.describe('roost flush -- player-sprint noise event (LUL-2389 slice b)', () 
 
     const after = await qaHook(page, 'qaProbePredatorState', 'wolf');
     expect(after.state).toBe('investigate');
-    // The roost's fixed position -- not the player's own (qaProbePlayer at ROOST_X, ROOST_Z+3).
-    expect(after.noiseTarget).toEqual({ x: ROOST_X, z: ROOST_Z });
+    // The roost's (scaled) fixed position -- not the player's own (qaProbePlayer at x, z+3).
+    expect(after.noiseTarget).toEqual({ x, z });
 
     const roost = await qaHook(page, 'qaProbeRoostState', ROOST_INDEX);
     expect(roost.cooldown).toBeGreaterThan(0);
@@ -124,8 +137,9 @@ test.describe('roost flush -- sprint-into-cooldown denial cue (LUL-5442)', () =>
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: ROOST_X, z: ROOST_Z + 30, state: 'roam' }] });
-    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 3);
+    const { x, z } = await roostCenter(page);
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x, z: z + 30, state: 'roam' }] });
+    await qaHook(page, 'qaTeleportTo', x, z + 3);
 
     // First sprint flushes the roost and starts its cooldown.
     await page.keyboard.down('ShiftLeft');
@@ -138,8 +152,8 @@ test.describe('roost flush -- sprint-into-cooldown denial cue (LUL-5442)', () =>
 
     // Leave and re-approach while still on cooldown, then sprint again -- this should
     // be denied and produce exactly one new cue firing, not one per tick.
-    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 40);
-    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 3);
+    await qaHook(page, 'qaTeleportTo', x, z + 40);
+    await qaHook(page, 'qaTeleportTo', x, z + 3);
     await page.keyboard.down('ShiftLeft');
     await qaHook(page, 'qaAdvance', stepsFor(2));
     await page.keyboard.up('ShiftLeft');
@@ -152,8 +166,9 @@ test.describe('roost flush -- sprint-into-cooldown denial cue (LUL-5442)', () =>
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: ROOST_X, z: ROOST_Z + 30, state: 'roam' }] });
-    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 3);
+    const { x, z } = await roostCenter(page);
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x, z: z + 30, state: 'roam' }] });
+    await qaHook(page, 'qaTeleportTo', x, z + 3);
 
     await page.keyboard.down('ShiftLeft');
     await qaHook(page, 'qaAdvance', 1);
@@ -172,8 +187,9 @@ test.describe('roost flush -- sprint-into-cooldown denial cue (LUL-5442)', () =>
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: ROOST_X, z: ROOST_Z + 30, state: 'roam' }] });
-    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 3);
+    const { x, z } = await roostCenter(page);
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x, z: z + 30, state: 'roam' }] });
+    await qaHook(page, 'qaTeleportTo', x, z + 3);
 
     await page.keyboard.down('ShiftLeft');
     await qaHook(page, 'qaAdvance', 1);
@@ -181,7 +197,7 @@ test.describe('roost flush -- sprint-into-cooldown denial cue (LUL-5442)', () =>
     const cueCountAfterFlush = (await qaHook(page, 'qaProbeRoostState', ROOST_INDEX)).deniedCueCount;
 
     // 18u from roost -- outside ROOST_TRIGGER_RADIUS(6), still while on cooldown.
-    await qaHook(page, 'qaTeleportTo', ROOST_X, ROOST_Z + 18);
+    await qaHook(page, 'qaTeleportTo', x, z + 18);
     await page.keyboard.down('ShiftLeft');
     await qaHook(page, 'qaAdvance', stepsFor(2));
     await page.keyboard.up('ShiftLeft');

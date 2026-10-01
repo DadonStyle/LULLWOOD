@@ -49,6 +49,15 @@ export const CONFIG = {
                           // shrunk micro map (movement-clamped to +-half) can never reach the one site
                           // (~205u from origin). applyQaWorldMicroPreset() scales this down too, same
                           // ratio as scentMaskScaleMul. 1 = full-map, no-op.
+  fireflyScaleMul: 1,     // LUL-5707: same "scale the read, not the source" shape as decoyScaleMul --
+                          // FIREFLY_CLUSTERS (lib/game/fireflyClusters.ts) stays untouched; every
+                          // engine read of a cluster's x/z scales by this (radius is left unscaled,
+                          // same precedent as ROOST_TRIGGER_RADIUS/DECOY_SCENT_RADIUS). Without it
+                          // every cluster sits 100-280u from the micro map's origin spawn, well
+                          // outside FIREFLY_CLUSTER_RADIUS(45), so qaProbeFireflyClusters() would
+                          // report anyVisible=false at night on the default QA world.
+                          // applyQaWorldMicroPreset() scales this down too, same ratio as
+                          // decoyScaleMul. 1 = full-map, no-op.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
@@ -238,6 +247,9 @@ export function applyQaWorldMicroPreset(){
   CONFIG.decoyScaleMul = 0.2;    // LUL-5566: same 96/480 ratio -- keeps the decoy site inside the
                                   // shrunk map's movement-clamp bounds so a real walk can enter and
                                   // leave it.
+  CONFIG.fireflyScaleMul = 0.2;  // LUL-5707: same 96/480 ratio -- keeps a firefly cluster within
+                                  // FIREFLY_CLUSTER_RADIUS of the micro map's origin spawn so
+                                  // qaProbeFireflyClusters() can observe anyVisible=true at night.
 }
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two
