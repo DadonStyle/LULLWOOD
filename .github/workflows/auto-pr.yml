@@ -157,11 +157,30 @@ jobs:
               'game or app code goes to the Code Reviewer' \
               '(see `.github/scripts/ship-allowed.sh`).' > /tmp/pr-body.md
 
-            gh_retry gh pr create \
-              --base release/next \
-              --head "$BRANCH" \
-              --title "$(git log -1 --pretty=%s)" \
-              --body-file /tmp/pr-body.md
+            # LUL-5629: `gh pr list` above and `gh pr create` here are not atomic --
+            # an agent that runs `git push` then its own `gh pr create` for the same
+            # branch (standard practice in this fleet) can win that race, so this
+            # call fails with "a pull request already exists" even though nothing
+            # is actually wrong. That used to red-X an otherwise-healthy PR and
+            # never got as far as arming auto-merge. Treat exactly that error as
+            # the already-open case instead of a real failure; anything else still
+            # fails the job.
+            create_err="$(mktemp)"
+            if gh_retry gh pr create \
+                 --base release/next \
+                 --head "$BRANCH" \
+                 --title "$(git log -1 --pretty=%s)" \
+                 --body-file /tmp/pr-body.md 2>"$create_err"; then
+              :
+            elif grep -qiF 'a pull request already exists' "$create_err"; then
+              cat "$create_err" >&2
+              echo "::notice::$BRANCH already has an open PR (race with a manual \`gh pr create\` right after push); using it instead of failing."
+            else
+              cat "$create_err" >&2
+              rm -f "$create_err"
+              exit 1
+            fi
+            rm -f "$create_err"
 
             number="$(gh_retry gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')"
             echo "::notice::opened PR #$number for $BRANCH"

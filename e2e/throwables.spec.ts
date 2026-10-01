@@ -89,6 +89,7 @@ test.describe('throwables (LUL-1623)', () => {
     // not already investigating/hunting, or the transition below proves nothing.
     const before = await qaHook(page, 'qaProbePredatorState', 'wolf');
     expect(before?.state).toBe('roam');
+    expect(before?.investigateCueCount).toBe(0);
 
     await page.keyboard.press('KeyE');
     // LUL-2352: heldThrowable only reaches the HUD through stepFrame()'s
@@ -109,5 +110,11 @@ test.describe('throwables (LUL-1623)', () => {
       return s?.state === 'investigate';
     });
     expect(reachedInvestigate, 'wolf did not enter investigate off the thrown stone\'s landing noise').toBe(true);
+
+    // LUL-5626: investigateCue() fires on this real hearThrowableNoise() entry --
+    // counted before its own audio/soundOn gate, so this holds regardless of the
+    // default boot sound setting.
+    const after = await qaHook(page, 'qaProbePredatorState', 'wolf');
+    expect(after?.investigateCueCount).toBeGreaterThanOrEqual(1);
   });
 });
