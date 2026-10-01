@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8501 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7436, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8537 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7466, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1704,16 +1704,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6625, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7036). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6688, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7099). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7031) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L3355) rather than recomputed later, since `player.x/z` can move on
+  (L7069) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L3387) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1769,11 +1769,11 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4365) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L4309),
+  reset to 0 on `enter()` (L4405) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L7723: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -3054,10 +3054,10 @@ it already fires correctly for the sprint-bonus window; both the `title` and the
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
+(`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6916) and `windAssistEndCue()` (L6925), edge-triggers on the combined
+`windAssistStartCue()` (L6946) and `windAssistEndCue()` (L6955), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3426,6 +3426,55 @@ the far side, and the wolf's `noiseTarget` snaps to the site's own `x`/`z` with 
 incrementing exactly once on the exit edge -- proving the redirect actually retargets a live chase,
 not just that the flag transitions.
 
+## Mudbound Decoy Amplification (LUL-5627, cheap slice of accepted LUL-5622)
+
+Composes Mud Zone (above) and Scent-Decoy Site (above): a predator redirected onto the decoy's
+fixed point by `hearThrowableNoise()` now always has to cross mud to reach it, since
+`generateMudZones()` (`engine/forest-engine.js:885-907`) reserves its first of five draws to land
+within `(r-1)` of `scaledDecoyScentSites()[0]` (`:888`) instead of drawing uniformly at random like
+the remaining four zones still do. Before this, a uniform draw landed near the fixed decoy site in
+roughly 1.7-2.8% of games (LUL-5630's own math); the reservation makes the overlap happen every
+game. No engine logic outside `generateMudZones()` changed -- `predInMud`/`mudSpeedMultiplier()`
+(Mud Zone, above) and the exit-transition redirect (Scent-Decoy Site, above) are both pre-existing
+and unmodified; this ticket only changes *where* one of the five mud zones lands.
+
+**Placement** -- `r` is drawn exactly as before every iteration. For the reserved zone only
+(`placed === 0`), `x`/`z` are drawn as a random angle + a random distance `< r-1` from the decoy
+site instead of `rnd(-half+margin, half-margin)` twice -- comfortably inside the zone, not right on
+its boundary. The reserved draw is still subject to the same `nearLandmarks()` rejection every
+other draw is; the decoy site sits >100u from every `LANDMARKS` entry (nearest is `drownedCar` at
+~109u vs. `MUD_ZONE_LANDMARK_PAD`'s 6u pad), so in practice this resolves on the first try. This
+changes mud-zone positions for every seed (extra `rng()` draws ahead of the unchanged uniform-random
+loop, inside the function already documented as the true last `rng()` consumer in `generateMap()`)
+-- an intentional, decided behavior change (LUL-5630, CEO Option A), not a regression.
+
+**Hint caption** -- new `'mudTrapDecoy'` entry in `HINT_PRIORITY` (`:2283`, positioned right after
+`'windAssist'`) and `HINT_TEXT` (`:2305`): *"mudbound decoy — lure a predator here and it will slow
+in the mud, unable to catch you if you escape."* Gated in `hintCandidate`/`hintDismissedByEvent`
+(`:8341`, `:8367`) on `playerInDecoyScentSiteIndex !== -1 && isInMudZone(player.x, player.z,
+mudZones)` -- both at once, not decoy entry alone, so it only shows once the composed trap is
+actually relevant to the player standing there. Self/panel-anchored like `windAssist`, not
+`WORLD_HINT_KEYS` -- same treatment as `decoyScent` itself.
+
+**QA hooks**: `qaProbeMudZones()` (`engine/forest-engine.js:6284-6286`) -- read-only snapshot of
+the live `mudZones` array (`{x,z,r}`, unscaled -- mud zones are never scaled, unlike the
+decoy/scent-mask/roost sites). `qaRegenerateMap(seed)` (pre-existing) drives the real
+`generateMap()` path for the reachability check below; `qaProbeDecoyScentSite()`/`qaBuildScene`/
+`qaProbePredatorState` (all pre-existing) drive the forced-geometry mechanic check.
+
+Covered by two files:
+- `e2e/mudbound-decoy-trap.spec.ts` (forced geometry, proves the *mechanic*): exiting the decoy
+  site while an overlapping mud zone is staged redirects a mid-chase wolf's `noiseTarget` onto a
+  point inside that zone; a predator in `investigate`/`approach` clamps to `MUD_SPEED_MUL`(0.6)
+  while inside an overlapping zone (isolated rest-start A/B comparison against the same approach
+  with no zone, exact because `mudSpeedMultiplier`'s fold-in scales the per-tick target speed
+  linearly and both runs start from `p.vx=p.vz=0`); the `mudTrapDecoy` caption renders in
+  `#hintCaption` with the exact text while the player stands in the overlap.
+- `e2e/mudbound-decoy-reachability.spec.ts` (real generation, proves *reachability*, the LUL-5630
+  gap this ticket exists to close): drives `qaRegenerateMap(seed)` over 8 distinct seeds with no
+  `mudZones` override anywhere in the file, and asserts a real mud zone lands inside the decoy site
+  for every seed, not a sampled subset.
+
 ### Predator Investigate Audio Cue (LUL-5626, accepted LUL-5597)
 
 Every real transition into `'investigate'` state had a per-site caption but zero audio -- the
@@ -3434,29 +3483,29 @@ stays the chase-state cue (howl/roar/growl, kind-specific); investigate needed i
 cue per Q7/Q9 of the Feature Checklist (don't reuse the chase call verbatim, don't duplicate an
 existing surface).
 
-**Audio**: `investigateCue(p)` (L4101-4115) -- a low, two-pulse searching
+**Audio**: `investigateCue(p)` (L4122-4136) -- a low, two-pulse searching
 tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
-caption already names the species -- `hearCry()` (L2564) is the one exception: it pushes no
+caption already names the species -- `hearCry()` (L2585) is the one exception: it pushes no
 caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
 responding to the child's cry gives the player zero species identification, audio or text, same
 as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2531),
-`hearThrowableNoise()` (L2547), `hearCry()` (L2564), the charge-overshoot handoff (`p.chargeRecoveryT`,
-L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
-sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2552),
+`hearThrowableNoise()` (L2568), `hearCry()` (L2585), the charge-overshoot handoff (`p.chargeRecoveryT`,
+L2841), the 30s force-hunt escalation losing sight (`p.hunt`, L2905), the chase downgrade on losing
+sight/scentLock expiry via `shouldDowngradeChase()` (L2984 -- a seventh real site found independently
 of the driving ticket's six-line list, included for the same reason the other six are: a real
 `p.state='investigate'` assignment reachable in normal play), and the hidden-mid-chase contact-range
-handoff (`isCaught(dist, p.rad)`, L3003). Not wired at `qaStagePredatorGiveUp`'s direct investigate/sniff
-force-set (L5238) -- that's test staging, not a real-play entry (Q1.5: no real trigger reachability
+handoff (`isCaught(dist, p.rad)`, L3024). Not wired at `qaStagePredatorGiveUp`'s direct investigate/sniff
+force-set (L5259) -- that's test staging, not a real-play entry (Q1.5: no real trigger reachability
 there to cite).
 
 **QA hooks**: no new hook function -- `investigateCueCount` (per-predator, counted before the
 audio/soundOn gate, same "counter-before-gate" idiom as `qaProbeRoostState`'s `deniedCueCount`) is
-added to the existing `qaProbePredatorState(kind)`'s return object (L4874),
-and reset to 0 alongside `scentCalls` at predator spawn/restart (L1986, L2059, L2182).
+added to the existing `qaProbePredatorState(kind)`'s return object (L4895),
+and reset to 0 alongside `scentCalls` at predator spawn/restart (L2006, L2079, L2202).
 
 Covered by `e2e/throwables.spec.ts` ("a thrown rock lures a nearby roaming predator into
 investigate"): a real player-thrown rock lands within `THROWABLE_NOISE_RADIUS` of a staged roaming

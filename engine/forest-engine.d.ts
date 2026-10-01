@@ -655,6 +655,11 @@ declare global {
         cooldown: number[];
         exitCueCount: number;
       };
+      /** LUL-5627: read-only snapshot of the live mudZones array -- world (x,z,r),
+       * no scale factor (mud zones are never scaled unlike decoy/scent-mask/roost
+       * sites). Used to confirm, over real qaRegenerateMap(seed) draws, that a mud
+       * zone always lands near the Decoy Scent Site (Mudbound Decoy Amplification). */
+      qaProbeMudZones?: () => { x: number; z: number; r: number }[];
       /** LUL-2230: sets the camera yaw directly (the same `player.yaw` every
        * look-input path writes) so a test can turn to face its own scent
        * trail without pointer lock. Read-only otherwise -- no movement. */
