@@ -977,7 +977,7 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
   `timeOfRun=1`).
 - **As of `LUL-5698`** (Rainfall Event, cheap slice), an additive
   `rainfallFogBoost(rainfallAmount)` term stacked on top of the veil/tide/
-  time-of-run terms above (`engine/forest-engine.js:7573`). Same
+  time-of-run terms above (`engine/forest-engine.js:7589`). Same
   `eventScheduler.ts` three-phase calm/signpost/active cycle as Fog Tide, its
   own `RAINFALL_CONFIG` (`lib/game/rainfallEvent.ts` — `period: 80,
   activeDuration: 20, leadIn: 10`), eased over `RAINFALL_RAMP` (4s). At full
@@ -990,15 +990,15 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
   `rainfallNoiseScalar(rainfallAmount)` (`RAINFALL_NOISE_MUL = 0.65`, same
   magnitude as Fog Tide's own detect-radius cut) — is threaded into
   `updatePredators()`'s `checkNoise()` call for the footstep channel only
-  (`engine/forest-engine.js:2959`); the cry-noise channel two lines below is
+  (`engine/forest-engine.js:2960`); the cry-noise channel two lines below is
   deliberately untouched. Ambient audio: a new procedural bandpass-filtered
-  noise bed (`audio.rg`, `engine/forest-engine.js:3722-3726`) ramped by
+  noise bed (`audio.rg`, `engine/forest-engine.js:3729-3733`) ramped by
   `rainfallBuild` alongside Fog Tide's own `wg`/`dg` ramping
-  (`engine/forest-engine.js:8272`) — no loaded audio sample exists anywhere
+  (`engine/forest-engine.js:8283`) — no loaded audio sample exists anywhere
   in this file, every ambient bed (`wind`/`insects`/`dg`/now `rain`) is
   procedural Web Audio noise. Signposted via the existing
   `HINT_PRIORITY`/`HINT_TEXT` registry (`rainfall` key,
-  `engine/forest-engine.js:2303`, `:2340`) — no new `EngineHudState` field or
+  `engine/forest-engine.js:2303`, `:2339`) — no new `EngineHudState` field or
   React round-trip, same as Fog Tide's own visual. QA hook:
   `qaSetRainfallClock(seconds)` (`engine/forest-engine.js`), mirrors
   `qaSetFogTideClock` exactly.
