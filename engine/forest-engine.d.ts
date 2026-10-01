@@ -88,6 +88,11 @@ declare global {
         visual: import('../lib/game/timeOfDay').TimeOfDaySkyConfig;
         audio: import('../lib/game/timeOfDay').TimeOfDayAudioConfig;
       };
+      /** LUL-5707: active firefly-cluster count (0 outside dusk/night) plus whether
+       * any mote is currently lit (distance-based falloff from the player) -- lets a
+       * test assert presence at night and absence at noon without scraping Three.js
+       * light internals. */
+      qaProbeFireflyClusters?: () => { clusterCount: number; anyVisible: boolean };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */
