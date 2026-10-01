@@ -2726,7 +2726,7 @@ function updateWolfPack(dt){
 // exactly where they were. Long enough to read as "that's over," short
 // enough that a second charge later in the same chase is still in play.
 
-function updatePredators(dt, noiseRadius, cryNoiseRadius){
+function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
   for(const p of predators){
@@ -2737,6 +2737,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // each one individually. Eye color reverts on the same transition.
     if(p.state !== 'chase' && p.beaconHunterLocked){ p.beaconHunterLocked = false; p.eyeMat.color.setHex(p.spec.eye); }
     const dx = wrapDelta(player.x, p.x, WRAP_SPAN), dz = wrapDelta(player.z, p.z, WRAP_SPAN), dist = Math.hypot(dx, dz) || 0.0001;
+    const predInMud = isInMudZone(p.x, p.z, mudZones);
     const ux = dx/dist, uz = dz/dist;
     // LUL-2422: CONFIG.speedScaleMul (default 1, set by applyQaWorldMicroPreset) folded in
     // here so every `*pSpeedScaleMul` speed site below is scaled together -- mirrors
@@ -2910,7 +2911,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           && dist < effectiveDetect(p) * BEACON_HUNTER_LOCK_MUL){
         beaconOnto(p);
       }
-      else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
+      else if(!sniffImmune && checkNoise(p, dist, (predInMud && windAssist) ? NOISE_RADIUS_RUN : noiseRadius, dt)){ hearNoise(p); }
       // LUL-1255 (Ship 1 wayfinding S3): the cry is a second, independent
       // hearing check against the child's actual position, not the player's --
       // see S3 of the wayfinding spec for why this can't reuse
@@ -3149,7 +3150,6 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // the one point every branch's speed converges through before becoming actual movement
     // (dvx/dvz below), so it can't miss a branch or apply inconsistently by AI state the way
     // patching each call site individually risked.
-    const predInMud = isInMudZone(p.x, p.z, mudZones);
     speed *= mudSpeedMultiplier(predInMud);
 
     // smooth velocity + collide with trees (axis-separated slide)
@@ -7760,7 +7760,7 @@ function stepFrame(dt, t, skipRender){
       sinceBelowMinHunters = 0;
     }
   }
-  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
+  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius, windAssistNowActive);   // predators only hunt while you're actually playing
   if(playing) updateRoosts(dt, running);   // LUL-1914/LUL-2389: roost feedback, same gate as predator AI
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
