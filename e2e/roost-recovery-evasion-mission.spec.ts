@@ -33,6 +33,7 @@ test.describe('Roost Recovery Evasion mission (LUL-5447/LUL-5446)', () => {
   test('spawns with a repositioned lion after a lion-present flush and completes when the roost cooldown expires', async ({ page }) => {
     await boot(page, { qaHooks: true, qaMissionKind: 'roostRecoveryEvasion', qaRoostIndex: 0 });
     await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaBuildScene', {
       predators: [{ kind: 'lion', x: 0, z: -8, state: 'roam' }],
     });
@@ -70,7 +71,6 @@ test.describe('Roost Recovery Evasion mission (LUL-5447/LUL-5446)', () => {
 
     // Drive simulated time forward until the cooldown fully expires -- the mission should
     // auto-complete the instant roostCooldown[0] reaches 0, with no further player input.
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     let cooldown = flushed.cooldown;
     let guard = 0;
     while (cooldown > 0 && guard < 500) {
@@ -92,6 +92,7 @@ test.describe('Roost Recovery Evasion mission (LUL-5447/LUL-5446)', () => {
     // this proves the cooldown-completion branch is scoped to the marked roostIndex only).
     await boot(page, { qaHooks: true, qaMissionKind: 'roostRecoveryEvasion', qaRoostIndex: 0 });
     await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const mission = await qaHook(page, 'qaProbeMission');
     expect(mission?.kind).toBe('roostRecoveryEvasion');
@@ -106,7 +107,6 @@ test.describe('Roost Recovery Evasion mission (LUL-5447/LUL-5446)', () => {
     const roost1State = await qaHook(page, 'qaProbeRoostState', 1);
     expect(roost1State.burstActive, 'the player-thrown flush path must have actually fired').toBe(true);
 
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', 200);
 
     const stillActive = await qaHook(page, 'qaProbeMission');
