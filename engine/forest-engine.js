@@ -268,22 +268,13 @@ function init(onStateChange, inputMode) {
   const qaParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   if(qaParams && qaParams.get('qaWorld') === 'micro'){
     applyQaWorldMicroPreset();
-    // LUL-5346: roostGroups (below) is built once at module load, from ROOSTS' raw
-    // (unscaled) positions, strictly before this qaWorld branch ever runs -- so the
-    // burst mesh has to be re-pinned here, once, to CONFIG.roostScaleMul's now-live
-    // value, or the visible burst would sit at the old full-map spot while every
-    // distance check (updateRoosts(), qaTeleportNearRoost()) already agrees on the
-    // scaled one. No-op outside qaWorld=micro (this branch never runs).
-    roostGroups.forEach((g, i) => g.position.set(ROOSTS[i].x * CONFIG.roostScaleMul, 14, ROOSTS[i].z * CONFIG.roostScaleMul));
-    // LUL-5493: same re-pin, same reason -- scentMaskGlowMeshes (below) is built once at
-    // module load from SCENT_MASK_SITES' raw (unscaled) positions, strictly before this
-    // qaWorld branch ever runs.
-    scentMaskGlowMeshes.forEach((m, i) => m.position.set(SCENT_MASK_SITES[i].x * CONFIG.scentMaskScaleMul, 0.04, SCENT_MASK_SITES[i].z * CONFIG.scentMaskScaleMul));
-    // LUL-5566: same re-pin, same reason -- decoyScentGlowMeshes (below) is built once at
-    // module load from DECOY_SCENT_SITES' raw (unscaled) positions, strictly before this
-    // qaWorld branch ever runs.
-    decoyScentGlowMeshes.forEach((m, i) => m.position.set(DECOY_SCENT_SITES[i].x * CONFIG.decoyScaleMul, 0.04, DECOY_SCENT_SITES[i].z * CONFIG.decoyScaleMul));
   }
+  // LUL-5619: the roostGroups/scentMaskGlowMeshes/decoyScentGlowMeshes re-pin (LUL-5346/
+  // LUL-5493/LUL-5566) used to live right here, but all three are `const`-declared much
+  // further down this same function -- referencing them this early threw a TDZ
+  // ReferenceError on every `qaWorld=micro` boot (minified to "Cannot access 'ic' before
+  // initialization" in production, LUL-5612). Moved below, right after the last of the
+  // three (roostGroups) is actually declared.
   // Skips updateStreamedChunks()/layoutThrowableMeshes() inside generateMap()
   // below -- LUL-2249: streaming replaced the old direct layoutTreeChunks()/
   // layoutCoverMeshes() instantiate-everything calls with a ring-limited
@@ -1773,6 +1764,23 @@ const roostGroups = ROOSTS.map(r => {
   scene.add(g);
   return g;
 });
+// LUL-5619 (moved from near the top of init(), see the comment there): re-pin every
+// qaWorld=micro-scaled mesh to CONFIG.*ScaleMul's now-live value, once, now that
+// roostGroups/scentMaskGlowMeshes/decoyScentGlowMeshes all actually exist. No-op
+// outside qaWorld=micro (this branch never runs for real players).
+if(qaParams && qaParams.get('qaWorld') === 'micro'){
+  // LUL-5346: roostGroups was built above from ROOSTS' raw (unscaled) positions, so the
+  // burst mesh has to be re-pinned here or the visible burst would sit at the old
+  // full-map spot while every distance check (updateRoosts(), qaTeleportNearRoost())
+  // already agrees on the scaled one.
+  roostGroups.forEach((g, i) => g.position.set(ROOSTS[i].x * CONFIG.roostScaleMul, 14, ROOSTS[i].z * CONFIG.roostScaleMul));
+  // LUL-5493: same re-pin, same reason -- scentMaskGlowMeshes was built from
+  // SCENT_MASK_SITES' raw (unscaled) positions.
+  scentMaskGlowMeshes.forEach((m, i) => m.position.set(SCENT_MASK_SITES[i].x * CONFIG.scentMaskScaleMul, 0.04, SCENT_MASK_SITES[i].z * CONFIG.scentMaskScaleMul));
+  // LUL-5566: same re-pin, same reason -- decoyScentGlowMeshes was built from
+  // DECOY_SCENT_SITES' raw (unscaled) positions.
+  decoyScentGlowMeshes.forEach((m, i) => m.position.set(DECOY_SCENT_SITES[i].x * CONFIG.decoyScaleMul, 0.04, DECOY_SCENT_SITES[i].z * CONFIG.decoyScaleMul));
+}
 function fireBoom(x, y, z){
   boomGroup.position.set(x, y, z); boomGroup.visible = true; boomStart = 0;
   for(let i=0;i<BSP;i++){ const a=Math.random()*Math.PI*2, e=Math.acos(2*Math.random()-1), sp=(8+Math.random()*24)*BOOM_FOV_SCALE;
