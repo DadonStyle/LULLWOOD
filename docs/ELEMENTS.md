@@ -3434,26 +3434,29 @@ stays the chase-state cue (howl/roar/growl, kind-specific); investigate needed i
 cue per Q7/Q9 of the Feature Checklist (don't reuse the chase call verbatim, don't duplicate an
 existing surface).
 
-**Audio**: `investigateCue(p)` (`engine/forest-engine.js:4101-4115`) -- a low, two-pulse searching
-tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since each entry site's own
-caption already names the species. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
+**Audio**: `investigateCue(p)` (L4101-4115) -- a low, two-pulse searching
+tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
+caption already names the species -- `hearCry()` (L2564) is the one exception: it pushes no
+caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
+responding to the child's cry gives the player zero species identification, audio or text, same
+as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (`:2531`),
-`hearThrowableNoise()` (`:2546`), `hearCry()` (`:2562`), the charge-overshoot handoff (`:2817`),
-the 30s force-hunt escalation losing sight (`:2880`), the chase downgrade on losing sight/scentLock
-expiry via `shouldDowngradeChase()` (`:2953` -- a seventh real site found independently of the
-driving ticket's six-line list, included for the same reason the other six are: a real
-`p.state='investigate'` assignment reachable in normal play), and the hidden-mid-chase
-contact-range handoff (`:2993`). Not wired at `qaStagePredatorGiveUp`'s direct `investigate`/`sniff`
-force-set (`:5229`) -- that's test staging, not a real-play entry (Q1.5: no real trigger reachability
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2531),
+`hearThrowableNoise()` (L2547), `hearCry()` (L2564), the charge-overshoot handoff (`p.chargeRecoveryT`,
+L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
+sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
+of the driving ticket's six-line list, included for the same reason the other six are: a real
+`p.state='investigate'` assignment reachable in normal play), and the hidden-mid-chase contact-range
+handoff (`isCaught(dist, p.rad)`, L3003). Not wired at `qaStagePredatorGiveUp`'s direct investigate/sniff
+force-set (L5238) -- that's test staging, not a real-play entry (Q1.5: no real trigger reachability
 there to cite).
 
 **QA hooks**: no new hook function -- `investigateCueCount` (per-predator, counted before the
 audio/soundOn gate, same "counter-before-gate" idiom as `qaProbeRoostState`'s `deniedCueCount`) is
-added to the existing `qaProbePredatorState(kind)`'s return object (`engine/forest-engine.js:4857`),
-and reset to 0 alongside `scentCalls` at predator spawn/restart (`:1986`, `:2059`, `:2182`).
+added to the existing `qaProbePredatorState(kind)`'s return object (L4874),
+and reset to 0 alongside `scentCalls` at predator spawn/restart (L1986, L2059, L2182).
 
 Covered by `e2e/throwables.spec.ts` ("a thrown rock lures a nearby roaming predator into
 investigate"): a real player-thrown rock lands within `THROWABLE_NOISE_RADIUS` of a staged roaming
