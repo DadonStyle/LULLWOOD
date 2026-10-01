@@ -3213,7 +3213,17 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
       }
     }
 
-    if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz, dt, pSpeedScaleMul);
+    // LUL-5673: skip the avoid-commit override entirely while a charge is active
+    // (desx/desz already came from p.chargeDirX/chargeDirZ above -- telegraph has
+    // speed=0 so it never reaches here regardless). A charge is a committed heading
+    // by design (see startCharge()'s own comment above); without this guard a
+    // commitDir left over from the avoid-steer that happened moments before the
+    // charge triggered (same 'chase' state, so the state-change reset at the top of
+    // this loop never fires) silently overrides the charge's direction for up to
+    // AVOID_COMMIT_TIME/pSpeedScaleMul -- 1.0s in production, long enough to cover
+    // almost the whole ~1.3s charging+overshoot window, and up to 5.0s at
+    // qaWorld=micro's speedScaleMul=0.2, longer than the charge itself.
+    if(speed > 0 && (desx || desz) && !p.charge) [desx, desz] = avoidDir(p, desx, desz, dt, pSpeedScaleMul);
 
     // LUL-5564: Mud Zone predator slowdown -- folded in once here, after every roam/chase/
     // investigate/flank/charge/hunt branch above has set `speed`, rather than at each
