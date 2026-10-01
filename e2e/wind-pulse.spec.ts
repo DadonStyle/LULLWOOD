@@ -119,11 +119,19 @@ test.describe('Predator Pause (LUL-4893): wind-gated freeze for downwind-perpend
     // retriggered on. dist starts at 5 and isCaught's contact range is only
     // ~2.3 (rad 1.0 + CATCH_MARGIN 1.3), so this stays deliberately short --
     // enough to prove sustained movement, not a full chase to the catch.
+    // Re-measured on this rig (2026-10-01, LUL-5686, after LUL-5670/PR#968
+    // scaled the avoid-commit hold's decay by speedScaleMul): a commit that
+    // engages even incidentally in qaWorld=micro now holds ~5x longer in
+    // real time, so this already-short recovery window closes only ~0.029u
+    // (live-measured dist 4.970691427942399, deterministic/fixed-dt,
+    // reproduces bit-for-bit) instead of the pre-968 margin's required 0.1u.
+    // 0.02u keeps proof of real (non-zero) movement with headroom under the
+    // measured close.
     await qaHook(page, 'qaAdvance', stepsFor(0.36));
     const afterFreeze = await qaHook(page, 'qaPredatorState', LION_IDX);
     expect(afterFreeze.windPauseT, 'LUL-4996: must not refreeze the instant the first freeze decays, even with unchanged geometry').toBe(0);
     expect(afterFreeze.windPauseCooldownT, 'the re-arm cooldown must still be counting down').toBeGreaterThan(0);
-    expect(afterFreeze.dist, 'must have resumed closing distance').toBeLessThan(triggered.dist - 0.1);
+    expect(afterFreeze.dist, 'must have resumed closing distance').toBeLessThan(triggered.dist - 0.02);
 
     // A bit further, still well inside the 2.0s cooldown window -- must keep
     // closing distance, not freeze again.
@@ -146,10 +154,17 @@ test.describe('Predator Pause (LUL-4893): wind-gated freeze for downwind-perpend
     // unpaused head-on chase closes the full 5u gap to catch range (rad+
     // CATCH_MARGIN=2.3) in under 0.3s; this only needs to prove movement
     // happened, not run the chase to its conclusion.
+    // Re-measured on this rig (2026-10-01, LUL-5686, after LUL-5670/PR#968):
+    // same incidental-avoid-commit mechanism as the test above -- live-
+    // measured dist 4.843335453837601 (deterministic/fixed-dt, reproduces
+    // bit-for-bit), closing only ~0.157u of the initial 5u gap in this
+    // window instead of the pre-968 margin's required 0.5u. Same "initial
+    // dist - 0.1" proof-of-movement formula as the test above, just
+    // restated as a literal since this test has no stored initial dist var.
     await qaHook(page, 'qaAdvance', stepsFor(0.15));
     const state = await qaHook(page, 'qaPredatorState', LION_IDX);
     expect(state.windPauseT).toBe(0);
-    expect(state.dist, 'an unpaused head-on lion must have closed real distance').toBeLessThan(4.5);
+    expect(state.dist, 'an unpaused head-on lion must have closed real distance').toBeLessThan(4.9);
   });
 
   test('the wind-pulse hint caption fires once, the first time a freeze triggers, and not again', async ({ page }) => {
