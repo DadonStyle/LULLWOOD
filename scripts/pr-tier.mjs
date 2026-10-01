@@ -126,21 +126,32 @@ function isSpecOrTestPath(file) {
   return SPEC_TEST_RULES.some((re) => re.test(file));
 }
 
+// Strips a trailing `//...` line comment so matching below only sees real
+// code. Not airtight (block comments, `//` inside a string literal), but a
+// prose comment quoting `expect(`/`test(` -- the natural way to explain a
+// retune in English -- is the realistic case this closes (LUL-5697).
+function stripLineComment(code) {
+  return code.replace(/\/\/.*$/, '');
+}
+
 // Counts `expect(` occurrences among a unified diff's added/removed content
-// lines (never the `+++`/`---` file-header lines) and reports whether a new
-// `test`/`it`/`describe` registration was added. Comment-only lines don't
-// contain `expect(` or a block registration, so padding a retune with
-// explanatory comments (PR#971's exact shape) doesn't change the verdict.
+// lines (never the `+++`/`---` file-header lines), ignoring their comment
+// text, and reports whether a new `test`/`it`/`describe` registration was
+// added in real code. Padding a retune with explanatory comments (PR#971's
+// exact shape, and the comment-text variants in LUL-5697) doesn't change the
+// verdict.
 function patchAddsNewCoverage(patch) {
   let added = 0;
   let removed = 0;
   for (const line of patch.split('\n')) {
     if (line.startsWith('+++') || line.startsWith('---')) continue;
     if (line.startsWith('+')) {
-      if (/\b(test|it|describe)\s*\(/.test(line)) return true;
-      if (/\bexpect\s*\(/.test(line)) added++;
+      const code = stripLineComment(line.slice(1));
+      if (/\b(test|it|describe)\s*\(/.test(code)) return true;
+      if (/\bexpect\s*\(/.test(code)) added++;
     } else if (line.startsWith('-')) {
-      if (/\bexpect\s*\(/.test(line)) removed++;
+      const code = stripLineComment(line.slice(1));
+      if (/\bexpect\s*\(/.test(code)) removed++;
     }
   }
   return added > removed;

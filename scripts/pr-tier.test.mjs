@@ -141,6 +141,40 @@ test('Tier C: a spec/test diff that retunes an assertion value behind added comm
   );
 });
 
+// LUL-5697: the comment lines in RETUNE_PATCH above happen not to contain
+// `expect(`/`test(`, so they never exercised the real bypass -- a comment
+// that *quotes* the old assertion call (a completely natural way to phrase
+// a retune, matching this same PR's own commit message and PR#971's real
+// comments) counted as a second `expect(` and flipped added > removed.
+test('Tier C: a retune whose explanatory comment quotes an expect( call (comment-text bypass)', () => {
+  const patch = [
+    '@@ -10,1 +10,2 @@',
+    '-    expect(afterFreeze.dist).toBeLessThan(140);',
+    '+    // previously expect(afterFreeze.dist) compared against 140; real measurement is 152',
+    '+    expect(afterFreeze.dist).toBeLessThan(152);',
+  ].join('\n');
+  assert.equal(
+    tierStdin(ndjson([{ filename: 'e2e/wind-pulse.spec.ts', additions: 2, deletions: 1, patch }])),
+    'C',
+  );
+});
+
+// LUL-5697: a comment merely mentioning `test(`/`it(`/`describe(` must not
+// short-circuit to Tier A -- only a real `test(`/`it(`/`describe(` call in
+// added code counts as a new registration.
+test('Tier C: a retune whose comment mentions test(/it(/describe( by name (comment-text bypass)', () => {
+  const patch = [
+    '@@ -10,1 +10,2 @@',
+    '-    expect(afterFreeze.dist).toBeLessThan(140);',
+    "+    // retuned, matches the behavior covered by test('resumes closing') elsewhere",
+    '+    expect(afterFreeze.dist).toBeLessThan(152);',
+  ].join('\n');
+  assert.equal(
+    tierStdin(ndjson([{ filename: 'e2e/wind-pulse.spec.ts', additions: 2, deletions: 1, patch }])),
+    'C',
+  );
+});
+
 test('Tier C: a spec/test diff that only deletes an assertion (weakened/disguised coverage)', () => {
   const patch = ['@@ -10,2 +10,1 @@', '-    expect(x).toBeLessThan(5);', '-    expect(y).toBeLessThan(5);', '+    expect(x).toBeLessThan(5);'].join('\n');
   assert.equal(
