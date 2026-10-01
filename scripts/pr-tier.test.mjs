@@ -110,3 +110,106 @@ test('--stdin matches argv classification', () => {
   }).trim();
   assert.equal(out, 'B');
 });
+
+// LUL-5693/PR#971: tier-approve.yml auto-merged a spec file whose diff only
+// retuned an existing assertion's numeric budget -- padded with 3 lines of
+// new explanatory comment per call site, so plain added/removed line counts
+// (10 added, 2 removed, confirmed live via `gh api .../pulls/971/files`)
+// read as net-positive and would have missed this -- with zero review,
+// because tierOf() only ever saw the file path. These drive the real
+// stdin form: one JSON object per line, `{filename, additions, deletions,
+// patch}`, exactly GitHub's `.../pulls/{n}/files` shape.
+const ndjson = (entries) => entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
+const tierStdin = (input) => execFileSync('node', [script, '--stdin'], { input, encoding: 'utf8' }).trim();
+
+// PR#971's actual shape: one `expect(` line removed, one `expect(` line
+// added (with a different literal), plus 3 pure-comment lines of
+// explanation -- net +2 lines, net 0 assertions.
+const RETUNE_PATCH = [
+  '@@ -123,3 +123,7 @@',
+  "-    expect(afterFreeze.dist, 'must have resumed closing distance').toBeLessThan(triggered.dist - 0.1);",
+  '+    // re-tuned per LUL-5686 to the real measured value',
+  '+    // (margin stays safely below it)',
+  '+    // see PR#968 for why the old margin stopped holding',
+  "+    expect(afterFreeze.dist, 'must have resumed closing distance').toBeLessThan(triggered.dist - 0.02);",
+].join('\n');
+
+test('Tier C: a spec/test diff that retunes an assertion value behind added comments (PR#971 exact shape)', () => {
+  assert.equal(
+    tierStdin(ndjson([{ filename: 'e2e/wind-pulse.spec.ts', additions: 10, deletions: 2, patch: RETUNE_PATCH }])),
+    'C',
+  );
+});
+
+// LUL-5697: the comment lines in RETUNE_PATCH above happen not to contain
+// `expect(`/`test(`, so they never exercised the real bypass -- a comment
+// that *quotes* the old assertion call (a completely natural way to phrase
+// a retune, matching this same PR's own commit message and PR#971's real
+// comments) counted as a second `expect(` and flipped added > removed.
+test('Tier C: a retune whose explanatory comment quotes an expect( call (comment-text bypass)', () => {
+  const patch = [
+    '@@ -10,1 +10,2 @@',
+    '-    expect(afterFreeze.dist).toBeLessThan(140);',
+    '+    // previously expect(afterFreeze.dist) compared against 140; real measurement is 152',
+    '+    expect(afterFreeze.dist).toBeLessThan(152);',
+  ].join('\n');
+  assert.equal(
+    tierStdin(ndjson([{ filename: 'e2e/wind-pulse.spec.ts', additions: 2, deletions: 1, patch }])),
+    'C',
+  );
+});
+
+// LUL-5697: a comment merely mentioning `test(`/`it(`/`describe(` must not
+// short-circuit to Tier A -- only a real `test(`/`it(`/`describe(` call in
+// added code counts as a new registration.
+test('Tier C: a retune whose comment mentions test(/it(/describe( by name (comment-text bypass)', () => {
+  const patch = [
+    '@@ -10,1 +10,2 @@',
+    '-    expect(afterFreeze.dist).toBeLessThan(140);',
+    "+    // retuned, matches the behavior covered by test('resumes closing') elsewhere",
+    '+    expect(afterFreeze.dist).toBeLessThan(152);',
+  ].join('\n');
+  assert.equal(
+    tierStdin(ndjson([{ filename: 'e2e/wind-pulse.spec.ts', additions: 2, deletions: 1, patch }])),
+    'C',
+  );
+});
+
+test('Tier C: a spec/test diff that only deletes an assertion (weakened/disguised coverage)', () => {
+  const patch = ['@@ -10,2 +10,1 @@', '-    expect(x).toBeLessThan(5);', '-    expect(y).toBeLessThan(5);', '+    expect(x).toBeLessThan(5);'].join('\n');
+  assert.equal(
+    tierStdin(ndjson([{ filename: 'e2e/smoke.spec.ts', additions: 1, deletions: 2, patch }])),
+    'C',
+  );
+});
+
+test('Tier A: a spec/test diff that adds a net-new assertion is new coverage', () => {
+  const patch = ['@@ -10,1 +10,2 @@', '     const x = 1;', '+    expect(x).toBe(1);'].join('\n');
+  assert.equal(
+    tierStdin(ndjson([{ filename: 'e2e/wind-pulse.spec.ts', additions: 1, deletions: 0, patch }])),
+    'A',
+  );
+});
+
+test('Tier A: a spec/test diff that registers a brand-new test block is new coverage', () => {
+  const patch = ["+test('new behavior', async () => {", '+  expect(1).toBe(1);', '+});'].join('\n');
+  assert.equal(
+    tierStdin(ndjson([{ filename: 'lib/game/cover.test.ts', additions: 3, deletions: 0, patch }])),
+    'A',
+  );
+});
+
+test('Tier C: falls back to additions<=deletions when GitHub omits patch (large/binary diff)', () => {
+  assert.equal(tierStdin(ndjson([{ filename: 'e2e/wind-pulse.spec.ts', additions: 2, deletions: 2 }])), 'C');
+  assert.equal(tierStdin(ndjson([{ filename: 'lib/game/cover.test.ts', additions: 6, deletions: 2 }])), 'A');
+});
+
+test('Tier A: a spec/test path with no meta at all keeps the original path-only behavior', () => {
+  assert.equal(tierStdin('e2e/wind-pulse.spec.ts\n'), 'A', 'a bare path is not valid JSON, so meta stays undefined');
+  assert.equal(tier('e2e/wind-pulse.spec.ts'), 'A', 'bare argv form never carries a diff');
+});
+
+test('the retune downgrade never applies to non-spec Tier A paths', () => {
+  assert.equal(tierStdin(ndjson([{ filename: 'README.md', additions: 0, deletions: 5 }])), 'A');
+  assert.equal(tierStdin(ndjson([{ filename: 'public/death.mp4', additions: 0, deletions: 3 }])), 'A');
+});
