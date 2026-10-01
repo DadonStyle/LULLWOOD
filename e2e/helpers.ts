@@ -119,10 +119,6 @@ export async function boot(
       | 'bearRoostAmbush'
       | 'beaconDeepwater'
       | 'beaconRoostRecoveryEvasion'
-      | 'ghost'
-      | 'chapelSanctuary'
-      | 'skyCompassNavigation'
-      | 'chapelVeilEscape'
       | null;
     qaRoostIndex?: number | null;
     seedWelcomeSplashSeen?: boolean;

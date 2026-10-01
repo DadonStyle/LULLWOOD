@@ -67,11 +67,7 @@ export type MissionKind =
   | 'roostRecoveryEvasion'
   | 'bearRoostAmbush'
   | 'beaconDeepwater'
-  | 'beaconRoostRecoveryEvasion'
-  | 'ghost'
-  | 'chapelSanctuary'
-  | 'skyCompassNavigation'
-  | 'chapelVeilEscape';
+  | 'beaconRoostRecoveryEvasion';
 
 export interface MissionTarget {
   kind: MissionKind;
@@ -220,35 +216,6 @@ export const MISSION_POOL: readonly MissionTarget[] = [
   // verbatim -- never read directly, always overwritten by generateMap()'s post-placeCave()
   // roost draw.
   { kind: 'beaconRoostRecoveryEvasion', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false, roostIndex: 0 },
-  // LUL-5497/LUL-5495: M4 Ghost (veil-escape) -- no real target position, same non-spatial
-  // shape as slackWater (:126 above): completion is "a chase's shouldGiveUpChase() transition
-  // fired while Veil Overload was active" (see canCompleteGhost below), checked at
-  // engine/forest-engine.js's chase give-up branch, not through canCompleteMission().
-  // interactRadius: 0 keeps the E-key/canCompleteMission() path permanently false for this
-  // kind, spatial: false keeps the nav-cue hum from firing at (0,0) -- both follow
-  // slackWater's own reasoning verbatim. No roostIndex/landmarkKind/timeLimitSeconds.
-  { kind: 'ghost', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false },
-  // LUL-5498/LUL-5495: Chapel Sanctuary -- keyed to the `chapelSteeple` LANDMARKS entry
-  // (engine/tuning.js), same fixed-landmark shape as oakHollow/radioMast/stoneMarker.
-  // Untimed (no timeLimitSeconds) like oakHollow -- the existing LUL-5005 shrine mechanic
-  // (chapelSanctuaryActive/chapelSanctuaryChargeT/chapelSanctuaryUsedThisRun,
-  // engine/forest-engine.js) already gates completion on a 15s dwell, so this mission just
-  // rides that mechanic's existing grant edge (see canCompleteChapelSanctuary below) --
-  // no new engine completion logic, no new HUD prompt, no new key.
-  { kind: 'chapelSanctuary', x: 20, z: -178, zoneRadius: 4, interactRadius: 4, landmarkKind: 'chapelSteeple' },
-  // LUL-5528/LUL-5524: Sky Compass Navigation -- keyed to the `drownedCar` LANDMARKS entry
-  // (engine/tuning.js:82), same fixed-landmark/untimed shape as oakHollow (:122 above).
-  // A teaching mission for the shipped world-space Sky Compass (LUL-5486/PR#937): no new
-  // completion logic, this rides canCompleteMission() unchanged like every other
-  // fixed-landmark entry -- only a HINT_PRIORITY caption (engine/forest-engine.js)
-  // nudges the player to use the compass to find the target.
-  { kind: 'skyCompassNavigation', x: -95, z: 46, zoneRadius: 10, interactRadius: 4, landmarkKind: 'drownedCar' },
-  // LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo -- two-stage, non-spatial like
-  // ghost/slackWater: stage 1 is the LUL-5005 shrine's dwell grant (chapelSanctuaryUsedThisRun
-  // flipping true), stage 2 is a chase give-up while Veil Overload is active (same
-  // real-play edge as ghost's canCompleteGhost). No target position drives completion,
-  // so interactRadius: 0/spatial: false follow ghost's reasoning verbatim.
-  { kind: 'chapelVeilEscape', x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false },
 ];
 
 export interface MissionState {
@@ -313,22 +280,8 @@ export function eligibleMissionPool(progression: Progression, difficulty: Diffic
   // repositioned predator differs), so it is excluded here too. LUL-5465/LUL-5455:
   // beaconRoostRecoveryEvasion shares that same untimed/no-landmarkKind shape too
   // (roostRecoveryEvasion's own composition, only the repositioned predator differs), so it is
-  // excluded here too. LUL-5497/LUL-5495: ghost shares that same untimed/no-landmarkKind shape
-  // too (slackWater's own non-spatial-target shape, only its completion trigger differs), so
-  // it is excluded here too -- same regression this filter exists to prevent (a fresh boot()
-  // drawing a mission kind with no matching HINT_PRIORITY entry breaks e2e/hints.spec.ts's
-  // landmark->deepwater hint-slot handoff, see the LUL-4958/LUL-5069 comment above).
-  // LUL-5498/LUL-5495: chapelSanctuary is excluded here too -- not because it shares the
-  // untimed/no-landmarkKind shape (it doesn't -- it has a real chapelSteeple target), but to
-  // preserve the LUL-3010 invariant this filter's own name states: oakHollow is the ONE
-  // deterministic pre-win draw e2e/hints.spec.ts's landmark test relies on. Letting a second
-  // untimed kind into this pool would make that draw non-deterministic under a fixed seed,
-  // same class of regression as LUL-5069's slackWater incident even though the failure mode
-  // here is draw-nondeterminism, not an unreachable target.
-  // LUL-5528/LUL-5524: skyCompassNavigation is excluded here too, same reasoning as
-  // chapelSanctuary immediately above (a real drownedCar target, but a second untimed kind
-  // in this pool would still break oakHollow's determinism).
-  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion' && m.kind !== 'ghost' && m.kind !== 'chapelSanctuary' && m.kind !== 'skyCompassNavigation' && m.kind !== 'chapelVeilEscape');
+  // excluded here too.
+  return MISSION_POOL.filter((m) => m.timeLimitSeconds == null && m.kind !== 'slackWater' && m.kind !== 'flush' && m.kind !== 'beaconRoostFlush' && m.kind !== 'lionRoostFlush' && m.kind !== 'roostRecoveryEvasion' && m.kind !== 'bearRoostAmbush' && m.kind !== 'beaconRoostRecoveryEvasion');
 }
 
 /** Mirrors completeMission's shape. No-ops (returns `mission` unchanged) once the mission
@@ -398,47 +351,6 @@ export function canCompleteFlush(mission: MissionState, flushedRoostIndex: numbe
   return mission.status === 'active'
     && (mission.target.kind === 'flush' || mission.target.kind === 'beaconRoostFlush' || mission.target.kind === 'lionRoostFlush' || mission.target.kind === 'bearRoostAmbush')
     && mission.target.roostIndex === flushedRoostIndex;
-}
-
-/** LUL-5497/LUL-5495: M4 Ghost -- a chase this mission's target names just gave up
- * (shouldGiveUpChase() transitioned, engine/forest-engine.js's chase branch) while Veil
- * Overload's detection-immunity window (LUL-2281) was active. Mirrors canCompleteSlackWater's
- * exact shape -- one pure predicate, checked at the one real-play call site that can make it
- * true. Caller passes the engine's own isVeilOverloadActive(veilOverloadChargeT) boolean,
- * read at the exact instant the give-up fires -- not re-derived here, same reasoning as
- * canCompleteSlackWater's fogTideActive param (this module has no engine-state import). */
-export function canCompleteGhost(mission: MissionState, overloadActive: boolean): boolean {
-  return mission.status === 'active' && mission.target.kind === 'ghost' && overloadActive;
-}
-
-/** LUL-5498/LUL-5495: Chapel Sanctuary -- the LUL-5005 shrine's own one-shot grant just
- * fired (chapelSanctuaryUsedThisRun flipped true on the full-dwell edge, engine/forest-
- * engine.js's tick()). Mirrors canCompleteSlackWater/canCompleteGhost's exact shape --
- * one pure predicate, checked at the one real-play call site that can make it true. The
- * mission's own interactRadius (4, same as CHAPEL_SANCTUARY_INTERACT_RADIUS) never drives
- * completion through canCompleteMission()/completeMissionSequence() in practice: the KeyE
- * handler checks chapelSanctuaryPromptVisible/chapelSanctuaryInRadius before missionCanComplete,
- * so every E-press in range is claimed by the shrine's own dwell-start/denied-cue branches
- * first -- this predicate is the only path that ever completes this mission kind. */
-export function canCompleteChapelSanctuary(mission: MissionState, justGranted: boolean): boolean {
-  return mission.status === 'active' && mission.target.kind === 'chapelSanctuary' && justGranted;
-}
-
-/** LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo, stage 1 -- the LUL-5005 shrine's
- * one-shot grant just fired (same real-play edge as canCompleteChapelSanctuary above), for
- * the 'chapelVeilEscape' kind. Does not complete the mission -- the caller flips the engine's
- * own chapelVeilEscapeChapelDone stage flag on true, mirroring canCompleteChapelSanctuary's
- * shape without reusing its literal-kind check. */
-export function canCompleteChapelVeilEscapeStage1(mission: MissionState, justGranted: boolean): boolean {
-  return mission.status === 'active' && mission.target.kind === 'chapelVeilEscape' && justGranted;
-}
-
-/** LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo, stage 2 -- mirrors canCompleteGhost's
- * shape (a chase give-up while Veil Overload is active), gated additionally on stage 1 having
- * already fired this run (chapelDone, the engine's chapelVeilEscapeChapelDone flag passed in
- * at the same shouldGiveUpChase() call site canCompleteGhost is checked at). */
-export function canCompleteChapelVeilEscapeStage2(mission: MissionState, chapelDone: boolean, overloadActive: boolean): boolean {
-  return mission.status === 'active' && mission.target.kind === 'chapelVeilEscape' && chapelDone && overloadActive;
 }
 
 export function completeMission(mission: MissionState): MissionState {

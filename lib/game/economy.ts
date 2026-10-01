@@ -163,29 +163,6 @@ export const MISSION_BEACON_DEEPWATER_REWARD = 9;
 // pricing ticket, not re-derived here.
 export const MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD = 9;
 
-// LUL-5497/LUL-5495: M4 Ghost (veil-escape) -- placeholder pending the Game Economist's
-// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced
-// provisionally level with the other untimed missions (9); a follow-up ticket to the
-// Game Economist requests the real number.
-export const MISSION_GHOST_REWARD = 9;
-
-// LUL-5498/LUL-5495: Chapel Sanctuary -- placeholder pending the Game Economist's confirmed
-// number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced provisionally
-// level with the other untimed missions (9); MISSION_REWARDS is Record<MissionKind, number>
-// so every kind needs a row here regardless of the ticket's "no Economist ticket needed"
-// scope note -- that note only means no NEW reward path, not that this row can be skipped.
-export const MISSION_CHAPEL_SANCTUARY_REWARD = 9;
-
-// LUL-5528/LUL-5524: Sky Compass Navigation -- placeholder pending the Game Economist's
-// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced
-// provisionally level with the other untimed missions (9).
-export const MISSION_SKY_COMPASS_NAVIGATION_REWARD = 9;
-
-// LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo -- placeholder pending the Game
-// Economist's confirmed number, same convention as the other untimed missions above.
-// Filing a parallel non-blocking pricing ticket, same pattern as LUL-5462/LUL-5532.
-export const MISSION_CHAPEL_VEIL_ESCAPE_REWARD = 9;
-
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -201,10 +178,6 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   bearRoostAmbush: MISSION_BEAR_ROOST_AMBUSH_REWARD,
   beaconDeepwater: MISSION_BEACON_DEEPWATER_REWARD,
   beaconRoostRecoveryEvasion: MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD,
-  ghost: MISSION_GHOST_REWARD,
-  chapelSanctuary: MISSION_CHAPEL_SANCTUARY_REWARD,
-  skyCompassNavigation: MISSION_SKY_COMPASS_NAVIGATION_REWARD,
-  chapelVeilEscape: MISSION_CHAPEL_VEIL_ESCAPE_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

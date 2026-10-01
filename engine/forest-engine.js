@@ -15,10 +15,6 @@ import { track } from '@/lib/analytics';
 import { jumpOffset, JUMP_DURATION } from '@/lib/game/jump';
 import { toggleFullscreen } from '@/lib/game/fullscreen';
 import {
-  SKY_COMPASS_GLYPHS, skyCompassPosition, drawSkyCompassGlyph,
-  SKY_COMPASS_CANVAS_SIZE, SKY_COMPASS_MIN_OPACITY, SKY_COMPASS_MAX_OPACITY,
-} from '@/lib/game/skyCompass';
-import {
   freshRunState,
   isPlaying,
   canPickUp,
@@ -88,7 +84,6 @@ import {
   findLogCrawlEntry as geoFindLogCrawlEntry,
   SHUFFLE_OFFSET,
 } from '@/lib/game/cover';
-import { mudSpeedMultiplier, mudNoiseMultiplier, isInMudZone } from '@/lib/game/mud';
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { spawnClearanceScale } from '@/lib/game/spawnClearance';
@@ -164,10 +159,6 @@ import {
   completeMission,
   canCompleteSlackWater,
   canCompleteFlush,
-  canCompleteGhost,
-  canCompleteChapelSanctuary,
-  canCompleteChapelVeilEscapeStage1,
-  canCompleteChapelVeilEscapeStage2,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -205,8 +196,6 @@ import {
 import { timeOfRunDetectMul, duskLionDetectMul, DUSK_LION_SIGHT_START_S } from '@/lib/game/dayNight';
 import { nearestLandmarkName } from '@/lib/game/chronicle';
 import { ROOSTS } from '@/lib/game/roostSites';
-import { SCENT_MASK_SITES, findScentMaskSiteIndex, scentMaskGlowWeight } from '@/lib/game/scentMaskSites';
-import { DECOY_SCENT_SITES, findDecoyScentSiteIndex, decoyScentGlowWeight } from '@/lib/game/decoyScentSites';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -214,7 +203,6 @@ import {
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, ROOST_COOLDOWN, ROOST_TRIGGER_RADIUS, ROOST_NOISE_RADIUS, ROOST_INVESTIGATE_TIME,
-  DECOY_COOLDOWN, DECOY_SCENT_RADIUS, DECOY_INVESTIGATE_TIME,
   CHAPEL_SANCTUARY_INTERACT_RADIUS, CHAPEL_SANCTUARY_DURATION,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
@@ -275,14 +263,6 @@ function init(onStateChange, inputMode) {
     // distance check (updateRoosts(), qaTeleportNearRoost()) already agrees on the
     // scaled one. No-op outside qaWorld=micro (this branch never runs).
     roostGroups.forEach((g, i) => g.position.set(ROOSTS[i].x * CONFIG.roostScaleMul, 14, ROOSTS[i].z * CONFIG.roostScaleMul));
-    // LUL-5493: same re-pin, same reason -- scentMaskGlowMeshes (below) is built once at
-    // module load from SCENT_MASK_SITES' raw (unscaled) positions, strictly before this
-    // qaWorld branch ever runs.
-    scentMaskGlowMeshes.forEach((m, i) => m.position.set(SCENT_MASK_SITES[i].x * CONFIG.scentMaskScaleMul, 0.04, SCENT_MASK_SITES[i].z * CONFIG.scentMaskScaleMul));
-    // LUL-5566: same re-pin, same reason -- decoyScentGlowMeshes (below) is built once at
-    // module load from DECOY_SCENT_SITES' raw (unscaled) positions, strictly before this
-    // qaWorld branch ever runs.
-    decoyScentGlowMeshes.forEach((m, i) => m.position.set(DECOY_SCENT_SITES[i].x * CONFIG.decoyScaleMul, 0.04, DECOY_SCENT_SITES[i].z * CONFIG.decoyScaleMul));
   }
   // Skips updateStreamedChunks()/layoutThrowableMeshes() inside generateMap()
   // below -- LUL-2249: streaming replaced the old direct layoutTreeChunks()/
@@ -460,32 +440,6 @@ moonGroup.add(
   new THREE.Mesh(new THREE.CircleGeometry(15, 40), new THREE.MeshBasicMaterial({ color: TOD_VISUAL.sunMoonColor, fog: false }))
 );
 scene.add(moonGroup);
-// LUL-5486: Sky Compass -- four cardinal glyphs (N/E/S/W), real world-space
-// sprites at fixed absolute positions, same trick as `stars` two blocks above
-// (never re-centered on the camera like moonGroup is): rotating the camera
-// moves them across the screen exactly like turning to face a real landmark
-// would, unlike scene.background (a flat, non-rotating backdrop) -- which is
-// why the original LUL-5485 "bake glyphs into the sky gradient" proposal
-// couldn't work. fog:false/depthWrite:false read through fog and never
-// occlude/get occluded by nearer geometry, same as stars/moon.
-const skyCompassIsNight = timeOfDay === 'night';
-const skyCompassColor = '#' + TOD_VISUAL.sunMoonColor.toString(16).padStart(6, '0');
-const skyCompassOpacity = SKY_COMPASS_MIN_OPACITY + (SKY_COMPASS_MAX_OPACITY - SKY_COMPASS_MIN_OPACITY) * TOD_VISUAL.starOpacity;
-const skyCompassSprites = {};
-for (const skyCompassGlyph of SKY_COMPASS_GLYPHS) {
-  const skyCompassCanvas = document.createElement('canvas');
-  skyCompassCanvas.width = skyCompassCanvas.height = SKY_COMPASS_CANVAS_SIZE;
-  drawSkyCompassGlyph(skyCompassCanvas.getContext('2d'), skyCompassGlyph, skyCompassIsNight, skyCompassColor);
-  const skyCompassTex = new THREE.CanvasTexture(skyCompassCanvas); skyCompassTex.colorSpace = THREE.SRGBColorSpace;
-  const skyCompassSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: skyCompassTex, transparent: true, opacity: skyCompassOpacity, depthWrite: false, fog: false,
-  }));
-  const skyCompassPos = skyCompassPosition(skyCompassGlyph);
-  skyCompassSprite.position.set(skyCompassPos.x, skyCompassPos.y, skyCompassPos.z);
-  skyCompassSprite.scale.set(24, 24, 1);
-  scene.add(skyCompassSprite);
-  skyCompassSprites[skyCompassGlyph] = skyCompassSprite;
-}
 const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20, 2); camera.add(playerLight);
 // LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
 // LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
@@ -506,7 +460,6 @@ let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, stami
 // LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
 // decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
 let stoneMarkerPulseT = 0, brambleSnagT = 0;   // LUL-4526: Thorn Snag stumble countdown
-let wasInMud = false;   // LUL-5564: edge-detect for mudEnterCue()/hint -- last tick's mud-zone state
 let chapelSanctuaryPulseT = 0;   // LUL-5005: same one-shot beacon-glow boost shape as stoneMarkerPulseT, set on grant
 let inLogCrawl = false, logCrawlDirX = 0, logCrawlDirZ = 0,
     logCrawlExitX = 0, logCrawlExitZ = 0, logCrawlDeniedLatch = false;   // LUL-4527
@@ -651,7 +604,6 @@ scene.add(throwableMesh);
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
 let treeData = [];            // {x,z,s,cr,crCanopy}
-let mudZones = [];             // LUL-5564: {x,z,r} -- terrain hazard circles, generateMudZones()
 let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders for the four fixed
                                  // landmark meshes, populated by placeLandmarks() post-nudge. No
                                  // crCanopy (canopyBlockedR() skips entries that lack it) and never
@@ -662,26 +614,6 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 // gate; caveImmuneT is the live countdown (0 = inactive), decremented in
 // tick() alongside the other per-frame timers.
 let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
-// LUL-5493: index into SCENT_MASK_SITES the player currently stands inside, or -1.
-// Fixed sites (not part of generateMap()'s procedural draw), so no per-round reset --
-// recomputed every stepFrame() tick below, after player.x/z are final for the frame.
-let playerInScentMaskSiteIndex = -1;
-// LUL-5493: SCENT_MASK_SITES scaled by CONFIG.scentMaskScaleMul (see tuning.js -- same
-// "scale the read, not the source" shape as ROOSTS/roostScaleMul). Radius is left
-// unscaled on purpose, same precedent as ROOST_TRIGGER_RADIUS staying fixed while only
-// ROOSTS' x/z position scales down for the micro world's movement-clamp bounds.
-function scaledScentMaskSites(){
-  return SCENT_MASK_SITES.map(s => ({ ...s, x: s.x * CONFIG.scentMaskScaleMul, z: s.z * CONFIG.scentMaskScaleMul }));
-}
-// LUL-5566: index into DECOY_SCENT_SITES the player currently stands inside, or -1.
-// Same "fixed site, recomputed every tick" shape as playerInScentMaskSiteIndex above.
-let playerInDecoyScentSiteIndex = -1;
-// LUL-5566: one physical redirect event per cooldown, same shape as roostCooldown
-// (below) -- shared Float32Array-per-site convention even though there's only one
-// site today, so a second site needs no shape change here. Reset in restart().
-function scaledDecoyScentSites(){
-  return DECOY_SCENT_SITES.map(s => ({ ...s, x: s.x * CONFIG.decoyScaleMul, z: s.z * CONFIG.decoyScaleMul }));
-}
 let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
 let coldWalkOptIn = false, coldWalkBroken = false;
 // LUL-5005: Chapel Sanctuary -- chapelSanctuaryActive is the live dwell gate,
@@ -691,12 +623,6 @@ let coldWalkOptIn = false, coldWalkBroken = false;
 // dwell completes and the charm is actually granted (see the tick() branch below);
 // leaving early resets chargeT/active but leaves this false so the player can retry.
 let chapelSanctuaryActive = false, chapelSanctuaryChargeT = 0, chapelSanctuaryUsedThisRun = false;
-// LUL-5529: Chapel Refuge + Veil Escape Combo's stage-1 flag -- flips true on the same
-// full-dwell grant edge as chapelSanctuaryUsedThisRun above, read by stage 2's
-// canCompleteChapelVeilEscapeStage2 call at the chase give-up branch. Reset alongside
-// chapelSanctuaryUsedThisRun at both per-run reset sites (deliberately not on
-// arriveHome()/child pickup either, same reasoning as that flag).
-let chapelVeilEscapeChapelDone = false;
 // LUL-4528: Rock -- Vantage Climb. mountedOnRock is the live gate (mutually exclusive
 // with hidden by construction); rockClimbT is the countdown, decremented in tick()
 // alongside the other per-frame timers (same shape as caveImmuneT above).
@@ -860,28 +786,6 @@ function generateThrowables(){
     if(Math.hypot(x - CONFIG.home.x, z - CONFIG.home.z) < 12) continue;
     if(throwableData.some(t => Math.hypot(t.x - x, t.z - z) < 6)) continue;
     throwableData.push({ x, z, taken: false });
-    placed++;
-  }
-}
-// LUL-5564: Mud Zone terrain hazard placement. Called from generateMap() after every other
-// rng() consumer in the stream (see the call site's own comment) so it can never reshuffle
-// an existing seed's trees/predators/cover/throwables/wind/mission/cave/roost draws --
-// LUL-791 precedent. Rejection-samples against landmarks (nearLandmarks(), below) and
-// against every already-placed mud zone (no overlap), mirroring generateThrowables()'
-// rejection-sample shape above.
-const MUD_ZONE_COUNT = 5;
-const MUD_ZONE_MIN_R = 6, MUD_ZONE_MAX_R = 9;
-const MUD_ZONE_LANDMARK_PAD = 6;
-function generateMudZones(){
-  mudZones = [];
-  let placed = 0, tries = 0;
-  while(placed < MUD_ZONE_COUNT && tries < MUD_ZONE_COUNT * 40){
-    tries++;
-    const x = rnd(-half+margin, half-margin), z = rnd(-half+margin, half-margin);
-    const r = MUD_ZONE_MIN_R + rng() * (MUD_ZONE_MAX_R - MUD_ZONE_MIN_R);
-    if(nearLandmarks(x, z, MUD_ZONE_LANDMARK_PAD)) continue;
-    if(mudZones.some(m => Math.hypot(m.x - x, m.z - z) < m.r + r)) continue;
-    mudZones.push({ x, z, r });
     placed++;
   }
 }
@@ -1223,7 +1127,6 @@ function generateMap(seed){
   placeBabyWisps();
 
   treeData = [];
-  mudZones = [];   // LUL-5564: reset alongside treeData -- generateMudZones() repopulates below
   let tries = 0;
   while(treeData.length < CONFIG.trees && tries < CONFIG.trees*25){
     tries++;
@@ -1322,16 +1225,6 @@ function generateMap(seed){
                                                  // never existed before this ticket, so its
                                                  // exact position past that point cannot
                                                  // perturb any existing seed either way.
-  // LUL-5564: deviation from the ticket's suggested call site (right after
-  // generateThrowables()) -- that spot is NOT actually the last rng() consumer in this
-  // function: generateWind()/placeLandmarks()/pickMission()/placeCave()/the roost-index
-  // draw above and repositionBeaconHunterForMission() itself all consume rng() after
-  // generateThrowables() runs. Inserting there would have reshuffled wind direction,
-  // landmark placement, mission pick, cave placement and roost index for every existing
-  // seed -- exactly the LUL-791/LUL-43 class of bug this ticket's own §2 warns about.
-  // This is the true last rng() consumer in generateMap() today; appending here is the
-  // only spot that "appends, doesn't reorder" the stream for real.
-  generateMudZones();
   // LUL-2249: hand off from "every populated chunk instantiated up front" to
   // the streamed ring, now that treeData/coverData are all at their final,
   // post-thin state. Drop whatever the PREVIOUS seed left live (those meshes
@@ -1373,35 +1266,6 @@ const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG
   new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
 homeRing.rotation.x = -Math.PI/2; homeRing.position.set(CONFIG.home.x, 0.04, CONFIG.home.z); scene.add(homeRing);
-
-// ---- Scent-masking sites (LUL-5493 cheap slice) ---------------------------
-// Same "static ring + additive blend" recipe as homeRing above -- three fixed
-// world positions (lib/game/scentMaskSites.ts), one mesh per site (not a single
-// shared ring) so each site's glow can brighten independently as the player
-// nears its own center (scentMaskGlowWeight(), read in tick() below).
-const SCENT_MASK_GLOW_COLOR = { marsh: 0x2fae8a, pine: 0xd98a3d };
-const scentMaskGlowMeshes = SCENT_MASK_SITES.map(s => {
-  const mesh = new THREE.Mesh(new THREE.RingGeometry(s.radius*0.7, s.radius*1.05, 40),
-    new THREE.MeshBasicMaterial({ color: SCENT_MASK_GLOW_COLOR[s.type], transparent: true, opacity: 0.18,
-      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-  mesh.rotation.x = -Math.PI/2; mesh.position.set(s.x, 0.04, s.z);
-  scene.add(mesh);
-  return mesh;
-});
-
-// ---- Scent-decoy site (LUL-5566 cheap slice) ------------------------------
-// Same "static ring + additive blend" recipe as the scent-masking sites above,
-// one fixed world position (lib/game/decoyScentSites.ts). Distinct color so
-// the two "scent" site kinds stay visually distinguishable.
-const DECOY_SCENT_GLOW_COLOR = 0xc9432f;
-const decoyScentGlowMeshes = DECOY_SCENT_SITES.map(s => {
-  const mesh = new THREE.Mesh(new THREE.RingGeometry(s.radius*0.7, s.radius*1.05, 40),
-    new THREE.MeshBasicMaterial({ color: DECOY_SCENT_GLOW_COLOR, transparent: true, opacity: 0.18,
-      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-  mesh.rotation.x = -Math.PI/2; mesh.position.set(s.x, 0.04, s.z);
-  scene.add(mesh);
-  return mesh;
-});
 
 // ---- Navigational landmarks (LUL-25) --------------------------------------
 // Same "static group + a light to read through the fog" recipe as the home
@@ -1595,7 +1459,6 @@ function placeCave(){
   // set-down (that carry-leg path is dead in real play, decisions/lul-2281-pickup-
   // is-the-win-2026-09-09), only at run start.
   chapelSanctuaryActive = false; chapelSanctuaryChargeT = 0; chapelSanctuaryUsedThisRun = false;
-  chapelVeilEscapeChapelDone = false;
   if(caveSpawned){
     const [x, z] = clearLandmarkSpot(CAVE.x, CAVE.z, CAVE.clear);
     caveData = { x, z };
@@ -1754,7 +1617,6 @@ let boomStart = -1;
 // few seconds from different predators, so each site needs its own timer).
 const ROOST_BURST_PTS = 10;   // bird-lift silhouette, not an explosion -- keep small
 const roostCooldown = new Float32Array(ROOSTS.length);      // seconds remaining, 0 = ready
-const decoyCooldown = new Float32Array(DECOY_SCENT_SITES.length);   // LUL-5566: seconds remaining, 0 = ready
 const roostSprintDeniedPlayed = new Uint8Array(ROOSTS.length);  // LUL-5442: debounce flag, mirrors staminaLowCuePlayed hysteresis pattern
 const roostBurstStart = new Float32Array(ROOSTS.length).fill(-1);  // seconds since flush, -1 = idle
 const roostBurstVel = ROOSTS.map(() => []);
@@ -2259,8 +2121,8 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // a fresh install), and a higher-priority key preempts a lower-priority one
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
-const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion','skyCompassNavigation',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2'];
+const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion',
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2275,7 +2137,6 @@ const HINT_TEXT = {
   deepwater:  'the fire tower — a bonus payout, but only if you reach it within the time limit',
   oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
   beaconEvasion: 'the fire tower — a Beacon Hunter patrols the approach. veil (F) breaks its lock if it catches your scent on the wind',
-  skyCompassNavigation: 'the sky compass overhead points true north — use it to navigate straight to the target without a landmark in sight',
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
@@ -2289,12 +2150,8 @@ const HINT_TEXT = {
   rockClimb:  'climb the rock to see farther — but you\'re exposed while you\'re up there',
   veilOverload: 'burn all veil charge (Q) for a detection-proof escape',
   throwable:  'a stone — E to pick up, throw to break a chase',
-  scentMask:  "a scent-masking site — your footsteps are hidden here; predators can't track your trail while you stay inside",
-  decoyScent: "a scent-decoy site — leave it behind you and nearby predators will investigate it instead of you",
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
   duskLion:   "as night falls, the lion's sight weakens — darkness favors the quiet",
-  chapelVeilEscapeStage1: 'the chapel offers refuge — dwell inside to earn a veil reserve, then survive a chase with veil overload',
-  chapelVeilEscapeStage2: 'you gained a veil reserve — now burn all veil charge (Q) to escape a chase and complete the mission',
 };
 const HINT_KEY_PREFIX = 'lullwood:hints:';
 // LUL-2230's key, read (never written) as a migration fallback for the 'scent' entry
@@ -2365,7 +2222,6 @@ function projectToScreen(x, y, z){
 }
 
 function depositScent(hot, againstWind){
-  if(playerInScentMaskSiteIndex !== -1) return;   // LUL-5493: a scent-masking site hides footstep scent entirely
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
   const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
   scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
@@ -3010,7 +2866,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           p.windPauseT = WIND_PAUSE_DURATION; p.windPauseCooldownT = WIND_PAUSE_COOLDOWN; speed = 0; windPulseCue();
         }
         else { desx=ux; desz=uz; speed=p.spec.speed; }
-        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; if(mission && canCompleteGhost(mission, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); if(mission && canCompleteChapelVeilEscapeStage2(mission, chapelVeilEscapeChapelDone, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); }
+        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -3142,15 +2998,6 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     }
 
     if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz, dt);
-
-    // LUL-5564: Mud Zone predator slowdown -- folded in once here, after every roam/chase/
-    // investigate/flank/charge/hunt branch above has set `speed`, rather than at each
-    // branch's own `p.spec.speed*pSpeedScaleMul` site (the ticket's suggested shape). This is
-    // the one point every branch's speed converges through before becoming actual movement
-    // (dvx/dvz below), so it can't miss a branch or apply inconsistently by AI state the way
-    // patching each call site individually risked.
-    const predInMud = isInMudZone(p.x, p.z, mudZones);
-    speed *= mudSpeedMultiplier(predInMud);
 
     // smooth velocity + collide with trees (axis-separated slide)
     const dvx = desx*speed, dvz = desz*speed, accel = speed > 0 ? 3.6 : 6;
@@ -3753,22 +3600,6 @@ function logCrawlEnterCue(){
   g.gain.exponentialRampToValueAtTime(0.0001, t+0.22);
   src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
   src.start(t); src.stop(t+0.24);
-}
-// LUL-5564: same procedural-noise-burst shape as logCrawlEnterCue()/thornSnagSound() -- a
-// squelchy, heavily low-passed burst so it reads as a wet footstep, not a rustle or a scrape.
-// One-shot on the false->true edge only (see the tick() call site), not a sustained loop --
-// this file has no sustained per-zone ambience convention (see logCrawlEnterCue()'s own note).
-function mudEnterCue(){
-  if(!audio || !soundOn) return;
-  const { ctx, conv, master } = audio, t = ctx.currentTime;
-  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.22, false);
-  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 320;
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.18, t+0.02);
-  g.gain.exponentialRampToValueAtTime(0.0001, t+0.2);
-  src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
-  src.start(t); src.stop(t+0.22);
 }
 function logCrawlExitCue(){
   if(!audio || !soundOn) return;
@@ -4431,17 +4262,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       kind: l.kind, x: l.x, z: l.z,
       visible: landmarkGroups[l.kind].children.some(c => c.isSprite),
       fog: landmarkGroups[l.kind].children.find(c => c.isSprite)?.material.fog ?? null,
-    }));
-  };
-  // LUL-5486: exposes the 4 cardinal glyph sprites' real world positions (not
-  // screen projections -- flaky, unnecessary) so a test can assert they sit at
-  // the cardinal unit vectors * radius and, critically, that rotating the
-  // camera does NOT move them -- proving they're genuine world-space objects,
-  // not baked into scene.background the way the rejected LUL-5485 proposal was.
-  window.ForestEngine.qaGetSkyCompassPositions = function(){
-    return Object.fromEntries(SKY_COMPASS_GLYPHS.map(glyph => {
-      const p = skyCompassSprites[glyph].position;
-      return [glyph, { x: p.x, y: p.y, z: p.z }];
     }));
   };
   // LUL-2667: exposes the resolved timeOfDay state plus the exact TOD_VISUAL/
@@ -5574,7 +5394,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       jumping: jumping, paused: paused, toggleRunOn: toggleRunOn,
       veilHeld: (entered && !won && !dead && !pickingUp) && (!!keys['KeyF'] || touchVeil),
       hidden: hidden, brambleSnagT: brambleSnagT,
-      inMudZone: isInMudZone(player.x, player.z, mudZones),
       inLogCrawl: inLogCrawl, logCrawlExitX: logCrawlExitX, logCrawlExitZ: logCrawlExitZ,
     };
   };
@@ -6197,30 +6016,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // math in the page context. `points`/`livePoints` let a test cross-check
   // "the array decayed" against "the picture decayed" independently.
   window.ForestEngine.qaProbeScentTrail = function(){ return scentTrailLastFrame; };
-  // [QA-HOOK] LUL-5493: the live scent-masking site index (matches SCENT_MASK_SITES'
-  // own order) plus the fixed site list itself -- x/z already scaled by
-  // CONFIG.scentMaskScaleMul (1 on the full map, 0.2 under qaWorld=micro, same as every
-  // other engine read of these sites), so a test can qaTeleportTo(sites[i].x, sites[i].z)
-  // or walk there directly without re-deriving the scale factor itself.
-  window.ForestEngine.qaProbeScentMaskSite = function(){
-    return {
-      index: playerInScentMaskSiteIndex,
-      sites: scaledScentMaskSites().map(s => ({ id: s.id, type: s.type, x: s.x, z: s.z, radius: s.radius })),
-      enterCueCount: qaScentMaskEnterCueCount,
-      exitCueCount: qaScentMaskExitCueCount,
-    };
-  };
-  // [QA-HOOK] LUL-5566: the live decoy-site index, the fixed site list (x/z already
-  // scaled by CONFIG.decoyScaleMul, same convention as qaProbeScentMaskSite above),
-  // per-site cooldown remaining, and the exit-cue count the redirect fires alongside.
-  window.ForestEngine.qaProbeDecoyScentSite = function(){
-    return {
-      index: playerInDecoyScentSiteIndex,
-      sites: scaledDecoyScentSites().map(s => ({ id: s.id, x: s.x, z: s.z, radius: s.radius })),
-      cooldown: Array.from(decoyCooldown),
-      exitCueCount: qaDecoyScentExitCueCount,
-    };
-  };
 
   // [QA-HOOK] LUL-2230: sets the camera yaw directly (the same player.yaw
   // every look-input path writes, see camera.rotation.set(player.pitch,
@@ -6301,10 +6096,6 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       const s = t.s ?? 1.2;
       return { x: t.x, z: t.z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled: false, rot: 0, tint: 1 };
     });
-
-    // LUL-5564: required so LUL-5559's e2e spec can stage a mud zone in the micro world
-    // (Q12: must run without @fullmap) -- same reset-from-opts shape as treeData above.
-    mudZones = (opts.mudZones || []).map(m => ({ x: m.x, z: m.z, r: m.r }));
 
     coverData = (opts.props || [])
       .filter(p => QA_COVER_SHAPE[p.kind])
@@ -6898,47 +6689,6 @@ function windAssistEndCue(){
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.2);
 }
-// LUL-5530: Scent-Masking site cues -- completes the cue triple (LUL-5493 already ships
-// the glow ring + one-shot HINT_PRIORITY caption). Same rising/falling sine pair shape as
-// windAssistStartCue/EndCue above, but a lower register so the two "quieting" effects
-// (wind-assisted sprint vs. scent-masking site) stay distinguishable.
-let qaScentMaskEnterCueCount = 0;
-function scentMaskEnterCue(){
-  qaScentMaskEnterCueCount++;
-  if(!audio || !soundOn) return;
-  const { ctx, conv, master } = audio, t = ctx.currentTime;
-  const o = ctx.createOscillator(); o.type = 'sine';
-  o.frequency.setValueAtTime(260, t); o.frequency.exponentialRampToValueAtTime(390, t + 0.15);
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.24);
-}
-let qaScentMaskExitCueCount = 0;
-function scentMaskExitCue(){
-  qaScentMaskExitCueCount++;
-  if(!audio || !soundOn) return;
-  const { ctx, conv, master } = audio, t = ctx.currentTime;
-  const o = ctx.createOscillator(); o.type = 'sine';
-  o.frequency.setValueAtTime(390, t); o.frequency.exponentialRampToValueAtTime(260, t + 0.15);
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.24);
-}
-// LUL-5566: Scent Decoy Site's exit cue -- fires the same frame as the redirect
-// itself (stepFrame() below), a lower, harsher register than scentMaskExitCue()
-// so "you just threw the hunt off your scent" reads distinctly from "you just
-// left a masking site."
-let qaDecoyScentExitCueCount = 0;
-function decoyScentExitCue(){
-  qaDecoyScentExitCueCount++;
-  if(!audio || !soundOn) return;
-  const { ctx, conv, master } = audio, t = ctx.currentTime;
-  const o = ctx.createOscillator(); o.type = 'sawtooth';
-  o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(90, t + 0.18);
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
-  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.28);
-}
 // LUL-4893: Predator Pause's cue -- a rising chime distinct in register from
 // windAssistStartCue's 440->660Hz pair so the two wind-driven effects (player
 // sprint bonus vs. predator freeze) stay audibly distinguishable.
@@ -7062,14 +6812,12 @@ function restart(){
   // rejects outright, reading as a fully frozen player (0.00u movement) after restart.
   inLogCrawl = false; logCrawlDirX = 0; logCrawlDirZ = 0; logCrawlExitX = 0; logCrawlExitZ = 0; logCrawlDeniedLatch = false;
   brambleSnagT = 0;   // LUL-5298: same stale-timer-into-new-round class as the jump/hide resets above
-  wasInMud = false;   // LUL-5564: same stale-flag-into-new-round class as brambleSnagT above
   heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   winPendingActive = false; winPendingT = 0; if(winPendingEl) winPendingEl.style.opacity = '0';   // LUL-1633
   roostCooldown.fill(0); roostSprintDeniedPlayed.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
-  decoyCooldown.fill(0);   // LUL-5566
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
@@ -7460,20 +7208,6 @@ function stepFrame(dt, t, skipRender){
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0, movingAgainstWind = false;
   if(playing && !hidden){
-    // LUL-5564: Mud Zone -- read once per tick, ahead of maxSpd/noiseRadius, both of which
-    // fold in the multiplier below. Edge-detected against wasInMud (module-scope, reset on
-    // restart -- see LUL-5298-style reset above) for the one-shot enter cue/chronicle/hint,
-    // same shape as logCrawlEnterCue()'s call site.
-    const inMud = isInMudZone(player.x, player.z, mudZones);
-    if(inMud && !wasInMud){
-      mudEnterCue();
-      logChronicle('mud_zone_enter', {});
-      if(!hintSeen('mudZone')){
-        markHintSeen('mudZone');
-        if(captionsOn) pushState({ caption: 'Mud — slower, louder: predators can hear you farther', captionId: ++captionSeq });
-      }
-    }
-    wasInMud = inMud;
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
     if(coldWalkJustBroke(coldWalkOptIn, coldWalkBroken, pickingUp, running)){
       coldWalkBroken = true;
@@ -7482,7 +7216,7 @@ function stepFrame(dt, t, skipRender){
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
-    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * brambleSnagSpeedMultiplier(brambleSnagT) * mudSpeedMultiplier(inMud);
+    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * brambleSnagSpeedMultiplier(brambleSnagT);
     // LUL-4527: entry check -- only when not already crawling, using this frame's actual
     // input heading (computed below as mvx/mvz normally would be) is circular, so entry uses
     // the player's last real facing/movement intent instead: any movement key held this frame,
@@ -7539,7 +7273,7 @@ function stepFrame(dt, t, skipRender){
       // LUL-4527: scent suppressed entirely while crawling -- no depositScent() call here at
       // all (the gate below on the normal branch is belt-and-suspenders in case both branches
       // ever run the same frame at a transition boundary; see the exit check's own comment).
-      noiseRadius = NOISE_RADIUS_WALK * mudNoiseMultiplier(inMud);   // still makes a little noise -- crawling isn't silent, just untracked by scent
+      noiseRadius = NOISE_RADIUS_WALK;   // still makes a little noise -- crawling isn't silent, just untracked by scent
       const past = (player.x - logCrawlExitX) * logCrawlDirX + (player.z - logCrawlExitZ) * logCrawlDirZ;
       if(past >= 0){
         inLogCrawl = false;
@@ -7586,7 +7320,7 @@ function stepFrame(dt, t, skipRender){
         if(scentEmitT <= 0){ depositScent(running, movingAgainstWind); scentEmitT = SCENT_DEPOSIT_INTERVAL; }   // dedup: was a second isMovingAgainstWind() call, no behavior change
         // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
         // shape as scent, sized off the same running flag rather than a new one.
-        noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK)) * mudNoiseMultiplier(inMud);
+        noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK));
       }
     }
   }
@@ -7617,37 +7351,6 @@ function stepFrame(dt, t, skipRender){
   // every tick regardless of movement, or a stationary player's fully-decayed
   // scent points never leave the array.
   pruneScentPoints();
-  // LUL-5493: same "once per stepFrame(), after every player.x/z write" placement
-  // as updateStreamedChunks(false) above -- a QA teleport into a site is picked up
-  // next frame with zero movement input, same as real walking into one.
-  {
-    const prevScentMaskSiteIndex = playerInScentMaskSiteIndex;
-    playerInScentMaskSiteIndex = findScentMaskSiteIndex(player.x, player.z, scaledScentMaskSites(), WRAP_SPAN, WRAP_SPAN);
-    // LUL-5530: completes the cue triple -- glow ring + caption already fire on this
-    // same -1<->index transition (LUL-5493); this is the missing audio leg.
-    if(prevScentMaskSiteIndex === -1 && playerInScentMaskSiteIndex !== -1) scentMaskEnterCue();
-    else if(prevScentMaskSiteIndex !== -1 && playerInScentMaskSiteIndex === -1) scentMaskExitCue();
-  }
-  // LUL-5566: Scent Decoy Site -- on exit, if the site isn't cooling down, every
-  // non-inert predator within DECOY_SCENT_RADIUS of the site hears a throwable-style
-  // noise at the site's own (x,z) (hearThrowableNoise()'s noiseTarget override --
-  // proven to redirect a live chase off the real player, see updateRoosts() above).
-  // One physical event per cooldown, same shape as ROOSTS' flush trigger.
-  {
-    const prevDecoyScentSiteIndex = playerInDecoyScentSiteIndex;
-    const scaledDecoySites = scaledDecoyScentSites();
-    playerInDecoyScentSiteIndex = findDecoyScentSiteIndex(player.x, player.z, scaledDecoySites, WRAP_SPAN, WRAP_SPAN);
-    for(let i=0;i<decoyCooldown.length;i++) if(decoyCooldown[i] > 0) decoyCooldown[i] -= dt;
-    if(prevDecoyScentSiteIndex !== -1 && playerInDecoyScentSiteIndex === -1 && decoyCooldown[prevDecoyScentSiteIndex] <= 0){
-      const site = scaledDecoySites[prevDecoyScentSiteIndex];
-      for(const p of predators){
-        if(p.inert) continue;
-        if(Math.hypot(p.x-site.x, p.z-site.z) < DECOY_SCENT_RADIUS) hearThrowableNoise(p, site.x, site.z, DECOY_INVESTIGATE_TIME);
-      }
-      decoyCooldown[prevDecoyScentSiteIndex] = DECOY_COOLDOWN;
-      decoyScentExitCue();
-    }
-  }
 
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this
@@ -7993,13 +7696,6 @@ function stepFrame(dt, t, skipRender){
         pushState({ caption: 'a charm against the mist', captionId: ++captionSeq });
         embersPurchaseCue();   // LUL-5005: reuses buyVeilCharm()'s own grant cue -- same charm, same tell
         chapelSanctuaryPulseT = 0.6;   // LUL-5005: mirrors buyVeilCharm()'s stoneMarkerPulseT boost
-        // LUL-5498: mission-mode completion -- only fires if the drawn mission actually
-        // named this landmark (canCompleteChapelSanctuary's own kind guard), same shape
-        // as canCompleteSlackWater/canCompleteGhost's call sites just above.
-        if(mission && canCompleteChapelSanctuary(mission, true)) mission = completeMission(mission);
-        // LUL-5529: Chapel Refuge + Veil Escape Combo stage 1 -- same grant edge, does not
-        // complete the mission itself (see canCompleteChapelVeilEscapeStage1's own comment).
-        if(mission && canCompleteChapelVeilEscapeStage1(mission, true)) chapelVeilEscapeChapelDone = true;
       } else if(distChapel > CHAPEL_SANCTUARY_INTERACT_RADIUS * 1.5){
         chapelSanctuaryActive = false;
         chapelSanctuaryChargeT = 0;
@@ -8019,7 +7715,6 @@ function stepFrame(dt, t, skipRender){
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,
       heldThrowable, canGrabThrowable: canGrabThrowable(heldThrowable, nearestThrowableD, THROWABLE_PICKUP_RADIUS), throwablesReserve,
-      inMudZone: isInMudZone(player.x, player.z, mudZones),
       missionKind: mission ? mission.target.kind : null,
       missionStatus: mission ? mission.status : null,
       // LUL-3010: only the far/timed variant carries a timer; null for oakHollow (untimed).
@@ -8143,28 +7838,6 @@ function stepFrame(dt, t, skipRender){
     landmarkBeaconGlows[kind].material.opacity = opacity;
   }
 
-  // LUL-5493: brightens as the player nears a site's own center (Q15: glow intensity
-  // increases on approach); the ambient sine pulse degrades to static under
-  // reducedMotion, same as everywhere else in this file, but the proximity term does
-  // not -- losing the pulse shouldn't also hide "you're getting close."
-  {
-    const scaledSites = scaledScentMaskSites();
-    for(let i=0;i<scaledSites.length;i++){
-      const w = scentMaskGlowWeight(player.x, player.z, scaledSites[i], WRAP_SPAN, WRAP_SPAN);
-      const pulse = motionReduced() ? 0 : Math.sin(t*1.1)*0.05;
-      scentMaskGlowMeshes[i].material.opacity = 0.12 + pulse + w*0.35;
-    }
-  }
-  // LUL-5566: same proximity-brightening recipe as the scent-masking sites above.
-  {
-    const scaledDecoySites = scaledDecoyScentSites();
-    for(let i=0;i<scaledDecoySites.length;i++){
-      const w = decoyScentGlowWeight(player.x, player.z, scaledDecoySites[i], WRAP_SPAN, WRAP_SPAN);
-      const pulse = motionReduced() ? 0 : Math.sin(t*1.1)*0.05;
-      decoyScentGlowMeshes[i].material.opacity = 0.12 + pulse + w*0.35;
-    }
-  }
-
   // ambient dust follows you, drifting downwind (LUL-195, see setup above)
   const amp = motionReduced() ? 0.3 : 1, dp = dustGeo.attributes.position.array;
   const wdx = windX * dt * DUST_WIND_SPEED * amp, wdz = windZ * dt * DUST_WIND_SPEED * amp;
@@ -8250,9 +7923,6 @@ function stepFrame(dt, t, skipRender){
         case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active', null];
         case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active', null];
         case 'beaconEvasion': return [!!mission && mission.target.kind === 'beaconEvasion' && mission.status === 'active', null];
-        case 'skyCompassNavigation': return [!!mission && mission.target.kind === 'skyCompassNavigation' && mission.status === 'active', null];
-        case 'chapelVeilEscapeStage1': return [!!mission && mission.target.kind === 'chapelVeilEscape' && mission.status === 'active' && !chapelVeilEscapeChapelDone, null];
-        case 'chapelVeilEscapeStage2': return [!!mission && mission.target.kind === 'chapelVeilEscape' && mission.status === 'active' && chapelVeilEscapeChapelDone, null];
         case 'wolf': case 'bear': case 'lion': {
           for(const p of predators){
             if(p.inert || p.kind !== key) continue;
@@ -8281,8 +7951,6 @@ function stepFrame(dt, t, skipRender){
         case 'caveImmune': return [caveImmuneT > 0, null];
         case 'veilOverload': return [veilOverloadChargeT > 0, null];
         case 'throwable': return [throwableHintEligible, throwableHintAnchor];
-        case 'scentMask': return [playerInScentMaskSiteIndex !== -1, null];
-        case 'decoyScent': return [playerInDecoyScentSiteIndex !== -1, null];
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
         case 'duskLion': return [runElapsed >= DUSK_LION_SIGHT_START_S, null];   // LUL-4889: time-only, no world anchor
         default: return [false, null];
@@ -8294,16 +7962,11 @@ function stepFrame(dt, t, skipRender){
         case 'wolf': case 'bear': case 'lion': case 'beaconHunter': case 'cover': return hideEventCount > baseline;
         case 'throwable': return throwableGrabCount > baseline;
         case 'caveImmune': return caveImmuneT <= 0;
-        case 'scentMask': return playerInScentMaskSiteIndex === -1;
-        case 'decoyScent': return playerInDecoyScentSiteIndex === -1;
         case 'windPulse': return !predators.some(p => p.windPauseT > 0);
         case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
         case 'beaconEvasion': return missionCanComplete;
-        case 'skyCompassNavigation': return missionCanComplete;
-        case 'chapelVeilEscapeStage1': return chapelVeilEscapeChapelDone;
-        case 'chapelVeilEscapeStage2': return !mission || mission.target.kind !== 'chapelVeilEscape' || mission.status !== 'active';
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
         default: return false;   // landmark: time-only
