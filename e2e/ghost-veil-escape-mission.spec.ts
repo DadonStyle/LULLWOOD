@@ -61,10 +61,16 @@ test('a chase give-up while Veil Overload is active completes Ghost', async ({ p
   const overload = await qaHook(page, 'qaProbeVeilOverload');
   expect(overload.chargeT, 'KeyQ must have actually activated Veil Overload').toBeGreaterThan(0);
 
-  // Cross the remaining ~0.2s of scentLock decay -- shouldGiveUpChase() fires this tick.
+  // Cross the remaining ~0.2s of scentLock decay. The wolf was never actually sighted this
+  // whole chase (sightFlicker stays at its qaBuildScene-staged 0 default), so
+  // shouldDowngradeChase() -- checked before shouldGiveUpChase() in forest-engine.js, and the
+  // one e2e/beacon-hunter.spec.ts's own 'give-up' test already proves wins this exact blind-
+  // chase-expiry race -- fires first and the state lands on 'investigate', not 'roam'.
+  // canCompleteGhost() is checked at that call site too (LUL-5649): a blind chase, the shape
+  // this mission is actually designed around, never reaches the shouldGiveUpChase() call site.
   await qaHook(page, 'qaAdvance', 20, true);
   const after = await qaHook(page, 'qaPredatorState', 0);
-  expect(after.state, 'the chase must have actually given up for this to prove anything').toBe('roam');
+  expect(after.state, 'the chase must have actually given up for this to prove anything').toBe('investigate');
 
   const completed = await qaHook(page, 'qaProbeMission');
   expect(completed?.status).toBe('complete');
@@ -91,8 +97,11 @@ test('a chase give-up with Veil Overload never activated does not complete Ghost
   // Full decay plus margin, no KeyQ press anywhere in this test.
   await qaHook(page, 'qaAdvance', SCENT_TRACK_TICKS + 20, true);
 
+  // Same blind-chase-expiry shape as the test above -- lands on 'investigate', not 'roam'
+  // (see that test's comment); this test's point is overloadActive=false still blocks
+  // completion even though the engine now checks canCompleteGhost() at this call site too.
   const gaveUp = await qaHook(page, 'qaPredatorState', 0);
-  expect(gaveUp.state, 'the chase must have actually given up for this to prove anything').toBe('roam');
+  expect(gaveUp.state, 'the chase must have actually given up for this to prove anything').toBe('investigate');
 
   const overload = await qaHook(page, 'qaProbeVeilOverload');
   expect(overload.chargeT).toBe(0);

@@ -70,8 +70,11 @@ test.describe('scent-masking sites (LUL-5493)', () => {
     expect(stillInsideTrail.livePoints, 'no new motes must appear while masked, even after several deposit intervals')
       .toBe(insideEntryTrail.livePoints);
 
-    // Phase 4: exit the far side (2 units past the exit edge).
-    await walkUnits(page, 5);
+    // Phase 4: exit the far side (2 units past the exit edge). Cumulative distance
+    // from the entry edge is 9 (phase 2's 2-past-entry) + 9 (phase 3) + 7 = 18, landing
+    // at center+10 -- 2 units past the exit edge at center+8 (walking only 5 here lands
+    // exactly on the edge, still "inside" per findScentMaskSiteIndex()'s `<= s.radius`).
+    await walkUnits(page, 7);
     probe = await qaHook(page, 'qaProbeScentMaskSite');
     expect(probe.index, 'must be outside again after exiting the far side').toBe(-1);
     expect(probe.enterCueCount, 'still just the one entry').toBe(1);

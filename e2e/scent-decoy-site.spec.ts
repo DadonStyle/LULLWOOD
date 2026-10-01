@@ -14,6 +14,15 @@
 // and catching the player before the exit transition ever fires. A teleport is
 // picked up by the per-tick enter/exit diff on the very next frame, same as real
 // walking into/out of a site (see forest-engine.js's own comment on that diff).
+//
+// scentLock: SCENT_TRACK_TIME (8, lib/game/scent.ts) mirrors a real scentOnto()/
+// spotOnto() chase entry -- same precedent as e2e/chapel-veil-escape-combo-mission.spec.ts
+// and e2e/ghost-veil-escape-mission.spec.ts. Without it, qaBuildScene's staged
+// 'chase' has no scentLock and the player is far outside the staged wolf's
+// (scaled-down, qaWorld=micro) sight detect radius, so shouldDowngradeChase()
+// (lib/game/predator.ts, forest-engine.js:6127's own comment) reverts 'chase' to
+// 'investigate' on the very first qaAdvance(1) tick -- before the decoy site's
+// exit-transition redirect is ever exercised.
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
@@ -28,7 +37,7 @@ test.describe('scent-decoy site (LUL-5566)', () => {
     const site = (await qaHook(page, 'qaProbeDecoyScentSite')).sites[0];
 
     // Wolf staged mid-chase, within DECOY_SCENT_RADIUS(18) of the site.
-    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: site.x + 15, z: site.z, state: 'chase' }] });
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: site.x + 15, z: site.z, state: 'chase', scentLock: 8 }] });
 
     const before = await qaHook(page, 'qaProbePredatorState', 'wolf');
     expect(before.state, 'staged as a real mid-chase, not investigate/roam').toBe('chase');
@@ -67,7 +76,7 @@ test.describe('scent-decoy site (LUL-5566)', () => {
 
     const site = (await qaHook(page, 'qaProbeDecoyScentSite')).sites[0];
     // 25u from the site -- outside DECOY_SCENT_RADIUS(18).
-    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: site.x + 25, z: site.z, state: 'chase' }] });
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: site.x + 25, z: site.z, state: 'chase', scentLock: 8 }] });
 
     await qaHook(page, 'qaTeleportTo', site.x, site.z);
     await qaHook(page, 'qaAdvance', 1);
@@ -89,7 +98,7 @@ test.describe('scent-decoy site (LUL-5566)', () => {
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const site = (await qaHook(page, 'qaProbeDecoyScentSite')).sites[0];
-    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: site.x + 15, z: site.z, state: 'chase' }] });
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: site.x + 15, z: site.z, state: 'chase', scentLock: 8 }] });
 
     // First enter/exit -- fires the redirect.
     await qaHook(page, 'qaTeleportTo', site.x, site.z);

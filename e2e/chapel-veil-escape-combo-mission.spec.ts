@@ -64,9 +64,16 @@ test('completing the chapel dwell then a veil-overload chase escape completes ch
   const overload = await qaHook(page, 'qaProbeVeilOverload');
   expect(overload.chargeT, 'KeyQ must have actually activated Veil Overload').toBeGreaterThan(0);
 
+  // The wolf was never actually sighted this whole chase (sightFlicker stays at its
+  // qaBuildScene-staged 0 default), so shouldDowngradeChase() -- checked before
+  // shouldGiveUpChase() in forest-engine.js, and the one e2e/beacon-hunter.spec.ts's own
+  // 'give-up' test already proves wins this exact blind-chase-expiry race -- fires first and
+  // the state lands on 'investigate', not 'roam'. canCompleteChapelVeilEscapeStage2() is
+  // checked at that call site too (LUL-5649): a blind chase, the shape this mission is
+  // actually designed around, never reaches the shouldGiveUpChase() call site.
   await qaHook(page, 'qaAdvance', 20, true);
   const after = await qaHook(page, 'qaPredatorState', 0);
-  expect(after.state, 'the chase must have actually given up for this to prove anything').toBe('roam');
+  expect(after.state, 'the chase must have actually given up for this to prove anything').toBe('investigate');
 
   const completed = await qaHook(page, 'qaProbeMission');
   expect(completed?.status, 'both stages must have fired for the combo mission to complete').toBe('complete');
@@ -97,9 +104,10 @@ test('a veil-overload chase escape before the chapel dwell completes does not co
   const overload = await qaHook(page, 'qaProbeVeilOverload');
   expect(overload.chargeT).toBeGreaterThan(0);
 
+  // Same blind-chase-expiry shape as the test above -- lands on 'investigate', not 'roam'.
   await qaHook(page, 'qaAdvance', 20, true);
   const gaveUp = await qaHook(page, 'qaPredatorState', 0);
-  expect(gaveUp.state, 'the chase must have actually given up for this to prove anything').toBe('roam');
+  expect(gaveUp.state, 'the chase must have actually given up for this to prove anything').toBe('investigate');
 
   const stillActive = await qaHook(page, 'qaProbeMission');
   expect(stillActive?.status, 'stage 2 without stage 1 first must not complete the combo mission').toBe('active');
