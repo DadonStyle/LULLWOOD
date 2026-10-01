@@ -58,6 +58,9 @@ export const CONFIG = {
                           // report anyVisible=false at night on the default QA world.
                           // applyQaWorldMicroPreset() scales this down too, same ratio as
                           // decoyScaleMul. 1 = full-map, no-op.
+  FIREFLY_RAIN_DIM: 0.8,  // LUL-5736: rain dims firefly mote intensity -- at rainfallAmount=1 the
+                          // mote is left at 20% of its dry intensity (1 - 1*0.8). Ambient-only, no
+                          // HUD/cues per docs/CUES.md Q15 N/A (decision lul-5735-firefly-rain-dim-accepted).
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,

@@ -91,8 +91,10 @@ declare global {
       /** LUL-5707: active firefly-cluster count (0 outside dusk/night) plus whether
        * any mote is currently lit (distance-based falloff from the player) -- lets a
        * test assert presence at night and absence at noon without scraping Three.js
-       * light internals. */
-      qaProbeFireflyClusters?: () => { clusterCount: number; anyVisible: boolean };
+       * light internals. LUL-5736 added maxIntensity so a test can assert the
+       * rain-dim ramp quantitatively (anyVisible alone can't distinguish dimmed
+       * from undimmed once intensity is merely reduced, not zeroed). */
+      qaProbeFireflyClusters?: () => { clusterCount: number; anyVisible: boolean; maxIntensity: number };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */
