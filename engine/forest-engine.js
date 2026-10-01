@@ -2970,7 +2970,14 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist, rainfallNo
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt', predators.indexOf(p));   // LUL-1194: the 30s force-hunt escalation caught up
         else { desx=ux; desz=uz; speed=p.spec.speed*pSpeedScaleMul; }
-        if(dist < 8) p.hunt = false;                   // reached you → back to normal
+        // LUL-5757: hand off to 'chase' in the same tick the force-hunt lock lifts, rather
+        // than just clearing p.hunt and leaving p.state whatever it was before the hunt
+        // (commonly 'roam', from a predator that never actually engaged yet -- qaLurePredatorKind
+        // is the clearest repro). canSee() is already true in this branch, so 'chase' picks up
+        // the pursuit with no discontinuity; leaving p.state alone instead depends on roam's own
+        // independent canSee() re-check firing on the very next tick to recover the chase, which
+        // cost a full tick here and isn't guaranteed if p.state was something other than 'roam'.
+        if(dist < 8){ p.hunt = false; p.state = 'chase'; }   // reached you → straight to chase, not back to whatever it was
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'roam'){
@@ -4923,9 +4930,22 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // meaning what it says. See wiki: systems/dt-clamp-vs-walltime.
   //
   // So this skips the waiting, not the mechanic: it drops the nearest predator a few
-  // units away and sets the same `hunt` flag the 30s trigger would have set. The
-  // approach, the catch test (`dist < p.rad + 1.3`) and triggerDeath all still run
-  // for real -- the animal is placed outside catch range and closes it itself.
+  // units away and sets the same `hunt`/`scentLock` state the 30s trigger (:8013) would
+  // have set. The approach, the catch test (`dist < p.rad + 1.3`) and triggerDeath all
+  // still run for real -- the animal is placed outside catch range and closes it itself.
+  //
+  // LUL-5757: `scentLock = FORCE_HUNT_LOCK` was missing here (this hook used to set only
+  // `hunt=true`) -- harmless for wolf/lion, whose species `detect` comfortably covers this
+  // 6-unit placement even after qaWorld=micro's detectScaleMul and the 'night' time-of-day
+  // detect multiplier (effective ~6.7-7.7u), but bear's smaller `detect:30` scales down to
+  // ~4.8u -- *below* 6u -- so canSee() reads false the instant this hook places it. The
+  // forced-hunt branch's own `!canSee` sub-branch (updatePredators()) then falls through to
+  // the slow, give-up-prone investigate/approach collapse instead of the relentless blind
+  // chase, exactly because this hook (unlike the real :8013 trigger) left scentLock at 0 --
+  // reproducing only half the state the real escalation sets. Confirmed via effectiveDetect's
+  // exact constants (species detect * 0.2 micro scale * 0.8 night-time-of-day = 4.8 for bear
+  // vs the fixed 6u placement), not a collision/pathing issue -- qaBuildScene's synthetic
+  // scene here has zero trees/props for the predator to path around.
   window.ForestEngine.qaLurePredator = function(){
     let nearest = null, best = 1e9;
     for(const p of predators){
@@ -4938,6 +4958,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     nearest.x = player.x + 6; nearest.z = player.z;
     nearest.vx = nearest.vz = 0;
     nearest.hunt = true;
+    nearest.scentLock = FORCE_HUNT_LOCK;   // LUL-5757: match :8013's real trigger, see comment above
     return nearest.kind;
   };
 
@@ -4965,6 +4986,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     nearest.x = player.x + 6; nearest.z = player.z;
     nearest.vx = nearest.vz = 0;
     nearest.hunt = true;
+    nearest.scentLock = FORCE_HUNT_LOCK;   // LUL-5757: match :8013's real trigger -- see qaLurePredator's comment above
     for(const other of predators){ if(other !== nearest){ other.inert = true; } }
     return nearest.kind;
   };
@@ -5031,7 +5053,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // staging scentLock>0 in 'approach' needs the predator's own real position over
     // several ticks to measure whether its path drifts downwind, and `inv` to confirm
     // it's still in the 'approach' sub-phase this bias only applies to.
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null, x: p.x, z: p.z, inv: p.inv, investigateCueCount: p.investigateCueCount ?? 0 };
+    // LUL-5757: hunt/reroute/stuckT/alert/sightLock/sniffsLeft added -- tracing the
+    // bear-kill deathScreen regression needed the full force-hunt/stuck-reroute state
+    // this hook didn't expose yet (only state/dist/scentLock existed), the same gap
+    // qaStageAndTraceBehindTree's own position/state trace needed for the cover case.
+    // Kept rather than reverted post-investigation: any future predator-AI stall is
+    // this same shape of bug (a state transition silently falls through to the wrong
+    // branch), and this is the one probe already wired into every e2e spec that traces
+    // a single predator over time.
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null, x: p.x, z: p.z, inv: p.inv, investigateCueCount: p.investigateCueCount ?? 0, hunt: p.hunt, reroute: p.reroute, stuckT: p.stuckT, alert: p.alert, sightLock: p.sightLock, sniffsLeft: p.sniffsLeft };
   };
   // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
   // stage a "first sighted" scenario -- effectiveDetect() applies
