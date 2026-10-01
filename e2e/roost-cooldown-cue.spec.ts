@@ -51,7 +51,15 @@ async function ambientlyFlushMissionRoost(page: Page) {
   await qaHook(page, 'qaSetFixedStep', FIXED_DT);
   const roost = await qaHook(page, 'qaTeleportNearRoost', ROOST_INDEX);
   expect(roost?.i).toBe(ROOST_INDEX);
-  await qaHook(page, 'qaStagePredatorNearPlayer', 'wolf', 5, 0);
+  // qaTeleportNearRoost (LUL-5691) now lands the player a full THROWABLE_THROW_DISTANCE
+  // (18u) from the roost so a thrown stone lands exactly on it -- outside both
+  // ROOST_TRIGGER_RADIUS(6) (the #roostCooldownPanel proximity check) and the roost's
+  // own ambient-trigger radius, which this test needs the player and the staged
+  // predator standing inside instead. Re-teleport onto the roost's own (scaled)
+  // centre it already returned, then stage the predator a couple of units off that --
+  // well inside both radii -- rather than off the player's now-distant position.
+  await qaHook(page, 'qaTeleportTo', roost.x, roost.z);
+  await qaHook(page, 'qaStagePredatorNearPlayer', 'wolf', 2, 0);
   await qaHook(page, 'qaSetPredatorChasing', 'wolf');
   await advanceChunked(page, stepsFor(2));
 }
