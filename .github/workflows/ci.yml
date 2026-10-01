@@ -217,6 +217,22 @@ jobs:
       - name: SSR-boundary guard
         run: node scripts/check-ssr-boundary.mjs
 
+      # LUL-5619: `next build` succeeding proves the bundler didn't error, not that
+      # the bundle runs -- LUL-5612 shipped a minified "Cannot access 'X' before
+      # initialization" ReferenceError on real boot (production bundle only; a clean
+      # local `next build` + `next start` here never reproduced it) that this job's
+      # `build` step above stayed green through. This single Playwright test (not
+      # the full suite -- that stays nightly-only per the founder's 2026-08-28 cost
+      # directive, see the comment below) boots the actual production bundle
+      # (playwright.config.ts's webServer runs `npm run build && npm run start`)
+      # and asserts zero console errors, which is exactly the class of failure a
+      # passing `next build` cannot catch.
+      - name: install playwright chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: prod-boot smoke (no console errors)
+        run: npx playwright test e2e/smoke.spec.ts --project=chromium -g "title gate, engine API, two canvases, no console errors"
+
 # The Playwright suite ("smoke"/full regression) no longer runs per-push here.
 # Founder directive (2026-08-28): per-PR QA cost was too high relative to the
 # pace of shipping; the full e2e suite now runs once a day instead
