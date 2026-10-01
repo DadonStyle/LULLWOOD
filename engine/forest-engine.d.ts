@@ -605,6 +605,8 @@ declare global {
       /** LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e staging.
        * See engine/forest-engine.js's qaSetFogTideClock for the full rationale. */
       qaSetFogTideClock?: (seconds: number) => void;
+      /** See engine/forest-engine.js's qaSetRainfallClock for the full rationale. */
+      qaSetRainfallClock?: (seconds: number) => void;
       /** LUL-3010: shrinks the current mission's own timeLimitSeconds so the real per-tick
        * checkMissionExpiry() trips on the next frame. No-op (null) if the mission has no
        * timer (near variant / already resolved). */

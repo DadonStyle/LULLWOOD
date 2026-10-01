@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8602 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7531, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8647 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7559, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -975,6 +975,33 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
   surfaced to the HUD as a plain-text clock (`#timeOfRunClock`,
   `formatTimeOfRunClock()`, dawn 6:00 AM at `timeOfRun=0` to 9:00 PM at
   `timeOfRun=1`).
+- **As of `LUL-5698`** (Rainfall Event, cheap slice), an additive
+  `rainfallFogBoost(rainfallAmount)` term stacked on top of the veil/tide/
+  time-of-run terms above (`engine/forest-engine.js:7573`). Same
+  `eventScheduler.ts` three-phase calm/signpost/active cycle as Fog Tide, its
+  own `RAINFALL_CONFIG` (`lib/game/rainfallEvent.ts` — `period: 80,
+  activeDuration: 20, leadIn: 10`), eased over `RAINFALL_RAMP` (4s). At full
+  rain, `rainfallFogBoost()` adds `RAINFALL_FOG_BOOST` (0.08) — no particle
+  system or color tint (none exists for Fog Tide either; "fog bloom
+  particles" in the original proposal doesn't map to anything in this
+  codebase's single-density `THREE.FogExp2`). Whole-map, not site-scoped
+  (`RAINFALL_SITES` deferred to Full Feature). The event's other effect
+  surface — footstep/breathing noise radius scaled by
+  `rainfallNoiseScalar(rainfallAmount)` (`RAINFALL_NOISE_MUL = 0.65`, same
+  magnitude as Fog Tide's own detect-radius cut) — is threaded into
+  `updatePredators()`'s `checkNoise()` call for the footstep channel only
+  (`engine/forest-engine.js:2959`); the cry-noise channel two lines below is
+  deliberately untouched. Ambient audio: a new procedural bandpass-filtered
+  noise bed (`audio.rg`, `engine/forest-engine.js:3722-3726`) ramped by
+  `rainfallBuild` alongside Fog Tide's own `wg`/`dg` ramping
+  (`engine/forest-engine.js:8272`) — no loaded audio sample exists anywhere
+  in this file, every ambient bed (`wind`/`insects`/`dg`/now `rain`) is
+  procedural Web Audio noise. Signposted via the existing
+  `HINT_PRIORITY`/`HINT_TEXT` registry (`rainfall` key,
+  `engine/forest-engine.js:2303`, `:2340`) — no new `EngineHudState` field or
+  React round-trip, same as Fog Tide's own visual. QA hook:
+  `qaSetRainfallClock(seconds)` (`engine/forest-engine.js`), mirrors
+  `qaSetFogTideClock` exactly.
 
 **What it CANNOT do**
 - `effectiveDetect()` (predator sight range) still never reads
@@ -1704,16 +1731,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6696, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7138). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6781, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7192). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7126) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L3395) rather than recomputed later, since `player.x/z` can move on
+  (L7162) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L3457) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1769,8 +1796,8 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L4317),
-  reset to 0 on `enter()` (L4444) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L4385),
+  reset to 0 on `enter()` (L4481) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7731: `computeDepth(maxDistFromHome) +
@@ -1893,7 +1920,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7485, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7509, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -3057,7 +3084,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7011) and `windAssistEndCue()` (L7020), edge-triggers on the combined
+`windAssistStartCue()` (L7039) and `windAssistEndCue()` (L7048), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3485,15 +3512,15 @@ existing surface).
 
 **Audio**: `investigateCue(p)` (L4122-4136) -- a low, two-pulse searching
 tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
-caption already names the species -- `hearCry()` (L2593) is the one exception: it pushes no
+caption already names the species -- `hearCry()` (L2604) is the one exception: it pushes no
 caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
 responding to the child's cry gives the player zero species identification, audio or text, same
 as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2560),
-`hearThrowableNoise()` (L2576), `hearCry()` (L2593), the charge-overshoot handoff (`p.chargeRecoveryT`,
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2571),
+`hearThrowableNoise()` (L2588), `hearCry()` (L2604), the charge-overshoot handoff (`p.chargeRecoveryT`,
 L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
 sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
 of the driving ticket's six-line list, included for the same reason the other six are: a real

@@ -198,6 +198,16 @@ import {
   fogTideBuildAt,
 } from '@/lib/game/fogTide';
 import {
+  RAINFALL_CONFIG,
+  RAINFALL_RAMP,
+  RAINFALL_AUDIO_RAMP,
+  rainfallPhase,
+  rainfallBuildAmount,
+  rainfallActiveTarget,
+  rainfallNoiseScalar,
+  rainfallFogBoost,
+} from '@/lib/game/rainfallEvent';
+import {
   timeOfDayFromHour,
   TIME_OF_DAY_VISUALS,
   TIME_OF_DAY_AUDIO, timeOfDayDetectMul,
@@ -513,6 +523,8 @@ let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil r
 // same split as the veil above). `fogTideClock` only advances while `playing`
 // (see tick()) -- that's the whole "pausable" requirement, no separate flag.
 let fogTideClock = 0, fogTideAmount = 0, fogTideBuild = 0, fogTideActive = false;
+// LUL-5698: Rainfall Event -- same four-variable shape as Fog Tide above.
+let rainfallClock = 0, rainfallAmount = 0, rainfallBuild = 0, rainfallActive = false;
 // LUL-1709: live time-of-run pacing clock, 0 (dawn) -> 1 (full night) over
 // TIME_OF_RUN_DURATION_S of actual play. Same pausable-accumulator pattern as
 // fogTideClock immediately above -- only advances while `playing` (see tick()),
@@ -2288,7 +2300,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion','skyCompassNavigation',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','mudTrapDecoy','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','mudTrapDecoy','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2','rainfall'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2324,6 +2336,7 @@ const HINT_TEXT = {
   duskLion:   "as night falls, the lion's sight weakens — darkness favors the quiet",
   chapelVeilEscapeStage1: 'the chapel offers refuge — dwell inside to earn a veil reserve, then survive a chase with veil overload',
   chapelVeilEscapeStage2: 'you gained a veil reserve — now burn all veil charge (Q) to escape a chase and complete the mission',
+  rainfall: "rain masks footsteps — predators' noise detection drops",
 };
 const HINT_KEY_PREFIX = 'lullwood:hints:';
 // LUL-2230's key, read (never written) as a migration fallback for the 'scent' entry
@@ -2758,7 +2771,7 @@ function updateWolfPack(dt){
 // exactly where they were. Long enough to read as "that's over," short
 // enough that a second charge later in the same chase is still in play.
 
-function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
+function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist, rainfallNoiseMul){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
   for(const p of predators){
@@ -2944,7 +2957,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
           && dist < effectiveDetect(p) * BEACON_HUNTER_LOCK_MUL){
         beaconOnto(p);
       }
-      else if(!sniffImmune && checkNoise(p, dist, (predInMud && windAssist) ? NOISE_RADIUS_RUN : noiseRadius, dt)){ hearNoise(p); }
+      else if(!sniffImmune && checkNoise(p, dist, ((predInMud && windAssist) ? NOISE_RADIUS_RUN : noiseRadius) * rainfallNoiseMul, dt)){ hearNoise(p); }
       // LUL-1255 (Ship 1 wayfinding S3): the cry is a second, independent
       // hearing check against the child's actual position, not the player's --
       // see S3 of the wayfinding spec for why this can't reuse
@@ -3713,6 +3726,12 @@ function startAudio(){
   const ing = ctx.createGain(); ing.gain.value = TOD_AUDIO.insectsGain;
   insects.connect(inf); inf.connect(ing); ing.connect(master); ing.connect(conv); insects.start();
 
+  // rain bed -- filtered white noise, silent until Rainfall Event (LUL-5698) ramps it in
+  const rain = ctx.createBufferSource(); rain.buffer = noise(ctx, 3, true); rain.loop = true;
+  const rf = ctx.createBiquadFilter(); rf.type = 'bandpass'; rf.frequency.value = 2000; rf.Q.value = 0.8; // ~2kHz band, matches the proposal's "rainfall hum" register without a sample
+  const rg = ctx.createGain(); rg.gain.value = 0.0001;
+  rain.connect(rf); rf.connect(rg); rg.connect(master); rg.connect(conv); rain.start();
+
   // low ominous drone
   const dg = ctx.createGain(); dg.gain.value = 0.05 * TOD_AUDIO.droneGainMul; dg.connect(master); dg.connect(conv);
   [55, 82.5, 110].forEach((f, i) => { const o = ctx.createOscillator(); o.type='sine'; o.frequency.value=f;
@@ -3733,7 +3752,7 @@ function startAudio(){
   const shimmer = ctx.createOscillator(); shimmer.type='triangle'; shimmer.frequency.value=1245;   // unease up high
   const shg = ctx.createGain(); shg.gain.value=0.012; shimmer.connect(shg); shg.connect(huntGain); shimmer.start();
 
-  audio = { ctx, master, wf, wg, dg, huntGain, plfo, conv, foot: 0, twinkle: rnd(1.5,4), footBuf: noise(ctx, 0.3, false) };
+  audio = { ctx, master, wf, wg, dg, rg, huntGain, plfo, conv, foot: 0, twinkle: rnd(1.5,4), footBuf: noise(ctx, 0.3, false) };
   if (TOD_AUDIO.birdsGain > 0) scheduleBirdChirp();
 }
 function footstep(vol){
@@ -4765,6 +4784,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // that set the derived boolean directly would.
   window.ForestEngine.qaSetFogTideClock = function(seconds){
     fogTideClock = Math.max(0, seconds % FOG_TIDE_CONFIG.period);
+  };
+
+  // [QA-HOOK] LUL-5698: directly sets the rainfall cycle accumulator for deterministic e2e
+  // staging -- same rationale as qaSetFogTideClock immediately above: the real cycle is an
+  // 80s game-clock loop (lib/game/rainfallEvent.ts RAINFALL_CONFIG), too slow to drive through
+  // qaAdvance() one real dt-step at a time. Takes effect on the next tick's rainfallPhase()
+  // re-evaluation, same as a real elapsed-time crossing would.
+  window.ForestEngine.qaSetRainfallClock = function(seconds){
+    rainfallClock = Math.max(0, seconds % RAINFALL_CONFIG.period);
   };
 
   // LUL-2189/LUL-2207: exposes the module-scope wind unit vector (set once per
@@ -7558,7 +7586,7 @@ function stepFrame(dt, t, skipRender){
   // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
   // the sight-detect cut ramps in step with what the player actually sees.
   veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
-  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
+  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) + rainfallFogBoost(rainfallAmount) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
   hemiLight.intensity = HEMI_BASE_INTENSITY * (1 - timeOfRun * 0.7);
   pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, veilReserve, staminaCharge: Math.round(staminaCharge * 100) / 100, timeOfRunClock: formatTimeOfRunClock(timeOfRun) });
 
@@ -7584,6 +7612,20 @@ function stepFrame(dt, t, skipRender){
     fogTideActive = false;
     track({ event: 'feature_engagement', feature: 'fog_tide', action: 'end' });
     logChronicle('fog_tide_end');
+  }
+
+  if(playing) rainfallClock = (rainfallClock + dt) % RAINFALL_CONFIG.period;
+  const rainfallPhaseNow = rainfallPhase(rainfallClock);
+  rainfallBuild += (rainfallBuildAmount(rainfallClock) - rainfallBuild) * Math.min(1, dt / RAINFALL_AUDIO_RAMP);
+  rainfallAmount += (rainfallActiveTarget(rainfallClock) - rainfallAmount) * Math.min(1, dt / RAINFALL_RAMP);
+  if(rainfallPhaseNow === 'active' && !rainfallActive){
+    rainfallActive = true;
+    track({ event: 'feature_engagement', feature: 'rainfall', action: 'start' });
+    logChronicle('rainfall_start');
+  } else if(rainfallPhaseNow !== 'active' && rainfallActive){
+    rainfallActive = false;
+    track({ event: 'feature_engagement', feature: 'rainfall', action: 'end' });
+    logChronicle('rainfall_end');
   }
 
   let spd = 0, dist = 0, running = false, noiseRadius = 0, movingAgainstWind = false;
@@ -7888,7 +7930,7 @@ function stepFrame(dt, t, skipRender){
       sinceBelowMinHunters = 0;
     }
   }
-  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius, windAssistNowActive);   // predators only hunt while you're actually playing
+  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius, windAssistNowActive, rainfallNoiseScalar(rainfallAmount));   // predators only hunt while you're actually playing
   if(playing) updateRoosts(dt, running);   // LUL-1914/LUL-2389: roost feedback, same gate as predator AI
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
@@ -8238,6 +8280,7 @@ function stepFrame(dt, t, skipRender){
       audio.wg.gain.setTargetAtTime((0.05 + move01*0.10) * fogTideWindGainMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * TOD_AUDIO.windGainMul, now, 0.3);
       audio.wf.frequency.setTargetAtTime(320 + move01*900, now, 0.3);
       audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuildAt(player.x, player.z, fogTideBuild, WRAP_SPAN, WRAP_SPAN)) * TOD_AUDIO.droneGainMul, now, 0.3);
+      audio.rg.gain.setTargetAtTime(0.04 * rainfallBuild, now, 0.3);
       audio.twinkle -= dt;
       if(audio.twinkle <= 0){
         twinkle(0.05, false);
@@ -8418,6 +8461,7 @@ function stepFrame(dt, t, skipRender){
         case 'decoyScent': return [playerInDecoyScentSiteIndex !== -1, null];
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
         case 'duskLion': return [runElapsed >= DUSK_LION_SIGHT_START_S, null];   // LUL-4889: time-only, no world anchor
+        case 'rainfall': return [rainfallActive, null];
         default: return [false, null];
       }
     }
@@ -8432,6 +8476,7 @@ function stepFrame(dt, t, skipRender){
         case 'mudTrapDecoy': return playerInDecoyScentSiteIndex === -1 || !isInMudZone(player.x, player.z, mudZones);
         case 'windPulse': return !predators.some(p => p.windPauseT > 0);
         case 'veilOverload': return veilOverloadChargeT <= 0;
+        case 'rainfall': return !rainfallActive;
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
         case 'beaconEvasion': return missionCanComplete;
