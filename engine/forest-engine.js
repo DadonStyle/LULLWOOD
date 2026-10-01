@@ -1983,7 +1983,7 @@ function makePredator(kind){
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:rng()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0, standX:0, standZ:0,
-    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0, scentVeilReady:false,
+    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0, scentVeilReady:false, investigateCueCount:0,
     commitDir: null, commitT: 0, lastSteerState: 'roam', searchPath: null,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0, sightFlicker:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
@@ -2056,7 +2056,7 @@ function placePredators(){
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
     if(p.parked) p.g.visible = false;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
-    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.windPauseCooldownT=0; p.scentLock=0; p.scentCalls=0; p.scentVeilReady=false;
+    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.windPauseCooldownT=0; p.scentLock=0; p.scentCalls=0; p.scentVeilReady=false; p.investigateCueCount=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0; p.sightFlicker=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
@@ -2179,7 +2179,7 @@ function repositionBeaconHunterForMission(mission){
   // first tick whenever state !== 'chase', the same way a normal placePredators() restart
   // relies on, with no explicit reset there either).
   hunter.state='roam'; hunter.spotted=false; hunter.inv=''; hunter.sniffsLeft=0; hunter.sniffTimer=0; hunter.callTimer=0;
-  hunter.stuckT=0; hunter.trail=[]; hunter.trailT=0; hunter.reroute=0; hunter.hunt=DIFFICULTY_PRESETS[difficulty].startHunting; hunter.alert=0; hunter.windPauseT=0; hunter.windPauseCooldownT=0; hunter.scentLock=0; hunter.scentCalls=0; hunter.scentVeilReady=false;
+  hunter.stuckT=0; hunter.trail=[]; hunter.trailT=0; hunter.reroute=0; hunter.hunt=DIFFICULTY_PRESETS[difficulty].startHunting; hunter.alert=0; hunter.windPauseT=0; hunter.windPauseCooldownT=0; hunter.scentLock=0; hunter.scentCalls=0; hunter.scentVeilReady=false; hunter.investigateCueCount=0;
   hunter.packTimer=0; hunter.flankX=0; hunter.flankZ=0; hunter.sniffImmuneT=0; hunter.sightFlicker=0;
   hunter.lkpX=0; hunter.lkpZ=0; hunter.lkpSweeps=0;
   hunter.charge=null; hunter.chargeDirX=0; hunter.chargeDirZ=0; hunter.chargeCooldown=0; hunter.chargeRecoveryT=0;
@@ -2531,6 +2531,7 @@ function hearNoise(p){
   p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
   leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
+  investigateCue(p);              // LUL-5626: searching tone on investigate entry
   if(captionsOn){
     const b = bearingOf(p.x, p.z, player.x, player.z, player.yaw);
     const near = b.dist < 30 ? 'near' : 'far';
@@ -2547,6 +2548,7 @@ function hearThrowableNoise(p, tx, tz, investigateTime = THROWABLE_INVESTIGATE_T
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: tx, z: tz };
   p.noiseTargetT = rnd(investigateTime[0], investigateTime[1]);
+  investigateCue(p);              // LUL-5626: searching tone on investigate entry
   if(captionsOn) pushState({ caption: `${p.kind} investigates a noise`, captionId: ++captionSeq });
 }
 // LUL-1255 (Ship 1 wayfinding S3): modeled on hearThrowableNoise() above, not
@@ -2563,6 +2565,7 @@ function hearCry(p){
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: baby.x, z: baby.z };
   p.noiseTargetT = Infinity;
+  investigateCue(p);              // LUL-5626: searching tone on investigate entry
 }
 
 // LUL-1258: the mission waypoint's hum -- same tempo-carries-distance shape
@@ -2815,6 +2818,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
         // rather than snapping straight back into a full chase mid-overshoot
         // -- it just sprinted past you and has to notice you again.
         p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 3);
+        investigateCue(p);        // LUL-5626: searching tone on investigate entry
         endChargeHud();
       } else {
         p.charge = cs;
@@ -2877,7 +2881,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
         // (non-escalated) hunts, e.g. LUL-26 preset `startHunting`, still fall through to
         // the pre-existing investigate/approach collapse below, unchanged.
         if(p.scentLock > 0){ p.state='chase'; p.hunt=false; }
-        else { p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
+        else { p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; investigateCue(p); }
       }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt', predators.indexOf(p));   // LUL-1194: the 30s force-hunt escalation caught up
@@ -2950,7 +2954,13 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
       // p.sightFlicker is a short, separate grace for exactly that: refreshed here while
       // sight actually holds, consulted only at this gate.
       if(canSee(p, dist)) p.sightFlicker = SIGHT_FLICKER_TIME;
-      if(shouldDowngradeChase(p.scentLock, p.sightFlicker, canSee(p, dist))){ p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); }
+      // LUL-5626: a real investigate-state entry site not on the ticket's line list
+      // (chase -> investigate on losing sight/scentLock expiry) -- gets the same cue
+      // as the other six for the same reason they do: it's a real p.state='investigate'
+      // assignment reachable in normal play, not a qa* hook (contrast :5229 below, left
+      // untouched since qaStagePredatorGiveUp sets investigate/sniff directly for test
+      // staging only).
+      if(shouldDowngradeChase(p.scentLock, p.sightFlicker, canSee(p, dist))){ p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); investigateCue(p); }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -2991,6 +3001,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
         // shouldGiveUpChase()'s distance/timer give-up below to eventually fire.
         else if(hidden && isCaught(dist, p.rad)){
           p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
+          investigateCue(p);      // LUL-5626: searching tone on investigate entry
         }
         // LUL-4893 (Predator Pause): a wind-gated freeze on ordinary chase pursuit,
         // evaluated only here -- charge/sightLock/alert/reroute/searchPath/hunt all
@@ -4080,6 +4091,28 @@ function predatorCall(kind, big, p, panVal){
     o.connect(lp); lp.connect(g); g.connect(dest); g.connect(conv); o.start(t); o.stop(t+1.25);
   }
 }
+// LUL-5626: investigate-state entry cue -- a low, two-pulse "searching" tone
+// distinct from predatorCall()'s per-species howl/roar/growl (Q7/Q9 of the
+// Feature Checklist: this must not reuse the chase call verbatim). Kind-
+// agnostic on purpose -- each entry site already pushes its own caption
+// naming the species, so this only needs to say "something is searching for
+// you," not which animal. Mirrors sniff()'s two-pulse shape just below, at a
+// lower register and longer per-pulse duration so the two stay audibly apart.
+function investigateCue(p){
+  p.investigateCueCount = (p.investigateCueCount || 0) + 1;   // LUL-5626: counted before the gate, assertable with soundOn:false
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t0 = ctx.currentTime;
+  const vol = 0.16 * callVolumeMul(Math.hypot(p.x - player.x, p.z - player.z));
+  const pan = ctx.createStereoPanner();
+  pan.pan.value = bearingPan(bearingOf(p.x, p.z, player.x, player.z, player.yaw));
+  pan.connect(master); pan.connect(conv);
+  for(let i=0;i<2;i++){
+    const t = t0 + i*0.55;
+    const o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(120,t); o.frequency.exponentialRampToValueAtTime(95,t+0.4);
+    const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(vol,t+0.08); g.gain.exponentialRampToValueAtTime(0.0001,t+0.45);
+    o.connect(g); g.connect(pan); o.start(t); o.stop(t+0.5);
+  }
+}
 // two quick snorts as it sniffs you out
 function sniff(){
   if(!audio || !soundOn) return;
@@ -4838,7 +4871,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // staging scentLock>0 in 'approach' needs the predator's own real position over
     // several ticks to measure whether its path drifts downwind, and `inv` to confirm
     // it's still in the 'approach' sub-phase this bias only applies to.
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null, x: p.x, z: p.z, inv: p.inv };
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null, x: p.x, z: p.z, inv: p.inv, investigateCueCount: p.investigateCueCount ?? 0 };
   };
   // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
   // stage a "first sighted" scenario -- effectiveDetect() applies

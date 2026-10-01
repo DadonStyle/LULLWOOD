@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8468 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7403, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8501 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7436, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1712,7 +1712,7 @@ not final tuning.
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7006) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L7031) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L3355) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1770,7 +1770,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4351) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4365) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
@@ -3057,7 +3057,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6883) and `windAssistEndCue()` (L6892), edge-triggers on the combined
+`windAssistStartCue()` (L6916) and `windAssistEndCue()` (L6925), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3425,3 +3425,39 @@ check) with its `noiseTarget` locked onto the live player; the player walks into
 the far side, and the wolf's `noiseTarget` snaps to the site's own `x`/`z` with `exitCueCount`
 incrementing exactly once on the exit edge -- proving the redirect actually retargets a live chase,
 not just that the flag transitions.
+
+### Predator Investigate Audio Cue (LUL-5626, accepted LUL-5597)
+
+Every real transition into `'investigate'` state had a per-site caption but zero audio -- the
+first time a predator starts searching for you only read on screen, not in the mix. `predatorCall()`
+stays the chase-state cue (howl/roar/growl, kind-specific); investigate needed its own, distinct
+cue per Q7/Q9 of the Feature Checklist (don't reuse the chase call verbatim, don't duplicate an
+existing surface).
+
+**Audio**: `investigateCue(p)` (`engine/forest-engine.js:4101-4115`) -- a low, two-pulse searching
+tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since each entry site's own
+caption already names the species. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
+and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
+growl, so it reads as coming from the animal, not a flat stereo blip.
+
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (`:2531`),
+`hearThrowableNoise()` (`:2546`), `hearCry()` (`:2562`), the charge-overshoot handoff (`:2817`),
+the 30s force-hunt escalation losing sight (`:2880`), the chase downgrade on losing sight/scentLock
+expiry via `shouldDowngradeChase()` (`:2953` -- a seventh real site found independently of the
+driving ticket's six-line list, included for the same reason the other six are: a real
+`p.state='investigate'` assignment reachable in normal play), and the hidden-mid-chase
+contact-range handoff (`:2993`). Not wired at `qaStagePredatorGiveUp`'s direct `investigate`/`sniff`
+force-set (`:5229`) -- that's test staging, not a real-play entry (Q1.5: no real trigger reachability
+there to cite).
+
+**QA hooks**: no new hook function -- `investigateCueCount` (per-predator, counted before the
+audio/soundOn gate, same "counter-before-gate" idiom as `qaProbeRoostState`'s `deniedCueCount`) is
+added to the existing `qaProbePredatorState(kind)`'s return object (`engine/forest-engine.js:4857`),
+and reset to 0 alongside `scentCalls` at predator spawn/restart (`:1986`, `:2059`, `:2182`).
+
+Covered by `e2e/throwables.spec.ts` ("a thrown rock lures a nearby roaming predator into
+investigate"): a real player-thrown rock lands within `THROWABLE_NOISE_RADIUS` of a staged roaming
+wolf (`qaStagePredatorNearThrowLanding`, not a synthetic `hearThrowableNoise()` call), driving the
+real `checkThrowableNoise()`/`hearThrowableNoise()` path; the test asserts `investigateCueCount`
+goes from 0 to >=1 once the wolf reaches `'investigate'`, proving the cue fires off a real trigger,
+not just that the state flag flips.
