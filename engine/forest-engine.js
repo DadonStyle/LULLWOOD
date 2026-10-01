@@ -2914,7 +2914,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
       }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt', predators.indexOf(p));   // LUL-1194: the 30s force-hunt escalation caught up
-        else { desx=ux; desz=uz; speed=p.spec.speed; }
+        else { desx=ux; desz=uz; speed=p.spec.speed*pSpeedScaleMul; }
         if(dist < 8) p.hunt = false;                   // reached you → back to normal
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
@@ -2989,7 +2989,32 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
       // assignment reachable in normal play, not a qa* hook (contrast :5229 below, left
       // untouched since qaStagePredatorGiveUp sets investigate/sniff directly for test
       // staging only).
-      if(shouldDowngradeChase(p.scentLock, p.sightFlicker, canSee(p, dist))){ p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); investigateCue(p); }
+      // LUL-5649: a long blind scent-chase (never sighted, so sightFlicker stays at its 0
+      // default the whole time, e.g. a beaconHunter/scentOnto() lock expiring far from the
+      // player -- e2e/beacon-hunter.spec.ts's 'give-up' test is the existing, already-passing
+      // precedent for this exact shape, asserting 'investigate') crosses both this and
+      // shouldGiveUpChase()'s scentLock<=0 gate on the same tick scentLock expires --
+      // shouldDowngradeChase() wins every time since it's checked first, so the
+      // shouldGiveUpChase() call below (:3068) is unreachable for a genuine blind chase; it
+      // only ever fires for a sighted chase whose distance crosses the leash while sight is
+      // still fresh. canCompleteGhost()/canCompleteChapelVeilEscapeStage2() were wired only
+      // at that unreachable-for-blind-chases call site, so neither mission could ever
+      // complete via the blind-chase give-up both are designed around. Checked here too,
+      // not swapped ahead of shouldDowngradeChase, to keep beacon-hunter.spec.ts's asserted
+      // 'investigate' outcome (and every other scentLock consumer's identical behavior)
+      // unchanged -- only the mission-completion side effect was missing, not the state.
+      // Gated on the same `dist > effectiveDetect(p)*1.5` leash shouldGiveUpChase() itself
+      // requires (not just scentLock/sightFlicker/canSee): without it, any ordinary close-
+      // range sight break -- ducking behind any prop for 0.4s mid-chase -- would complete
+      // Ghost/chapelVeilEscape the instant the player also holds Veil Overload, nothing to
+      // do with actually escaping the chase at distance.
+      if(shouldDowngradeChase(p.scentLock, p.sightFlicker, canSee(p, dist))){
+        p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); investigateCue(p);
+        if(dist > effectiveDetect(p)*1.5){
+          if(mission && canCompleteGhost(mission, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission);
+          if(mission && canCompleteChapelVeilEscapeStage2(mission, chapelVeilEscapeChapelDone, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission);
+        }
+      }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -3046,11 +3071,17 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
         // pursues at full speed during the cooldown window; only the retrigger check is
         // suppressed.
         else if(p.windPauseT > 0){ p.windPauseT = Math.max(0, p.windPauseT - dt); speed = 0; }
-        else if(p.windPauseCooldownT > 0){ p.windPauseCooldownT = Math.max(0, p.windPauseCooldownT - dt); desx=ux; desz=uz; speed=p.spec.speed; }
+        else if(p.windPauseCooldownT > 0){ p.windPauseCooldownT = Math.max(0, p.windPauseCooldownT - dt); desx=ux; desz=uz; speed=p.spec.speed*pSpeedScaleMul; }
         else if(shouldWindPause(ux, uz, -Math.sin(player.yaw), -Math.cos(player.yaw), windX, windZ)){
           p.windPauseT = WIND_PAUSE_DURATION; p.windPauseCooldownT = WIND_PAUSE_COOLDOWN; speed = 0; windPulseCue();
         }
-        else { desx=ux; desz=uz; speed=p.spec.speed; }
+        // LUL-5649: this plain chase-pursuit branch (and :3049/:2917's hunt-escalation sibling)
+        // was the one speed site in this function not folded into pSpeedScaleMul (see :2777's
+        // comment) -- a chasing predator crossed the shrunk qaWorld=micro map at full species
+        // speed (8.5-9.2u/s), 5x the scaled ~1.7u/s every other branch already used, closing a
+        // 40u gap in ~5s instead of ~24s. Full map is CONFIG.speedScaleMul=1 (no-op), so this
+        // never showed up outside the micro-world e2e suite.
+        else { desx=ux; desz=uz; speed=p.spec.speed*pSpeedScaleMul; }
         if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; if(mission && canCompleteGhost(mission, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); if(mission && canCompleteChapelVeilEscapeStage2(mission, chapelVeilEscapeChapelDone, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }

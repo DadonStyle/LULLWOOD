@@ -4,7 +4,18 @@
 // (LUL-5486/PR#937): no new completion logic, reuses canCompleteMission() unchanged --
 // see e2e/mission-progression.spec.ts's oakHollow case, which this file mirrors.
 import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { boot, enter, qaHook, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
+
+// Every key in HINT_PRIORITY (engine/forest-engine.js) ahead of 'skyCompassNavigation' --
+// same technique as e2e/wind-pulse.spec.ts's HINTS_AHEAD_OF_WIND_PULSE. Without this,
+// 'landmark' (unconditionally eligible from frame 1) wins the slot first every time.
+const HINTS_AHEAD_OF_SKY_COMPASS_NAVIGATION = ['scent', 'landmark', 'deepwater', 'oakHollow', 'beaconEvasion'];
+async function preSeenHintsAheadOfSkyCompassNavigation(page: Page) {
+  await page.addInitScript((keys) => {
+    for (const k of keys) window.localStorage.setItem('lullwood:hints:' + k, '1');
+  }, HINTS_AHEAD_OF_SKY_COMPASS_NAVIGATION);
+}
 
 test.describe('skyCompassNavigation (near/untimed)', () => {
   test('panel shows the name and glyph, no timer element, completes for the placeholder reward', async ({ page }) => {
@@ -39,6 +50,7 @@ test.describe('skyCompassNavigation (near/untimed)', () => {
 
   test('shows the first-encounter hint caption naming the Sky Compass while the mission is active', async ({ page }) => {
     const errs = trackConsoleErrors(page);
+    await preSeenHintsAheadOfSkyCompassNavigation(page);
     await boot(page, { qaHooks: true, qaMissionKind: 'skyCompassNavigation' });
     await enter(page);
 

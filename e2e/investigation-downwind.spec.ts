@@ -80,10 +80,12 @@ test('#windIndicator gains windIndicatorInvestigationActive while a scent-locked
   await expect(page.locator('#windIndicator')).toHaveClass(/windIndicatorInvestigationActive/);
 
   // scentLock decays unconditionally every tick (lib/game/predator.ts) -- run
-  // past its expiry and the class must drop with it.
+  // past its expiry and the class must drop with it. tickTimers() doesn't clamp
+  // at zero (predator.test.ts: "can cross zero in a single call, no clamping"),
+  // so the last tick can leave scentLock a hair below 0, not exactly 0.
   await qaHook(page, 'qaAdvance', stepsFor(1));
   const after = await qaHook(page, 'qaProbePredatorState', 'wolf');
-  expect(after.scentLock).toBe(0);
+  expect(after.scentLock).toBeLessThanOrEqual(0);
   await expect(page.locator('#windIndicator')).not.toHaveClass(/windIndicatorInvestigationActive/);
 });
 
@@ -102,10 +104,21 @@ test('windIndicatorInvestigationActive is withheld under reducedMotion, even wit
   await expect(page.locator('#windIndicator')).not.toHaveClass(/windIndicatorInvestigationActive/);   // Hud.tsx withholds the class
 });
 
+// Every key in HINT_PRIORITY (engine/forest-engine.js) ahead of 'downwindInvestigation' --
+// same technique as e2e/wind-pulse.spec.ts's HINTS_AHEAD_OF_WIND_PULSE. Without this,
+// 'landmark' (unconditionally eligible from frame 1) or 'wolf' (this test's own staged
+// predator) wins the slot first every time.
+const HINTS_AHEAD_OF_DOWNWIND_INVESTIGATION = ['scent', 'landmark', 'deepwater', 'oakHollow', 'beaconEvasion', 'skyCompassNavigation', 'wolf', 'bear', 'lion', 'beaconHunter', 'stamina', 'windAssist', 'mudTrapDecoy'];
+async function preSeenHintsAheadOfDownwindInvestigation(page: Page) {
+  await page.addInitScript((keys) => {
+    for (const k of keys) window.localStorage.setItem('lullwood:hints:' + k, '1');
+  }, HINTS_AHEAD_OF_DOWNWIND_INVESTIGATION);
+}
+
 test('the downwindInvestigation hint caption fires once with the spec\'s exact copy while the gate is active', async ({ page }) => {
+  await preSeenHintsAheadOfDownwindInvestigation(page);
   await boot(page, { qaHooks: true });
   await enter(page);
-  await qaHook(page, 'qaResetHints');
 
   await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: 50, z: 0, state: 'investigate', inv: 'approach', scentLock: 5 }] });
   await qaHook(page, 'qaSetWindDirection', 0, 1);
