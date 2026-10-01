@@ -54,9 +54,35 @@
 //     -- so classify new simulation files here by hand against the same
 //     definition rather than assuming the old blanket rule still applies.
 //   - `package.json` / lockfile are C: a dependency bump is arbitrary code.
+//   - A spec/test diff (`e2e/**`, `*.test.*`, `*.spec.*`) only stays Tier A
+//     when its patch adds new coverage, not just new lines. LUL-5693/PR#971:
+//     an existing assertion's numeric budget got retuned behind 3 lines of
+//     new explanatory comment per call site, so the diff was net +8 lines
+//     (10 added, 2 removed) -- positive by any plain line-count measure --
+//     and auto-merged as Tier A with zero review. A line count can't tell
+//     "new test" from "old test, new comment", so this counts `expect(`
+//     occurrences in the patch's added vs. removed lines instead: a
+//     genuinely new assertion or a new `test`/`it`/`describe` block stays A;
+//     a diff that doesn't net-add an `expect(` call -- a value-only retune
+//     (PR#971: 2 removed, 2 added, net zero) or a pure deletion (weakened/
+//     disguised coverage) -- fails closed to C, the same tier this studio's
+//     own convention already hand-assigns budget retunes (LUL-5670/LUL-5673,
+//     cited on the ticket). Needs the patch text, which GitHub omits for
+//     very large/binary diffs (`.../pulls/{n}/files` response, `patch` field
+//     absent) -- falls back to the raw additions/deletions count if so
+//     (weaker, but strictly better than skipping the check). Callers that
+//     only have bare paths (the CLI argv form, this file's own tests) have
+//     no diff at all to give it, so the downgrade only fires when a caller
+//     supplies one -- both production consumers (tier-approve.yml,
+//     check-review-gap.mjs) always do.
 //
 // Usage: node scripts/pr-tier.mjs <file> [file...]
-//        node scripts/pr-tier.mjs --stdin   (newline-separated paths)
+//        node scripts/pr-tier.mjs --stdin
+//          accepts either bare paths (one per line) or, to enable the
+//          spec/test retune check above, one JSON object per line:
+//          `{"filename":"...","additions":N,"deletions":N,"patch":"..."}`
+//          -- exactly the fields GitHub's own `.../pulls/{n}/files` response
+//          gives for each changed file.
 
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -92,22 +118,82 @@ const rules = [
   [/^components\//, 'B'],
 ];
 
-function tierOf(file) {
-  for (const [re, tier] of rules) if (re.test(file)) return tier;
+// The two Tier A rules above that cover spec/test files specifically (not
+// docs/public/md, which have no "assertion value" concept to retune).
+const SPEC_TEST_RULES = [/^e2e\//, /\.(test|spec)\.[jt]sx?$/];
+
+function isSpecOrTestPath(file) {
+  return SPEC_TEST_RULES.some((re) => re.test(file));
+}
+
+// Counts `expect(` occurrences among a unified diff's added/removed content
+// lines (never the `+++`/`---` file-header lines) and reports whether a new
+// `test`/`it`/`describe` registration was added. Comment-only lines don't
+// contain `expect(` or a block registration, so padding a retune with
+// explanatory comments (PR#971's exact shape) doesn't change the verdict.
+function patchAddsNewCoverage(patch) {
+  let added = 0;
+  let removed = 0;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    if (line.startsWith('+')) {
+      if (/\b(test|it|describe)\s*\(/.test(line)) return true;
+      if (/\bexpect\s*\(/.test(line)) added++;
+    } else if (line.startsWith('-')) {
+      if (/\bexpect\s*\(/.test(line)) removed++;
+    }
+  }
+  return added > removed;
+}
+
+// `meta` is optional: GitHub's own per-file `{ additions, deletions, patch }`
+// from `.../pulls/{n}/files`. See the "spec/test diff" bullet above for why
+// this is the signal, when it fires, and the additions/deletions fallback
+// for when `patch` isn't available.
+function tierOf(file, meta) {
+  for (const [re, tier] of rules) {
+    if (!re.test(file)) continue;
+    if (tier === 'A' && isSpecOrTestPath(file) && meta) {
+      const newCoverage =
+        typeof meta.patch === 'string'
+          ? patchAddsNewCoverage(meta.patch)
+          : Number.isFinite(meta.additions) && Number.isFinite(meta.deletions) && meta.additions > meta.deletions;
+      if (!newCoverage) return 'C';
+    }
+    return tier;
+  }
   return 'C'; // unrecognised path -> fail closed
 }
 
 const rank = { A: 0, B: 1, C: 2 };
 
+// Parses one `--stdin` line into a path plus optional meta. A line that
+// parses as a JSON object with a `filename` string is the real consumers'
+// `{filename, additions, deletions, patch}` form; anything else (including
+// every bare path, which is not valid JSON) comes back with
+// `meta: undefined`, matching tierOf's "no signal, no downgrade" contract.
+function parseEntry(line) {
+  try {
+    const obj = JSON.parse(line);
+    if (obj && typeof obj === 'object' && typeof obj.filename === 'string') {
+      return { file: obj.filename, meta: obj };
+    }
+  } catch {
+    // not JSON -- bare path line, meta stays undefined
+  }
+  return { file: line, meta: undefined };
+}
+
 // Classifies a whole file list to the single worst tier. Shared with
 // check-review-gap.mjs (LUL-1111) so it doesn't re-derive tier rules to
 // decide whether a zero-review PR is Tier-A-only and can be skipped.
-function classify(files) {
+function classify(lines) {
   let worst = 'A';
-  for (const f of files) {
-    const t = tierOf(f);
+  for (const line of lines) {
+    const { file, meta } = parseEntry(line);
+    const t = tierOf(file, meta);
     if (rank[t] > rank[worst]) worst = t;
-    if (process.env.PR_TIER_VERBOSE) console.error(`  ${t}  ${f}`);
+    if (process.env.PR_TIER_VERBOSE) console.error(`  ${t}  ${file}`);
   }
   return worst;
 }
