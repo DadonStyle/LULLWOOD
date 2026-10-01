@@ -7,7 +7,7 @@
 // required-status-check context named `local-qa` on version-cut PRs
 // (release/next -> main) via the commit Statuses API.
 //
-// Two modes, selected by GITHUB_EVENT_NAME (set by the calling workflow):
+// Three modes, selected by GITHUB_EVENT_NAME (set by the calling workflow):
 //
 //   pull_request (opened/reopened/synchronize, base=main): set `local-qa`
 //   to pending on the PR's current head sha. Every push to release/next
@@ -21,6 +21,22 @@
 //   base is `main` and whose CURRENT head sha starts with the comment's
 //   sha before setting success/failure -- a comment against an old sha
 //   (superseded by a later push) must not move the gate.
+//
+//   workflow_dispatch: manual admin trigger, two independent uses selected
+//   by which inputs are set --
+//     - inputs.sha + inputs.verdict (PASS|FAIL): set `local-qa` directly to
+//       success/failure on that sha, the same effect issue_comment would
+//       have. LUL-5660: GitHub resolves repo-level-event triggers like
+//       issue_comment from the DEFAULT BRANCH's copy of the workflow file,
+//       not the PR's head/base ref -- so the very first version-cut PR that
+//       lands this workflow on main has no issue_comment listener for its
+//       own sha and the tester's real PASS|FAIL comment is a structural
+//       no-op. This input lets an admin manually replay that comment's
+//       verdict once the gate is bootstrapped. No PR-head-match check (the
+//       issue_comment path's staleness guard) applies here -- it's a
+//       deliberate one-sha admin write, not an automatic listener.
+//     - inputs.pr_number (no sha/verdict): back-fill a pending status for a
+//       PR's current head, e.g. right after this workflow first lands.
 //
 // Required ruleset wiring (a one-time ruleset PATCH, see LUL-5620 ticket):
 // main's required_status_checks must list {"context": "local-qa"} so
@@ -95,6 +111,30 @@ async function handleIssueComment(repo, token, event) {
   await setStatus(repo, token, pr.head.sha, verdict === 'PASS' ? 'success' : 'failure', comment.body, comment.html_url);
 }
 
+async function handleWorkflowDispatch(repo, token, event) {
+  const inputs = event.inputs || {};
+  if (inputs.sha && inputs.verdict) {
+    const verdict = inputs.verdict.toUpperCase();
+    if (verdict !== 'PASS' && verdict !== 'FAIL') {
+      throw new Error(`verdict input must be PASS or FAIL, got: ${inputs.verdict}`);
+    }
+    await setStatus(
+      repo,
+      token,
+      inputs.sha,
+      verdict === 'PASS' ? 'success' : 'failure',
+      `manual workflow_dispatch replay: local-qa: ${verdict} @${inputs.sha}`,
+    );
+    return;
+  }
+  if (inputs.pr_number) {
+    const pr = await ghFetch(`https://api.github.com/repos/${repo}/pulls/${inputs.pr_number}`, token);
+    await setStatus(repo, token, pr.head.sha, 'pending', 'awaiting local-qa PASS|FAIL comment for this sha');
+    return;
+  }
+  console.log('workflow_dispatch with no sha+verdict and no pr_number -- nothing to do');
+}
+
 async function main() {
   const repo = process.env.GITHUB_REPOSITORY || DEFAULT_REPO;
   const token = process.env.GITHUB_TOKEN;
@@ -106,6 +146,8 @@ async function main() {
     await handlePullRequest(repo, token, event);
   } else if (eventName === 'issue_comment') {
     await handleIssueComment(repo, token, event);
+  } else if (eventName === 'workflow_dispatch') {
+    await handleWorkflowDispatch(repo, token, event);
   } else {
     throw new Error(`unsupported GITHUB_EVENT_NAME: ${eventName}`);
   }
