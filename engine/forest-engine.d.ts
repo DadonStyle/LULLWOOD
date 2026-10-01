@@ -150,10 +150,13 @@ declare global {
        * (roost (x,z) for slice-b's player-sprint flush, thrown-object landing point, or null).
        * LUL-5402: `x`/`z`/`inv` added for the downwind-investigation bias e2e coverage --
        * `inv` confirms the predator is still in the 'approach' sub-phase biasTowardWind()
-       * gates on, `x`/`z` are its real per-tick position for measuring path drift. */
+       * gates on, `x`/`z` are its real per-tick position for measuring path drift.
+       * LUL-5626: `investigateCueCount` is investigateCue()'s own fire count for this
+       * predator, counted before its audio/soundOn gate (same "counter-before-gate"
+       * idiom as qaProbeRoostState's deniedCueCount) so it's assertable with sound off. */
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
-      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number; noiseTarget: { x: number; z: number } | null; x: number; z: number; inv: string } | null;
+      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number; noiseTarget: { x: number; z: number } | null; x: number; z: number; inv: string; investigateCueCount: number } | null;
       /** LUL-2878: `kind`'s scaled effectiveDetect() this tick (veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul applied on top of tuning.js's unscaled spec.detect), or null if not spawned. Use this, not the tuning constant, to stage a distance that will actually pass canSee()'s detect gate. */
       qaProbeEffectiveDetect?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
