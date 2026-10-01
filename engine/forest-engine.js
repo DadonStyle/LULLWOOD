@@ -6219,7 +6219,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const r = ROOSTS[i];
     if(!r) return null;
     const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
-    player.x = rx; player.z = rz + 2;
+    // LUL-5691: must land a throw exactly on the roost regardless of CONFIG.roostScaleMul --
+    // the old fixed +2u offset left a 16u landing-to-roost gap (THROWABLE_THROW_DISTANCE=18
+    // minus 2), inside full-map's unscaled 20u burst radius but outside qaWorld=micro's
+    // scaled radius (20u * roostScaleMul=0.2 = 4u), so a single throw silently missed.
+    player.x = rx; player.z = rz + THROWABLE_THROW_DISTANCE;
     return { i, x: rx, z: rz };
   };
   // [QA-HOOK] LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a
