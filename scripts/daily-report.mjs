@@ -138,8 +138,22 @@ const SECTION_BY_TITLE = new Map(SECTIONS.map((s) => [s.title.toLowerCase(), s])
 // ---------------------------------------------------------------------------
 // git plumbing
 
+// listFirstParentCommits() below walks the full first-parent history of
+// release/next every run, regardless of --since/--until (filtering happens
+// after, in buildEntriesByDay) -- that output grows every day and crossed
+// Node's default 1MB execFileSync maxBuffer around commit #818 (LUL-5613,
+// observed as a raw ENOBUFS rather than a clean maxBuffer error on the
+// Actions runner). Set a generous explicit ceiling so this scales with repo
+// history instead of recurring every few hundred commits.
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+
 function git(args, cwd = REPO_ROOT) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: GIT_MAX_BUFFER,
+  });
 }
 
 const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
