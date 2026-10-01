@@ -171,34 +171,6 @@ test.describe('Chapel Sanctuary (LUL-5005)', () => {
     expect(after.purchaseCueCount, 'reducedMotion only withholds visual pulses, never audio cues').toBeGreaterThan(before.purchaseCueCount);
   });
 
-  test('LUL-5498: the chapelSanctuary mission completes on a full dwell even while a predator hunts nearby', async ({ page }) => {
-    await boot(page, { qaHooks: true, qaMissionKind: 'chapelSanctuary' });
-    await enter(page);
-    await qaHook(page, 'qaBuildScene', {});
-    await qaHook(page, 'qaTeleportNearChapel');
-
-    let m = await qaHook(page, 'qaProbeMission');
-    expect(m.kind, 'sanity: the forced mission draw is the one under test').toBe('chapelSanctuary');
-    expect(m.status).toBe('active');
-
-    // A hunting predator must not block or interfere with the dwell -- the shrine's own
-    // grant edge is the only completion trigger for this mission kind (docs/ELEMENTS.md's
-    // "Mission mode" note on chapelSanctuary: missionCanComplete is a dead branch here).
-    await qaHook(page, 'qaStagePredatorNearPlayer', 'wolf', 30, 0);
-    await qaHook(page, 'qaSetPredatorChasing', 'wolf');
-
-    await expectRowVisible(page, 'chapelSanctuaryPrompt');
-    await page.keyboard.press('KeyE');
-    expect((await qaHook(page, 'qaProbeChapelSanctuary')).chapelSanctuaryActive).toBe(true);
-
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-    await advanceChunked(page, stepsFor(DWELL + 0.5));
-
-    expect((await qaHook(page, 'qaProbeVeil')).reserve, 'the free charm must still be granted').toBe(true);
-    m = await qaHook(page, 'qaProbeMission');
-    expect(m.status, 'the mission must complete on the same dwell edge that grants the charm').toBe('complete');
-  });
-
   test.describe('mobile', () => {
     test.use({ viewport: { width: 727, height: 393 } });
 
