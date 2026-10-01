@@ -5,6 +5,13 @@
 // e2e/ghost-veil-escape-mission.spec.ts's real chase staging (qaBuildScene + qaSetFixedStep/
 // qaAdvance to decay scentLock + KeyQ) -- no new QA hooks, per the CTO-corrected plan's own
 // Q13 answer (both real-play patterns already exist and cover this combo's two edges).
+//
+// LUL-5644: `boot()` must pin `qaHour` -- see e2e/beacon-hunter.spec.ts's header (LUL-5146)
+// for the full mechanism. Both tests' give-up window (a fixed 20-tick qaAdvance after Veil
+// Overload activates) is timed against shouldGiveUpChase()'s distance-vs-effectiveDetect()
+// math, which folds in the same timeOfDayDetectMul() this file never pinned -- an unpinned
+// 'night' hour shrank detectRange enough that the chase hadn't fully decayed to 'roam' (stuck
+// at 'investigate') by the time the fixed window ran out. Not an engine regression.
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook, advanceChunked, expectRowVisible, trackConsoleErrors, expectNoConsoleErrors } from './helpers';
 
@@ -17,7 +24,7 @@ const SCENT_TRACK_TICKS = 400;
 test('completing the chapel dwell then a veil-overload chase escape completes chapelVeilEscape', async ({ page }) => {
   test.setTimeout(60_000);
   const errs = trackConsoleErrors(page);
-  await boot(page, { qaHooks: true, qaMissionKind: 'chapelVeilEscape' });
+  await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'chapelVeilEscape' });
   await enter(page);
 
   let mission = await qaHook(page, 'qaProbeMission');
@@ -70,7 +77,7 @@ test('completing the chapel dwell then a veil-overload chase escape completes ch
 test('a veil-overload chase escape before the chapel dwell completes does not complete chapelVeilEscape', async ({ page }) => {
   test.setTimeout(60_000);
   const errs = trackConsoleErrors(page);
-  await boot(page, { qaHooks: true, qaMissionKind: 'chapelVeilEscape' });
+  await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'chapelVeilEscape' });
   await enter(page);
 
   const mission = await qaHook(page, 'qaProbeMission');
