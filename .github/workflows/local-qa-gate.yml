@@ -21,6 +21,13 @@ name: local-qa gate
 #    GitHub App, so there is no check-run or workflow-run event to key off
 #    instead).
 #
+# Plus a manual workflow_dispatch escape hatch -- see LUL-5660: GitHub
+# resolves repo-level-event triggers like issue_comment from the DEFAULT
+# BRANCH's copy of this file, not the PR's head/base ref, so the first
+# version-cut PR that lands this workflow on main has no issue_comment
+# listener for its own sha and the tester's real comment is a no-op there.
+# `sha` + `verdict` inputs let an admin manually replay that comment.
+#
 # scripts/local-qa-gate.mjs does the real work; see that file for the
 # sha-matching rules this depends on.
 
@@ -36,6 +43,15 @@ on:
         description: 'Open cut PR number to backfill a pending local-qa status for (e.g. right after this workflow first lands)'
         required: false
         type: string
+      sha:
+        description: 'Commit sha to set the local-qa status on directly (use with verdict, e.g. bootstrap window LUL-5660)'
+        required: false
+        type: string
+      verdict:
+        description: 'PASS or FAIL -- replays the tester''s own comment verdict onto `sha` (use with sha)'
+        required: false
+        type: choice
+        options: [PASS, FAIL]
 
 permissions:
   contents: read
@@ -52,16 +68,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: backfill pending status for a manually-specified PR
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.pr_number != ''
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          sha="$(gh pr view "${{ github.event.inputs.pr_number }}" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
-          gh api "repos/$GITHUB_REPOSITORY/statuses/$sha" -f state=pending -f context=local-qa -f description='awaiting local-qa PASS|FAIL comment for this sha'
       - name: update local-qa gate
-        if: github.event_name == 'pull_request' || github.event_name == 'issue_comment'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
