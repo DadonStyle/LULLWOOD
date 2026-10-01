@@ -36,8 +36,13 @@ export function pickCommittedAvoidDirection(
   lookAhead: number = 2.4,
   nearLookAhead: number = 0.8,
   span: number = Infinity,
+  speedScaleMul: number = 1,
 ): CommittedSteerResult {
-  const nextT = Math.max(0, commitT - dt);
+  // LUL-5670: decay by dt*speedScaleMul, not raw dt, so the hold covers a
+  // constant ground distance (speed * AVOID_COMMIT_TIME) regardless of
+  // world-size/speed presets -- a slower predator needs the window held
+  // longer in sim-time to cover the same distance around an obstacle.
+  const nextT = Math.max(0, commitT - dt * speedScaleMul);
   if (commitDir && nextT > 0) {
     return { dir: commitDir, commitDir, commitT: nextT };
   }

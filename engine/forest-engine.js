@@ -2219,8 +2219,8 @@ function repositionBeaconHunterForMission(mission){
 // (pickAvoidDirection, unit tested there) -- this stays a thin wrapper that
 // injects the engine's own tree/landmark `grid` closure state, same pattern
 // as blockedR/blocked/hasLOS/findHideSpot above.
-function avoidDir(p, dx, dz, dt){
-  const r = pickCommittedAvoidDirection(p.commitDir, p.commitT, dt, p.x, p.z, p.moveRad, dx, dz, grid, coverGrid, CELL, undefined, undefined, WRAP_SPAN);
+function avoidDir(p, dx, dz, dt, speedScaleMul){
+  const r = pickCommittedAvoidDirection(p.commitDir, p.commitT, dt, p.x, p.z, p.moveRad, dx, dz, grid, coverGrid, CELL, undefined, undefined, WRAP_SPAN, speedScaleMul);
   p.commitDir = r.commitDir; p.commitT = r.commitT;
   return r.dir;
 }
@@ -3213,7 +3213,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist){
       }
     }
 
-    if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz, dt);
+    if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz, dt, pSpeedScaleMul);
 
     // LUL-5564: Mud Zone predator slowdown -- folded in once here, after every roam/chase/
     // investigate/flank/charge/hunt branch above has set `speed`, rather than at each

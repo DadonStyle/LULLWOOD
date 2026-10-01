@@ -65,6 +65,26 @@ test('pickCommittedAvoidDirection re-commits to a fresh side once the timer hits
   assert.equal(r.commitT, AVOID_COMMIT_TIME);
 });
 
+// LUL-5670: a speedScaleMul < 1 must decay the commit timer proportionally
+// slower, so the hold still covers a constant ground distance (speed *
+// AVOID_COMMIT_TIME) at reduced speeds instead of expiring before a slower
+// predator clears the obstacle it committed around.
+test('pickCommittedAvoidDirection with speedScaleMul < 1 decays the commit timer slower than the default', () => {
+  const held: [number, number] = [1, 0];
+  const full = pickCommittedAvoidDirection(held, 0.5, 0.2, 0, 0, 0.6, 0, 1, emptyGrid, emptyCoverGrid, CELL, 2.4, 0.8, Infinity, 1);
+  const scaled = pickCommittedAvoidDirection(held, 0.5, 0.2, 0, 0, 0.6, 0, 1, emptyGrid, emptyCoverGrid, CELL, 2.4, 0.8, Infinity, 0.2);
+  assert.ok(scaled.commitT > full.commitT);
+  assert.equal(full.commitT, 0.5 - 0.2 * 1);
+  assert.equal(scaled.commitT, 0.5 - 0.2 * 0.2);
+});
+
+test('pickCommittedAvoidDirection omitting speedScaleMul defaults to 1, matching existing callers', () => {
+  const held: [number, number] = [1, 0];
+  const omitted = pickCommittedAvoidDirection(held, 0.5, 0.2, 0, 0, 0.6, 0, 1, emptyGrid, emptyCoverGrid);
+  const explicit = pickCommittedAvoidDirection(held, 0.5, 0.2, 0, 0, 0.6, 0, 1, emptyGrid, emptyCoverGrid, CELL, 2.4, 0.8, Infinity, 1);
+  assert.equal(omitted.commitT, explicit.commitT);
+});
+
 // ---- findLocalPath -----------------------------------------------------------
 
 test('findLocalPath returns null when the start node is itself blocked', () => {
