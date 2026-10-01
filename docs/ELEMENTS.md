@@ -3072,6 +3072,18 @@ wind-assisted one; walking against the wind triggers neither the speed nor the n
 (scent-only, per LUL-3009); both updated copy strings; the `windAssist` hint caption appears
 once and not again after being marked seen.
 
+**LUL-5601/LUL-5605 (Wind Deafness in Mud Zones)** voids this discount per-predator: in
+`updatePredators()` (`engine/forest-engine.js:2729`, 4th param `windAssist` = the
+`windAssistNowActive` computed above, wired at the one call site `:7763`), a predator whose own
+`x/z` falls inside a Mud Zone (LUL-5564, below) (`predInMud`, hoisted at
+`:2740`) hears the player's footsteps at the plain `NOISE_RADIUS_RUN` instead of the discounted
+`NOISE_RADIUS_RUN_WIND` while the player is wind-assisted (`:2914`) -- the wind can't be used to
+sneak past a predator that is itself standing in mud. No new HUD element or hint: this is a
+hearing-radius change on an existing probabilistic check, not a new player-visible state.
+Covered by `e2e/wind-deafness-mud.spec.ts` (positive: mud-standing wolf hears a wind-assisted
+sprint at a distance between the two radii; negative: the same wolf outside mud never hears it
+at that distance).
+
 ### LUL-5402: Predator Investigation Asymmetry (downwind investigation bias)
 
 Scout proposal (LUL-5401), CTO-accepted cheap slice (`decisions/lul-5401-predator-investigation-asymmetry-accepted-2026-09-30`).
@@ -3315,6 +3327,14 @@ falls inside any zone:
 - Predator: folded into the single point every AI branch's `speed` converges through before
   becoming movement (`updatePredators()`, `:3152-3153`), not patched per-branch -- can't miss a
   roam/chase/investigate/flank/charge/hunt branch or apply inconsistently by AI state.
+
+**Hearing (LUL-5601/LUL-5605, Wind Deafness in Mud Zones)** -- a predator standing in a zone
+(`predInMud`, hoisted at `:2740`) also ignores the player's Wind-Assisted Evasion (LUL-3149,
+above) footstep-noise discount: `checkNoise()` is called with the plain `NOISE_RADIUS_RUN`
+instead of the wind-discounted radius whenever `predInMud && windAssist` (`:2914`), so the
+wind-assist speed bonus can't be used to slip past a mud-standing predator unheard. Only the
+predator's own mud presence matters here -- the player's own mud state is unrelated to this
+check.
 
 **Cue (one-shot, enter edge only)** -- `wasInMud` edge-detect (`:7467-7476`) fires on the
 `false->true` transition only, same shape `logCrawlEnterCue()`'s own call site uses:
