@@ -22,6 +22,8 @@ export const ENGINE_ACTION_KEYS = [
   // LUL-5004
   'triggerTouchScentVeil',
   'setDifficulty', 'setRunMode', 'setSensitivity', 'setInvertY', 'setReducedMotion', 'setCaptions', 'setColdWalkOptIn',
+  // LUL-5805
+  'setKeyMap',
   'setEmbers', 'purchase',
   'setMissionUnlocks', 'setSecondaryChoice',
   // LUL-2230

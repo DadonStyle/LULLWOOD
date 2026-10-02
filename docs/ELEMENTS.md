@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8893 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7764, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8916 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7787, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1731,15 +1731,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6908, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7358). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6931, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7381). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7358) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L7381) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L3499) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1797,7 +1797,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L4427),
-  reset to 0 on `enter()` (L4570) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4590) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7731: `computeDepth(maxDistFromHome) +
@@ -1920,7 +1920,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7714, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7737, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -3086,7 +3086,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7226) and `windAssistEndCue()` (L7235), edge-triggers on the combined
+`windAssistStartCue()` (L7249) and `windAssistEndCue()` (L7258), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3711,3 +3711,45 @@ caption+sting on first deep entry, never again) and
 `e2e/mobile/firefly-glow-detection.spec.ts` (an unrendered-on-mobile cluster still
 raises `effectiveDetect` even though `clusterCount` stays 4) -- all run in the micro
 world via `qaBuildScene`, no `@fullmap` needed.
+
+## Keybind Remapping (LUL-5805, cheap slice, decision
+decisions/lul-5804-keybind-remapping-accepted-2026-10-02)
+
+CEO accepted the Cheap Slice option from LUL-5804's `suggest_tasks` interaction: movement
+keys only (forward/back/left/right). Hide/interact/climb/jump/etc. stay hardcoded; the
+full 11-verb + HUD-templating variant is a separate future ticket.
+
+**State** -- `keyMap` (`engine/forest-engine.js`, module-level, verb -> `KeyboardEvent.code`),
+defaulting to `{ forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD' }`. The 3
+WASD-reading call sites (`shuffleHide()`, the log-crawl branch and the main movement
+branch inside `stepFrame()`) all read `keys[keyMap.<verb>]` instead of the literal
+`KeyW`/`KeyA`/`KeyS`/`KeyD` codes. Arrow keys stay as a permanent hardcoded fallback
+alongside the remappable key at every site, same "never lock the player out" shape as
+`runMode`'s hold/toggle default -- a bad remap can never leave movement unreachable.
+`setKeyMap(verb, code)` validates `verb` against the 4 known keys before writing, same
+engine-owns-it/React-persists-it split as `setDifficulty`/`setRunMode`.
+
+**Settings UI** -- new "Controls" fieldset in `components/SettingsPanel.tsx`, one row per
+verb, a button showing the currently bound key that becomes "Press a key to assign" while
+listening for the next keydown (captured via a `capture: true` window listener so it
+doesn't leak into gameplay input; Escape cancels without rebinding). Desktop-only
+(`isMobile()`, same single-source-of-truth gate as the `runMode` row's "(instead of hold
+Shift)" copy) -- there is no keyboard to remap on a touch device. No new CSS: the row
+reuses the existing `.radioRow` flex layout, matching this file's existing hardcoded-px
+convention (no `ui-scale` CSS custom property exists anywhere in the codebase today to
+reuse instead).
+
+**Persistence** -- `keyMap` added to `PersistedSettings`/the apply-on-ready effect/the
+persist effect in `components/SettingsPanel.tsx`, same `lullwood:settings` key and
+apply-once-ready shape as every other persisted setting.
+
+**QA hook**: `qaProbeKeyMap()` returns the live `keyMap` object so a test can assert a
+remap actually changed which key moves the player.
+
+**No HUD prompt changes in this slice** -- the 6 stale literal-keycap strings flagged by
+the Feature Scout (`components/Hud.tsx:423/428/1316/1327/1341`, `engine/forest-engine.js:8390`)
+are all for hardcoded (non-movement) verbs and stay as-is until the full-scope follow-on.
+
+Covered by `e2e/remapping.spec.ts` (3 tests: default WASD moves the player, a real-UI
+remap changes which key moves the player with a staged predator in the scene, and the
+remap persists across reload) -- all in the micro world via `qaBuildScene`, no `@fullmap`.
