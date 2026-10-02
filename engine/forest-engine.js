@@ -5631,6 +5631,22 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     return { kind: chosen.kind, x: chosen.x, z: chosen.z };
   };
 
+  // LUL-5761 cheap slice: same placement as qaIsolatePredatorKindAt above,
+  // but leaves every other predator alone instead of parking them inert --
+  // call qaClearAllPredators first, then this once per kind, to stage two
+  // different species (e.g. bear + lion) at the same time and prove
+  // fireflyAlarmBoost's per-species range (alarmRangeFor) applies
+  // independently per predator rather than off one shared range.
+  window.ForestEngine.qaPlacePredatorKindAt = function(kind, x, z){
+    const chosen = predators.find(p => p.kind === kind);
+    if(!chosen) return null;
+    chosen.inert = false; chosen.g.visible = true;
+    chosen.x = x; chosen.z = z;
+    chosen.vx = chosen.vz = 0; chosen.alert = 0; chosen.reroute = 0; chosen.stuckT = 0;
+    chosen.state = 'roam'; chosen.hunt = false;
+    return { kind: chosen.kind, x: chosen.x, z: chosen.z };
+  };
+
   // LUL-2457: same `inert` flag as qaIsolatePredator above, applied to every
   // predator with none kept -- for specs like e2e/day-night-cycle.spec.ts
   // that hold `qaAdvance` open for two-plus minutes of game time to observe
