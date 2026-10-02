@@ -2044,7 +2044,8 @@ not final tuning.
   verbatim — no new predator behavior, no new HUD element, no new key, no new cue.
 - `upwindRefuge` (LUL-5432, "Upwind Refuge", Fire Tower variant of LUL-5424) — same
   fixed-`fireTower`-landmark/timed shape as `beaconEvasion` (`timeLimitSeconds: 60`,
-  `MISSION_UPWIND_REFUGE_REWARD` = 9 Embers, gated behind `MISSION_FAR_UNLOCK_WINS` by the
+  `MISSION_UPWIND_REFUGE_REWARD` = 8 Embers (LUL-5799 repriced 9 -> 8, LUL-5789 accepted),
+  gated behind `MISSION_FAR_UNLOCK_WINS` by the
   same `timeLimitSeconds == null` filter), except `repositionBeaconHunterForMission()`
   (`engine/forest-engine.js:1968`) finds `predators.find(p => p.kind === 'lion')` for this
   kind — same lookup `lionRoostFlush` uses — anchored on `mission.target.x/z` (the

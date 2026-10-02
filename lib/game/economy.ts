@@ -109,7 +109,11 @@ export const MISSION_BEACON_HUNTER_EVASION_REWARD = 8;
 // former pair per the wiki proposal's own Scope section (game/mechanics/roost-decoy-mission,
 // "closer in effort to Oak Hollow than to Slack Water" -- flagged there as an observation,
 // not a proposed number).
-export const MISSION_FLUSH_REWARD = 9;
+// LUL-5799 (Game Economist full-pool review, LUL-5789 accepted, wiki
+// decisions/lul-5789-mission-reward-reprice-accepted-2026-10-02): repriced 9 -> 8. The 9E
+// tier had collapsed 11/18 missions (61% of the pool) into one bucket; Flush moves to the
+// 8E spatial-low-threat tier alongside Oak Hollow/Fire Tower.
+export const MISSION_FLUSH_REWARD = 8;
 
 // LUL-5160: Beacon Roost Flush -- placeholder pending the Game Economist's number, same
 // convention MISSION_FLUSH_REWARD (above) already uses. Scout's proposal (wiki
@@ -132,7 +136,11 @@ export const MISSION_LION_ROOST_FLUSH_REWARD = 9;
 // (passive threat) and beaconRoostFlush's 10 -- an active-hunt lion is more demanding than
 // the Beacon Hunter's passive lock, but Fire Tower needs less mechanical skill than
 // roost-flushing. Level with flush (9). Confirmed by the Economist, not a placeholder.
-export const MISSION_UPWIND_REFUGE_REWARD = 9;
+// LUL-5799 (Game Economist full-pool review, LUL-5789 accepted, wiki
+// decisions/lul-5789-mission-reward-reprice-accepted-2026-10-02): repriced 9 -> 8, same
+// reasoning as MISSION_FLUSH_REWARD (above) -- moves out of the collapsed 9E tier into the
+// 8E spatial-low-threat tier alongside Oak Hollow/Fire Tower.
+export const MISSION_UPWIND_REFUGE_REWARD = 8;
 
 // LUL-5447/LUL-5446: Roost Recovery Evasion -- placeholder pending the Game Economist's
 // confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Wiki proposal
