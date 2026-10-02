@@ -15,6 +15,19 @@
 //   re-arms this to pending for the new sha -- a stale PASS for an old sha
 //   can never carry a new sha across the gate.
 //
+//   LUL-5775: a direct-to-main PR (any head branch other than release/next)
+//   carrying the `emergency-hotfix` label auto-passes instead of arming
+//   pending. The nightly tester (shared/local-qa/bin/pr-e2e-watch.mjs,
+//   founder-owned, outside this repo) only ever watches the
+//   release/next->main version-cut pattern, so a direct hotfix's `pending`
+//   has no path to `success` -- without this, the required `local-qa`
+//   context (ruleset 20886790, bypass_actors=[]) makes every such PR
+//   permanently unmergeable regardless of review/CI state. The explicit
+//   head-ref guard keeps this from ever firing on the real version-cut PR
+//   even if someone mislabels it; the label is reviewed trust (Code
+//   Reviewer approval + all required CI checks still gate the merge) in
+//   place of the tester, which this PR shape can never reach.
+//
 //   issue_comment (created): parse the comment body for
 //   `local-qa: PASS|FAIL @<sha>` (exact format posted by
 //   shared/local-qa/bin/pr-e2e-watch.mjs). Confirm the issue is a PR whose
@@ -36,7 +49,11 @@
 //       issue_comment path's staleness guard) applies here -- it's a
 //       deliberate one-sha admin write, not an automatic listener.
 //     - inputs.pr_number (no sha/verdict): back-fill a pending status for a
-//       PR's current head, e.g. right after this workflow first lands.
+//       PR's current head, e.g. right after this workflow first lands, or
+//       (LUL-5775) re-arm an already-open direct-to-main PR to the
+//       emergency-hotfix auto-pass after the label is added post-hoc --
+//       the label alone does nothing until the next real push re-fires
+//       `synchronize`, so this path re-checks it the same way.
 //
 // Required ruleset wiring (a one-time ruleset PATCH, see LUL-5620 ticket):
 // main's required_status_checks must list {"context": "local-qa"} so
@@ -55,11 +72,16 @@ import { ghFetch, ghPost } from './lib/github-fetch.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
 const VERDICT_RE = /local-qa:\s*(PASS|FAIL)\s*@([0-9a-f]{7,40})/i;
+const EMERGENCY_HOTFIX_LABEL = 'emergency-hotfix';
 
 function loadEvent() {
   const eventPath = process.env.GITHUB_EVENT_PATH;
   if (!eventPath) throw new Error('GITHUB_EVENT_PATH not set -- this script only runs inside a GitHub Actions workflow');
   return JSON.parse(readFileSync(eventPath, 'utf8'));
+}
+
+function isEmergencyHotfix(pr) {
+  return pr.base.ref === 'main' && pr.head.ref !== 'release/next' && (pr.labels || []).some((l) => l.name === EMERGENCY_HOTFIX_LABEL);
 }
 
 async function setStatus(repo, token, sha, state, description, targetUrl) {
@@ -77,6 +99,10 @@ async function handlePullRequest(repo, token, event) {
   if (!pr) throw new Error('pull_request event with no pull_request payload');
   if (pr.base.ref !== 'main') {
     console.log(`PR #${pr.number} base is ${pr.base.ref}, not main -- local-qa gate does not apply, skipping`);
+    return;
+  }
+  if (isEmergencyHotfix(pr)) {
+    await setStatus(repo, token, pr.head.sha, 'success', `local-qa: auto-pass -- emergency-hotfix label, gated by Code Reviewer approval + required CI checks instead of the tester`);
     return;
   }
   await setStatus(repo, token, pr.head.sha, 'pending', 'awaiting local-qa PASS|FAIL comment for this sha');
@@ -129,6 +155,10 @@ async function handleWorkflowDispatch(repo, token, event) {
   }
   if (inputs.pr_number) {
     const pr = await ghFetch(`https://api.github.com/repos/${repo}/pulls/${inputs.pr_number}`, token);
+    if (isEmergencyHotfix(pr)) {
+      await setStatus(repo, token, pr.head.sha, 'success', `local-qa: auto-pass -- emergency-hotfix label, gated by Code Reviewer approval + required CI checks instead of the tester`);
+      return;
+    }
     await setStatus(repo, token, pr.head.sha, 'pending', 'awaiting local-qa PASS|FAIL comment for this sha');
     return;
   }
