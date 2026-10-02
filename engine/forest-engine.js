@@ -225,6 +225,7 @@ import { DECOY_SCENT_SITES, findDecoyScentSiteIndex, decoyScentGlowWeight } from
 import { FIREFLY_CLUSTERS, FIREFLY_MOBILE_CLUSTER_COUNT } from '@/lib/game/fireflyClusters';
 import { fireflyAlarmBoost } from '@/lib/game/fireflyAlarmResponse';
 import { fireflyGlowWeightAt, fireflyGlowDetectMul } from '@/lib/game/fireflyDetect';
+import { COUNTRY_PALETTES } from '@/lib/game/country-palettes';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -716,6 +717,65 @@ scene.add(throwableMesh);
 
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
+// LUL-3295: flag-tinted trees. `leaderboardTintPalette` is the current record
+// holder's COUNTRY_PALETTES entry, or null for "no tint" (loading/empty/failed-
+// no-cache/unrecognized code -- never a default country, PART 2.6). A plain
+// object-reference compare in setLeaderboardRecord() below treats "same
+// country, new timeMs" as a no-op without parsing anything.
+let leaderboardTintPalette = null;
+const leaderboardFlagColor = new THREE.Color(); // scratch, reused every tree
+
+// Mutates `out` in place: the per-tree weathering tint ensureChunk() has
+// always applied, then -- for the subset of trees selected by `ti` -- blended
+// toward the record holder's flag colour. Pure function of treeData[ti] and
+// the current palette; no rng() call, so it can run from ensureChunk() (first
+// build) and retintLiveTreeChunks() (a later record change) alike without
+// perturbing the seeded stream (forest-engine.js:1062-1063).
+function computeTreeTintColor(out, t, ti){
+  out.setRGB(t.tint*0.92, t.tint, t.tint*0.86);
+  if(!leaderboardTintPalette) return out;
+  const n = CONFIG.LEADERBOARD_TINT_SUBSET_N;
+  if(ti % n !== 0) return out;
+  const hex = leaderboardTintPalette[(ti / n) % leaderboardTintPalette.length];
+  leaderboardFlagColor.set(hex);
+  out.lerp(leaderboardFlagColor, CONFIG.LEADERBOARD_TINT_WEIGHT);
+  return out;
+}
+
+// Re-applies computeTreeTintColor() to every already-built (live) tree chunk's
+// instanceColor and flags it for upload. ensureChunk() only runs the tint
+// computation once per chunk build, so a later leaderboard record change
+// (empty -> populated, or one country overtaking another) needs this explicit
+// pass -- there is no other hook that revisits an already-live chunk.
+function retintLiveTreeChunks(){
+  for(let c=0; c<treeChunkTrios.length; c++){
+    const trio = treeChunkTrios[c];
+    if(!trio) continue;
+    const idxs = treeChunkBuckets[c];
+    idxs.forEach((ti, slot) => {
+      computeTreeTintColor(tintCol, treeData[ti], ti);
+      trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
+    });
+    trio[1].instanceColor.needsUpdate = true;
+    trio[2].instanceColor.needsUpdate = true;
+  }
+}
+
+// LUL-3295: applies the current leaderboard record to tree tint. Called from
+// the merged setLeaderboardRecord() below (LUL-5820 S4 + LUL-3295 S5 share one
+// engine action -- see that function's comment). `record` is already collapsed
+// to "what to show, or null" (components/Leaderboard.tsx, resolveLeaderboardRecord);
+// trees don't render per-state text so `status` isn't needed here. Skips the
+// (chunk-count-sized) re-tint pass when the country hasn't actually changed --
+// COUNTRY_PALETTES[code] is the same array reference every call for the same
+// code, so this is a plain reference compare.
+function applyLeaderboardTreeTint(record){
+  const country = record ? record.country : null;
+  const nextPalette = (country && COUNTRY_PALETTES[country]) ? COUNTRY_PALETTES[country] : null;
+  if(nextPalette === leaderboardTintPalette) return;
+  leaderboardTintPalette = nextPalette;
+  retintLiveTreeChunks();
+}
 let treeData = [];            // {x,z,s,cr,crCanopy}
 let mudZones = [];             // LUL-5564: {x,z,r} -- terrain hazard circles, generateMudZones()
 let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders for the four fixed
@@ -1078,7 +1138,7 @@ function ensureChunk(c){
     }
     dummy.updateMatrix();
     for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
-    tintCol.setRGB(t.tint*0.92, t.tint, t.tint*0.86);
+    computeTreeTintColor(tintCol, t, ti);
     trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
   });
   for(const m of trio){
@@ -4938,6 +4998,40 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     };
   };
 
+  // LUL-3295: drives the exact same setLeaderboardRecord() the real
+  // GameCanvas effect calls on every resolved-record change -- not a second,
+  // fake-state path, just a way for a spec to simulate a record change
+  // without a second real fetch (components/Leaderboard.tsx's hook only ever
+  // fetches once per mount, so there is no live re-fetch to stub mid-test).
+  window.ForestEngine.qaSetLeaderboardRecord = function(status, record){
+    setLeaderboardRecord(status, record);
+  };
+
+  // LUL-3295: flag-tinted trees -- counts live tree instances selected for
+  // tinting (ti % N === 0, only when a palette is set) and reads back one
+  // tinted instance's actual instanceColor bytes, so a spec can assert the
+  // colour really moved toward the flag rather than just that the code ran.
+  window.ForestEngine.qaProbeTreeTint = function(){
+    const n = CONFIG.LEADERBOARD_TINT_SUBSET_N;
+    let totalTrees = 0, tintedCount = 0, sampleTintedColor = null;
+    for(let c=0; c<treeChunkTrios.length; c++){
+      const trio = treeChunkTrios[c];
+      if(!trio) continue;
+      const idxs = treeChunkBuckets[c];
+      totalTrees += idxs.length;
+      if(!leaderboardTintPalette) continue;
+      idxs.forEach((ti, slot) => {
+        if(ti % n !== 0) return;
+        tintedCount++;
+        if(!sampleTintedColor){
+          const arr = trio[1].instanceColor.array;
+          sampleTintedColor = [arr[slot*3], arr[slot*3+1], arr[slot*3+2]];
+        }
+      });
+    }
+    return { totalTrees, tintedCount, sampleTintedColor };
+  };
+
   // LUL-2249: liveChunks/cover liveness + the player's own current chunk,
   // for e2e assertions that a chunk-change moved the live set (and that old
   // far chunks actually dropped) without reaching into module-private state.
@@ -7663,7 +7757,8 @@ function setProgression(p){
   pushState({ progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak } });
 }
-// LUL-5820 (LUL-3264 wave2 S4): sync from components/Hud.tsx's useLeaderboardSky()
+// LUL-5820 (LUL-3264 wave2 S4) + LUL-3295 (S5): one engine action shared by both
+// leaderboard-record consumers -- sync from components/Hud.tsx's useLeaderboardSky()
 // hook, called on every useLeaderboardRecord() fetch resolution/transition -- the
 // engine never fetches itself (that stays components/Leaderboard.tsx's job). `status`
 // is already the resolved display state: Hud.tsx collapses the client state machine's
@@ -7675,7 +7770,10 @@ function setProgression(p){
 // object, not a HUD element). Fades in from 0 opacity the first time the group becomes
 // visible (any transition away from "no-balloons-yet"); every call after that just
 // swaps the canvas texture in place, never recreating the sprite (PART 2.5).
+// Tree tint (LUL-3295 S5) reads `record` directly regardless of the balloon's
+// resolved status, so trees un-tint whenever the record itself stops being usable.
 function setLeaderboardRecord(status, record){
+  applyLeaderboardTreeTint(record);
   const resolved = (status === 'loading' || status === 'populated' || status === 'empty' || status === 'hidden') ? status : 'hidden';
   const validRecord = !!(record && typeof record.nickname === 'string' && typeof record.country === 'string' && typeof record.timeMs === 'number');
   skyBalloonStatus = (resolved === 'populated' && !validRecord) ? 'hidden' : resolved;
@@ -9156,7 +9254,7 @@ tick();
            setHintsEnabled, resetHints,
            // LUL-2558
            setProgression,
-           // LUL-5820
+           // LUL-5820 + LUL-3295
            setLeaderboardRecord };
 }
 
