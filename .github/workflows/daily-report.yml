@@ -437,6 +437,25 @@ jobs:
           if GH_TOKEN="$SHIP_REVIEW_TOKEN" gh pr merge "$PR_NUMBER" --squash --delete-branch; then
             echo "::notice::PR #$PR_NUMBER merged"
           else
+            # ── race check (third time) ────────────────────────────────────────
+            # LUL-5773: a rival workflow (auto-pr.yml/automerge.yml) can win the
+            # merge race in the few seconds between the second race check above
+            # and this merge call itself -- both react to the same green,
+            # push-triggered CI run. When that happens the GraphQL mutation
+            # fails with "Pull Request is not mergeable" even though the PR is
+            # merged a moment later under the rival's identity (run 36947317763:
+            # review submitted 00:45:58, PR #986 mergedAt 00:46:00 by the
+            # SHIP_REVIEW_TOKEN account via automerge.yml, this call's error
+            # logged 00:46:01 for a PR that was already merged). Re-check
+            # mergedness before reporting failure, same as the two earlier race
+            # checks -- a lost race to a successful rival merge is success, not
+            # a branch-protection problem.
+            if already_merged="$(gh pr view "$PR_NUMBER" --json merged --jq '.merged' 2>/dev/null || echo "unknown")"; then
+              if [ "$already_merged" = "true" ]; then
+                echo "::notice::PR #$PR_NUMBER was already merged (lost the merge race to a rival workflow); nothing left to do."
+                exit 0
+              fi
+            fi
             echo "::error::merge of PR #$PR_NUMBER refused -- it stays open with green CI. Check the branch protection rules."
             exit 1
           fi
