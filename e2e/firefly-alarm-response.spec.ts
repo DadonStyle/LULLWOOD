@@ -90,3 +90,39 @@ test('a predator at any one cluster brightens every rendered mote -- frame-globa
   expect(after.maxIntensity, 'a predator anywhere in the cluster list raises the single global scalar, lighting every mote')
     .toBeGreaterThan(before.maxIntensity);
 });
+
+test('alarm sting fires exactly once per run, not again on re-activation', async ({ page }) => {
+  // LUL-5785: fireflyAlarmStingPlayed (forest-engine.js:536) is a true once-per-run
+  // latch, never cleared by alarmActive dropping back to false -- only restart()
+  // (:7417) resets it. qaFireflyAlarmStingCount (new this ticket) makes that
+  // one-shot-ness assertable instead of just read from the source.
+  await boot(page, { qaHooks: true, qaHour: 2 });
+  await qaHook(page, 'qaSetFixedStep', 0.02);
+  await qaHook(page, 'qaClearAllPredators');
+
+  const baseline = await qaHook(page, 'qaProbeFireflyClusters');
+  expect(baseline.stingCount, 'no sting before any predator has approached a cluster').toBe(0);
+
+  const meadow = baseline.clusters[0];
+  await qaHook(page, 'qaIsolatePredatorKindAt', 'lion', meadow.x, meadow.z);
+  await qaHook(page, 'qaAdvance', 1);
+
+  const activated = await qaHook(page, 'qaProbeFireflyClusters');
+  expect(activated.alarmActive).toBe(true);
+  expect(activated.stingCount, 'sting fires once on the rising edge of alarmActive').toBe(1);
+
+  // Beyond CONFIG.FIREFLY_ALARM_RANGE (120u, engine/tuning.js) from every cluster.
+  await qaHook(page, 'qaIsolatePredatorKindAt', 'lion', meadow.x + 5000, meadow.z + 5000);
+  await qaHook(page, 'qaAdvance', 1);
+
+  const cleared = await qaHook(page, 'qaProbeFireflyClusters');
+  expect(cleared.alarmActive).toBe(false);
+  expect(cleared.stingCount, 'stingCount is not decremented or reset by the alarm clearing').toBe(1);
+
+  await qaHook(page, 'qaIsolatePredatorKindAt', 'lion', meadow.x, meadow.z);
+  await qaHook(page, 'qaAdvance', 1);
+
+  const reactivated = await qaHook(page, 'qaProbeFireflyClusters');
+  expect(reactivated.alarmActive).toBe(true);
+  expect(reactivated.stingCount, 'the sting is a once-per-run latch -- re-activation must not fire it again').toBe(1);
+});

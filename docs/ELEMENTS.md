@@ -3633,7 +3633,9 @@ world point to anchor to). A one-shot rising-chitter audio sting, `fireflyAlarmS
 first frame the alarm activates (`:8543-8546`).
 
 **QA hooks** -- `qaProbeFireflyClusters()` (`:4697-4706`) returns `clusterCount`,
-`anyVisible`, `maxIntensity`, `alarmScalar`, `alarmActive`, and `clusters` (the full unsliced,
+`anyVisible`, `maxIntensity`, `alarmScalar`, `alarmActive`, `stingCount` (LUL-5785:
+`qaFireflyAlarmStingCount`, mirrors the `qa*CueCount` idiom so the one-shot sting's
+fire count is assertable instead of inferred from source), and `clusters` (the full unsliced,
 scaled `id`/`x`/`z` list, so a test can stage a predator directly on a named cluster's own
 coordinates via `qaIsolatePredatorKindAt`/`qaPlacePredatorKindAt`, including one excluded from
 mobile's render budget). `detectClusterCount` and `glowSwellCueCount` on the same hook belong to
@@ -3641,8 +3643,9 @@ the Glow Detection Risk feature below, not this section.
 
 **Coverage** -- `e2e/firefly-swarms.spec.ts` (clusters present/visible at night, absent by day),
 `e2e/firefly-rain-interaction.spec.ts` (rain-dim ramp via `maxIntensity`), and
-`e2e/firefly-alarm-response.spec.ts` / `e2e/firefly-alarm-per-species.spec.ts` (alarm ramp, one-shot
-sting, bear/lion range divergence) -- all run in the micro world via `qaBuildScene`, no
+`e2e/firefly-alarm-response.spec.ts` / `e2e/firefly-alarm-per-species.spec.ts` (alarm ramp,
+one-shot sting fires exactly once per run and not again on re-activation via `stingCount`,
+bear/lion range divergence) -- all run in the micro world via `qaBuildScene`, no
 `@fullmap` needed. `shared/local-qa/requests/lul-5707-firefly-swarms.md` and
 `shared/local-qa/requests/lul-5761-firefly-per-species-alarm.md` are the nightly request files.
 
