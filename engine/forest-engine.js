@@ -5624,6 +5624,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaIsolatePredatorKindAt = function(kind, x, z){
     const chosen = predators.find(p => p.kind === kind);
     if(!chosen) return null;
+    chosen.inert = false; chosen.g.visible = true;
     chosen.x = x; chosen.z = z;
     chosen.vx = chosen.vz = 0; chosen.alert = 0; chosen.reroute = 0; chosen.stuckT = 0;
     chosen.state = 'roam'; chosen.hunt = false;
