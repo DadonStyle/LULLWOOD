@@ -519,9 +519,11 @@ degrades.
 
 - S4 (sky balloons) and S5 (flag-tinted trees) — Game Engineer, own spec, blocked on this wave's
   API shape per the ratified sequencing, not touched here.
-- S6 (moderation ops: founder alert on new record, denylist maintenance beyond the seed list above,
-  retention policy) — separate ticket, admin-invalidate itself (the mandatory-day-one piece) ships
-  in S1 above; the *alert mechanism* does not.
+- S6 (moderation ops: denylist maintenance beyond the seed list above, retention policy) —
+  separate ticket (LUL-3296). Correction: the *alert mechanism* ended up shipping in S1 above
+  after all (`services/leaderboard-db/server.ts` `onNewRecord`/`alertCommand`), not deferred to
+  S6 as this line originally said — see
+  `decisions/lul-3296-leaderboard-moderation-ops-accepted-2026-10-02` §1.
 - Denylist content beyond the small seed list — founder call per
   `decisions/lul-3264-leaderboard-accepted-2026-09-18`, not an engineering decision.
 - Actually provisioning the Postgres database and proving the prod write/read-back — LUL-3289
