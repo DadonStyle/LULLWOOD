@@ -315,6 +315,14 @@ export const PSPEC = {
 // RUN itself is NOT exported here -- see the note at the top of this file.
 export const CHASE_GAP = 28;
 
+// LUL-5781: scent-lock endurance asymmetry. Applied at `p.scentLock = SCENT_TRACK_TIME`
+// assignment time (every chase-entry site in forest-engine.js), not inside tickTimers'
+// shared decay -- same per-species-lookup pattern as PSPEC.nose above. Bear is the
+// relentless scent hunter (hounds the trail longest), lion gives up soonest (reverts to
+// searching if the trail goes cold), wolf is the 1.0 baseline. Placeholder ratios --
+// Game Economist owns real tuning numbers if these need adjusting.
+export const SCENT_LOCK_ENDURANCE_MULTIPLIER = { wolf: 1.0, bear: 1.4, lion: 0.8 };
+
 // LUL-2246: how long a force-hunt escalation (30s-no-contact -> straight for you) keeps
 // chasing blind once it loses sight, via the existing scentLock leash (LUL-23) below --
 // 25s at the bear's full species speed (13.9 u/s, the slowest of the three) covers 348u,

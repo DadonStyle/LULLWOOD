@@ -233,6 +233,7 @@ import {
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
   BEACON_HUNTER_LOCK_MUL, BEACON_HUNTER_EYE_COLOR,
   LOG_CRAWL_SPEED_MUL, LOG_CRAWL_ENTER_RADIUS,
+  SCENT_LOCK_ENDURANCE_MULTIPLIER,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -2546,7 +2547,7 @@ function scentOnto(p){
     p.gaveUpAt = null;
   }
   p.alertedBy = null;   // LUL-1857: scent-driven, not the carried cry
-  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
+  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind]; p.callTimer = rnd(2.6,4.2);
   p.scentVeilReady = true;   // LUL-5004: a fresh lock cycle re-arms the one-time-per-lock break
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
@@ -2568,7 +2569,7 @@ function scentOnto(p){
 function beaconOnto(p){
   if(p.state === 'chase') return;   // already chasing (any channel) -- don't re-trigger the cue/roar
   p.alertedBy = null;
-  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2); p.beaconHunterLocked = true;
+  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind]; p.callTimer = rnd(2.6,4.2); p.beaconHunterLocked = true;
   p.scentVeilReady = true;   // LUL-5004: scentLock is the shared leash both channels arm -- see scentVeilTriggerActive's own comment (lib/game/scent.ts)
   p.eyeMat.color.setHex(BEACON_HUNTER_EYE_COLOR);   // cold blue-teal rim glow, visible under reducedMotion since it's a static color, not an animation
   if(!p.spotted) p.spotted = true;
@@ -5524,7 +5525,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const p = predators[idx];
     p.x = player.x + dx; p.z = player.z + dz;
     p.vx = p.vz = 0; p.charge = null; p.sightLock = null; p.alert = 0; p.reroute = 0; p.stuckT = 0;
-    p.hunt = false; p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.alertedBy = null;
+    p.hunt = false; p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind]; p.alertedBy = null;
     return { idx, x: p.x, z: p.z };
   };
 
@@ -5955,7 +5956,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // trigger band) when a caller polls for the outcome. Force it off so
       // this hook tests exactly the branch it says it does.
       p.charge = null; p.chargeCooldown = 999;
-      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind];
       player.x = bx; player.z = bz;
       // Isolate: the player is being relocated to wherever this cover prop
       // happens to be, which could easily land inside another (untouched)
@@ -6100,7 +6101,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.x = px; p.z = pz;
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       p.charge = null; p.chargeCooldown = 999;
-      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind];
       player.x = qx; player.z = qz;
       // Isolate, same rationale as stageBlindChaseThroughCover above: nine
       // predators roam independently, and relocating the player next to a
@@ -6372,7 +6373,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // Mirrors every real chase-entry site's p.scentLock = SCENT_TRACK_TIME (e.g. :2227, :4898) --
     // without it, shouldDowngradeChase() reverts 'chase' to 'investigate' on the very next tick
     // if canSee() reads false for even one frame, before ambient consumers ever observe 'chase'.
-    p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+    p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind];
     return { idx };
   };
   // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
