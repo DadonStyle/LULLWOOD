@@ -57,6 +57,18 @@ main.about li strong {
   color: #b7c7de;
   font-weight: 500;
 }
+.about-gallery {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+.about-gallery img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  display: block;
+}
 
 /* Devlog pages (LUL-47). Standalone routes -- no game overlay, no 100vh push. */
 main.devlog-index,
