@@ -34,17 +34,26 @@ const OVERLAY_STYLE = `
        these on a matching media query) always win when they match -- a
        custom property's cascade follows normal specificity/source-order
        rules same as any other declaration, so the override must come later
-       in the stylesheet than this default. */
-    --action-pill-bg: rgba(12,17,26,0.6);
-    --action-pill-border-calm: rgba(150,175,215,0.16);
-    --action-pill-border-ready: rgba(255,200,140,0.45);
+       in the stylesheet than this default.
+       LUL-5772: re-skinned off the hint-caption teal/green family (background
+       rgba(18,34,34,0.6), border rgba(159,224,208,0.4), text #cdf3e8, glyph
+       #9fe0d0 -- see #hintCaption below) per decisions/
+       lul-5771-note-style-green-standard -- see docs/STYLE_GUIDE_NOTES.md for
+       the standing palette. calm and ready share the hint's teal hue,
+       distinguished by border/text weight; status keeps its own already-green
+       hue (unchanged) so the hidden/hunted line still reads apart from a plain
+       available action. urgent's red flash is the one explicit exception --
+       it is an act-now safety signal, not decorative. */
+    --action-pill-bg: rgba(18,34,34,0.6);
+    --action-pill-border-calm: rgba(159,224,208,0.22);
+    --action-pill-border-ready: rgba(159,224,208,0.6);
     --action-pill-border-status: rgba(120,200,150,0.4);
-    --action-pill-color-calm: #d7c3b0;
-    --action-pill-color-ready: #ffdca8;
+    --action-pill-color-calm: #9bc9bd;
+    --action-pill-color-ready: #cdf3e8;
     --action-pill-color-status: #9fd7b0;
-    --action-pill-key-bg: #f0c79a;
-    --action-pill-key-color: #1a1006;
-    --action-pill-key-shadow: 0 2px 20px rgba(240,199,154,0.6);
+    --action-pill-key-bg: #bdeedb;
+    --action-pill-key-color: #07211a;
+    --action-pill-key-shadow: 0 2px 20px rgba(159,224,208,0.6);
     --action-pill-urgent-bg: #e8554a;
     --action-pill-urgent-shadow: 0 2px 26px rgba(232,85,74,0.85);
     /* LUL-5004: tone="disabled" -- #veilPrompt grayed while stamina-insufficient. */
@@ -323,7 +332,11 @@ const OVERLAY_STYLE = `
   body[data-high-contrast="1"] #panel,
   body[data-high-contrast="1"] .actionPromptLine,
   body[data-high-contrast="1"] #settingsPanel { background: rgba(4,6,10,0.92); border-color: rgba(255,255,255,0.55); color: #f4f8ff; }
-  body[data-high-contrast="1"] .actionPromptRow[data-tone="ready"] .actionPromptLine { color: #ffe6b0; border-color: #ffcf7a; }
+  /* LUL-5772: ready re-skinned onto the hint teal (was amber #ffe6b0/#ffcf7a) to
+     match the new base palette; urgent stays red (the one exception, unchanged);
+     status stays its own already-green hue (unchanged) so all three remain
+     distinguishable from each other under high contrast, same as before. */
+  body[data-high-contrast="1"] .actionPromptRow[data-tone="ready"] .actionPromptLine { color: #eafff8; border-color: #9fe0d0; }
   body[data-high-contrast="1"] .actionPromptRow[data-tone="urgent"] .actionPromptLine { color: #ff9f9f; border-color: #ff6b6b; }
   body[data-high-contrast="1"] .actionPromptRow[data-tone="status"] .actionPromptLine { color: #baffcf; border-color: #6fe89a; }
 
