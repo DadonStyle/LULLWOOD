@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { put, get } from '@vercel/blob';
+import { getClientIp, hashIp, usableSalt } from '../../../lib/request-identity.ts';
 
 // LUL-1918/LUL-2963/LUL-2993: POST /api/suggestions -- player suggestion
 // intake for the suggestion box (parent LUL-1917). Re-validates the UI's
@@ -118,39 +118,10 @@ async function writeRateRecord(path: string, data: RateWindow | CooldownRecord):
   }
 }
 
-function hashIp(ip: string, salt: string): string {
-  return createHash('sha256').update(salt + ip).digest('hex');
-}
-
 /** Returns null (never `''`) if the salt is unset or empty -- the caller
  * must fail closed rather than hash with an empty salt (A2). */
 function getIpHashSalt(): string | null {
-  const salt = process.env.SUGGESTIONS_IP_HASH_SALT;
-  return salt && salt.length > 0 ? salt : null;
-}
-
-function getClientIp(req: Request): string {
-  // Vercel's edge sets/overwrites this header with the real client IP on
-  // every request that reaches the deployment -- a client-supplied copy is
-  // replaced before the function sees it, unlike `x-forwarded-for` where
-  // the client fully controls the first hop (A1).
-  const vercelIp = req.headers.get('x-vercel-forwarded-for');
-  if (vercelIp) return vercelIp.split(',')[0].trim();
-
-  // Fallback for environments without that header: the LAST hop of
-  // `x-forwarded-for` is the one appended by the proxy closest to the
-  // server, not the client-controlled first hop the client can spoof and
-  // rotate at will.
-  const fwd = req.headers.get('x-forwarded-for');
-  if (fwd) {
-    const hops = fwd
-      .split(',')
-      .map((h) => h.trim())
-      .filter(Boolean);
-    if (hops.length > 0) return hops[hops.length - 1];
-  }
-
-  return req.headers.get('x-real-ip') ?? 'unknown';
+  return usableSalt(process.env.SUGGESTIONS_IP_HASH_SALT);
 }
 
 async function isInCooldown(ipHash: string): Promise<boolean> {

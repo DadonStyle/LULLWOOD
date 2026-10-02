@@ -90,6 +90,10 @@ const OVERLAY_STYLE = `
     color: #d7e4f6; text-shadow: 0 2px 30px rgba(120,160,230,0.35); }
   #gateSub { font-size: 14px; letter-spacing: 0.06em; color: #9fb2cd; }
   #gateCredit { font-size: 12px; letter-spacing: 0.04em; color: #6f82a0; }
+  /* LUL-3264: min-width reserves the longest menu string (20-char nickname, 59:59)
+     so the loading -> populated swap causes no layout shift. */
+  #leaderboardLine { font-size: 13px; letter-spacing: 0.04em; color: #c9b98f; min-height: 1.4em;
+    min-width: min(36rem, 100%); max-width: 36rem; }
   #gateKeys { margin-top: 18px; font-size: 12px; line-height: 2; color: #7f92ad;
     letter-spacing: 0.03em; max-width: 34rem; margin-inline: auto; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
@@ -557,6 +561,18 @@ const OVERLAY_STYLE = `
        phone. Keep this even if the two rules are ever reordered. */
     min-height: 48px; }
   .restartBtn:hover { background: #f6d3ac; }
+  /* LUL-3264: leaderboard submit form on the Blackout win screen. */
+  #leaderboardForm { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 6px; }
+  #leaderboardForm label { font-size: 13px; letter-spacing: 0.05em; color: #ffdca8; }
+  .leaderboardRow { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; align-items: center; }
+  #leaderboardNickname, #leaderboardCountry { font: inherit; font-size: 15px; color: #2a1a10; background: #f6e6d2;
+    border: none; border-radius: 8px; padding: 10px 12px; min-height: 44px; }
+  #leaderboardNickname { width: 12rem; }
+  #leaderboardForm .restartBtn { margin-top: 0; }
+  #leaderboardForm .restartBtn:disabled { opacity: 0.5; cursor: default; }
+  #leaderboardHint, .leaderboardError, #leaderboardSubmitted { font-size: 12px; margin: 0; color: #cbb7a4; }
+  .leaderboardError { color: #ff8a8a; }
+  .leaderboardHoneypot { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
   .restartBtn:focus-visible { outline: 2px solid #ffe6c8; outline-offset: 3px; }
 
   /* LUL-1043: Embers shop -- Deeper Lungs I/II/III, the cheap version's one

@@ -1034,6 +1034,22 @@ On success it POSTs once to `${SUGGESTIONS_PAPERCLIP_API_URL}` (trailing slash s
 2. `SUGGESTIONS_IP_HASH_SALT` used to default to `''`, silently degrading every stored hash to plain `sha256(ip)` — reversible across the whole IPv4 space in minutes. The route now fails closed (`503`, loud `console.error`) instead of ever hashing with an empty salt. **Operational risk:** if this var is not actually set in Vercel Production, the suggestion box now returns 503 for every submission instead of degrading insecurely — verify it is set (see LUL-3058 for the sibling `BLOB_READ_WRITE_TOKEN` gap, same class of risk).
 3. The cooldown/per-IP/global counters were plain module-scope `Map`s — reset on cold start, one copy per concurrent Lambda instance. They now live in the same Blob store as the suggestions themselves, under `suggestions/_ratelimit/`, so state is shared and durable. Still a plain read-then-write (no compare-and-swap) — an acceptable best-effort tradeoff at this traffic level, explicitly **not** a pattern to reuse for the leaderboard's record-write path (see `decisions/lul-3288-leaderboard-threat-model-accepted-2026-09-18`).
 
+### `/api/leaderboard/**` and the leaderboard service (LUL-3264)
+
+Storage is a SQLite service on the founder's server (`services/leaderboard-db/`), reached from the
+route handlers through Tailscale Funnel with HMAC-signed requests. Full design and security review:
+`docs/specs/lul-3264-leaderboard-security.md`; operating notes: `services/leaderboard-db/README.md`.
+
+| Env var (Vercel, server-only) | Purpose | Unset or invalid |
+|---|---|---|
+| `LEADERBOARD_API_URL` | `https://<node>.ts.net:8443`, the Funnel address | routes 503; `/current` returns `{ unavailable: true }` |
+| `LEADERBOARD_API_SECRET` | HMAC key, ≥32 chars; must equal the server's `LB_API_SECRET` | same as above |
+| `LEADERBOARD_IP_HASH_SALT` | salt for `sha256(salt + ip)`; same A2 fail-closed contract as the suggestions salt | submissions 503 |
+| `LEADERBOARD_ADMIN_TOKEN` | bearer token for `POST /api/leaderboard/:id/invalidate`, ≥32 chars | invalidate 503 |
+
+`POST /api/telemetry` also copies every validated event to the same service (1.5 s timeout,
+skipped when unconfigured), where the agents query it read-only.
+
 ### `POST /api/telemetry`
 
 Web-standard `Request`/`Response` only (no `next/server` import) specifically so the handler is callable from `node --test` with no Next internals mocked — the same reasoning as the suggestions route and `proxy.ts`.

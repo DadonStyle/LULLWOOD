@@ -14,6 +14,8 @@ import { freshProgression, type Progression } from '@/lib/game/progression';
 import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
+import { formatDuration } from '@/lib/ui/format-duration';
+import { LeaderboardMenuLine, LeaderboardSubmitForm } from './Leaderboard';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -400,11 +402,6 @@ const DEATH_CAUSE_TEXT: Record<EngineHudState['deathCause'], string> = {
 // engine's state object.
 const formatFog = (density: number) => density.toFixed(3).slice(1);
 
-const formatDuration = (totalSeconds: number) => {
-  const s = Math.max(0, Math.round(totalSeconds));
-  const m = Math.floor(s / 60);
-  return `${m}:${(s % 60).toString().padStart(2, '0')}`;
-};
 
 // LUL-1089/LUL-2312: hide/veil action-slot row copy. Only one of the two
 // mechanics prompts at a time -- cover wins (engine enforces via
@@ -827,7 +824,11 @@ export default function Hud({
   const deathRestartRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!state.winRevealed) return;
-    const id = setTimeout(() => winRestartRef.current?.focus(), RESTART_FOCUS_DELAY_MS);
+    // LUL-3264: never pull focus out of the leaderboard form mid-typing.
+    const id = setTimeout(() => {
+      if (document.activeElement?.closest('#leaderboardForm')) return;
+      winRestartRef.current?.focus();
+    }, RESTART_FOCUS_DELAY_MS);
     return () => clearTimeout(id);
   }, [state.winRevealed]);
   useEffect(() => {
@@ -970,6 +971,7 @@ export default function Hud({
           <div id="gateTitle">LULLWOOD</div>
           <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
           <div id="gateCredit">Developed by an independent AI studio</div>
+          <LeaderboardMenuLine />
           <div id="gateKeys">
             {mobile ? (
               <>
@@ -1364,6 +1366,7 @@ export default function Hud({
             <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
+            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} />
             <button
               ref={winRestartRef}
               className="restartBtn"

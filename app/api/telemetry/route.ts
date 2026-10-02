@@ -1,4 +1,6 @@
 import { put } from '@vercel/blob';
+import { deviceFromUserAgent, countryFromHeaders } from '../../../lib/request-identity.ts';
+import { serviceConfig, callService } from '../../../lib/leaderboard/remote.ts';
 
 // LUL-482: POST /api/telemetry — Vercel Blob sink for analytics events.
 // If BLOB_READ_WRITE_TOKEN is absent, logs once per cold start and returns 204.
@@ -45,6 +47,21 @@ function isRateLimited(anonId: string): boolean {
 
 let warnedAboutToken = false;
 
+const STATS_TIMEOUT_MS = 1_500;
+
+async function forwardToStats(req: Request, payload: Record<string, unknown>): Promise<void> {
+  const config = serviceConfig();
+  if (!config) return;
+  const device = deviceFromUserAgent(req.headers.get('user-agent'));
+  const result = await callService(config, 'POST', '/v1/events', {
+    payload,
+    device_class: device.deviceClass,
+    browser: device.browser,
+    country: countryFromHeaders(req),
+  }, STATS_TIMEOUT_MS);
+  if (result && result.status !== 202) console.error('[telemetry] stats copy refused', result.status);
+}
+
 export async function POST(req: Request): Promise<Response> {
   // Reject payloads over ~2KB before parsing
   const contentLength = Number(req.headers.get('content-length') ?? '0');
@@ -83,6 +100,14 @@ export async function POST(req: Request): Promise<Response> {
   if (isRateLimited(anon_id)) {
     return Response.json({ error: 'rate limited' }, { status: 429 });
   }
+
+  // LUL-3264 (SQLite variant): every validated event is also copied into the
+  // stats database on the founder's server (services/leaderboard-db/), where
+  // the agents can query it (win/loss land as typed `runs` rows). Same
+  // contract as the Blob write below: unconfigured or unreachable means the
+  // copy is skipped and logged, never a 5xx to the beacon. Short timeout so a
+  // slow server cannot hold the function open.
+  await forwardToStats(req, payload);
 
   // No Blob store yet — degraded mode. Return 204, do not throw.
   if (!process.env.BLOB_READ_WRITE_TOKEN) {

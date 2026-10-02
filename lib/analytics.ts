@@ -27,7 +27,9 @@ export interface PurchaseRecord {
 export type AnalyticsEventInput =
   | { event: 'page_view' }
   | { event: 'cta_start_clicked' }
-  | { event: 'game_start'; seed: number }
+  // LUL-3264 (stats DB): `viewport_w`/`viewport_h` (CSS px), `dpr` and `touch` are
+  // attached by track() itself, not by the engine call site -- see readViewport().
+  | { event: 'game_start'; seed: number; viewport_w?: number; viewport_h?: number; dpr?: number; touch?: boolean }
   // LUL-1043: `payout`/`balance` added so the Embers curve modelled on wiki
   // game/economy/embers can be checked against real players -- `payout` is
   // this run's Embers total (RunPayout.total from lib/game/economy.ts),
@@ -102,7 +104,8 @@ function readAnonId(): string {
 }
 
 let cachedAnonId: string | null = null;
-function getAnonId(): string {
+/** Also sent with a leaderboard submission (components/Leaderboard.tsx) so a nickname links to its runs. */
+export function getAnonId(): string {
   if (cachedAnonId == null) cachedAnonId = readAnonId();
   return cachedAnonId;
 }
@@ -121,6 +124,21 @@ export function setSink(next: Sink) {
 let reachedGameplay = false;
 
 /**
+ * LUL-3264: screen shape at game start, for the stats DB's device breakdown
+ * (does the game lose more phone players, and at which sizes). Coarse on
+ * purpose: CSS pixels rounded, no UA string, no fingerprinting signals.
+ */
+function readViewport(): { viewport_w?: number; viewport_h?: number; dpr?: number; touch?: boolean } {
+  if (typeof window === 'undefined') return {};
+  return {
+    viewport_w: Math.round(window.innerWidth),
+    viewport_h: Math.round(window.innerHeight),
+    dpr: Math.round((window.devicePixelRatio || 1) * 100) / 100,
+    touch: typeof navigator !== 'undefined' && (navigator.maxTouchPoints ?? 0) > 0,
+  };
+}
+
+/**
  * Never throws. A telemetry bug must not be able to crash the game loop or
  * the render path -- every call site depends on that guarantee.
  */
@@ -129,6 +147,7 @@ export function track(input: AnalyticsEventInput): void {
     if (input.event === 'game_start') reachedGameplay = true;
     const event: AnalyticsEvent = {
       ...input,
+      ...(input.event === 'game_start' ? readViewport() : {}),
       ts: Date.now(),
       anon_id: getAnonId(),
       build_sha: process.env.NEXT_PUBLIC_BUILD_SHA || 'dev',
