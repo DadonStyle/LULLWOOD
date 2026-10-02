@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8815 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7696, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8866 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7737, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1731,15 +1731,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6883, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7294). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6881, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7331). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7294) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L7331) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L3499) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1797,7 +1797,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L4427),
-  reset to 0 on `enter()` (L4548) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4570) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7731: `computeDepth(maxDistFromHome) +
@@ -3073,8 +3073,8 @@ engine flag is genuinely true.
 `running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
 re-deriving it (`engine/forest-engine.js` L7514) -- stacking on top of the LUL-3009 scent
 effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
-speed bonus applied to `spd` inside `stepFrame()` (L7656), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
-footstep-radius reduction applied to `noiseRadius` (L7642), replacing the plain sprint radius
+speed bonus applied to `spd` inside `stepFrame()` (L7921), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+footstep-radius reduction applied to `noiseRadius` (L7937), replacing the plain sprint radius
 only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
 is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
 it already fires correctly for the sprint-bonus window; both the `title` and the always-visible
@@ -3084,7 +3084,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7175) and `windAssistEndCue()` (L7184), edge-triggers on the combined
+`windAssistStartCue()` (L7199) and `windAssistEndCue()` (L7208), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3512,15 +3512,15 @@ existing surface).
 
 **Audio**: `investigateCue(p)` (L4122-4136) -- a low, two-pulse searching
 tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
-caption already names the species -- `hearCry()` (L2653) is the one exception: it pushes no
+caption already names the species -- `hearCry()` (L2663) is the one exception: it pushes no
 caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
 responding to the child's cry gives the player zero species identification, audio or text, same
 as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2620),
-`hearThrowableNoise()` (L2637), `hearCry()` (L2653), the charge-overshoot handoff (`p.chargeRecoveryT`,
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2630),
+`hearThrowableNoise()` (L2647), `hearCry()` (L2663), the charge-overshoot handoff (`p.chargeRecoveryT`,
 L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
 sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
 of the driving ticket's six-line list, included for the same reason the other six are: a real
@@ -3540,3 +3540,61 @@ wolf (`qaStagePredatorNearThrowLanding`, not a synthetic `hearThrowableNoise()` 
 real `checkThrowableNoise()`/`hearThrowableNoise()` path; the test asserts `investigateCueCount`
 goes from 0 to >=1 once the wolf reaches `'investigate'`, proving the cue fires off a real trigger,
 not just that the state flag flips.
+
+## Firefly Glow Detection Risk (LUL-5744, cheap slice, decision
+decisions/lul-5742-firefly-glow-detection-accepted-2026-10-02, full spec wiki
+game/mechanics/firefly-glow-detection-risk -- Section-0 checklist answered there)
+
+Standing inside a Firefly Swarms cluster (LUL-5707, `FIREFLY_CLUSTERS`,
+`lib/game/fireflyClusters.ts:24-30`) now raises the player's exposure in the predator
+detect-mul chain -- closing the gap LUL-5740 found: mote intensity (`:8398`) was pure
+rendering, read by nothing else, so a lit clearing cost the player nothing. No new
+HUD meter (Q2/Q3): the existing mote glow, already brighter nearer a cluster's center,
+is the risk readout.
+
+**New module** `lib/game/fireflyDetect.ts`: `fireflyGlowWeightAt(x, z, clusters, spanX,
+spanZ)` reuses `eventSites.ts`'s `sitesNear()` (the same proximity-weighted-max formula
+`decoyScentGlowWeight()`/Fog Tide already prove, generalized to "brightest of several
+same-kind sites") filtered to `kind: 'firefly'`. `fireflyGlowDetectMul(x, z, clusters,
+bonus, spanX, spanZ)` returns `1 + w*bonus`.
+
+**Trigger** -- `fireflyGlowDetectMul(player.x, player.z, activeFireflyDetectClusters,
+CONFIG.FIREFLY_GLOW_DETECT_BONUS, WRAP_SPAN, WRAP_SPAN)` multiplies into
+`effectiveDetect()`/`canSee()`'s existing detect-mul product (`engine/forest-engine.js`,
+alongside `veilDetectMul`/`fogTideDetectMul`/etc.), sampled at the **player's** position
+(unlike `fogTideDetectMul`, which samples the predator's) -- this represents the player
+standing in a lit clearing, not ambient conditions around the predator.
+`activeFireflyDetectClusters` is a second module-level cluster list alongside the
+render-side `activeFireflyClusters`: same dusk/night time-gate, but deliberately **not**
+sliced to `FIREFLY_MOBILE_CLUSTER_COUNT` on mobile -- the detection penalty applies to
+all 6 clusters regardless of render budget, so a mobile player standing in an
+unrendered cluster (5 or 6 of 6) is still exposed.
+
+`CONFIG.FIREFLY_GLOW_DETECT_BONUS` (`engine/tuning.js`) is a placeholder (`0.3`) --
+the real tuning number is named by the Game Economist (LUL-5744), not picked here,
+same stub-and-comment precedent as `CONFIG.FIREFLY_RAIN_DIM`.
+
+**Cue triple** -- no new visual (the existing mote glow is the readout, Q1/Q3); new
+one-shot `'fireflyGlow'` entry in `HINT_PRIORITY`/`HINT_TEXT` (self/panel-anchored, no
+world anchor needed), eligible the first frame the live `fireflyGlowWeight` (computed
+once per `stepFrame()` tick alongside the other hint candidates) exceeds `0.5` while
+not hidden: *"firefly glow -- the brighter you glow, the easier predators spot you."*
+Dismisses once the weight drops back to `<=0.5` (or the usual 8s timeout), same shape
+as `'rainfall'`'s `!rainfallActive` dismissal. A new one-shot audio sting,
+`fireflyGlowSwellCue()` (bandpass noise at the ambient insects bed's own 4800Hz
+register, ~0.6s swell), fires the same frame the caption claims the slot, gated by
+`soundOn`.
+
+**QA hooks**: no new hook function -- the existing `qaProbeFireflyClusters()` gains
+`detectClusterCount` (`activeFireflyDetectClusters.length`, diverges from the
+render-side `clusterCount` on mobile: 6 vs 4) and `glowSwellCueCount` (counted before
+the `audio`/`soundOn` gate, same counter-before-gate idiom as `qaScentMaskEnterCueCount`).
+`qaProbeEffectiveDetect(kind)`/`qaTeleportTo`/`qaBuildScene` (all pre-existing) drive
+the rest.
+
+Covered by `e2e/firefly-glow-detection.spec.ts` (3 tests: center-vs-outside ratio
+equals `1+FIREFLY_GLOW_DETECT_BONUS`, monotonic ramp with distance-to-center, one-shot
+caption+sting on first deep entry, never again) and
+`e2e/mobile/firefly-glow-detection.spec.ts` (an unrendered-on-mobile cluster still
+raises `effectiveDetect` even though `clusterCount` stays 4) -- all run in the micro
+world via `qaBuildScene`, no `@fullmap` needed.

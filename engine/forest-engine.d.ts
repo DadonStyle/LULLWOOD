@@ -98,11 +98,15 @@ declare global {
        * scanned over every cluster regardless of render slice -- see
        * fireflyAlarmResponse.ts) and clusters (the full unsliced, scaled
        * id/x/z list, for staging a predator on a named cluster's own
-       * coordinates via qaIsolatePredatorKindAt). */
+       * coordinates via qaIsolatePredatorKindAt). LUL-5744 added
+       * detectClusterCount (the detection-side list, never mobile-sliced --
+       * diverges from clusterCount on mobile) and glowSwellCueCount (the
+       * one-shot risk-tell sting's fire count). */
       qaProbeFireflyClusters?: () => {
-        clusterCount: number; anyVisible: boolean; maxIntensity: number;
+        clusterCount: number; detectClusterCount: number; anyVisible: boolean; maxIntensity: number;
         alarmScalar: number; alarmActive: boolean;
         clusters: { id: string; x: number; z: number }[];
+        glowSwellCueCount: number;
       };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
