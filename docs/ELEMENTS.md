@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L9025 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7882, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L9123 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7980, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1791,15 +1791,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L7052, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7480). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L7146, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7574). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7450) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L7544) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L3499) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -1857,7 +1857,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L4427),
-  reset to 0 on `enter()` (L4631) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4710) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7731: `computeDepth(maxDistFromHome) +
@@ -1980,7 +1980,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7832, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L8076, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -3135,7 +3135,7 @@ engine flag is genuinely true.
 `running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
 re-deriving it (`engine/forest-engine.js` L7514) -- stacking on top of the LUL-3009 scent
 effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
-speed bonus applied to `spd` inside `stepFrame()` (L7921), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+speed bonus applied to `spd` inside `stepFrame()` (L8164), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
 footstep-radius reduction applied to `noiseRadius` (L7937), replacing the plain sprint radius
 only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
 is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
@@ -3146,7 +3146,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7310) and `windAssistEndCue()` (L7319), edge-triggers on the combined
+`windAssistStartCue()` (L7404) and `windAssistEndCue()` (L7413), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3602,15 +3602,15 @@ existing surface).
 
 **Audio**: `investigateCue(p)` (L4122-4136) -- a low, two-pulse searching
 tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
-caption already names the species -- `hearCry()` (L2718) is the one exception: it pushes no
+caption already names the species -- `hearCry()` (L2780) is the one exception: it pushes no
 caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
 responding to the child's cry gives the player zero species identification, audio or text, same
 as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2685),
-`hearThrowableNoise()` (L2702), `hearCry()` (L2718), the charge-overshoot handoff (`p.chargeRecoveryT`,
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2747),
+`hearThrowableNoise()` (L2763), `hearCry()` (L2780), the charge-overshoot handoff (`p.chargeRecoveryT`,
 L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
 sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
 of the driving ticket's six-line list, included for the same reason the other six are: a real
@@ -3820,12 +3820,15 @@ remap persists across reload) -- all in the micro world via `qaBuildScene`, no `
 
 **What it is**
 - Two independent, React-owned surfaces in `components/Leaderboard.tsx`,
-  outside the `hudState`/`EngineHudState` pipeline entirely — no engine touch,
-  no `pushState()` field (same shape as the Welcome splash entry above).
+  outside the `hudState`/`EngineHudState` pipeline entirely — no
+  `pushState()` field (same shape as the Welcome splash entry above).
   Storage is the SQLite service behind `app/api/leaderboard/**`; this file
-  only ever talks to those routes.
-- `#leaderboardLine` (`LeaderboardMenuLine`, `components/Leaderboard.tsx:79-86`):
-  mounted inside `#gate` in `components/Hud.tsx:974`, directly under
+  only ever talks to those routes. As of wave 2 (LUL-3295, below) the
+  resolved record is *also* pushed one-way into the engine via
+  `actions.setLeaderboardRecord()` for the tree-tint consumer — still no
+  `EngineHudState`/`pushState()` field, the engine never reports back.
+- `#leaderboardLine` (`LeaderboardMenuLine`, `components/Leaderboard.tsx:92-99`):
+  mounted inside `#gate` in `components/Hud.tsx:983`, directly under
   `#gateCredit`. Fetches `/api/leaderboard/current` once on mount (5s timeout
   via `AbortSignal.timeout`) and renders one of four states via
   `data-state`: `loading` ("Loading top rescuer…"), `empty` ("No rescuer yet —
@@ -3869,3 +3872,69 @@ remap persists across reload) -- all in the micro world via `qaBuildScene`, no `
 
 **Collision & physics profile**
 - N/A — not spatial/world objects.
+
+---
+
+### Leaderboard wave 2: flag-tinted trees (LUL-3295)
+
+**What it is**
+- A visual-only recolor of a small subset of live tree instances toward the
+  current record holder's national flag colours. Driven one-way by
+  `components/Hud.tsx`'s `useLeaderboardSky()` (`:610-619`), the same hook the
+  LUL-5820 sky balloon uses — it calls the real `actions.setLeaderboardRecord
+  (status, record)` engine action whenever `useLeaderboardRecord()`'s fetch
+  resolves or transitions, `status` already collapsed to `'loading' |
+  'populated' | 'empty' | 'hidden'` (`failed` folded into `populated`-with-
+  cache or `hidden`). One engine action, one fetch, shared by `#leaderboardLine`,
+  the sky balloon and the tree tint — `setLeaderboardRecord()`
+  (`engine/forest-engine.js:7734-7768`) runs both consumers' logic (tree tint
+  first via `applyLeaderboardTreeTint()`, then the balloon), additive to
+  `EngineActions`/`ENGINE_ACTION_KEYS`/`init()`'s return (`lib/engine-contract.ts`,
+  `components/Hud.tsx`), per the engine/React contract rule.
+- Colour source: `COUNTRY_PALETTES` (`lib/game/country-palettes.ts`), one
+  2-3 hex-colour array per `COUNTRY_ALLOWLIST` code (30 entries, 1:1 covered —
+  `lib/game/country-palettes.test.ts` fails the build if the two drift). No
+  country ever falls back to a default palette — `setLeaderboardRecord()`
+  resolves straight to `null` (no tint) for `loading`/`empty`/`failed`-with-no-cache
+  or any code not in the table.
+- Subset selection: `computeTreeTintColor()` (`:680-689`) blends only every
+  `CONFIG.LEADERBOARD_TINT_SUBSET_N`th tree (`engine/tuning.js:87`, `8` —
+  ~12% of trees), keyed off each tree's own stable `treeData` index (`ti % N
+  === 0`), never an `rng()` draw — `ensureChunk()`'s seeded-stream invariant
+  (`:1062-1063` comment) stays intact across chunk stream-in/out. Canopy only
+  (`trio[1]`/`trio[2]`, the two foliage `InstancedMesh`es) — the trunk
+  (`trio[0]`) is never tinted by this or the pre-existing weathering tint.
+- Blend, not replace: `out.lerp(flagColor, CONFIG.LEADERBOARD_TINT_WEIGHT)`
+  (`engine/tuning.js:93`, `0.25`) is applied *after* the existing per-tree
+  weathering `tintCol.setRGB(t.tint*0.92, t.tint, t.tint*0.86)` — a tinted
+  tree keeps its weathering variation, just shifted toward the flag colour at
+  low weight, which is also what keeps the on-screen saturation low without a
+  second desaturation step.
+
+**What it CANNOT do**
+- Cannot tint a tree's trunk, only its two foliage meshes.
+- Cannot select a tree via randomness — the subset is a pure function of
+  `treeData[ti]`'s already-generated index, never a fresh `rng()` call.
+- Cannot show a default/placeholder country — no record, an empty board, a
+  failed fetch with nothing cached, or an unrecognized code all resolve to
+  "no tint," never a guessed flag.
+
+**Behaviours & logic**
+- `ensureChunk()` (`:1064-1097`) calls `computeTreeTintColor()` once per tree
+  the first time its chunk streams in (first build only). A later record
+  change (e.g. `empty` → `populated`, or one country overtaking another)
+  does not wait for a chunk to stream out and back in — `setLeaderboardRecord()`
+  compares the new `COUNTRY_PALETTES[code]` array reference against the
+  stored one (a plain reference equality check; same code ⇒ same array
+  reference ⇒ no-op even though `timeMs`/`achievedAt` changed) and, on a real
+  change, calls `retintLiveTreeChunks()` (`:696-708`) to re-apply the tint to
+  every already-live chunk's `instanceColor` and flag it `needsUpdate`.
+- QA-only (`?qaHooks=1`): `qaProbeTreeTint()` (`engine/forest-engine.js`, next
+  to `qaProbeTreeChunks`) reports `{ totalTrees, tintedCount, sampleTintedColor }`
+  over live chunks; `qaSetLeaderboardRecord(status, record)` calls the same
+  `setLeaderboardRecord()` function directly, for simulating a record change
+  mid-test since the production fetch (`useLeaderboardRecord()`) only ever
+  runs once per mount.
+
+**Collision & physics profile**
+- N/A — purely a per-instance `instanceColor` write, no collider/physics change.
