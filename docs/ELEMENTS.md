@@ -1130,8 +1130,8 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
 - Completion reuses `canCompleteMission()` unchanged — no new completion logic, this is a
   plain fixed-landmark target like `oakHollow`/`radioMast`/`stoneMarker`.
 - `MISSION_NAMES.skyCompassNavigation` (`components/Hud.tsx`): `'Sky Compass Navigation'`.
-  `MISSION_SKY_COMPASS_NAVIGATION_REWARD` (`lib/game/economy.ts`): placeholder `9`, same
-  convention as the other untimed missions pending a Game Economist pricing ticket.
+  `MISSION_SKY_COMPASS_NAVIGATION_REWARD` (`lib/game/economy.ts`): `6`, priced by the Game
+  Economist (LUL-5780) below baseline as a teaching/accessibility mission with no fail state.
 - Cue triple: a new `HINT_PRIORITY`/`HINT_TEXT` entry (`engine/forest-engine.js`) —
   self/panel-anchored like `oakHollow`, eligible while `mission.target.kind ===
   'skyCompassNavigation' && mission.status === 'active'`, dismissed on
@@ -2490,8 +2490,9 @@ not final tuning.
   (`engine/forest-engine.js`'s `tick()`, right after `chapelSanctuaryUsedThisRun = true`) —
   no new engine completion logic beyond that one call.
 - `MISSION_NAMES.chapelSanctuary` (`components/Hud.tsx`): `'Chapel Sanctuary'`.
-  `MISSION_CHAPEL_SANCTUARY_REWARD` (`lib/game/economy.ts`): placeholder `9`, same convention
-  as the other untimed missions pending a Game Economist pricing ticket.
+  `MISSION_CHAPEL_SANCTUARY_REWARD` (`lib/game/economy.ts`): `8`, priced by the Game
+  Economist (LUL-5780), grouped with Oak Hollow/Deepwater as a risk-free spatial-only veil
+  route.
 - Cue triple: reuses the shrine's own existing visual (beacon-glow pulse via
   `chapelSanctuaryPulseT`), audio (`missionWaypointHum()` nav cue while the mission is active
   and un-entered, `embersPurchaseCue()` on grant), and caption (`chapelSanctuaryStartCue()`'s
