@@ -22,6 +22,8 @@ interface PersistedSettings {
   invertY: boolean;
   reducedMotion: boolean;
   captionsOn: boolean;
+  // LUL-5829: Predator Audio slider -- display units (0-100), default 100.
+  predatorVolume: number;
   // LUL-4960: M5 Cold Walk opt-in -- defaults false (never pre-selected, per the
   // 2026-09-01 acceptance's own constraint), applied at the next enter()/restart().
   coldWalkOptIn: boolean;
@@ -130,6 +132,8 @@ export default function SettingsPanel({
     if (typeof s.reducedMotion === 'boolean') actions.setReducedMotion(s.reducedMotion);
     if (typeof s.captionsOn === 'boolean') actions.setCaptions(s.captionsOn);
     if (typeof s.coldWalkOptIn === 'boolean') actions.setColdWalkOptIn(s.coldWalkOptIn);
+    // LUL-5829: display units (0-100) -> engine converts to WebAudio gain (0-1).
+    if (typeof s.predatorVolume === 'number') actions.setPredatorVolume(s.predatorVolume / 100);
     // LUL-2230: default on, so a never-persisted key (new player, or an
     // existing player's first load after this ships) doesn't turn the trail
     // off -- only an explicit `false` in storage does.
@@ -169,6 +173,7 @@ export default function SettingsPanel({
       invertY: state.invertY,
       reducedMotion: state.reducedMotion,
       captionsOn: state.captionsOn,
+      predatorVolume: state.predatorVolume,
       coldWalkOptIn: state.coldWalkOptIn,
       scentTrailVisible: state.scentTrailVisible,
       hintsEnabled: state.hintsEnabled,
@@ -183,6 +188,7 @@ export default function SettingsPanel({
     state.invertY,
     state.reducedMotion,
     state.captionsOn,
+    state.predatorVolume,
     state.coldWalkOptIn,
     state.scentTrailVisible,
     state.hintsEnabled,
@@ -257,6 +263,19 @@ export default function SettingsPanel({
             onChange={(e) => actions?.setCaptions(e.target.checked)}
           />
           Captions for predator calls
+        </label>
+        <label className="sliderRow">
+          Predator Audio
+          <input
+            id="predatorVolumeSlider"
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={state.predatorVolume}
+            onChange={(e) => actions?.setPredatorVolume(+e.target.value / 100)}
+          />
+          <span>{Math.round(state.predatorVolume)}%</span>
         </label>
         <label className="radioRow">
           <input
