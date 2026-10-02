@@ -93,8 +93,17 @@ declare global {
        * test assert presence at night and absence at noon without scraping Three.js
        * light internals. LUL-5736 added maxIntensity so a test can assert the
        * rain-dim ramp quantitatively (anyVisible alone can't distinguish dimmed
-       * from undimmed once intensity is merely reduced, not zeroed). */
-      qaProbeFireflyClusters?: () => { clusterCount: number; anyVisible: boolean; maxIntensity: number };
+       * from undimmed once intensity is merely reduced, not zeroed). LUL-5756
+       * (LUL-5759) added alarmScalar/alarmActive (the frame-global alarm value,
+       * scanned over every cluster regardless of render slice -- see
+       * fireflyAlarmResponse.ts) and clusters (the full unsliced, scaled
+       * id/x/z list, for staging a predator on a named cluster's own
+       * coordinates via qaIsolatePredatorKindAt). */
+      qaProbeFireflyClusters?: () => {
+        clusterCount: number; anyVisible: boolean; maxIntensity: number;
+        alarmScalar: number; alarmActive: boolean;
+        clusters: { id: string; x: number; z: number }[];
+      };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */
@@ -218,6 +227,8 @@ declare global {
       qaIsolatePredator?: (idx: number) => { idx: number; x: number; z: number } | null;
       /** LUL-2841: re-runs qaLurePredatorKind's own nearest-of-`kind` search and marks every other predator `inert` (same flag as qaIsolatePredator) -- for a test built on qaTeleportToHideSpot's natural cover (so qaBuildScene isn't an option) that lures by kind rather than holding an idx. Returns {kind,x,z}, or null if the species isn't spawned. */
       qaIsolatePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number } | null;
+      /** LUL-5756 cheap slice (LUL-5759): same isolate-and-park-the-rest shape as qaIsolatePredatorKind, but places the chosen predator at an exact (x,z) instead of picking the nearest -- for staging a real predator directly on a firefly cluster's own coordinates (qaProbeFireflyClusters().clusters) rather than relative to the player. Returns {kind,x,z}, or null if the species isn't spawned. */
+      qaIsolatePredatorKindAt?: (kind: 'wolf' | 'bear' | 'lion', x: number, z: number) => { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number } | null;
       /** LUL-2457: marks every predator `inert` (same flag as qaIsolatePredator), parking them off-map so a long `qaAdvance` window (e.g. the day/night ramp) can't be ended early by an ambient kill. Returns the count parked. */
       qaClearAllPredators?: () => number;
       /** LUL-212: teleports the player to the first generated hiding spot (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of `kind` if given (LUL-2320). No predator involved. Returns the spot's kind, or null if none were generated / no prop of `kind` exists on this map. */

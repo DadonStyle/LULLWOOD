@@ -218,6 +218,7 @@ import { ROOSTS } from '@/lib/game/roostSites';
 import { SCENT_MASK_SITES, findScentMaskSiteIndex, scentMaskGlowWeight } from '@/lib/game/scentMaskSites';
 import { DECOY_SCENT_SITES, findDecoyScentSiteIndex, decoyScentGlowWeight } from '@/lib/game/decoyScentSites';
 import { FIREFLY_CLUSTERS, FIREFLY_MOBILE_CLUSTER_COUNT } from '@/lib/game/fireflyClusters';
+import { fireflyAlarmBoost } from '@/lib/game/fireflyAlarmResponse';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -526,6 +527,11 @@ let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil r
 let fogTideClock = 0, fogTideAmount = 0, fogTideBuild = 0, fogTideActive = false;
 // LUL-5698: Rainfall Event -- same four-variable shape as Fog Tide above.
 let rainfallClock = 0, rainfallAmount = 0, rainfallBuild = 0, rainfallActive = false;
+// LUL-5756 cheap slice (LUL-5759): recomputed every frame in the mote render
+// loop below, never persisted. fireflyAlarmStingPlayed is a true once-per-run
+// flag (unlike staminaLowCuePlayed's hysteresis reset) -- the sting is a
+// first-encounter tell, not re-armed when alarm re-triggers later the same run.
+let fireflyAlarmActive = false, fireflyAlarmStingPlayed = false;
 // LUL-1709: live time-of-run pacing clock, 0 (dawn) -> 1 (full night) over
 // TIME_OF_RUN_DURATION_S of actual play. Same pausable-accumulator pattern as
 // fogTideClock immediately above -- only advances while `playing` (see tick()),
@@ -2342,7 +2348,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion','skyCompassNavigation',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','mudTrapDecoy','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2','rainfall'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','mudTrapDecoy','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2','rainfall','fireflyAlarm'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2379,6 +2385,7 @@ const HINT_TEXT = {
   chapelVeilEscapeStage1: 'the chapel offers refuge — dwell inside to earn a veil reserve, then survive a chase with veil overload',
   chapelVeilEscapeStage2: 'you gained a veil reserve — now burn all veil charge (Q) to escape a chase and complete the mission',
   rainfall: "rain masks footsteps — predators' noise detection drops",
+  fireflyAlarm: 'firefly alarm — they sense danger nearby and brighten, easier to spot in the glow',
 };
 const HINT_KEY_PREFIX = 'lullwood:hints:';
 // LUL-2230's key, read (never written) as a migration fallback for the 'scent' entry
@@ -3939,6 +3946,24 @@ function logCrawlExitCue(){
   src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
   src.start(t); src.stop(t+0.18);
 }
+// LUL-5756 cheap slice (LUL-5759): one-shot rising-chitter sting, fired once per run on
+// the first frame the firefly alarm activates -- same procedural-noise-burst shape as
+// thornSnagSound()/logCrawlEnterCue() above, but with a rising bandpass sweep (an
+// alarm-calling chitter) instead of a static filter.
+function fireflyAlarmSting(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.3, false);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 4;
+  bp.frequency.setValueAtTime(900, t);
+  bp.frequency.exponentialRampToValueAtTime(3200, t+0.28);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.16, t+0.04);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.3);
+  src.connect(bp); bp.connect(g); g.connect(master); g.connect(conv);
+  src.start(t); src.stop(t+0.32);
+}
 // LUL-4527: refusal tell for a sprint/strafe/reverse attempt mid-crawl -- same shape as
 // veilOverloadDeniedCue(), the codebase's one existing "input was refused" cue.
 function logCrawlDeniedCue(){
@@ -4638,10 +4663,22 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // LUL-5736: maxIntensity added so a test can assert the rain-dim ramp
   // (CONFIG.FIREFLY_RAIN_DIM) quantitatively -- anyVisible alone can't, since
   // a dimmed-not-zeroed mote still reads intensity > 0.
+  // LUL-5756 cheap slice (LUL-5759): alarmScalar/alarmActive expose the frame-
+  // global value computed in the mote loop (scanned over ALL clusters, not
+  // just this session's rendered `activeFireflyClusters` slice -- see
+  // lib/game/fireflyAlarmResponse.ts) so a test can assert the alarm
+  // mechanism directly instead of only inferring it from maxIntensity deltas.
+  // `clusters` is that same full unsliced, scaled id/x/z list -- lets a test
+  // stage a real predator (qaIsolatePredatorKindAt) directly on a named
+  // cluster's own coordinates, including one excluded from mobile's render
+  // budget, instead of only approximating "near a cluster" via the player.
   window.ForestEngine.qaProbeFireflyClusters = function(){
     return { clusterCount: activeFireflyClusters.length,
              anyVisible: fireflyClusterMotes.some(function(m){ return m.light.intensity > 0; }),
-             maxIntensity: fireflyClusterMotes.reduce(function(acc, m){ return Math.max(acc, m.light.intensity); }, 0) };
+             maxIntensity: fireflyClusterMotes.reduce(function(acc, m){ return Math.max(acc, m.light.intensity); }, 0),
+             alarmScalar: fireflyClusterMotes.length ? fireflyAlarmBoost(predators, scaledFireflyClusters(), player, WRAP_SPAN, WRAP_SPAN) : 1,
+             alarmActive: fireflyAlarmActive,
+             clusters: scaledFireflyClusters().map(function(c){ return { id: c.id, x: c.x, z: c.z }; }) };
   };
   // LUL-2225: generic teleport, for staging an arbitrary position that isn't
   // already a fixed named landmark like qaTeleportHome/qaTeleportNearBaby.
@@ -5551,6 +5588,21 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     }
     const chosen = nearestPursuing || nearestAny;
     if(!chosen) return null;
+    for(const other of predators){ if(other !== chosen){ other.inert = true; } }
+    return { kind: chosen.kind, x: chosen.x, z: chosen.z };
+  };
+
+  // LUL-5756 cheap slice (LUL-5759): same isolate-and-park-the-rest shape as
+  // qaIsolatePredatorKind above, but places the chosen predator at an exact
+  // (x,z) instead of picking the nearest -- for staging a real predator
+  // object directly on a specific firefly cluster's coordinates (read from
+  // qaProbeFireflyClusters().clusters) rather than relative to the player.
+  window.ForestEngine.qaIsolatePredatorKindAt = function(kind, x, z){
+    const chosen = predators.find(p => p.kind === kind);
+    if(!chosen) return null;
+    chosen.x = x; chosen.z = z;
+    chosen.vx = chosen.vz = 0; chosen.alert = 0; chosen.reroute = 0; chosen.stuckT = 0;
+    chosen.state = 'roam'; chosen.hunt = false;
     for(const other of predators){ if(other !== chosen){ other.inert = true; } }
     return { kind: chosen.kind, x: chosen.x, z: chosen.z };
   };
@@ -7294,6 +7346,7 @@ function restart(){
   won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; baby.taken = fresh.babyTaken;
   hidden = false; hideTime = 0; hideKind = null; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false;
+  fireflyAlarmActive = false; fireflyAlarmStingPlayed = false;   // LUL-5756 cheap slice (LUL-5759): fresh once-per-run sting eligibility
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   // LUL-5298: a death/win that lands mid-crawl (LUL-4527) left inLogCrawl true and
   // logCrawlDirX/Z/logCrawlExitX/Z pointed at the OLD map's tunnel -- the next round's
@@ -8419,13 +8472,29 @@ function stepFrame(dt, t, skipRender){
       decoyScentGlowMeshes[i].material.opacity = 0.12 + pulse + w*0.35;
     }
   }
+  // LUL-5756 cheap slice (LUL-5759): one frame-global alarm scalar, scanning
+  // every cluster -- not just the ones this session actually renders, so a
+  // predator near a mobile-budget-excluded cluster (FIREFLY_MOBILE_CLUSTER_COUNT)
+  // still brightens the clusters the player can see (see fireflyAlarmResponse.ts).
+  // Skipped outside dusk/night (fireflyClusterMotes.length is 0 then, same guard
+  // as the loop below) so this never does live predator-scan work for nothing.
+  const alarmScalar = fireflyClusterMotes.length
+    ? fireflyAlarmBoost(predators, scaledFireflyClusters(), player, WRAP_SPAN, WRAP_SPAN)
+    : 1;
+  const alarmNowActive = alarmScalar > 1.0001;
+  if (alarmNowActive && !fireflyAlarmActive) {
+    fireflyAlarmActive = true;
+    if (!fireflyAlarmStingPlayed) { fireflyAlarmSting(); fireflyAlarmStingPlayed = true; }
+  } else if (!alarmNowActive && fireflyAlarmActive) {
+    fireflyAlarmActive = false;
+  }
   // LUL-5707: distance-based intensity falloff (same decoyScentGlowWeight() math
   // as the scent sites above, generic over any EventSite-shaped object) plus
   // idle drift, degrading to static under reducedMotion. Empty loop outside
   // dusk/night -- fireflyClusterMotes is built empty then (see module scope above).
   for (const mote of fireflyClusterMotes) {
     const w = decoyScentGlowWeight(player.x, player.z, mote.cluster, WRAP_SPAN, WRAP_SPAN);
-    mote.light.intensity = 0.6 * w * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM);
+    mote.light.intensity = 0.6 * w * alarmScalar * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM);
     if (!motionReduced()) {
       mote.light.position.x = mote.baseX + Math.sin(t*0.3 + mote.phase) * 1.5;
       mote.light.position.z = mote.baseZ + Math.cos(t*0.23 + mote.phase) * 1.5;
@@ -8559,6 +8628,7 @@ function stepFrame(dt, t, skipRender){
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
         case 'duskLion': return [runElapsed >= DUSK_LION_SIGHT_START_S, null];   // LUL-4889: time-only, no world anchor
         case 'rainfall': return [rainfallActive, null];
+        case 'fireflyAlarm': return [fireflyAlarmActive, null];   // self/panel-anchored, time-only like rainfall -- the tell is the mote glow itself
         default: return [false, null];
       }
     }
@@ -8574,6 +8644,7 @@ function stepFrame(dt, t, skipRender){
         case 'windPulse': return !predators.some(p => p.windPauseT > 0);
         case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'rainfall': return !rainfallActive;
+        case 'fireflyAlarm': return !fireflyAlarmActive;
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
         case 'beaconEvasion': return missionCanComplete;
