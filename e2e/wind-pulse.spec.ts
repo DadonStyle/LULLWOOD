@@ -123,7 +123,11 @@ test.describe('Predator Pause (LUL-4893): wind-gated freeze for downwind-perpend
     const afterFreeze = await qaHook(page, 'qaPredatorState', LION_IDX);
     expect(afterFreeze.windPauseT, 'LUL-4996: must not refreeze the instant the first freeze decays, even with unchanged geometry').toBe(0);
     expect(afterFreeze.windPauseCooldownT, 'the re-arm cooldown must still be counting down').toBeGreaterThan(0);
-    expect(afterFreeze.dist, 'must have resumed closing distance').toBeLessThan(triggered.dist - 0.1);
+    // LUL-5670/PR#968 scaled the avoid-commit hold's decay by speedScaleMul; in
+    // qaWorld=micro (0.2x) the hold now lingers 5x longer than when this margin
+    // was tuned, so only ~0.0293u closes in this window now (was >0.1u). Re-tuned
+    // per LUL-5686 to the real measured value (margin stays safely below it).
+    expect(afterFreeze.dist, 'must have resumed closing distance').toBeLessThan(triggered.dist - 0.02);
 
     // A bit further, still well inside the 2.0s cooldown window -- must keep
     // closing distance, not freeze again.
@@ -149,7 +153,11 @@ test.describe('Predator Pause (LUL-4893): wind-gated freeze for downwind-perpend
     await qaHook(page, 'qaAdvance', stepsFor(0.15));
     const state = await qaHook(page, 'qaPredatorState', LION_IDX);
     expect(state.windPauseT).toBe(0);
-    expect(state.dist, 'an unpaused head-on lion must have closed real distance').toBeLessThan(4.5);
+    // Re-tuned per LUL-5686: PR#968's speedScaleMul-scaled avoid-commit hold
+    // (see note above) cuts real closing here to ~0.157u of the 5u gap, not
+    // the >0.5u this 4.5 budget assumed. New budget keeps a margin below the
+    // real measured value (4.843335453837601u).
+    expect(state.dist, 'an unpaused head-on lion must have closed real distance').toBeLessThan(4.9);
   });
 
   test('the wind-pulse hint caption fires once, the first time a freeze triggers, and not again', async ({ page }) => {

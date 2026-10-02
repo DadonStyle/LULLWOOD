@@ -17,6 +17,7 @@ import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 const LION_IDX = 6;   // wolf/bear/lion each claim a fixed 3-slot range (:1835) -- lion is 6-8, see e2e/wind-pulse.spec.ts's own LION_IDX
+const FIXED_DT = 0.5;   // same shape as e2e/bear-roost-ambush-mission.spec.ts
 
 async function grabAThrowable(page: import('@playwright/test').Page) {
   const stone = await qaHook(page, 'qaTeleportNearThrowable');
@@ -47,6 +48,11 @@ test.describe('Lion Roost Flush mission (LUL-5426)', () => {
 
     const lion = await qaHook(page, 'qaPredatorState', LION_IDX);
     expect(lion.kind).toBe('lion');
+
+    // LUL-5644/LUL-5646: qaAdvance() requires qaSetFixedStep() to have run first (engine/
+    // forest-engine.js throws otherwise) -- this file never called it, so the qaAdvance()
+    // below could never have passed.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     // Complete the mission via the real roost-throw path (M6 Flush's own completion channel,
     // canCompleteFlush() -- reused unmodified for this kind).

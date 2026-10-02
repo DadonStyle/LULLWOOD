@@ -21,7 +21,16 @@ name: Tier approve
 #      job exits without approving unless the whole diff is Tier A or B. That
 #      script fails closed: `.github/**`, `scripts/**`, `engine/**`,
 #      `app/api/**`, dependency manifests, and any unrecognised path are C.
-#      It cannot approve a change to itself or to the merge gate.
+#      It cannot approve a change to itself or to the merge gate. Since
+#      LUL-5693, it also looks past the path for `e2e/**`/`*.test.*`/
+#      `*.spec.*` files: it parses each file's patch for `expect(`/`test(`/
+#      `it(`/`describe(` occurrences, and a diff that doesn't add a new
+#      assertion or test block isn't new coverage and fails closed to C
+#      instead of riding the test-file path to Tier A -- see pr-tier.mjs's
+#      "spec/test diff" bullet for why (PR#971 auto-merged a budget retune
+#      this way with zero review; a plain added/removed line count would
+#      have missed it too, since the retune was padded with 3 comment lines
+#      per call site and read net-positive).
 #   2. NEVER SELF-APPROVES. Refuses if the PR was authored by the same login
 #      the approving review is submitted under (the real 422 case). Every PR
 #      in this repo is opened by auto-pr.yml as github-actions[bot], and the
@@ -204,8 +213,17 @@ jobs:
             fi
 
             # --- guard 1: tier ---
-            gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename' > files.txt
-            echo "changed files:"; sed 's/^/  /' files.txt
+            # One JSON object per line (filename, additions, deletions,
+            # patch), not just the path -- pr-tier.mjs (LUL-5693) parses the
+            # patch to tell a spec/test diff that adds new coverage (a new
+            # assertion or test block, stays Tier A) from one that doesn't
+            # (a value-only retune, even one padded with explanatory
+            # comments -- PR#971's exact shape -- or a weakened/disguised
+            # test; fails closed to Tier C). All three fields are already on
+            # this same response, no extra request. `tojson` keeps each
+            # object on one line regardless of what the patch text contains.
+            gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[] | {filename, additions, deletions, patch} | tojson' > files.txt
+            echo "changed files:"; jq -r '.filename' files.txt | sed 's/^/  /'
             tier=$(PR_TIER_VERBOSE=1 node scripts/pr-tier.mjs --stdin < files.txt)
             echo "tier: $tier"
             if [ "$tier" = "C" ]; then

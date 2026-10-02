@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8131 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7151, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L9161 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L8018, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -975,6 +975,33 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
   surfaced to the HUD as a plain-text clock (`#timeOfRunClock`,
   `formatTimeOfRunClock()`, dawn 6:00 AM at `timeOfRun=0` to 9:00 PM at
   `timeOfRun=1`).
+- **As of `LUL-5698`** (Rainfall Event, cheap slice), an additive
+  `rainfallFogBoost(rainfallAmount)` term stacked on top of the veil/tide/
+  time-of-run terms above (`engine/forest-engine.js:7589`). Same
+  `eventScheduler.ts` three-phase calm/signpost/active cycle as Fog Tide, its
+  own `RAINFALL_CONFIG` (`lib/game/rainfallEvent.ts` — `period: 80,
+  activeDuration: 20, leadIn: 10`), eased over `RAINFALL_RAMP` (4s). At full
+  rain, `rainfallFogBoost()` adds `RAINFALL_FOG_BOOST` (0.08) — no particle
+  system or color tint (none exists for Fog Tide either; "fog bloom
+  particles" in the original proposal doesn't map to anything in this
+  codebase's single-density `THREE.FogExp2`). Whole-map, not site-scoped
+  (`RAINFALL_SITES` deferred to Full Feature). The event's other effect
+  surface — footstep/breathing noise radius scaled by
+  `rainfallNoiseScalar(rainfallAmount)` (`RAINFALL_NOISE_MUL = 0.65`, same
+  magnitude as Fog Tide's own detect-radius cut) — is threaded into
+  `updatePredators()`'s `checkNoise()` call for the footstep channel only
+  (`engine/forest-engine.js:2960`); the cry-noise channel two lines below is
+  deliberately untouched. Ambient audio: a new procedural bandpass-filtered
+  noise bed (`audio.rg`, `engine/forest-engine.js:3729-3733`) ramped by
+  `rainfallBuild` alongside Fog Tide's own `wg`/`dg` ramping
+  (`engine/forest-engine.js:8283`) — no loaded audio sample exists anywhere
+  in this file, every ambient bed (`wind`/`insects`/`dg`/now `rain`) is
+  procedural Web Audio noise. Signposted via the existing
+  `HINT_PRIORITY`/`HINT_TEXT` registry (`rainfall` key,
+  `engine/forest-engine.js:2303`, `:2339`) — no new `EngineHudState` field or
+  React round-trip, same as Fog Tide's own visual. QA hook:
+  `qaSetRainfallClock(seconds)` (`engine/forest-engine.js`), mirrors
+  `qaSetFogTideClock` exactly.
 
 **What it CANNOT do**
 - `effectiveDetect()` (predator sight range) still never reads
@@ -1043,6 +1070,140 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
 
 **Collision & physics profile**
 - N/A — not a spatial object, has no position or collider.
+
+---
+
+### Sky Compass (LUL-5486, cheap slice off LUL-5485)
+
+**What it can do**
+- Paint four faint cardinal glyphs (N/E/S/W) as real `THREE.Sprite` objects at
+  fixed absolute world positions — the cardinal unit vectors × radius 280,
+  same sky-setup block as the star field/moon disc
+  (`engine/forest-engine.js`, right after `scene.add(moonGroup)`). Because
+  they are genuine world-space objects (not baked into `scene.background`,
+  which is a flat non-rotating `CanvasTexture` — the approach LUL-5485's
+  original proposal wanted and which cannot rotate with the camera), turning
+  to face a direction moves the glyph across the screen exactly like a real
+  landmark would.
+- Draw a filled serif glyph by day and a hollow (stroke-only) serif glyph by
+  night, colored from `TOD_VISUAL.sunMoonColor` so it reads as lit by the
+  same source as the sun/moon disc (`lib/game/skyCompass.ts`'s
+  `drawSkyCompassGlyph()`, unit tested in `skyCompass.test.ts`).
+- Fade in/out with `TOD_VISUAL.starOpacity` between 8–12% opacity
+  (`SKY_COMPASS_MIN_OPACITY`/`SKY_COMPASS_MAX_OPACITY`) — always faint,
+  never a HUD element.
+
+**What it CANNOT do**
+- No settings, no economy cost, no HUD entry, no `EngineActions`/`EngineHudState`
+  wiring — a passive always-on background object, so the LUL-1697 engine/React
+  contract rule does not apply (nothing added to `init()`'s return object).
+- Does not affect predator detection, hiding, scent, difficulty, or any other
+  gameplay system — purely atmospheric, same class as the star field.
+- Not interactive — no click/tap target, no prompt, no state that persists
+  across sessions.
+
+**Behaviours & logic**
+- Pure glyph-draw and world-position math lives in `lib/game/skyCompass.ts`
+  (`SKY_COMPASS_GLYPHS`, `skyCompassPosition()`, `drawSkyCompassGlyph()`), no
+  THREE import and no `document`/DOM access — testable with a plain recording
+  stub for the 2D context (`skyCompass.test.ts`).
+- QA hook `qaGetSkyCompassPositions()` (inside `?qaHooks=1`) returns the 4
+  sprites' real world positions, so a test can assert they sit at the cardinal
+  unit vectors × radius and that rotating the camera
+  (`qaSetLookYaw`) does not move them — proving world-space placement, not a
+  screen-locked overlay. See `e2e/sky-compass.spec.ts`.
+
+**Collision & physics profile**
+- N/A — not a spatial object with a collider; `fog: false`/`depthWrite: false`
+  so it always reads through fog and never occludes or is occluded by nearer
+  geometry, same as stars/moon.
+
+**Mission mode (LUL-5528/LUL-5524)**
+- `MissionKind` gains `'skyCompassNavigation'` (`lib/game/mission.ts`), a `MISSION_POOL`
+  entry keyed to the `drownedCar` landmark (`landmarkKind: 'drownedCar'`, untimed,
+  `interactRadius: 4`). `syncMissionTargetToLandmark()` overwrites the pool entry's
+  nominal x/z with the landmark's real post-placement position on the full map, same as
+  `oakHollow`/`radioMast`/`stoneMarker`/`chapelSanctuary`.
+- Excluded from `eligibleMissionPool()`'s pre-`MISSION_FAR_UNLOCK_WINS` draw (`lib/game/
+  mission.ts`), same reasoning as `chapelSanctuary`: a second untimed kind in that pool
+  would make `oakHollow`'s pre-win draw non-deterministic under a fixed seed.
+- Completion reuses `canCompleteMission()` unchanged — no new completion logic, this is a
+  plain fixed-landmark target like `oakHollow`/`radioMast`/`stoneMarker`.
+- `MISSION_NAMES.skyCompassNavigation` (`components/Hud.tsx`): `'Sky Compass Navigation'`.
+  `MISSION_SKY_COMPASS_NAVIGATION_REWARD` (`lib/game/economy.ts`): `6`, priced by the Game
+  Economist (LUL-5780) below baseline as a teaching/accessibility mission with no fail state.
+- Cue triple: a new `HINT_PRIORITY`/`HINT_TEXT` entry (`engine/forest-engine.js`) —
+  self/panel-anchored like `oakHollow`, eligible while `mission.target.kind ===
+  'skyCompassNavigation' && mission.status === 'active'`, dismissed on
+  `missionCanComplete` — teaches the player to use the Sky Compass (above) to find the
+  target without a landmark in sight. `GameCanvas.tsx`'s generic hint-key CSS group
+  (shared with `landmark`/`oakHollow`/`scentMask`) gains the matching selector; no new
+  audio (reuses `missionWaypointHum()`'s existing nav-cue hum while the mission is active
+  and un-entered).
+- e2e: `e2e/mission-sky-compass-navigation.spec.ts` (mission drawn via
+  `?qaMissionKind=skyCompassNavigation`, mirrors `mission-progression.spec.ts`'s
+  `oakHollow` case: panel name/glyph, no timer element, completion via
+  `qaTeleportAtMissionTarget`).
+
+---
+
+### Sky balloon: record-holder display (LUL-5820, LUL-3264 wave 2 S4)
+
+**What it can do**
+- Billboard a single world-space `THREE.Sprite` showing the global leaderboard
+  record in the sky, offset from the sun/moon disc so it never shares screen
+  space with it — `skyBalloonDirection()` (`lib/game/skyBalloon.ts`) rotates
+  `moonDir` 40° around the vertical axis, then the group billboards exactly
+  like `moonGroup` does (`engine/forest-engine.js:8947-8948`, mirroring
+  `moonGroup.position.copy(camera.position).addScaledVector(moonDir, 300)` a
+  few lines above it).
+- Render all 4 states PART 2.4 defines: `'loading top rescuer'` (no flag),
+  `'{nickname} — {mm:ss}'` + a 2-3 colour flag swatch from
+  `COUNTRY_PALETTES[record.country]` (`lib/game/country-palettes.ts`),
+  `'be the first — --:--'` (no flag), and hidden entirely on a failed fetch
+  with no cached record — `skyBalloonContent()`/`drawSkyBalloonTexture()`
+  (`lib/game/skyBalloon.ts`), driven by `setLeaderboardRecord()`
+  (`engine/forest-engine.js:7640`).
+- A small `CircleGeometry` shadow mesh and 3 thin `THREE.Line` trails hang
+  below the main sprite, same low-opacity idiom as the moon's halo mesh.
+- Fade in from 0 opacity over 1.5s the first time the group becomes visible
+  (any transition away from "no balloon yet"); every state change after that
+  swaps the canvas texture in place — the sprite/material/texture objects are
+  never recreated (`skyBalloonTex.needsUpdate = true`, same texture-reuse
+  idiom as the Sky Compass glyphs above). Skips the fade under
+  `reducedMotion` (`motionReduced()`), landing directly at target opacity.
+
+**What it CANNOT do**
+- No settings, no economy cost, no HUD entry, no `EngineHudState` wiring — a
+  passive background object, same as the Sky Compass above (Section 0
+  Q1-Q10 n/a). `setLeaderboardRecord` is on `EngineActions`/
+  `ENGINE_ACTION_KEYS` (LUL-1697 contract) only because it's an engine
+  *action* the React side calls, not because anything renders in the DOM.
+- Does not affect predator detection, hiding, scent, difficulty, or any other
+  gameplay system — purely informational, same class as `#leaderboardLine`.
+- The engine never fetches `/api/leaderboard/current` itself — it only draws
+  whatever `components/Hud.tsx`'s `useLeaderboardSky()` hook hands it.
+
+**Behaviours & logic**
+- Pure direction/content/draw functions live in `lib/game/skyBalloon.ts`
+  (`skyBalloonDirection()`, `skyBalloonContent()`, `drawSkyBalloonTexture()`),
+  no THREE import and no `document`/DOM access — testable with a plain
+  recording stub for the 2D context (`skyBalloon.test.ts`).
+- `components/Hud.tsx`'s `useLeaderboardSky()` hook feeds
+  `useLeaderboardRecord()`'s client state machine (`components/Leaderboard.tsx`,
+  S3) into the engine, collapsing `failed+cached` to `'populated'` and
+  `failed+no-cache` to `'hidden'` before calling `actions.setLeaderboardRecord()`
+  — the same one `useLeaderboardRecord()` call now also feeds
+  `<LeaderboardMenuLine state={...} />` (previously its own independent fetch).
+- QA hook `qaProbeLeaderboardSky()` (inside `?qaHooks=1`,
+  `engine/forest-engine.js:4761`) returns `{visible, text, hasFlag}` from the
+  last-drawn state, so a test can assert the 4-state mapping without a
+  screenshot. See `e2e/leaderboard-sky-and-trees.spec.ts`.
+
+**Collision & physics profile**
+- N/A — not a spatial object with a collider; `fog: false`/`depthWrite: false`
+  so it always reads through fog and never occludes or is occluded by nearer
+  geometry, same as the Sky Compass/stars/moon.
 
 ---
 
@@ -1630,16 +1791,16 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6356, the win path since
-  `LUL-2281`) and `triggerDeath()` (L6748). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L7146, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7574). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L6748) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L6469) rather than recomputed later, since `player.x/z` can move on
+  (L7582) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  set at L3499) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1695,11 +1856,11 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L3933),
-  reset to 0 on `enter()` (L4163) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L4427),
+  reset to 0 on `enter()` (L4729) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L7097: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L7731: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -1819,7 +1980,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7215, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7968, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -1943,7 +2104,8 @@ not final tuning.
   verbatim — no new predator behavior, no new HUD element, no new key, no new cue.
 - `upwindRefuge` (LUL-5432, "Upwind Refuge", Fire Tower variant of LUL-5424) — same
   fixed-`fireTower`-landmark/timed shape as `beaconEvasion` (`timeLimitSeconds: 60`,
-  `MISSION_UPWIND_REFUGE_REWARD` = 9 Embers, gated behind `MISSION_FAR_UNLOCK_WINS` by the
+  `MISSION_UPWIND_REFUGE_REWARD` = 8 Embers (LUL-5799 repriced 9 -> 8, LUL-5789 accepted),
+  gated behind `MISSION_FAR_UNLOCK_WINS` by the
   same `timeLimitSeconds == null` filter), except `repositionBeaconHunterForMission()`
   (`engine/forest-engine.js:1968`) finds `predators.find(p => p.kind === 'lion')` for this
   kind — same lookup `lionRoostFlush` uses — anchored on `mission.target.x/z` (the
@@ -2039,6 +2201,22 @@ not final tuning.
   Hunter detection/chase, roost-burst/cooldown, and mission timer/objective UI
   (`#roostCooldownPanel`, `#missionTimerSeconds`) verbatim — no new engine state, no new HUD
   element, no new key, no new audio.
+- `ghost` (LUL-5497/LUL-5495, "M4 Ghost — veil-escape") — no real target position, same
+  non-spatial shape as `slackWater` (`lib/game/mission.ts`): completion is "a chase's
+  `shouldGiveUpChase()` transition fired while Veil Overload's detection-immunity window
+  (LUL-2281) was active", checked at the one real-play call site in the `chase`-state
+  predator loop (`engine/forest-engine.js`, `if(shouldGiveUpChase(...)){ ... }`), not through
+  `canCompleteMission()`. `canCompleteGhost()` (`lib/game/mission.ts`) mirrors
+  `canCompleteSlackWater()`'s exact shape — one pure predicate, given the engine's own
+  `isVeilOverloadActive(veilOverloadChargeT)` boolean read at the instant the give-up fires.
+  Untimed, excluded from `eligibleMissionPool()` pre-`MISSION_FAR_UNLOCK_WINS` by name
+  (`lib/game/mission.ts`) — shares `slackWater`'s exact untimed/no-`landmarkKind` shape, so it
+  would reproduce the same LUL-5069 landmark-hint-slot regression without the same exclusion.
+  `MISSION_GHOST_REWARD` = 9 Embers (`lib/game/economy.ts`, provisional — pending Game
+  Economist confirmation, same convention as every other provisional mission reward), level
+  with `flush`/`lionRoostFlush`/`roostRecoveryEvasion`/`bearRoostAmbush`. No new HUD element,
+  no new engine state, no new key, no new audio, no new cue — wraps the existing Veil Overload
+  detection-immunity edge (LUL-2281) unchanged.
 
 **What it can do**
 - Add a completion bonus to the win payout only, keyed by kind via `MISSION_REWARDS`
@@ -2355,7 +2533,80 @@ not final tuning.
   decorative/navigational collision profile (`landmarkGroups.chapelSteeple.position`, live
   post-nudge position), unchanged by this entry.
 
-See wiki `game/mechanics/chapel-sanctuary.md`.
+**Mission mode (LUL-5498/LUL-5495)**
+- `MissionKind` gains `'chapelSanctuary'` (`lib/game/mission.ts`), a `MISSION_POOL` entry
+  keyed to the `chapelSteeple` landmark (`landmarkKind: 'chapelSteeple'`, untimed,
+  `interactRadius: 4` matching `CHAPEL_SANCTUARY_INTERACT_RADIUS`). `syncMissionTargetToLandmark()` overwrites the pool
+  entry's nominal x/z with the landmark's real post-placement position on the full map, same
+  as `oakHollow`/`radioMast`/`stoneMarker`.
+- Excluded from `eligibleMissionPool()`'s pre-`MISSION_FAR_UNLOCK_WINS` draw (`lib/game/
+  mission.ts`) to keep `oakHollow` the one deterministic pre-win draw
+  `e2e/hints.spec.ts`'s landmark test relies on.
+- Completion does NOT go through `canCompleteMission()`/`completeMissionSequence()` — the
+  `KeyE` handler always claims an in-radius press for `chapelSanctuaryPromptVisible`/
+  `chapelSanctuaryDeniedCue` first (same interact radius, so `missionCanComplete` for this
+  kind is a dead branch in practice). Real completion is `canCompleteChapelSanctuary()`
+  (`lib/game/mission.ts`), called at the existing full-dwell grant edge
+  (`engine/forest-engine.js`'s `tick()`, right after `chapelSanctuaryUsedThisRun = true`) —
+  no new engine completion logic beyond that one call.
+- `MISSION_NAMES.chapelSanctuary` (`components/Hud.tsx`): `'Chapel Sanctuary'`.
+  `MISSION_CHAPEL_SANCTUARY_REWARD` (`lib/game/economy.ts`): `8`, priced by the Game
+  Economist (LUL-5780), grouped with Oak Hollow/Deepwater as a risk-free spatial-only veil
+  route.
+- Cue triple: reuses the shrine's own existing visual (beacon-glow pulse via
+  `chapelSanctuaryPulseT`), audio (`missionWaypointHum()` nav cue while the mission is active
+  and un-entered, `embersPurchaseCue()` on grant), and caption (`chapelSanctuaryStartCue()`'s
+  entry caption, HINT_PRIORITY's generic `'landmark'` slot) — no new cue assets.
+- e2e: `e2e/chapel-sanctuary.spec.ts` extended with a mission-mode case (mission drawn via
+  `?qaMissionKind=chapelSanctuary`, dwell completed while a predator hunts, asserts
+  `mission.status === 'complete'`).
+
+See wiki `game/mechanics/chapel-sanctuary.md` and `game/mechanics/chapel-sanctuary-mission`.
+
+---
+
+### Chapel Refuge + Veil Escape Combo (LUL-5529/LUL-5524, two-stage mission)
+
+**What it is**
+- `MissionKind` gains `'chapelVeilEscape'` (`lib/game/mission.ts`), a non-spatial `MISSION_POOL`
+  entry (`x: 0, z: 0, zoneRadius: 0, interactRadius: 0, spatial: false`), same shape as `ghost`/
+  `slackWater` — no target position drives completion.
+- Excluded from `eligibleMissionPool()`'s pre-`MISSION_FAR_UNLOCK_WINS` draw, same reasoning as
+  `chapelSanctuary`/`skyCompassNavigation`: keeps `oakHollow` the one deterministic pre-win draw
+  `e2e/hints.spec.ts`'s landmark test relies on.
+- Stage 1: the LUL-5005 shrine's own full-dwell grant edge (`engine/forest-engine.js`'s `tick()`,
+  the same site `canCompleteChapelSanctuary()` is checked at) flips a new engine-local flag,
+  `chapelVeilEscapeChapelDone`, via `canCompleteChapelVeilEscapeStage1()` (`lib/game/mission.ts`)
+  — does not complete the mission itself.
+- Stage 2: mirrors `canCompleteGhost()`'s shape — a chase's `shouldGiveUpChase()` transition
+  while Veil Overload's detection-immunity window is active — gated additionally on
+  `chapelVeilEscapeChapelDone`, via `canCompleteChapelVeilEscapeStage2()`, checked at the same
+  chase give-up call site `canCompleteGhost()` already is.
+- `chapelVeilEscapeChapelDone` (`engine/forest-engine.js`, next to `chapelSanctuaryActive`) is
+  per-run state, reset at the same site `chapelSanctuaryUsedThisRun` resets (deliberately not on
+  `arriveHome()`/child pickup, same reasoning as that flag).
+- `MISSION_NAMES.chapelVeilEscape` (`components/Hud.tsx`): `'Chapel Refuge + Veil Escape'`.
+  `MISSION_CHAPEL_VEIL_ESCAPE_REWARD` (`lib/game/economy.ts`): placeholder `9`, same convention
+  as the other untimed missions pending a Game Economist pricing ticket.
+- Cue triple: two sequential `HINT_PRIORITY` captions (`engine/forest-engine.js`) —
+  `chapelVeilEscapeStage1` (eligible while the mission is active and the dwell hasn't been
+  granted yet, dismissed when `chapelVeilEscapeChapelDone` flips true) and
+  `chapelVeilEscapeStage2` (eligible once that flag is true, dismissed when the mission leaves
+  `'active'` status) — reusing the standing `#hintCaption`/`HINT_TEXT` mechanism, not
+  `#actionSlot` (this mission adds no new `<ActionPrompt>` row; both stages ride existing
+  shrine/chase UI). Framed sequentially per the CEO's 2026-09-24 `veilReserve` ruling — Chapel
+  grants a reserve charm, Veil Overload burns charge directly and never reads it — the two
+  captions read "you gained a veil reserve" / "now escape a chase with veil overload", not
+  "spend the reserve to escape".
+- e2e: new `e2e/chapel-veil-escape-combo-mission.spec.ts`, composing
+  `e2e/chapel-sanctuary.spec.ts`'s real dwell staging (`qaTeleportNearChapel` + `KeyE` +
+  `qaAdvance` for the 15s) with `e2e/ghost-veil-escape-mission.spec.ts`'s real chase staging
+  (`qaBuildScene` + `qaSetFixedStep`/`qaAdvance` to decay `scentLock` + `KeyQ`) — no new QA
+  hooks. Asserts stage-1-only leaves the mission `'active'`, and both stages in order complete
+  it; a second test proves stage 2 alone (no prior dwell) does not complete it.
+
+See wiki `decisions/lul-5524-3proposals-accepted-2026-09-30` and
+`game/mechanics/chapel-veil-escape-combo.md`.
 
 ---
 
@@ -2714,7 +2965,7 @@ already saw the scent caption doesn't see it a second time under the new key.
 **Anchoring**: `scent`/`wolf`/`bear`/`lion`/`cover`/`throwable` are world-anchored — a real 3D
 point (the mote/animal/prop/stone), projected to a viewport fraction via the same
 camera-frustum math LUL-2230 introduced (`projectToScreen()`, generalized out of the
-scent-only inline version). `deepwater`/`stamina`/`caveImmune`/`veil`/`landmark`
+scent-only inline version). `deepwater`/`stamina`/`caveImmune`/`veil`/`landmark`/`scentMask`
 have no natural 3D point (or, for stamina/veil, no player-facing meter to anchor to at all —
 see `SettingsPanel.tsx`'s own note that `#panel`'s stamina/veil readouts are dev-only;
 `landmark` fires unconditionally on entry with nothing specific to point at, same as the old
@@ -2882,20 +3133,20 @@ engine flag is genuinely true.
 
 **LUL-3149 (Wind-Assisted Evasion)** adds two new, always-on effects to this same trigger --
 `running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
-re-deriving it (`engine/forest-engine.js` L7056) -- stacking on top of the LUL-3009 scent
+re-deriving it (`engine/forest-engine.js` L7514) -- stacking on top of the LUL-3009 scent
 effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
-speed bonus applied to `spd` inside `stepFrame()` (L7303), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
-footstep-radius reduction applied to `noiseRadius` (L7319), replacing the plain sprint radius
+speed bonus applied to `spd` inside `stepFrame()` (L8164), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+footstep-radius reduction applied to `noiseRadius` (L7937), replacing the plain sprint radius
 only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
 is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
 it already fires correctly for the sprint-bonus window; both the `title` and the always-visible
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L7653 for the eligibility case), positioned below the danger hints
+(`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L6674) and `windAssistEndCue()` (L6683), edge-triggers on the combined
+`windAssistStartCue()` (L7442) and `windAssistEndCue()` (L7451), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -2909,6 +3160,18 @@ ground than sprinting with it over a fixed window; a wolf at a distance inside
 wind-assisted one; walking against the wind triggers neither the speed nor the noise bonus
 (scent-only, per LUL-3009); both updated copy strings; the `windAssist` hint caption appears
 once and not again after being marked seen.
+
+**LUL-5601/LUL-5605 (Wind Deafness in Mud Zones)** voids this discount per-predator: in
+`updatePredators()` (`engine/forest-engine.js:2729`, 4th param `windAssist` = the
+`windAssistNowActive` computed above, wired at the one call site `:7763`), a predator whose own
+`x/z` falls inside a Mud Zone (LUL-5564, below) (`predInMud`, hoisted at
+`:2740`) hears the player's footsteps at the plain `NOISE_RADIUS_RUN` instead of the discounted
+`NOISE_RADIUS_RUN_WIND` while the player is wind-assisted (`:2914`) -- the wind can't be used to
+sneak past a predator that is itself standing in mud. No new HUD element or hint: this is a
+hearing-radius change on an existing probabilistic check, not a new player-visible state.
+Covered by `e2e/wind-deafness-mud.spec.ts` (positive: mud-standing wolf hears a wind-assisted
+sprint at a distance between the two radii; negative: the same wolf outside mud never hears it
+at that distance).
 
 ### LUL-5402: Predator Investigation Asymmetry (downwind investigation bias)
 
@@ -2955,6 +3218,34 @@ approaching wolf drifts off the player-straight-line toward downwind; the bias i
 (gained while live, lost the instant `scentLock` decays to 0); the class is withheld under
 `reducedMotion` even with a genuinely live gate; the hint caption fires once with the exact copy
 above.
+
+### LUL-5781: Scent-Lock Endurance Asymmetry (per-species chase-persistence)
+
+Scout proposal (LUL-5781), CTO-accepted cheap slice
+(`decisions/lul-5781-scent-lock-endurance-accepted-2026-10-02`). Bear and lion now give up a
+scent-lock chase at different times: bear hounds the trail 40% longer (relentless tracker), lion
+gives up 20% sooner (reverts to investigating sooner when the trail goes cold), wolf stays the 1.0
+baseline. New `SCENT_LOCK_ENDURANCE_MULTIPLIER` (`engine/tuning.js`, `{ wolf: 1.0, bear: 1.4, lion:
+0.8 }`, placeholder ratios -- Game Economist owns real tuning numbers), applied at `p.scentLock =
+SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind]` at every real chase-entry assignment
+site (`engine/forest-engine.js` L2550, L2572, L5528, L5959, L6104, L6376 -- the last inside
+`qaSetPredatorChasing`, which mirrors every real site's own statement, not a special case).
+Applied at assignment time only, not inside the shared `tickTimers()` decay (`lib/game/predator.ts`
+L172-177, also used by `chargeCooldown`) -- same "touch the read, not the shared decay" shape as
+the nose multiplier (`PSPEC[k].nose`, `engine/tuning.js` L308-310) this proposal extends into chase
+persistence.
+
+No new player-facing state or HUD element: `scentLock` is an invisible engine counter, unchanged in
+how it decays or is read (`shouldGiveUpChase(scentLock, dist, detect)`, `lib/game/predator.ts` L93);
+only its initial value varies by species. No cue triple -- learned through repeated play ("the bear
+won't give up your scent, but the lion will"), per the accepted proposal's own Q15 answer.
+
+Covered by `e2e/scent-lock-endurance.spec.ts` (new, micro world, no `@fullmap`): stages a bear and a
+lion via `qaBuildScene` at a fixed distance beyond `detect * 1.5` (so `shouldGiveUpChase`'s distance
+half is already satisfied), drives the real chase-entry assignment through `qaSetPredatorChasing`,
+and asserts the bear's `scentLock` outlasts the lion's by the 1.4/0.8 ratio and that the lion leaves
+`'chase'` before the bear does at a fixed elapsed time. QA request:
+`shared/local-qa/requests/lul-5781-scent-lock-endurance.md`.
 
 ### LUL-4893: Predator Pause (wind-gated freeze on downwind-perpendicular chase)
 
@@ -3066,3 +3357,609 @@ once `scentLock` decays and the player is teleported out of sight/leash range, w
 `beaconHunterLocked` clearing; an ordinary wolf (no `variant`) never reaches `'chase'` from the
 identical wind signal in the same single-tick window, proving no accidental duplication of the
 channel onto ordinary wolves.
+
+## Scent-Masking Sites (LUL-5493, cheap slice, proposal LUL-5491)
+
+Three fixed, static world locations (`SCENT_MASK_SITES`, `lib/game/scentMaskSites.ts:19-23`,
+registered as `EventSite[]` the same way `ROOSTS`/`FOG_TIDE_SITES` are) where standing inside
+gates the player's own scent deposit entirely -- "proactive navigation strategy" distinct from
+every existing detection-suppression mechanic (cave immunity, veil, Rock Climb's exposure
+trade), all of which react to a threat already present rather than letting the player pre-empt
+one by route choice. Not a duplicate of the wolf-only Bog scent-mask (LUL-1902/2082): that
+mechanic, and the Bog biome itself, were deleted whole (`docs/specs/lul-4676-delete-bog.md`)
+before this feature was designed -- confirmed live by grepping `playerBogMask`/`bogMaskLevel`,
+neither of which exists in `release/next` any more.
+
+**Trigger** -- `playerInScentMaskSiteIndex` (`engine/forest-engine.js:655`), the index into
+`SCENT_MASK_SITES` the player currently stands inside or `-1`, recomputed unconditionally every
+`stepFrame()` tick (`:7442`, same "after every `player.x`/`z` write, picks up a QA teleport too"
+placement `updateStreamedChunks(false)` already uses) via `findScentMaskSiteIndex()`
+(`lib/game/scentMaskSites.ts`), wrap-aware, radius ~8u. Positions are read through
+`scaledScentMaskSites()` (`engine/forest-engine.js:660-662`), which multiplies by
+`CONFIG.scentMaskScaleMul` (`engine/tuning.js`, default `1`, `0.2` under `qaWorld=micro` --
+same "scale the read, not the source" shape `roostScaleMul` already established, needed so a
+real walk in the shrunk QA map can reach a site at all) -- the site's own `radius` is left
+unscaled, same precedent as `ROOST_TRIGGER_RADIUS`.
+
+**Effect** -- `depositScent()` (`engine/forest-engine.js:2287`) early-returns while
+`playerInScentMaskSiteIndex !== -1`: no new scent point is pushed. Existing points laid before
+entering (or laid elsewhere) are untouched -- masking stops new deposits, it does not erase or
+accelerate the decay of a trail already down. `checkScent()`/`scentOnto()` (predator tracking)
+are unmodified; a masked player is simply never adding anything for them to find.
+
+**Visual + audio (full cue triple as of LUL-5530)**:
+- Glow: one static `THREE.Mesh` ring per site (`RingGeometry` + additive-blended
+  `MeshBasicMaterial`, `engine/forest-engine.js:1322`, same "static ring, module scope" recipe
+  as `homeRing`), teal for `marsh` sites and amber for `pine` (`SCENT_MASK_GLOW_COLOR`).
+  Opacity brightens toward each site's own center (`scentMaskGlowWeight()`, 0..1 proximity
+  falloff) plus a slow ambient sine pulse that drops out entirely under `reducedMotion` (the
+  proximity brightening does not) -- `:7971-7980`. Rendered directly into `scene`, not a child
+  of `#panel`, so visible with `adminMode` off.
+- Caption: new `'scentMask'` entry in `HINT_PRIORITY`/`HINT_TEXT`/`hintCandidate`
+  (`engine/forest-engine.js:2216`, `:8097`), self/panel-anchored (bottom-center, same fixed CSS
+  family as `landmark`/`caveImmune` -- `components/GameCanvas.tsx`), one-shot per install:
+  *"a scent-masking site -- your footsteps are hidden here; predators can't track your trail
+  while you stay inside."* Dismisses (without marking seen) the instant the player leaves the
+  site (`hintDismissedByEvent`'s `'scentMask'` case, `:8109`), same shape as `caveImmune`'s own
+  `caveImmuneT <= 0` dismissal.
+- Audio (LUL-5530): `scentMaskEnterCue()`/`scentMaskExitCue()` (`engine/forest-engine.js:6781-6804`),
+  a rising/falling 260<->390Hz sine pair -- same shape as `windAssistStartCue`/`windAssistEndCue`
+  but a lower register so the two "quieting" effects stay distinguishable. Fired once per
+  `playerInScentMaskSiteIndex` `-1<->index` transition, at the same `stepFrame()` recompute site
+  the glow/caption pair already reads (`:7469-7478`) -- all three legs of the cue triple now fire
+  off one shared edge-detect.
+
+**QA hooks**: `qaProbeScentMaskSite()` (`engine/forest-engine.js:6100-6107`) -- live site index,
+the three sites' own (already-scaled) `id`/`type`/`x`/`z`/`radius`, and cumulative
+`enterCueCount`/`exitCueCount` (counted before the `audio`/`soundOn` gate, same
+"counter-before-gate" idiom as `qaScentVeilDeniedCueCount`, so assertions work with
+`soundOn:false` too). `qaTeleportTo`/`qaSetLookYaw`/`qaAdvance` (all pre-existing) drive the rest.
+
+Covered by `e2e/scent-masking.spec.ts`: walking a straight line through a site deposits zero new
+scent motes for several `SCENT_DEPOSIT_INTERVAL` (0.3s) ticks while inside, and resumes within one
+interval of exiting the far side, asserting `enterCueCount`/`exitCueCount` fire exactly once each
+at the entry/exit edges and never re-fire while continuously inside; a wolf staged inside the same
+site next to the player (a real predator, not a flag check) never reaches `scentLock > 0` -- the
+scent-specific detection channel this feature gates -- regardless of whatever sight-based state
+its own `canSee()` channel reaches, which this feature doesn't touch.
+
+## Mud Zone (LUL-5564, terrain hazard)
+
+Five circular terrain-hazard zones (`mudZones`, `{x,z,r}`, `engine/forest-engine.js:654`),
+placed by `generateMudZones()` (`:875-887`, `MUD_ZONE_COUNT=5`, radius `MUD_ZONE_MIN_R=6`..
+`MUD_ZONE_MAX_R=9`, `MUD_ZONE_LANDMARK_PAD=6` keep-out around landmarks, rejection-sampled
+against already-placed zones the same shape `generateThrowables()` uses) -- called from
+`generateMap()` after every other `rng()` consumer (`:1334`), and reset alongside `treeData`
+on `restart()` (`:1226`). Pure geometry/multiplier logic lives outside the engine in
+`lib/game/mud.ts` (`MUD_SPEED_MUL=0.6`, `MUD_NOISE_MUL=1.5`, `isInMudZone()`), unit-tested in
+`lib/game/mud.test.ts` (4 cases incl. the boundary -- `isInMudZone` uses strict `<`, so exactly
+on the radius counts as outside).
+
+**Effect** -- both the player and every predator slow down and get louder while their `x/z`
+falls inside any zone:
+- Player: `stepFrame()` reads `inMud` once per tick (`:7467`) ahead of the two places that fold
+  it in -- `maxSpd` (`:7485`, `mudSpeedMultiplier(inMud)` chained alongside
+  `brambleSnagSpeedMultiplier`) and `noiseRadius` for both the walk (`:7542`) and run/wind-assist
+  (`:7589`) branches (`mudNoiseMultiplier(inMud)`). Crawling isn't silent, just louder.
+- Predator: folded into the single point every AI branch's `speed` converges through before
+  becoming movement (`updatePredators()`, `:3152-3153`), not patched per-branch -- can't miss a
+  roam/chase/investigate/flank/charge/hunt branch or apply inconsistently by AI state.
+
+**Hearing (LUL-5601/LUL-5605, Wind Deafness in Mud Zones)** -- a predator standing in a zone
+(`predInMud`, hoisted at `:2740`) also ignores the player's Wind-Assisted Evasion (LUL-3149,
+above) footstep-noise discount: `checkNoise()` is called with the plain `NOISE_RADIUS_RUN`
+instead of the wind-discounted radius whenever `predInMud && windAssist` (`:2914`), so the
+wind-assist speed bonus can't be used to slip past a mud-standing predator unheard. Only the
+predator's own mud presence matters here -- the player's own mud state is unrelated to this
+check.
+
+**Cue (one-shot, enter edge only)** -- `wasInMud` edge-detect (`:7467-7476`) fires on the
+`false->true` transition only, same shape `logCrawlEnterCue()`'s own call site uses:
+`mudEnterCue()` (`:3761-3772`, a lowpass-filtered noise burst -- "wet footstep", not a rustle),
+plus `logChronicle('mud_zone_enter', {})` and, first encounter only
+(`hintSeen`/`markHintSeen('mudZone')`, `:7471-7472`), a caption: *"Mud — slower, louder:
+predators can hear you farther"*. This bypasses the shared `HINT_PRIORITY`/`HINT_TEXT`
+candidate table other hints use (pushed directly via `pushState({ caption, captionId })`) --
+no exit cue, since there is nothing to announce on leaving (the slowdown/noise effect just stops).
+
+**HUD state** -- `inMudZone` is computed and pushed into the engine's per-frame `pushState()`
+call (`:8022`) but is not yet declared on the `EngineHudState` interface
+(`components/Hud.tsx:32`) and no component reads it -- there is no persistent on-screen "you are
+in mud" indicator today, only the one-shot enter cue/caption above. Also exposed on
+`qaPlayerState()` (`:5577`, typed at `engine/forest-engine.d.ts:324`) for tests. Per LUL-5564's
+own follow-up, a render site for this field is LUL-5565's scope, not this ticket's.
+
+**QA hooks**: `qaPlayerState().inMudZone` (live boolean) is the only hook; no zone-geometry or
+cue-count probe exists yet (compare `qaProbeScentMaskSite()`'s `enterCueCount`).
+
+**Coverage**: `lib/game/mud.test.ts` covers the pure multiplier/geometry functions only. No
+`e2e/` spec or `shared/local-qa/requests/` file exists yet -- LUL-5564 is engine-core only; e2e
+opposing-system coverage (a predator staged inside a zone) and the local-qa request file are
+LUL-5565's scope.
+
+## Scent-Decoy Site (LUL-5566, cheap slice, plan LUL-5560)
+
+One fixed, static world location (`DECOY_SCENT_SITES`, `lib/game/decoyScentSites.ts:21-23`,
+registered as `EventSite[]` the same way `ROOSTS`/`SCENT_MASK_SITES` are) where leaving the site
+redirects every nearby hunting predator onto the site's own fixed point instead of the real
+player -- an active counter-tool, distinct from Scent-Masking Sites' passive "don't lay a trail
+here" above. Corrected from the original proposal's literal `checkScent()`/`scentOnto()` hook:
+`scentPoints` has no location-redirect capability (a chase off that array always beelines to the
+live player), so this reuses `hearThrowableNoise()`'s `noiseTarget` override instead -- the same
+mechanism `updateRoosts()` (`engine/forest-engine.js:3283-3332`) already uses to redirect a live
+chase off the real player, proven mid-chase.
+
+**Trigger** -- `playerInDecoyScentSiteIndex` (`engine/forest-engine.js:678`), the index into
+`DECOY_SCENT_SITES` the player currently stands inside or `-1`, recomputed unconditionally every
+`stepFrame()` tick (`:7639`, same "after every `player.x`/`z` write" placement
+`playerInScentMaskSiteIndex` already uses) via `findDecoyScentSiteIndex()`
+(`lib/game/decoyScentSites.ts`), wrap-aware, radius 8u. Positions are read through
+`scaledDecoyScentSites()` (`engine/forest-engine.js:682-684`), which multiplies by
+`CONFIG.decoyScaleMul` (`engine/tuning.js`, default `1`, `0.2` under `qaWorld=micro` -- same
+"scale the read, not the source" shape `scentMaskScaleMul` already established) -- the site's own
+`radius` is left unscaled, same precedent as `ROOST_TRIGGER_RADIUS`.
+
+**Effect** -- on the `-1<->index` transition from inside to outside (`engine/forest-engine.js:7631-7649`),
+if `decoyCooldown[i]` (a `Float32Array`, one entry per site, same shape as `roostCooldown`) is not
+still counting down, every non-inert predator within `DECOY_SCENT_RADIUS` (18u, `engine/tuning.js`)
+of the site's own (already-scaled) `x`/`z` gets `hearThrowableNoise(p, site.x, site.z,
+DECOY_INVESTIGATE_TIME)` -- the exact call `updateRoosts()`'s player-sprint branch makes at a
+roost -- which overwrites `p.noiseTarget` and commits the predator's current `investigate`/`approach`
+phase to the site's point, off the live player, even mid-chase. `decoyCooldown[i]` is then set to
+`DECOY_COOLDOWN` (30s) so one exit fires at most one redirect per cooldown window; reset in
+`restart()` alongside `roostCooldown`.
+
+**Visual + audio (full cue triple)**:
+- Glow: one static `THREE.Mesh` ring (`RingGeometry` + additive-blended `MeshBasicMaterial`,
+  `engine/forest-engine.js:1397`, same "static ring, module scope" recipe as `scentMaskGlowMeshes`),
+  a distinct red (`DECOY_SCENT_GLOW_COLOR`) so the two "scent" site kinds stay visually
+  distinguishable. Opacity brightens toward the site's own center (`decoyScentGlowWeight()`, 0..1
+  proximity falloff) plus a slow ambient sine pulse that drops out entirely under `reducedMotion`
+  (the proximity brightening does not) -- `:8159-8165`. Rendered directly into `scene`, not a
+  child of `#panel`, so visible with `adminMode` off.
+- Caption: new `'decoyScent'` entry in `HINT_PRIORITY`/`HINT_TEXT`/`hintCandidate`
+  (`engine/forest-engine.js:2263`, `:2293`), self/panel-anchored (bottom-center, same fixed CSS
+  family as `scentMask`/`landmark` -- `components/GameCanvas.tsx`), one-shot per install: *"a
+  scent-decoy site -- leave it behind you and nearby predators will investigate it instead of
+  you."* Dismisses (without marking seen) the instant the player leaves the site
+  (`hintDismissedByEvent`'s `'decoyScent'` case), same shape as `scentMask`'s own
+  `playerInScentMaskSiteIndex === -1` dismissal.
+- Audio: `decoyScentExitCue()` (`engine/forest-engine.js:6932-6941`), a falling 180->90Hz
+  sawtooth -- a lower, harsher register than `scentMaskExitCue()`'s sine so "you just threw the
+  hunt off your scent" reads distinctly from "you just left a masking site." Fires exactly when
+  the redirect itself fires (the exit transition, cooldown-permitting), not on every exit.
+
+**QA hooks**: `qaProbeDecoyScentSite()` (`engine/forest-engine.js:6216-6223`) -- live site index,
+the site's own (already-scaled) `id`/`x`/`z`/`radius`, per-site `cooldown` remaining, and
+cumulative `exitCueCount` (counted before the `audio`/`soundOn` gate, same "counter-before-gate"
+idiom as `qaScentMaskExitCueCount`, so assertions work with `soundOn:false` too). A predator's
+live `noiseTarget`/`x`/`z` is already exposed by the pre-existing `qaProbePredatorState(kind)`
+(`engine/forest-engine.js:4825`) -- no new hook needed to observe the redirect itself.
+`qaTeleportTo`/`qaBuildScene`/`qaAdvance` (all pre-existing) drive the rest.
+
+Covered by `e2e/scent-decoy-site.spec.ts`: a wolf staged mid-chase (a real predator, not a flag
+check) with its `noiseTarget` locked onto the live player; the player walks into the site and out
+the far side, and the wolf's `noiseTarget` snaps to the site's own `x`/`z` with `exitCueCount`
+incrementing exactly once on the exit edge -- proving the redirect actually retargets a live chase,
+not just that the flag transitions.
+
+## Mudbound Decoy Amplification (LUL-5627, cheap slice of accepted LUL-5622)
+
+Composes Mud Zone (above) and Scent-Decoy Site (above): a predator redirected onto the decoy's
+fixed point by `hearThrowableNoise()` now always has to cross mud to reach it, since
+`generateMudZones()` (`engine/forest-engine.js:885-907`) reserves its first of five draws to land
+within `(r-1)` of `scaledDecoyScentSites()[0]` (`:888`) instead of drawing uniformly at random like
+the remaining four zones still do. Before this, a uniform draw landed near the fixed decoy site in
+roughly 1.7-2.8% of games (LUL-5630's own math); the reservation makes the overlap happen every
+game. No engine logic outside `generateMudZones()` changed -- `predInMud`/`mudSpeedMultiplier()`
+(Mud Zone, above) and the exit-transition redirect (Scent-Decoy Site, above) are both pre-existing
+and unmodified; this ticket only changes *where* one of the five mud zones lands.
+
+**Placement** -- `r` is drawn exactly as before every iteration. For the reserved zone only
+(`placed === 0`), `x`/`z` are drawn as a random angle + a random distance `< r-1` from the decoy
+site instead of `rnd(-half+margin, half-margin)` twice -- comfortably inside the zone, not right on
+its boundary. The reserved draw is still subject to the same `nearLandmarks()` rejection every
+other draw is; the decoy site sits >100u from every `LANDMARKS` entry (nearest is `drownedCar` at
+~109u vs. `MUD_ZONE_LANDMARK_PAD`'s 6u pad), so in practice this resolves on the first try. This
+changes mud-zone positions for every seed (extra `rng()` draws ahead of the unchanged uniform-random
+loop, inside the function already documented as the true last `rng()` consumer in `generateMap()`)
+-- an intentional, decided behavior change (LUL-5630, CEO Option A), not a regression.
+
+**Hint caption** -- new `'mudTrapDecoy'` entry in `HINT_PRIORITY` (`:2283`, positioned right after
+`'windAssist'`) and `HINT_TEXT` (`:2305`): *"mudbound decoy — lure a predator here and it will slow
+in the mud, unable to catch you if you escape."* Gated in `hintCandidate`/`hintDismissedByEvent`
+(`:8341`, `:8367`) on `playerInDecoyScentSiteIndex !== -1 && isInMudZone(player.x, player.z,
+mudZones)` -- both at once, not decoy entry alone, so it only shows once the composed trap is
+actually relevant to the player standing there. Self/panel-anchored like `windAssist`, not
+`WORLD_HINT_KEYS` -- same treatment as `decoyScent` itself.
+
+**QA hooks**: `qaProbeMudZones()` (`engine/forest-engine.js:6284-6286`) -- read-only snapshot of
+the live `mudZones` array (`{x,z,r}`, unscaled -- mud zones are never scaled, unlike the
+decoy/scent-mask/roost sites). `qaRegenerateMap(seed)` (pre-existing) drives the real
+`generateMap()` path for the reachability check below; `qaProbeDecoyScentSite()`/`qaBuildScene`/
+`qaProbePredatorState` (all pre-existing) drive the forced-geometry mechanic check.
+
+Covered by two files:
+- `e2e/mudbound-decoy-trap.spec.ts` (forced geometry, proves the *mechanic*): exiting the decoy
+  site while an overlapping mud zone is staged redirects a mid-chase wolf's `noiseTarget` onto a
+  point inside that zone; a predator in `investigate`/`approach` clamps to `MUD_SPEED_MUL`(0.6)
+  while inside an overlapping zone (isolated rest-start A/B comparison against the same approach
+  with no zone, exact because `mudSpeedMultiplier`'s fold-in scales the per-tick target speed
+  linearly and both runs start from `p.vx=p.vz=0`); the `mudTrapDecoy` caption renders in
+  `#hintCaption` with the exact text while the player stands in the overlap.
+- `e2e/mudbound-decoy-reachability.spec.ts` (real generation, proves *reachability*, the LUL-5630
+  gap this ticket exists to close): drives `qaRegenerateMap(seed)` over 8 distinct seeds with no
+  `mudZones` override anywhere in the file, and asserts a real mud zone lands inside the decoy site
+  for every seed, not a sampled subset.
+
+### Predator Investigate Audio Cue (LUL-5626, accepted LUL-5597)
+
+Every real transition into `'investigate'` state had a per-site caption but zero audio -- the
+first time a predator starts searching for you only read on screen, not in the mix. `predatorCall()`
+stays the chase-state cue (howl/roar/growl, kind-specific); investigate needed its own, distinct
+cue per Q7/Q9 of the Feature Checklist (don't reuse the chase call verbatim, don't duplicate an
+existing surface).
+
+**Audio**: `investigateCue(p)` (L4122-4136) -- a low, two-pulse searching
+tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
+caption already names the species -- `hearCry()` (L2780) is the one exception: it pushes no
+caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
+responding to the child's cry gives the player zero species identification, audio or text, same
+as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
+and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
+growl, so it reads as coming from the animal, not a flat stereo blip.
+
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2747),
+`hearThrowableNoise()` (L2763), `hearCry()` (L2780), the charge-overshoot handoff (`p.chargeRecoveryT`,
+L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
+sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
+of the driving ticket's six-line list, included for the same reason the other six are: a real
+`p.state='investigate'` assignment reachable in normal play), and the hidden-mid-chase contact-range
+handoff (`isCaught(dist, p.rad)`, L3024). Not wired at `qaStagePredatorGiveUp`'s direct investigate/sniff
+force-set (L5259) -- that's test staging, not a real-play entry (Q1.5: no real trigger reachability
+there to cite).
+
+**QA hooks**: no new hook function -- `investigateCueCount` (per-predator, counted before the
+audio/soundOn gate, same "counter-before-gate" idiom as `qaProbeRoostState`'s `deniedCueCount`) is
+added to the existing `qaProbePredatorState(kind)`'s return object (L4895),
+and reset to 0 alongside `scentCalls` at predator spawn/restart (L2006, L2079, L2202).
+
+Covered by `e2e/throwables.spec.ts` ("a thrown rock lures a nearby roaming predator into
+investigate"): a real player-thrown rock lands within `THROWABLE_NOISE_RADIUS` of a staged roaming
+wolf (`qaStagePredatorNearThrowLanding`, not a synthetic `hearThrowableNoise()` call), driving the
+real `checkThrowableNoise()`/`hearThrowableNoise()` path; the test asserts `investigateCueCount`
+goes from 0 to >=1 once the wolf reaches `'investigate'`, proving the cue fires off a real trigger,
+not just that the state flag flips.
+
+## Firefly Clusters (LUL-5707, cheap slice, decision
+decisions/lul-5704-firefly-swarms-accepted-2026-10-01, full spec `docs/specs/lul-5707-firefly-swarms.md`)
+
+Six fixed ambient glow clusters -- `FIREFLY_CLUSTERS` (`lib/game/fireflyClusters.ts:24-30`,
+`EventSite[]`-shaped like `ROOSTS`/`SCENT_MASK_SITES`/`DECOY_SCENT_SITES`, no `rng()` draw so
+seeds stay byte-identical), each `{ id, kind: 'firefly', x, z, radius: FIREFLY_CLUSTER_RADIUS
+(45, `:15`), moteCount }` with `moteCount` 4-8 per cluster (`:25-30`). Pure ambient visual --
+no input, no HUD field, no save state, no economy hook (docs/CUES.md:1-6 passive/ambient-texture
+cue-triple exemption, same ruling as decisions/lul-2431-fire-tower-embers-cue-triple-exempt-
+2026-09-11).
+
+**Gating and mote build** -- active only at dusk/night: `activeFireflyClusters`
+(`engine/forest-engine.js:1451-1453`) gates on the per-session `timeOfDay` snapshot
+(`'evening'` or `'night'`, never re-evaluated mid-session per LUL-1644) and, on
+`mode === 'mobile'`, slices to the first `FIREFLY_MOBILE_CLUSTER_COUNT` (4, `fireflyClusters.ts:19`)
+entries -- desktop renders all 6. `scaledFireflyClusters()` (`:699-700`) scales every cluster's
+`x`/`z` by `CONFIG.fireflyScaleMul` (default `1`, `0.2` under `applyQaWorldMicroPreset()` so the
+clusters sit inside the QA micro map). One `THREE.PointLight` per mote is built once at module
+scope (`fireflyClusterMotes`, `:1471-1484`) on a deterministic sunflower-seed scatter around
+each cluster's center (no `rng()` consumed), empty outside dusk/night so the tick loop below is
+a no-op for a daytime session.
+
+**Per-frame intensity** (`:8549-8561`) -- each mote's `light.intensity` is
+`0.6 * w * alarmScalar * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM)` (`:8555`), where `w` is
+`decoyScentGlowWeight()`'s own proximity-to-cluster-center falloff (the same recipe the
+scent-mask/decoy-site brightening above already uses) plus idle sine/cosine drift, degrading to
+static under `motionReduced()`. No HUD meter and no readout beyond the mote glow itself (Q2/Q3
+passive-visual) -- there is nothing to show "how many" of, since the clusters are fixed and
+always either lit or dark.
+
+**Rain Dim (LUL-5736)** -- `CONFIG.FIREFLY_RAIN_DIM` (`engine/tuning.js:61`, placeholder `0.8`,
+decision lul-5735-firefly-rain-dim-accepted-2026-10-01) is the `(1 - rainfallAmount *
+CONFIG.FIREFLY_RAIN_DIM)` multiplicative term above: at full `rainfallAmount` (1), a mote sits at
+20% of its dry intensity. Ambient-only, no new cue (docs/CUES.md Q15 N/A, same exemption as the
+base swarm). `qaProbeFireflyClusters().maxIntensity` (added for this ticket) is the only probe,
+since `anyVisible` alone can't distinguish a dimmed-not-zeroed mote from a dry one.
+
+**Alarm Response (LUL-5756, cheap slice LUL-5759; per-species range LUL-5761, decisions
+lul-5756-firefly-alarm-response-accepted-2026-10-02 / lul-5761-firefly-alarm-per-species-
+accepted-2026-10-02)** -- fireflies behaviorally brighten when a hunting predator closes on
+their cluster. `fireflyAlarmBoost(predators, clusters, player, spanX, spanZ)`
+(`lib/game/fireflyAlarmResponse.ts`) is a single frame-global scalar, scanned over **every**
+cluster each frame regardless of this session's render slice (mobile's
+`FIREFLY_MOBILE_CLUSTER_COUNT` budget doesn't gate the scan) -- the single highest
+predator-to-cluster ramp across all pairs wins, ramping `1.0` baseline linearly to
+`1 + CONFIG.FIREFLY_ALARM_BOOST` (placeholder `0.4`, `engine/tuning.js:70`) as the nearest live
+(non-`inert`) predator closes from its own alarm range down to 0. That range is per-species
+(`alarmRangeFor(kind)`, LUL-5761): `CONFIG.FIREFLY_ALARM_RANGE_BEAR` (150, `tuning.js:73`) and
+`CONFIG.FIREFLY_ALARM_RANGE_LION` (100, `tuning.js:77`) override the flat
+`CONFIG.FIREFLY_ALARM_RANGE` (120, `tuning.js:64`) that every other kind (e.g. wolf) still uses.
+All four are Economist-owned placeholders, same stub-and-comment precedent as
+`CONFIG.FIREFLY_RAIN_DIM`. The result (`alarmScalar`, computed once per tick at `:8539-8541`)
+feeds directly into the mote-intensity formula above -- no separate glow/color change, the
+existing brightening *is* the tell (Q2/Q3: no new HUD meter needed).
+
+**Cue triple** -- self/panel-anchored `'fireflyAlarm'` entry in `HINT_PRIORITY`
+(`engine/forest-engine.js:2360`) and `HINT_TEXT` (`:2397`: *"firefly alarm -- they sense danger
+nearby and brighten, easier to spot in the glow"*), eligible while `fireflyAlarmActive` is true
+(trigger case `:8696`, dismiss case `:8713`, mirrors `'rainfall'`'s time-only self-anchoring, no
+world point to anchor to). A one-shot rising-chitter audio sting, `fireflyAlarmSting()`
+(`:3968-3980`, procedural bandpass noise burst, `soundOn`-gated), fires once per run on the
+first frame the alarm activates (`:8543-8546`).
+
+**QA hooks** -- `qaProbeFireflyClusters()` (`:4697-4706`) returns `clusterCount`,
+`anyVisible`, `maxIntensity`, `alarmScalar`, `alarmActive`, `stingCount` (LUL-5785:
+`qaFireflyAlarmStingCount`, mirrors the `qa*CueCount` idiom so the one-shot sting's
+fire count is assertable instead of inferred from source), and `clusters` (the full unsliced,
+scaled `id`/`x`/`z` list, so a test can stage a predator directly on a named cluster's own
+coordinates via `qaIsolatePredatorKindAt`/`qaPlacePredatorKindAt`, including one excluded from
+mobile's render budget). `detectClusterCount` and `glowSwellCueCount` on the same hook belong to
+the Glow Detection Risk feature below, not this section.
+
+**Coverage** -- `e2e/firefly-swarms.spec.ts` (clusters present/visible at night, absent by day),
+`e2e/firefly-rain-interaction.spec.ts` (rain-dim ramp via `maxIntensity`), and
+`e2e/firefly-alarm-response.spec.ts` / `e2e/firefly-alarm-per-species.spec.ts` (alarm ramp,
+one-shot sting fires exactly once per run and not again on re-activation via `stingCount`,
+bear/lion range divergence) -- all run in the micro world via `qaBuildScene`, no
+`@fullmap` needed. `shared/local-qa/requests/lul-5707-firefly-swarms.md` and
+`shared/local-qa/requests/lul-5761-firefly-per-species-alarm.md` are the nightly request files.
+
+See also the Firefly Glow Detection Risk section immediately below, which layers a
+player-exposure penalty on top of the same `FIREFLY_CLUSTERS`/`activeFireflyDetectClusters` data.
+
+## Firefly Glow Detection Risk (LUL-5744, cheap slice, decision
+decisions/lul-5742-firefly-glow-detection-accepted-2026-10-02, full spec wiki
+game/mechanics/firefly-glow-detection-risk -- Section-0 checklist answered there)
+
+Standing inside a Firefly Swarms cluster (LUL-5707, `FIREFLY_CLUSTERS`,
+`lib/game/fireflyClusters.ts:24-30`) now raises the player's exposure in the predator
+detect-mul chain -- closing the gap LUL-5740 found: mote intensity (`:8398`) was pure
+rendering, read by nothing else, so a lit clearing cost the player nothing. No new
+HUD meter (Q2/Q3): the existing mote glow, already brighter nearer a cluster's center,
+is the risk readout.
+
+**New module** `lib/game/fireflyDetect.ts`: `fireflyGlowWeightAt(x, z, clusters, spanX,
+spanZ)` reuses `eventSites.ts`'s `sitesNear()` (the same proximity-weighted-max formula
+`decoyScentGlowWeight()`/Fog Tide already prove, generalized to "brightest of several
+same-kind sites") filtered to `kind: 'firefly'`. `fireflyGlowDetectMul(x, z, clusters,
+bonus, spanX, spanZ)` returns `1 + w*bonus`.
+
+**Trigger** -- `fireflyGlowDetectMul(player.x, player.z, activeFireflyDetectClusters,
+CONFIG.FIREFLY_GLOW_DETECT_BONUS, WRAP_SPAN, WRAP_SPAN)` multiplies into
+`effectiveDetect()`/`canSee()`'s existing detect-mul product (`engine/forest-engine.js`,
+alongside `veilDetectMul`/`fogTideDetectMul`/etc.), sampled at the **player's** position
+(unlike `fogTideDetectMul`, which samples the predator's) -- this represents the player
+standing in a lit clearing, not ambient conditions around the predator.
+`activeFireflyDetectClusters` is a second module-level cluster list alongside the
+render-side `activeFireflyClusters`: same dusk/night time-gate, but deliberately **not**
+sliced to `FIREFLY_MOBILE_CLUSTER_COUNT` on mobile -- the detection penalty applies to
+all 6 clusters regardless of render budget, so a mobile player standing in an
+unrendered cluster (5 or 6 of 6) is still exposed.
+
+`CONFIG.FIREFLY_GLOW_DETECT_BONUS` (`engine/tuning.js`) is a placeholder (`0.3`) --
+the real tuning number is named by the Game Economist (LUL-5744), not picked here,
+same stub-and-comment precedent as `CONFIG.FIREFLY_RAIN_DIM`.
+
+**Cue triple** -- no new visual (the existing mote glow is the readout, Q1/Q3); new
+one-shot `'fireflyGlow'` entry in `HINT_PRIORITY`/`HINT_TEXT` (self/panel-anchored, no
+world anchor needed), eligible the first frame the live `fireflyGlowWeight` (computed
+once per `stepFrame()` tick alongside the other hint candidates) exceeds `0.5` while
+not hidden: *"firefly glow -- the brighter you glow, the easier predators spot you."*
+Dismisses once the weight drops back to `<=0.5` (or the usual 8s timeout), same shape
+as `'rainfall'`'s `!rainfallActive` dismissal. A new one-shot audio sting,
+`fireflyGlowSwellCue()` (bandpass noise at the ambient insects bed's own 4800Hz
+register, ~0.6s swell), fires the same frame the caption claims the slot, gated by
+`soundOn`.
+
+**QA hooks**: no new hook function -- the existing `qaProbeFireflyClusters()` gains
+`detectClusterCount` (`activeFireflyDetectClusters.length`, diverges from the
+render-side `clusterCount` on mobile: 6 vs 4) and `glowSwellCueCount` (counted before
+the `audio`/`soundOn` gate, same counter-before-gate idiom as `qaScentMaskEnterCueCount`).
+`qaProbeEffectiveDetect(kind)`/`qaTeleportTo`/`qaBuildScene` (all pre-existing) drive
+the rest.
+
+Covered by `e2e/firefly-glow-detection.spec.ts` (3 tests: center-vs-outside ratio
+equals `1+FIREFLY_GLOW_DETECT_BONUS`, monotonic ramp with distance-to-center, one-shot
+caption+sting on first deep entry, never again) and
+`e2e/mobile/firefly-glow-detection.spec.ts` (an unrendered-on-mobile cluster still
+raises `effectiveDetect` even though `clusterCount` stays 4) -- all run in the micro
+world via `qaBuildScene`, no `@fullmap` needed.
+
+## Keybind Remapping (LUL-5805 movement cheap slice + LUL-5828 full-scope
+follow-on, decisions/lul-5804-keybind-remapping-accepted-2026-10-02 and
+decisions/lul-5806-keybind-full-scope-accepted-2026-10-02)
+
+LUL-5805 shipped the CEO-accepted Cheap Slice: movement keys only (forward/back/left/
+right). LUL-5828 extends the same mechanism to the 7 action verbs (interact/
+veilOverload/scentVeil/hide/climb/shuffleHide/jump) and templates the HUD prompt
+copy that names them. `F` (mist-veil hold) is explicitly out of scope for both
+tickets and stays hardcoded.
+
+**State** -- `keyMap` (`engine/forest-engine.js`, module-level, verb -> `KeyboardEvent.code`),
+all 11 verbs: `{ forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
+interact: 'KeyE', veilOverload: 'KeyQ', scentVeil: 'KeyG', hide: 'KeyH', climb: 'KeyC',
+shuffleHide: 'KeyR', jump: 'Space' }`. The 3 WASD-reading call sites (`shuffleHide()`,
+the log-crawl branch and the main movement branch inside `stepFrame()`) and the 7
+action checks in the keydown handler all read `e.code === keyMap.<verb>` /
+`keys[keyMap.<verb>]` instead of literal `KeyboardEvent` codes. Arrow keys stay as a
+permanent hardcoded fallback alongside the remappable movement keys at every site,
+same "never lock the player out" shape as `runMode`'s hold/toggle default -- a bad
+remap can never leave movement unreachable.
+
+**Collision guard (LUL-5828 Q5)** -- `setKeyMap(verb, code)` rejects (no-ops the
+assignment) a `code` already bound to another verb in `keyMap`, or one of the
+`KEYMAP_RESERVED_CODES` the keydown handler hardcodes outside `keyMap` (`Escape`,
+`F11`, `Enter`, `ShiftLeft`, `ShiftRight`). A rejection pushes a transient
+`keyMapCollision: { verb, code } | null` HUD field (cleared ~2s later, or immediately
+superseded by the next attempt) -- the positive tell a silent no-op would otherwise be
+missing. UI-only, no audio cue (a settings-screen interaction, not an in-game refusal) --
+borrows the "denial state next to the thing it denies" shape of
+`veilOverloadDeniedCue`/`scentVeilDeniedCue`, not their sound.
+
+**Settings UI** -- "Controls" fieldset in `components/SettingsPanel.tsx`, one row per
+verb (all 11), a button showing the currently bound key's display label
+(`lib/ui/key-label.ts`'s `formatKeyLabel()`, e.g. `'KeyE'` -> `'E'`) that becomes "Press
+a key to assign" while listening for the next keydown (captured via a `capture: true`
+window listener so it doesn't leak into gameplay input; Escape cancels without
+rebinding). A collision renders an inline warning row directly under the offending
+verb's row, reusing `.radioRow` for spacing -- no new CSS. Desktop-only (`isMobile()`,
+same single-source-of-truth gate as the `runMode` row's "(instead of hold Shift)" copy)
+-- there is no keyboard to remap on a touch device.
+
+**HUD prompt templating (LUL-5828)** -- every literal keycap/key-name in
+`components/Hud.tsx` that named one of the 7 action verbs now reads through
+`formatKeyLabel(state.keyMap.<verb>)`: the charge-dodge row's `SPACE` (`jump`), the
+veil-overload prompt's `Q`, the scent-veil prompt's `G`, `hideVeilPromptContent()`'s `H`
+(both branches), the pickup prompt's "Press  E  to pick up the stone", the climb
+prompt's "Press  C  to climb the rock", and the chapel sanctuary prompt's "Press  E  for
+chapel sanctuary — ...". `shuffleHide` (R) has no existing HUD prompt render site (a
+pre-existing Q10 gap, not introduced or fixed by this ticket) -- it's remappable in
+Controls with no HUD copy to template.
+
+**Persistence** -- `keyMap` (now all 11 verbs) in `PersistedSettings`/the
+apply-on-ready effect/the persist effect in `components/SettingsPanel.tsx`, same
+`lullwood:settings` key and apply-once-ready shape as every other persisted setting;
+unchanged from LUL-5805's shape since it already iterated whatever keys exist in
+storage.
+
+**QA hook**: `qaProbeKeyMap()` returns the live `keyMap` object (all 11 verbs) so a
+test can assert a remap actually changed which key triggers an action.
+
+Covered by `e2e/remapping.spec.ts`: LUL-5805's original 3 movement tests, plus 3 new
+LUL-5828 tests (a real-UI interact remap actually grabs a throwable via the new key,
+not just that `keyMap` changed; a collision attempt is rejected with `keyMap`
+unchanged and the inline tell visible; a remapped interact key renders in the
+templated `pickupPrompt` copy with `adminMode` off) -- all in the micro world
+(default boot, no `qaBuildScene`/`@fullmap` needed for an input-binding change).
+
+---
+
+### Leaderboard (gate record line + win-screen submit form, LUL-3264 wave 1)
+
+**What it is**
+- Two independent, React-owned surfaces in `components/Leaderboard.tsx`,
+  outside the `hudState`/`EngineHudState` pipeline entirely — no
+  `pushState()` field (same shape as the Welcome splash entry above).
+  Storage is the SQLite service behind `app/api/leaderboard/**`; this file
+  only ever talks to those routes. As of wave 2 (LUL-3295, below) the
+  resolved record is *also* pushed one-way into the engine via
+  `actions.setLeaderboardRecord()` for the tree-tint consumer — still no
+  `EngineHudState`/`pushState()` field, the engine never reports back.
+- `#leaderboardLine` (`LeaderboardMenuLine`, `components/Leaderboard.tsx:92-99`):
+  mounted inside `#gate` in `components/Hud.tsx:983`, directly under
+  `#gateCredit`. Fetches `/api/leaderboard/current` once on mount (5s timeout
+  via `AbortSignal.timeout`) and renders one of four states via
+  `data-state`: `loading` ("Loading top rescuer…"), `empty` ("No rescuer yet —
+  be the first."), `populated` (the live record, `recordLine()` at
+  `components/Leaderboard.tsx:77`: "`<nickname>` is the top rescuer at
+  `<mm:ss>` — can you beat it?"), or `failed` (falls back to the last-known
+  record cached in `localStorage['lullwood:leaderboard:current']`,
+  display-only (B8) — validated on read, never sent back to the server).
+  `failed` with no cache renders nothing at all — the line is omitted from
+  `#gate` entirely rather than show a broken state.
+- `#leaderboardForm` (`LeaderboardSubmitForm`, `components/Leaderboard.tsx:96`,
+  element at `:143`): mounted inside `#winScreen`'s `#winText`, directly after
+  `RunRecap` and before the "Play again" button (`components/Hud.tsx:1369`).
+  Rendered only when all three gates pass: `difficulty === 'blackout'`,
+  `document.body.dataset.adminMode !== '1'` (admin mode off — Blackout
+  already forces the minimap off, `engine/tuning.js`), and
+  `survivedSeconds*1000 >= PLAUSIBILITY_FLOOR_MS` (`lib/game/leaderboard.ts`,
+  ~15.7s floor derived from the map's max theoretical traversal speed, not a
+  tunable to re-derive). Any one gate failing means no form at all —
+  deliberately silent by design (an eligibility check, not a refused player
+  input, so Q5 of `docs/FEATURE_CHECKLIST.md` does not apply here).
+
+**Behaviours & logic**
+- Nickname input is client-filtered to `[a-z0-9]{0,20}` on every keystroke
+  (UX only — the server re-validates against `NICKNAME_PATTERN`/
+  `isDenylisted()` in `lib/game/leaderboard.ts`); country is a `<select>`
+  constrained to `COUNTRY_ALLOWLIST`. Submit is disabled until both are valid.
+- On submit, POSTs `{ nickname, country, time_ms, anon_id, website }` to
+  `/api/leaderboard`. `website` is an off-screen (not `display:none`)
+  honeypot field, same convention as `SuggestionBox`. A `201` with
+  `isRecord:true` shows "New record! …"; `201`/`isRecord:false` shows
+  "Saved — …"; `429` shows a rate-limited message; anything else (including a
+  thrown fetch) shows a generic "That could not be saved" error. The form
+  stays resubmittable from `error`, but `done`/`record` replace it entirely
+  with a static `#leaderboardSubmitted` status paragraph.
+- Typing inside the form calls `e.stopPropagation()` on `onKeyDown` so
+  keystrokes (including `KeyW`/`Space`/etc.) never reach the engine's
+  `window` keydown listener while the win screen is up.
+- Every nickname is rendered as a React text child (never as HTML, B2) —
+  in the menu line and in both the submitted and record confirmation strings.
+
+**Collision & physics profile**
+- N/A — not spatial/world objects.
+
+---
+
+### Leaderboard wave 2: flag-tinted trees (LUL-3295)
+
+**What it is**
+- A visual-only recolor of a small subset of live tree instances toward the
+  current record holder's national flag colours. Driven one-way by
+  `components/Hud.tsx`'s `useLeaderboardSky()` (`:610-619`), the same hook the
+  LUL-5820 sky balloon uses — it calls the real `actions.setLeaderboardRecord
+  (status, record)` engine action whenever `useLeaderboardRecord()`'s fetch
+  resolves or transitions, `status` already collapsed to `'loading' |
+  'populated' | 'empty' | 'hidden'` (`failed` folded into `populated`-with-
+  cache or `hidden`). One engine action, one fetch, shared by `#leaderboardLine`,
+  the sky balloon and the tree tint — `setLeaderboardRecord()`
+  (`engine/forest-engine.js:7734-7768`) runs both consumers' logic (tree tint
+  first via `applyLeaderboardTreeTint()`, then the balloon), additive to
+  `EngineActions`/`ENGINE_ACTION_KEYS`/`init()`'s return (`lib/engine-contract.ts`,
+  `components/Hud.tsx`), per the engine/React contract rule.
+- Colour source: `COUNTRY_PALETTES` (`lib/game/country-palettes.ts`), one
+  2-3 hex-colour array per `COUNTRY_ALLOWLIST` code (30 entries, 1:1 covered —
+  `lib/game/country-palettes.test.ts` fails the build if the two drift). No
+  country ever falls back to a default palette — `setLeaderboardRecord()`
+  resolves straight to `null` (no tint) for `loading`/`empty`/`failed`-with-no-cache
+  or any code not in the table.
+- Subset selection: `computeTreeTintColor()` (`:680-689`) blends only every
+  `CONFIG.LEADERBOARD_TINT_SUBSET_N`th tree (`engine/tuning.js:87`, `8` —
+  ~12% of trees), keyed off each tree's own stable `treeData` index (`ti % N
+  === 0`), never an `rng()` draw — `ensureChunk()`'s seeded-stream invariant
+  (`:1062-1063` comment) stays intact across chunk stream-in/out. Canopy only
+  (`trio[1]`/`trio[2]`, the two foliage `InstancedMesh`es) — the trunk
+  (`trio[0]`) is never tinted by this or the pre-existing weathering tint.
+- Blend, not replace: `out.lerp(flagColor, CONFIG.LEADERBOARD_TINT_WEIGHT)`
+  (`engine/tuning.js:93`, `0.25`) is applied *after* the existing per-tree
+  weathering `tintCol.setRGB(t.tint*0.92, t.tint, t.tint*0.86)` — a tinted
+  tree keeps its weathering variation, just shifted toward the flag colour at
+  low weight, which is also what keeps the on-screen saturation low without a
+  second desaturation step.
+
+**What it CANNOT do**
+- Cannot tint a tree's trunk, only its two foliage meshes.
+- Cannot select a tree via randomness — the subset is a pure function of
+  `treeData[ti]`'s already-generated index, never a fresh `rng()` call.
+- Cannot show a default/placeholder country — no record, an empty board, a
+  failed fetch with nothing cached, or an unrecognized code all resolve to
+  "no tint," never a guessed flag.
+
+**Behaviours & logic**
+- `ensureChunk()` (`:1064-1097`) calls `computeTreeTintColor()` once per tree
+  the first time its chunk streams in (first build only). A later record
+  change (e.g. `empty` → `populated`, or one country overtaking another)
+  does not wait for a chunk to stream out and back in — `setLeaderboardRecord()`
+  compares the new `COUNTRY_PALETTES[code]` array reference against the
+  stored one (a plain reference equality check; same code ⇒ same array
+  reference ⇒ no-op even though `timeMs`/`achievedAt` changed) and, on a real
+  change, calls `retintLiveTreeChunks()` (`:696-708`) to re-apply the tint to
+  every already-live chunk's `instanceColor` and flag it `needsUpdate`.
+- QA-only (`?qaHooks=1`): `qaProbeTreeTint()` (`engine/forest-engine.js`, next
+  to `qaProbeTreeChunks`) reports `{ totalTrees, tintedCount, sampleTintedColor }`
+  over live chunks; `qaSetLeaderboardRecord(status, record)` calls the same
+  `setLeaderboardRecord()` function directly, for simulating a record change
+  mid-test since the production fetch (`useLeaderboardRecord()`) only ever
+  runs once per mount.
+
+**Collision & physics profile**
+- N/A — purely a per-instance `instanceColor` write, no collider/physics change.

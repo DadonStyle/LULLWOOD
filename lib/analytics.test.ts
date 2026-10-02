@@ -82,3 +82,27 @@ test('startSessionTracking: three visibilitychange:hidden fires emit three rows 
     assert.ok(rows[i].duration_ms >= rows[i - 1].duration_ms);
   }
 });
+
+test('game_start carries the viewport shape; other events do not', () => {
+  const prevWindow = (globalThis as Record<string, unknown>).window;
+  (globalThis as Record<string, unknown>).window = {
+    innerWidth: 667.4, innerHeight: 375, devicePixelRatio: 2.6666,
+    localStorage: { getItem: () => null, setItem: () => {} },
+    location: { pathname: '/' },
+  };
+  const captured: AnalyticsEvent[] = [];
+  setSink((e) => captured.push(e));
+  try {
+    track({ event: 'game_start', seed: 7 });
+    track({ event: 'page_view' });
+  } finally {
+    (globalThis as Record<string, unknown>).window = prevWindow;
+    setSink(() => {});
+  }
+  const start = captured[0] as Extract<AnalyticsEvent, { event: 'game_start' }>;
+  assert.equal(start.viewport_w, 667);
+  assert.equal(start.viewport_h, 375);
+  assert.equal(start.dpr, 2.67);
+  assert.equal(typeof start.touch, 'boolean');
+  assert.equal('viewport_w' in captured[1], false);
+});

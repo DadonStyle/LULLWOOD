@@ -38,6 +38,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  actions: write
 
 concurrency:
   group: version-cut
@@ -473,6 +474,9 @@ jobs:
           else
             echo "::notice::cut PR #$number already open; not opening a duplicate."
           fi
+
+          gh workflow run base-branch-guard.yml --repo "$REPO" --ref release/next
+          echo "::notice::dispatched base-branch-guard.yml for PR #$number"
 
           if [ "$SUITE_RESULT" = "success" ]; then
             comment="Combined-suite passed against the release/next+main merge tree: $RUN_URL"

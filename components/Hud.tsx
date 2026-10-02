@@ -14,6 +14,10 @@ import { freshProgression, type Progression } from '@/lib/game/progression';
 import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
+import { formatDuration } from '@/lib/ui/format-duration';
+import { formatKeyLabel } from '@/lib/ui/key-label';
+import { LeaderboardMenuLine, LeaderboardSubmitForm, useLeaderboardRecord, type LeaderboardState } from './Leaderboard';
+import type { SkyBalloonStatus, SkyBalloonRecord } from '@/lib/game/skyBalloon';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -28,6 +32,14 @@ import { CHARGE_WINDOW } from '@/lib/game/charge';
 //
 // Not lifted here, still engine-owned DOM (out of LUL-34 scope, see the ticket):
 // #vignette, #spotFlash, #flash, #minimap, #hint, #pausePrompt, #deathVideo.
+
+// LUL-5805/LUL-5828: the 11 remappable verbs -- 4 movement (LUL-5805) + 7 action
+// (LUL-5828). Shared between EngineHudState.keyMap/keyMapCollision, EngineActions.
+// setKeyMap, and SettingsPanel.tsx's Controls fieldset so the verb set can't drift
+// between the three.
+export type KeyMapVerb =
+  | 'forward' | 'back' | 'left' | 'right'
+  | 'interact' | 'veilOverload' | 'scentVeil' | 'hide' | 'climb' | 'shuffleHide' | 'jump';
 
 export interface EngineHudState {
   entered: boolean;
@@ -120,6 +132,11 @@ export interface EngineHudState {
   // LUL-26: difficulty + accessibility, engine-controlled like pace/fog above.
   difficulty: 'lantern' | 'night' | 'blackout';
   runMode: 'hold' | 'toggle';
+  // LUL-5805/LUL-5828: keybind remapping. Engine-controlled like difficulty/
+  // runMode above. keyMapCollision is the Q5 refusal tell for a remap attempt
+  // that collided with another verb or a reserved key -- null when none is live.
+  keyMap: Record<KeyMapVerb, string>;
+  keyMapCollision: { verb: KeyMapVerb; code: string } | null;
   sensitivity: number;
   invertY: boolean;
   reducedMotion: boolean;
@@ -246,6 +263,8 @@ export interface EngineActions {
   setReducedMotion: (v: boolean) => void;
   setCaptions: (v: boolean) => void;
   setColdWalkOptIn: (v: boolean) => void;
+  // LUL-5805/LUL-5828: keybind remapping.
+  setKeyMap: (verb: KeyMapVerb, code: string) => void;
   // LUL-1043
   setEmbers: (balance: number, tiers: Record<string, number>) => void;
   purchase: (id: string) => void;
@@ -259,6 +278,10 @@ export interface EngineActions {
   resetHints: () => void;
   // LUL-2558
   setProgression: (p: Progression) => void;
+  // LUL-5820 + LUL-3295: feeds the sky balloon and tree-tint consumers one
+  // engine action; status is already collapsed by useLeaderboardSky below
+  // ('failed' -> 'populated' with its cache, or 'hidden').
+  setLeaderboardRecord: (status: SkyBalloonStatus, record: SkyBalloonRecord | null) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -318,6 +341,12 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   chargeToken: 0,
   difficulty: 'night',
   runMode: 'hold',
+  keyMap: {
+    forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
+    interact: 'KeyE', veilOverload: 'KeyQ', scentVeil: 'KeyG', hide: 'KeyH',
+    climb: 'KeyC', shuffleHide: 'KeyR', jump: 'Space',
+  },
+  keyMapCollision: null,
   sensitivity: 1,
   invertY: false,
   reducedMotion: false,
@@ -372,6 +401,10 @@ const MISSION_NAMES: Record<MissionKind, string> = {
   bearRoostAmbush: 'Bear Roost Ambush',
   beaconDeepwater: 'Beacon Deepwater',
   beaconRoostRecoveryEvasion: 'Beacon Roost Recovery',
+  ghost: 'Ghost',
+  chapelSanctuary: 'Chapel Sanctuary',
+  skyCompassNavigation: 'Sky Compass Navigation',
+  chapelVeilEscape: 'Chapel Refuge + Veil Escape',
 };
 
 // LUL-1194: the death screen names the cause, not the species -- a death the
@@ -390,11 +423,6 @@ const DEATH_CAUSE_TEXT: Record<EngineHudState['deathCause'], string> = {
 // engine's state object.
 const formatFog = (density: number) => density.toFixed(3).slice(1);
 
-const formatDuration = (totalSeconds: number) => {
-  const s = Math.max(0, Math.round(totalSeconds));
-  const m = Math.floor(s / 60);
-  return `${m}:${(s % 60).toString().padStart(2, '0')}`;
-};
 
 // LUL-1089/LUL-2312: hide/veil action-slot row copy. Only one of the two
 // mechanics prompts at a time -- cover wins (engine enforces via
@@ -407,16 +435,16 @@ function hideVeilPromptContent(
   state: EngineHudState,
   mobile: boolean,
 ): { text: string; suffix?: string; keycap: string; tone: 'ready' | 'urgent' } {
-  const noun = 'bush'; // LUL-2311: bramble is the only hide-eligible cover kind now
+  const noun = state.coverPromptKind ?? 'bush'; // LUL-5684: surface the real cover prop kind instead of a hardcoded noun; null fallback only matters if coverPromptVisible fires before coverPromptKind is populated
   if (state.coverPromptVisible) {
     if (state.coverPromptUrgent) {
       return mobile
         ? { text: `the ${noun} is right there — TAP  `, keycap: 'Hide', tone: 'urgent' }
-        : { text: `the ${noun} is right there — PRESS  `, keycap: 'H', tone: 'urgent' };
+        : { text: `the ${noun} is right there — PRESS  `, keycap: formatKeyLabel(state.keyMap.hide), tone: 'urgent' };
     }
     return mobile
       ? { text: 'Tap  ', keycap: 'Hide', suffix: `  to slip into the ${noun}`, tone: 'ready' }
-      : { text: 'Press  ', keycap: 'H', suffix: `  to hide in the ${noun}`, tone: 'ready' };
+      : { text: 'Press  ', keycap: formatKeyLabel(state.keyMap.hide), suffix: `  to hide in the ${noun}`, tone: 'ready' };
   }
   if (state.veilPromptUrgent) {
     return mobile
@@ -578,6 +606,22 @@ function useProgression(actions: EngineActions | null, progression: Progression)
     if (!appliedRef.current) return;
     writeProgression(progression);
   }, [progression]);
+}
+
+// LUL-5820: pushes useLeaderboardRecord()'s client state machine into the engine's
+// sky balloon -- the engine never fetches, it only renders what this hook resolves.
+// `failed` collapses to the same two engine-level outcomes the spec names ("failed,
+// with cache -> render exactly as populated" / "failed, no cache -> hidden"), so the
+// engine only ever sees 'loading' | 'populated' | 'empty' | 'hidden'.
+function useLeaderboardSky(actions: EngineActions | null, state: LeaderboardState) {
+  useEffect(() => {
+    if (!actions) return;
+    if (state.status === 'failed') {
+      actions.setLeaderboardRecord?.(state.cached ? 'populated' : 'hidden', state.cached);
+      return;
+    }
+    actions.setLeaderboardRecord?.(state.status, state.status === 'populated' ? state.record : null);
+  }, [actions, state]);
 }
 
 // LUL-26: captions are the only channel carrying predator warnings for a deaf/
@@ -774,6 +818,11 @@ export default function Hud({
   useEmbers(actions, state.embersBalance, state.embersTiers);
   useMissionUnlocks(actions, state.missionUnlocks);
   useProgression(actions, state.progression);
+  // LUL-5820: one fetch, shared by the gate's #leaderboardLine (below) and the
+  // sky balloon (useLeaderboardSky) -- was two independent useLeaderboardRecord()
+  // call sites each hitting /api/leaderboard/current before this.
+  const leaderboardState = useLeaderboardRecord();
+  useLeaderboardSky(actions, leaderboardState);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
@@ -817,7 +866,11 @@ export default function Hud({
   const deathRestartRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (!state.winRevealed) return;
-    const id = setTimeout(() => winRestartRef.current?.focus(), RESTART_FOCUS_DELAY_MS);
+    // LUL-3264: never pull focus out of the leaderboard form mid-typing.
+    const id = setTimeout(() => {
+      if (document.activeElement?.closest('#leaderboardForm')) return;
+      winRestartRef.current?.focus();
+    }, RESTART_FOCUS_DELAY_MS);
     return () => clearTimeout(id);
   }, [state.winRevealed]);
   useEffect(() => {
@@ -960,6 +1013,7 @@ export default function Hud({
           <div id="gateTitle">LULLWOOD</div>
           <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
           <div id="gateCredit">Developed by an independent AI studio</div>
+          <LeaderboardMenuLine state={leaderboardState} />
           <div id="gateKeys">
             {mobile ? (
               <>
@@ -1228,7 +1282,7 @@ export default function Hud({
           testId={mobile ? 'chargePromptTap' : undefined}
           visible={state.chargeVisible && hudLive}
           tone="urgent"
-          keycap={mobile ? 'JUMP' : 'SPACE'}
+          keycap={mobile ? 'JUMP' : formatKeyLabel(state.keyMap.jump)}
           reducedMotion={state.reducedMotion}
           progress={{ token: state.chargeToken, durationSeconds: CHARGE_WINDOW }}
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchJump(); } : undefined}
@@ -1264,7 +1318,7 @@ export default function Hud({
           id="veilOverloadPrompt"
           visible={state.veilOverloadVisible && hudLive}
           tone="urgent"
-          keycap="Q"
+          keycap={formatKeyLabel(state.keyMap.veilOverload)}
           text="Burn veil for a detection-proof escape"
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchVeilOverload(); } : undefined}
         />
@@ -1280,7 +1334,7 @@ export default function Hud({
           id="veilPrompt"
           visible={state.scentVeilPromptVisible && hudLive}
           tone={state.scentVeilPromptEnabled ? 'urgent' : 'disabled'}
-          keycap="G"
+          keycap={formatKeyLabel(state.keyMap.scentVeil)}
           text="Press  "
           suffix="  to break the scent trail"
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchScentVeil(); } : undefined}
@@ -1309,7 +1363,7 @@ export default function Hud({
           id="pickupPrompt"
           visible={state.canGrabThrowable && hudLive}
           tone="calm"
-          text="Press  E  to pick up the stone"
+          text={`Press  ${formatKeyLabel(state.keyMap.interact)}  to pick up the stone`}
         />
         {/* LUL-4528: Rock -- Vantage Climb prompt -- a contextual "something to do" row
             like pickupPrompt just above, not the terminal status row, so it's placed
@@ -1320,7 +1374,7 @@ export default function Hud({
           id="climbPrompt"
           visible={state.climbPromptVisible && hudLive}
           tone="calm"
-          text="Press  C  to climb the rock"
+          text={`Press  ${formatKeyLabel(state.keyMap.climb)}  to climb the rock`}
           keycap={mobile ? 'Climb' : undefined}
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchClimb(); } : undefined}
         />
@@ -1334,7 +1388,7 @@ export default function Hud({
           id="chapelSanctuaryPrompt"
           visible={state.chapelSanctuaryPromptVisible && hudLive}
           tone="calm"
-          text="Press  E  for chapel sanctuary — shelter 15s for a free charm against the mist"
+          text={`Press  ${formatKeyLabel(state.keyMap.interact)}  for chapel sanctuary — shelter 15s for a free charm against the mist`}
         />
         {/* `hiding` is not a second flag: status only ever appears while hidden
             (LUL-35 pass 2 removed the `statusHiding` field, which the engine
@@ -1354,6 +1408,7 @@ export default function Hud({
             <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
+            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} />
             <button
               ref={winRestartRef}
               className="restartBtn"

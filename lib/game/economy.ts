@@ -109,7 +109,11 @@ export const MISSION_BEACON_HUNTER_EVASION_REWARD = 8;
 // former pair per the wiki proposal's own Scope section (game/mechanics/roost-decoy-mission,
 // "closer in effort to Oak Hollow than to Slack Water" -- flagged there as an observation,
 // not a proposed number).
-export const MISSION_FLUSH_REWARD = 9;
+// LUL-5799 (Game Economist full-pool review, LUL-5789 accepted, wiki
+// decisions/lul-5789-mission-reward-reprice-accepted-2026-10-02): repriced 9 -> 8. The 9E
+// tier had collapsed 11/18 missions (61% of the pool) into one bucket; Flush moves to the
+// 8E spatial-low-threat tier alongside Oak Hollow/Fire Tower.
+export const MISSION_FLUSH_REWARD = 8;
 
 // LUL-5160: Beacon Roost Flush -- placeholder pending the Game Economist's number, same
 // convention MISSION_FLUSH_REWARD (above) already uses. Scout's proposal (wiki
@@ -132,7 +136,11 @@ export const MISSION_LION_ROOST_FLUSH_REWARD = 9;
 // (passive threat) and beaconRoostFlush's 10 -- an active-hunt lion is more demanding than
 // the Beacon Hunter's passive lock, but Fire Tower needs less mechanical skill than
 // roost-flushing. Level with flush (9). Confirmed by the Economist, not a placeholder.
-export const MISSION_UPWIND_REFUGE_REWARD = 9;
+// LUL-5799 (Game Economist full-pool review, LUL-5789 accepted, wiki
+// decisions/lul-5789-mission-reward-reprice-accepted-2026-10-02): repriced 9 -> 8, same
+// reasoning as MISSION_FLUSH_REWARD (above) -- moves out of the collapsed 9E tier into the
+// 8E spatial-low-threat tier alongside Oak Hollow/Fire Tower.
+export const MISSION_UPWIND_REFUGE_REWARD = 8;
 
 // LUL-5447/LUL-5446: Roost Recovery Evasion -- placeholder pending the Game Economist's
 // confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Wiki proposal
@@ -163,6 +171,29 @@ export const MISSION_BEACON_DEEPWATER_REWARD = 9;
 // pricing ticket, not re-derived here.
 export const MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD = 9;
 
+// LUL-5497/LUL-5495: M4 Ghost (veil-escape) -- placeholder pending the Game Economist's
+// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced
+// provisionally level with the other untimed missions (9); a follow-up ticket to the
+// Game Economist requests the real number.
+export const MISSION_GHOST_REWARD = 9;
+
+// LUL-5498/LUL-5495/LUL-5780/LUL-5801: Chapel Sanctuary -- priced by the Game Economist
+// (LUL-5780) at 8, grouped with Oak Hollow/Deepwater as a risk-free spatial-only veil
+// route. MISSION_REWARDS is Record<MissionKind, number> so every kind needs a row here
+// regardless of the ticket's "no Economist ticket needed" scope note -- that note only
+// means no NEW reward path, not that this row can be skipped.
+export const MISSION_CHAPEL_SANCTUARY_REWARD = 8;
+
+// LUL-5528/LUL-5524/LUL-5780/LUL-5801: Sky Compass Navigation -- priced by the Game
+// Economist (LUL-5780) at 6, below baseline since it's a teaching/accessibility mission
+// with no fail state and should not inflate reward expectations for later missions.
+export const MISSION_SKY_COMPASS_NAVIGATION_REWARD = 6;
+
+// LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo -- placeholder pending the Game
+// Economist's confirmed number, same convention as the other untimed missions above.
+// Filing a parallel non-blocking pricing ticket, same pattern as LUL-5462/LUL-5532.
+export const MISSION_CHAPEL_VEIL_ESCAPE_REWARD = 9;
+
 export const MISSION_REWARDS: Record<MissionKind, number> = {
   deepwater: MISSION_FIREPOWER_REWARD,
   oakHollow: MISSION_OAKHOLLOW_REWARD,
@@ -178,6 +209,10 @@ export const MISSION_REWARDS: Record<MissionKind, number> = {
   bearRoostAmbush: MISSION_BEAR_ROOST_AMBUSH_REWARD,
   beaconDeepwater: MISSION_BEACON_DEEPWATER_REWARD,
   beaconRoostRecoveryEvasion: MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD,
+  ghost: MISSION_GHOST_REWARD,
+  chapelSanctuary: MISSION_CHAPEL_SANCTUARY_REWARD,
+  skyCompassNavigation: MISSION_SKY_COMPASS_NAVIGATION_REWARD,
+  chapelVeilEscape: MISSION_CHAPEL_VEIL_ESCAPE_REWARD,
 };
 
 // LUL-1666: secondary-objective bonuses for deepwater, additive on top of

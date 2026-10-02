@@ -94,7 +94,14 @@ export default defineConfig({
   },
   webServer: {
     // The suite serves itself against a production build, same as what actually ships.
-    command: `npm run build && npm run start -- -p ${PORT}`,
+    // LUL-5619: skip the build when `.next/BUILD_ID` is already there -- ci.yml's
+    // "build, typecheck, lint" job runs `npx next build` immediately before this step
+    // in the same job/workspace, and a second full build back-to-back on that
+    // CPU-starved runner is exactly the stacked-build failure mode LUL-1110's comment
+    // above already documented (it blew this suite's wall-clock budget there too).
+    // Callers with no prior build in the workspace (local dev, the nightly cron, the
+    // version-cut job) still get one here.
+    command: `(test -f .next/BUILD_ID || npm run build) && npm run start -- -p ${PORT}`,
     url: baseURL,
     reuseExistingServer: false,
     timeout: 180_000,

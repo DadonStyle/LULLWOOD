@@ -51,7 +51,7 @@ is the source of truth for the exact shape -- this table is a summary, not a cop
 |---|---|---|
 | `page_view` | (none) | `computeFunnel` |
 | `cta_start_clicked` | (none) | `computeFunnel` |
-| `game_start` | `seed` | `computeFunnel` |
+| `game_start` | `seed`, `viewport_w?`, `viewport_h?`, `dpr?`, `touch?` (LUL-3264, attached by `track()`) | `computeFunnel`, stats DB (`events.payload_json`) |
 | `win` | `time_survived_ms`, `seed`, `payout`, `balance`, `difficulty`, `purchases_made?` (LUL-2998) | `computeFunnel`, `computeOutcomes`, `computeOutcomesByTier`, `computeEconomy` |
 | `loss` | `predator_kind`, `time_survived_ms`, `seed`, `payout`, `balance`, `difficulty`, `distance_from_home_m`, `purchases_made?` (LUL-2998) | `computeOutcomes`, `computeOutcomesByTier`, `computeEconomy` |
 | `session_length` | `duration_ms`, `reached_gameplay`, `session_id` | `computeSessions` |
@@ -117,6 +117,18 @@ a second, independent signal rather than relying on `purchases_made` alone.
   that the balance went down. Once `purchases_made` is actually emitted, that
   heuristic becomes replaceable with an exact count; this ticket does not
   replace it, so both will coexist until a follow-up does.
+
+## Stats database copy (LUL-3264)
+
+Every event that passes `app/api/telemetry/route.ts`'s validation is also copied
+to the SQLite stats database on the founder's server
+(`services/leaderboard-db/`, signed request, 1.5 s timeout, skipped and logged
+when unconfigured or unreachable). The route adds three server-derived fields
+that never come from the client: `device_class` and `browser` (coarse, from the
+User-Agent, `lib/request-identity.ts`) and `country` (Vercel's
+`x-vercel-ip-country`). `win`/`loss` also land as typed `runs` rows. Agents read
+it with `node services/leaderboard-db/stats.ts` (read-only); raw events are
+pruned after 180 days.
 
 ## How to maintain this file
 

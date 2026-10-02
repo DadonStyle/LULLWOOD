@@ -37,9 +37,62 @@ export const CONFIG = {
                           // updateRoosts()'s ambient chase-proximity trigger had no way to fire in
                           // a micro-world spec. applyQaWorldMicroPreset() scales this down too.
                           // 1 = full-map, no-op default.
+  scentMaskScaleMul: 1,   // LUL-5493: same "scale the read, not the source" shape as roostScaleMul
+                          // -- SCENT_MASK_SITES (lib/game/scentMaskSites.ts) stays untouched; every
+                          // engine read site scales x/z by this. Without it a real walk in the
+                          // shrunk micro map (movement-clamped to +-half) can never reach any of the
+                          // 3 sites (up to 160u from origin). applyQaWorldMicroPreset() scales this
+                          // down too, same ratio as roostScaleMul/missionScaleMul. 1 = full-map, no-op.
+  decoyScaleMul: 1,       // LUL-5566: same "scale the read, not the source" shape as scentMaskScaleMul
+                          // -- DECOY_SCENT_SITES (lib/game/decoyScentSites.ts) stays untouched; every
+                          // engine read site scales x/z by this. Without it a real walk in the
+                          // shrunk micro map (movement-clamped to +-half) can never reach the one site
+                          // (~205u from origin). applyQaWorldMicroPreset() scales this down too, same
+                          // ratio as scentMaskScaleMul. 1 = full-map, no-op.
+  fireflyScaleMul: 1,     // LUL-5707: same "scale the read, not the source" shape as decoyScaleMul --
+                          // FIREFLY_CLUSTERS (lib/game/fireflyClusters.ts) stays untouched; every
+                          // engine read of a cluster's x/z scales by this (radius is left unscaled,
+                          // same precedent as ROOST_TRIGGER_RADIUS/DECOY_SCENT_RADIUS). Without it
+                          // every cluster sits 100-280u from the micro map's origin spawn, well
+                          // outside FIREFLY_CLUSTER_RADIUS(45), so qaProbeFireflyClusters() would
+                          // report anyVisible=false at night on the default QA world.
+                          // applyQaWorldMicroPreset() scales this down too, same ratio as
+                          // decoyScaleMul. 1 = full-map, no-op.
+  FIREFLY_RAIN_DIM: 0.8,  // LUL-5736: rain dims firefly mote intensity -- at rainfallAmount=1 the
+                          // mote is left at 20% of its dry intensity (1 - 1*0.8). Ambient-only, no
+                          // HUD/cues per docs/CUES.md Q15 N/A (decision lul-5735-firefly-rain-dim-accepted).
+  FIREFLY_ALARM_RANGE: 120, // LUL-5756 cheap slice (LUL-5759): nearest-predator-to-cluster distance
+                          // the mote-brighten ramp starts from -- same fixed, unscaled-by-
+                          // fireflyScaleMul precedent as FIREFLY_CLUSTER_RADIUS (fireflyClusters.ts)
+                          // and ROOST_TRIGGER_RADIUS/DECOY_SCENT_RADIUS above. Placeholder -- Game
+                          // Economist names the real value in a parallel ticket, same pattern as
+                          // LUL-5744/LUL-5745; do not block merge on it.
+  FIREFLY_ALARM_BOOST: 0.4, // LUL-5756 cheap slice (LUL-5759): peak multiplier added to the glow-
+                          // weight at zero nearest-predator distance (1.0 baseline -> 1.4 at the
+                          // alarm's hottest). Placeholder, Economist-owned, see FIREFLY_ALARM_RANGE.
+  FIREFLY_ALARM_RANGE_BEAR: 150, // LUL-5761 cheap slice: per-species override of FIREFLY_ALARM_RANGE
+                          // for bear predators -- bears alarm fireflies from farther off. Placeholder,
+                          // Economist names the real value in a parallel ticket; wolf and any other
+                          // kind keep falling back to the flat FIREFLY_ALARM_RANGE.
+  FIREFLY_ALARM_RANGE_LION: 100, // LUL-5761 cheap slice: per-species override of FIREFLY_ALARM_RANGE
+                          // for lion predators -- lions alarm fireflies at closer range than bears.
+                          // Placeholder, Economist-owned, see FIREFLY_ALARM_RANGE_BEAR.
+  FIREFLY_GLOW_DETECT_BONUS: 0.3,  // LUL-5744 (cheap slice, decision lul-5742-firefly-glow-
+                          // detection-accepted-2026-10-02): standing at a cluster's own center
+                          // multiplies detect-mul by 1+this; placeholder value -- the real number
+                          // is named by the Game Economist (LUL-5744), not picked here.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
+  LEADERBOARD_TINT_SUBSET_N: 8, // LUL-3295: every Nth tree (by its stable treeData index,
+                          // ti % N === 0) is eligible for the record-holder's flag tint --
+                          // ~12% of trees, chosen by eye against "saturation low... a forest
+                          // of bright national colours destroys the night-forest look." Pure
+                          // function of ti, no rng() draw (ensureChunk()'s seeded-stream
+                          // invariant, forest-engine.js:1062-1063).
+  LEADERBOARD_TINT_WEIGHT: 0.25, // LUL-3295: lerp weight blending a selected tree's flag
+                          // colour into its existing tintCol -- low enough to keep the
+                          // per-tree weathering variation and low saturation by construction.
   // LUL-2328: coverProps moved onto CONFIG (was a standalone COVER_PROPS
   // export) so applyQaWorldMicroPreset() below can override it the same
   // proven way it already overrides mapSize/trees -- a property mutation on
@@ -87,6 +140,14 @@ export const ROOST_COOLDOWN = 32;   // seconds a roost stays quiet after firing
 export const ROOST_TRIGGER_RADIUS = 6;   // player-side flush trigger radius
 export const ROOST_NOISE_RADIUS = 14;    // predators within this of the roost (x,z) hear the flush
 export const ROOST_INVESTIGATE_TIME = [1.5, 2.5]; // rnd() range, seconds -- not a THROWABLE_INVESTIGATE_TIME reuse
+
+// LUL-5566: Scent Decoy Site -- leaving the site fires hearThrowableNoise() at
+// the site's own (x,z) for every nearby non-inert predator, same "one physical
+// event per cooldown" shape as ROOST_COOLDOWN/ROOST_NOISE_RADIUS above, but
+// triggered on exit rather than ambient chase-proximity.
+export const DECOY_COOLDOWN = 30;   // seconds the site stays quiet after firing
+export const DECOY_SCENT_RADIUS = 18;    // predators within this of the site (x,z) hear the redirect
+export const DECOY_INVESTIGATE_TIME = [2, 3]; // rnd() range, seconds -- distinct from ROOST_INVESTIGATE_TIME
 
 // LUL-1210: Stone Marker veil-charm interact radius -- same shape as
 // MISSION_POOL's interactRadius (lib/game/mission.ts).
@@ -212,6 +273,15 @@ export function applyQaWorldMicroPreset(){
   CONFIG.roostScaleMul = 0.2;    // LUL-5346: same 96/480 ratio -- keeps a ROOSTS site inside the
                                   // shrunk map's movement-clamp bounds so a chasing predator can
                                   // actually reach one (and qaTeleportNearRoost() lands legally).
+  CONFIG.scentMaskScaleMul = 0.2; // LUL-5493: same 96/480 ratio -- keeps a scent-masking site
+                                  // inside the shrunk map's movement-clamp bounds so a real walk
+                                  // (not just qaTeleportTo) can enter and leave one.
+  CONFIG.decoyScaleMul = 0.2;    // LUL-5566: same 96/480 ratio -- keeps the decoy site inside the
+                                  // shrunk map's movement-clamp bounds so a real walk can enter and
+                                  // leave it.
+  CONFIG.fireflyScaleMul = 0.2;  // LUL-5707: same 96/480 ratio -- keeps a firefly cluster within
+                                  // FIREFLY_CLUSTER_RADIUS of the micro map's origin spawn so
+                                  // qaProbeFireflyClusters() can observe anyVisible=true at night.
 }
 
 // LUL-2247: flat centre-to-centre minimum spacing enforced between ANY two
@@ -253,6 +323,14 @@ export const PSPEC = {
 // than the player, so you can't simply outrun them -- hiding is the real escape.
 // RUN itself is NOT exported here -- see the note at the top of this file.
 export const CHASE_GAP = 28;
+
+// LUL-5781: scent-lock endurance asymmetry. Applied at `p.scentLock = SCENT_TRACK_TIME`
+// assignment time (every chase-entry site in forest-engine.js), not inside tickTimers'
+// shared decay -- same per-species-lookup pattern as PSPEC.nose above. Bear is the
+// relentless scent hunter (hounds the trail longest), lion gives up soonest (reverts to
+// searching if the trail goes cold), wolf is the 1.0 baseline. Placeholder ratios --
+// Game Economist owns real tuning numbers if these need adjusting.
+export const SCENT_LOCK_ENDURANCE_MULTIPLIER = { wolf: 1.0, bear: 1.4, lion: 0.8 };
 
 // LUL-2246: how long a force-hunt escalation (30s-no-contact -> straight for you) keeps
 // chasing blind once it loses sight, via the existing scentLock leash (LUL-23) below --

@@ -29,7 +29,9 @@ export const SITE_DESCRIPTION =
   'A glowing child is lost in the fog. Cross a night forest, hide from wolves, bears and lions that hunt by sight and scent, and reach her first. Free in browser.';
 
 // Brand colour for the manifest / theme-color -- the HUD's night ground
-// (components/GameCanvas.tsx uses rgba(12,17,26,…) for every pill).
+// (components/GameCanvas.tsx's #panel/#settingsPanel chrome uses
+// rgba(12,17,26,…); LUL-5772 moved the action-prompt pills off this value
+// onto the green hint palette, so it's no longer "every pill").
 export const SITE_THEME_COLOR = '#0c111a';
 
 // Short, atmospheric line for social cards, where mood beats keywords -- a

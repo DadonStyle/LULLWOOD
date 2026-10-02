@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { EngineActions, EngineHudState } from './Hud';
 import { isMobile } from '@/lib/input-mode';
+import { formatKeyLabel } from '@/lib/ui/key-label';
 
 // LUL-26: difficulty presets + accessibility, shipped together per the ticket.
 // Difficulty/runMode/sensitivity/invertY/reducedMotion/captionsOn are engine
@@ -16,6 +17,8 @@ const SETTINGS_KEY = 'lullwood:settings';
 interface PersistedSettings {
   difficulty: EngineHudState['difficulty'];
   runMode: EngineHudState['runMode'];
+  // LUL-5805/LUL-5828: keybind remapping, all 11 verbs.
+  keyMap: EngineHudState['keyMap'];
   sensitivity: number;
   invertY: boolean;
   reducedMotion: boolean;
@@ -79,6 +82,22 @@ export default function SettingsPanel({
   // mobile surface uses (see components/OrientationGate.tsx).
   const mobile = useState(() => isMobile())[0];
 
+  // LUL-5805/LUL-5828: which verb (if any) is waiting for its next keydown to
+  // become the new binding. Local-only -- the capture itself never touches
+  // engine state until a key is actually pressed (setKeyMap below, which may
+  // itself reject the attempt -- see keyMapCollision).
+  const [listeningFor, setListeningFor] = useState<null | keyof EngineHudState['keyMap']>(null);
+  useEffect(() => {
+    if (!listeningFor) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      if (e.code !== 'Escape') actions?.setKeyMap(listeningFor, e.code);
+      setListeningFor(null);
+    };
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
+  }, [listeningFor, actions]);
+
   // LUL-2649: guards the persist effect below until the apply-on-ready effect
   // has actually run. `actions` is null on the very first render (the engine
   // loads async in GameCanvas.tsx) -- without this gate, the persist effect
@@ -102,6 +121,12 @@ export default function SettingsPanel({
     const s = readSettings();
     if (s.difficulty) actions.setDifficulty(s.difficulty);
     if (s.runMode) actions.setRunMode(s.runMode);
+    if (s.keyMap) {
+      (Object.keys(s.keyMap) as (keyof EngineHudState['keyMap'])[]).forEach((verb) => {
+        const code = s.keyMap?.[verb];
+        if (code) actions.setKeyMap(verb, code);
+      });
+    }
     if (typeof s.sensitivity === 'number') actions.setSensitivity(s.sensitivity);
     if (typeof s.invertY === 'boolean') actions.setInvertY(s.invertY);
     if (typeof s.reducedMotion === 'boolean') actions.setReducedMotion(s.reducedMotion);
@@ -141,6 +166,7 @@ export default function SettingsPanel({
     writeSettings({
       difficulty: state.difficulty,
       runMode: state.runMode,
+      keyMap: state.keyMap,
       sensitivity: state.sensitivity,
       invertY: state.invertY,
       reducedMotion: state.reducedMotion,
@@ -154,6 +180,7 @@ export default function SettingsPanel({
   }, [
     state.difficulty,
     state.runMode,
+    state.keyMap,
     state.sensitivity,
     state.invertY,
     state.reducedMotion,
@@ -282,6 +309,51 @@ export default function SettingsPanel({
           Cold Walk — never sprint before you find the child, for bonus Embers on a win
         </label>
       </fieldset>
+
+      {/* LUL-5805/LUL-5828: keybind remapping -- all 11 verbs (4 movement +
+          7 action). Keyboard-only (isMobile() single source of truth, same
+          pattern as the runMode row's "(instead of hold Shift)" copy above),
+          so this fieldset doesn't render on touch devices where there is no
+          keyboard to remap. Each row's optional collision warning (Q5 tell
+          for setKeyMap's reject-on-collision guard, engine/forest-engine.js)
+          reuses .radioRow purely for spacing -- no new CSS. */}
+      {!mobile && (
+        <fieldset>
+          <legend>Controls</legend>
+          {(
+            [
+              ['forward', 'Move forward'],
+              ['back', 'Move backward'],
+              ['left', 'Strafe left'],
+              ['right', 'Strafe right'],
+              ['interact', 'Interact / pick up'],
+              ['veilOverload', 'Veil overload (panic burn)'],
+              ['scentVeil', 'Break scent veil'],
+              ['hide', 'Hide'],
+              ['climb', 'Climb vantage rock'],
+              ['shuffleHide', 'Shuffle hide spot'],
+              ['jump', 'Jump'],
+            ] as const
+          ).map(([verb, label]) => (
+            <div key={verb}>
+              <div className="radioRow">
+                <span>{label}</span>
+                <button type="button" onClick={() => setListeningFor(verb)}>
+                  {listeningFor === verb ? 'Press a key to assign' : formatKeyLabel(state.keyMap[verb])}
+                </button>
+              </div>
+              {state.keyMapCollision?.verb === verb && (
+                <div className="radioRow">
+                  <span>
+                    {formatKeyLabel(state.keyMapCollision.code)} is already used by another action — try a
+                    different key.
+                  </span>
+                </div>
+              )}
+            </div>
+          ))}
+        </fieldset>
+      )}
     </div>
   );
 }

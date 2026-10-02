@@ -70,11 +70,16 @@ function filesFor(filesByPrNumber, prNumber) {
 }
 
 // `files` is the shape of GitHub's `GET /pulls/{n}/files` response (needs
-// `.filename`). Empty/missing files list is never Tier-A-only -- fail open
-// to "still a candidate gap" rather than silently skipping on no data.
+// `.filename`, and -- same as tier-approve.yml -- `.additions`/`.deletions`/
+// `.patch` so a spec/test value-only retune doesn't read as Tier A here
+// either; see pr-tier.mjs's "spec/test diff" bullet, LUL-5693). Empty/missing
+// files list is never Tier-A-only -- fail open to "still a candidate gap"
+// rather than silently skipping on no data.
 function isTierAOnly(files) {
   if (!files || files.length === 0) return false;
-  return files.every((f) => tierOf(f.filename) === 'A');
+  return files.every(
+    (f) => tierOf(f.filename, { additions: f.additions, deletions: f.deletions, patch: f.patch }) === 'A',
+  );
 }
 
 // Pure, unit-testable core. `openPrs` is the shape of GitHub's

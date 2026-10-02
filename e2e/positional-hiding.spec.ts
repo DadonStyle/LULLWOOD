@@ -298,6 +298,12 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
     test.setTimeout(30_000);
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-5724: this was the one case in the LUL-2320 section still waiting
+    // on the real RAF loop (`toBeVisible({timeout: 20_000})`), the same
+    // dt-clamp-vs-walltime class LUL-5117/LUL-2107 already fixed for its
+    // siblings below -- it just never got its own pass. qaSetFixedStep up
+    // front, same placement as the fixedClock cover-hiding tests above.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const spotKind = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.('log') ?? null);
     if (spotKind === null) {
@@ -315,9 +321,12 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
       throw new Error('qaLurePredatorKind("wolf") returned null -- no wolf in predators');
     }
 
-    await expect(page.locator('#deathScreen'), 'wolf should catch the player standing on a log, un-hidden').toBeVisible({
-      timeout: 20_000,
-    });
+    const killed = await advanceUntil(
+      page,
+      () => page.evaluate(() => !!document.querySelector('#deathScreen')),
+      { maxSeconds: 10 },
+    );
+    expect(killed, 'wolf should catch the player standing on a log, un-hidden, within 10 simulated seconds').toBe(true);
     await assertInViewport(page.locator('#deathScreen'), page, '#deathScreen');
     await expect(page.locator('#deathKind')).toHaveText('wolf');
   });
@@ -395,22 +404,20 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
   test('lion: hiding inside a bramble footprint in the open survives at range, dies within 5s of moving (LUL-2320)', async ({
     page,
   }) => {
-    // LUL-5149: was 30_000, left over from before LUL-5117 replaced the
-    // wall-clock kill-wait with a 50-round-trip qaSetFixedStep/qaAdvance
-    // chunked loop on the full (non-micro) map -- every *other*
-    // qaAdvance-chunked test in this file (lines above, e.g. the
-    // wolf-bramble case right below, which chunks 100 round trips over the
-    // same shape) already budgets 60_000 for exactly this round-trip
-    // overhead; this test was never bumped to match when LUL-5117 added its
-    // own chunking loop, so on a contended/render-heavy rig the 50 round
-    // trips plus this test's extra real 5s wait (LUL-2841, below) blew the
-    // unchanged 30s outer wall-clock cap even though the 5-simulated-second
-    // kill budget itself (`maxSeconds: 5` below, unchanged) was never close
-    // to exceeded. This raises only the wall-clock harness allowance to
-    // match file convention -- the simulated pass/fail budget is untouched.
+    // LUL-5149 raised this to 60_000 (from 30_000) to cover the kill-wait's
+    // qaAdvance round trips below, but the test's first half (the "survives
+    // at range" window) was still a real 5s wall-clock wait at the time --
+    // LUL-5724 found that still timed out under CI contention even at 60s,
+    // same dt-clamp-vs-walltime class as the kill-wait LUL-5117 already
+    // fixed, just not applied to this earlier half yet. Fixed below by
+    // moving qaSetFixedStep up front and driving *both* halves off
+    // qaAdvance, same placement the fixedClock cover-hiding tests above
+    // use -- no further timeout bump, this budget is now mostly round-trip
+    // overhead headroom.
     test.setTimeout(60_000);
     await boot(page, { qaHooks: true });
     await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const spotKind = await page.evaluate(() => window.ForestEngine?.qaTeleportToHideSpot?.('bramble') ?? null);
     if (spotKind === null) {
@@ -430,58 +437,47 @@ test.describe('positional hiding (LUL-22 / LUL-43)', () => {
       throw new Error('qaLurePredatorKind("lion") returned null -- no lion in predators');
     }
 
-    // LUL-2841: this test runs on the real RAF loop with no qaBuildScene
-    // (which would wipe the natural bramble qaTeleportToHideSpot just found),
-    // so the 5s wait below is real wall time an independently-hunting
-    // ambient predator elsewhere on the full map can use to reach and kill
-    // the player before the lured lion does -- live-repro'd 30/30 as a wrong-
+    // LUL-2841: no qaBuildScene here (it would wipe the natural bramble
+    // qaTeleportToHideSpot just found), so an independently-hunting ambient
+    // predator elsewhere on the full map could otherwise reach and kill the
+    // player before the lured lion does -- live-repro'd 30/30 as a wrong-
     // species death ("bear" instead of "lion"). qaIsolatePredatorKind parks
-    // every other predator `inert` without touching cover/terrain state.
+    // every other predator `inert` without touching cover/terrain state;
+    // unaffected by qaSetFixedStep, which only changes the dt source.
     await page.evaluate(() => window.ForestEngine?.qaIsolatePredatorKind?.('lion'));
 
-    await page.waitForTimeout(5_000);
-    await expect(
-      page.locator('#deathScreen'),
-      'a hidden player inside a bramble footprint must survive a lion at range',
-    ).toHaveCount(0);
+    // LUL-5724: was `page.waitForTimeout(5_000)` + a real-time assertion --
+    // real wall time, not simulated, so it (plus the kill-wait's own round
+    // trips below) was blowing the outer wall-clock budget under CI
+    // contention. advanceUntil's predicate is expected to stay false for the
+    // full 5 simulated seconds (the player must survive); chunked in 1s
+    // steps rather than one large unchunked qaAdvance call, which is the
+    // single-round-trip-timeout shape LUL-2734/LUL-2802 already root-caused
+    // (see helpers.ts's advanceChunked comment).
+    const diedWhileHidden = await advanceUntil(
+      page,
+      () => page.evaluate(() => !!document.querySelector('#deathScreen')),
+      { chunkSeconds: 1, maxSeconds: 5 },
+    );
+    expect(diedWhileHidden, 'a hidden player inside a bramble footprint must survive a lion at range').toBe(false);
 
     await page.keyboard.down('KeyW');
-    // LUL-2978: this test runs on the real RAF loop up to this point (see the
-    // LUL-2841 comment above), so the very next macrotask after dispatching
-    // KeyW is not guaranteed to have run a single game frame yet -- under
-    // host load, reading qaPlayerState() here raced the engine and caught
-    // `hidden` still true because nothing had processed the keydown at all
-    // (not the exitHide() path, not triggerDeath(), which also clears
-    // `hidden`). Poll for the frame to land instead of asserting on an
-    // un-ticked state.
-    await page.waitForFunction(() => window.ForestEngine?.qaPlayerState?.()?.hidden === false, {
-      timeout: 2_000,
-    });
+    // LUL-5724: was a real-RAF `page.waitForFunction` poll (LUL-2978, up to
+    // 2s wall-clock) to wait out the race between dispatching KeyW and the
+    // engine's next frame actually processing exitHide() -- now that
+    // qaSetFixedStep parks the real RAF loop for this whole test, the engine
+    // only advances via qaAdvance, so a single fixed-step tick is guaranteed
+    // to process the keydown exactly once, deterministically, no poll
+    // needed.
+    await qaHook(page, 'qaAdvance', 1);
     const afterMove = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
     expect(afterMove?.hidden, 'KeyW should have exited `hidden`').toBe(false);
 
-    // LUL-5117: from here to the end of the test, drive via
-    // qaSetFixedStep/qaAdvance instead of the real RAF loop -- the same fix
-    // shape LUL-5046 used for qaStageAndTraceBehindTreeFixed and the wolf
-    // case earlier in this file. The lion's detect (post investigate->chase
-    // revert) and its ~6-unit close-and-kill both cost a fixed amount of
-    // *simulated* time, but the un-fixed version of this wait budgeted that
-    // in *wall-clock* milliseconds (`toBeVisible({ timeout: 5_000 })`)
-    // against a frame `dt` that's clamped to DT_CLAMP_CEILING=0.05s
-    // regardless of how long a frame actually took to render -- exactly the
-    // dt-clamp-vs-walltime mismatch LUL-5046 root-caused for tree-pathing
-    // (wiki: systems/dt-clamp-vs-walltime). Confirmed as this same class, not
-    // a logic regression: LUL-5111's nightly run 2026-09-24-2251 failed this
-    // exact wait on retry0 (21685ms) and passed on retry1 of the identical
-    // run (21147ms) with zero code change in between, and `git log -p`
-    // across the last 5 commits touching canSee()/hasLOS()/
-    // insideHideFootprint() (lib/game/cover.ts) and the investigate->chase
-    // revert (engine/forest-engine.js, lib/game/predator.ts) turned up
-    // nothing relevant. qaAdvance's chunked steps below keep the exact same
-    // 5-second budget LUL-2320 originally required -- expressed in simulated
-    // seconds instead of wall-clock ones, never raised, per founder rule that
-    // a failing test is a finding, not a license to widen the timeout.
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    // LUL-5117: kill-wait already fixed-step/qaAdvance-chunked -- same dt-
+    // clamp-vs-walltime class (wiki: systems/dt-clamp-vs-walltime) as above,
+    // keeping the exact same 5-simulated-second budget LUL-2320 originally
+    // required, never raised, per founder rule that a failing test is a
+    // finding, not a license to widen the timeout.
     const killed = await advanceUntil(
       page,
       () => page.evaluate(() => !!document.querySelector('#deathScreen')),

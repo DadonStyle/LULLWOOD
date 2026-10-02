@@ -57,6 +57,10 @@ declare global {
        * `>= BLACKOUT_MIN_RADIUS` and landmark clearance, see lib/game/mission.ts
        * pickHardBabyPosition()). */
       qaProbeBaby?: () => { x: number; z: number; distHome: number };
+      /** LUL-5805/LUL-5828: live keybind remapping state (verb -> KeyboardEvent.code,
+       * all 11 verbs), so a test can assert a remap actually changed which key
+       * triggers an action without relying on reading the Settings UI's own DOM. */
+      qaProbeKeyMap?: () => EngineHudState['keyMap'];
       /** LUL-2122: babyLight's live intensity/distance plus the pickup/taken
        * state flags, so a test can assert the interact button actually reached
        * pickup() instead of only that it rendered and was tappable. */
@@ -73,6 +77,11 @@ declare global {
        * LANDMARKS kind, so a test can assert the sprite exists and reads past the fog line
        * without a screenshot. */
       qaProbeLandmarkBeacons?: () => Array<{ kind: string; x: number; z: number; visible: boolean; fog: boolean | null }>;
+      /** LUL-5486: the 4 cardinal glyph sprites' real world positions, so a test
+       * can assert they sit at the cardinal unit vectors * radius and that
+       * rotating the camera does not move them (proves they're genuine
+       * world-space objects, not baked into scene.background). */
+      qaGetSkyCompassPositions?: () => Record<'N' | 'E' | 'S' | 'W', { x: number; y: number; z: number }>;
       /** LUL-2667: the resolved timeOfDay state plus the exact TOD_VISUAL/TOD_AUDIO
        * values init() applied, so a test can assert against the six documented
        * states without scraping renderer internals. Read-only snapshot -- see
@@ -82,6 +91,34 @@ declare global {
         state: 'night' | 'early-morning' | 'morning' | 'noon' | 'afternoon' | 'evening';
         visual: import('../lib/game/timeOfDay').TimeOfDaySkyConfig;
         audio: import('../lib/game/timeOfDay').TimeOfDayAudioConfig;
+      };
+      /** LUL-5820: the sky balloon's current visibility + last-drawn text/flag
+       * state, so a test can assert the loading/populated/empty/hidden content
+       * mapping (docs/specs/lul-3264-leaderboard-wave2.md S4) without a
+       * screenshot. */
+      qaProbeLeaderboardSky?: () => { visible: boolean; text: string; hasFlag: boolean };
+      /** LUL-5707: active firefly-cluster count (0 outside dusk/night) plus whether
+       * any mote is currently lit (distance-based falloff from the player) -- lets a
+       * test assert presence at night and absence at noon without scraping Three.js
+       * light internals. LUL-5736 added maxIntensity so a test can assert the
+       * rain-dim ramp quantitatively (anyVisible alone can't distinguish dimmed
+       * from undimmed once intensity is merely reduced, not zeroed). LUL-5756
+       * (LUL-5759) added alarmScalar/alarmActive (the frame-global alarm value,
+       * scanned over every cluster regardless of render slice -- see
+       * fireflyAlarmResponse.ts) and clusters (the full unsliced, scaled
+       * id/x/z list, for staging a predator on a named cluster's own
+       * coordinates via qaIsolatePredatorKindAt). LUL-5744 added
+       * detectClusterCount (the detection-side list, never mobile-sliced --
+       * diverges from clusterCount on mobile) and glowSwellCueCount (the
+       * one-shot risk-tell sting's fire count). LUL-5785 added stingCount, the
+       * same fire-count idiom for fireflyAlarmSting() (the alarm cue, distinct
+       * from glowSwellCueCount's glow-proximity cue). */
+      qaProbeFireflyClusters?: () => {
+        clusterCount: number; detectClusterCount: number; anyVisible: boolean; maxIntensity: number;
+        alarmScalar: number; alarmActive: boolean;
+        clusters: { id: string; x: number; z: number }[];
+        glowSwellCueCount: number;
+        stingCount: number;
       };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
@@ -111,6 +148,27 @@ declare global {
         populated: number;
         totalInstances: number;
         expected: number;
+      };
+      /** LUL-3295: calls the real setLeaderboardRecord() engine action directly --
+       * the same function components/Hud.tsx's useLeaderboardSky() calls on every
+       * resolved-record change (shared with the LUL-5820 sky balloon) -- so a spec
+       * can simulate a record changing mid-run without a second real fetch (the
+       * production hook, components/Leaderboard.tsx's useLeaderboardRecord, only
+       * ever fetches once per mount). `status`/`record` match what useLeaderboardSky
+       * passes once it has collapsed the 4-state fetch machine's `failed`. */
+      qaSetLeaderboardRecord?: (
+        status: 'loading' | 'populated' | 'empty' | 'hidden',
+        record: { id: number; nickname: string; country: string; timeMs: number; achievedAt: string } | null,
+      ) => void;
+      /** LUL-3295: flag-tinted trees -- counts live tree instances whose
+       * instanceColor has been blended toward the current leaderboard
+       * record's flag palette vs. the plain weathering tint baseline, plus
+       * one sampled tinted RGB triple (or null if no tree is tinted) so a
+       * spec can assert the colour moved toward the flag without becoming it. */
+      qaProbeTreeTint?: () => {
+        totalTrees: number;
+        tintedCount: number;
+        sampleTintedColor: [number, number, number] | null;
       };
       /** LUL-2249: the ring-streamed chunk lifecycle's own live state --
        * which chunk ids are currently live, how many cover chunks of
@@ -145,10 +203,15 @@ declare global {
        * (roost (x,z) for slice-b's player-sprint flush, thrown-object landing point, or null).
        * LUL-5402: `x`/`z`/`inv` added for the downwind-investigation bias e2e coverage --
        * `inv` confirms the predator is still in the 'approach' sub-phase biasTowardWind()
-       * gates on, `x`/`z` are its real per-tick position for measuring path drift. */
+       * gates on, `x`/`z` are its real per-tick position for measuring path drift.
+       * LUL-5626: `investigateCueCount` is investigateCue()'s own fire count for this
+       * predator, counted before its audio/soundOn gate (same "counter-before-gate"
+       * idiom as qaProbeRoostState's deniedCueCount) so it's assertable with sound off.
+       * LUL-5757: `hunt`/`reroute`/`stuckT`/`alert`/`sightLock`/`sniffsLeft` added for
+       * tracing force-hunt/stuck-reroute state (the bear-kill deathScreen regression). */
       qaProbePredatorState?: (
         kind: 'wolf' | 'bear' | 'lion',
-      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number; noiseTarget: { x: number; z: number } | null; x: number; z: number; inv: string } | null;
+      ) => { state: string; dist: number; scentCalls: number; alertedBy: string | null; scentLock: number; scentVeilReady: boolean; t: number; noiseTarget: { x: number; z: number } | null; x: number; z: number; inv: string; investigateCueCount: number; hunt: boolean; reroute: number; stuckT: number; alert: number; sightLock: unknown; sniffsLeft: number } | null;
       /** LUL-2878: `kind`'s scaled effectiveDetect() this tick (veil/fog/time-of-run/difficulty/CONFIG.detectScaleMul applied on top of tuning.js's unscaled spec.detect), or null if not spawned. Use this, not the tuning constant, to stage a distance that will actually pass canSee()'s detect gate. */
       qaProbeEffectiveDetect?: (kind: 'wolf' | 'bear' | 'lion') => number | null;
       // LUL-22/LUL-43 positional-hiding scaffolding (see the qaHooks block
@@ -201,6 +264,10 @@ declare global {
       qaIsolatePredator?: (idx: number) => { idx: number; x: number; z: number } | null;
       /** LUL-2841: re-runs qaLurePredatorKind's own nearest-of-`kind` search and marks every other predator `inert` (same flag as qaIsolatePredator) -- for a test built on qaTeleportToHideSpot's natural cover (so qaBuildScene isn't an option) that lures by kind rather than holding an idx. Returns {kind,x,z}, or null if the species isn't spawned. */
       qaIsolatePredatorKind?: (kind: 'wolf' | 'bear' | 'lion') => { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number } | null;
+      /** LUL-5756 cheap slice (LUL-5759): same isolate-and-park-the-rest shape as qaIsolatePredatorKind, but places the chosen predator at an exact (x,z) instead of picking the nearest -- for staging a real predator directly on a firefly cluster's own coordinates (qaProbeFireflyClusters().clusters) rather than relative to the player. Returns {kind,x,z}, or null if the species isn't spawned. */
+      qaIsolatePredatorKindAt?: (kind: 'wolf' | 'bear' | 'lion', x: number, z: number) => { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number } | null;
+      /** LUL-5761 cheap slice: same placement as qaIsolatePredatorKindAt but does NOT park every other predator inert -- call qaClearAllPredators first, then this once per kind, to stage two different species (e.g. bear + lion) simultaneously and prove fireflyAlarmBoost's per-species range applies independently per predator. Un-inerts and re-shows the chosen predator. Returns {kind,x,z}, or null if the species isn't spawned. */
+      qaPlacePredatorKindAt?: (kind: 'wolf' | 'bear' | 'lion', x: number, z: number) => { kind: 'wolf' | 'bear' | 'lion'; x: number; z: number } | null;
       /** LUL-2457: marks every predator `inert` (same flag as qaIsolatePredator), parking them off-map so a long `qaAdvance` window (e.g. the day/night ramp) can't be ended early by an ambient kill. Returns the count parked. */
       qaClearAllPredators?: () => number;
       /** LUL-212: teleports the player to the first generated hiding spot (bramble; LUL-2311 dropped log from HIDE_KINDS), or the first prop of `kind` if given (LUL-2320). No predator involved. Returns the spot's kind, or null if none were generated / no prop of `kind` exists on this map. */
@@ -315,6 +382,8 @@ declare global {
         jumping: boolean; paused: boolean; toggleRunOn: boolean; veilHeld: boolean;
         hidden: boolean; brambleSnagT: number;
         inLogCrawl: boolean; logCrawlExitX: number; logCrawlExitZ: number;
+        /** LUL-5564: Mud Zone -- true when the player's current x/z falls inside any mudZones circle. */
+        inMudZone: boolean;
       };
       /** LUL-388: places `kind` in a blind scent-chase (state='chase', scentLock=SCENT_TRACK_TIME)
        * within catch range (dist < rad+CATCH_MARGIN) of the player, with a real cover prop's
@@ -595,6 +664,8 @@ declare global {
       /** LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e staging.
        * See engine/forest-engine.js's qaSetFogTideClock for the full rationale. */
       qaSetFogTideClock?: (seconds: number) => void;
+      /** See engine/forest-engine.js's qaSetRainfallClock for the full rationale. */
+      qaSetRainfallClock?: (seconds: number) => void;
       /** LUL-3010: shrinks the current mission's own timeLimitSeconds so the real per-tick
        * checkMissionExpiry() trips on the next frame. No-op (null) if the mission has no
        * timer (near variant / already resolved). */
@@ -622,6 +693,34 @@ declare global {
         windX: number;
         windZ: number;
       };
+      /** LUL-5493: the live scent-masking site index (matches SCENT_MASK_SITES' own
+       * order, -1 if outside every site) plus the fixed site list itself, so a test
+       * can teleport to a known site's x/z (qaTeleportTo) without hardcoding
+       * SCENT_MASK_SITES a second time. */
+      qaProbeScentMaskSite?: () => {
+        index: number;
+        sites: { id: string; type: 'marsh' | 'pine'; x: number; z: number; radius: number }[];
+        /** LUL-5530: cumulative scentMaskEnterCue()/scentMaskExitCue() fire counts --
+         * counted before the audio/soundOn gate, mirrors qaScentVeilDeniedCueCount's
+         * idiom, so the e2e assertion works with soundOn:false too. */
+        enterCueCount: number;
+        exitCueCount: number;
+      };
+      /** LUL-5566: the live decoy-site index, the fixed site list, per-site cooldown
+       * remaining (0 = ready to fire again), and the cumulative decoyScentExitCue()
+       * fire count (counted before the audio/soundOn gate, same idiom as
+       * qaProbeScentMaskSite's enterCueCount/exitCueCount above). */
+      qaProbeDecoyScentSite?: () => {
+        index: number;
+        sites: { id: string; x: number; z: number; radius: number }[];
+        cooldown: number[];
+        exitCueCount: number;
+      };
+      /** LUL-5627: read-only snapshot of the live mudZones array -- world (x,z,r),
+       * no scale factor (mud zones are never scaled unlike decoy/scent-mask/roost
+       * sites). Used to confirm, over real qaRegenerateMap(seed) draws, that a mud
+       * zone always lands near the Decoy Scent Site (Mudbound Decoy Amplification). */
+      qaProbeMudZones?: () => { x: number; z: number; r: number }[];
       /** LUL-2230: sets the camera yaw directly (the same `player.yaw` every
        * look-input path writes) so a test can turn to face its own scent
        * trail without pointer lock. Read-only otherwise -- no movement. */
@@ -657,6 +756,11 @@ declare global {
       qaBuildScene?: (scene: {
         trees?: { x: number; z: number; s?: number }[];
         props?: { kind: 'log' | 'rock' | 'bramble'; x: number; z: number; ry?: number }[];
+        /** LUL-5564: Mud Zone -- stages one or more terrain-hazard circles in the micro
+         * world so an e2e spec can drive isInMudZone()'s speed/noise effects without
+         * @fullmap. Replaces whatever generateMap() last populated, same reset shape as
+         * `trees` above. */
+        mudZones?: { x: number; z: number; r: number }[];
         /** LUL-5402: `inv`/`scentLock` are additive overrides (default ''/0, same
          * as before) -- stage `state: 'investigate', inv: 'approach', scentLock: 1`
          * to exercise biasTowardWind()'s scentLock>0 gate directly, since every

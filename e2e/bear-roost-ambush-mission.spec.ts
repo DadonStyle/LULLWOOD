@@ -12,10 +12,16 @@
 // this kind, not a lion. Non-spatial target (`spatial: false`, same shape as flush), so this
 // spec never needs @fullmap -- ?qaRoostIndex= pins the draw deterministically instead of
 // fighting the rng.
+//
+// LUL-5644: `boot()` now pins `qaHour` defensively, matching every sibling roost-mission spec
+// (see e2e/beacon-hunter.spec.ts's header, LUL-5146, for the wall-clock-hour mechanism this
+// guards against). This file's own CI failure was the qaSetFixedStep ordering bug below, not
+// a detect-margin miss, but pinning costs nothing and keeps the convention uniform.
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
 const BEAR_IDX = 3;   // wolf/bear/lion each claim a fixed 3-slot range (:1848) -- bear is 3-5, see e2e/lion-roost-flush-mission.spec.ts's own LION_IDX
+const FIXED_DT = 0.5;   // same shape as e2e/beacon-roost-recovery-evasion-mission.spec.ts
 
 async function grabAThrowable(page: import('@playwright/test').Page) {
   const stone = await qaHook(page, 'qaTeleportNearThrowable');
@@ -31,7 +37,7 @@ async function throwAtLockedTarget(page: import('@playwright/test').Page) {
 
 test.describe('Bear Roost Ambush mission (LUL-5456)', () => {
   test('draws with a repositioned bear near the marked roost and completes via the real roost-throw path', async ({ page }) => {
-    await boot(page, { qaHooks: true, qaMissionKind: 'bearRoostAmbush', qaRoostIndex: 0 });
+    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'bearRoostAmbush', qaRoostIndex: 0 });
     await enter(page);
     await qaHook(page, 'qaBuildScene', {
       predators: [{ kind: 'bear', x: 0, z: -8, state: 'roam' }],
@@ -46,6 +52,11 @@ test.describe('Bear Roost Ambush mission (LUL-5456)', () => {
 
     const bear = await qaHook(page, 'qaPredatorState', BEAR_IDX);
     expect(bear.kind).toBe('bear');
+
+    // LUL-5644: qaAdvance() requires qaSetFixedStep() to have run first (engine/
+    // forest-engine.js throws otherwise) -- this file never called it, so the qaAdvance()
+    // below could never have passed.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     // Complete the mission via the real roost-throw path (M6 Flush's own completion channel,
     // canCompleteFlush() -- reused unmodified for this kind).
@@ -63,7 +74,7 @@ test.describe('Bear Roost Ambush mission (LUL-5456)', () => {
   test('does not complete when a different (unmarked) roost is flushed by a player throw', async ({ page }) => {
     // Mirrors e2e/lion-roost-flush-mission.spec.ts's own guard test -- canCompleteFlush()'s
     // roostIndex check applies to this kind too, not just 'flush'/'lionRoostFlush'.
-    await boot(page, { qaHooks: true, qaMissionKind: 'bearRoostAmbush', qaRoostIndex: 0 });
+    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'bearRoostAmbush', qaRoostIndex: 0 });
     await enter(page);
 
     const mission = await qaHook(page, 'qaProbeMission');

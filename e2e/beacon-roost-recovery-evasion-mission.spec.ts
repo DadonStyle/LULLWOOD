@@ -31,7 +31,7 @@ async function throwAtLockedTarget(page: Page) {
 
 test.describe('Beacon Roost Recovery Evasion mission (LUL-5465/LUL-5455)', () => {
   test('spawns with a repositioned Beacon Hunter after a flush and completes when the roost cooldown expires', async ({ page }) => {
-    await boot(page, { qaHooks: true, qaMissionKind: 'beaconRoostRecoveryEvasion', qaRoostIndex: 0 });
+    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'beaconRoostRecoveryEvasion', qaRoostIndex: 0 });
     await enter(page);
     await qaHook(page, 'qaBuildScene', {
       predators: [{ kind: 'wolf', x: 0, z: -8, state: 'roam', variant: 'beaconHunter' }],
@@ -54,6 +54,12 @@ test.describe('Beacon Roost Recovery Evasion mission (LUL-5465/LUL-5455)', () =>
     expect(distFromRoost, 'the repositioned Beacon Hunter should land close to the documented ~50u radius').toBeGreaterThan(30);
     expect(distFromRoost).toBeLessThan(70);
 
+    // LUL-5644: qaAdvance() requires qaSetFixedStep() to have run first (engine/
+    // forest-engine.js throws otherwise) -- this call used to come after the first
+    // qaAdvance() below, so this test could never have passed. Moved up so the single
+    // post-throw tick and the cooldown-expiry loop share the one fixed step.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+
     // Flush the marked roost via the real player-throw path -- this is what starts
     // roostCooldown[0] counting down and fires the mission's caption (flushRoost()).
     await grabAThrowable(page);
@@ -71,7 +77,6 @@ test.describe('Beacon Roost Recovery Evasion mission (LUL-5465/LUL-5455)', () =>
 
     // Drive simulated time forward until the cooldown fully expires -- the mission should
     // auto-complete the instant roostCooldown[0] reaches 0, with no further player input.
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     let cooldown = flushed.cooldown;
     let guard = 0;
     while (cooldown > 0 && guard < 500) {
@@ -91,12 +96,16 @@ test.describe('Beacon Roost Recovery Evasion mission (LUL-5465/LUL-5455)', () =>
     // Mirrors the other roost-mission specs' own guard test: flushing a DIFFERENT roost must
     // not touch this mission's completion state (it never calls canCompleteFlush() at all, but
     // this proves the cooldown-completion branch is scoped to the marked roostIndex only).
-    await boot(page, { qaHooks: true, qaMissionKind: 'beaconRoostRecoveryEvasion', qaRoostIndex: 0 });
+    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'beaconRoostRecoveryEvasion', qaRoostIndex: 0 });
     await enter(page);
 
     const mission = await qaHook(page, 'qaProbeMission');
     expect(mission?.kind).toBe('beaconRoostRecoveryEvasion');
     expect(mission?.roostIndex).toBe(0);
+
+    // LUL-5644: qaAdvance() requires qaSetFixedStep() to have run first -- see the other
+    // test's own note above.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     await grabAThrowable(page);
     const roost1 = await qaHook(page, 'qaTeleportNearRoost', 1);
@@ -107,7 +116,6 @@ test.describe('Beacon Roost Recovery Evasion mission (LUL-5465/LUL-5455)', () =>
     const roost1State = await qaHook(page, 'qaProbeRoostState', 1);
     expect(roost1State.burstActive, 'the player-thrown flush path must have actually fired').toBe(true);
 
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', 200);
 
     const stillActive = await qaHook(page, 'qaProbeMission');

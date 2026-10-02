@@ -25,22 +25,25 @@ test.describe('Upwind Refuge mission (LUL-5432)', () => {
     await boot(page, { qaHooks: true, qaMissionKind: 'upwindRefuge' });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-    await qaHook(page, 'qaBuildScene', {
-      predators: [{ kind: 'lion', x: 0, z: -8, state: 'roam' }],
-    });
 
     const mission = await qaHook(page, 'qaProbeMission');
     expect(mission?.kind).toBe('upwindRefuge');
     expect(mission?.status).toBe('active');
 
-    // The reposition pass runs at generateMap() time (before qaBuildScene's own staging
-    // above), so the lion qaBuildScene just placed at (0,-8) is not the same lion instance
-    // repositionBeaconHunterForMission() moved -- assert against the mission target itself,
-    // same reasoning lion-roost-flush-mission.spec.ts uses for its own repositioned-lion check.
+    // The reposition pass runs at generateMap() time, inside boot()/enter() above --
+    // probe it here, before qaBuildScene below. qaBuildScene's predators staging claims a
+    // lion by `predators.find(q => q.kind === spec.kind && q.speciesIdx === 0)`, the same
+    // first-of-kind lion repositionBeaconHunterForMission() already moved
+    // (`predators.find(p => p.kind === 'lion')`) -- staging first and probing after reads
+    // back the staged (0,-8) position, not the real repositioned one.
     const lionState = await page.evaluate(() => window.ForestEngine?.qaProbePredatorState?.('lion') ?? null);
     expect(lionState).not.toBeNull();
     const distFromTarget = Math.hypot(lionState!.x - mission!.x, lionState!.z - mission!.z);
     expect(distFromTarget, 'repositionBeaconHunterForMission anchors ~50u from the fireTower target, not a roost').toBeCloseTo(50, 0);
+
+    await qaHook(page, 'qaBuildScene', {
+      predators: [{ kind: 'lion', x: 0, z: -8, state: 'roam' }],
+    });
 
     // Complete via the real E-key interact at the reach-zone target, same channel
     // beaconEvasion's own completion test uses -- no hold-timer, plain reach-zone.

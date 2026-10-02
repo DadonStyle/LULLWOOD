@@ -20,6 +20,31 @@ write-then-read-back proof** (per the ratified sequencing — "no display surfac
 proof"). `lib/game/leaderboard.ts` (pure validation/plausibility logic, no DB import) can be built
 and merged standalone ahead of S0 with zero risk; the route handlers cannot.
 
+## SQLite variant (2026-10-02, founder decision) — supersedes S0 and the Postgres parts below
+
+The Postgres plan never shipped: LUL-3310 (create the Vercel Postgres database) stayed blocked from
+2026-09-18. On 2026-10-02 the founder chose **SQLite on the founder's server** instead, with more
+statistics captured for the agents. What changes against the sections below:
+
+- **S0 / storage:** `services/leaderboard-db/` is a zero-dependency Node service (`node:sqlite`) on
+  `noam-live-server`. It runs as its own system user, behind Tailscale Funnel. The Vercel route
+  handlers call it with HMAC-signed requests (`lib/leaderboard/signing.ts`,
+  `lib/leaderboard/remote.ts`). The `record_holders` / `current_record` design below is kept, in
+  SQLite (`db.ts`); `@vercel/postgres` is not added.
+- **Atomicity:** the rate limits and the record compare-and-set run inside one `BEGIN IMMEDIATE`
+  transaction. SQLite's single writer serialises concurrent submissions, which gives the same
+  guarantee the Postgres transaction was meant to.
+- **Security:** `docs/specs/lul-3264-leaderboard-security.md` maps every LUL-3288 item and adds
+  H1–H12 for the self-hosted design. Running as a dedicated system user (H2) is a launch blocker.
+- **More statistics:** nickname history (`players`); every win and loss from telemetry as typed
+  `runs` rows; all raw events; coarse device and browser; Vercel geo country; viewport at game start
+  (`lib/analytics.ts`). Agents query a read-only hourly snapshot with
+  `node services/leaderboard-db/stats.ts`.
+- **S2 `current`:** never answers 5xx (`{ unavailable: true }`, no-store), so an unconfigured or
+  down server is not a console error on every page load. The client treats it as a failed fetch.
+- **Engine:** still no `engine/**` edit. The plausibility floor is also applied client-side, so a
+  win faster than the floor is never offered a form the server would reject.
+
 ## Why no engine change (Tier B, not C)
 
 Every value the write path needs is already computed and already leaves the engine on every win:
@@ -494,9 +519,11 @@ degrades.
 
 - S4 (sky balloons) and S5 (flag-tinted trees) — Game Engineer, own spec, blocked on this wave's
   API shape per the ratified sequencing, not touched here.
-- S6 (moderation ops: founder alert on new record, denylist maintenance beyond the seed list above,
-  retention policy) — separate ticket, admin-invalidate itself (the mandatory-day-one piece) ships
-  in S1 above; the *alert mechanism* does not.
+- S6 (moderation ops: denylist maintenance beyond the seed list above, retention policy) —
+  separate ticket (LUL-3296). Correction: the *alert mechanism* ended up shipping in S1 above
+  after all (`services/leaderboard-db/server.ts` `onNewRecord`/`alertCommand`), not deferred to
+  S6 as this line originally said — see
+  `decisions/lul-3296-leaderboard-moderation-ops-accepted-2026-10-02` §1.
 - Denylist content beyond the small seed list — founder call per
   `decisions/lul-3264-leaderboard-accepted-2026-09-18`, not an engineering decision.
 - Actually provisioning the Postgres database and proving the prod write/read-back — LUL-3289

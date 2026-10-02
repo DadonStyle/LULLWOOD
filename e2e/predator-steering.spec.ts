@@ -93,11 +93,12 @@ function contactReached(rad: number) {
 const SPECIES_RAD = { wolf: 0.8, bear: 1.5, lion: 1.0 } as const;
 
 test.describe('predator steering (LUL-2306): player-sized movement collision + committed go-around', () => {
-  // Live-measured on this rig (2026-09-16): every species reaches contact
-  // within the first 1s-of-game-time chunk once it no longer grinds on the
-  // trunks -- 4s gives >4x margin over that measurement for CI jitter, same
-  // convention as tree-pathing.spec.ts's own MAX_MS.
-  const GAP_MAX_MS = 4_000;
+  // Re-measured on this rig (2026-10-01, LUL-5666, after LUL-5649/PR#966
+  // folded pSpeedScaleMul into chase-pursuit speed): worst case (bear) now
+  // reaches contact at the 2nd 1s-of-game-time chunk (~2000ms) instead of
+  // the 1st -- 8s restores this file's >4x margin convention over that
+  // measurement, same convention as tree-pathing.spec.ts's own MAX_MS.
+  const GAP_MAX_MS = 8_000;
 
   for (const kind of ['wolf', 'bear', 'lion'] as const) {
     test(`${kind} passes the same 1.4u trunk gap the player passes`, async ({ page }) => {
@@ -132,10 +133,19 @@ test.describe('predator steering (LUL-2306): player-sized movement collision + c
     });
   }
 
-  // Live-measured on this rig (2026-09-16): wolf reaches contact between 8-10s
-  // of game time going around the wall's end -- 36s gives >4x margin over that
-  // measurement, matching tree-pathing.spec.ts's own measured-not-guessed
-  // convention.
+  // Re-measured on this rig (2026-10-01, LUL-5666, after LUL-5649/PR#966
+  // folded pSpeedScaleMul into chase-pursuit speed): unlike GAP_MAX_MS and
+  // ROCK_MAX_MS below, this is NOT a stale-margin problem -- the wolf never
+  // reaches contact at all, confirmed by raising this budget to 600_000ms
+  // (600 1s-of-game-time samples, deterministic, reproduced on retry) and
+  // watching it oscillate forever with x bounded in [-0.7, 2.85], never
+  // approaching the ~3.66u wall-end clearance. Root-caused and tracked as a
+  // real regression in LUL-5670 (AVOID_COMMIT_TIME in lib/game/steer.ts is a
+  // fixed real-time window that doesn't scale with the now-~5x-slower
+  // micro-world chase speed, so a predator no longer covers enough ground
+  // per commit to clear the wall before re-evaluating). Left at the
+  // original 36s -- no budget value fixes this, so budget tuning would be
+  // the wrong tool; this stays correctly red until LUL-5670 lands.
   const WALL_MAX_MS = 36_000;
 
   test('a predator commits around a 5-trunk wall instead of grinding into it', async ({ page }) => {
@@ -183,11 +193,14 @@ test.describe('predator steering (LUL-2306): player-sized movement collision + c
     ).toBeLessThan(trace.length - 1);
   });
 
-  // Live-measured on this rig (2026-09-16): the wolf's LOS is blocked by the
-  // rock almost immediately (chase -> investigate/approach downgrade after
-  // SIGHT_FLICKER_TIME, same mechanism e2e/sight-flicker.spec.ts covers), so
-  // it closes at the slower approach speed -- reaches contact between 4-5s
-  // of game time. 20s gives 4x margin over that measurement.
+  // Re-measured on this rig (2026-10-01, LUL-5666, after LUL-5649/PR#966):
+  // unaffected by the chase-speed fix as expected -- the wolf's LOS is
+  // blocked by the rock almost immediately (chase -> investigate/approach
+  // downgrade after SIGHT_FLICKER_TIME, same mechanism
+  // e2e/sight-flicker.spec.ts covers) and it closes at the slower approach
+  // speed, which doesn't fold in pSpeedScaleMul -- still reaches contact at
+  // ~5s of game time. 20s still gives 4x margin over that measurement, so
+  // this budget is unchanged.
   const ROCK_MAX_MS = 20_000;
 
   test('a rock still blocks a predator exactly where it blocks the player', async ({ page }) => {

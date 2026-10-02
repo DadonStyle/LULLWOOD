@@ -55,7 +55,15 @@ test.describe('#throwPrompt via qaGrabThrowable()', () => {
 test.describe('#missionPanel via qaTeleportNearMission()', () => {
   test('teleporting near the mission target shows #missionPanel and enables completion', async ({ page }) => {
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true, qaMissionKind: 'deepwater' }); // LUL-3010: this test asserts deepwater-specific behaviour; force it past the new eligibility gate
+    // LUL-5748/LUL-5644: pin qaHour -- without it the engine falls back to
+    // new Date().getHours() (engine/forest-engine.js:369), and landing in
+    // evening/night activates Firefly Swarms' 36 real-time-animated motes
+    // (LUL-5707), which can trip the dt clamp (wiki systems/dt-clamp-vs-
+    // walltime) just enough that this test's real-wall-clock KeyW hold below
+    // (mouse-look yaw has no qa hook, so it can't use qaAdvance) doesn't
+    // close the gap in time. Same fix as every sibling mission spec already
+    // uses (e.g. e2e/beacon-hunter-deepwater-mission.spec.ts:14-19).
+    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'deepwater' }); // LUL-3010: this test asserts deepwater-specific behaviour; force it past the new eligibility gate
     await enter(page);
 
     const target = await qaHook(page, 'qaTeleportNearMission');
@@ -118,7 +126,10 @@ test.describe('#missionPanel via qaTeleportNearMission()', () => {
 test.describe('#missionPanel via qaTeleportAtMissionTarget()', () => {
   test('teleporting inside the interactRadius completes the mission with no movement', async ({ page }) => {
     const errs = trackConsoleErrors(page);
-    await boot(page, { qaHooks: true, qaMissionKind: 'deepwater' }); // LUL-3010: this test asserts deepwater-specific behaviour; force it past the new eligibility gate
+    // LUL-5748/LUL-5644: pin qaHour defensively, matching the sibling test
+    // above and every other qaMissionKind-forcing spec in this file set --
+    // see that test's comment for why an unpinned hour is live risk now.
+    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'deepwater' }); // LUL-3010: this test asserts deepwater-specific behaviour; force it past the new eligibility gate
     await enter(page);
 
     const target = await qaHook(page, 'qaTeleportAtMissionTarget');

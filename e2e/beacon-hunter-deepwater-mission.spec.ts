@@ -10,6 +10,13 @@
 // Veil break sequence per Q1.5 discipline -- no QA-hook force-set of the lock), swapping only
 // the mission kind. Micro world (qaBuildScene default), no @fullmap -- a Beacon Hunter is a
 // predator variant, not map geometry.
+//
+// LUL-5644: `boot()` must pin `qaHour` -- this file never did, so it inherited the exact
+// wall-clock-hour flakiness e2e/beacon-hunter.spec.ts's own header already documents (LUL-5146):
+// without `?qaHour=`, the engine falls back to `new Date().getHours()`, and 'night' (0.8x
+// detect multiplier) shrinks the beacon channel's detect range just enough that the fixed
+// distance-8 wolf placement never locks. Not an engine regression -- qaHour: 12 matches the
+// pin every other beacon-staging spec in this file set already uses.
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
@@ -26,7 +33,7 @@ async function sprintAgainstWind(page: import('@playwright/test').Page, steps: n
 
 test.describe('Beacon Hunter Deepwater mission (LUL-5462/LUL-5460)', () => {
   test('completes after a real Scent Veil break clears a real Beacon Hunter lock', async ({ page }) => {
-    await boot(page, { qaHooks: true, qaMissionKind: 'beaconDeepwater' });
+    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'beaconDeepwater' });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaBuildScene', {

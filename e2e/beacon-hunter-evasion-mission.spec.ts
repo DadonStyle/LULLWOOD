@@ -13,6 +13,10 @@
 // exactly), then completes the mission via qaTeleportAtMissionTarget() + a
 // real KeyE press. Micro world (qaBuildScene default), no @fullmap -- a
 // Beacon Hunter is a predator variant, not map geometry.
+//
+// LUL-5644: `boot()` must pin `qaHour` -- see e2e/beacon-hunter.spec.ts's header (LUL-5146)
+// for the full mechanism (unpinned hour -> 'night' detect multiplier -> beacon channel never
+// fires at this file's fixed staging distance). Not an engine regression.
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
@@ -29,7 +33,7 @@ async function sprintAgainstWind(page: import('@playwright/test').Page, steps: n
 
 test.describe('Beacon Hunter Evasion mission (LUL-5134)', () => {
   test('completes after a real Scent Veil break clears a real Beacon Hunter lock', async ({ page }) => {
-    await boot(page, { qaHooks: true, qaMissionKind: 'beaconEvasion' });
+    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'beaconEvasion' });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaBuildScene', {

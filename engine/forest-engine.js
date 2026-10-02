@@ -15,6 +15,15 @@ import { track } from '@/lib/analytics';
 import { jumpOffset, JUMP_DURATION } from '@/lib/game/jump';
 import { toggleFullscreen } from '@/lib/game/fullscreen';
 import {
+  SKY_COMPASS_GLYPHS, skyCompassPosition, drawSkyCompassGlyph,
+  SKY_COMPASS_CANVAS_SIZE, SKY_COMPASS_MIN_OPACITY, SKY_COMPASS_MAX_OPACITY,
+} from '@/lib/game/skyCompass';
+import {
+  skyBalloonDirection, skyBalloonContent, drawSkyBalloonTexture,
+  SKY_BALLOON_RADIUS, SKY_BALLOON_FADE_DURATION_S, SKY_BALLOON_OPACITY,
+  SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_CANVAS_HEIGHT,
+} from '@/lib/game/skyBalloon';
+import {
   freshRunState,
   isPlaying,
   canPickUp,
@@ -84,6 +93,7 @@ import {
   findLogCrawlEntry as geoFindLogCrawlEntry,
   SHUFFLE_OFFSET,
 } from '@/lib/game/cover';
+import { mudSpeedMultiplier, mudNoiseMultiplier, isInMudZone } from '@/lib/game/mud';
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
 import { spawnClearanceScale } from '@/lib/game/spawnClearance';
@@ -159,6 +169,10 @@ import {
   completeMission,
   canCompleteSlackWater,
   canCompleteFlush,
+  canCompleteGhost,
+  canCompleteChapelSanctuary,
+  canCompleteChapelVeilEscapeStage1,
+  canCompleteChapelVeilEscapeStage2,
   canCompleteRetrieval,
   completeRetrieval,
   secondaryComplete,
@@ -189,6 +203,16 @@ import {
   fogTideBuildAt,
 } from '@/lib/game/fogTide';
 import {
+  RAINFALL_CONFIG,
+  RAINFALL_RAMP,
+  RAINFALL_AUDIO_RAMP,
+  rainfallPhase,
+  rainfallBuildAmount,
+  rainfallActiveTarget,
+  rainfallNoiseScalar,
+  rainfallFogBoost,
+} from '@/lib/game/rainfallEvent';
+import {
   timeOfDayFromHour,
   TIME_OF_DAY_VISUALS,
   TIME_OF_DAY_AUDIO, timeOfDayDetectMul,
@@ -196,6 +220,12 @@ import {
 import { timeOfRunDetectMul, duskLionDetectMul, DUSK_LION_SIGHT_START_S } from '@/lib/game/dayNight';
 import { nearestLandmarkName } from '@/lib/game/chronicle';
 import { ROOSTS } from '@/lib/game/roostSites';
+import { SCENT_MASK_SITES, findScentMaskSiteIndex, scentMaskGlowWeight } from '@/lib/game/scentMaskSites';
+import { DECOY_SCENT_SITES, findDecoyScentSiteIndex, decoyScentGlowWeight } from '@/lib/game/decoyScentSites';
+import { FIREFLY_CLUSTERS, FIREFLY_MOBILE_CLUSTER_COUNT } from '@/lib/game/fireflyClusters';
+import { fireflyAlarmBoost } from '@/lib/game/fireflyAlarmResponse';
+import { fireflyGlowWeightAt, fireflyGlowDetectMul } from '@/lib/game/fireflyDetect';
+import { COUNTRY_PALETTES } from '@/lib/game/country-palettes';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -203,11 +233,13 @@ import {
   BABY_LIGHT_DISTANCE, PSPEC as PSPEC_BASE, CHASE_GAP, DIFFICULTY_PRESETS,
   CAVE, CHARGE_COOLDOWN, SENS, SCALE, PLAYER_FOV_COS, CUT_END, LANDMARK_BEACONS,
   VEIL_CHARM_INTERACT_RADIUS, ROOST_COOLDOWN, ROOST_TRIGGER_RADIUS, ROOST_NOISE_RADIUS, ROOST_INVESTIGATE_TIME,
+  DECOY_COOLDOWN, DECOY_SCENT_RADIUS, DECOY_INVESTIGATE_TIME,
   CHAPEL_SANCTUARY_INTERACT_RADIUS, CHAPEL_SANCTUARY_DURATION,
   FORCE_HUNT_LOCK, PROP_MIN_SPACING, PROP_CHUNK_CAP, applyQaWorldMicroPreset,
   BRAMBLE_SNAG_DURATION_S, BRAMBLE_SNAG_SPEED_MUL,
   BEACON_HUNTER_LOCK_MUL, BEACON_HUNTER_EYE_COLOR,
   LOG_CRAWL_SPEED_MUL, LOG_CRAWL_ENTER_RADIUS,
+  SCENT_LOCK_ENDURANCE_MULTIPLIER,
 } from '@/engine/tuning';
 
 // LUL-975: r152 turned THREE.ColorManagement on by default, which now decodes every
@@ -256,14 +288,13 @@ function init(onStateChange, inputMode) {
   const qaParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
   if(qaParams && qaParams.get('qaWorld') === 'micro'){
     applyQaWorldMicroPreset();
-    // LUL-5346: roostGroups (below) is built once at module load, from ROOSTS' raw
-    // (unscaled) positions, strictly before this qaWorld branch ever runs -- so the
-    // burst mesh has to be re-pinned here, once, to CONFIG.roostScaleMul's now-live
-    // value, or the visible burst would sit at the old full-map spot while every
-    // distance check (updateRoosts(), qaTeleportNearRoost()) already agrees on the
-    // scaled one. No-op outside qaWorld=micro (this branch never runs).
-    roostGroups.forEach((g, i) => g.position.set(ROOSTS[i].x * CONFIG.roostScaleMul, 14, ROOSTS[i].z * CONFIG.roostScaleMul));
   }
+  // LUL-5619: the roostGroups/scentMaskGlowMeshes/decoyScentGlowMeshes re-pin (LUL-5346/
+  // LUL-5493/LUL-5566) used to live right here, but all three are `const`-declared much
+  // further down this same function -- referencing them this early threw a TDZ
+  // ReferenceError on every `qaWorld=micro` boot (minified to "Cannot access 'ic' before
+  // initialization" in production, LUL-5612). Moved below, right after the last of the
+  // three (roostGroups) is actually declared.
   // Skips updateStreamedChunks()/layoutThrowableMeshes() inside generateMap()
   // below -- LUL-2249: streaming replaced the old direct layoutTreeChunks()/
   // layoutCoverMeshes() instantiate-everything calls with a ring-limited
@@ -440,6 +471,81 @@ moonGroup.add(
   new THREE.Mesh(new THREE.CircleGeometry(15, 40), new THREE.MeshBasicMaterial({ color: TOD_VISUAL.sunMoonColor, fog: false }))
 );
 scene.add(moonGroup);
+// LUL-5486: Sky Compass -- four cardinal glyphs (N/E/S/W), real world-space
+// sprites at fixed absolute positions, same trick as `stars` two blocks above
+// (never re-centered on the camera like moonGroup is): rotating the camera
+// moves them across the screen exactly like turning to face a real landmark
+// would, unlike scene.background (a flat, non-rotating backdrop) -- which is
+// why the original LUL-5485 "bake glyphs into the sky gradient" proposal
+// couldn't work. fog:false/depthWrite:false read through fog and never
+// occlude/get occluded by nearer geometry, same as stars/moon.
+const skyCompassIsNight = timeOfDay === 'night';
+const skyCompassColor = '#' + TOD_VISUAL.sunMoonColor.toString(16).padStart(6, '0');
+const skyCompassOpacity = SKY_COMPASS_MIN_OPACITY + (SKY_COMPASS_MAX_OPACITY - SKY_COMPASS_MIN_OPACITY) * TOD_VISUAL.starOpacity;
+const skyCompassSprites = {};
+for (const skyCompassGlyph of SKY_COMPASS_GLYPHS) {
+  const skyCompassCanvas = document.createElement('canvas');
+  skyCompassCanvas.width = skyCompassCanvas.height = SKY_COMPASS_CANVAS_SIZE;
+  drawSkyCompassGlyph(skyCompassCanvas.getContext('2d'), skyCompassGlyph, skyCompassIsNight, skyCompassColor);
+  const skyCompassTex = new THREE.CanvasTexture(skyCompassCanvas); skyCompassTex.colorSpace = THREE.SRGBColorSpace;
+  const skyCompassSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: skyCompassTex, transparent: true, opacity: skyCompassOpacity, depthWrite: false, fog: false,
+  }));
+  const skyCompassPos = skyCompassPosition(skyCompassGlyph);
+  skyCompassSprite.position.set(skyCompassPos.x, skyCompassPos.y, skyCompassPos.z);
+  skyCompassSprite.scale.set(24, 24, 1);
+  scene.add(skyCompassSprite);
+  skyCompassSprites[skyCompassGlyph] = skyCompassSprite;
+}
+// LUL-5820 (LUL-3264 wave2 S4): sky balloon record-holder display -- same
+// camera-billboard idiom as moonGroup (`moonGroup.position.copy(camera.position)
+// .addScaledVector(moonDir, 300)` + `moonGroup.quaternion.copy(camera.quaternion)`,
+// both a few hundred lines down in stepFrame), offset around the vertical axis
+// (skyBalloonDirection, lib/game/skyBalloon.ts) so it never shares screen space
+// with the sun/moon disc. The canvas texture is drawn once below and redrawn in
+// place on every state/text change via setLeaderboardRecord() -- never
+// recreated (PART 2.5's "swap TEXT on state change, never re-create the balloon
+// objects"), same texture-reuse idiom as the Sky Compass glyphs above. Shadow
+// is a CircleGeometry mesh (not a Sprite) so it billboards via the group's own
+// quaternion copy, same as moonGroup's halo mesh (`:463-465`); the main sprite
+// self-billboards regardless (THREE.Sprite ignores inherited rotation), so the
+// group quaternion copy below is a harmless no-op for it.
+const skyBalloonDir = skyBalloonDirection(moonDir);
+const skyBalloonCanvas = document.createElement('canvas');
+skyBalloonCanvas.width = SKY_BALLOON_CANVAS_WIDTH; skyBalloonCanvas.height = SKY_BALLOON_CANVAS_HEIGHT;
+const skyBalloonCtx = skyBalloonCanvas.getContext('2d');
+const skyBalloonTex = new THREE.CanvasTexture(skyBalloonCanvas); skyBalloonTex.colorSpace = THREE.SRGBColorSpace;
+const skyBalloonSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: skyBalloonTex, transparent: true, opacity: 0, depthWrite: false, fog: false,
+}));
+skyBalloonSprite.scale.set(34, 34 * (SKY_BALLOON_CANVAS_HEIGHT / SKY_BALLOON_CANVAS_WIDTH), 1);
+const skyBalloonShadow = new THREE.Mesh(
+  new THREE.CircleGeometry(13, 24),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false, fog: false }),
+);
+skyBalloonShadow.position.set(1.4, -10, -0.4);
+const skyBalloonTrails = [];
+for (let skyBalloonTrailI = 0; skyBalloonTrailI < 3; skyBalloonTrailI++) {
+  const skyBalloonTrailGeo = new THREE.BufferGeometry();
+  const skyBalloonTrailSpread = (skyBalloonTrailI - 1) * 4;
+  skyBalloonTrailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    skyBalloonTrailSpread, -6, 0,
+    skyBalloonTrailSpread * 1.4, -16 - skyBalloonTrailI * 2, 0,
+  ]), 3));
+  const skyBalloonTrailLine = new THREE.Line(skyBalloonTrailGeo, new THREE.LineBasicMaterial({
+    color: 0xd8c9a8, transparent: true, opacity: 0, fog: false,
+  }));
+  skyBalloonTrails.push(skyBalloonTrailLine);
+}
+const skyBalloonGroup = new THREE.Group();
+skyBalloonGroup.add(skyBalloonShadow, skyBalloonSprite, ...skyBalloonTrails);
+skyBalloonGroup.visible = false; // no-balloons-yet, until the first setLeaderboardRecord() call
+scene.add(skyBalloonGroup);
+let skyBalloonStatus = null;
+let skyBalloonRecord = null;
+let skyBalloonOpacity = 0;
+let skyBalloonFading = false;
+let skyBalloonLastDrawn = { text: '', hasFlag: false }; // for qaProbeLeaderboardSky()
 const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20, 2); camera.add(playerLight);
 // LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
 // LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
@@ -460,6 +566,7 @@ let veilCharge = 1, veilLocked = false, veilAmount = 0, staminaCharge = 1, stami
 // LUL-2331: one-shot beacon-glow pulse on the Stone Marker, set on purchase (buyVeilCharm()),
 // decayed once per frame in tick() -- see the landmarkBeaconGlows loop for the boost itself.
 let stoneMarkerPulseT = 0, brambleSnagT = 0;   // LUL-4526: Thorn Snag stumble countdown
+let wasInMud = false;   // LUL-5564: edge-detect for mudEnterCue()/hint -- last tick's mud-zone state
 let chapelSanctuaryPulseT = 0;   // LUL-5005: same one-shot beacon-glow boost shape as stoneMarkerPulseT, set on grant
 let inLogCrawl = false, logCrawlDirX = 0, logCrawlDirZ = 0,
     logCrawlExitX = 0, logCrawlExitZ = 0, logCrawlDeniedLatch = false;   // LUL-4527
@@ -475,6 +582,13 @@ let fogBase = CONFIG.fog;         // last player-set "Mist" slider value; veil r
 // same split as the veil above). `fogTideClock` only advances while `playing`
 // (see tick()) -- that's the whole "pausable" requirement, no separate flag.
 let fogTideClock = 0, fogTideAmount = 0, fogTideBuild = 0, fogTideActive = false;
+// LUL-5698: Rainfall Event -- same four-variable shape as Fog Tide above.
+let rainfallClock = 0, rainfallAmount = 0, rainfallBuild = 0, rainfallActive = false;
+// LUL-5756 cheap slice (LUL-5759): recomputed every frame in the mote render
+// loop below, never persisted. fireflyAlarmStingPlayed is a true once-per-run
+// flag (unlike staminaLowCuePlayed's hysteresis reset) -- the sting is a
+// first-encounter tell, not re-armed when alarm re-triggers later the same run.
+let fireflyAlarmActive = false, fireflyAlarmStingPlayed = false;
 // LUL-1709: live time-of-run pacing clock, 0 (dawn) -> 1 (full night) over
 // TIME_OF_RUN_DURATION_S of actual play. Same pausable-accumulator pattern as
 // fogTideClock immediately above -- only advances while `playing` (see tick()),
@@ -603,7 +717,67 @@ scene.add(throwableMesh);
 
 const dummy = new THREE.Object3D();
 const tintCol = new THREE.Color();
+// LUL-3295: flag-tinted trees. `leaderboardTintPalette` is the current record
+// holder's COUNTRY_PALETTES entry, or null for "no tint" (loading/empty/failed-
+// no-cache/unrecognized code -- never a default country, PART 2.6). A plain
+// object-reference compare in setLeaderboardRecord() below treats "same
+// country, new timeMs" as a no-op without parsing anything.
+let leaderboardTintPalette = null;
+const leaderboardFlagColor = new THREE.Color(); // scratch, reused every tree
+
+// Mutates `out` in place: the per-tree weathering tint ensureChunk() has
+// always applied, then -- for the subset of trees selected by `ti` -- blended
+// toward the record holder's flag colour. Pure function of treeData[ti] and
+// the current palette; no rng() call, so it can run from ensureChunk() (first
+// build) and retintLiveTreeChunks() (a later record change) alike without
+// perturbing the seeded stream (forest-engine.js:1062-1063).
+function computeTreeTintColor(out, t, ti){
+  out.setRGB(t.tint*0.92, t.tint, t.tint*0.86);
+  if(!leaderboardTintPalette) return out;
+  const n = CONFIG.LEADERBOARD_TINT_SUBSET_N;
+  if(ti % n !== 0) return out;
+  const hex = leaderboardTintPalette[(ti / n) % leaderboardTintPalette.length];
+  leaderboardFlagColor.set(hex);
+  out.lerp(leaderboardFlagColor, CONFIG.LEADERBOARD_TINT_WEIGHT);
+  return out;
+}
+
+// Re-applies computeTreeTintColor() to every already-built (live) tree chunk's
+// instanceColor and flags it for upload. ensureChunk() only runs the tint
+// computation once per chunk build, so a later leaderboard record change
+// (empty -> populated, or one country overtaking another) needs this explicit
+// pass -- there is no other hook that revisits an already-live chunk.
+function retintLiveTreeChunks(){
+  for(let c=0; c<treeChunkTrios.length; c++){
+    const trio = treeChunkTrios[c];
+    if(!trio) continue;
+    const idxs = treeChunkBuckets[c];
+    idxs.forEach((ti, slot) => {
+      computeTreeTintColor(tintCol, treeData[ti], ti);
+      trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
+    });
+    trio[1].instanceColor.needsUpdate = true;
+    trio[2].instanceColor.needsUpdate = true;
+  }
+}
+
+// LUL-3295: applies the current leaderboard record to tree tint. Called from
+// the merged setLeaderboardRecord() below (LUL-5820 S4 + LUL-3295 S5 share one
+// engine action -- see that function's comment). `record` is already collapsed
+// to "what to show, or null" (components/Leaderboard.tsx, resolveLeaderboardRecord);
+// trees don't render per-state text so `status` isn't needed here. Skips the
+// (chunk-count-sized) re-tint pass when the country hasn't actually changed --
+// COUNTRY_PALETTES[code] is the same array reference every call for the same
+// code, so this is a plain reference compare.
+function applyLeaderboardTreeTint(record){
+  const country = record ? record.country : null;
+  const nextPalette = (country && COUNTRY_PALETTES[country]) ? COUNTRY_PALETTES[country] : null;
+  if(nextPalette === leaderboardTintPalette) return;
+  leaderboardTintPalette = nextPalette;
+  retintLiveTreeChunks();
+}
 let treeData = [];            // {x,z,s,cr,crCanopy}
+let mudZones = [];             // LUL-5564: {x,z,r} -- terrain hazard circles, generateMudZones()
 let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders for the four fixed
                                  // landmark meshes, populated by placeLandmarks() post-nudge. No
                                  // crCanopy (canopyBlockedR() skips entries that lack it) and never
@@ -614,6 +788,32 @@ let landmarkData = [];          // LUL-374: {x,z,cr} -- movement-only colliders 
 // gate; caveImmuneT is the live countdown (0 = inactive), decremented in
 // tick() alongside the other per-frame timers.
 let caveSpawned = false, caveData = null, caveConsumed = false, caveImmuneT = 0;
+// LUL-5493: index into SCENT_MASK_SITES the player currently stands inside, or -1.
+// Fixed sites (not part of generateMap()'s procedural draw), so no per-round reset --
+// recomputed every stepFrame() tick below, after player.x/z are final for the frame.
+let playerInScentMaskSiteIndex = -1;
+// LUL-5493: SCENT_MASK_SITES scaled by CONFIG.scentMaskScaleMul (see tuning.js -- same
+// "scale the read, not the source" shape as ROOSTS/roostScaleMul). Radius is left
+// unscaled on purpose, same precedent as ROOST_TRIGGER_RADIUS staying fixed while only
+// ROOSTS' x/z position scales down for the micro world's movement-clamp bounds.
+function scaledScentMaskSites(){
+  return SCENT_MASK_SITES.map(s => ({ ...s, x: s.x * CONFIG.scentMaskScaleMul, z: s.z * CONFIG.scentMaskScaleMul }));
+}
+// LUL-5566: index into DECOY_SCENT_SITES the player currently stands inside, or -1.
+// Same "fixed site, recomputed every tick" shape as playerInScentMaskSiteIndex above.
+let playerInDecoyScentSiteIndex = -1;
+// LUL-5566: one physical redirect event per cooldown, same shape as roostCooldown
+// (below) -- shared Float32Array-per-site convention even though there's only one
+// site today, so a second site needs no shape change here. Reset in restart().
+function scaledDecoyScentSites(){
+  return DECOY_SCENT_SITES.map(s => ({ ...s, x: s.x * CONFIG.decoyScaleMul, z: s.z * CONFIG.decoyScaleMul }));
+}
+// LUL-5707: FIREFLY_CLUSTERS scaled by CONFIG.fireflyScaleMul, same "scale the read,
+// not the source" shape as scaledDecoyScentSites() above. Radius is left unscaled on
+// purpose, same precedent as ROOST_TRIGGER_RADIUS/DECOY_SCENT_RADIUS staying fixed.
+function scaledFireflyClusters(){
+  return FIREFLY_CLUSTERS.map(c => ({ ...c, x: c.x * CONFIG.fireflyScaleMul, z: c.z * CONFIG.fireflyScaleMul }));
+}
 let veilOverloadChargeT = 0, veilOverloadUsedThisRound = false;
 let coldWalkOptIn = false, coldWalkBroken = false;
 // LUL-5005: Chapel Sanctuary -- chapelSanctuaryActive is the live dwell gate,
@@ -623,6 +823,12 @@ let coldWalkOptIn = false, coldWalkBroken = false;
 // dwell completes and the charm is actually granted (see the tick() branch below);
 // leaving early resets chargeT/active but leaves this false so the player can retry.
 let chapelSanctuaryActive = false, chapelSanctuaryChargeT = 0, chapelSanctuaryUsedThisRun = false;
+// LUL-5529: Chapel Refuge + Veil Escape Combo's stage-1 flag -- flips true on the same
+// full-dwell grant edge as chapelSanctuaryUsedThisRun above, read by stage 2's
+// canCompleteChapelVeilEscapeStage2 call at the chase give-up branch. Reset alongside
+// chapelSanctuaryUsedThisRun at both per-run reset sites (deliberately not on
+// arriveHome()/child pickup either, same reasoning as that flag).
+let chapelVeilEscapeChapelDone = false;
 // LUL-4528: Rock -- Vantage Climb. mountedOnRock is the live gate (mutually exclusive
 // with hidden by construction); rockClimbT is the countdown, decremented in tick()
 // alongside the other per-frame timers (same shape as caveImmuneT above).
@@ -789,6 +995,48 @@ function generateThrowables(){
     placed++;
   }
 }
+// LUL-5564: Mud Zone terrain hazard placement. Called from generateMap() after every other
+// rng() consumer in the stream (see the call site's own comment) so it can never reshuffle
+// an existing seed's trees/predators/cover/throwables/wind/mission/cave/roost draws --
+// LUL-791 precedent. Rejection-samples against landmarks (nearLandmarks(), below) and
+// against every already-placed mud zone (no overlap), mirroring generateThrowables()'
+// rejection-sample shape above.
+//
+// LUL-5627 (Mudbound Decoy Amplification): the first zone is reserved to land within
+// (r-1) of the Decoy Scent Site (scaledDecoyScentSites()[0]) instead of a uniform-random
+// draw -- a predator redirected onto the decoy by hearThrowableNoise() (forest-engine.js's
+// exit-transition block) then has to cross the mud to reach it, so the composition is
+// guaranteed every game instead of the ~1.7-2.8% a uniform draw would land there (LUL-5630,
+// CEO Option A). Still subject to the same nearLandmarks() rejection as every other draw --
+// the decoy site sits >100u from every LANDMARKS entry (nearest is drownedCar at ~109u vs.
+// MUD_ZONE_LANDMARK_PAD=6), so this resolves on the first try in practice. The remaining 4
+// zones keep today's uniform-random + overlap-rejection loop unchanged.
+const MUD_ZONE_COUNT = 5;
+const MUD_ZONE_MIN_R = 6, MUD_ZONE_MAX_R = 9;
+const MUD_ZONE_LANDMARK_PAD = 6;
+function generateMudZones(){
+  mudZones = [];
+  let placed = 0, tries = 0;
+  const decoySite = scaledDecoyScentSites()[0];
+  while(placed < MUD_ZONE_COUNT && tries < MUD_ZONE_COUNT * 40){
+    tries++;
+    const r = MUD_ZONE_MIN_R + rng() * (MUD_ZONE_MAX_R - MUD_ZONE_MIN_R);
+    let x, z;
+    if(placed === 0){
+      const angle = rng() * Math.PI * 2;
+      const dist = rng() * (r - 1);
+      x = decoySite.x + Math.cos(angle) * dist;
+      z = decoySite.z + Math.sin(angle) * dist;
+    } else {
+      x = rnd(-half+margin, half-margin);
+      z = rnd(-half+margin, half-margin);
+    }
+    if(nearLandmarks(x, z, MUD_ZONE_LANDMARK_PAD)) continue;
+    if(mudZones.some(m => Math.hypot(m.x - x, m.z - z) < m.r + r)) continue;
+    mudZones.push({ x, z, r });
+    placed++;
+  }
+}
 // LUL-2249: layoutCoverMeshes() (repainted all four fixed-capacity meshes from
 // coverData every call) is gone -- ensureCoverChunk()/dropCoverChunk() below
 // do the same per-instance matrix layout, per chunk, on approach/departure.
@@ -890,7 +1138,7 @@ function ensureChunk(c){
     }
     dummy.updateMatrix();
     for(const p of trio) p.setMatrixAt(slot, dummy.matrix);
-    tintCol.setRGB(t.tint*0.92, t.tint, t.tint*0.86);
+    computeTreeTintColor(tintCol, t, ti);
     trio[1].setColorAt(slot, tintCol); trio[2].setColorAt(slot, tintCol);
   });
   for(const m of trio){
@@ -1127,6 +1375,7 @@ function generateMap(seed){
   placeBabyWisps();
 
   treeData = [];
+  mudZones = [];   // LUL-5564: reset alongside treeData -- generateMudZones() repopulates below
   let tries = 0;
   while(treeData.length < CONFIG.trees && tries < CONFIG.trees*25){
     tries++;
@@ -1225,6 +1474,16 @@ function generateMap(seed){
                                                  // never existed before this ticket, so its
                                                  // exact position past that point cannot
                                                  // perturb any existing seed either way.
+  // LUL-5564: deviation from the ticket's suggested call site (right after
+  // generateThrowables()) -- that spot is NOT actually the last rng() consumer in this
+  // function: generateWind()/placeLandmarks()/pickMission()/placeCave()/the roost-index
+  // draw above and repositionBeaconHunterForMission() itself all consume rng() after
+  // generateThrowables() runs. Inserting there would have reshuffled wind direction,
+  // landmark placement, mission pick, cave placement and roost index for every existing
+  // seed -- exactly the LUL-791/LUL-43 class of bug this ticket's own §2 warns about.
+  // This is the true last rng() consumer in generateMap() today; appending here is the
+  // only spot that "appends, doesn't reorder" the stream for real.
+  generateMudZones();
   // LUL-2249: hand off from "every populated chunk instantiated up front" to
   // the streamed ring, now that treeData/coverData are all at their final,
   // post-thin state. Drop whatever the PREVIOUS seed left live (those meshes
@@ -1266,6 +1525,78 @@ const homeRing = new THREE.Mesh(new THREE.RingGeometry(CONFIG.home.r*0.7, CONFIG
   new THREE.MeshBasicMaterial({ color: CONFIG.home.glow, transparent: true, opacity: 0.2,
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
 homeRing.rotation.x = -Math.PI/2; homeRing.position.set(CONFIG.home.x, 0.04, CONFIG.home.z); scene.add(homeRing);
+
+// ---- Scent-masking sites (LUL-5493 cheap slice) ---------------------------
+// Same "static ring + additive blend" recipe as homeRing above -- three fixed
+// world positions (lib/game/scentMaskSites.ts), one mesh per site (not a single
+// shared ring) so each site's glow can brighten independently as the player
+// nears its own center (scentMaskGlowWeight(), read in tick() below).
+const SCENT_MASK_GLOW_COLOR = { marsh: 0x2fae8a, pine: 0xd98a3d };
+const scentMaskGlowMeshes = SCENT_MASK_SITES.map(s => {
+  const mesh = new THREE.Mesh(new THREE.RingGeometry(s.radius*0.7, s.radius*1.05, 40),
+    new THREE.MeshBasicMaterial({ color: SCENT_MASK_GLOW_COLOR[s.type], transparent: true, opacity: 0.18,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  mesh.rotation.x = -Math.PI/2; mesh.position.set(s.x, 0.04, s.z);
+  scene.add(mesh);
+  return mesh;
+});
+
+// ---- Scent-decoy site (LUL-5566 cheap slice) ------------------------------
+// Same "static ring + additive blend" recipe as the scent-masking sites above,
+// one fixed world position (lib/game/decoyScentSites.ts). Distinct color so
+// the two "scent" site kinds stay visually distinguishable.
+const DECOY_SCENT_GLOW_COLOR = 0xc9432f;
+const decoyScentGlowMeshes = DECOY_SCENT_SITES.map(s => {
+  const mesh = new THREE.Mesh(new THREE.RingGeometry(s.radius*0.7, s.radius*1.05, 40),
+    new THREE.MeshBasicMaterial({ color: DECOY_SCENT_GLOW_COLOR, transparent: true, opacity: 0.18,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+  mesh.rotation.x = -Math.PI/2; mesh.position.set(s.x, 0.04, s.z);
+  scene.add(mesh);
+  return mesh;
+});
+
+// ---- Firefly swarms (LUL-5707 cheap slice) --------------------------------
+// Pure ambient dusk/night glow clusters -- no input, no HUD field, no save
+// state, no economy hook (docs/CUES.md:1-6 passive/ambient-texture cue-triple
+// exemption, same ruling as decisions/lul-2431-fire-tower-embers-cue-triple-
+// exempt-2026-09-11). `timeOfDay` is a per-session snapshot (LUL-1644, never
+// re-evaluated during play), so gating the cluster list once here -- instead
+// of per-frame in the tick loop below -- is correct, not an optimization that
+// could go stale mid-session.
+const activeFireflyClusters = (timeOfDay === 'evening' || timeOfDay === 'night')
+  ? (mode === 'mobile' ? scaledFireflyClusters().slice(0, FIREFLY_MOBILE_CLUSTER_COUNT) : scaledFireflyClusters())
+  : [];
+// LUL-5744: detection-side cluster list -- same dusk/night time-gate as the render
+// list above, but deliberately NOT sliced to FIREFLY_MOBILE_CLUSTER_COUNT on mobile.
+// The wiki spec (game/mechanics/firefly-glow-detection-risk, Q11 test 3) is explicit
+// that the detection penalty must apply to all 6 clusters regardless of render
+// budget -- a mobile player standing in an unrendered cluster (5/6) is still exposed.
+const activeFireflyDetectClusters = (timeOfDay === 'evening' || timeOfDay === 'night')
+  ? scaledFireflyClusters()
+  : [];
+const FIREFLY_MOTE_COLOR = 0xcfe86a;
+// One THREE.PointLight per mote, built once here and never rebuilt -- empty
+// outside dusk/night so every loop below over fireflyClusterMotes is a cheap
+// no-op for a daytime session. Mote scatter around each cluster center uses a
+// deterministic sunflower-seed layout (index-derived angle/radius), not
+// rng() -- consuming a shared seeded draw here would shift every later
+// rng()-based system's sequence for the same seed (decoyScentSites.ts's own
+// header comment: "no rng() draw contract, so seeds stay byte-identical per
+// seed").
+const fireflyClusterMotes = activeFireflyClusters.flatMap((cluster, ci) => {
+  const motes = [];
+  for (let i = 0; i < cluster.moteCount; i++) {
+    const ang = i * 2.399963 + ci * 0.7;
+    const rad = cluster.radius * 0.35 * Math.sqrt((i + 0.5) / cluster.moteCount);
+    const baseX = cluster.x + Math.cos(ang) * rad;
+    const baseZ = cluster.z + Math.sin(ang) * rad;
+    const light = new THREE.PointLight(FIREFLY_MOTE_COLOR, 0, 6, 2);
+    light.position.set(baseX, 1.2 + (i % 3) * 0.5, baseZ);
+    scene.add(light);
+    motes.push({ light, cluster, baseX, baseZ, phase: ang });
+  }
+  return motes;
+});
 
 // ---- Navigational landmarks (LUL-25) --------------------------------------
 // Same "static group + a light to read through the fog" recipe as the home
@@ -1459,6 +1790,7 @@ function placeCave(){
   // set-down (that carry-leg path is dead in real play, decisions/lul-2281-pickup-
   // is-the-win-2026-09-09), only at run start.
   chapelSanctuaryActive = false; chapelSanctuaryChargeT = 0; chapelSanctuaryUsedThisRun = false;
+  chapelVeilEscapeChapelDone = false;
   if(caveSpawned){
     const [x, z] = clearLandmarkSpot(CAVE.x, CAVE.z, CAVE.clear);
     caveData = { x, z };
@@ -1617,6 +1949,7 @@ let boomStart = -1;
 // few seconds from different predators, so each site needs its own timer).
 const ROOST_BURST_PTS = 10;   // bird-lift silhouette, not an explosion -- keep small
 const roostCooldown = new Float32Array(ROOSTS.length);      // seconds remaining, 0 = ready
+const decoyCooldown = new Float32Array(DECOY_SCENT_SITES.length);   // LUL-5566: seconds remaining, 0 = ready
 const roostSprintDeniedPlayed = new Uint8Array(ROOSTS.length);  // LUL-5442: debounce flag, mirrors staminaLowCuePlayed hysteresis pattern
 const roostBurstStart = new Float32Array(ROOSTS.length).fill(-1);  // seconds since flush, -1 = idle
 const roostBurstVel = ROOSTS.map(() => []);
@@ -1635,6 +1968,23 @@ const roostGroups = ROOSTS.map(r => {
   scene.add(g);
   return g;
 });
+// LUL-5619 (moved from near the top of init(), see the comment there): re-pin every
+// qaWorld=micro-scaled mesh to CONFIG.*ScaleMul's now-live value, once, now that
+// roostGroups/scentMaskGlowMeshes/decoyScentGlowMeshes all actually exist. No-op
+// outside qaWorld=micro (this branch never runs for real players).
+if(qaParams && qaParams.get('qaWorld') === 'micro'){
+  // LUL-5346: roostGroups was built above from ROOSTS' raw (unscaled) positions, so the
+  // burst mesh has to be re-pinned here or the visible burst would sit at the old
+  // full-map spot while every distance check (updateRoosts(), qaTeleportNearRoost())
+  // already agrees on the scaled one.
+  roostGroups.forEach((g, i) => g.position.set(ROOSTS[i].x * CONFIG.roostScaleMul, 14, ROOSTS[i].z * CONFIG.roostScaleMul));
+  // LUL-5493: same re-pin, same reason -- scentMaskGlowMeshes was built from
+  // SCENT_MASK_SITES' raw (unscaled) positions.
+  scentMaskGlowMeshes.forEach((m, i) => m.position.set(SCENT_MASK_SITES[i].x * CONFIG.scentMaskScaleMul, 0.04, SCENT_MASK_SITES[i].z * CONFIG.scentMaskScaleMul));
+  // LUL-5566: same re-pin, same reason -- decoyScentGlowMeshes was built from
+  // DECOY_SCENT_SITES' raw (unscaled) positions.
+  decoyScentGlowMeshes.forEach((m, i) => m.position.set(DECOY_SCENT_SITES[i].x * CONFIG.decoyScaleMul, 0.04, DECOY_SCENT_SITES[i].z * CONFIG.decoyScaleMul));
+}
 function fireBoom(x, y, z){
   boomGroup.position.set(x, y, z); boomGroup.visible = true; boomStart = 0;
   for(let i=0;i<BSP;i++){ const a=Math.random()*Math.PI*2, e=Math.acos(2*Math.random()-1), sp=(8+Math.random()*24)*BOOM_FOV_SCALE;
@@ -1845,7 +2195,7 @@ function makePredator(kind){
     state:'roam', x:0, z:0, vx:0, vz:0, yaw:0, wpx:0, wpz:0,
     phase:rng()*6, spotted:false, callTimer:0,
     inv:'', sniffsLeft:0, sniffTimer:0, backX:0, backZ:0, standX:0, standZ:0,
-    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0, scentVeilReady:false,
+    stuckT:0, trail:[], trailT:0, reroute:0, rrX:0, rrZ:0, hunt:false, alert:0, scentLock:0, scentCalls:0, scentVeilReady:false, investigateCueCount:0,
     commitDir: null, commitT: 0, lastSteerState: 'roam', searchPath: null,
     packTimer:0, flankX:0, flankZ:0, sniffImmuneT:0, sightFlicker:0,
     lkpX:0, lkpZ:0, lkpSweeps:0,
@@ -1918,7 +2268,7 @@ function placePredators(){
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
     if(p.parked) p.g.visible = false;
     p.state='roam'; p.spotted=false; p.inv=''; p.sniffsLeft=0; p.sniffTimer=0; p.callTimer=0;
-    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.windPauseCooldownT=0; p.scentLock=0; p.scentCalls=0; p.scentVeilReady=false;
+    p.stuckT=0; p.trail=[]; p.trailT=0; p.reroute=0; p.hunt=preset.startHunting; p.alert=0; p.windPauseT=0; p.windPauseCooldownT=0; p.scentLock=0; p.scentCalls=0; p.scentVeilReady=false; p.investigateCueCount=0;
     p.packTimer=0; p.flankX=0; p.flankZ=0; p.sniffImmuneT=0; p.sightFlicker=0;
     p.lkpX=0; p.lkpZ=0; p.lkpSweeps=0;
     p.charge=null; p.chargeDirX=0; p.chargeDirZ=0; p.chargeCooldown=0; p.chargeRecoveryT=0;
@@ -2041,7 +2391,7 @@ function repositionBeaconHunterForMission(mission){
   // first tick whenever state !== 'chase', the same way a normal placePredators() restart
   // relies on, with no explicit reset there either).
   hunter.state='roam'; hunter.spotted=false; hunter.inv=''; hunter.sniffsLeft=0; hunter.sniffTimer=0; hunter.callTimer=0;
-  hunter.stuckT=0; hunter.trail=[]; hunter.trailT=0; hunter.reroute=0; hunter.hunt=DIFFICULTY_PRESETS[difficulty].startHunting; hunter.alert=0; hunter.windPauseT=0; hunter.windPauseCooldownT=0; hunter.scentLock=0; hunter.scentCalls=0; hunter.scentVeilReady=false;
+  hunter.stuckT=0; hunter.trail=[]; hunter.trailT=0; hunter.reroute=0; hunter.hunt=DIFFICULTY_PRESETS[difficulty].startHunting; hunter.alert=0; hunter.windPauseT=0; hunter.windPauseCooldownT=0; hunter.scentLock=0; hunter.scentCalls=0; hunter.scentVeilReady=false; hunter.investigateCueCount=0;
   hunter.packTimer=0; hunter.flankX=0; hunter.flankZ=0; hunter.sniffImmuneT=0; hunter.sightFlicker=0;
   hunter.lkpX=0; hunter.lkpZ=0; hunter.lkpSweeps=0;
   hunter.charge=null; hunter.chargeDirX=0; hunter.chargeDirZ=0; hunter.chargeCooldown=0; hunter.chargeRecoveryT=0;
@@ -2053,8 +2403,8 @@ function repositionBeaconHunterForMission(mission){
 // (pickAvoidDirection, unit tested there) -- this stays a thin wrapper that
 // injects the engine's own tree/landmark `grid` closure state, same pattern
 // as blockedR/blocked/hasLOS/findHideSpot above.
-function avoidDir(p, dx, dz, dt){
-  const r = pickCommittedAvoidDirection(p.commitDir, p.commitT, dt, p.x, p.z, p.moveRad, dx, dz, grid, coverGrid, CELL, undefined, undefined, WRAP_SPAN);
+function avoidDir(p, dx, dz, dt, speedScaleMul){
+  const r = pickCommittedAvoidDirection(p.commitDir, p.commitT, dt, p.x, p.z, p.moveRad, dx, dz, grid, coverGrid, CELL, undefined, undefined, WRAP_SPAN, speedScaleMul);
   p.commitDir = r.commitDir; p.commitT = r.commitT;
   return r.dir;
 }
@@ -2121,8 +2471,8 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // a fresh install), and a higher-priority key preempts a lower-priority one
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
-const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','veil','duskLion'];
+const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion','skyCompassNavigation',
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','mudTrapDecoy','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2','rainfall','fireflyAlarm','fireflyGlow'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2137,12 +2487,14 @@ const HINT_TEXT = {
   deepwater:  'the fire tower — a bonus payout, but only if you reach it within the time limit',
   oakHollow:  'a hollow oak nearby — a small bonus payout, no time limit',
   beaconEvasion: 'the fire tower — a Beacon Hunter patrols the approach. veil (F) breaks its lock if it catches your scent on the wind',
+  skyCompassNavigation: 'the sky compass overhead points true north — use it to navigate straight to the target without a landmark in sight',
   wolf:       "a wolf — faster than you. hide (H) or veil (F), don't outrun",
   bear:       'a bear — not fast, but it tracks your scent better than the others. hide (H) or veil (F)',
   lion:       "a lion — the fastest hunter here. hide (H) or veil (F), don't outrun",
   beaconHunter: 'a Beacon Hunter — locks onto you the instant you sprint into the wind, sight and scent don\'t matter to it. hide (H) or veil (F), or stop sprinting into the wind.',
   stamina:    'out of breath — walk to recover, running lays a wider scent trail',
   windAssist: 'sprinting into the wind moves you faster and quieter',
+  mudTrapDecoy: 'mudbound decoy — lure a predator here and it will slow in the mud, unable to catch you if you escape.',
   downwindInvestigation: 'predators hunt downwind of your scent — position yourself upwind to escape',
   windPulse:  'wind pulse — nearby predators pause their sprint when moving across the wind',
   cover:      'a bush — predators lose sight of you while you hold still',
@@ -2150,8 +2502,15 @@ const HINT_TEXT = {
   rockClimb:  'climb the rock to see farther — but you\'re exposed while you\'re up there',
   veilOverload: 'burn all veil charge (Q) for a detection-proof escape',
   throwable:  'a stone — E to pick up, throw to break a chase',
+  scentMask:  "a scent-masking site — your footsteps are hidden here; predators can't track your trail while you stay inside",
+  decoyScent: "a scent-decoy site — leave it behind you and nearby predators will investigate it instead of you",
   veil:       "veil — F holds off what hunts you. limited; it refills when you don't use it",
   duskLion:   "as night falls, the lion's sight weakens — darkness favors the quiet",
+  chapelVeilEscapeStage1: 'the chapel offers refuge — dwell inside to earn a veil reserve, then survive a chase with veil overload',
+  chapelVeilEscapeStage2: 'you gained a veil reserve — now burn all veil charge (Q) to escape a chase and complete the mission',
+  rainfall: "rain masks footsteps — predators' noise detection drops",
+  fireflyAlarm: 'firefly alarm — they sense danger nearby and brighten, easier to spot in the glow',
+  fireflyGlow: 'firefly glow — the brighter you glow, the easier predators spot you',
 };
 const HINT_KEY_PREFIX = 'lullwood:hints:';
 // LUL-2230's key, read (never written) as a migration fallback for the 'scent' entry
@@ -2222,6 +2581,7 @@ function projectToScreen(x, y, z){
 }
 
 function depositScent(hot, againstWind){
+  if(playerInScentMaskSiteIndex !== -1) return;   // LUL-5493: a scent-masking site hides footstep scent entirely
   const base = hot ? SCENT_RADIUS_RUN : SCENT_RADIUS_WALK;
   const radius = againstWind ? base * WIND_AGAINST_RADIUS_MULTIPLIER : base;
   scentPoints.push({ x: player.x, z: player.z, t0: clock.elapsedTime, radius });
@@ -2301,7 +2661,7 @@ function scentOnto(p){
     p.gaveUpAt = null;
   }
   p.alertedBy = null;   // LUL-1857: scent-driven, not the carried cry
-  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2);
+  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind]; p.callTimer = rnd(2.6,4.2);
   p.scentVeilReady = true;   // LUL-5004: a fresh lock cycle re-arms the one-time-per-lock break
   p.scentCalls++;               // QA-visible: e2e/scent.spec.ts asserts this stays low, not once-per-frame
   if(!p.spotted) p.spotted = true;
@@ -2323,7 +2683,7 @@ function scentOnto(p){
 function beaconOnto(p){
   if(p.state === 'chase') return;   // already chasing (any channel) -- don't re-trigger the cue/roar
   p.alertedBy = null;
-  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.callTimer = rnd(2.6,4.2); p.beaconHunterLocked = true;
+  p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind]; p.callTimer = rnd(2.6,4.2); p.beaconHunterLocked = true;
   p.scentVeilReady = true;   // LUL-5004: scentLock is the shared leash both channels arm -- see scentVeilTriggerActive's own comment (lib/game/scent.ts)
   p.eyeMat.color.setHex(BEACON_HUNTER_EYE_COLOR);   // cold blue-teal rim glow, visible under reducedMotion since it's a static color, not an animation
   if(!p.spotted) p.spotted = true;
@@ -2387,6 +2747,7 @@ function hearNoise(p){
   p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
   p.callTimer = rnd(2.6, 4.2);   // LUL-1610: callTimer was 0 on first noise-catch, causing instant roar on chase entry
   leafRustle(false);              // distinct from sight sting (spotSting) -- quieter rustle, not the big roar
+  investigateCue(p);              // LUL-5626: searching tone on investigate entry
   if(captionsOn){
     const b = bearingOf(p.x, p.z, player.x, player.z, player.yaw);
     const near = b.dist < 30 ? 'near' : 'far';
@@ -2403,6 +2764,7 @@ function hearThrowableNoise(p, tx, tz, investigateTime = THROWABLE_INVESTIGATE_T
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: tx, z: tz };
   p.noiseTargetT = rnd(investigateTime[0], investigateTime[1]);
+  investigateCue(p);              // LUL-5626: searching tone on investigate entry
   if(captionsOn) pushState({ caption: `${p.kind} investigates a noise`, captionId: ++captionSeq });
 }
 // LUL-1255 (Ship 1 wayfinding S3): modeled on hearThrowableNoise() above, not
@@ -2419,6 +2781,7 @@ function hearCry(p){
   p.callTimer = rnd(2.6, 4.2);
   p.noiseTarget = { x: baby.x, z: baby.z };
   p.noiseTargetT = Infinity;
+  investigateCue(p);              // LUL-5626: searching tone on investigate entry
 }
 
 // LUL-1258: the mission waypoint's hum -- same tempo-carries-distance shape
@@ -2526,16 +2889,21 @@ function findRockMountSpot(x,z){ return geoFindRockMountSpot(x,z,coverGrid,CELL,
 // LUL-4889 (Dusk Stealth): lion replaces the ambient timeOfRunDetectMul(timeOfRun)
 // ramp with its own duskLionDetectMul(runElapsed) curve -- see dayNight.ts's
 // comment on why the two aren't stacked. Wolf/bear are unaffected.
+// LUL-5744 (decision lul-5742-firefly-glow-detection-accepted-2026-10-02): sampled at
+// the player's position, not the predator's -- unlike fogTideDetectMul above, this
+// represents the player standing in a lit clearing, not ambient conditions around the
+// predator. activeFireflyDetectClusters is the detection-side list (time-gated like
+// the render list but never mobile-sliced, see its own comment above).
 function timeOfRunDetectMulFor(p){
   return p.kind === 'lion' ? duskLionDetectMul(runElapsed) : timeOfRunDetectMul(timeOfRun);
 }
 function effectiveDetect(p){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return 0;
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * fireflyGlowDetectMul(player.x, player.z, activeFireflyDetectClusters, CONFIG.FIREFLY_GLOW_DETECT_BONUS, WRAP_SPAN, WRAP_SPAN) * CONFIG.detectScaleMul, { hidden, hideTime });
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * fireflyGlowDetectMul(player.x, player.z, activeFireflyDetectClusters, CONFIG.FIREFLY_GLOW_DETECT_BONUS, WRAP_SPAN, WRAP_SPAN) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -2582,7 +2950,7 @@ function updateWolfPack(dt){
 // exactly where they were. Long enough to read as "that's over," short
 // enough that a second charge later in the same chase is still in play.
 
-function updatePredators(dt, noiseRadius, cryNoiseRadius){
+function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist, rainfallNoiseMul){
   const tt = clock.elapsedTime;
   updateWolfPack(dt);
   for(const p of predators){
@@ -2593,6 +2961,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
     // each one individually. Eye color reverts on the same transition.
     if(p.state !== 'chase' && p.beaconHunterLocked){ p.beaconHunterLocked = false; p.eyeMat.color.setHex(p.spec.eye); }
     const dx = wrapDelta(player.x, p.x, WRAP_SPAN), dz = wrapDelta(player.z, p.z, WRAP_SPAN), dist = Math.hypot(dx, dz) || 0.0001;
+    const predInMud = isInMudZone(p.x, p.z, mudZones);
     const ux = dx/dist, uz = dz/dist;
     // LUL-2422: CONFIG.speedScaleMul (default 1, set by applyQaWorldMicroPreset) folded in
     // here so every `*pSpeedScaleMul` speed site below is scaled together -- mirrors
@@ -2670,6 +3039,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // rather than snapping straight back into a full chase mid-overshoot
         // -- it just sprinted past you and has to notice you again.
         p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 3);
+        investigateCue(p);        // LUL-5626: searching tone on investigate entry
         endChargeHud();
       } else {
         p.charge = cs;
@@ -2732,12 +3102,19 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // (non-escalated) hunts, e.g. LUL-26 preset `startHunting`, still fall through to
         // the pre-existing investigate/approach collapse below, unchanged.
         if(p.scentLock > 0){ p.state='chase'; p.hunt=false; }
-        else { p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; }
+        else { p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft=rollSniffs(rng, 4); p.hunt=false; investigateCue(p); }
       }
       else {
         if(isCaught(dist, p.rad)) triggerDeath(p.kind, 'hunt', predators.indexOf(p));   // LUL-1194: the 30s force-hunt escalation caught up
-        else { desx=ux; desz=uz; speed=p.spec.speed; }
-        if(dist < 8) p.hunt = false;                   // reached you → back to normal
+        else { desx=ux; desz=uz; speed=p.spec.speed*pSpeedScaleMul; }
+        // LUL-5757: hand off to 'chase' in the same tick the force-hunt lock lifts, rather
+        // than just clearing p.hunt and leaving p.state whatever it was before the hunt
+        // (commonly 'roam', from a predator that never actually engaged yet -- qaLurePredatorKind
+        // is the clearest repro). canSee() is already true in this branch, so 'chase' picks up
+        // the pursuit with no discontinuity; leaving p.state alone instead depends on roam's own
+        // independent canSee() re-check firing on the very next tick to recover the chase, which
+        // cost a full tick here and isn't guaranteed if p.state was something other than 'roam'.
+        if(dist < 8){ p.hunt = false; p.state = 'chase'; }   // reached you → straight to chase, not back to whatever it was
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'roam'){
@@ -2766,7 +3143,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
           && dist < effectiveDetect(p) * BEACON_HUNTER_LOCK_MUL){
         beaconOnto(p);
       }
-      else if(!sniffImmune && checkNoise(p, dist, noiseRadius, dt)){ hearNoise(p); }
+      else if(!sniffImmune && checkNoise(p, dist, ((predInMud && windAssist) ? NOISE_RADIUS_RUN : noiseRadius) * rainfallNoiseMul, dt)){ hearNoise(p); }
       // LUL-1255 (Ship 1 wayfinding S3): the cry is a second, independent
       // hearing check against the child's actual position, not the player's --
       // see S3 of the wayfinding spec for why this can't reuse
@@ -2805,7 +3182,38 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       // p.sightFlicker is a short, separate grace for exactly that: refreshed here while
       // sight actually holds, consulted only at this gate.
       if(canSee(p, dist)) p.sightFlicker = SIGHT_FLICKER_TIME;
-      if(shouldDowngradeChase(p.scentLock, p.sightFlicker, canSee(p, dist))){ p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); }
+      // LUL-5626: a real investigate-state entry site not on the ticket's line list
+      // (chase -> investigate on losing sight/scentLock expiry) -- gets the same cue
+      // as the other six for the same reason they do: it's a real p.state='investigate'
+      // assignment reachable in normal play, not a qa* hook (contrast :5229 below, left
+      // untouched since qaStagePredatorGiveUp sets investigate/sniff directly for test
+      // staging only).
+      // LUL-5649: a long blind scent-chase (never sighted, so sightFlicker stays at its 0
+      // default the whole time, e.g. a beaconHunter/scentOnto() lock expiring far from the
+      // player -- e2e/beacon-hunter.spec.ts's 'give-up' test is the existing, already-passing
+      // precedent for this exact shape, asserting 'investigate') crosses both this and
+      // shouldGiveUpChase()'s scentLock<=0 gate on the same tick scentLock expires --
+      // shouldDowngradeChase() wins every time since it's checked first, so the
+      // shouldGiveUpChase() call below (:3068) is unreachable for a genuine blind chase; it
+      // only ever fires for a sighted chase whose distance crosses the leash while sight is
+      // still fresh. canCompleteGhost()/canCompleteChapelVeilEscapeStage2() were wired only
+      // at that unreachable-for-blind-chases call site, so neither mission could ever
+      // complete via the blind-chase give-up both are designed around. Checked here too,
+      // not swapped ahead of shouldDowngradeChase, to keep beacon-hunter.spec.ts's asserted
+      // 'investigate' outcome (and every other scentLock consumer's identical behavior)
+      // unchanged -- only the mission-completion side effect was missing, not the state.
+      // Gated on the same `dist > effectiveDetect(p)*1.5` leash shouldGiveUpChase() itself
+      // requires (not just scentLock/sightFlicker/canSee): without it, any ordinary close-
+      // range sight break -- ducking behind any prop for 0.4s mid-chase -- would complete
+      // Ghost/chapelVeilEscape the instant the player also holds Veil Overload, nothing to
+      // do with actually escaping the chase at distance.
+      if(shouldDowngradeChase(p.scentLock, p.sightFlicker, canSee(p, dist))){
+        p.state='investigate'; p.inv='approach'; p.approachEnteredHidden=hidden; p.sniffsLeft = rollSniffs(rng, 4); investigateCue(p);
+        if(dist > effectiveDetect(p)*1.5){
+          if(mission && canCompleteGhost(mission, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission);
+          if(mission && canCompleteChapelVeilEscapeStage2(mission, chapelVeilEscapeChapelDone, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission);
+        }
+      }
       // LUL-213: wolf/lion only (bear stays the slow unavoidable threat --
       // contrast is the point, same call LUL-24 made for pack flanking).
       // canSee(p,dist) here (not just the enclosing branch, which also
@@ -2846,6 +3254,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // shouldGiveUpChase()'s distance/timer give-up below to eventually fire.
         else if(hidden && isCaught(dist, p.rad)){
           p.state = 'investigate'; p.inv = 'approach'; p.approachEnteredHidden = hidden; p.sniffsLeft = rollSniffs(rng, 4);
+          investigateCue(p);      // LUL-5626: searching tone on investigate entry
         }
         // LUL-4893 (Predator Pause): a wind-gated freeze on ordinary chase pursuit,
         // evaluated only here -- charge/sightLock/alert/reroute/searchPath/hunt all
@@ -2861,12 +3270,18 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
         // pursues at full speed during the cooldown window; only the retrigger check is
         // suppressed.
         else if(p.windPauseT > 0){ p.windPauseT = Math.max(0, p.windPauseT - dt); speed = 0; }
-        else if(p.windPauseCooldownT > 0){ p.windPauseCooldownT = Math.max(0, p.windPauseCooldownT - dt); desx=ux; desz=uz; speed=p.spec.speed; }
+        else if(p.windPauseCooldownT > 0){ p.windPauseCooldownT = Math.max(0, p.windPauseCooldownT - dt); desx=ux; desz=uz; speed=p.spec.speed*pSpeedScaleMul; }
         else if(shouldWindPause(ux, uz, -Math.sin(player.yaw), -Math.cos(player.yaw), windX, windZ)){
           p.windPauseT = WIND_PAUSE_DURATION; p.windPauseCooldownT = WIND_PAUSE_COOLDOWN; speed = 0; windPulseCue();
         }
-        else { desx=ux; desz=uz; speed=p.spec.speed; }
-        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; }
+        // LUL-5649: this plain chase-pursuit branch (and :3049/:2917's hunt-escalation sibling)
+        // was the one speed site in this function not folded into pSpeedScaleMul (see :2777's
+        // comment) -- a chasing predator crossed the shrunk qaWorld=micro map at full species
+        // speed (8.5-9.2u/s), 5x the scaled ~1.7u/s every other branch already used, closing a
+        // 40u gap in ~5s instead of ~24s. Full map is CONFIG.speedScaleMul=1 (no-op), so this
+        // never showed up outside the micro-world e2e suite.
+        else { desx=ux; desz=uz; speed=p.spec.speed*pSpeedScaleMul; }
+        if(shouldGiveUpChase(p.scentLock, dist, effectiveDetect(p))){ p.state='roam'; p.spotted=false; logChronicle('predator_gave_up', { kind: p.kind }); p.gaveUpAt = clock.elapsedTime; if(mission && canCompleteGhost(mission, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); if(mission && canCompleteChapelVeilEscapeStage2(mission, chapelVeilEscapeChapelDone, isVeilOverloadActive(veilOverloadChargeT))) mission = completeMission(mission); }
         p.callTimer -= dt; if(p.callTimer <= 0){ predatorCall(p.kind, false, p); p.callTimer = rnd(2.6,4.6); }
       }
     } else if(p.state === 'investigate'){
@@ -2997,7 +3412,25 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius){
       }
     }
 
-    if(speed > 0 && (desx || desz)) [desx, desz] = avoidDir(p, desx, desz, dt);
+    // LUL-5673: skip the avoid-commit override entirely while a charge is active
+    // (desx/desz already came from p.chargeDirX/chargeDirZ above -- telegraph has
+    // speed=0 so it never reaches here regardless). A charge is a committed heading
+    // by design (see startCharge()'s own comment above); without this guard a
+    // commitDir left over from the avoid-steer that happened moments before the
+    // charge triggered (same 'chase' state, so the state-change reset at the top of
+    // this loop never fires) silently overrides the charge's direction for up to
+    // AVOID_COMMIT_TIME/pSpeedScaleMul -- 1.0s in production, long enough to cover
+    // almost the whole ~1.3s charging+overshoot window, and up to 5.0s at
+    // qaWorld=micro's speedScaleMul=0.2, longer than the charge itself.
+    if(speed > 0 && (desx || desz) && !p.charge) [desx, desz] = avoidDir(p, desx, desz, dt, pSpeedScaleMul);
+
+    // LUL-5564: Mud Zone predator slowdown -- folded in once here, after every roam/chase/
+    // investigate/flank/charge/hunt branch above has set `speed`, rather than at each
+    // branch's own `p.spec.speed*pSpeedScaleMul` site (the ticket's suggested shape). This is
+    // the one point every branch's speed converges through before becoming actual movement
+    // (dvx/dvz below), so it can't miss a branch or apply inconsistently by AI state the way
+    // patching each call site individually risked.
+    speed *= mudSpeedMultiplier(predInMud);
 
     // smooth velocity + collide with trees (axis-separated slide)
     const dvx = desx*speed, dvz = desz*speed, accel = speed > 0 ? 3.6 : 6;
@@ -3131,12 +3564,23 @@ function updateRoosts(dt, running){
   updateRoostBursts(dt);
   for(let i=0;i<ROOSTS.length;i++){
     const r = ROOSTS[i];
+    // LUL-5346: CONFIG.roostScaleMul (1 on every real map) -- see its own comment,
+    // engine/tuning.js -- so this stays a no-op outside qaWorld=micro. Scaling r.radius
+    // alongside rx/rz (not just the position) matters: the radius describes the site's
+    // own geometric footprint, so shrinking the site without shrinking its footprint is
+    // what let qaWorld=micro's compressed roost spacing (~10-40u apart) fall inside an
+    // unscaled 20u radius meant for the full map's ~140-152u spacing -- the nearest-roost
+    // scan below (and throwThrowable()'s own copy) would then resolve throws/approaches
+    // meant for one roost onto whichever neighbor's unscaled radius happened to reach
+    // further, leaving the intended roost's burstActive permanently false.
+    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
+    const rRadius = r.radius * CONFIG.roostScaleMul;
     if(roostCooldown[i] > 0){
       // LUL-5442: sprint-into-cooling-roost denial cue, mirrors the throw-path
       // roostFlushDeniedCue() (LUL-5412). Distance-gated to this roost only, and
       // edge-triggered (fires once per approach, not every tick) via the same
       // hysteresis-flag idiom as staminaLowCuePlayed (~line 7150).
-      const nearWhileRunning = running && Math.hypot(player.x-r.x, player.z-r.z) < ROOST_TRIGGER_RADIUS;
+      const nearWhileRunning = running && Math.hypot(player.x-rx, player.z-rz) < ROOST_TRIGGER_RADIUS;
       if(nearWhileRunning && !roostSprintDeniedPlayed[i]) roostFlushDeniedCue();
       roostSprintDeniedPlayed[i] = nearWhileRunning ? 1 : 0;
       roostCooldown[i] -= dt;
@@ -3155,24 +3599,21 @@ function updateRoosts(dt, running){
       }
       continue;
     }
-    // LUL-5346: CONFIG.roostScaleMul (1 on every real map) -- see its own comment,
-    // engine/tuning.js -- so this stays a no-op outside qaWorld=micro.
-    const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
     for(const p of predators){
       if(p.inert || p.state !== 'chase') continue;
-      if(Math.hypot(p.x-rx, p.z-rz) < r.radius){
+      if(Math.hypot(p.x-rx, p.z-rz) < rRadius){
         flushRoost(i);
         roostCooldown[i] = ROOST_COOLDOWN;
         break;
       }
     }
     if(roostCooldown[i] > 0) continue;   // the predator branch above may have just set it this tick
-    if(running && Math.hypot(player.x-r.x, player.z-r.z) < ROOST_TRIGGER_RADIUS){
+    if(running && Math.hypot(player.x-rx, player.z-rz) < ROOST_TRIGGER_RADIUS){
       flushRoost(i);
       roostCooldown[i] = ROOST_COOLDOWN;
       for(const p of predators){
         if(p.inert) continue;
-        if(Math.hypot(p.x-r.x, p.z-r.z) < ROOST_NOISE_RADIUS) hearThrowableNoise(p, r.x, r.z, ROOST_INVESTIGATE_TIME);
+        if(Math.hypot(p.x-rx, p.z-rz) < ROOST_NOISE_RADIUS) hearThrowableNoise(p, rx, rz, ROOST_INVESTIGATE_TIME);
       }
     }
   }
@@ -3287,6 +3728,54 @@ let runMode = 'hold', toggleRunOn = false, sensMul = 1, invertY = false,
     reducedMotionSetting = false, captionsOn = false, captionSeq = 0;
 function motionReduced(){ return reduce || reducedMotionSetting; }
 
+// LUL-5805/LUL-5828: keybind remapping. `keyMap` holds the live KeyboardEvent
+// `code` bound to each of the 11 verbs -- the 4 movement verbs LUL-5805 shipped
+// (forward/back/left/right) plus the 7 action verbs LUL-5828 adds (interact/
+// veilOverload/scentVeil/hide/climb/shuffleHide/jump). Arrow keys stay as a
+// permanent hardcoded fallback alongside the remappable movement keys (same
+// "never lock the player out" shape as runMode's hold/toggle default) so a bad
+// remap can never leave movement unreachable. The 3 WASD-reading call sites
+// (shuffleHide/log-crawl/main movement) and the 7 action checks in the keydown
+// handler below all read through this map instead of literal KeyboardEvent
+// codes, so a remap takes effect immediately without touching those call sites
+// again.
+let keyMap = {
+  forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
+  interact: 'KeyE', veilOverload: 'KeyQ', scentVeil: 'KeyG', hide: 'KeyH',
+  climb: 'KeyC', shuffleHide: 'KeyR', jump: 'Space',
+};
+// LUL-5828: codes the keydown handler below already hardcodes outside keyMap
+// (fullscreen toggle, pause, run-toggle) -- binding a verb onto one of these
+// wouldn't just create an in-keyMap ambiguity, it would make that other action
+// unreachable, so they're rejected the same way a verb-vs-verb collision is.
+const KEYMAP_RESERVED_CODES = ['Escape', 'F11', 'Enter', 'ShiftLeft', 'ShiftRight'];
+let keyMapCollision = null, keyMapCollisionToken = 0;
+function setKeyMap(verb, code){
+  if(!Object.prototype.hasOwnProperty.call(keyMap, verb) || typeof code !== 'string') return;
+  const collidesWithVerb = Object.keys(keyMap).find(v => v !== verb && keyMap[v] === code);
+  // LUL-5828 Q5: a rejected remap is a silent no-op without this -- pushing a
+  // transient keyMapCollision state is the Settings UI's only way to tell the
+  // player *why* the key they just pressed didn't take. UI-only (a settings-
+  // screen interaction, not an in-game refusal) so no audio cue, unlike
+  // veilOverloadDeniedCue/scentVeilDeniedCue just below, whose "denial state
+  // next to the thing it denies" shape this borrows, not their sound.
+  if(collidesWithVerb || KEYMAP_RESERVED_CODES.includes(code)){
+    const token = ++keyMapCollisionToken;
+    keyMapCollision = { verb, code };
+    pushState({ keyMapCollision });
+    later(() => {
+      if(keyMapCollisionToken !== token) return;   // superseded by a newer attempt
+      keyMapCollision = null;
+      pushState({ keyMapCollision });
+    }, 2000);
+    return;
+  }
+  keyMapCollisionToken++;   // any pending collision warning is stale once a remap succeeds
+  keyMap = { ...keyMap, [verb]: code };
+  keyMapCollision = null;
+  pushState({ keyMap, keyMapCollision });
+}
+
 // LUL-1194: any input skips the death cutscene straight to revealLoss(), on every
 // death after the player's first. Independent of `playing` (false while dead), and
 // deliberately not e.repeat-gated -- a held key still counts as "an input" here.
@@ -3325,7 +3814,7 @@ on(window, 'keydown', e => {
   // (landmarks >100u apart, Q7). The denied branch fires whenever the player is in
   // radius but the one-shot gate is already closed and mid-dwell isn't already
   // running, so a repeat E-press after the charm is granted still gets a tell.
-  if(e.code === 'KeyE' && playing && !paused){
+  if(e.code === keyMap.interact && playing && !paused){
     if(canPickup) pickup();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(chapelSanctuaryPromptVisible) startChapelSanctuary();
@@ -3349,7 +3838,7 @@ on(window, 'keydown', e => {
   // the denied branch is the Q5 refusal-feedback gap the CEO's acceptance
   // flagged as in-scope, not deferred -- pressing Q while hunted but
   // ineligible always gets a cue.
-  if(e.code === 'KeyQ' && playing && !paused && veilOverloadTriggerActive){
+  if(e.code === keyMap.veilOverload && playing && !paused && veilOverloadTriggerActive){
     if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound) activateVeilOverload();
     else veilOverloadDeniedCue();
   }
@@ -3360,22 +3849,22 @@ on(window, 'keydown', e => {
   // is already the mist veil's own hold key (veilHeld below), and both are eligible
   // in the same real-play frame (hunted + downwind + charge/stamina available), so
   // holding F would be ambiguous between two unrelated systems.
-  if(e.code === 'KeyG' && playing && !paused && scentVeilPromptActive){
+  if(e.code === keyMap.scentVeil && playing && !paused && scentVeilPromptActive){
     if(staminaCharge >= SCENT_VEIL_STAMINA_COST) breakScentVeil();
     else scentVeilDeniedCue();
   }
-  if(e.code === 'KeyH' && playing && !paused) toggleHidden();
+  if(e.code === keyMap.hide && playing && !paused) toggleHidden();
   // LUL-4528: Rock -- Vantage Climb. Tap, not held (mirrors KeyH's shape above).
-  if(e.code === 'KeyC' && playing && !paused) toggleRockClimb();
+  if(e.code === keyMap.climb && playing && !paused) toggleRockClimb();
   // LUL-3066: hide-reposition shuffle -- only while already hidden, off cooldown.
-  if(e.code === 'KeyR' && playing && !paused && hidden && shuffleCooldownAccum <= 0) shuffleHide();
+  if(e.code === keyMap.shuffleHide && playing && !paused && hidden && shuffleCooldownAccum <= 0) shuffleHide();
   // LUL-213: jumping stands you up first (same as any movement key already
   // does via the moveKey-breaks-hide check in tick()) -- a charge can still
   // catch a hidden player (STILL_DETECT_CUT never reaches 1), and jump is the
   // only way out of one, so it can't be blocked by being crouched.
   // e.repeat is dropped so holding Space down doesn't spam a jump every OS
   // auto-repeat tick; JUMP_DURATION is the only real cooldown once airborne.
-  if(e.code === 'Space' && playing && !paused && !e.repeat){
+  if(e.code === keyMap.jump && playing && !paused && !e.repeat){
     if(hidden) exitHide();
     beginJump();
     jumpPressed = true;   // consumed by updatePredators() this frame, then cleared in tick()
@@ -3471,6 +3960,12 @@ function startAudio(){
   const ing = ctx.createGain(); ing.gain.value = TOD_AUDIO.insectsGain;
   insects.connect(inf); inf.connect(ing); ing.connect(master); ing.connect(conv); insects.start();
 
+  // rain bed -- filtered white noise, silent until Rainfall Event (LUL-5698) ramps it in
+  const rain = ctx.createBufferSource(); rain.buffer = noise(ctx, 3, true); rain.loop = true;
+  const rf = ctx.createBiquadFilter(); rf.type = 'bandpass'; rf.frequency.value = 2000; rf.Q.value = 0.8; // ~2kHz band, matches the proposal's "rainfall hum" register without a sample
+  const rg = ctx.createGain(); rg.gain.value = 0.0001;
+  rain.connect(rf); rf.connect(rg); rg.connect(master); rg.connect(conv); rain.start();
+
   // low ominous drone
   const dg = ctx.createGain(); dg.gain.value = 0.05 * TOD_AUDIO.droneGainMul; dg.connect(master); dg.connect(conv);
   [55, 82.5, 110].forEach((f, i) => { const o = ctx.createOscillator(); o.type='sine'; o.frequency.value=f;
@@ -3491,7 +3986,7 @@ function startAudio(){
   const shimmer = ctx.createOscillator(); shimmer.type='triangle'; shimmer.frequency.value=1245;   // unease up high
   const shg = ctx.createGain(); shg.gain.value=0.012; shimmer.connect(shg); shg.connect(huntGain); shimmer.start();
 
-  audio = { ctx, master, wf, wg, dg, huntGain, plfo, conv, foot: 0, twinkle: rnd(1.5,4), footBuf: noise(ctx, 0.3, false) };
+  audio = { ctx, master, wf, wg, dg, rg, huntGain, plfo, conv, foot: 0, twinkle: rnd(1.5,4), footBuf: noise(ctx, 0.3, false) };
   if (TOD_AUDIO.birdsGain > 0) scheduleBirdChirp();
 }
 function footstep(vol){
@@ -3601,6 +4096,22 @@ function logCrawlEnterCue(){
   src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
   src.start(t); src.stop(t+0.24);
 }
+// LUL-5564: same procedural-noise-burst shape as logCrawlEnterCue()/thornSnagSound() -- a
+// squelchy, heavily low-passed burst so it reads as a wet footstep, not a rustle or a scrape.
+// One-shot on the false->true edge only (see the tick() call site), not a sustained loop --
+// this file has no sustained per-zone ambience convention (see logCrawlEnterCue()'s own note).
+function mudEnterCue(){
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.22, false);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 320;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.18, t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.2);
+  src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
+  src.start(t); src.stop(t+0.22);
+}
 function logCrawlExitCue(){
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
@@ -3612,6 +4123,29 @@ function logCrawlExitCue(){
   g.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
   src.connect(lp); lp.connect(g); g.connect(master); g.connect(conv);
   src.start(t); src.stop(t+0.18);
+}
+// LUL-5756 cheap slice (LUL-5759): one-shot rising-chitter sting, fired once per run on
+// the first frame the firefly alarm activates -- same procedural-noise-burst shape as
+// thornSnagSound()/logCrawlEnterCue() above, but with a rising bandpass sweep (an
+// alarm-calling chitter) instead of a static filter.
+// LUL-5785: qaFireflyAlarmStingCount mirrors the qa*CueCount idiom (qaFireflyGlowSwellCueCount
+// below) so a test can assert the sting fired exactly once without scraping AudioContext
+// internals -- not reset on restart(), same as the other one-shot cue counters.
+let qaFireflyAlarmStingCount = 0;
+function fireflyAlarmSting(){
+  qaFireflyAlarmStingCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.3, false);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 4;
+  bp.frequency.setValueAtTime(900, t);
+  bp.frequency.exponentialRampToValueAtTime(3200, t+0.28);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.16, t+0.04);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.3);
+  src.connect(bp); bp.connect(g); g.connect(master); g.connect(conv);
+  src.start(t); src.stop(t+0.32);
 }
 // LUL-4527: refusal tell for a sprint/strafe/reverse attempt mid-crawl -- same shape as
 // veilOverloadDeniedCue(), the codebase's one existing "input was refused" cue.
@@ -3730,10 +4264,10 @@ function toggleRockClimb(){
 // the only path that reliably keeps the player hidden after a shuffle.
 function shuffleHide(){
   let ix = 0, iz = 0;
-  if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
-  if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
-  if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
-  if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
+  if(keys[keyMap.forward] || keys['ArrowUp'])    iz += 1;
+  if(keys[keyMap.back]    || keys['ArrowDown'])  iz -= 1;
+  if(keys[keyMap.right]   || keys['ArrowRight']) ix += 1;
+  if(keys[keyMap.left]    || keys['ArrowLeft'])  ix -= 1;
   // hasTouchMove is stepFrame()'s own per-frame local (:6532) -- shuffleHide() runs
   // outside that scope (a one-shot keydown/touch handler, not a per-tick call), so it
   // recomputes the same >0.15 deadzone check directly off the module-level `touchMove`.
@@ -3911,6 +4445,28 @@ function predatorCall(kind, big, p, panVal){
     o.connect(lp); lp.connect(g); g.connect(dest); g.connect(conv); o.start(t); o.stop(t+1.25);
   }
 }
+// LUL-5626: investigate-state entry cue -- a low, two-pulse "searching" tone
+// distinct from predatorCall()'s per-species howl/roar/growl (Q7/Q9 of the
+// Feature Checklist: this must not reuse the chase call verbatim). Kind-
+// agnostic on purpose -- each entry site already pushes its own caption
+// naming the species, so this only needs to say "something is searching for
+// you," not which animal. Mirrors sniff()'s two-pulse shape just below, at a
+// lower register and longer per-pulse duration so the two stay audibly apart.
+function investigateCue(p){
+  p.investigateCueCount = (p.investigateCueCount || 0) + 1;   // LUL-5626: counted before the gate, assertable with soundOn:false
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t0 = ctx.currentTime;
+  const vol = 0.16 * callVolumeMul(Math.hypot(p.x - player.x, p.z - player.z));
+  const pan = ctx.createStereoPanner();
+  pan.pan.value = bearingPan(bearingOf(p.x, p.z, player.x, player.z, player.yaw));
+  pan.connect(master); pan.connect(conv);
+  for(let i=0;i<2;i++){
+    const t = t0 + i*0.55;
+    const o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(120,t); o.frequency.exponentialRampToValueAtTime(95,t+0.4);
+    const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(vol,t+0.08); g.gain.exponentialRampToValueAtTime(0.0001,t+0.45);
+    o.connect(g); g.connect(pan); o.start(t); o.stop(t+0.5);
+  }
+}
 // two quick snorts as it sniffs you out
 function sniff(){
   if(!audio || !soundOn) return;
@@ -4077,6 +4633,16 @@ let hudState = {
   // and persists it to localStorage (see components/Hud.tsx).
   difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
+  // LUL-5805/LUL-5828: keybind remapping, same engine-owns-it/React-persists-it
+  // split as runMode above. keyMapCollision is the Q5 refusal tell for a remap
+  // attempt that collided with another verb or a reserved key -- null when no
+  // collision is live, cleared ~2s after it's set (see setKeyMap above).
+  keyMap: {
+    forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
+    interact: 'KeyE', veilOverload: 'KeyQ', scentVeil: 'KeyG', hide: 'KeyH',
+    climb: 'KeyC', shuffleHide: 'KeyR', jump: 'Space',
+  },
+  keyMapCollision: null,
   // LUL-1043/LUL-2351: Embers. `embersBalance`/`embersTiers` are the
   // cross-run economy state -- engine-owned like difficulty above, synced
   // from localStorage by components/Hud.tsx via setEmbers() once on mount.
@@ -4248,6 +4814,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeBaby = function(){
     return { x: baby.x, z: baby.z, distHome: Math.hypot(baby.x, baby.z) };
   };
+  // LUL-5805: exposes the live keyMap so a test can assert a remap (via setKeyMap()
+  // / the Controls settings UI) actually changed which key moves the player.
+  window.ForestEngine.qaProbeKeyMap = function(){ return { ...keyMap }; };
   // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
   // "this world point stays on-canvas" for both the player arrow (which calls
   // w2m(player.x, player.z) in drawMinimap()) and the objective marker (which
@@ -4264,6 +4833,17 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       fog: landmarkGroups[l.kind].children.find(c => c.isSprite)?.material.fog ?? null,
     }));
   };
+  // LUL-5486: exposes the 4 cardinal glyph sprites' real world positions (not
+  // screen projections -- flaky, unnecessary) so a test can assert they sit at
+  // the cardinal unit vectors * radius and, critically, that rotating the
+  // camera does NOT move them -- proving they're genuine world-space objects,
+  // not baked into scene.background the way the rejected LUL-5485 proposal was.
+  window.ForestEngine.qaGetSkyCompassPositions = function(){
+    return Object.fromEntries(SKY_COMPASS_GLYPHS.map(glyph => {
+      const p = skyCompassSprites[glyph].position;
+      return [glyph, { x: p.x, y: p.y, z: p.z }];
+    }));
+  };
   // LUL-2667: exposes the resolved timeOfDay state plus the exact TOD_VISUAL/
   // TOD_AUDIO values init() applied, so a test can assert against the six
   // documented states (lib/game/timeOfDay.ts) without scraping renderer
@@ -4271,6 +4851,50 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // not plain values a test can diff cleanly).
   window.ForestEngine.qaProbeTimeOfDay = function(){
     return { state: timeOfDay, visual: TOD_VISUAL, audio: TOD_AUDIO };
+  };
+  // LUL-5820: exposes the sky balloon's current visibility + last-drawn text/
+  // flag state (stored alongside the sprite when drawn, same as any other QA
+  // probe that can't read pixels back out of a canvas texture) so a test can
+  // assert the 4-state content/visibility mapping without a screenshot.
+  window.ForestEngine.qaProbeLeaderboardSky = function(){
+    return { visible: skyBalloonGroup.visible, text: skyBalloonLastDrawn.text, hasFlag: skyBalloonLastDrawn.hasFlag };
+  };
+  // LUL-5707: active firefly-cluster count (0 outside dusk/night) plus whether
+  // any mote is currently lit (distance-based falloff from the player), so a
+  // test can assert presence/absence without scraping Three.js light
+  // internals -- same shape as qaProbeTimeOfDay's own init-time snapshot.
+  // LUL-5736: maxIntensity added so a test can assert the rain-dim ramp
+  // (CONFIG.FIREFLY_RAIN_DIM) quantitatively -- anyVisible alone can't, since
+  // a dimmed-not-zeroed mote still reads intensity > 0.
+  // LUL-5756 cheap slice (LUL-5759): alarmScalar/alarmActive expose the frame-
+  // global value computed in the mote loop (scanned over ALL clusters, not
+  // just this session's rendered `activeFireflyClusters` slice -- see
+  // lib/game/fireflyAlarmResponse.ts) so a test can assert the alarm
+  // mechanism directly instead of only inferring it from maxIntensity deltas.
+  // `clusters` is that same full unsliced, scaled id/x/z list -- lets a test
+  // stage a real predator (qaIsolatePredatorKindAt) directly on a named
+  // cluster's own coordinates, including one excluded from mobile's render
+  // budget, instead of only approximating "near a cluster" via the player.
+  // LUL-5744: detectClusterCount + glowSwellCueCount added -- detectClusterCount reads
+  // activeFireflyDetectClusters.length (the detection-side list, deliberately NOT
+  // mobile-sliced) alongside clusterCount (the render-side, mobile-sliced list), so a
+  // test can assert the two diverge on mobile (4 rendered vs 6 detectable) without a
+  // separate hook; glowSwellCueCount mirrors the qa*CueCount idiom other one-shot audio
+  // cues already use (e.g. qaScentMaskEnterCueCount) so a test can assert the sting
+  // fired without scraping AudioContext internals.
+  // LUL-5785: stingCount (qaFireflyAlarmStingCount) added the same way, for
+  // fireflyAlarmSting() -- the one-shot alarm cue, distinct from glowSwellCueCount's
+  // glow-proximity cue.
+  window.ForestEngine.qaProbeFireflyClusters = function(){
+    return { clusterCount: activeFireflyClusters.length,
+             detectClusterCount: activeFireflyDetectClusters.length,
+             anyVisible: fireflyClusterMotes.some(function(m){ return m.light.intensity > 0; }),
+             maxIntensity: fireflyClusterMotes.reduce(function(acc, m){ return Math.max(acc, m.light.intensity); }, 0),
+             alarmScalar: fireflyClusterMotes.length ? fireflyAlarmBoost(predators, scaledFireflyClusters(), player, WRAP_SPAN, WRAP_SPAN) : 1,
+             alarmActive: fireflyAlarmActive,
+             clusters: scaledFireflyClusters().map(function(c){ return { id: c.id, x: c.x, z: c.z }; }),
+             glowSwellCueCount: qaFireflyGlowSwellCueCount,
+             stingCount: qaFireflyAlarmStingCount };
   };
   // LUL-2225: generic teleport, for staging an arbitrary position that isn't
   // already a fixed named landmark like qaTeleportHome/qaTeleportNearBaby.
@@ -4372,6 +4996,40 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       totalInstances: trios.reduce((n, t) => n + t[0].count, 0),
       expected: treeData.filter(t => liveChunks.has(treeChunkIndex(t.x, t.z))).length,
     };
+  };
+
+  // LUL-3295: drives the exact same setLeaderboardRecord() the real
+  // GameCanvas effect calls on every resolved-record change -- not a second,
+  // fake-state path, just a way for a spec to simulate a record change
+  // without a second real fetch (components/Leaderboard.tsx's hook only ever
+  // fetches once per mount, so there is no live re-fetch to stub mid-test).
+  window.ForestEngine.qaSetLeaderboardRecord = function(status, record){
+    setLeaderboardRecord(status, record);
+  };
+
+  // LUL-3295: flag-tinted trees -- counts live tree instances selected for
+  // tinting (ti % N === 0, only when a palette is set) and reads back one
+  // tinted instance's actual instanceColor bytes, so a spec can assert the
+  // colour really moved toward the flag rather than just that the code ran.
+  window.ForestEngine.qaProbeTreeTint = function(){
+    const n = CONFIG.LEADERBOARD_TINT_SUBSET_N;
+    let totalTrees = 0, tintedCount = 0, sampleTintedColor = null;
+    for(let c=0; c<treeChunkTrios.length; c++){
+      const trio = treeChunkTrios[c];
+      if(!trio) continue;
+      const idxs = treeChunkBuckets[c];
+      totalTrees += idxs.length;
+      if(!leaderboardTintPalette) continue;
+      idxs.forEach((ti, slot) => {
+        if(ti % n !== 0) return;
+        tintedCount++;
+        if(!sampleTintedColor){
+          const arr = trio[1].instanceColor.array;
+          sampleTintedColor = [arr[slot*3], arr[slot*3+1], arr[slot*3+2]];
+        }
+      });
+    }
+    return { totalTrees, tintedCount, sampleTintedColor };
   };
 
   // LUL-2249: liveChunks/cover liveness + the player's own current chunk,
@@ -4476,6 +5134,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     fogTideClock = Math.max(0, seconds % FOG_TIDE_CONFIG.period);
   };
 
+  // [QA-HOOK] LUL-5698: directly sets the rainfall cycle accumulator for deterministic e2e
+  // staging -- same rationale as qaSetFogTideClock immediately above: the real cycle is an
+  // 80s game-clock loop (lib/game/rainfallEvent.ts RAINFALL_CONFIG), too slow to drive through
+  // qaAdvance() one real dt-step at a time. Takes effect on the next tick's rainfallPhase()
+  // re-evaluation, same as a real elapsed-time crossing would.
+  window.ForestEngine.qaSetRainfallClock = function(seconds){
+    rainfallClock = Math.max(0, seconds % RAINFALL_CONFIG.period);
+  };
+
   // LUL-2189/LUL-2207: exposes the module-scope wind unit vector (set once per
   // generateMap() by generateWind(), engine/forest-engine.js:1810/1812) so a test
   // can derive #windIndicator's expected rotation instead of hardcoding an angle.
@@ -4550,9 +5217,22 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // meaning what it says. See wiki: systems/dt-clamp-vs-walltime.
   //
   // So this skips the waiting, not the mechanic: it drops the nearest predator a few
-  // units away and sets the same `hunt` flag the 30s trigger would have set. The
-  // approach, the catch test (`dist < p.rad + 1.3`) and triggerDeath all still run
-  // for real -- the animal is placed outside catch range and closes it itself.
+  // units away and sets the same `hunt`/`scentLock` state the 30s trigger (:8013) would
+  // have set. The approach, the catch test (`dist < p.rad + 1.3`) and triggerDeath all
+  // still run for real -- the animal is placed outside catch range and closes it itself.
+  //
+  // LUL-5757: `scentLock = FORCE_HUNT_LOCK` was missing here (this hook used to set only
+  // `hunt=true`) -- harmless for wolf/lion, whose species `detect` comfortably covers this
+  // 6-unit placement even after qaWorld=micro's detectScaleMul and the 'night' time-of-day
+  // detect multiplier (effective ~6.7-7.7u), but bear's smaller `detect:30` scales down to
+  // ~4.8u -- *below* 6u -- so canSee() reads false the instant this hook places it. The
+  // forced-hunt branch's own `!canSee` sub-branch (updatePredators()) then falls through to
+  // the slow, give-up-prone investigate/approach collapse instead of the relentless blind
+  // chase, exactly because this hook (unlike the real :8013 trigger) left scentLock at 0 --
+  // reproducing only half the state the real escalation sets. Confirmed via effectiveDetect's
+  // exact constants (species detect * 0.2 micro scale * 0.8 night-time-of-day = 4.8 for bear
+  // vs the fixed 6u placement), not a collision/pathing issue -- qaBuildScene's synthetic
+  // scene here has zero trees/props for the predator to path around.
   window.ForestEngine.qaLurePredator = function(){
     let nearest = null, best = 1e9;
     for(const p of predators){
@@ -4565,6 +5245,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     nearest.x = player.x + 6; nearest.z = player.z;
     nearest.vx = nearest.vz = 0;
     nearest.hunt = true;
+    nearest.scentLock = FORCE_HUNT_LOCK;   // LUL-5757: match :8013's real trigger, see comment above
     return nearest.kind;
   };
 
@@ -4592,6 +5273,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     nearest.x = player.x + 6; nearest.z = player.z;
     nearest.vx = nearest.vz = 0;
     nearest.hunt = true;
+    nearest.scentLock = FORCE_HUNT_LOCK;   // LUL-5757: match :8013's real trigger -- see qaLurePredator's comment above
     for(const other of predators){ if(other !== nearest){ other.inert = true; } }
     return nearest.kind;
   };
@@ -4658,7 +5340,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // staging scentLock>0 in 'approach' needs the predator's own real position over
     // several ticks to measure whether its path drifts downwind, and `inv` to confirm
     // it's still in the 'approach' sub-phase this bias only applies to.
-    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null, x: p.x, z: p.z, inv: p.inv };
+    // LUL-5757: hunt/reroute/stuckT/alert/sightLock/sniffsLeft added -- tracing the
+    // bear-kill deathScreen regression needed the full force-hunt/stuck-reroute state
+    // this hook didn't expose yet (only state/dist/scentLock existed), the same gap
+    // qaStageAndTraceBehindTree's own position/state trace needed for the cover case.
+    // Kept rather than reverted post-investigation: any future predator-AI stall is
+    // this same shape of bug (a state transition silently falls through to the wrong
+    // branch), and this is the one probe already wired into every e2e spec that traces
+    // a single predator over time.
+    return { state: p.state, dist: Math.hypot(player.x - p.x, player.z - p.z), scentCalls: p.scentCalls, alertedBy: p.alertedBy, scentLock: p.scentLock, scentVeilReady: p.scentVeilReady, t: clock.elapsedTime, noiseTarget: p.noiseTarget ?? null, x: p.x, z: p.z, inv: p.inv, investigateCueCount: p.investigateCueCount ?? 0, hunt: p.hunt, reroute: p.reroute, stuckT: p.stuckT, alert: p.alert, sightLock: p.sightLock, sniffsLeft: p.sniffsLeft };
   };
   // LUL-2878: `p.spec.detect` (tuning.js) is unscaled and cannot be used to
   // stage a "first sighted" scenario -- effectiveDetect() applies
@@ -5060,7 +5750,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const p = predators[idx];
     p.x = player.x + dx; p.z = player.z + dz;
     p.vx = p.vz = 0; p.charge = null; p.sightLock = null; p.alert = 0; p.reroute = 0; p.stuckT = 0;
-    p.hunt = false; p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME; p.alertedBy = null;
+    p.hunt = false; p.state = 'chase'; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind]; p.alertedBy = null;
     return { idx, x: p.x, z: p.z };
   };
 
@@ -5149,6 +5839,38 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const chosen = nearestPursuing || nearestAny;
     if(!chosen) return null;
     for(const other of predators){ if(other !== chosen){ other.inert = true; } }
+    return { kind: chosen.kind, x: chosen.x, z: chosen.z };
+  };
+
+  // LUL-5756 cheap slice (LUL-5759): same isolate-and-park-the-rest shape as
+  // qaIsolatePredatorKind above, but places the chosen predator at an exact
+  // (x,z) instead of picking the nearest -- for staging a real predator
+  // object directly on a specific firefly cluster's coordinates (read from
+  // qaProbeFireflyClusters().clusters) rather than relative to the player.
+  window.ForestEngine.qaIsolatePredatorKindAt = function(kind, x, z){
+    const chosen = predators.find(p => p.kind === kind);
+    if(!chosen) return null;
+    chosen.inert = false; chosen.g.visible = true;
+    chosen.x = x; chosen.z = z;
+    chosen.vx = chosen.vz = 0; chosen.alert = 0; chosen.reroute = 0; chosen.stuckT = 0;
+    chosen.state = 'roam'; chosen.hunt = false;
+    for(const other of predators){ if(other !== chosen){ other.inert = true; } }
+    return { kind: chosen.kind, x: chosen.x, z: chosen.z };
+  };
+
+  // LUL-5761 cheap slice: same placement as qaIsolatePredatorKindAt above,
+  // but leaves every other predator alone instead of parking them inert --
+  // call qaClearAllPredators first, then this once per kind, to stage two
+  // different species (e.g. bear + lion) at the same time and prove
+  // fireflyAlarmBoost's per-species range (alarmRangeFor) applies
+  // independently per predator rather than off one shared range.
+  window.ForestEngine.qaPlacePredatorKindAt = function(kind, x, z){
+    const chosen = predators.find(p => p.kind === kind);
+    if(!chosen) return null;
+    chosen.inert = false; chosen.g.visible = true;
+    chosen.x = x; chosen.z = z;
+    chosen.vx = chosen.vz = 0; chosen.alert = 0; chosen.reroute = 0; chosen.stuckT = 0;
+    chosen.state = 'roam'; chosen.hunt = false;
     return { kind: chosen.kind, x: chosen.x, z: chosen.z };
   };
 
@@ -5394,6 +6116,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       jumping: jumping, paused: paused, toggleRunOn: toggleRunOn,
       veilHeld: (entered && !won && !dead && !pickingUp) && (!!keys['KeyF'] || touchVeil),
       hidden: hidden, brambleSnagT: brambleSnagT,
+      inMudZone: isInMudZone(player.x, player.z, mudZones),
       inLogCrawl: inLogCrawl, logCrawlExitX: logCrawlExitX, logCrawlExitZ: logCrawlExitZ,
     };
   };
@@ -5458,7 +6181,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       // trigger band) when a caller polls for the outcome. Force it off so
       // this hook tests exactly the branch it says it does.
       p.charge = null; p.chargeCooldown = 999;
-      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind];
       player.x = bx; player.z = bz;
       // Isolate: the player is being relocated to wherever this cover prop
       // happens to be, which could easily land inside another (untouched)
@@ -5603,7 +6326,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       p.x = px; p.z = pz;
       p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0; p.sightLock = null;
       p.charge = null; p.chargeCooldown = 999;
-      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+      p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind];
       player.x = qx; player.z = qz;
       // Isolate, same rationale as stageBlindChaseThroughCover above: nine
       // predators roam independently, and relocating the player next to a
@@ -5875,7 +6598,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     // Mirrors every real chase-entry site's p.scentLock = SCENT_TRACK_TIME (e.g. :2227, :4898) --
     // without it, shouldDowngradeChase() reverts 'chase' to 'investigate' on the very next tick
     // if canSee() reads false for even one frame, before ambient consumers ever observe 'chase'.
-    p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME;
+    p.state = 'chase'; p.hunt = false; p.scentLock = SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind];
     return { idx };
   };
   // [QA-HOOK] LUL-2351: effective scent lifetime for the run's current Quiet Step tier --
@@ -5927,7 +6650,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const r = ROOSTS[i];
     if(!r) return null;
     const rx = r.x * CONFIG.roostScaleMul, rz = r.z * CONFIG.roostScaleMul;
-    player.x = rx; player.z = rz + 2;
+    // LUL-5691: must land a throw exactly on the roost regardless of CONFIG.roostScaleMul --
+    // the old fixed +2u offset left a 16u landing-to-roost gap (THROWABLE_THROW_DISTANCE=18
+    // minus 2), inside full-map's unscaled 20u burst radius but outside qaWorld=micro's
+    // scaled radius (20u * roostScaleMul=0.2 = 4u), so a single throw silently missed.
+    player.x = rx; player.z = rz + THROWABLE_THROW_DISTANCE;
     return { i, x: rx, z: rz };
   };
   // [QA-HOOK] LUL-4894: raw roost burst/cooldown state off the existing arrays -- lets a
@@ -6016,6 +6743,39 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // math in the page context. `points`/`livePoints` let a test cross-check
   // "the array decayed" against "the picture decayed" independently.
   window.ForestEngine.qaProbeScentTrail = function(){ return scentTrailLastFrame; };
+  // [QA-HOOK] LUL-5493: the live scent-masking site index (matches SCENT_MASK_SITES'
+  // own order) plus the fixed site list itself -- x/z already scaled by
+  // CONFIG.scentMaskScaleMul (1 on the full map, 0.2 under qaWorld=micro, same as every
+  // other engine read of these sites), so a test can qaTeleportTo(sites[i].x, sites[i].z)
+  // or walk there directly without re-deriving the scale factor itself.
+  window.ForestEngine.qaProbeScentMaskSite = function(){
+    return {
+      index: playerInScentMaskSiteIndex,
+      sites: scaledScentMaskSites().map(s => ({ id: s.id, type: s.type, x: s.x, z: s.z, radius: s.radius })),
+      enterCueCount: qaScentMaskEnterCueCount,
+      exitCueCount: qaScentMaskExitCueCount,
+    };
+  };
+  // [QA-HOOK] LUL-5566: the live decoy-site index, the fixed site list (x/z already
+  // scaled by CONFIG.decoyScaleMul, same convention as qaProbeScentMaskSite above),
+  // per-site cooldown remaining, and the exit-cue count the redirect fires alongside.
+  window.ForestEngine.qaProbeDecoyScentSite = function(){
+    return {
+      index: playerInDecoyScentSiteIndex,
+      sites: scaledDecoyScentSites().map(s => ({ id: s.id, x: s.x, z: s.z, radius: s.radius })),
+      cooldown: Array.from(decoyCooldown),
+      exitCueCount: qaDecoyScentExitCueCount,
+    };
+  };
+  // [QA-HOOK] LUL-5627: read-only snapshot of the live mudZones array ({x,z,r} world
+  // coordinates, already post-generateMudZones()/qaBuildScene -- no separate scale factor,
+  // mud zones are never scaled unlike the decoy/scent-mask/roost sites). Lets a reachability
+  // test drive the real generateMap() path (qaRegenerateMap) over several seeds and confirm
+  // a mud zone always lands near scaledDecoyScentSites()[0], without reproducing the
+  // forced-overlap gap qaBuildScene's own mudZones override would otherwise paper over.
+  window.ForestEngine.qaProbeMudZones = function(){
+    return mudZones.map(m => ({ x: m.x, z: m.z, r: m.r }));
+  };
 
   // [QA-HOOK] LUL-2230: sets the camera yaw directly (the same player.yaw
   // every look-input path writes, see camera.rotation.set(player.pitch,
@@ -6096,6 +6856,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
       const s = t.s ?? 1.2;
       return { x: t.x, z: t.z, s, cr: 0.35*s, crCanopy: canopyRadiusAtEye(s, CONFIG.eye, CANOPY_GEO), culled: false, rot: 0, tint: 1 };
     });
+
+    // LUL-5564: required so LUL-5559's e2e spec can stage a mud zone in the micro world
+    // (Q12: must run without @fullmap) -- same reset-from-opts shape as treeData above.
+    mudZones = (opts.mudZones || []).map(m => ({ x: m.x, z: m.z, r: m.r }));
 
     coverData = (opts.props || [])
       .filter(p => QA_COVER_SHAPE[p.kind])
@@ -6334,7 +7098,11 @@ function throwThrowable(){
     // LUL-5346: CONFIG.roostScaleMul -- matches qaTeleportNearRoost()'s own scaled landing spot,
     // see its comment; a no-op (mul=1) on every real map.
     const dist = Math.hypot(ROOSTS[i].x * CONFIG.roostScaleMul - landX, ROOSTS[i].z * CONFIG.roostScaleMul - landZ);
-    if(dist < ROOSTS[i].radius && dist < nearestRoostDist){ nearestRoost = i; nearestRoostDist = dist; }
+    // LUL-5658: radius scaled alongside position, same reasoning as updateRoosts() --
+    // an unscaled 20u radius against qaWorld=micro's compressed spacing let a throw aimed
+    // at one roost resolve to a closer neighbor instead, leaving the intended roost's
+    // burstActive permanently false.
+    if(dist < ROOSTS[i].radius * CONFIG.roostScaleMul && dist < nearestRoostDist){ nearestRoost = i; nearestRoostDist = dist; }
   }
   if(nearestRoost >= 0 && roostCooldown[nearestRoost] <= 0){
     flushRoost(nearestRoost);
@@ -6689,6 +7457,64 @@ function windAssistEndCue(){
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.2);
 }
+// LUL-5530: Scent-Masking site cues -- completes the cue triple (LUL-5493 already ships
+// the glow ring + one-shot HINT_PRIORITY caption). Same rising/falling sine pair shape as
+// windAssistStartCue/EndCue above, but a lower register so the two "quieting" effects
+// (wind-assisted sprint vs. scent-masking site) stay distinguishable.
+let qaScentMaskEnterCueCount = 0;
+function scentMaskEnterCue(){
+  qaScentMaskEnterCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(260, t); o.frequency.exponentialRampToValueAtTime(390, t + 0.15);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.24);
+}
+let qaScentMaskExitCueCount = 0;
+function scentMaskExitCue(){
+  qaScentMaskExitCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sine';
+  o.frequency.setValueAtTime(390, t); o.frequency.exponentialRampToValueAtTime(260, t + 0.15);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.24);
+}
+// LUL-5744: firefly glow's one-shot risk tell -- fires the first time the player
+// crosses w>0.5 inside a cluster (same trigger as the 'fireflyGlow' HINT_PRIORITY
+// caption below). Bandpass noise at the ambient insects bed's own 4800Hz register
+// (startAudio()'s `inf.frequency`) so this reads as "that bed, briefly louder and
+// swelling," not an unrelated new sound -- swells up over ~0.25s then falls off by
+// ~0.6s total, per the wiki spec's "~0.6s insect-swarm swell."
+let qaFireflyGlowSwellCueCount = 0;
+function fireflyGlowSwellCue(){
+  qaFireflyGlowSwellCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.6, false);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 4800; bp.Q.value = 1.6;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.16, t + 0.25); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+  nb.connect(bp); bp.connect(ng); ng.connect(master); ng.connect(conv); nb.start(t); nb.stop(t + 0.62);
+}
+// LUL-5566: Scent Decoy Site's exit cue -- fires the same frame as the redirect
+// itself (stepFrame() below), a lower, harsher register than scentMaskExitCue()
+// so "you just threw the hunt off your scent" reads distinctly from "you just
+// left a masking site."
+let qaDecoyScentExitCueCount = 0;
+function decoyScentExitCue(){
+  qaDecoyScentExitCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const o = ctx.createOscillator(); o.type = 'sawtooth';
+  o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(90, t + 0.18);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.09, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.26);
+  o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.28);
+}
 // LUL-4893: Predator Pause's cue -- a rising chime distinct in register from
 // windAssistStartCue's 440->660Hz pair so the two wind-driven effects (player
 // sprint bonus vs. predator freeze) stay audibly distinguishable.
@@ -6804,6 +7630,7 @@ function restart(){
   won = fresh.won; dead = fresh.dead; pickingUp = fresh.pickingUp; baby.taken = fresh.babyTaken;
   hidden = false; hideTime = 0; hideKind = null; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0; eyeH = CONFIG.eye; deathShown = false;
   staminaCharge = 1; staminaLowCuePlayed = false;
+  fireflyAlarmActive = false; fireflyAlarmStingPlayed = false;   // LUL-5756 cheap slice (LUL-5759): fresh once-per-run sting eligibility
   jumping = false; jumpElapsed = 0; jumpPressed = false;   // LUL-213: no mid-arc jump carrying into the new round
   // LUL-5298: a death/win that lands mid-crawl (LUL-4527) left inLogCrawl true and
   // logCrawlDirX/Z/logCrawlExitX/Z pointed at the OLD map's tunnel -- the next round's
@@ -6812,12 +7639,14 @@ function restart(){
   // rejects outright, reading as a fully frozen player (0.00u movement) after restart.
   inLogCrawl = false; logCrawlDirX = 0; logCrawlDirZ = 0; logCrawlExitX = 0; logCrawlExitZ = 0; logCrawlDeniedLatch = false;
   brambleSnagT = 0;   // LUL-5298: same stale-timer-into-new-round class as the jump/hide resets above
+  wasInMud = false;   // LUL-5564: same stale-flag-into-new-round class as brambleSnagT above
   heldThrowable = false;   // LUL-1623: not RunState (CTO plan decision 6) -- reset explicitly like the other non-RunState locals above
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
   winPendingActive = false; winPendingT = 0; if(winPendingEl) winPendingEl.style.opacity = '0';   // LUL-1633
   roostCooldown.fill(0); roostSprintDeniedPlayed.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
+  decoyCooldown.fill(0);   // LUL-5566
   document.body.style.cursor = '';
   coverAmt = 0; document.body.dataset.losCovered = '0'; el.style.filter = '';   // LUL-144: no stale desaturation into the new round
   generateMap((Math.random()*1e9) >>> 0);   // fresh forest, child, and predators
@@ -6927,6 +7756,44 @@ function setProgression(p){
   progression = next;
   pushState({ progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak } });
+}
+// LUL-5820 (LUL-3264 wave2 S4) + LUL-3295 (S5): one engine action shared by both
+// leaderboard-record consumers -- sync from components/Hud.tsx's useLeaderboardSky()
+// hook, called on every useLeaderboardRecord() fetch resolution/transition -- the
+// engine never fetches itself (that stays components/Leaderboard.tsx's job). `status`
+// is already the resolved display state: Hud.tsx collapses the client state machine's
+// `failed` status into 'populated' (when a cached record exists) or 'hidden' (when it
+// doesn't), per docs/specs/lul-3264-leaderboard-wave2.md S4's "failed, with cache ->
+// render exactly as populated" / "failed, no cache -> balloons hidden entirely" -- the
+// sky balloon only ever needs to know what to draw, not why. No EngineHudState field
+// (Section 0 Q1-Q10 n/a, same as the Sky Compass -- a passive world-space background
+// object, not a HUD element). Fades in from 0 opacity the first time the group becomes
+// visible (any transition away from "no-balloons-yet"); every call after that just
+// swaps the canvas texture in place, never recreating the sprite (PART 2.5).
+// Tree tint (LUL-3295 S5) reads `record` directly regardless of the balloon's
+// resolved status, so trees un-tint whenever the record itself stops being usable.
+function setLeaderboardRecord(status, record){
+  applyLeaderboardTreeTint(record);
+  const resolved = (status === 'loading' || status === 'populated' || status === 'empty' || status === 'hidden') ? status : 'hidden';
+  const validRecord = !!(record && typeof record.nickname === 'string' && typeof record.country === 'string' && typeof record.timeMs === 'number');
+  skyBalloonStatus = (resolved === 'populated' && !validRecord) ? 'hidden' : resolved;
+  skyBalloonRecord = (skyBalloonStatus === 'populated') ? record : null;
+  if(skyBalloonStatus === 'hidden'){
+    skyBalloonGroup.visible = false;
+    skyBalloonLastDrawn = { text: '', hasFlag: false };
+    return;
+  }
+  const skyBalloonFirstAppearance = !skyBalloonGroup.visible;
+  drawSkyBalloonTexture(skyBalloonCtx, skyBalloonStatus, skyBalloonRecord, SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_CANVAS_HEIGHT);
+  skyBalloonTex.needsUpdate = true;
+  skyBalloonLastDrawn = skyBalloonContent(skyBalloonStatus, skyBalloonRecord);
+  skyBalloonGroup.visible = true;
+  if(skyBalloonFirstAppearance){
+    skyBalloonOpacity = 0;
+    skyBalloonSprite.material.opacity = 0; skyBalloonShadow.material.opacity = 0;
+    for(const skyBalloonTrail of skyBalloonTrails) skyBalloonTrail.material.opacity = 0;
+    skyBalloonFading = true;
+  }
 }
 // LUL-1666: player's pre-run menu pick for the *next* draw. No-ops outside
 // the pre-run menu the same way setDifficulty tolerates a bad value -- an
@@ -7117,7 +7984,7 @@ function stepFrame(dt, t, skipRender){
 
   // hiding: H toggles crouch at a hiding spot (LUL-212, see findHideSpot/
   // toggleHidden above), any movement key breaks it
-  const moveKey = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
+  const moveKey = keys[keyMap.forward]||keys[keyMap.back]||keys[keyMap.left]||keys[keyMap.right]||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
   if(hidden && (moveKey || hasTouchMove)) exitHide();
   hideTime = hidden ? hideTime + dt : 0;
   // LUL-2856: self-healing off hideTime the same way hideTime is self-healing off `hidden` --
@@ -7178,7 +8045,7 @@ function stepFrame(dt, t, skipRender){
   // visibly billows in behind it. effectiveDetect() reads veilAmount directly, so
   // the sight-detect cut ramps in step with what the player actually sees.
   veilAmount += ((lightDimmed ? 1 : 0) - veilAmount) * Math.min(1, dt / VEIL_RAMP);
-  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
+  scene.fog.density = veilFogDensity(fogBase, MIST_VEIL_FOG, veilAmount) + fogTideFogBoost(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) + rainfallFogBoost(rainfallAmount) + timeOfRun * TIME_OF_RUN_FOG_DELTA;
   hemiLight.intensity = HEMI_BASE_INTENSITY * (1 - timeOfRun * 0.7);
   pushState({ veilCharge: Math.round(veilCharge * 100) / 100, veilLocked, veilReserve, staminaCharge: Math.round(staminaCharge * 100) / 100, timeOfRunClock: formatTimeOfRunClock(timeOfRun) });
 
@@ -7206,8 +8073,36 @@ function stepFrame(dt, t, skipRender){
     logChronicle('fog_tide_end');
   }
 
+  if(playing) rainfallClock = (rainfallClock + dt) % RAINFALL_CONFIG.period;
+  const rainfallPhaseNow = rainfallPhase(rainfallClock);
+  rainfallBuild += (rainfallBuildAmount(rainfallClock) - rainfallBuild) * Math.min(1, dt / RAINFALL_AUDIO_RAMP);
+  rainfallAmount += (rainfallActiveTarget(rainfallClock) - rainfallAmount) * Math.min(1, dt / RAINFALL_RAMP);
+  if(rainfallPhaseNow === 'active' && !rainfallActive){
+    rainfallActive = true;
+    track({ event: 'feature_engagement', feature: 'rainfall', action: 'start' });
+    logChronicle('rainfall_start');
+  } else if(rainfallPhaseNow !== 'active' && rainfallActive){
+    rainfallActive = false;
+    track({ event: 'feature_engagement', feature: 'rainfall', action: 'end' });
+    logChronicle('rainfall_end');
+  }
+
   let spd = 0, dist = 0, running = false, noiseRadius = 0, movingAgainstWind = false;
   if(playing && !hidden){
+    // LUL-5564: Mud Zone -- read once per tick, ahead of maxSpd/noiseRadius, both of which
+    // fold in the multiplier below. Edge-detected against wasInMud (module-scope, reset on
+    // restart -- see LUL-5298-style reset above) for the one-shot enter cue/chronicle/hint,
+    // same shape as logCrawlEnterCue()'s call site.
+    const inMud = isInMudZone(player.x, player.z, mudZones);
+    if(inMud && !wasInMud){
+      mudEnterCue();
+      logChronicle('mud_zone_enter', {});
+      if(!hintSeen('mudZone')){
+        markHintSeen('mudZone');
+        if(captionsOn) pushState({ caption: 'Mud — slower, louder: predators can hear you farther', captionId: ++captionSeq });
+      }
+    }
+    wasInMud = inMud;
     running = runMode === 'toggle' ? (toggleRunOn || touchSprint) : (keys['ShiftLeft'] || keys['ShiftRight'] || touchSprint);
     if(coldWalkJustBroke(coldWalkOptIn, coldWalkBroken, pickingUp, running)){
       coldWalkBroken = true;
@@ -7216,7 +8111,7 @@ function stepFrame(dt, t, skipRender){
     staminaCharge = stepStamina({ charge: staminaCharge }, running, dt).charge;
     if(staminaCharge < 0.45 && !staminaLowCuePlayed) { staminaExertionCue(); staminaLowCuePlayed = true; }
     else if(staminaCharge > 0.55) staminaLowCuePlayed = false;
-    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * brambleSnagSpeedMultiplier(brambleSnagT);
+    const maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * brambleSnagSpeedMultiplier(brambleSnagT) * mudSpeedMultiplier(inMud);
     // LUL-4527: entry check -- only when not already crawling, using this frame's actual
     // input heading (computed below as mvx/mvz normally would be) is circular, so entry uses
     // the player's last real facing/movement intent instead: any movement key held this frame,
@@ -7224,10 +8119,10 @@ function stepFrame(dt, t, skipRender){
     // only needs "are they walking toward the mouth," not the exact final heading.
     if(!inLogCrawl){
       let eix = 0, eiz = 0;
-      if(keys['KeyW'] || keys['ArrowUp'])    eiz += 1;
-      if(keys['KeyS'] || keys['ArrowDown'])  eiz -= 1;
-      if(keys['KeyD'] || keys['ArrowRight']) eix += 1;
-      if(keys['KeyA'] || keys['ArrowLeft'])  eix -= 1;
+      if(keys[keyMap.forward] || keys['ArrowUp'])    eiz += 1;
+      if(keys[keyMap.back]    || keys['ArrowDown'])  eiz -= 1;
+      if(keys[keyMap.right]   || keys['ArrowRight']) eix += 1;
+      if(keys[keyMap.left]    || keys['ArrowLeft'])  eix -= 1;
       if(hasTouchMove){ eix += touchMove.x; eiz += touchMove.z; }
       const efx = -Math.sin(player.yaw), efz = -Math.cos(player.yaw);
       const erx =  Math.cos(player.yaw), erz = -Math.sin(player.yaw);
@@ -7257,7 +8152,7 @@ function stepFrame(dt, t, skipRender){
     // fires the one-shot refusal cue (latched so it plays once per continuous hold, not every
     // frame), matching Q5's "refused input needs a positive tell."
     if(inLogCrawl){
-      const deniedInput = isSprintHeld() || keys['KeyA'] || keys['KeyD'] || keys['KeyS'] ||
+      const deniedInput = isSprintHeld() || keys[keyMap.left] || keys[keyMap.right] || keys[keyMap.back] ||
         keys['ArrowLeft'] || keys['ArrowRight'] || keys['ArrowDown'];
       if(deniedInput && !logCrawlDeniedLatch){ logCrawlDeniedLatch = true; logCrawlDeniedCue(); }
       else if(!deniedInput) logCrawlDeniedLatch = false;
@@ -7273,7 +8168,7 @@ function stepFrame(dt, t, skipRender){
       // LUL-4527: scent suppressed entirely while crawling -- no depositScent() call here at
       // all (the gate below on the normal branch is belt-and-suspenders in case both branches
       // ever run the same frame at a transition boundary; see the exit check's own comment).
-      noiseRadius = NOISE_RADIUS_WALK;   // still makes a little noise -- crawling isn't silent, just untracked by scent
+      noiseRadius = NOISE_RADIUS_WALK * mudNoiseMultiplier(inMud);   // still makes a little noise -- crawling isn't silent, just untracked by scent
       const past = (player.x - logCrawlExitX) * logCrawlDirX + (player.z - logCrawlExitZ) * logCrawlDirZ;
       if(past >= 0){
         inLogCrawl = false;
@@ -7282,10 +8177,10 @@ function stepFrame(dt, t, skipRender){
       }
     } else {
       let ix = 0, iz = 0;
-      if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
-      if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
-      if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
-      if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
+      if(keys[keyMap.forward] || keys['ArrowUp'])    iz += 1;
+      if(keys[keyMap.back]    || keys['ArrowDown'])  iz -= 1;
+      if(keys[keyMap.right]   || keys['ArrowRight']) ix += 1;
+      if(keys[keyMap.left]    || keys['ArrowLeft'])  ix -= 1;
       // LUL-68: merge touch left-stick direction (threshold 0.2 dead-zone)
       if(hasTouchMove){ ix += touchMove.x; iz += touchMove.z; }
       const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
@@ -7320,7 +8215,7 @@ function stepFrame(dt, t, skipRender){
         if(scentEmitT <= 0){ depositScent(running, movingAgainstWind); scentEmitT = SCENT_DEPOSIT_INTERVAL; }   // dedup: was a second isMovingAgainstWind() call, no behavior change
         // LUL-39: footsteps carry too -- same "moving = louder, still = silent"
         // shape as scent, sized off the same running flag rather than a new one.
-        noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK));
+        noiseRadius = (windAssist ? NOISE_RADIUS_RUN_WIND : (running ? NOISE_RADIUS_RUN : NOISE_RADIUS_WALK)) * mudNoiseMultiplier(inMud);
       }
     }
   }
@@ -7351,6 +8246,37 @@ function stepFrame(dt, t, skipRender){
   // every tick regardless of movement, or a stationary player's fully-decayed
   // scent points never leave the array.
   pruneScentPoints();
+  // LUL-5493: same "once per stepFrame(), after every player.x/z write" placement
+  // as updateStreamedChunks(false) above -- a QA teleport into a site is picked up
+  // next frame with zero movement input, same as real walking into one.
+  {
+    const prevScentMaskSiteIndex = playerInScentMaskSiteIndex;
+    playerInScentMaskSiteIndex = findScentMaskSiteIndex(player.x, player.z, scaledScentMaskSites(), WRAP_SPAN, WRAP_SPAN);
+    // LUL-5530: completes the cue triple -- glow ring + caption already fire on this
+    // same -1<->index transition (LUL-5493); this is the missing audio leg.
+    if(prevScentMaskSiteIndex === -1 && playerInScentMaskSiteIndex !== -1) scentMaskEnterCue();
+    else if(prevScentMaskSiteIndex !== -1 && playerInScentMaskSiteIndex === -1) scentMaskExitCue();
+  }
+  // LUL-5566: Scent Decoy Site -- on exit, if the site isn't cooling down, every
+  // non-inert predator within DECOY_SCENT_RADIUS of the site hears a throwable-style
+  // noise at the site's own (x,z) (hearThrowableNoise()'s noiseTarget override --
+  // proven to redirect a live chase off the real player, see updateRoosts() above).
+  // One physical event per cooldown, same shape as ROOSTS' flush trigger.
+  {
+    const prevDecoyScentSiteIndex = playerInDecoyScentSiteIndex;
+    const scaledDecoySites = scaledDecoyScentSites();
+    playerInDecoyScentSiteIndex = findDecoyScentSiteIndex(player.x, player.z, scaledDecoySites, WRAP_SPAN, WRAP_SPAN);
+    for(let i=0;i<decoyCooldown.length;i++) if(decoyCooldown[i] > 0) decoyCooldown[i] -= dt;
+    if(prevDecoyScentSiteIndex !== -1 && playerInDecoyScentSiteIndex === -1 && decoyCooldown[prevDecoyScentSiteIndex] <= 0){
+      const site = scaledDecoySites[prevDecoyScentSiteIndex];
+      for(const p of predators){
+        if(p.inert) continue;
+        if(Math.hypot(p.x-site.x, p.z-site.z) < DECOY_SCENT_RADIUS) hearThrowableNoise(p, site.x, site.z, DECOY_INVESTIGATE_TIME);
+      }
+      decoyCooldown[prevDecoyScentSiteIndex] = DECOY_COOLDOWN;
+      decoyScentExitCue();
+    }
+  }
 
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this
@@ -7463,7 +8389,7 @@ function stepFrame(dt, t, skipRender){
       sinceBelowMinHunters = 0;
     }
   }
-  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius);   // predators only hunt while you're actually playing
+  if(playing) updatePredators(dt, noiseRadius, cryNoiseRadius, windAssistNowActive, rainfallNoiseScalar(rainfallAmount));   // predators only hunt while you're actually playing
   if(playing) updateRoosts(dt, running);   // LUL-1914/LUL-2389: roost feedback, same gate as predator AI
   jumpPressed = false;   // consumed for this frame's charge-dodge resolution above
 
@@ -7696,6 +8622,13 @@ function stepFrame(dt, t, skipRender){
         pushState({ caption: 'a charm against the mist', captionId: ++captionSeq });
         embersPurchaseCue();   // LUL-5005: reuses buyVeilCharm()'s own grant cue -- same charm, same tell
         chapelSanctuaryPulseT = 0.6;   // LUL-5005: mirrors buyVeilCharm()'s stoneMarkerPulseT boost
+        // LUL-5498: mission-mode completion -- only fires if the drawn mission actually
+        // named this landmark (canCompleteChapelSanctuary's own kind guard), same shape
+        // as canCompleteSlackWater/canCompleteGhost's call sites just above.
+        if(mission && canCompleteChapelSanctuary(mission, true)) mission = completeMission(mission);
+        // LUL-5529: Chapel Refuge + Veil Escape Combo stage 1 -- same grant edge, does not
+        // complete the mission itself (see canCompleteChapelVeilEscapeStage1's own comment).
+        if(mission && canCompleteChapelVeilEscapeStage1(mission, true)) chapelVeilEscapeChapelDone = true;
       } else if(distChapel > CHAPEL_SANCTUARY_INTERACT_RADIUS * 1.5){
         chapelSanctuaryActive = false;
         chapelSanctuaryChargeT = 0;
@@ -7715,6 +8648,7 @@ function stepFrame(dt, t, skipRender){
       coverPromptVisible, coverPromptUrgent, coverPromptKind,
       veilPromptVisible, veilPromptUrgent,
       heldThrowable, canGrabThrowable: canGrabThrowable(heldThrowable, nearestThrowableD, THROWABLE_PICKUP_RADIUS), throwablesReserve,
+      inMudZone: isInMudZone(player.x, player.z, mudZones),
       missionKind: mission ? mission.target.kind : null,
       missionStatus: mission ? mission.status : null,
       // LUL-3010: only the far/timed variant carries a timer; null for oakHollow (untimed).
@@ -7805,6 +8739,7 @@ function stepFrame(dt, t, skipRender){
       audio.wg.gain.setTargetAtTime((0.05 + move01*0.10) * fogTideWindGainMul(fogTideAmountAt(player.x, player.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * TOD_AUDIO.windGainMul, now, 0.3);
       audio.wf.frequency.setTargetAtTime(320 + move01*900, now, 0.3);
       audio.dg.gain.setTargetAtTime(0.05 * fogTideDroneGainMul(fogTideBuildAt(player.x, player.z, fogTideBuild, WRAP_SPAN, WRAP_SPAN)) * TOD_AUDIO.droneGainMul, now, 0.3);
+      audio.rg.gain.setTargetAtTime(0.04 * rainfallBuild, now, 0.3);
       audio.twinkle -= dt;
       if(audio.twinkle <= 0){
         twinkle(0.05, false);
@@ -7836,6 +8771,57 @@ function stepFrame(dt, t, skipRender){
       opacity += motionReduced() ? 0.35 : 0.5 * (chapelSanctuaryPulseT / 0.6);
     }
     landmarkBeaconGlows[kind].material.opacity = opacity;
+  }
+
+  // LUL-5493: brightens as the player nears a site's own center (Q15: glow intensity
+  // increases on approach); the ambient sine pulse degrades to static under
+  // reducedMotion, same as everywhere else in this file, but the proximity term does
+  // not -- losing the pulse shouldn't also hide "you're getting close."
+  {
+    const scaledSites = scaledScentMaskSites();
+    for(let i=0;i<scaledSites.length;i++){
+      const w = scentMaskGlowWeight(player.x, player.z, scaledSites[i], WRAP_SPAN, WRAP_SPAN);
+      const pulse = motionReduced() ? 0 : Math.sin(t*1.1)*0.05;
+      scentMaskGlowMeshes[i].material.opacity = 0.12 + pulse + w*0.35;
+    }
+  }
+  // LUL-5566: same proximity-brightening recipe as the scent-masking sites above.
+  {
+    const scaledDecoySites = scaledDecoyScentSites();
+    for(let i=0;i<scaledDecoySites.length;i++){
+      const w = decoyScentGlowWeight(player.x, player.z, scaledDecoySites[i], WRAP_SPAN, WRAP_SPAN);
+      const pulse = motionReduced() ? 0 : Math.sin(t*1.1)*0.05;
+      decoyScentGlowMeshes[i].material.opacity = 0.12 + pulse + w*0.35;
+    }
+  }
+  // LUL-5756 cheap slice (LUL-5759): one frame-global alarm scalar, scanning
+  // every cluster -- not just the ones this session actually renders, so a
+  // predator near a mobile-budget-excluded cluster (FIREFLY_MOBILE_CLUSTER_COUNT)
+  // still brightens the clusters the player can see (see fireflyAlarmResponse.ts).
+  // Skipped outside dusk/night (fireflyClusterMotes.length is 0 then, same guard
+  // as the loop below) so this never does live predator-scan work for nothing.
+  const alarmScalar = fireflyClusterMotes.length
+    ? fireflyAlarmBoost(predators, scaledFireflyClusters(), player, WRAP_SPAN, WRAP_SPAN)
+    : 1;
+  const alarmNowActive = alarmScalar > 1.0001;
+  if (alarmNowActive && !fireflyAlarmActive) {
+    fireflyAlarmActive = true;
+    if (!fireflyAlarmStingPlayed) { fireflyAlarmSting(); fireflyAlarmStingPlayed = true; }
+  } else if (!alarmNowActive && fireflyAlarmActive) {
+    fireflyAlarmActive = false;
+  }
+  // LUL-5707: distance-based intensity falloff (same decoyScentGlowWeight() math
+  // as the scent sites above, generic over any EventSite-shaped object) plus
+  // idle drift, degrading to static under reducedMotion. Empty loop outside
+  // dusk/night -- fireflyClusterMotes is built empty then (see module scope above).
+  for (const mote of fireflyClusterMotes) {
+    const w = decoyScentGlowWeight(player.x, player.z, mote.cluster, WRAP_SPAN, WRAP_SPAN);
+    mote.light.intensity = 0.6 * w * alarmScalar * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM);
+    if (!motionReduced()) {
+      mote.light.position.x = mote.baseX + Math.sin(t*0.3 + mote.phase) * 1.5;
+      mote.light.position.z = mote.baseZ + Math.cos(t*0.23 + mote.phase) * 1.5;
+      mote.light.position.y = 1.2 + Math.sin(t*0.5 + mote.phase) * 0.6;
+    }
   }
 
   // ambient dust follows you, drifting downwind (LUL-195, see setup above)
@@ -7912,6 +8898,13 @@ function stepFrame(dt, t, skipRender){
       }
     }
     const coverHintVisible = !hidden && lastHideSpot !== null;
+    // LUL-5744: same weight effectiveDetect()/canSee() multiply into their detect-mul
+    // product (activeFireflyDetectClusters, sampled at the player's own position) --
+    // recomputed here rather than threaded through as a param because this block runs
+    // after stepFrame()'s predator pass. >0.5 ("deep in a cluster") is the wiki spec's
+    // own threshold for the one-shot caption/sting below, not the same thing as w>0
+    // (any exposure at all), which is all effectiveDetect()/canSee() care about.
+    const fireflyGlowWeight = fireflyGlowWeightAt(player.x, player.z, activeFireflyDetectClusters, WRAP_SPAN, WRAP_SPAN);
 
     // key -> [eligible this frame, world anchor {x,y,z} | null]. Self/panel-anchored
     // keys (deepwater/oakHollow/stamina/caveImmune/veil) never need an anchor --
@@ -7923,6 +8916,9 @@ function stepFrame(dt, t, skipRender){
         case 'deepwater': return [!!mission && mission.target.kind === 'deepwater' && mission.status === 'active', null];
         case 'oakHollow': return [!!mission && mission.target.kind === 'oakHollow' && mission.status === 'active', null];
         case 'beaconEvasion': return [!!mission && mission.target.kind === 'beaconEvasion' && mission.status === 'active', null];
+        case 'skyCompassNavigation': return [!!mission && mission.target.kind === 'skyCompassNavigation' && mission.status === 'active', null];
+        case 'chapelVeilEscapeStage1': return [!!mission && mission.target.kind === 'chapelVeilEscape' && mission.status === 'active' && !chapelVeilEscapeChapelDone, null];
+        case 'chapelVeilEscapeStage2': return [!!mission && mission.target.kind === 'chapelVeilEscape' && mission.status === 'active' && chapelVeilEscapeChapelDone, null];
         case 'wolf': case 'bear': case 'lion': {
           for(const p of predators){
             if(p.inert || p.kind !== key) continue;
@@ -7941,6 +8937,11 @@ function stepFrame(dt, t, skipRender){
         }
         case 'stamina': return [staminaCharge <= 0, null];
         case 'windAssist': return [running && movingAgainstWind, null];
+        // LUL-5627: self/panel-anchored like windAssist -- fires while the player stands
+        // inside both the decoy site and a mud zone at once (the overlap generateMudZones()
+        // now guarantees), not on decoy entry alone, so it only shows once the composed
+        // trap is actually relevant.
+        case 'mudTrapDecoy': return [playerInDecoyScentSiteIndex !== -1 && isInMudZone(player.x, player.z, mudZones), null];
         // LUL-5402: same gate as biasTowardWind()'s call site (state === 'investigate'
         // && inv === 'approach' && scentLock > 0) -- self/panel-anchored like windAssist,
         // re-derived here rather than sharing a variable with the pushState computation
@@ -7951,8 +8952,13 @@ function stepFrame(dt, t, skipRender){
         case 'caveImmune': return [caveImmuneT > 0, null];
         case 'veilOverload': return [veilOverloadChargeT > 0, null];
         case 'throwable': return [throwableHintEligible, throwableHintAnchor];
+        case 'scentMask': return [playerInScentMaskSiteIndex !== -1, null];
+        case 'decoyScent': return [playerInDecoyScentSiteIndex !== -1, null];
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
         case 'duskLion': return [runElapsed >= DUSK_LION_SIGHT_START_S, null];   // LUL-4889: time-only, no world anchor
+        case 'rainfall': return [rainfallActive, null];
+        case 'fireflyAlarm': return [fireflyAlarmActive, null];   // self/panel-anchored, time-only like rainfall -- the tell is the mote glow itself
+        case 'fireflyGlow': return [fireflyGlowWeight > 0.5, null];   // self/panel-anchored: no new HUD meter, the glow itself is the readout
         default: return [false, null];
       }
     }
@@ -7962,11 +8968,20 @@ function stepFrame(dt, t, skipRender){
         case 'wolf': case 'bear': case 'lion': case 'beaconHunter': case 'cover': return hideEventCount > baseline;
         case 'throwable': return throwableGrabCount > baseline;
         case 'caveImmune': return caveImmuneT <= 0;
+        case 'scentMask': return playerInScentMaskSiteIndex === -1;
+        case 'decoyScent': return playerInDecoyScentSiteIndex === -1;
+        case 'mudTrapDecoy': return playerInDecoyScentSiteIndex === -1 || !isInMudZone(player.x, player.z, mudZones);
         case 'windPulse': return !predators.some(p => p.windPauseT > 0);
         case 'veilOverload': return veilOverloadChargeT <= 0;
+        case 'rainfall': return !rainfallActive;
+        case 'fireflyAlarm': return !fireflyAlarmActive;
+        case 'fireflyGlow': return fireflyGlowWeight <= 0.5;
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
         case 'beaconEvasion': return missionCanComplete;
+        case 'skyCompassNavigation': return missionCanComplete;
+        case 'chapelVeilEscapeStage1': return chapelVeilEscapeChapelDone;
+        case 'chapelVeilEscapeStage2': return !mission || mission.target.kind !== 'chapelVeilEscape' || mission.status !== 'active';
         case 'stamina': return staminaCharge > 0.6;
         case 'veil': return veilCharge > 0.3;
         default: return false;   // landmark: time-only
@@ -8013,6 +9028,7 @@ function stepFrame(dt, t, skipRender){
         if(!baseHintEligible || !eligible) continue;
         if(WORLD_HINT_KEYS[key] && !hintWorldAnchor(key, anchor)) continue;   // needs to be visible to *start*
         hintActiveKey = key; hintActiveStartT = t; hintDismissBaseline = hintDismissBaselineFor(key);
+        if(key === 'fireflyGlow') fireflyGlowSwellCue();   // LUL-5744: one-shot risk tell, fires the same frame the caption claims the slot
         break;
       }
     }
@@ -8060,6 +9076,20 @@ function stepFrame(dt, t, skipRender){
   stars.position.copy(camera.position);
   moonGroup.position.copy(camera.position).addScaledVector(moonDir, 300);
   moonGroup.quaternion.copy(camera.quaternion);
+
+  // LUL-5820: sky balloon mirrors moonGroup's own billboard idiom directly above,
+  // offset around the vertical axis (skyBalloonDir) so it never shares screen space
+  // with the sun/moon disc.
+  skyBalloonGroup.position.copy(camera.position).addScaledVector(skyBalloonDir, SKY_BALLOON_RADIUS);
+  skyBalloonGroup.quaternion.copy(camera.quaternion);
+  if(skyBalloonFading){
+    skyBalloonOpacity = motionReduced() ? SKY_BALLOON_OPACITY
+      : Math.min(SKY_BALLOON_OPACITY, skyBalloonOpacity + dt * (SKY_BALLOON_OPACITY / SKY_BALLOON_FADE_DURATION_S));
+    skyBalloonSprite.material.opacity = skyBalloonOpacity;
+    skyBalloonShadow.material.opacity = skyBalloonOpacity * 0.5;
+    for(const skyBalloonTrail of skyBalloonTrails) skyBalloonTrail.material.opacity = skyBalloonOpacity * 0.6;
+    if(skyBalloonOpacity >= SKY_BALLOON_OPACITY) skyBalloonFading = false;
+  }
 
   updateBoom(dt);
   if(!dead && !skipRender){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
@@ -8214,6 +9244,8 @@ tick();
            triggerTouchThrow,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload, triggerTouchScentVeil,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions, setColdWalkOptIn,
+           // LUL-5805
+           setKeyMap,
            setEmbers, purchase,
            // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.
            setMissionUnlocks, setSecondaryChoice,
@@ -8221,7 +9253,9 @@ tick();
            // LUL-2307
            setHintsEnabled, resetHints,
            // LUL-2558
-           setProgression };
+           setProgression,
+           // LUL-5820 + LUL-3295
+           setLeaderboardRecord };
 }
 
 function dispose() {
