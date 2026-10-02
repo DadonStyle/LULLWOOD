@@ -22,6 +22,22 @@ function ghFetch(url, token) {
   });
 }
 
+async function ghPost(url, token, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`POST ${url} -> HTTP ${res.status}: ${await res.text()}`);
+  }
+  return res.json();
+}
+
 // GraphQL companion to ghFetch -- needed for anything the REST API can't
 // answer, e.g. a PR's statusCheckRollup with isRequired(pullRequestNumber),
 // which is the only field that reflects what `PUT /pulls/{n}/merge` actually
@@ -110,4 +126,4 @@ function resolveGithubToken({
   return null;
 }
 
-export { fetchJson, ghFetch, ghGraphQL, resolveGithubToken, GITHUB_TOKEN_CHAIN_DESCRIPTION };
+export { fetchJson, ghFetch, ghPost, ghGraphQL, resolveGithubToken, GITHUB_TOKEN_CHAIN_DESCRIPTION };
