@@ -3614,6 +3614,23 @@ let runMode = 'hold', toggleRunOn = false, sensMul = 1, invertY = false,
     reducedMotionSetting = false, captionsOn = false, captionSeq = 0;
 function motionReduced(){ return reduce || reducedMotionSetting; }
 
+// LUL-5805: keybind remapping, cheap slice -- movement only (forward/back/left/
+// right). Everything else (hide/interact/climb/jump/etc.) stays hardcoded per the
+// CEO's accepted cheap-slice scope (decisions/lul-5804-keybind-remapping-accepted-
+// 2026-10-02). `keyMap` holds the live KeyboardEvent `code` bound to each verb;
+// Arrow keys stay as a permanent hardcoded fallback alongside the remappable key
+// (same "never lock the player out" shape as runMode's hold/toggle default) so a
+// bad remap can never leave movement unreachable. The 3 WASD-reading call sites
+// (shuffleHide/log-crawl/main movement) read through this map instead of the
+// literal KeyW/A/S/D codes, so a remap takes effect immediately without touching
+// those call sites again.
+let keyMap = { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD' };
+function setKeyMap(verb, code){
+  if(!Object.prototype.hasOwnProperty.call(keyMap, verb) || typeof code !== 'string') return;
+  keyMap = { ...keyMap, [verb]: code };
+  pushState({ keyMap });
+}
+
 // LUL-1194: any input skips the death cutscene straight to revealLoss(), on every
 // death after the player's first. Independent of `playing` (false while dead), and
 // deliberately not e.repeat-gated -- a held key still counts as "an input" here.
@@ -4102,10 +4119,10 @@ function toggleRockClimb(){
 // the only path that reliably keeps the player hidden after a shuffle.
 function shuffleHide(){
   let ix = 0, iz = 0;
-  if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
-  if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
-  if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
-  if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
+  if(keys[keyMap.forward] || keys['ArrowUp'])    iz += 1;
+  if(keys[keyMap.back]    || keys['ArrowDown'])  iz -= 1;
+  if(keys[keyMap.right]   || keys['ArrowRight']) ix += 1;
+  if(keys[keyMap.left]    || keys['ArrowLeft'])  ix -= 1;
   // hasTouchMove is stepFrame()'s own per-frame local (:6532) -- shuffleHide() runs
   // outside that scope (a one-shot keydown/touch handler, not a per-tick call), so it
   // recomputes the same >0.15 deadzone check directly off the module-level `touchMove`.
@@ -4471,6 +4488,9 @@ let hudState = {
   // and persists it to localStorage (see components/Hud.tsx).
   difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
+  // LUL-5805: keybind remapping cheap slice -- movement only, same
+  // engine-owns-it/React-persists-it split as runMode above.
+  keyMap: { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD' },
   // LUL-1043/LUL-2351: Embers. `embersBalance`/`embersTiers` are the
   // cross-run economy state -- engine-owned like difficulty above, synced
   // from localStorage by components/Hud.tsx via setEmbers() once on mount.
@@ -4642,6 +4662,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeBaby = function(){
     return { x: baby.x, z: baby.z, distHome: Math.hypot(baby.x, baby.z) };
   };
+  // LUL-5805: exposes the live keyMap so a test can assert a remap (via setKeyMap()
+  // / the Controls settings UI) actually changed which key moves the player.
+  window.ForestEngine.qaProbeKeyMap = function(){ return { ...keyMap }; };
   // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
   // "this world point stays on-canvas" for both the player arrow (which calls
   // w2m(player.x, player.z) in drawMinimap()) and the objective marker (which
@@ -7730,7 +7753,7 @@ function stepFrame(dt, t, skipRender){
 
   // hiding: H toggles crouch at a hiding spot (LUL-212, see findHideSpot/
   // toggleHidden above), any movement key breaks it
-  const moveKey = keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
+  const moveKey = keys[keyMap.forward]||keys[keyMap.back]||keys[keyMap.left]||keys[keyMap.right]||keys['ArrowUp']||keys['ArrowDown']||keys['ArrowLeft']||keys['ArrowRight'];
   if(hidden && (moveKey || hasTouchMove)) exitHide();
   hideTime = hidden ? hideTime + dt : 0;
   // LUL-2856: self-healing off hideTime the same way hideTime is self-healing off `hidden` --
@@ -7865,10 +7888,10 @@ function stepFrame(dt, t, skipRender){
     // only needs "are they walking toward the mouth," not the exact final heading.
     if(!inLogCrawl){
       let eix = 0, eiz = 0;
-      if(keys['KeyW'] || keys['ArrowUp'])    eiz += 1;
-      if(keys['KeyS'] || keys['ArrowDown'])  eiz -= 1;
-      if(keys['KeyD'] || keys['ArrowRight']) eix += 1;
-      if(keys['KeyA'] || keys['ArrowLeft'])  eix -= 1;
+      if(keys[keyMap.forward] || keys['ArrowUp'])    eiz += 1;
+      if(keys[keyMap.back]    || keys['ArrowDown'])  eiz -= 1;
+      if(keys[keyMap.right]   || keys['ArrowRight']) eix += 1;
+      if(keys[keyMap.left]    || keys['ArrowLeft'])  eix -= 1;
       if(hasTouchMove){ eix += touchMove.x; eiz += touchMove.z; }
       const efx = -Math.sin(player.yaw), efz = -Math.cos(player.yaw);
       const erx =  Math.cos(player.yaw), erz = -Math.sin(player.yaw);
@@ -7898,7 +7921,7 @@ function stepFrame(dt, t, skipRender){
     // fires the one-shot refusal cue (latched so it plays once per continuous hold, not every
     // frame), matching Q5's "refused input needs a positive tell."
     if(inLogCrawl){
-      const deniedInput = isSprintHeld() || keys['KeyA'] || keys['KeyD'] || keys['KeyS'] ||
+      const deniedInput = isSprintHeld() || keys[keyMap.left] || keys[keyMap.right] || keys[keyMap.back] ||
         keys['ArrowLeft'] || keys['ArrowRight'] || keys['ArrowDown'];
       if(deniedInput && !logCrawlDeniedLatch){ logCrawlDeniedLatch = true; logCrawlDeniedCue(); }
       else if(!deniedInput) logCrawlDeniedLatch = false;
@@ -7923,10 +7946,10 @@ function stepFrame(dt, t, skipRender){
       }
     } else {
       let ix = 0, iz = 0;
-      if(keys['KeyW'] || keys['ArrowUp'])    iz += 1;
-      if(keys['KeyS'] || keys['ArrowDown'])  iz -= 1;
-      if(keys['KeyD'] || keys['ArrowRight']) ix += 1;
-      if(keys['KeyA'] || keys['ArrowLeft'])  ix -= 1;
+      if(keys[keyMap.forward] || keys['ArrowUp'])    iz += 1;
+      if(keys[keyMap.back]    || keys['ArrowDown'])  iz -= 1;
+      if(keys[keyMap.right]   || keys['ArrowRight']) ix += 1;
+      if(keys[keyMap.left]    || keys['ArrowLeft'])  ix -= 1;
       // LUL-68: merge touch left-stick direction (threshold 0.2 dead-zone)
       if(hasTouchMove){ ix += touchMove.x; iz += touchMove.z; }
       const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
@@ -8976,6 +8999,8 @@ tick();
            triggerTouchThrow,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload, triggerTouchScentVeil,
            setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions, setColdWalkOptIn,
+           // LUL-5805
+           setKeyMap,
            setEmbers, purchase,
            // LUL-2221: both were defined but never returned; Hud.tsx/GameMenu.tsx call them.
            setMissionUnlocks, setSecondaryChoice,

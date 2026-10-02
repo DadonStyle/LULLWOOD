@@ -120,6 +120,9 @@ export interface EngineHudState {
   // LUL-26: difficulty + accessibility, engine-controlled like pace/fog above.
   difficulty: 'lantern' | 'night' | 'blackout';
   runMode: 'hold' | 'toggle';
+  // LUL-5805: keybind remapping cheap slice -- movement only. Engine-controlled
+  // like difficulty/runMode above.
+  keyMap: { forward: string; back: string; left: string; right: string };
   sensitivity: number;
   invertY: boolean;
   reducedMotion: boolean;
@@ -246,6 +249,8 @@ export interface EngineActions {
   setReducedMotion: (v: boolean) => void;
   setCaptions: (v: boolean) => void;
   setColdWalkOptIn: (v: boolean) => void;
+  // LUL-5805: keybind remapping cheap slice -- movement only.
+  setKeyMap: (verb: 'forward' | 'back' | 'left' | 'right', code: string) => void;
   // LUL-1043
   setEmbers: (balance: number, tiers: Record<string, number>) => void;
   purchase: (id: string) => void;
@@ -318,6 +323,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   chargeToken: 0,
   difficulty: 'night',
   runMode: 'hold',
+  keyMap: { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD' },
   sensitivity: 1,
   invertY: false,
   reducedMotion: false,
