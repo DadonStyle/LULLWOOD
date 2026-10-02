@@ -70,6 +70,13 @@ export const CONFIG = {
   FIREFLY_ALARM_BOOST: 0.4, // LUL-5756 cheap slice (LUL-5759): peak multiplier added to the glow-
                           // weight at zero nearest-predator distance (1.0 baseline -> 1.4 at the
                           // alarm's hottest). Placeholder, Economist-owned, see FIREFLY_ALARM_RANGE.
+  FIREFLY_ALARM_RANGE_BEAR: 150, // LUL-5761 cheap slice: per-species override of FIREFLY_ALARM_RANGE
+                          // for bear predators -- bears alarm fireflies from farther off. Placeholder,
+                          // Economist names the real value in a parallel ticket; wolf and any other
+                          // kind keep falling back to the flat FIREFLY_ALARM_RANGE.
+  FIREFLY_ALARM_RANGE_LION: 100, // LUL-5761 cheap slice: per-species override of FIREFLY_ALARM_RANGE
+                          // for lion predators -- lions alarm fireflies at closer range than bears.
+                          // Placeholder, Economist-owned, see FIREFLY_ALARM_RANGE_BEAR.
   FIREFLY_GLOW_DETECT_BONUS: 0.3,  // LUL-5744 (cheap slice, decision lul-5742-firefly-glow-
                           // detection-accepted-2026-10-02): standing at a cluster's own center
                           // multiplies detect-mul by 1+this; placeholder value -- the real number
