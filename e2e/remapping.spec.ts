@@ -102,15 +102,23 @@ test.describe('keybind remapping -- action verbs, full scope (LUL-5828)', () => 
     await boot(page, { qaHooks: true });
     await enter(page);
 
+    // All Settings-panel interactions use a synthetic .evaluate() click, same
+    // as every other spec that opens this panel (e.g. chapel-sanctuary.spec.ts).
+    // A real Playwright .click() dispatches a genuine mousedown outside the
+    // locked canvas element, which releases pointer lock and -- via the
+    // pointerlockchange handler, engine/forest-engine.js:3896 -- pauses the
+    // run (setPaused(true)). Nothing in this test re-locks afterwards, so the
+    // `playing && !paused` gate on the interact handler (:3817) would block
+    // grabThrowable() for *any* key, remapped or not.
     await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
     await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
-    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').click();
+    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').evaluate((el) => (el as HTMLElement).click());
     await page.keyboard.press('KeyJ');
 
     const keyMap = await qaHook(page, 'qaProbeKeyMap');
     expect(keyMap?.interact).toBe('KeyJ');
 
-    await page.locator('#settingsPanel button[aria-label="Close settings"]').click();
+    await page.locator('#settingsPanel button[aria-label="Close settings"]').evaluate((el) => (el as HTMLElement).click());
 
     // Stage a real, live throwable -- the same real-play consuming system
     // e2e/throwables.spec.ts uses -- and prove the OLD key no longer grabs it.
@@ -157,12 +165,13 @@ test.describe('keybind remapping -- action verbs, full scope (LUL-5828)', () => 
 
     await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
     await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
-    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').click();
+    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').evaluate((el) => (el as HTMLElement).click());
     await page.keyboard.press('KeyJ');
-    await page.locator('#settingsPanel button[aria-label="Close settings"]').click();
+    await page.locator('#settingsPanel button[aria-label="Close settings"]').evaluate((el) => (el as HTMLElement).click());
 
     const stone = await qaHook(page, 'qaTeleportNearThrowable');
     expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', 1);
 
     await expectRowVisible(page, 'pickupPrompt');
