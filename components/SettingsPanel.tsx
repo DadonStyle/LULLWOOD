@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { EngineActions, EngineHudState } from './Hud';
 import { isMobile } from '@/lib/input-mode';
+import { formatKeyLabel } from '@/lib/ui/key-label';
 
 // LUL-26: difficulty presets + accessibility, shipped together per the ticket.
 // Difficulty/runMode/sensitivity/invertY/reducedMotion/captionsOn are engine
@@ -16,7 +17,7 @@ const SETTINGS_KEY = 'lullwood:settings';
 interface PersistedSettings {
   difficulty: EngineHudState['difficulty'];
   runMode: EngineHudState['runMode'];
-  // LUL-5805: keybind remapping cheap slice -- movement only.
+  // LUL-5805/LUL-5828: keybind remapping, all 11 verbs.
   keyMap: EngineHudState['keyMap'];
   sensitivity: number;
   invertY: boolean;
@@ -83,9 +84,10 @@ export default function SettingsPanel({
   // mobile surface uses (see components/OrientationGate.tsx).
   const mobile = useState(() => isMobile())[0];
 
-  // LUL-5805: which movement verb (if any) is waiting for its next keydown to
+  // LUL-5805/LUL-5828: which verb (if any) is waiting for its next keydown to
   // become the new binding. Local-only -- the capture itself never touches
-  // engine state until a key is actually pressed (setKeyMap below).
+  // engine state until a key is actually pressed (setKeyMap below, which may
+  // itself reject the attempt -- see keyMapCollision).
   const [listeningFor, setListeningFor] = useState<null | keyof EngineHudState['keyMap']>(null);
   useEffect(() => {
     if (!listeningFor) return;
@@ -327,10 +329,13 @@ export default function SettingsPanel({
         </label>
       </fieldset>
 
-      {/* LUL-5805: keybind remapping cheap slice -- movement only. Keyboard-only
-          (isMobile() single source of truth, same pattern as the runMode row's
-          "(instead of hold Shift)" copy above), so this fieldset doesn't render
-          on touch devices where there is no keyboard to remap. */}
+      {/* LUL-5805/LUL-5828: keybind remapping -- all 11 verbs (4 movement +
+          7 action). Keyboard-only (isMobile() single source of truth, same
+          pattern as the runMode row's "(instead of hold Shift)" copy above),
+          so this fieldset doesn't render on touch devices where there is no
+          keyboard to remap. Each row's optional collision warning (Q5 tell
+          for setKeyMap's reject-on-collision guard, engine/forest-engine.js)
+          reuses .radioRow purely for spacing -- no new CSS. */}
       {!mobile && (
         <fieldset>
           <legend>Controls</legend>
@@ -340,13 +345,30 @@ export default function SettingsPanel({
               ['back', 'Move backward'],
               ['left', 'Strafe left'],
               ['right', 'Strafe right'],
+              ['interact', 'Interact / pick up'],
+              ['veilOverload', 'Veil overload (panic burn)'],
+              ['scentVeil', 'Break scent veil'],
+              ['hide', 'Hide'],
+              ['climb', 'Climb vantage rock'],
+              ['shuffleHide', 'Shuffle hide spot'],
+              ['jump', 'Jump'],
             ] as const
           ).map(([verb, label]) => (
-            <div className="radioRow" key={verb}>
-              <span>{label}</span>
-              <button type="button" onClick={() => setListeningFor(verb)}>
-                {listeningFor === verb ? 'Press a key to assign' : state.keyMap[verb]}
-              </button>
+            <div key={verb}>
+              <div className="radioRow">
+                <span>{label}</span>
+                <button type="button" onClick={() => setListeningFor(verb)}>
+                  {listeningFor === verb ? 'Press a key to assign' : formatKeyLabel(state.keyMap[verb])}
+                </button>
+              </div>
+              {state.keyMapCollision?.verb === verb && (
+                <div className="radioRow">
+                  <span>
+                    {formatKeyLabel(state.keyMapCollision.code)} is already used by another action — try a
+                    different key.
+                  </span>
+                </div>
+              )}
             </div>
           ))}
         </fieldset>

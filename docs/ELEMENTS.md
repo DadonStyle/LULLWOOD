@@ -62,9 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L9145 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L8002, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
-  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
+  button via `setTouchVeil()` L9161 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L8018, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
@@ -1799,8 +1798,7 @@ not final tuning.
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7550) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L3499) rather than recomputed later, since `player.x/z` can move on
+  (L7582) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3499) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1857,7 +1855,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L4427),
-  reset to 0 on `enter()` (L4710) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4729) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7731: `computeDepth(maxDistFromHome) +
@@ -1980,7 +1978,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L8076, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L7968, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -3146,8 +3144,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7418) and `windAssistEndCue()` (L7427), edge-triggers on the combined
-`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
+`windAssistStartCue()` (L7442) and `windAssistEndCue()` (L7451), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
 **QA hooks**: none new -- `qaProbeWind().movingAgainstWind` (existing) is sufficient for the
@@ -3772,47 +3769,72 @@ caption+sting on first deep entry, never again) and
 raises `effectiveDetect` even though `clusterCount` stays 4) -- all run in the micro
 world via `qaBuildScene`, no `@fullmap` needed.
 
-## Keybind Remapping (LUL-5805, cheap slice, decision
-decisions/lul-5804-keybind-remapping-accepted-2026-10-02)
+## Keybind Remapping (LUL-5805 movement cheap slice + LUL-5828 full-scope
+follow-on, decisions/lul-5804-keybind-remapping-accepted-2026-10-02 and
+decisions/lul-5806-keybind-full-scope-accepted-2026-10-02)
 
-CEO accepted the Cheap Slice option from LUL-5804's `suggest_tasks` interaction: movement
-keys only (forward/back/left/right). Hide/interact/climb/jump/etc. stay hardcoded; the
-full 11-verb + HUD-templating variant is a separate future ticket.
+LUL-5805 shipped the CEO-accepted Cheap Slice: movement keys only (forward/back/left/
+right). LUL-5828 extends the same mechanism to the 7 action verbs (interact/
+veilOverload/scentVeil/hide/climb/shuffleHide/jump) and templates the HUD prompt
+copy that names them. `F` (mist-veil hold) is explicitly out of scope for both
+tickets and stays hardcoded.
 
 **State** -- `keyMap` (`engine/forest-engine.js`, module-level, verb -> `KeyboardEvent.code`),
-defaulting to `{ forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD' }`. The 3
-WASD-reading call sites (`shuffleHide()`, the log-crawl branch and the main movement
-branch inside `stepFrame()`) all read `keys[keyMap.<verb>]` instead of the literal
-`KeyW`/`KeyA`/`KeyS`/`KeyD` codes. Arrow keys stay as a permanent hardcoded fallback
-alongside the remappable key at every site, same "never lock the player out" shape as
-`runMode`'s hold/toggle default -- a bad remap can never leave movement unreachable.
-`setKeyMap(verb, code)` validates `verb` against the 4 known keys before writing, same
-engine-owns-it/React-persists-it split as `setDifficulty`/`setRunMode`.
+all 11 verbs: `{ forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
+interact: 'KeyE', veilOverload: 'KeyQ', scentVeil: 'KeyG', hide: 'KeyH', climb: 'KeyC',
+shuffleHide: 'KeyR', jump: 'Space' }`. The 3 WASD-reading call sites (`shuffleHide()`,
+the log-crawl branch and the main movement branch inside `stepFrame()`) and the 7
+action checks in the keydown handler all read `e.code === keyMap.<verb>` /
+`keys[keyMap.<verb>]` instead of literal `KeyboardEvent` codes. Arrow keys stay as a
+permanent hardcoded fallback alongside the remappable movement keys at every site,
+same "never lock the player out" shape as `runMode`'s hold/toggle default -- a bad
+remap can never leave movement unreachable.
 
-**Settings UI** -- new "Controls" fieldset in `components/SettingsPanel.tsx`, one row per
-verb, a button showing the currently bound key that becomes "Press a key to assign" while
-listening for the next keydown (captured via a `capture: true` window listener so it
-doesn't leak into gameplay input; Escape cancels without rebinding). Desktop-only
-(`isMobile()`, same single-source-of-truth gate as the `runMode` row's "(instead of hold
-Shift)" copy) -- there is no keyboard to remap on a touch device. No new CSS: the row
-reuses the existing `.radioRow` flex layout, matching this file's existing hardcoded-px
-convention (no `ui-scale` CSS custom property exists anywhere in the codebase today to
-reuse instead).
+**Collision guard (LUL-5828 Q5)** -- `setKeyMap(verb, code)` rejects (no-ops the
+assignment) a `code` already bound to another verb in `keyMap`, or one of the
+`KEYMAP_RESERVED_CODES` the keydown handler hardcodes outside `keyMap` (`Escape`,
+`F11`, `Enter`, `ShiftLeft`, `ShiftRight`). A rejection pushes a transient
+`keyMapCollision: { verb, code } | null` HUD field (cleared ~2s later, or immediately
+superseded by the next attempt) -- the positive tell a silent no-op would otherwise be
+missing. UI-only, no audio cue (a settings-screen interaction, not an in-game refusal) --
+borrows the "denial state next to the thing it denies" shape of
+`veilOverloadDeniedCue`/`scentVeilDeniedCue`, not their sound.
 
-**Persistence** -- `keyMap` added to `PersistedSettings`/the apply-on-ready effect/the
-persist effect in `components/SettingsPanel.tsx`, same `lullwood:settings` key and
-apply-once-ready shape as every other persisted setting.
+**Settings UI** -- "Controls" fieldset in `components/SettingsPanel.tsx`, one row per
+verb (all 11), a button showing the currently bound key's display label
+(`lib/ui/key-label.ts`'s `formatKeyLabel()`, e.g. `'KeyE'` -> `'E'`) that becomes "Press
+a key to assign" while listening for the next keydown (captured via a `capture: true`
+window listener so it doesn't leak into gameplay input; Escape cancels without
+rebinding). A collision renders an inline warning row directly under the offending
+verb's row, reusing `.radioRow` for spacing -- no new CSS. Desktop-only (`isMobile()`,
+same single-source-of-truth gate as the `runMode` row's "(instead of hold Shift)" copy)
+-- there is no keyboard to remap on a touch device.
 
-**QA hook**: `qaProbeKeyMap()` returns the live `keyMap` object so a test can assert a
-remap actually changed which key moves the player.
+**HUD prompt templating (LUL-5828)** -- every literal keycap/key-name in
+`components/Hud.tsx` that named one of the 7 action verbs now reads through
+`formatKeyLabel(state.keyMap.<verb>)`: the charge-dodge row's `SPACE` (`jump`), the
+veil-overload prompt's `Q`, the scent-veil prompt's `G`, `hideVeilPromptContent()`'s `H`
+(both branches), the pickup prompt's "Press  E  to pick up the stone", the climb
+prompt's "Press  C  to climb the rock", and the chapel sanctuary prompt's "Press  E  for
+chapel sanctuary — ...". `shuffleHide` (R) has no existing HUD prompt render site (a
+pre-existing Q10 gap, not introduced or fixed by this ticket) -- it's remappable in
+Controls with no HUD copy to template.
 
-**No HUD prompt changes in this slice** -- the 6 stale literal-keycap strings flagged by
-the Feature Scout (`components/Hud.tsx:423/428/1316/1327/1341`, `engine/forest-engine.js:8390`)
-are all for hardcoded (non-movement) verbs and stay as-is until the full-scope follow-on.
+**Persistence** -- `keyMap` (now all 11 verbs) in `PersistedSettings`/the
+apply-on-ready effect/the persist effect in `components/SettingsPanel.tsx`, same
+`lullwood:settings` key and apply-once-ready shape as every other persisted setting;
+unchanged from LUL-5805's shape since it already iterated whatever keys exist in
+storage.
 
-Covered by `e2e/remapping.spec.ts` (3 tests: default WASD moves the player, a real-UI
-remap changes which key moves the player with a staged predator in the scene, and the
-remap persists across reload) -- all in the micro world via `qaBuildScene`, no `@fullmap`.
+**QA hook**: `qaProbeKeyMap()` returns the live `keyMap` object (all 11 verbs) so a
+test can assert a remap actually changed which key triggers an action.
+
+Covered by `e2e/remapping.spec.ts`: LUL-5805's original 3 movement tests, plus 3 new
+LUL-5828 tests (a real-UI interact remap actually grabs a throwable via the new key,
+not just that `keyMap` changed; a collision attempt is rejected with `keyMap`
+unchanged and the inline tell visible; a remapped interact key renders in the
+templated `pickupPrompt` copy with `adminMode` off) -- all in the micro world
+(default boot, no `qaBuildScene`/`@fullmap` needed for an input-binding change).
 
 ---
 
