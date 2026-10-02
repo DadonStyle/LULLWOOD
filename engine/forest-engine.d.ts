@@ -101,12 +101,15 @@ declare global {
        * coordinates via qaIsolatePredatorKindAt). LUL-5744 added
        * detectClusterCount (the detection-side list, never mobile-sliced --
        * diverges from clusterCount on mobile) and glowSwellCueCount (the
-       * one-shot risk-tell sting's fire count). */
+       * one-shot risk-tell sting's fire count). LUL-5785 added stingCount, the
+       * same fire-count idiom for fireflyAlarmSting() (the alarm cue, distinct
+       * from glowSwellCueCount's glow-proximity cue). */
       qaProbeFireflyClusters?: () => {
         clusterCount: number; detectClusterCount: number; anyVisible: boolean; maxIntensity: number;
         alarmScalar: number; alarmActive: boolean;
         clusters: { id: string; x: number; z: number }[];
         glowSwellCueCount: number;
+        stingCount: number;
       };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
