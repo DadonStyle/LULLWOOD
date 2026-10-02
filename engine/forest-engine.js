@@ -3966,7 +3966,12 @@ function logCrawlExitCue(){
 // the first frame the firefly alarm activates -- same procedural-noise-burst shape as
 // thornSnagSound()/logCrawlEnterCue() above, but with a rising bandpass sweep (an
 // alarm-calling chitter) instead of a static filter.
+// LUL-5785: qaFireflyAlarmStingCount mirrors the qa*CueCount idiom (qaFireflyGlowSwellCueCount
+// below) so a test can assert the sting fired exactly once without scraping AudioContext
+// internals -- not reset on restart(), same as the other one-shot cue counters.
+let qaFireflyAlarmStingCount = 0;
 function fireflyAlarmSting(){
+  qaFireflyAlarmStingCount++;
   if(!audio || !soundOn) return;
   const { ctx, conv, master } = audio, t = ctx.currentTime;
   const src = ctx.createBufferSource(); src.buffer = noise(ctx, 0.3, false);
@@ -4695,6 +4700,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // separate hook; glowSwellCueCount mirrors the qa*CueCount idiom other one-shot audio
   // cues already use (e.g. qaScentMaskEnterCueCount) so a test can assert the sting
   // fired without scraping AudioContext internals.
+  // LUL-5785: stingCount (qaFireflyAlarmStingCount) added the same way, for
+  // fireflyAlarmSting() -- the one-shot alarm cue, distinct from glowSwellCueCount's
+  // glow-proximity cue.
   window.ForestEngine.qaProbeFireflyClusters = function(){
     return { clusterCount: activeFireflyClusters.length,
              detectClusterCount: activeFireflyDetectClusters.length,
@@ -4703,7 +4711,8 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
              alarmScalar: fireflyClusterMotes.length ? fireflyAlarmBoost(predators, scaledFireflyClusters(), player, WRAP_SPAN, WRAP_SPAN) : 1,
              alarmActive: fireflyAlarmActive,
              clusters: scaledFireflyClusters().map(function(c){ return { id: c.id, x: c.x, z: c.z }; }),
-             glowSwellCueCount: qaFireflyGlowSwellCueCount };
+             glowSwellCueCount: qaFireflyGlowSwellCueCount,
+             stingCount: qaFireflyAlarmStingCount };
   };
   // LUL-2225: generic teleport, for staging an arbitrary position that isn't
   // already a fixed named landmark like qaTeleportHome/qaTeleportNearBaby.
