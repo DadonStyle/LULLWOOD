@@ -19,6 +19,11 @@ import {
   SKY_COMPASS_CANVAS_SIZE, SKY_COMPASS_MIN_OPACITY, SKY_COMPASS_MAX_OPACITY,
 } from '@/lib/game/skyCompass';
 import {
+  skyBalloonDirection, skyBalloonContent, drawSkyBalloonTexture,
+  SKY_BALLOON_RADIUS, SKY_BALLOON_FADE_DURATION_S, SKY_BALLOON_OPACITY,
+  SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_CANVAS_HEIGHT,
+} from '@/lib/game/skyBalloon';
+import {
   freshRunState,
   isPlaying,
   canPickUp,
@@ -491,6 +496,55 @@ for (const skyCompassGlyph of SKY_COMPASS_GLYPHS) {
   scene.add(skyCompassSprite);
   skyCompassSprites[skyCompassGlyph] = skyCompassSprite;
 }
+// LUL-5820 (LUL-3264 wave2 S4): sky balloon record-holder display -- same
+// camera-billboard idiom as moonGroup (`moonGroup.position.copy(camera.position)
+// .addScaledVector(moonDir, 300)` + `moonGroup.quaternion.copy(camera.quaternion)`,
+// both a few hundred lines down in stepFrame), offset around the vertical axis
+// (skyBalloonDirection, lib/game/skyBalloon.ts) so it never shares screen space
+// with the sun/moon disc. The canvas texture is drawn once below and redrawn in
+// place on every state/text change via setLeaderboardRecord() -- never
+// recreated (PART 2.5's "swap TEXT on state change, never re-create the balloon
+// objects"), same texture-reuse idiom as the Sky Compass glyphs above. Shadow
+// is a CircleGeometry mesh (not a Sprite) so it billboards via the group's own
+// quaternion copy, same as moonGroup's halo mesh (`:463-465`); the main sprite
+// self-billboards regardless (THREE.Sprite ignores inherited rotation), so the
+// group quaternion copy below is a harmless no-op for it.
+const skyBalloonDir = skyBalloonDirection(moonDir);
+const skyBalloonCanvas = document.createElement('canvas');
+skyBalloonCanvas.width = SKY_BALLOON_CANVAS_WIDTH; skyBalloonCanvas.height = SKY_BALLOON_CANVAS_HEIGHT;
+const skyBalloonCtx = skyBalloonCanvas.getContext('2d');
+const skyBalloonTex = new THREE.CanvasTexture(skyBalloonCanvas); skyBalloonTex.colorSpace = THREE.SRGBColorSpace;
+const skyBalloonSprite = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: skyBalloonTex, transparent: true, opacity: 0, depthWrite: false, fog: false,
+}));
+skyBalloonSprite.scale.set(34, 34 * (SKY_BALLOON_CANVAS_HEIGHT / SKY_BALLOON_CANVAS_WIDTH), 1);
+const skyBalloonShadow = new THREE.Mesh(
+  new THREE.CircleGeometry(13, 24),
+  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false, fog: false }),
+);
+skyBalloonShadow.position.set(1.4, -10, -0.4);
+const skyBalloonTrails = [];
+for (let skyBalloonTrailI = 0; skyBalloonTrailI < 3; skyBalloonTrailI++) {
+  const skyBalloonTrailGeo = new THREE.BufferGeometry();
+  const skyBalloonTrailSpread = (skyBalloonTrailI - 1) * 4;
+  skyBalloonTrailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    skyBalloonTrailSpread, -6, 0,
+    skyBalloonTrailSpread * 1.4, -16 - skyBalloonTrailI * 2, 0,
+  ]), 3));
+  const skyBalloonTrailLine = new THREE.Line(skyBalloonTrailGeo, new THREE.LineBasicMaterial({
+    color: 0xd8c9a8, transparent: true, opacity: 0, fog: false,
+  }));
+  skyBalloonTrails.push(skyBalloonTrailLine);
+}
+const skyBalloonGroup = new THREE.Group();
+skyBalloonGroup.add(skyBalloonShadow, skyBalloonSprite, ...skyBalloonTrails);
+skyBalloonGroup.visible = false; // no-balloons-yet, until the first setLeaderboardRecord() call
+scene.add(skyBalloonGroup);
+let skyBalloonStatus = null;
+let skyBalloonRecord = null;
+let skyBalloonOpacity = 0;
+let skyBalloonFading = false;
+let skyBalloonLastDrawn = { text: '', hasFlag: false }; // for qaProbeLeaderboardSky()
 const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20, 2); camera.add(playerLight);
 // LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
 // LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
@@ -4700,6 +4754,13 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeTimeOfDay = function(){
     return { state: timeOfDay, visual: TOD_VISUAL, audio: TOD_AUDIO };
   };
+  // LUL-5820: exposes the sky balloon's current visibility + last-drawn text/
+  // flag state (stored alongside the sprite when drawn, same as any other QA
+  // probe that can't read pixels back out of a canvas texture) so a test can
+  // assert the 4-state content/visibility mapping without a screenshot.
+  window.ForestEngine.qaProbeLeaderboardSky = function(){
+    return { visible: skyBalloonGroup.visible, text: skyBalloonLastDrawn.text, hasFlag: skyBalloonLastDrawn.hasFlag };
+  };
   // LUL-5707: active firefly-cluster count (0 outside dusk/night) plus whether
   // any mote is currently lit (distance-based falloff from the player), so a
   // test can assert presence/absence without scraping Three.js light
@@ -7564,6 +7625,40 @@ function setProgression(p){
   pushState({ progression: { ...progression }, personalBest: progression[difficulty].bestTime,
     tierStats: { runs: progression[difficulty].runs, wins: progression[difficulty].wins, streak: progression[difficulty].currentStreak } });
 }
+// LUL-5820 (LUL-3264 wave2 S4): sync from components/Hud.tsx's useLeaderboardSky()
+// hook, called on every useLeaderboardRecord() fetch resolution/transition -- the
+// engine never fetches itself (that stays components/Leaderboard.tsx's job). `status`
+// is already the resolved display state: Hud.tsx collapses the client state machine's
+// `failed` status into 'populated' (when a cached record exists) or 'hidden' (when it
+// doesn't), per docs/specs/lul-3264-leaderboard-wave2.md S4's "failed, with cache ->
+// render exactly as populated" / "failed, no cache -> balloons hidden entirely" -- the
+// sky balloon only ever needs to know what to draw, not why. No EngineHudState field
+// (Section 0 Q1-Q10 n/a, same as the Sky Compass -- a passive world-space background
+// object, not a HUD element). Fades in from 0 opacity the first time the group becomes
+// visible (any transition away from "no-balloons-yet"); every call after that just
+// swaps the canvas texture in place, never recreating the sprite (PART 2.5).
+function setLeaderboardRecord(status, record){
+  const resolved = (status === 'loading' || status === 'populated' || status === 'empty' || status === 'hidden') ? status : 'hidden';
+  const validRecord = !!(record && typeof record.nickname === 'string' && typeof record.country === 'string' && typeof record.timeMs === 'number');
+  skyBalloonStatus = (resolved === 'populated' && !validRecord) ? 'hidden' : resolved;
+  skyBalloonRecord = (skyBalloonStatus === 'populated') ? record : null;
+  if(skyBalloonStatus === 'hidden'){
+    skyBalloonGroup.visible = false;
+    skyBalloonLastDrawn = { text: '', hasFlag: false };
+    return;
+  }
+  const skyBalloonFirstAppearance = !skyBalloonGroup.visible;
+  drawSkyBalloonTexture(skyBalloonCtx, skyBalloonStatus, skyBalloonRecord, SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_CANVAS_HEIGHT);
+  skyBalloonTex.needsUpdate = true;
+  skyBalloonLastDrawn = skyBalloonContent(skyBalloonStatus, skyBalloonRecord);
+  skyBalloonGroup.visible = true;
+  if(skyBalloonFirstAppearance){
+    skyBalloonOpacity = 0;
+    skyBalloonSprite.material.opacity = 0; skyBalloonShadow.material.opacity = 0;
+    for(const skyBalloonTrail of skyBalloonTrails) skyBalloonTrail.material.opacity = 0;
+    skyBalloonFading = true;
+  }
+}
 // LUL-1666: player's pre-run menu pick for the *next* draw. No-ops outside
 // the pre-run menu the same way setDifficulty tolerates a bad value -- an
 // unrecognized kind is treated as 'none'. Deliberately does not re-roll the
@@ -8846,6 +8941,20 @@ function stepFrame(dt, t, skipRender){
   moonGroup.position.copy(camera.position).addScaledVector(moonDir, 300);
   moonGroup.quaternion.copy(camera.quaternion);
 
+  // LUL-5820: sky balloon mirrors moonGroup's own billboard idiom directly above,
+  // offset around the vertical axis (skyBalloonDir) so it never shares screen space
+  // with the sun/moon disc.
+  skyBalloonGroup.position.copy(camera.position).addScaledVector(skyBalloonDir, SKY_BALLOON_RADIUS);
+  skyBalloonGroup.quaternion.copy(camera.quaternion);
+  if(skyBalloonFading){
+    skyBalloonOpacity = motionReduced() ? SKY_BALLOON_OPACITY
+      : Math.min(SKY_BALLOON_OPACITY, skyBalloonOpacity + dt * (SKY_BALLOON_OPACITY / SKY_BALLOON_FADE_DURATION_S));
+    skyBalloonSprite.material.opacity = skyBalloonOpacity;
+    skyBalloonShadow.material.opacity = skyBalloonOpacity * 0.5;
+    for(const skyBalloonTrail of skyBalloonTrails) skyBalloonTrail.material.opacity = skyBalloonOpacity * 0.6;
+    if(skyBalloonOpacity >= SKY_BALLOON_OPACITY) skyBalloonFading = false;
+  }
+
   updateBoom(dt);
   if(!dead && !skipRender){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
   adaptResolution(dt, t);
@@ -9008,7 +9117,9 @@ tick();
            // LUL-2307
            setHintsEnabled, resetHints,
            // LUL-2558
-           setProgression };
+           setProgression,
+           // LUL-5820
+           setLeaderboardRecord };
 }
 
 function dispose() {
