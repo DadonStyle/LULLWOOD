@@ -16,7 +16,10 @@ import { getAnonId } from '@/lib/analytics';
 // HTML (B2). The localStorage cache is display-only (B8): it is validated on
 // read and never sent back to the server.
 
-type LeaderboardState =
+// Exported (LUL-5820): components/Hud.tsx calls useLeaderboardRecord() once and
+// shares the result with both #leaderboardLine (below) and the sky balloon
+// (useLeaderboardSky), instead of each maintaining its own independent fetch.
+export type LeaderboardState =
   | { status: 'loading' }
   | { status: 'populated'; record: LeaderboardRecord }
   | { status: 'empty' }
@@ -76,8 +79,7 @@ export function useLeaderboardRecord(): LeaderboardState {
 
 const recordLine = (r: LeaderboardRecord) => `${r.nickname} is the top rescuer at ${formatDuration(r.timeMs / 1000)} — can you beat it?`;
 
-export function LeaderboardMenuLine() {
-  const state = useLeaderboardRecord();
+export function LeaderboardMenuLine({ state }: { state: LeaderboardState }) {
   if (state.status === 'failed' && !state.cached) return null; // hidden entirely when there is nothing to show
   const text =
     state.status === 'loading' ? 'Loading top rescuer…'

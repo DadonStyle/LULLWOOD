@@ -15,7 +15,8 @@ import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
 import { formatDuration } from '@/lib/ui/format-duration';
-import { LeaderboardMenuLine, LeaderboardSubmitForm } from './Leaderboard';
+import { LeaderboardMenuLine, LeaderboardSubmitForm, useLeaderboardRecord, type LeaderboardState } from './Leaderboard';
+import type { SkyBalloonStatus, SkyBalloonRecord } from '@/lib/game/skyBalloon';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -266,6 +267,8 @@ export interface EngineActions {
   resetHints: () => void;
   // LUL-2558
   setProgression: (p: Progression) => void;
+  // LUL-5820
+  setLeaderboardRecord: (status: SkyBalloonStatus, record: SkyBalloonRecord | null) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -587,6 +590,22 @@ function useProgression(actions: EngineActions | null, progression: Progression)
   }, [progression]);
 }
 
+// LUL-5820: pushes useLeaderboardRecord()'s client state machine into the engine's
+// sky balloon -- the engine never fetches, it only renders what this hook resolves.
+// `failed` collapses to the same two engine-level outcomes the spec names ("failed,
+// with cache -> render exactly as populated" / "failed, no cache -> hidden"), so the
+// engine only ever sees 'loading' | 'populated' | 'empty' | 'hidden'.
+function useLeaderboardSky(actions: EngineActions | null, state: LeaderboardState) {
+  useEffect(() => {
+    if (!actions) return;
+    if (state.status === 'failed') {
+      actions.setLeaderboardRecord?.(state.cached ? 'populated' : 'hidden', state.cached);
+      return;
+    }
+    actions.setLeaderboardRecord?.(state.status, state.status === 'populated' ? state.record : null);
+  }, [actions, state]);
+}
+
 // LUL-26: captions are the only channel carrying predator warnings for a deaf/
 // HoH player (every game sound is synthesized WebAudio, no other track exists),
 // so the toast needs its own visible lifetime -- the engine only ever sets
@@ -781,6 +800,11 @@ export default function Hud({
   useEmbers(actions, state.embersBalance, state.embersTiers);
   useMissionUnlocks(actions, state.missionUnlocks);
   useProgression(actions, state.progression);
+  // LUL-5820: one fetch, shared by the gate's #leaderboardLine (below) and the
+  // sky balloon (useLeaderboardSky) -- was two independent useLeaderboardRecord()
+  // call sites each hitting /api/leaderboard/current before this.
+  const leaderboardState = useLeaderboardRecord();
+  useLeaderboardSky(actions, leaderboardState);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
@@ -971,7 +995,7 @@ export default function Hud({
           <div id="gateTitle">LULLWOOD</div>
           <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
           <div id="gateCredit">Developed by an independent AI studio</div>
-          <LeaderboardMenuLine />
+          <LeaderboardMenuLine state={leaderboardState} />
           <div id="gateKeys">
             {mobile ? (
               <>
