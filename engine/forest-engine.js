@@ -218,6 +218,7 @@ import { ROOSTS } from '@/lib/game/roostSites';
 import { SCENT_MASK_SITES, findScentMaskSiteIndex, scentMaskGlowWeight } from '@/lib/game/scentMaskSites';
 import { DECOY_SCENT_SITES, findDecoyScentSiteIndex, decoyScentGlowWeight } from '@/lib/game/decoyScentSites';
 import { FIREFLY_CLUSTERS, FIREFLY_MOBILE_CLUSTER_COUNT } from '@/lib/game/fireflyClusters';
+import { fireflyGlowWeightAt, fireflyGlowDetectMul } from '@/lib/game/fireflyDetect';
 import {
   CONFIG, LANDMARKS, LEGACY_LIGHT_SCALE, LIGHT_NORMAL, LIGHT_DIMMED, VEIL_RAMP,
   MIST_VEIL_FOG, VIGNETTE_NORMAL, VIGNETTE_DIMMED, CANOPY_R, CONE1_HEIGHT, CONE1_Y,
@@ -1444,6 +1445,14 @@ const decoyScentGlowMeshes = DECOY_SCENT_SITES.map(s => {
 const activeFireflyClusters = (timeOfDay === 'evening' || timeOfDay === 'night')
   ? (mode === 'mobile' ? scaledFireflyClusters().slice(0, FIREFLY_MOBILE_CLUSTER_COUNT) : scaledFireflyClusters())
   : [];
+// LUL-5744: detection-side cluster list -- same dusk/night time-gate as the render
+// list above, but deliberately NOT sliced to FIREFLY_MOBILE_CLUSTER_COUNT on mobile.
+// The wiki spec (game/mechanics/firefly-glow-detection-risk, Q11 test 3) is explicit
+// that the detection penalty must apply to all 6 clusters regardless of render
+// budget -- a mobile player standing in an unrendered cluster (5/6) is still exposed.
+const activeFireflyDetectClusters = (timeOfDay === 'evening' || timeOfDay === 'night')
+  ? scaledFireflyClusters()
+  : [];
 const FIREFLY_MOTE_COLOR = 0xcfe86a;
 // One THREE.PointLight per mote, built once here and never rebuilt -- empty
 // outside dusk/night so every loop below over fireflyClusterMotes is a cheap
@@ -2342,7 +2351,7 @@ function setScentTrailVisible(v){ scentTrailVisible = !!v; pushState({ scentTrai
 // already showing (stepFrame() below) -- not marked seen, so it can still
 // show later. See docs/specs/lul-2307-first-encounter-hints.md.
 const HINT_PRIORITY = ['scent','landmark','deepwater','oakHollow','beaconEvasion','skyCompassNavigation',
-  'wolf','bear','lion','beaconHunter','stamina','windAssist','mudTrapDecoy','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2','rainfall'];
+  'wolf','bear','lion','beaconHunter','stamina','windAssist','mudTrapDecoy','downwindInvestigation','windPulse','cover','caveImmune','rockClimb','veilOverload','throwable','scentMask','decoyScent','veil','duskLion','chapelVeilEscapeStage1','chapelVeilEscapeStage2','rainfall','fireflyGlow'];
 // 'wolf'/'bear'/'lion'/'beaconHunter'/'cover'/'throwable' are world-anchored (a real 3D
 // point, projected to a viewport fraction via projectToScreen() below, same math the
 // scent-mote loop already used). The rest -- including 'landmark', whose trigger
@@ -2379,6 +2388,7 @@ const HINT_TEXT = {
   chapelVeilEscapeStage1: 'the chapel offers refuge — dwell inside to earn a veil reserve, then survive a chase with veil overload',
   chapelVeilEscapeStage2: 'you gained a veil reserve — now burn all veil charge (Q) to escape a chase and complete the mission',
   rainfall: "rain masks footsteps — predators' noise detection drops",
+  fireflyGlow: 'firefly glow — the brighter you glow, the easier predators spot you',
 };
 const HINT_KEY_PREFIX = 'lullwood:hints:';
 // LUL-2230's key, read (never written) as a migration fallback for the 'scent' entry
@@ -2757,16 +2767,21 @@ function findRockMountSpot(x,z){ return geoFindRockMountSpot(x,z,coverGrid,CELL,
 // LUL-4889 (Dusk Stealth): lion replaces the ambient timeOfRunDetectMul(timeOfRun)
 // ramp with its own duskLionDetectMul(runElapsed) curve -- see dayNight.ts's
 // comment on why the two aren't stacked. Wolf/bear are unaffected.
+// LUL-5744 (decision lul-5742-firefly-glow-detection-accepted-2026-10-02): sampled at
+// the player's position, not the predator's -- unlike fogTideDetectMul above, this
+// represents the player standing in a lit clearing, not ambient conditions around the
+// predator. activeFireflyDetectClusters is the detection-side list (time-gated like
+// the render list but never mobile-sliced, see its own comment above).
 function timeOfRunDetectMulFor(p){
   return p.kind === 'lion' ? duskLionDetectMul(runElapsed) : timeOfRunDetectMul(timeOfRun);
 }
 function effectiveDetect(p){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return 0;
-  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime });
+  return geoEffectiveDetect(p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * fireflyGlowDetectMul(player.x, player.z, activeFireflyDetectClusters, CONFIG.FIREFLY_GLOW_DETECT_BONUS, WRAP_SPAN, WRAP_SPAN) * CONFIG.detectScaleMul, { hidden, hideTime });
 }
 function canSee(p, dist){
   if(isCaveImmune(caveImmuneT) || isVeilOverloadActive(veilOverloadChargeT)) return false;
-  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
+  return geoCanSee(dist, p.spec.detect, DIFFICULTY_PRESETS[difficulty].detectMul * veilDetectMul(veilAmount) * fogTideDetectMul(fogTideAmountAt(p.x, p.z, fogTideAmount, WRAP_SPAN, WRAP_SPAN)) * timeOfRunDetectMulFor(p) * timeOfDayDetectMul(timeOfDay) * rockClimbDetectMul(mountedOnRock) * fireflyGlowDetectMul(player.x, player.z, activeFireflyDetectClusters, CONFIG.FIREFLY_GLOW_DETECT_BONUS, WRAP_SPAN, WRAP_SPAN) * CONFIG.detectScaleMul, { hidden, hideTime }, p.x, p.z, player.x, player.z, coverGrid, CELL, WRAP_SPAN, p.rad + CATCH_MARGIN);
 }
 
 // ---- Wolf pack coordination (LUL-24) ---------------------------------------
@@ -4638,10 +4653,19 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // LUL-5736: maxIntensity added so a test can assert the rain-dim ramp
   // (CONFIG.FIREFLY_RAIN_DIM) quantitatively -- anyVisible alone can't, since
   // a dimmed-not-zeroed mote still reads intensity > 0.
+  // LUL-5744: detectClusterCount + glowSwellCueCount added -- detectClusterCount reads
+  // activeFireflyDetectClusters.length (the detection-side list, deliberately NOT
+  // mobile-sliced) alongside clusterCount (the render-side, mobile-sliced list), so a
+  // test can assert the two diverge on mobile (4 rendered vs 6 detectable) without a
+  // separate hook; glowSwellCueCount mirrors the qa*CueCount idiom other one-shot audio
+  // cues already use (e.g. qaScentMaskEnterCueCount) so a test can assert the sting
+  // fired without scraping AudioContext internals.
   window.ForestEngine.qaProbeFireflyClusters = function(){
     return { clusterCount: activeFireflyClusters.length,
+             detectClusterCount: activeFireflyDetectClusters.length,
              anyVisible: fireflyClusterMotes.some(function(m){ return m.light.intensity > 0; }),
-             maxIntensity: fireflyClusterMotes.reduce(function(acc, m){ return Math.max(acc, m.light.intensity); }, 0) };
+             maxIntensity: fireflyClusterMotes.reduce(function(acc, m){ return Math.max(acc, m.light.intensity); }, 0),
+             glowSwellCueCount: qaFireflyGlowSwellCueCount };
   };
   // LUL-2225: generic teleport, for staging an arbitrary position that isn't
   // already a fixed named landmark like qaTeleportHome/qaTeleportNearBaby.
@@ -7164,6 +7188,23 @@ function scentMaskExitCue(){
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.1, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
   o.connect(g); g.connect(master); g.connect(conv); o.start(t); o.stop(t + 0.24);
 }
+// LUL-5744: firefly glow's one-shot risk tell -- fires the first time the player
+// crosses w>0.5 inside a cluster (same trigger as the 'fireflyGlow' HINT_PRIORITY
+// caption below). Bandpass noise at the ambient insects bed's own 4800Hz register
+// (startAudio()'s `inf.frequency`) so this reads as "that bed, briefly louder and
+// swelling," not an unrelated new sound -- swells up over ~0.25s then falls off by
+// ~0.6s total, per the wiki spec's "~0.6s insect-swarm swell."
+let qaFireflyGlowSwellCueCount = 0;
+function fireflyGlowSwellCue(){
+  qaFireflyGlowSwellCueCount++;
+  if(!audio || !soundOn) return;
+  const { ctx, conv, master } = audio, t = ctx.currentTime;
+  const nb = ctx.createBufferSource(); nb.buffer = noise(ctx, 0.6, false);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 4800; bp.Q.value = 1.6;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, t); ng.gain.exponentialRampToValueAtTime(0.16, t + 0.25); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+  nb.connect(bp); bp.connect(ng); ng.connect(master); ng.connect(conv); nb.start(t); nb.stop(t + 0.62);
+}
 // LUL-5566: Scent Decoy Site's exit cue -- fires the same frame as the redirect
 // itself (stepFrame() below), a lower, harsher register than scentMaskExitCue()
 // so "you just threw the hunt off your scent" reads distinctly from "you just
@@ -8507,6 +8548,13 @@ function stepFrame(dt, t, skipRender){
       }
     }
     const coverHintVisible = !hidden && lastHideSpot !== null;
+    // LUL-5744: same weight effectiveDetect()/canSee() multiply into their detect-mul
+    // product (activeFireflyDetectClusters, sampled at the player's own position) --
+    // recomputed here rather than threaded through as a param because this block runs
+    // after stepFrame()'s predator pass. >0.5 ("deep in a cluster") is the wiki spec's
+    // own threshold for the one-shot caption/sting below, not the same thing as w>0
+    // (any exposure at all), which is all effectiveDetect()/canSee() care about.
+    const fireflyGlowWeight = fireflyGlowWeightAt(player.x, player.z, activeFireflyDetectClusters, WRAP_SPAN, WRAP_SPAN);
 
     // key -> [eligible this frame, world anchor {x,y,z} | null]. Self/panel-anchored
     // keys (deepwater/oakHollow/stamina/caveImmune/veil) never need an anchor --
@@ -8559,6 +8607,7 @@ function stepFrame(dt, t, skipRender){
         case 'veil': return [veilCharge < 0.3 && !veilLocked, null];
         case 'duskLion': return [runElapsed >= DUSK_LION_SIGHT_START_S, null];   // LUL-4889: time-only, no world anchor
         case 'rainfall': return [rainfallActive, null];
+        case 'fireflyGlow': return [fireflyGlowWeight > 0.5, null];   // self/panel-anchored: no new HUD meter, the glow itself is the readout
         default: return [false, null];
       }
     }
@@ -8574,6 +8623,7 @@ function stepFrame(dt, t, skipRender){
         case 'windPulse': return !predators.some(p => p.windPauseT > 0);
         case 'veilOverload': return veilOverloadChargeT <= 0;
         case 'rainfall': return !rainfallActive;
+        case 'fireflyGlow': return fireflyGlowWeight <= 0.5;
         case 'deepwater': return missionCanComplete;
         case 'oakHollow': return missionCanComplete;
         case 'beaconEvasion': return missionCanComplete;
@@ -8626,6 +8676,7 @@ function stepFrame(dt, t, skipRender){
         if(!baseHintEligible || !eligible) continue;
         if(WORLD_HINT_KEYS[key] && !hintWorldAnchor(key, anchor)) continue;   // needs to be visible to *start*
         hintActiveKey = key; hintActiveStartT = t; hintDismissBaseline = hintDismissBaselineFor(key);
+        if(key === 'fireflyGlow') fireflyGlowSwellCue();   // LUL-5744: one-shot risk tell, fires the same frame the caption claims the slot
         break;
       }
     }

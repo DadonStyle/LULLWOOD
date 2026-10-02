@@ -61,6 +61,10 @@ export const CONFIG = {
   FIREFLY_RAIN_DIM: 0.8,  // LUL-5736: rain dims firefly mote intensity -- at rainfallAmount=1 the
                           // mote is left at 20% of its dry intensity (1 - 1*0.8). Ambient-only, no
                           // HUD/cues per docs/CUES.md Q15 N/A (decision lul-5735-firefly-rain-dim-accepted).
+  FIREFLY_GLOW_DETECT_BONUS: 0.3,  // LUL-5744 (cheap slice, decision lul-5742-firefly-glow-
+                          // detection-accepted-2026-10-02): standing at a cluster's own center
+                          // multiplies detect-mul by 1+this; placeholder value -- the real number
+                          // is named by the Game Economist (LUL-5744), not picked here.
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,

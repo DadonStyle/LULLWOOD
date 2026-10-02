@@ -93,8 +93,11 @@ declare global {
        * test assert presence at night and absence at noon without scraping Three.js
        * light internals. LUL-5736 added maxIntensity so a test can assert the
        * rain-dim ramp quantitatively (anyVisible alone can't distinguish dimmed
-       * from undimmed once intensity is merely reduced, not zeroed). */
-      qaProbeFireflyClusters?: () => { clusterCount: number; anyVisible: boolean; maxIntensity: number };
+       * from undimmed once intensity is merely reduced, not zeroed). LUL-5744 added
+       * detectClusterCount (the detection-side list, never mobile-sliced -- diverges
+       * from clusterCount on mobile) and glowSwellCueCount (the one-shot risk-tell
+       * sting's fire count). */
+      qaProbeFireflyClusters?: () => { clusterCount: number; detectClusterCount: number; anyVisible: boolean; maxIntensity: number; glowSwellCueCount: number };
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */
