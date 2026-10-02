@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""new-record-alert SUBJECT BODY -- emails the founder once per new leaderboard record (threat model B1).
+
+Called by server.ts (LB_ALERT_CMD) with a fixed argv, never through a shell. Reuses the founder's
+existing SMTP credentials file (same format as the watchdog's founder-alert):
+    SMTP_USER=you@gmail.com
+    SMTP_PASS=<Gmail App Password>
+    ALERT_TO=you@gmail.com
+Path from LB_ALERT_ENV, default ~/.config/lullwood/founder-alert.env. Missing file: logs and exits 0.
+"""
+import os, smtplib, ssl, sys
+from email.message import EmailMessage
+from pathlib import Path
+
+def main() -> int:
+    if len(sys.argv) != 3:
+        print("usage: new-record-alert SUBJECT BODY", file=sys.stderr)
+        return 2
+    env_path = Path(os.environ.get("LB_ALERT_ENV", Path.home() / ".config/lullwood/founder-alert.env"))
+    try:
+        env = dict(l.split("=", 1) for l in env_path.read_text().splitlines() if "=" in l and not l.startswith("#"))
+    except OSError:
+        print(f"new-record-alert: no credentials at {env_path}, not sent", file=sys.stderr)
+        return 0
+    msg = EmailMessage()
+    msg["Subject"], msg["From"], msg["To"] = sys.argv[1][:120], env["SMTP_USER"], env["ALERT_TO"]
+    msg.set_content(sys.argv[2][:500] + "\n\nInvalidate if bogus: POST /api/leaderboard/<id>/invalidate with the admin token.\n")
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context(), timeout=20) as s:
+        s.login(env["SMTP_USER"], env["SMTP_PASS"])
+        s.send_message(msg)
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -3753,3 +3753,59 @@ are all for hardcoded (non-movement) verbs and stay as-is until the full-scope f
 Covered by `e2e/remapping.spec.ts` (3 tests: default WASD moves the player, a real-UI
 remap changes which key moves the player with a staged predator in the scene, and the
 remap persists across reload) -- all in the micro world via `qaBuildScene`, no `@fullmap`.
+
+---
+
+### Leaderboard (gate record line + win-screen submit form, LUL-3264 wave 1)
+
+**What it is**
+- Two independent, React-owned surfaces in `components/Leaderboard.tsx`,
+  outside the `hudState`/`EngineHudState` pipeline entirely — no engine touch,
+  no `pushState()` field (same shape as the Welcome splash entry above).
+  Storage is the SQLite service behind `app/api/leaderboard/**`; this file
+  only ever talks to those routes.
+- `#leaderboardLine` (`LeaderboardMenuLine`, `components/Leaderboard.tsx:79-86`):
+  mounted inside `#gate` in `components/Hud.tsx:974`, directly under
+  `#gateCredit`. Fetches `/api/leaderboard/current` once on mount (5s timeout
+  via `AbortSignal.timeout`) and renders one of four states via
+  `data-state`: `loading` ("Loading top rescuer…"), `empty` ("No rescuer yet —
+  be the first."), `populated` (the live record, `recordLine()` at
+  `components/Leaderboard.tsx:77`: "`<nickname>` is the top rescuer at
+  `<mm:ss>` — can you beat it?"), or `failed` (falls back to the last-known
+  record cached in `localStorage['lullwood:leaderboard:current']`,
+  display-only (B8) — validated on read, never sent back to the server).
+  `failed` with no cache renders nothing at all — the line is omitted from
+  `#gate` entirely rather than show a broken state.
+- `#leaderboardForm` (`LeaderboardSubmitForm`, `components/Leaderboard.tsx:96`,
+  element at `:143`): mounted inside `#winScreen`'s `#winText`, directly after
+  `RunRecap` and before the "Play again" button (`components/Hud.tsx:1369`).
+  Rendered only when all three gates pass: `difficulty === 'blackout'`,
+  `document.body.dataset.adminMode !== '1'` (admin mode off — Blackout
+  already forces the minimap off, `engine/tuning.js`), and
+  `survivedSeconds*1000 >= PLAUSIBILITY_FLOOR_MS` (`lib/game/leaderboard.ts`,
+  ~15.7s floor derived from the map's max theoretical traversal speed, not a
+  tunable to re-derive). Any one gate failing means no form at all —
+  deliberately silent by design (an eligibility check, not a refused player
+  input, so Q5 of `docs/FEATURE_CHECKLIST.md` does not apply here).
+
+**Behaviours & logic**
+- Nickname input is client-filtered to `[a-z0-9]{0,20}` on every keystroke
+  (UX only — the server re-validates against `NICKNAME_PATTERN`/
+  `isDenylisted()` in `lib/game/leaderboard.ts`); country is a `<select>`
+  constrained to `COUNTRY_ALLOWLIST`. Submit is disabled until both are valid.
+- On submit, POSTs `{ nickname, country, time_ms, anon_id, website }` to
+  `/api/leaderboard`. `website` is an off-screen (not `display:none`)
+  honeypot field, same convention as `SuggestionBox`. A `201` with
+  `isRecord:true` shows "New record! …"; `201`/`isRecord:false` shows
+  "Saved — …"; `429` shows a rate-limited message; anything else (including a
+  thrown fetch) shows a generic "That could not be saved" error. The form
+  stays resubmittable from `error`, but `done`/`record` replace it entirely
+  with a static `#leaderboardSubmitted` status paragraph.
+- Typing inside the form calls `e.stopPropagation()` on `onKeyDown` so
+  keystrokes (including `KeyW`/`Space`/etc.) never reach the engine's
+  `window` keydown listener while the win screen is up.
+- Every nickname is rendered as a React text child (never as HTML, B2) —
+  in the menu line and in both the submitted and record confirmation strings.
+
+**Collision & physics profile**
+- N/A — not spatial/world objects.
