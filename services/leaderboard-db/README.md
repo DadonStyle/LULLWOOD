@@ -72,3 +72,23 @@ curl -X POST -H "Authorization: Bearer $LEADERBOARD_ADMIN_TOKEN" \
 
 Backups: `/mnt/hdd/backups/lullwood-leaderboard/stats-YYYY-MM-DD.db`, nightly, kept 14 days. To
 restore, stop the service, copy a backup over `data/leaderboard.db`, then start it again.
+
+## Moderation ops (LUL-3296)
+
+**Founder alert on a new record (B1).** Already wired: `server.ts`'s `onNewRecord` fires
+`new-record-alert` (opt-in, via `LB_ALERT_CMD`/`LB_ALERT_ENV` in `install.sh`) on every successful
+submit that sets a record. See `decisions/lul-3296-leaderboard-moderation-ops-accepted-2026-10-02`
+for the full citation trail; nothing left to build here.
+
+**Denylist maintenance.** `NICKNAME_DENYLIST` (`lib/game/leaderboard.ts`) is the single source of
+truth the Vercel route and this service both read. Expanding its *content* is a founder call
+(`decisions/lul-3264-leaderboard-accepted-2026-09-18`), not an engineering one — propose the word
+to the founder, then an engineer edits the `Set` literal only (no service redeploy needed, it
+ships with the normal app deploy). `normalizeForDenylist` already folds digit-substitution and
+`isDenylisted` matches by substring, so only base words need adding, not every leet variant.
+
+**Retention.** `record_holders` rows (including `valid=0` soft deletes) are kept indefinitely —
+confirmed storage growth is fine as designed (bounded by the A1-A3 rate limits, and the
+soft-deleted rows are the moderation audit trail alongside `admin_audit`, not disposable). `events`
+already has its own 180-day prune (`EVENT_RETENTION_DAYS`) and is unaffected. Full reasoning:
+`decisions/lul-3296-leaderboard-moderation-ops-accepted-2026-10-02`.
