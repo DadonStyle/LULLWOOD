@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L8883 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L7754, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
+  button via `setTouchVeil()` L8884 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L7755, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
   `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
@@ -1731,15 +1731,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L6898, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7348). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L6899, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7349). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7348) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
+  (L7349) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
   set at L3499) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
@@ -3084,7 +3084,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7216) and `windAssistEndCue()` (L7225), edge-triggers on the combined
+`windAssistStartCue()` (L7217) and `windAssistEndCue()` (L7226), edge-triggers on the combined
 `running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
@@ -3156,6 +3156,34 @@ approaching wolf drifts off the player-straight-line toward downwind; the bias i
 (gained while live, lost the instant `scentLock` decays to 0); the class is withheld under
 `reducedMotion` even with a genuinely live gate; the hint caption fires once with the exact copy
 above.
+
+### LUL-5781: Scent-Lock Endurance Asymmetry (per-species chase-persistence)
+
+Scout proposal (LUL-5781), CTO-accepted cheap slice
+(`decisions/lul-5781-scent-lock-endurance-accepted-2026-10-02`). Bear and lion now give up a
+scent-lock chase at different times: bear hounds the trail 40% longer (relentless tracker), lion
+gives up 20% sooner (reverts to investigating sooner when the trail goes cold), wolf stays the 1.0
+baseline. New `SCENT_LOCK_ENDURANCE_MULTIPLIER` (`engine/tuning.js`, `{ wolf: 1.0, bear: 1.4, lion:
+0.8 }`, placeholder ratios -- Game Economist owns real tuning numbers), applied at `p.scentLock =
+SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind]` at every real chase-entry assignment
+site (`engine/forest-engine.js` L2550, L2572, L5528, L5959, L6104, L6376 -- the last inside
+`qaSetPredatorChasing`, which mirrors every real site's own statement, not a special case).
+Applied at assignment time only, not inside the shared `tickTimers()` decay (`lib/game/predator.ts`
+L172-177, also used by `chargeCooldown`) -- same "touch the read, not the shared decay" shape as
+the nose multiplier (`PSPEC[k].nose`, `engine/tuning.js` L308-310) this proposal extends into chase
+persistence.
+
+No new player-facing state or HUD element: `scentLock` is an invisible engine counter, unchanged in
+how it decays or is read (`shouldGiveUpChase(scentLock, dist, detect)`, `lib/game/predator.ts` L93);
+only its initial value varies by species. No cue triple -- learned through repeated play ("the bear
+won't give up your scent, but the lion will"), per the accepted proposal's own Q15 answer.
+
+Covered by `e2e/scent-lock-endurance.spec.ts` (new, micro world, no `@fullmap`): stages a bear and a
+lion via `qaBuildScene` at a fixed distance beyond `detect * 1.5` (so `shouldGiveUpChase`'s distance
+half is already satisfied), drives the real chase-entry assignment through `qaSetPredatorChasing`,
+and asserts the bear's `scentLock` outlasts the lion's by the 1.4/0.8 ratio and that the lion leaves
+`'chase'` before the bear does at a fixed elapsed time. QA request:
+`shared/local-qa/requests/lul-5781-scent-lock-endurance.md`.
 
 ### LUL-4893: Predator Pause (wind-gated freeze on downwind-perpendicular chase)
 
@@ -3512,15 +3540,15 @@ existing surface).
 
 **Audio**: `investigateCue(p)` (L4122-4136) -- a low, two-pulse searching
 tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
-caption already names the species -- `hearCry()` (L2663) is the one exception: it pushes no
+caption already names the species -- `hearCry()` (L2664) is the one exception: it pushes no
 caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
 responding to the child's cry gives the player zero species identification, audio or text, same
 as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2630),
-`hearThrowableNoise()` (L2647), `hearCry()` (L2663), the charge-overshoot handoff (`p.chargeRecoveryT`,
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2631),
+`hearThrowableNoise()` (L2648), `hearCry()` (L2664), the charge-overshoot handoff (`p.chargeRecoveryT`,
 L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
 sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
 of the driving ticket's six-line list, included for the same reason the other six are: a real
