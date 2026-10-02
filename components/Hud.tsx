@@ -64,6 +64,9 @@ export interface EngineHudState {
   // dawn to full night over the run. Engine-driven like pace/fog above.
   timeOfRunClock: string;
   soundOn: boolean;
+  // LUL-5829: Predator Audio slider -- display units (0-100), ducks predator-call/
+  // threat SFX independently of the soundOn master mute above.
+  predatorVolume: number;
   // LUL-40/LUL-382: hold-to-veil (mist ramp + follow-light dim + sight-detect cut),
   // engine-driven (see engine/forest-engine.js tick()) -- read-only here, there's no
   // setter because React never triggers it.
@@ -282,6 +285,9 @@ export interface EngineActions {
   // engine action; status is already collapsed by useLeaderboardSky below
   // ('failed' -> 'populated' with its cache, or 'hidden').
   setLeaderboardRecord: (status: SkyBalloonStatus, record: SkyBalloonRecord | null) => void;
+  // LUL-5829: Predator Audio slider -- display units (0-100), converted to WebAudio
+  // gain (0-1) at the engine boundary.
+  setPredatorVolume: (v: number) => void;
 }
 
 // Placeholder for the single frame before the engine module resolves and calls
@@ -309,6 +315,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   fog: 0.04,
   timeOfRunClock: '6:00 AM',
   soundOn: true,
+  predatorVolume: 100,
   lightDimmed: false,
   veilCharge: 1,
   veilLocked: false,

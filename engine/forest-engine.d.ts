@@ -61,6 +61,10 @@ declare global {
        * all 11 verbs), so a test can assert a remap actually changed which key
        * triggers an action without relying on reading the Settings UI's own DOM. */
       qaProbeKeyMap?: () => EngineHudState['keyMap'];
+      /** LUL-5829: the real predatorGain WebAudio node's current .value (0-1), not just
+       * the stored predatorVolume setting -- lets a test assert setPredatorVolume()
+       * actually changed the gain stage predator-call/threat SFX route through. */
+      qaProbePredatorVolume?: () => number;
       /** LUL-2122: babyLight's live intensity/distance plus the pickup/taken
        * state flags, so a test can assert the interact button actually reached
        * pickup() instead of only that it rendered and was tappable. */

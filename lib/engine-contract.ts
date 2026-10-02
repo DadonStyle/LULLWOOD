@@ -34,6 +34,8 @@ export const ENGINE_ACTION_KEYS = [
   'setProgression',
   // LUL-5820 + LUL-3264 wave 2 (S5)
   'setLeaderboardRecord',
+  // LUL-5829
+  'setPredatorVolume',
 ] as const satisfies readonly (keyof EngineActions)[];
 
 // The other direction: if EngineActions ever gains a key missing from the list above,

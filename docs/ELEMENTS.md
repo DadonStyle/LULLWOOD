@@ -62,9 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L9161 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L8018, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —
-  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
+  button via `setTouchVeil()` L9183 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L8040, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
@@ -1792,15 +1791,14 @@ not final tuning.
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
   both `track()` call sites, in `finishPickup()` (L7146, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7574). The `difficulty` module-level
+  `LUL-2281`) and `triggerDeath()` (L7626). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7582) fires, computed and stored in `deathDistanceFromHomeM` (module-level,
-  set at L3499) rather than recomputed later, since `player.x/z` can move on
+  (L7596) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3499) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1857,7 +1855,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L4427),
-  reset to 0 on `enter()` (L4729) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4758) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7731: `computeDepth(maxDistFromHome) +
@@ -1980,7 +1978,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L7968, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L8136, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -3146,8 +3144,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7442) and `windAssistEndCue()` (L7451), edge-triggers on the combined
-`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
+`windAssistStartCue()` (L7456) and `windAssistEndCue()` (L7465), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
 **QA hooks**: none new -- `qaProbeWind().movingAgainstWind` (existing) is sufficient for the
@@ -3963,3 +3960,50 @@ templated `pickupPrompt` copy with `adminMode` off) -- all in the micro world
 
 **Collision & physics profile**
 - N/A — purely a per-instance `instanceColor` write, no collider/physics change.
+
+## Predator Audio Bus Volume (LUL-5829, cheap slice, decision
+decisions/lul-5808-audio-bus-cheap-slice-accepted-2026-10-02)
+
+One slider, "Predator Audio" (0-100%, default 100, Accessibility settings), ducks
+predator-call/threat SFX independently of the master `soundOn` mute
+(`components/Hud.tsx:57`). Full four-bus scope (Music/Ambient/Interface/Predator) is
+explicitly deferred — this is one gain stage, not a bus-routing abstraction.
+
+**Engine** — `startAudio()` (`engine/forest-engine.js`) creates `predatorGain`
+(`ctx.createGain()`), connected into `master` alongside the pre-existing bed/drone/
+hunt nodes, seeded from module-level `predatorVolume` (internal unit 0-1). The three
+predator-sourced threat-SFX functions — `predatorCall()`, `investigateCue()`,
+`sniff()` — route their dry signal (and, for `predatorCall`/`investigateCue`, their
+`StereoPannerNode`) through `predatorGain` instead of `master`; every `g.connect(conv)`
+reverb send is untouched (the shared reverb is a room effect, not a threat cue).
+`setPredatorVolume(v)` clamps to `[0,1]`, ramps `predatorGain.gain` via
+`setTargetAtTime(..., 0.05)`, and echoes back `predatorVolume*100` (display units) via
+`pushState`. Added to `EngineActions`/`ENGINE_ACTION_KEYS`/`init()`'s return
+(`lib/engine-contract.ts`, `components/Hud.tsx`), per the engine/React contract rule.
+
+**Settings** — `SettingsPanel.tsx`'s `PersistedSettings.predatorVolume` (0-100,
+default 100) follows the same LUL-2649 apply-on-ready + persist-effect gate every
+other numeric setting in that file uses — skipping it would revert the slider to its
+default on the next reload, the exact bug LUL-2649 fixed. The slider row reuses the
+existing `<input type="range">` `.sliderRow` markup (same shape as Look sensitivity),
+with a `${predatorVolume}%` numeric readout next to it (Q2 — this is a 0-100 quantity,
+not a has/has-not pill).
+
+**Cue triple** — visual: the labeled slider + `%` readout in Accessibility settings;
+audio: none new as its own cue (the feature *is* audio mixing — moving the slider
+while a predator call is active audibly changes it in real time); one-line: "Predator
+Audio volume — Settings → Accessibility."
+
+**QA hooks**: `qaProbePredatorVolume()` (`engine/forest-engine.js`, next to
+`qaProbeKeyMap`) returns the real `predatorGain.gain.value`, not just the stored
+`predatorVolume` setting (Q11 — a test that only reads back the state it wrote isn't
+coverage). `qaBuildScene`/`qaLurePredatorKind`/`qaAdvance` (all pre-existing) stage a
+real predator call through the real `p.hunt` → `predatorCall()` path.
+
+Covered by `e2e/predator-audio-bus.spec.ts` (4 tests: default full gain, muting to 0%
+silences the bus during a real staged predator call, raising it back un-mutes for the
+next call, reload-persistence at a non-default value) — all run in the micro world via
+`qaBuildScene`, no `@fullmap` needed.
+
+**Collision & physics profile**
+- N/A — audio routing only, no collider/physics change.
