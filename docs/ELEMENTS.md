@@ -3541,6 +3541,86 @@ real `checkThrowableNoise()`/`hearThrowableNoise()` path; the test asserts `inve
 goes from 0 to >=1 once the wolf reaches `'investigate'`, proving the cue fires off a real trigger,
 not just that the state flag flips.
 
+## Firefly Clusters (LUL-5707, cheap slice, decision
+decisions/lul-5704-firefly-swarms-accepted-2026-10-01, full spec `docs/specs/lul-5707-firefly-swarms.md`)
+
+Six fixed ambient glow clusters -- `FIREFLY_CLUSTERS` (`lib/game/fireflyClusters.ts:24-30`,
+`EventSite[]`-shaped like `ROOSTS`/`SCENT_MASK_SITES`/`DECOY_SCENT_SITES`, no `rng()` draw so
+seeds stay byte-identical), each `{ id, kind: 'firefly', x, z, radius: FIREFLY_CLUSTER_RADIUS
+(45, `:15`), moteCount }` with `moteCount` 4-8 per cluster (`:25-30`). Pure ambient visual --
+no input, no HUD field, no save state, no economy hook (docs/CUES.md:1-6 passive/ambient-texture
+cue-triple exemption, same ruling as decisions/lul-2431-fire-tower-embers-cue-triple-exempt-
+2026-09-11).
+
+**Gating and mote build** -- active only at dusk/night: `activeFireflyClusters`
+(`engine/forest-engine.js:1451-1453`) gates on the per-session `timeOfDay` snapshot
+(`'evening'` or `'night'`, never re-evaluated mid-session per LUL-1644) and, on
+`mode === 'mobile'`, slices to the first `FIREFLY_MOBILE_CLUSTER_COUNT` (4, `fireflyClusters.ts:19`)
+entries -- desktop renders all 6. `scaledFireflyClusters()` (`:699-700`) scales every cluster's
+`x`/`z` by `CONFIG.fireflyScaleMul` (default `1`, `0.2` under `applyQaWorldMicroPreset()` so the
+clusters sit inside the QA micro map). One `THREE.PointLight` per mote is built once at module
+scope (`fireflyClusterMotes`, `:1471-1484`) on a deterministic sunflower-seed scatter around
+each cluster's center (no `rng()` consumed), empty outside dusk/night so the tick loop below is
+a no-op for a daytime session.
+
+**Per-frame intensity** (`:8549-8561`) -- each mote's `light.intensity` is
+`0.6 * w * alarmScalar * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM)` (`:8555`), where `w` is
+`decoyScentGlowWeight()`'s own proximity-to-cluster-center falloff (the same recipe the
+scent-mask/decoy-site brightening above already uses) plus idle sine/cosine drift, degrading to
+static under `motionReduced()`. No HUD meter and no readout beyond the mote glow itself (Q2/Q3
+passive-visual) -- there is nothing to show "how many" of, since the clusters are fixed and
+always either lit or dark.
+
+**Rain Dim (LUL-5736)** -- `CONFIG.FIREFLY_RAIN_DIM` (`engine/tuning.js:61`, placeholder `0.8`,
+decision lul-5735-firefly-rain-dim-accepted-2026-10-01) is the `(1 - rainfallAmount *
+CONFIG.FIREFLY_RAIN_DIM)` multiplicative term above: at full `rainfallAmount` (1), a mote sits at
+20% of its dry intensity. Ambient-only, no new cue (docs/CUES.md Q15 N/A, same exemption as the
+base swarm). `qaProbeFireflyClusters().maxIntensity` (added for this ticket) is the only probe,
+since `anyVisible` alone can't distinguish a dimmed-not-zeroed mote from a dry one.
+
+**Alarm Response (LUL-5756, cheap slice LUL-5759; per-species range LUL-5761, decisions
+lul-5756-firefly-alarm-response-accepted-2026-10-02 / lul-5761-firefly-alarm-per-species-
+accepted-2026-10-02)** -- fireflies behaviorally brighten when a hunting predator closes on
+their cluster. `fireflyAlarmBoost(predators, clusters, player, spanX, spanZ)`
+(`lib/game/fireflyAlarmResponse.ts`) is a single frame-global scalar, scanned over **every**
+cluster each frame regardless of this session's render slice (mobile's
+`FIREFLY_MOBILE_CLUSTER_COUNT` budget doesn't gate the scan) -- the single highest
+predator-to-cluster ramp across all pairs wins, ramping `1.0` baseline linearly to
+`1 + CONFIG.FIREFLY_ALARM_BOOST` (placeholder `0.4`, `engine/tuning.js:70`) as the nearest live
+(non-`inert`) predator closes from its own alarm range down to 0. That range is per-species
+(`alarmRangeFor(kind)`, LUL-5761): `CONFIG.FIREFLY_ALARM_RANGE_BEAR` (150, `tuning.js:73`) and
+`CONFIG.FIREFLY_ALARM_RANGE_LION` (100, `tuning.js:77`) override the flat
+`CONFIG.FIREFLY_ALARM_RANGE` (120, `tuning.js:64`) that every other kind (e.g. wolf) still uses.
+All four are Economist-owned placeholders, same stub-and-comment precedent as
+`CONFIG.FIREFLY_RAIN_DIM`. The result (`alarmScalar`, computed once per tick at `:8539-8541`)
+feeds directly into the mote-intensity formula above -- no separate glow/color change, the
+existing brightening *is* the tell (Q2/Q3: no new HUD meter needed).
+
+**Cue triple** -- self/panel-anchored `'fireflyAlarm'` entry in `HINT_PRIORITY`
+(`engine/forest-engine.js:2360`) and `HINT_TEXT` (`:2397`: *"firefly alarm -- they sense danger
+nearby and brighten, easier to spot in the glow"*), eligible while `fireflyAlarmActive` is true
+(trigger case `:8696`, dismiss case `:8713`, mirrors `'rainfall'`'s time-only self-anchoring, no
+world point to anchor to). A one-shot rising-chitter audio sting, `fireflyAlarmSting()`
+(`:3968-3980`, procedural bandpass noise burst, `soundOn`-gated), fires once per run on the
+first frame the alarm activates (`:8543-8546`).
+
+**QA hooks** -- `qaProbeFireflyClusters()` (`:4697-4706`) returns `clusterCount`,
+`anyVisible`, `maxIntensity`, `alarmScalar`, `alarmActive`, and `clusters` (the full unsliced,
+scaled `id`/`x`/`z` list, so a test can stage a predator directly on a named cluster's own
+coordinates via `qaIsolatePredatorKindAt`/`qaPlacePredatorKindAt`, including one excluded from
+mobile's render budget). `detectClusterCount` and `glowSwellCueCount` on the same hook belong to
+the Glow Detection Risk feature below, not this section.
+
+**Coverage** -- `e2e/firefly-swarms.spec.ts` (clusters present/visible at night, absent by day),
+`e2e/firefly-rain-interaction.spec.ts` (rain-dim ramp via `maxIntensity`), and
+`e2e/firefly-alarm-response.spec.ts` / `e2e/firefly-alarm-per-species.spec.ts` (alarm ramp, one-shot
+sting, bear/lion range divergence) -- all run in the micro world via `qaBuildScene`, no
+`@fullmap` needed. `shared/local-qa/requests/lul-5707-firefly-swarms.md` and
+`shared/local-qa/requests/lul-5761-firefly-per-species-alarm.md` are the nightly request files.
+
+See also the Firefly Glow Detection Risk section immediately below, which layers a
+player-exposure penalty on top of the same `FIREFLY_CLUSTERS`/`activeFireflyDetectClusters` data.
+
 ## Firefly Glow Detection Risk (LUL-5744, cheap slice, decision
 decisions/lul-5742-firefly-glow-detection-accepted-2026-10-02, full spec wiki
 game/mechanics/firefly-glow-detection-risk -- Section-0 checklist answered there)
