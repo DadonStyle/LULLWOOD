@@ -177,17 +177,17 @@ export const MISSION_BEACON_ROOST_RECOVERY_EVASION_REWARD = 9;
 // Game Economist requests the real number.
 export const MISSION_GHOST_REWARD = 9;
 
-// LUL-5498/LUL-5495: Chapel Sanctuary -- placeholder pending the Game Economist's confirmed
-// number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced provisionally
-// level with the other untimed missions (9); MISSION_REWARDS is Record<MissionKind, number>
-// so every kind needs a row here regardless of the ticket's "no Economist ticket needed"
-// scope note -- that note only means no NEW reward path, not that this row can be skipped.
-export const MISSION_CHAPEL_SANCTUARY_REWARD = 9;
+// LUL-5498/LUL-5495/LUL-5780/LUL-5801: Chapel Sanctuary -- priced by the Game Economist
+// (LUL-5780) at 8, grouped with Oak Hollow/Deepwater as a risk-free spatial-only veil
+// route. MISSION_REWARDS is Record<MissionKind, number> so every kind needs a row here
+// regardless of the ticket's "no Economist ticket needed" scope note -- that note only
+// means no NEW reward path, not that this row can be skipped.
+export const MISSION_CHAPEL_SANCTUARY_REWARD = 8;
 
-// LUL-5528/LUL-5524: Sky Compass Navigation -- placeholder pending the Game Economist's
-// confirmed number, same convention MISSION_FLUSH_REWARD (above) already uses. Priced
-// provisionally level with the other untimed missions (9).
-export const MISSION_SKY_COMPASS_NAVIGATION_REWARD = 9;
+// LUL-5528/LUL-5524/LUL-5780/LUL-5801: Sky Compass Navigation -- priced by the Game
+// Economist (LUL-5780) at 6, below baseline since it's a teaching/accessibility mission
+// with no fail state and should not inflate reward expectations for later missions.
+export const MISSION_SKY_COMPASS_NAVIGATION_REWARD = 6;
 
 // LUL-5529/LUL-5524: Chapel Refuge + Veil Escape Combo -- placeholder pending the Game
 // Economist's confirmed number, same convention as the other untimed missions above.
