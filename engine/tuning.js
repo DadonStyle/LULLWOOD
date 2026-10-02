@@ -61,6 +61,15 @@ export const CONFIG = {
   FIREFLY_RAIN_DIM: 0.8,  // LUL-5736: rain dims firefly mote intensity -- at rainfallAmount=1 the
                           // mote is left at 20% of its dry intensity (1 - 1*0.8). Ambient-only, no
                           // HUD/cues per docs/CUES.md Q15 N/A (decision lul-5735-firefly-rain-dim-accepted).
+  FIREFLY_ALARM_RANGE: 120, // LUL-5756 cheap slice (LUL-5759): nearest-predator-to-cluster distance
+                          // the mote-brighten ramp starts from -- same fixed, unscaled-by-
+                          // fireflyScaleMul precedent as FIREFLY_CLUSTER_RADIUS (fireflyClusters.ts)
+                          // and ROOST_TRIGGER_RADIUS/DECOY_SCENT_RADIUS above. Placeholder -- Game
+                          // Economist names the real value in a parallel ticket, same pattern as
+                          // LUL-5744/LUL-5745; do not block merge on it.
+  FIREFLY_ALARM_BOOST: 0.4, // LUL-5756 cheap slice (LUL-5759): peak multiplier added to the glow-
+                          // weight at zero nearest-predator distance (1.0 baseline -> 1.4 at the
+                          // alarm's hottest). Placeholder, Economist-owned, see FIREFLY_ALARM_RANGE.
   FIREFLY_GLOW_DETECT_BONUS: 0.3,  // LUL-5744 (cheap slice, decision lul-5742-firefly-glow-
                           // detection-accepted-2026-10-02): standing at a cluster's own center
                           // multiplies detect-mul by 1+this; placeholder value -- the real number
