@@ -84,6 +84,15 @@ export const CONFIG = {
   wrapEnabled: false,    // LUL-1485: seam math is live everywhere but inert until a
                           // Game Tester seam-walk flips this true (fast-follow ticket)
   trees:   5200,
+  LEADERBOARD_TINT_SUBSET_N: 8, // LUL-3295: every Nth tree (by its stable treeData index,
+                          // ti % N === 0) is eligible for the record-holder's flag tint --
+                          // ~12% of trees, chosen by eye against "saturation low... a forest
+                          // of bright national colours destroys the night-forest look." Pure
+                          // function of ti, no rng() draw (ensureChunk()'s seeded-stream
+                          // invariant, forest-engine.js:1062-1063).
+  LEADERBOARD_TINT_WEIGHT: 0.25, // LUL-3295: lerp weight blending a selected tree's flag
+                          // colour into its existing tintCol -- low enough to keep the
+                          // per-tree weathering variation and low saturation by construction.
   // LUL-2328: coverProps moved onto CONFIG (was a standalone COVER_PROPS
   // export) so applyQaWorldMicroPreset() below can override it the same
   // proven way it already overrides mapSize/trees -- a property mutation on

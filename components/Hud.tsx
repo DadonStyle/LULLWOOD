@@ -267,7 +267,9 @@ export interface EngineActions {
   resetHints: () => void;
   // LUL-2558
   setProgression: (p: Progression) => void;
-  // LUL-5820
+  // LUL-5820 + LUL-3295: feeds the sky balloon and tree-tint consumers one
+  // engine action; status is already collapsed by useLeaderboardSky below
+  // ('failed' -> 'populated' with its cache, or 'hidden').
   setLeaderboardRecord: (status: SkyBalloonStatus, record: SkyBalloonRecord | null) => void;
 }
 

@@ -32,7 +32,7 @@ export const ENGINE_ACTION_KEYS = [
   'setHintsEnabled', 'resetHints',
   // LUL-2558
   'setProgression',
-  // LUL-5820
+  // LUL-5820 + LUL-3264 wave 2 (S5)
   'setLeaderboardRecord',
 ] as const satisfies readonly (keyof EngineActions)[];
 

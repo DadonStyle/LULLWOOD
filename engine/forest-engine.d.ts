@@ -149,6 +149,27 @@ declare global {
         totalInstances: number;
         expected: number;
       };
+      /** LUL-3295: calls the real setLeaderboardRecord() engine action directly --
+       * the same function components/Hud.tsx's useLeaderboardSky() calls on every
+       * resolved-record change (shared with the LUL-5820 sky balloon) -- so a spec
+       * can simulate a record changing mid-run without a second real fetch (the
+       * production hook, components/Leaderboard.tsx's useLeaderboardRecord, only
+       * ever fetches once per mount). `status`/`record` match what useLeaderboardSky
+       * passes once it has collapsed the 4-state fetch machine's `failed`. */
+      qaSetLeaderboardRecord?: (
+        status: 'loading' | 'populated' | 'empty' | 'hidden',
+        record: { id: number; nickname: string; country: string; timeMs: number; achievedAt: string } | null,
+      ) => void;
+      /** LUL-3295: flag-tinted trees -- counts live tree instances whose
+       * instanceColor has been blended toward the current leaderboard
+       * record's flag palette vs. the plain weathering tint baseline, plus
+       * one sampled tinted RGB triple (or null if no tree is tinted) so a
+       * spec can assert the colour moved toward the flag without becoming it. */
+      qaProbeTreeTint?: () => {
+        totalTrees: number;
+        tintedCount: number;
+        sampleTintedColor: [number, number, number] | null;
+      };
       /** LUL-2249: the ring-streamed chunk lifecycle's own live state --
        * which chunk ids are currently live, how many cover chunks of
        * those are live, and the player's own current chunk id. */
