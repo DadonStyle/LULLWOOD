@@ -57,10 +57,10 @@ declare global {
        * `>= BLACKOUT_MIN_RADIUS` and landmark clearance, see lib/game/mission.ts
        * pickHardBabyPosition()). */
       qaProbeBaby?: () => { x: number; z: number; distHome: number };
-      /** LUL-5805: live keybind remapping state (verb -> KeyboardEvent.code), so a
-       * test can assert a remap actually changed which key moves the player without
-       * relying on the Settings UI. */
-      qaProbeKeyMap?: () => { forward: string; back: string; left: string; right: string };
+      /** LUL-5805/LUL-5828: live keybind remapping state (verb -> KeyboardEvent.code,
+       * all 11 verbs), so a test can assert a remap actually changed which key
+       * triggers an action without relying on reading the Settings UI's own DOM. */
+      qaProbeKeyMap?: () => EngineHudState['keyMap'];
       /** LUL-2122: babyLight's live intensity/distance plus the pickup/taken
        * state flags, so a test can assert the interact button actually reached
        * pickup() instead of only that it rendered and was tappable. */

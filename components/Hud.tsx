@@ -15,6 +15,7 @@ import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
 import { formatDuration } from '@/lib/ui/format-duration';
+import { formatKeyLabel } from '@/lib/ui/key-label';
 import { LeaderboardMenuLine, LeaderboardSubmitForm, useLeaderboardRecord, type LeaderboardState } from './Leaderboard';
 import type { SkyBalloonStatus, SkyBalloonRecord } from '@/lib/game/skyBalloon';
 
@@ -31,6 +32,14 @@ import type { SkyBalloonStatus, SkyBalloonRecord } from '@/lib/game/skyBalloon';
 //
 // Not lifted here, still engine-owned DOM (out of LUL-34 scope, see the ticket):
 // #vignette, #spotFlash, #flash, #minimap, #hint, #pausePrompt, #deathVideo.
+
+// LUL-5805/LUL-5828: the 11 remappable verbs -- 4 movement (LUL-5805) + 7 action
+// (LUL-5828). Shared between EngineHudState.keyMap/keyMapCollision, EngineActions.
+// setKeyMap, and SettingsPanel.tsx's Controls fieldset so the verb set can't drift
+// between the three.
+export type KeyMapVerb =
+  | 'forward' | 'back' | 'left' | 'right'
+  | 'interact' | 'veilOverload' | 'scentVeil' | 'hide' | 'climb' | 'shuffleHide' | 'jump';
 
 export interface EngineHudState {
   entered: boolean;
@@ -123,9 +132,11 @@ export interface EngineHudState {
   // LUL-26: difficulty + accessibility, engine-controlled like pace/fog above.
   difficulty: 'lantern' | 'night' | 'blackout';
   runMode: 'hold' | 'toggle';
-  // LUL-5805: keybind remapping cheap slice -- movement only. Engine-controlled
-  // like difficulty/runMode above.
-  keyMap: { forward: string; back: string; left: string; right: string };
+  // LUL-5805/LUL-5828: keybind remapping. Engine-controlled like difficulty/
+  // runMode above. keyMapCollision is the Q5 refusal tell for a remap attempt
+  // that collided with another verb or a reserved key -- null when none is live.
+  keyMap: Record<KeyMapVerb, string>;
+  keyMapCollision: { verb: KeyMapVerb; code: string } | null;
   sensitivity: number;
   invertY: boolean;
   reducedMotion: boolean;
@@ -252,8 +263,8 @@ export interface EngineActions {
   setReducedMotion: (v: boolean) => void;
   setCaptions: (v: boolean) => void;
   setColdWalkOptIn: (v: boolean) => void;
-  // LUL-5805: keybind remapping cheap slice -- movement only.
-  setKeyMap: (verb: 'forward' | 'back' | 'left' | 'right', code: string) => void;
+  // LUL-5805/LUL-5828: keybind remapping.
+  setKeyMap: (verb: KeyMapVerb, code: string) => void;
   // LUL-1043
   setEmbers: (balance: number, tiers: Record<string, number>) => void;
   purchase: (id: string) => void;
@@ -328,7 +339,12 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   chargeToken: 0,
   difficulty: 'night',
   runMode: 'hold',
-  keyMap: { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD' },
+  keyMap: {
+    forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
+    interact: 'KeyE', veilOverload: 'KeyQ', scentVeil: 'KeyG', hide: 'KeyH',
+    climb: 'KeyC', shuffleHide: 'KeyR', jump: 'Space',
+  },
+  keyMapCollision: null,
   sensitivity: 1,
   invertY: false,
   reducedMotion: false,
@@ -422,11 +438,11 @@ function hideVeilPromptContent(
     if (state.coverPromptUrgent) {
       return mobile
         ? { text: `the ${noun} is right there — TAP  `, keycap: 'Hide', tone: 'urgent' }
-        : { text: `the ${noun} is right there — PRESS  `, keycap: 'H', tone: 'urgent' };
+        : { text: `the ${noun} is right there — PRESS  `, keycap: formatKeyLabel(state.keyMap.hide), tone: 'urgent' };
     }
     return mobile
       ? { text: 'Tap  ', keycap: 'Hide', suffix: `  to slip into the ${noun}`, tone: 'ready' }
-      : { text: 'Press  ', keycap: 'H', suffix: `  to hide in the ${noun}`, tone: 'ready' };
+      : { text: 'Press  ', keycap: formatKeyLabel(state.keyMap.hide), suffix: `  to hide in the ${noun}`, tone: 'ready' };
   }
   if (state.veilPromptUrgent) {
     return mobile
@@ -1264,7 +1280,7 @@ export default function Hud({
           testId={mobile ? 'chargePromptTap' : undefined}
           visible={state.chargeVisible && hudLive}
           tone="urgent"
-          keycap={mobile ? 'JUMP' : 'SPACE'}
+          keycap={mobile ? 'JUMP' : formatKeyLabel(state.keyMap.jump)}
           reducedMotion={state.reducedMotion}
           progress={{ token: state.chargeToken, durationSeconds: CHARGE_WINDOW }}
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchJump(); } : undefined}
@@ -1300,7 +1316,7 @@ export default function Hud({
           id="veilOverloadPrompt"
           visible={state.veilOverloadVisible && hudLive}
           tone="urgent"
-          keycap="Q"
+          keycap={formatKeyLabel(state.keyMap.veilOverload)}
           text="Burn veil for a detection-proof escape"
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchVeilOverload(); } : undefined}
         />
@@ -1316,7 +1332,7 @@ export default function Hud({
           id="veilPrompt"
           visible={state.scentVeilPromptVisible && hudLive}
           tone={state.scentVeilPromptEnabled ? 'urgent' : 'disabled'}
-          keycap="G"
+          keycap={formatKeyLabel(state.keyMap.scentVeil)}
           text="Press  "
           suffix="  to break the scent trail"
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchScentVeil(); } : undefined}
@@ -1345,7 +1361,7 @@ export default function Hud({
           id="pickupPrompt"
           visible={state.canGrabThrowable && hudLive}
           tone="calm"
-          text="Press  E  to pick up the stone"
+          text={`Press  ${formatKeyLabel(state.keyMap.interact)}  to pick up the stone`}
         />
         {/* LUL-4528: Rock -- Vantage Climb prompt -- a contextual "something to do" row
             like pickupPrompt just above, not the terminal status row, so it's placed
@@ -1356,7 +1372,7 @@ export default function Hud({
           id="climbPrompt"
           visible={state.climbPromptVisible && hudLive}
           tone="calm"
-          text="Press  C  to climb the rock"
+          text={`Press  ${formatKeyLabel(state.keyMap.climb)}  to climb the rock`}
           keycap={mobile ? 'Climb' : undefined}
           onPointerDown={mobile ? (e) => { e.preventDefault(); actions?.triggerTouchClimb(); } : undefined}
         />
@@ -1370,7 +1386,7 @@ export default function Hud({
           id="chapelSanctuaryPrompt"
           visible={state.chapelSanctuaryPromptVisible && hudLive}
           tone="calm"
-          text="Press  E  for chapel sanctuary — shelter 15s for a free charm against the mist"
+          text={`Press  ${formatKeyLabel(state.keyMap.interact)}  for chapel sanctuary — shelter 15s for a free charm against the mist`}
         />
         {/* `hiding` is not a second flag: status only ever appears while hidden
             (LUL-35 pass 2 removed the `statusHiding` field, which the engine

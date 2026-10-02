@@ -3668,21 +3668,52 @@ let runMode = 'hold', toggleRunOn = false, sensMul = 1, invertY = false,
     reducedMotionSetting = false, captionsOn = false, captionSeq = 0;
 function motionReduced(){ return reduce || reducedMotionSetting; }
 
-// LUL-5805: keybind remapping, cheap slice -- movement only (forward/back/left/
-// right). Everything else (hide/interact/climb/jump/etc.) stays hardcoded per the
-// CEO's accepted cheap-slice scope (decisions/lul-5804-keybind-remapping-accepted-
-// 2026-10-02). `keyMap` holds the live KeyboardEvent `code` bound to each verb;
-// Arrow keys stay as a permanent hardcoded fallback alongside the remappable key
-// (same "never lock the player out" shape as runMode's hold/toggle default) so a
-// bad remap can never leave movement unreachable. The 3 WASD-reading call sites
-// (shuffleHide/log-crawl/main movement) read through this map instead of the
-// literal KeyW/A/S/D codes, so a remap takes effect immediately without touching
-// those call sites again.
-let keyMap = { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD' };
+// LUL-5805/LUL-5828: keybind remapping. `keyMap` holds the live KeyboardEvent
+// `code` bound to each of the 11 verbs -- the 4 movement verbs LUL-5805 shipped
+// (forward/back/left/right) plus the 7 action verbs LUL-5828 adds (interact/
+// veilOverload/scentVeil/hide/climb/shuffleHide/jump). Arrow keys stay as a
+// permanent hardcoded fallback alongside the remappable movement keys (same
+// "never lock the player out" shape as runMode's hold/toggle default) so a bad
+// remap can never leave movement unreachable. The 3 WASD-reading call sites
+// (shuffleHide/log-crawl/main movement) and the 7 action checks in the keydown
+// handler below all read through this map instead of literal KeyboardEvent
+// codes, so a remap takes effect immediately without touching those call sites
+// again.
+let keyMap = {
+  forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
+  interact: 'KeyE', veilOverload: 'KeyQ', scentVeil: 'KeyG', hide: 'KeyH',
+  climb: 'KeyC', shuffleHide: 'KeyR', jump: 'Space',
+};
+// LUL-5828: codes the keydown handler below already hardcodes outside keyMap
+// (fullscreen toggle, pause, run-toggle) -- binding a verb onto one of these
+// wouldn't just create an in-keyMap ambiguity, it would make that other action
+// unreachable, so they're rejected the same way a verb-vs-verb collision is.
+const KEYMAP_RESERVED_CODES = ['Escape', 'F11', 'Enter', 'ShiftLeft', 'ShiftRight'];
+let keyMapCollision = null, keyMapCollisionToken = 0;
 function setKeyMap(verb, code){
   if(!Object.prototype.hasOwnProperty.call(keyMap, verb) || typeof code !== 'string') return;
+  const collidesWithVerb = Object.keys(keyMap).find(v => v !== verb && keyMap[v] === code);
+  // LUL-5828 Q5: a rejected remap is a silent no-op without this -- pushing a
+  // transient keyMapCollision state is the Settings UI's only way to tell the
+  // player *why* the key they just pressed didn't take. UI-only (a settings-
+  // screen interaction, not an in-game refusal) so no audio cue, unlike
+  // veilOverloadDeniedCue/scentVeilDeniedCue just below, whose "denial state
+  // next to the thing it denies" shape this borrows, not their sound.
+  if(collidesWithVerb || KEYMAP_RESERVED_CODES.includes(code)){
+    const token = ++keyMapCollisionToken;
+    keyMapCollision = { verb, code };
+    pushState({ keyMapCollision });
+    later(() => {
+      if(keyMapCollisionToken !== token) return;   // superseded by a newer attempt
+      keyMapCollision = null;
+      pushState({ keyMapCollision });
+    }, 2000);
+    return;
+  }
+  keyMapCollisionToken++;   // any pending collision warning is stale once a remap succeeds
   keyMap = { ...keyMap, [verb]: code };
-  pushState({ keyMap });
+  keyMapCollision = null;
+  pushState({ keyMap, keyMapCollision });
 }
 
 // LUL-1194: any input skips the death cutscene straight to revealLoss(), on every
@@ -3723,7 +3754,7 @@ on(window, 'keydown', e => {
   // (landmarks >100u apart, Q7). The denied branch fires whenever the player is in
   // radius but the one-shot gate is already closed and mid-dwell isn't already
   // running, so a repeat E-press after the charm is granted still gets a tell.
-  if(e.code === 'KeyE' && playing && !paused){
+  if(e.code === keyMap.interact && playing && !paused){
     if(canPickup) pickup();
     else if(canBuyVeilCharm) buyVeilCharm();
     else if(chapelSanctuaryPromptVisible) startChapelSanctuary();
@@ -3747,7 +3778,7 @@ on(window, 'keydown', e => {
   // the denied branch is the Q5 refusal-feedback gap the CEO's acceptance
   // flagged as in-scope, not deferred -- pressing Q while hunted but
   // ineligible always gets a cue.
-  if(e.code === 'KeyQ' && playing && !paused && veilOverloadTriggerActive){
+  if(e.code === keyMap.veilOverload && playing && !paused && veilOverloadTriggerActive){
     if(veilCharge > VEIL_PROMPT_MIN_CHARGE && !veilOverloadUsedThisRound) activateVeilOverload();
     else veilOverloadDeniedCue();
   }
@@ -3758,22 +3789,22 @@ on(window, 'keydown', e => {
   // is already the mist veil's own hold key (veilHeld below), and both are eligible
   // in the same real-play frame (hunted + downwind + charge/stamina available), so
   // holding F would be ambiguous between two unrelated systems.
-  if(e.code === 'KeyG' && playing && !paused && scentVeilPromptActive){
+  if(e.code === keyMap.scentVeil && playing && !paused && scentVeilPromptActive){
     if(staminaCharge >= SCENT_VEIL_STAMINA_COST) breakScentVeil();
     else scentVeilDeniedCue();
   }
-  if(e.code === 'KeyH' && playing && !paused) toggleHidden();
+  if(e.code === keyMap.hide && playing && !paused) toggleHidden();
   // LUL-4528: Rock -- Vantage Climb. Tap, not held (mirrors KeyH's shape above).
-  if(e.code === 'KeyC' && playing && !paused) toggleRockClimb();
+  if(e.code === keyMap.climb && playing && !paused) toggleRockClimb();
   // LUL-3066: hide-reposition shuffle -- only while already hidden, off cooldown.
-  if(e.code === 'KeyR' && playing && !paused && hidden && shuffleCooldownAccum <= 0) shuffleHide();
+  if(e.code === keyMap.shuffleHide && playing && !paused && hidden && shuffleCooldownAccum <= 0) shuffleHide();
   // LUL-213: jumping stands you up first (same as any movement key already
   // does via the moveKey-breaks-hide check in tick()) -- a charge can still
   // catch a hidden player (STILL_DETECT_CUT never reaches 1), and jump is the
   // only way out of one, so it can't be blocked by being crouched.
   // e.repeat is dropped so holding Space down doesn't spam a jump every OS
   // auto-repeat tick; JUMP_DURATION is the only real cooldown once airborne.
-  if(e.code === 'Space' && playing && !paused && !e.repeat){
+  if(e.code === keyMap.jump && playing && !paused && !e.repeat){
     if(hidden) exitHide();
     beginJump();
     jumpPressed = true;   // consumed by updatePredators() this frame, then cleared in tick()
@@ -4542,9 +4573,16 @@ let hudState = {
   // and persists it to localStorage (see components/Hud.tsx).
   difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
-  // LUL-5805: keybind remapping cheap slice -- movement only, same
-  // engine-owns-it/React-persists-it split as runMode above.
-  keyMap: { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD' },
+  // LUL-5805/LUL-5828: keybind remapping, same engine-owns-it/React-persists-it
+  // split as runMode above. keyMapCollision is the Q5 refusal tell for a remap
+  // attempt that collided with another verb or a reserved key -- null when no
+  // collision is live, cleared ~2s after it's set (see setKeyMap above).
+  keyMap: {
+    forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
+    interact: 'KeyE', veilOverload: 'KeyQ', scentVeil: 'KeyG', hide: 'KeyH',
+    climb: 'KeyC', shuffleHide: 'KeyR', jump: 'Space',
+  },
+  keyMapCollision: null,
   // LUL-1043/LUL-2351: Embers. `embersBalance`/`embersTiers` are the
   // cross-run economy state -- engine-owned like difficulty above, synced
   // from localStorage by components/Hud.tsx via setEmbers() once on mount.

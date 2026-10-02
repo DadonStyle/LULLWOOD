@@ -5,11 +5,16 @@
 // movement in stepFrame()) all read through it, with Arrow keys kept as a permanent
 // hardcoded fallback so a bad remap can never lock the player out of movement.
 //
+// LUL-5828: full-scope follow-up (decisions/lul-5806-keybind-full-scope-accepted-
+// 2026-10-02) widens `keyMap` to the 7 action verbs too (interact/veilOverload/
+// scentVeil/hide/climb/shuffleHide/jump) and adds a reject-on-collision guard to
+// setKeyMap() -- see the second describe block below.
+//
 // Micro world (qaBuildScene default), no @fullmap -- this is an input-binding
 // change, not map geometry (same reasoning as e2e/beacon-hunter-deepwater-
 // mission.spec.ts's own header).
 import { test, expect } from './fixtures';
-import { boot, enter, qaHook } from './helpers';
+import { boot, enter, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
 const FIXED_DT = 0.02;
 
@@ -89,5 +94,79 @@ test.describe('keybind remapping -- movement cheap slice (LUL-5805)', () => {
     await enter(page);
     const keyMap = await qaHook(page, 'qaProbeKeyMap');
     expect(keyMap?.forward).toBe('KeyI');
+  });
+});
+
+test.describe('keybind remapping -- action verbs, full scope (LUL-5828)', () => {
+  test('remapping interact via the real Settings UI changes which key grabs a throwable', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
+    await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
+    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').click();
+    await page.keyboard.press('KeyJ');
+
+    const keyMap = await qaHook(page, 'qaProbeKeyMap');
+    expect(keyMap?.interact).toBe('KeyJ');
+
+    await page.locator('#settingsPanel button[aria-label="Close settings"]').click();
+
+    // Stage a real, live throwable -- the same real-play consuming system
+    // e2e/throwables.spec.ts uses -- and prove the OLD key no longer grabs it.
+    const stone = await qaHook(page, 'qaTeleportNearThrowable');
+    expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+    await page.keyboard.press('KeyE');
+    await expectRowHidden(page, 'throwPrompt');
+
+    // ...but the new key does: heldThrowable flips and #throwPrompt appears.
+    await page.keyboard.press('KeyJ');
+    await expectRowVisible(page, 'throwPrompt');
+  });
+
+  test('remapping a verb onto an already-bound key is rejected: keyMap unchanged, collision tell renders', async ({
+    page,
+  }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
+    await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
+    // veilOverload defaults to KeyQ; attempt to rebind it onto KeyW, already
+    // bound to `forward`.
+    await page.getByText('Veil overload (panic burn)').locator('xpath=following-sibling::button').click();
+    await page.keyboard.press('KeyW');
+
+    const keyMap = await qaHook(page, 'qaProbeKeyMap');
+    expect(keyMap?.veilOverload, 'rejected assignment must leave keyMap unchanged').toBe('KeyQ');
+    expect(keyMap?.forward, 'the row that already owned the key must be untouched too').toBe('KeyW');
+
+    // Q5: the refusal needs a positive tell, not silence -- rendered inline
+    // under the offending row (SettingsPanel.tsx), not a toast or console log.
+    await expect(page.getByText(/is already used by another action/i)).toBeVisible();
+  });
+
+  test('a remapped interact key is reflected in the templated pickupPrompt copy, with adminMode off', async ({
+    page,
+  }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    const adminMode = await page.evaluate(() => document.body.dataset.adminMode);
+    expect(adminMode, 'this assertion is only meaningful with the default (off) admin mode').toBe('0');
+
+    await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
+    await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
+    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').click();
+    await page.keyboard.press('KeyJ');
+    await page.locator('#settingsPanel button[aria-label="Close settings"]').click();
+
+    const stone = await qaHook(page, 'qaTeleportNearThrowable');
+    expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+    await qaHook(page, 'qaAdvance', 1);
+
+    await expectRowVisible(page, 'pickupPrompt');
+    await expect(page.locator('#pickupPrompt')).toContainText('Press  J  to pick up the stone');
+    await expect(page.locator('#pickupPrompt')).not.toContainText('Press  E');
   });
 });
