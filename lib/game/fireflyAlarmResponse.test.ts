@@ -54,3 +54,28 @@ test('never drops below baseline or exceeds the configured peak', () => {
   const boosted = fireflyAlarmBoost([onCenter, onCenter], [CLUSTER], PLAYER);
   assert.ok(boosted <= 1 + CONFIG.FIREFLY_ALARM_BOOST + 1e-9);
 });
+
+// LUL-5761 cheap slice: per-species range lookup (bear/lion).
+test('a bear alarms from beyond FIREFLY_ALARM_RANGE_LION, a lion at the same distance does not', () => {
+  const d = (CONFIG.FIREFLY_ALARM_RANGE_LION + CONFIG.FIREFLY_ALARM_RANGE_BEAR) / 2;
+  assert.ok(d > CONFIG.FIREFLY_ALARM_RANGE_LION && d < CONFIG.FIREFLY_ALARM_RANGE_BEAR);
+  const bear = { x: d, z: 0, kind: 'bear' };
+  const lion = { x: d, z: 0, kind: 'lion' };
+  assert.ok(fireflyAlarmBoost([bear], [CLUSTER], PLAYER) > 1);
+  assert.equal(fireflyAlarmBoost([lion], [CLUSTER], PLAYER), 1);
+});
+
+test('a lion outside its own range but inside the bear range still contributes nothing', () => {
+  const d = CONFIG.FIREFLY_ALARM_RANGE_LION + 10;
+  assert.ok(d < CONFIG.FIREFLY_ALARM_RANGE_BEAR);
+  const lion = { x: d, z: 0, kind: 'lion' };
+  assert.equal(fireflyAlarmBoost([lion], [CLUSTER], PLAYER), 1);
+});
+
+test('a bear and a lion each alarm their own in-range cluster -- the max ramp wins per pair, not a shared range', () => {
+  const bearClose = { x: 10, z: 0, kind: 'bear' };
+  const lionFar = { x: CONFIG.FIREFLY_ALARM_RANGE_LION - 5, z: 0, kind: 'lion' };
+  const boosted = fireflyAlarmBoost([bearClose, lionFar], [CLUSTER], PLAYER);
+  const bearOnly = fireflyAlarmBoost([bearClose], [CLUSTER], PLAYER);
+  assert.ok(Math.abs(boosted - bearOnly) < 1e-9, 'bear (closer, larger ramp) should dominate the max');
+});
