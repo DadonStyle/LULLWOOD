@@ -109,6 +109,17 @@ test.describe('Beacon Roost Flush mission (LUL-5160)', () => {
     // kind too, not just plain 'flush' -- mirrors e2e/mission-flush.spec.ts's own guard test.
     await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'beaconRoostFlush', qaRoostIndex: 0 });
     await enter(page);
+    // LUL-5859: this kind's repositionBeaconHunterForMission() (engine/forest-engine.js)
+    // relocates a live, roaming beaconHunter wolf to within 50u of ROOSTS[0] -- well inside
+    // reach of ROOSTS[1] too at this seed's compressed inter-roost spacing. Without pinning
+    // the clock, the real RAF loop keeps ticking across every await below (page.evaluate/
+    // keyboard/mouse round-trips all cost real wall-clock ms), long enough for that wolf to
+    // wander into updateRoosts()'s ambient flush trigger for roost 1 BEFORE the player's own
+    // throw -- which puts roost 1 on cooldown and makes the deliberate throw below a no-op
+    // (the roostFlushDeniedCue() branch, not flushRoost()), so burstActive reads false. Same
+    // qaSetFixedStep()-cancels-the-real-RAF-loop fix LUL-5046 already established for
+    // e2e/tree-pathing.spec.ts's identical real-time-vs-simulated-time class of flake.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const mission = await qaHook(page, 'qaProbeMission');
     expect(mission?.kind).toBe('beaconRoostFlush');
@@ -118,6 +129,7 @@ test.describe('Beacon Roost Flush mission (LUL-5160)', () => {
     const roost1 = await qaHook(page, 'qaTeleportNearRoost', 1);
     expect(roost1?.i).toBe(1);
     await throwAtLockedTarget(page);
+    await qaHook(page, 'qaAdvance', 1);
 
     const roost1State = await qaHook(page, 'qaProbeRoostState', 1);
     expect(roost1State.burstActive, 'the player-thrown flush path must have actually fired').toBe(true);
