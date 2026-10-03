@@ -3920,6 +3920,10 @@ let touchVeil = false;
 
 // ---- Procedural audio (built on first entry) -----------------------------
 let audio = null, started = false, soundOn = true;
+// LUL-5829: predator-call/threat SFX gain, independent of the master soundOn mute --
+// Predator Audio slider in Accessibility settings. Internal unit is 0-1 WebAudio gain;
+// setPredatorVolume() converts from the Settings UI's 0-100 display units.
+let predatorVolume = 1;
 function noise(ctx, sec, brown){
   const len = Math.floor(ctx.sampleRate*sec), b = ctx.createBuffer(1, len, ctx.sampleRate), d = b.getChannelData(0);
   let last = 0;
@@ -3944,6 +3948,12 @@ function startAudio(){
   const master = ctx.createGain(); master.connect(ctx.destination);
   master.gain.setValueAtTime(0.0001, ctx.currentTime);
   master.gain.exponentialRampToValueAtTime(soundOn ? 0.6 : 0.0001, ctx.currentTime + 2);
+
+  // LUL-5829: predator-call/threat SFX route through this gain before master, so the
+  // Predator Audio slider can duck them independently of the soundOn master mute.
+  const predatorGain = ctx.createGain();
+  predatorGain.connect(master);
+  predatorGain.gain.value = predatorVolume;
 
   const conv = ctx.createConvolver(); conv.buffer = impulse(ctx, 2.4, 3.0);
   const rev = ctx.createGain(); rev.gain.value = 0.5; conv.connect(rev); rev.connect(master);
@@ -3986,7 +3996,7 @@ function startAudio(){
   const shimmer = ctx.createOscillator(); shimmer.type='triangle'; shimmer.frequency.value=1245;   // unease up high
   const shg = ctx.createGain(); shg.gain.value=0.012; shimmer.connect(shg); shg.connect(huntGain); shimmer.start();
 
-  audio = { ctx, master, wf, wg, dg, rg, huntGain, plfo, conv, foot: 0, twinkle: rnd(1.5,4), footBuf: noise(ctx, 0.3, false) };
+  audio = { ctx, master, predatorGain, wf, wg, dg, rg, huntGain, plfo, conv, foot: 0, twinkle: rnd(1.5,4), footBuf: noise(ctx, 0.3, false) };
   if (TOD_AUDIO.birdsGain > 0) scheduleBirdChirp();
 }
 function footstep(vol){
@@ -4407,11 +4417,11 @@ function announceCaption(kind, big, p){
 function predatorCall(kind, big, p, panVal){
   if(captionsOn) announceCaption(kind, big, p);
   if(!audio || !soundOn) return;
-  const { ctx, master, conv } = audio, t = ctx.currentTime;
+  const { ctx, predatorGain, conv } = audio, t = ctx.currentTime;
   const baseVol = big ? 1.0 : 0.6;
   const vol = p ? baseVol * callVolumeMul(Math.hypot(p.x - player.x, p.z - player.z)) : baseVol;
-  let dest = master;
-  if(panVal != null){ const pan = ctx.createStereoPanner(); pan.pan.value = Math.max(-1, Math.min(1, panVal)); pan.connect(master); dest = pan; }
+  let dest = predatorGain;
+  if(panVal != null){ const pan = ctx.createStereoPanner(); pan.pan.value = Math.max(-1, Math.min(1, panVal)); pan.connect(predatorGain); dest = pan; }
   if(kind === 'wolf'){                              // howl: gliding tone with vibrato
     const o=ctx.createOscillator(); o.type='sawtooth';
     o.frequency.setValueAtTime(300,t); o.frequency.linearRampToValueAtTime(560,t+0.4);
@@ -4455,11 +4465,11 @@ function predatorCall(kind, big, p, panVal){
 function investigateCue(p){
   p.investigateCueCount = (p.investigateCueCount || 0) + 1;   // LUL-5626: counted before the gate, assertable with soundOn:false
   if(!audio || !soundOn) return;
-  const { ctx, conv, master } = audio, t0 = ctx.currentTime;
+  const { ctx, conv, predatorGain } = audio, t0 = ctx.currentTime;
   const vol = 0.16 * callVolumeMul(Math.hypot(p.x - player.x, p.z - player.z));
   const pan = ctx.createStereoPanner();
   pan.pan.value = bearingPan(bearingOf(p.x, p.z, player.x, player.z, player.yaw));
-  pan.connect(master); pan.connect(conv);
+  pan.connect(predatorGain); pan.connect(conv);
   for(let i=0;i<2;i++){
     const t = t0 + i*0.55;
     const o=ctx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(120,t); o.frequency.exponentialRampToValueAtTime(95,t+0.4);
@@ -4470,14 +4480,14 @@ function investigateCue(p){
 // two quick snorts as it sniffs you out
 function sniff(){
   if(!audio || !soundOn) return;
-  const { ctx, master } = audio, t0 = ctx.currentTime;
+  const { ctx, predatorGain } = audio, t0 = ctx.currentTime;
   for(let i=0;i<2;i++){
     const t = t0 + i*0.22;
     const nb=ctx.createBufferSource(); nb.buffer=noise(ctx,0.18,false);
     const bp=ctx.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=1.2;
     bp.frequency.setValueAtTime(650,t); bp.frequency.linearRampToValueAtTime(1700,t+0.12);
     const g=ctx.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.16,t+0.03); g.gain.exponentialRampToValueAtTime(0.0001,t+0.16);
-    nb.connect(bp); bp.connect(g); g.connect(master); nb.start(t); nb.stop(t+0.18);
+    nb.connect(bp); bp.connect(g); g.connect(predatorGain); nb.start(t); nb.stop(t+0.18);
   }
 }
 // the bite hit
@@ -4817,6 +4827,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // LUL-5805: exposes the live keyMap so a test can assert a remap (via setKeyMap()
   // / the Controls settings UI) actually changed which key moves the player.
   window.ForestEngine.qaProbeKeyMap = function(){ return { ...keyMap }; };
+  // LUL-5829: exposes the real predatorGain WebAudio node's current .value (not just
+  // the stored predatorVolume setting) so a test can assert setPredatorVolume() actually
+  // changed the gain stage predator-call/threat SFX route through, not only React state.
+  window.ForestEngine.qaProbePredatorVolume = function(){ return audio && audio.predatorGain ? audio.predatorGain.gain.value : predatorVolume; };
   // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
   // "this world point stays on-canvas" for both the player arrow (which calls
   // w2m(player.x, player.z) in drawMinimap()) and the objective marker (which
@@ -7666,6 +7680,14 @@ function toggleSound(){
   if(audio) audio.master.gain.setTargetAtTime(soundOn ? 0.6 : 0.0001, audio.ctx.currentTime, 0.1);
   pushState({ soundOn });
 }
+// LUL-5829: Predator Audio slider -- ducks predator-call/threat SFX independently of
+// the soundOn master mute. `v` is 0-1 WebAudio gain; the Settings UI deals in 0-100
+// display units and converts at this boundary (mirrors setPace/setFog above).
+function setPredatorVolume(v){
+  predatorVolume = Math.max(0, Math.min(1, v));
+  if(audio) audio.predatorGain.gain.setTargetAtTime(predatorVolume, audio.ctx.currentTime, 0.05);
+  pushState({ predatorVolume: predatorVolume * 100 });
+}
 function regenMap(){ if(!canRegenMap(runState())) return; generateMap((Math.random()*1e9)>>>0); }
 
 // LUL-26: difficulty + accessibility actions. Mirrors setPace/setFog above --
@@ -9255,7 +9277,9 @@ tick();
            // LUL-2558
            setProgression,
            // LUL-5820 + LUL-3295
-           setLeaderboardRecord };
+           setLeaderboardRecord,
+           // LUL-5829
+           setPredatorVolume };
 }
 
 function dispose() {

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 import GameLoader from "@/components/GameLoader";
 
@@ -99,6 +100,36 @@ export default function Home() {
             On a phone or tablet the same actions are on screen: twin sticks
             to move and look, and buttons for jump, hide, veil and lift.
           </p>
+        </section>
+        <section>
+          <h2>Screenshots</h2>
+          <p>
+            The forest at night, rendered in-engine (no HUD, no admin
+            overlay) — this is what the game actually looks like.
+          </p>
+          <div className="about-gallery">
+            <Image
+              src="/screenshots/lullwood-night-forest-pine-trees.png"
+              alt="Low-poly pine forest at night in Lullwood, snow-dusted ground and a rocky outcrop under a starfield"
+              width={3840}
+              height={2160}
+              sizes="(min-width: 640px) 592px, 100vw"
+            />
+            <Image
+              src="/screenshots/lullwood-dense-pine-forest-snow.png"
+              alt="Dense stand of pine trees in Lullwood's night forest, seen from ground level near a snowbank"
+              width={3840}
+              height={2160}
+              sizes="(min-width: 640px) 592px, 100vw"
+            />
+            <Image
+              src="/screenshots/lullwood-forest-rock-outcrop-night.png"
+              alt="A snow-covered rock outcrop breaking up the tree line in Lullwood's forest at night"
+              width={3840}
+              height={2160}
+              sizes="(min-width: 640px) 592px, 100vw"
+            />
+          </div>
         </section>
         <section>
           <h2>What makes it different</h2>
