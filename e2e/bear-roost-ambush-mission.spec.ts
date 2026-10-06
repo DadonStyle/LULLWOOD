@@ -76,14 +76,14 @@ test.describe('Bear Roost Ambush mission (LUL-5456)', () => {
     // roostIndex check applies to this kind too, not just 'flush'/'lionRoostFlush'.
     await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'bearRoostAmbush', qaRoostIndex: 0 });
     await enter(page);
-    // LUL-5859: same real-time-vs-simulated-time race LUL-5644 already fixed for this
-    // file's own first test above and cb288c8 fixed for beacon-/lion-roost-flush-mission
-    // .spec.ts's identical guard tests -- the real RAF loop ticks across every await below
-    // long enough for the default roaming predator roster to wander into updateRoosts()'s
-    // ambient flush trigger for roost 1 before the player's own deliberate throw, putting
-    // it on cooldown and turning the throw into a no-op (roostFlushDeniedCue(), not
-    // flushRoost()), so burstActive reads false. This test was missed when LUL-5644
-    // patched the first test in this same file for the exact same precondition.
+    // LUL-5859: same real-time-vs-simulated-time race e2e/lion-roost-flush-mission.spec.ts's
+    // own guard test had -- repositionBeaconHunterForMission() drops the live bear within 50u
+    // of ROOSTS[0], well inside reach of ROOSTS[1] too at this seed's compressed inter-roost
+    // spacing. Without pinning the clock, the real RAF loop keeps ticking across every await
+    // below, long enough for the bear to wander into updateRoosts()'s ambient flush trigger
+    // for roost 1 BEFORE the player's own throw -- which puts roost 1 on cooldown and makes
+    // the deliberate throw below a no-op (roostFlushDeniedCue(), not flushRoost()), so
+    // burstActive reads false.
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const mission = await qaHook(page, 'qaProbeMission');

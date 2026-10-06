@@ -101,36 +101,34 @@ test.describe('keybind remapping -- action verbs, full scope (LUL-5828)', () => 
   test('remapping interact via the real Settings UI changes which key grabs a throwable', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
-    // LUL-5859: without a pinned clock, canGrabThrowable's per-frame recompute (read by
-    // #throwPrompt below) depends on the real RAF loop landing at least one frame inside
-    // expectRowHidden/expectRowVisible's real 3s timeout -- same real-time-vs-simulated-
-    // time race class LUL-5046 diagnosed for e2e/tree-pathing.spec.ts, just surfacing here
-    // as a starved frame on a contended rig instead of a wandering predator. Same remedy
-    // as the sibling 'forward' remap test above: park the RAF loop and drive a known
-    // number of deterministic steps after each key press instead of racing real time.
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
+    // All Settings-panel interactions use a synthetic .evaluate() click, same
+    // as every other spec that opens this panel (e.g. chapel-sanctuary.spec.ts).
+    // A real Playwright .click() dispatches a genuine mousedown outside the
+    // locked canvas element, which releases pointer lock and -- via the
+    // pointerlockchange handler, engine/forest-engine.js:3896 -- pauses the
+    // run (setPaused(true)). Nothing in this test re-locks afterwards, so the
+    // `playing && !paused` gate on the interact handler (:3817) would block
+    // grabThrowable() for *any* key, remapped or not.
     await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
     await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
-    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').click();
+    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').evaluate((el) => (el as HTMLElement).click());
     await page.keyboard.press('KeyJ');
 
     const keyMap = await qaHook(page, 'qaProbeKeyMap');
     expect(keyMap?.interact).toBe('KeyJ');
 
-    await page.locator('#settingsPanel button[aria-label="Close settings"]').click();
+    await page.locator('#settingsPanel button[aria-label="Close settings"]').evaluate((el) => (el as HTMLElement).click());
 
     // Stage a real, live throwable -- the same real-play consuming system
     // e2e/throwables.spec.ts uses -- and prove the OLD key no longer grabs it.
     const stone = await qaHook(page, 'qaTeleportNearThrowable');
     expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
     await page.keyboard.press('KeyE');
-    await qaHook(page, 'qaAdvance', 1);
     await expectRowHidden(page, 'throwPrompt');
 
     // ...but the new key does: heldThrowable flips and #throwPrompt appears.
     await page.keyboard.press('KeyJ');
-    await qaHook(page, 'qaAdvance', 1);
     await expectRowVisible(page, 'throwPrompt');
   });
 
@@ -161,22 +159,22 @@ test.describe('keybind remapping -- action verbs, full scope (LUL-5828)', () => 
   }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
-    // LUL-5859: qaAdvance() below requires qaSetFixedStep() to run first (engine/
-    // forest-engine.js throws otherwise) -- this test never called it, so the qaAdvance()
-    // below could never have passed.
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const adminMode = await page.evaluate(() => document.body.dataset.adminMode);
     expect(adminMode, 'this assertion is only meaningful with the default (off) admin mode').toBe('0');
 
     await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
     await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
-    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').click();
+    await page.getByText('Interact / pick up').locator('xpath=following-sibling::button').evaluate((el) => (el as HTMLElement).click());
     await page.keyboard.press('KeyJ');
-    await page.locator('#settingsPanel button[aria-label="Close settings"]').click();
+    await page.locator('#settingsPanel button[aria-label="Close settings"]').evaluate((el) => (el as HTMLElement).click());
 
     const stone = await qaHook(page, 'qaTeleportNearThrowable');
     expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+    // LUL-5859/#1009: qaAdvance() below requires qaSetFixedStep() to run first (engine/
+    // forest-engine.js throws otherwise) -- this test never called it, so the qaAdvance()
+    // below could never have passed.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', 1);
 
     await expectRowVisible(page, 'pickupPrompt');
