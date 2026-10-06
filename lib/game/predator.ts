@@ -181,6 +181,15 @@ export const SCENT_LOCK_AVOID_COMMIT_FLOOR = 0.05; // seconds; just above zero s
 // push, the LUL-387 blind-chase catch exemption, the Scent Veil trigger) keeps reading
 // "locked" instead of "expired" for one more tick.
 
+// LUL-5911: gate the refloor on `> SCENT_LOCK_AVOID_COMMIT_FLOOR`, not `> 0`. commitT
+// (and so avoidCommitActive) can be renewed indefinitely by repeated
+// pickCommittedAvoidDirection calls when a predator stays pinned against persistent
+// geometry -- a tree line the dense full map has room for but the micro QA world
+// (LUL-2377) does not. With `> 0` the floor value re-floors itself every few ticks for as
+// long as avoidCommitActive stays true, permanently starving shouldDowngradeChase /
+// shouldGiveUpChase (both gated on scentLock<=0) -- "defer expiry during the collision
+// window" became "disable expiry". Gating on the floor spends the one-tick grace once per
+// real crossing and lets scentLock actually reach <=0 on the next tick either way.
 export function tickTimers(
   t: PredatorTickTimers,
   dt: number,
@@ -188,7 +197,7 @@ export function tickTimers(
 ): PredatorTickTimers {
   const decayedScentLock = t.scentLock > 0 ? t.scentLock - dt : t.scentLock;
   const scentLock =
-    avoidCommitActive && t.scentLock > 0 && decayedScentLock <= 0
+    avoidCommitActive && t.scentLock > SCENT_LOCK_AVOID_COMMIT_FLOOR && decayedScentLock <= 0
       ? SCENT_LOCK_AVOID_COMMIT_FLOOR
       : decayedScentLock;
   return {
