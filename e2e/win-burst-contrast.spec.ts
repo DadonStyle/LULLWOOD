@@ -89,6 +89,19 @@ const CAPTURES: { totalElapsed: number; label: string }[] = [
 ];
 
 async function assertBurstContrastAcrossLifetime(page: Page) {
+  // LUL-5900: pin the leaderboard-derived sky balloon/tree tint (LUL-5820/
+  // LUL-3295) to 'hidden' instead of leaving it on whatever the real
+  // useLeaderboardRecord() fetch resolves to -- a populated or even 'empty'
+  // record draws a bright cream balloon (skyBalloon.ts's
+  // 'rgba(255, 248, 230, 0.92)' body) 40deg across the sky from the moon,
+  // which the pickup cinematic's camera-tilts-up-to-follow-the-child framing
+  // can bring into frame; the post pass's bloom bright-pass (threshold 0.60,
+  // engine/forest-engine.js:7924) then blurs that into the screen-centre
+  // pixel this test reads, washing out the measured deficit regardless of
+  // whether this diff's own burst materials changed at all. Goes through the
+  // same real setLeaderboardRecord() the React effect calls (qaSetLeaderboardRecord,
+  // engine/forest-engine.js:5020), not a fake-state shortcut.
+  await qaHook(page, 'qaSetLeaderboardRecord', 'hidden', null);
   await qaHook(page, 'qaTeleportNearBaby');
   await page.waitForTimeout(300);
   await qaHook(page, 'qaSetFixedStep', FIXED_DT);
