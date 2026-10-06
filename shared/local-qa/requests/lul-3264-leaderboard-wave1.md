@@ -7,7 +7,7 @@ viewports: [desktop-1280x720, pixel5-landscape-727x393, iphone-se-landscape-667x
 preconditions: []
 hooks: []
 steps:
-  - boot seed=20260718
+  - boot qaHooks seed=20260718
   - dom "#gate" visible
   - snap gate-with-leaderboard
 expected:
