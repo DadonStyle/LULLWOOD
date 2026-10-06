@@ -16,6 +16,7 @@ import {
   pickRoamWaypoint,
   predatorSeparationPush,
   rollSniffs,
+  SCENT_LOCK_AVOID_COMMIT_FLOOR,
   shouldDowngradeChase,
   shouldGiveUpChase,
   shouldRevertInvestigateToChase,
@@ -190,6 +191,36 @@ test('tickTimers has no state/mode input -- it decays the same way regardless of
   timers = tickTimers(timers, 0.6);
   timers = tickTimers(timers, 0.6);
   assert.equal(timers.scentLock < 0, true); // expired before a third check would even run
+});
+
+test('tickTimers clamps scentLock to the avoid-commit floor instead of crossing to zero when avoidCommitActive', () => {
+  const out = tickTimers({ scentLock: 0.5, chargeCooldown: 0.5 }, 1, true);
+  assert.equal(out.scentLock, SCENT_LOCK_AVOID_COMMIT_FLOOR);
+  assert.equal(out.chargeCooldown, -0.5); // chargeCooldown is unaffected by avoidCommitActive
+});
+
+test('tickTimers with avoidCommitActive does not re-arm a scentLock that was already at or below zero', () => {
+  const out = tickTimers({ scentLock: 0, chargeCooldown: 3 }, 1, true);
+  assert.equal(out.scentLock, 0); // not locked entering this tick -- nothing to protect
+});
+
+test('tickTimers with avoidCommitActive does not floor a decay that stays well above zero', () => {
+  const out = tickTimers({ scentLock: 5, chargeCooldown: 3 }, 1, true);
+  assert.equal(out.scentLock, 4); // floor only engages on the tick that would cross to <=0
+});
+
+test('tickTimers resumes unconditional decay once avoidCommitActive goes false again', () => {
+  let timers = { scentLock: 0.5, chargeCooldown: 0 };
+  timers = tickTimers(timers, 1, true);
+  assert.equal(timers.scentLock, SCENT_LOCK_AVOID_COMMIT_FLOOR); // held at the floor mid-commit
+  timers = tickTimers(timers, 1, false);
+  assert.equal(timers.scentLock < 0, true); // commit ended -- decay resumes and crosses zero normally
+});
+
+test('tickTimers omitting avoidCommitActive is byte-identical to passing false (default param, regression guard)', () => {
+  const withDefault = tickTimers({ scentLock: 0.5, chargeCooldown: 0.5 }, 1);
+  const explicitFalse = tickTimers({ scentLock: 0.5, chargeCooldown: 0.5 }, 1, false);
+  assert.deepEqual(withDefault, explicitFalse);
 });
 
 // ---- stepSniffLoop --------------------------------------------------------------
