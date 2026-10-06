@@ -31,6 +31,12 @@ test.describe('flush mission (LUL-5116)', () => {
   test('completes Flush when the marked roost is flushed by a player throw', async ({ page }) => {
     await boot(page, { qaHooks: true, qaMissionKind: 'flush', qaRoostIndex: 0 });
     await enter(page);
+    // LUL-5905: same real-time-vs-simulated-time race LUL-5859/LUL-5867 already fixed in
+    // every sibling roost-flush spec (lion/bear/beacon-roost-flush-mission.spec.ts) -- this
+    // file's own "ambient chase-proximity" test below already pins the clock for exactly
+    // this reason, but these two throw-only tests never did, so the real RAF loop keeps
+    // ticking across grabAThrowable()/throwAtLockedTarget()'s awaits on a contended rig.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const mission = await qaHook(page, 'qaProbeMission');
     expect(mission?.kind).toBe('flush');
@@ -93,6 +99,8 @@ test.describe('flush mission (LUL-5116)', () => {
   test('does not complete when a different (unmarked) roost is flushed by a player throw', async ({ page }) => {
     await boot(page, { qaHooks: true, qaMissionKind: 'flush', qaRoostIndex: 0 });
     await enter(page);
+    // LUL-5905: same unpinned-clock race as the "completes Flush" test above.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const mission = await qaHook(page, 'qaProbeMission');
     expect(mission?.roostIndex).toBe(0);
