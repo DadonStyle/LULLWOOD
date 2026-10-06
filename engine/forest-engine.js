@@ -2972,7 +2972,7 @@ function updatePredators(dt, noiseRadius, cryNoiseRadius, windAssist, rainfallNo
 
     // ticks in every state, so a lock set during `chase` has actually
     // expired by the time `roam` re-checks it (see lib/game/predator.ts)
-    const timers = tickTimers({ scentLock: p.scentLock, chargeCooldown: p.chargeCooldown }, dt);
+    const timers = tickTimers({ scentLock: p.scentLock, chargeCooldown: p.chargeCooldown }, dt, p.commitT > 0);
     p.scentLock = timers.scentLock; p.chargeCooldown = timers.chargeCooldown;
     // LUL-437: post-sniff re-detection grace, same unconditional-every-state
     // decay as the timers above -- not folded into tickTimers() itself since

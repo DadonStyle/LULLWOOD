@@ -169,9 +169,30 @@ export interface PredatorTickTimers {
   scentLock: number;
   chargeCooldown: number;
 }
-export function tickTimers(t: PredatorTickTimers, dt: number): PredatorTickTimers {
+// LUL-5897 (LUL-5859 cluster 3): scentLock must not cross to <=0 while a predator is
+// mid avoid-commit (pickCommittedAvoidDirection, lib/game/steer.ts, p.commitT > 0) --
+// doing so drops a chase to investigate mid-arc, and if a tree is still blocking
+// canSee() at that moment the predator never resumes closing (the pre-LUL-1091 symptom).
+// This only gates the *crossing*: once avoidCommitActive goes false again, unconditional
+// decay resumes next tick exactly as before -- it defers expiry during the collision
+// window, it does not disable expiry.
+export const SCENT_LOCK_AVOID_COMMIT_FLOOR = 0.05; // seconds; just above zero so every
+// scentLock>0 consumer (shouldDowngradeChase, shouldGiveUpChase, the LUL-5402 close-in
+// push, the LUL-387 blind-chase catch exemption, the Scent Veil trigger) keeps reading
+// "locked" instead of "expired" for one more tick.
+
+export function tickTimers(
+  t: PredatorTickTimers,
+  dt: number,
+  avoidCommitActive = false,
+): PredatorTickTimers {
+  const decayedScentLock = t.scentLock > 0 ? t.scentLock - dt : t.scentLock;
+  const scentLock =
+    avoidCommitActive && t.scentLock > 0 && decayedScentLock <= 0
+      ? SCENT_LOCK_AVOID_COMMIT_FLOOR
+      : decayedScentLock;
   return {
-    scentLock: t.scentLock > 0 ? t.scentLock - dt : t.scentLock,
+    scentLock,
     chargeCooldown: t.chargeCooldown > 0 ? t.chargeCooldown - dt : t.chargeCooldown,
   };
 }
