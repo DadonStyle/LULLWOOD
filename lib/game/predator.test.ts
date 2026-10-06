@@ -217,6 +217,15 @@ test('tickTimers resumes unconditional decay once avoidCommitActive goes false a
   assert.equal(timers.scentLock < 0, true); // commit ended -- decay resumes and crosses zero normally
 });
 
+test('tickTimers does not perpetually relock scentLock while avoidCommitActive stays true across many ticks', () => {
+  // LUL-5911: commitT (and so avoidCommitActive) can be renewed every AVOID_COMMIT_TIME
+  // window for as long as a predator stays pinned against persistent geometry -- this
+  // simulates that worst case directly rather than via commitT's own renewal logic.
+  let timers = { scentLock: 0.5, chargeCooldown: 0 };
+  for (let i = 0; i < 10; i++) timers = tickTimers(timers, 0.1, true);
+  assert.equal(timers.scentLock <= 0, true); // must have actually expired, not relatched at the floor
+});
+
 test('tickTimers omitting avoidCommitActive is byte-identical to passing false (default param, regression guard)', () => {
   const withDefault = tickTimers({ scentLock: 0.5, chargeCooldown: 0.5 }, 1);
   const explicitFalse = tickTimers({ scentLock: 0.5, chargeCooldown: 0.5 }, 1, false);
