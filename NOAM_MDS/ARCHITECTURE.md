@@ -2406,22 +2406,28 @@ Both were up at the time of writing (2026-09-13 23:03 IDT, box uptime 27 h, boot
 | unit | `~/.config/systemd/user/ollama.service` | `~/.config/systemd/user/ollama-cpu.service` |
 | listens | `127.0.0.1:11434` (loopback only) | `127.0.0.1:11435` (loopback only) |
 | models dir | `OLLAMA_MODELS=/mnt/hdd/ollama-data` (5.5 G) | `OLLAMA_MODELS=/mnt/hdd/ollama-cpu-data` (5.8 G) |
-| model | `hf.co/Qwen/Qwen3-8B-GGUF:Q5_K_M` (`1806628832da`, 5.9 GB on disk, 6.7 GB resident) | `qwen3-vl:8b` (`901cae732162`) + alias `lullwood-qa-tester:latest` (`202720341d3f`), 6.1 GB each, **one shared blob** |
-| hardware | RTX 2070 SUPER, 8192 MiB VRAM, driver 595.84 / CUDA 13.2 | CPU only — `CUDA_VISIBLE_DEVICES=-1`, `OLLAMA_NUM_GPU=0`, `OLLAMA_LLM_LIBRARY=cpu_avx2` |
-| measured speed | eval **~54.4 tok/s** (843 samples in the live log: p50 54.35, p90 54.80, max 55.06, only 2 below 40) | prefill **11.3–28.0 tok/s**; eval **4.0–5.4 tok/s** warm, 0.9–2.8 on the first request after a cold load. The "4.3–4.8 tok/s prompt eval" cluster is an artefact — see below |
+| model | `hf.co/Qwen/Qwen3-8B-GGUF:Q5_K_M` (`1806628832da`, 5.9 GB on disk) plus the alias **`qwen3-8b-8k`** (same weights, `num_ctx 8192` / `num_predict 2048` baked in, 6.2 GB resident, 100% GPU) — new callers use the alias (2026-10-06) | `qwen3-vl:8b` (`901cae732162`) + alias `lullwood-qa-tester:latest` (`202720341d3f`), 6.1 GB each, **one shared blob** |
+| hardware | RTX 2070 SUPER, 8192 MiB VRAM, driver **595.91.07** (kernel module and library match again since the 2026-10-06 reboot; before it `nvidia-smi` failed with an NVML version mismatch) | CPU only — `CUDA_VISIBLE_DEVICES=-1`, `OLLAMA_NUM_GPU=0`, `OLLAMA_LLM_LIBRARY=cpu_avx2` |
+| measured speed | eval **~54.4 tok/s** (843 samples in the live log: p50 54.35, p90 54.80, max 55.06, only 2 below 40); re-measured 2026-10-06 after the reboot: 46.7 tok/s at 8k (`qwen3-8b-8k`), 58.4 at 16k, **31.6 at 24k because 24k spills out of VRAM** | prefill **11.3–28.0 tok/s**; eval **4.0–5.4 tok/s** warm, 0.9–2.8 on the first request after a cold load. The "4.3–4.8 tok/s prompt eval" cluster is an artefact — see below |
 | idle unload | `OLLAMA_KEEP_ALIVE=10m` | `OLLAMA_KEEP_ALIVE=5m` (QA triage asks for `keep_alive: "20m"` per call) |
 | concurrency | `OLLAMA_MAX_LOADED_MODELS=1`, `OLLAMA_NUM_PARALLEL=1` | same |
 | effective cgroup | `MemoryMax=6G`, `MemoryHigh=infinity`, `MemorySwapMax=0`, `OOMScoreAdjust=200` | `MemoryHigh=10G`, `MemoryMax=11G`, `MemorySwapMax=0`, `OOMScoreAdjust=600` |
 | scheduling | `Nice=10`, `IOSchedulingClass=best-effort`/prio 6, **no `CPUWeight`** | `CPUWeight=25`, `Nice=10`, IO prio left at the default 4 |
 | restart | `Restart=on-failure`, `RestartSec=5` | `Restart=always`, `RestartSec=5` |
 | log file | `~/.paperclip/shared/logs/ollama-gpu.log` | `~/.paperclip/shared/logs/ollama-cpu.log` |
-| clients | the three `local-code` dispatchers | the local QA tester's `triage.py` |
+| clients | the `local-code` ask/code dispatchers (`num_ctx 16384`), the `local-research` scripts and the QA tester's escalation path (both `qwen3-8b-8k`), `qa-model-health`'s fix advice. The idle feature scout is paused for good (`local-code/FEATURE_SCOUT_PAUSED`) | the local QA tester's `triage.py`; probed hourly by `qa-model-health` |
 
 Nothing outside `local-code/`, `local-qa/`, `watchdog/` and the wiki's own docs references either port.
 
 ### GPU instance — `ollama.service`, port 11434
 
-Serves one 8B text model to the `local-code` toolkit and to the idle feature scout. It is meant to be resident all day, and currently is: `ollama ps` on 11434 shows the model at 6.7 GB, `100% GPU`, context 8192, expiry a few minutes out and constantly renewed by scout traffic.
+Serves one 8B text model to the `local-code` toolkit, the `local-research` scripts, the QA tester's escalation path and `qa-model-health`. **It is no longer resident all day**: the idle feature scout that used to renew it every few minutes is paused for good (crontab line commented out 2026-09-18; every scout script exits early while `local-code/FEATURE_SCOUT_PAUSED` exists, founder 2026-10-02), so the model loads on demand (~50 s cold, from `/mnt/hdd`) and unloads after `OLLAMA_KEEP_ALIVE=10m`.
+
+**Changed 2026-10-02 → 10-06 — read before calling this instance:**
+
+- **The HF tag carries `num_ctx 40960` in its own params.** A request that does not pass `num_ctx` loads a 40k context, whose KV cache spills ~2.5 GB into system RAM, pins the unit at its 6G `MemoryMax`, and the load hangs with the API unresponsive (it happened 2026-10-02: 0.09 tok/s, then no answer). Hence the alias **`qwen3-8b-8k`** (`num_ctx 8192`, `num_predict 2048`), which every new caller uses, and `ollama.service.d/context.conf`: `OLLAMA_CONTEXT_LENGTH=8192`, `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, `OLLAMA_LOAD_TIMEOUT=2m`.
+- **16384 is the largest context that stays 100% on the card** (measured 2026-10-06: `size_vram == size`, 58.4 tok/s). At 24576, `/api/ps` shows `size_vram` 6.82 GB of `size` 8.06 GB, 31.6 tok/s, with the unit at its memory cap. The "VRAM is flat across num_ctx" note in `local-code/ollama_code_common.py` was Ollama silently offloading layers to the CPU, which is why speed fell as the window grew; that file's `NUM_CTX` went 24576 → 16384 on 2026-10-06.
+- **`ollama-health.timer`** (user unit, every 5 min, `~/.local/bin/ollama-health`, log `~/.local/state/ollama-health/health.log`) restarts either instance whose `/api/version` fails twice in a row. systemd's `Restart=` never fires on a hung load, because the process never exits.
 
 Its `Description=` is **stale**: it still reads "Ollama local model server (CPU-only, no root available -- see systems/local-ollama.md)", and the unit body's comment block repeats the claim. There is a working NVIDIA stack now and the model runs fully on the card.
 
@@ -2455,7 +2461,15 @@ Serves the vision model that the nightly local-QA run uses to judge screenshots.
 
 `lullwood-qa-tester` is **not a second model** — it is a Modelfile alias over the same `qwen3-vl:8b` weights with the QA rulebook baked into `SYSTEM`. The proof is on disk: two 6.1 GB tags occupy 5.8 G total, and the alias's `FROM` points at a blob path under `/mnt/hdd/ollama-cpu-data/blobs/`. The baked rulebook is the founder's numbered list of 2026-09-08 (no HUD overlap on desktop *and* landscape phone; win and lose sequences tested every night on both; "could not verify" is a valid and required result; the deterministic audit decides which boxes overlap and whether a state was reached, and the model's severity never overrides it). Only one of the two tags can be loaded at a time (`OLLAMA_MAX_LOADED_MODELS=1`); the tester always loads the alias.
 
-Never point the QA tester at 11434 — it would evict the scout model and take the card.
+The tester's own calls stay on 11435. **One deliberate exception since 2026-10-06:** when the CPU model is stuck (its call errors or times out, or every pass yields no usable JSON), `triage.py`'s `ask_model()` escalates that one case to 11434 as **`qwen3-8b-8k` with thinking on, text-only**: the same prompt and evidence plus the CPU model's draft, never the screenshot, and the model is told so. If 11434 is down too, the CPU result stands. Disable with `LOCAL_QA_ESCALATE=0`. The old reason for keeping it off 11434 (evicting the scout's resident model) is gone with the scout.
+
+**`qa-model-health`** (cron `5 * * * *`, `local-qa/bin/qa-model-health`, output `local-qa/health/latest.md` + `history.log`) checks this instance hourly:
+- the unit is active and has not restarted, and `/api/version` and `/api/tags` answer
+- memory is under 90% of `MemoryMax`, and the log has no kill/OOM/load-failure line in the last hour
+- a running QA job's log has moved within 120 min
+- a 2-token probe works when the model is already loaded (never during QA, and it never loads 6 GB just to test)
+
+On a problem it asks the GPU Qwen (thinking on) for a diagnosis and fix commands, falls back to rule-based advice if 11434 cannot answer, and emails the founder: once per distinct problem, repeated after 6 h, plus a "recovered" mail. It only suggests and never changes anything. It sets `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS` itself (the cron gotcha in "The crontab" below). Without them it reported "service down" every hour on 2026-10-06 until fixed.
 
 **The prompt-eval numbers look bimodal and are not.** Of the 78 `prompt eval time` samples in `ollama-cpu.log`, 44 read `/ 1 tokens` — e.g. `222.39 ms / 1 tokens (222.39 ms per token, 4.50 tokens per second)`. That is a prompt already entirely in the KV cache, where llama.cpp divides a single ~210 ms CPU decode step by one token: it is the CPU's per-token *generation* latency wearing a prefill label, and the same tasks report 4.4–4.8 tok/s generation. Real batched prefill (the 34 multi-token samples, 211–3347 tokens) runs **11.3–28.0 tok/s**. Image-bearing calls are in the fast half, not the slow one: the `process_mtmd` requests prefill 2.4–2.6k tokens at 18.9–23.8 tok/s. Do not read the 4.x cluster as "images are slow".
 
@@ -2777,23 +2791,31 @@ Finding kinds emitted — exactly thirteen: `overlap`, `offscreen`, `tiny-text-m
 
 ### `request-runner.mjs` and `requests/`
 
-The channel by which any agent asks for a scenario the fixed nightly checks do not cover. Grammar is `REQUESTING-A-TEST.md` "Mechanism 1": a markdown file in `local-qa/requests/` with YAML front matter (`ticket`, `title`, `requested_by`, `branch`, `viewports`, `steps`, `expected` all required — the runner rejects a file missing any one with `NEEDS-GRAMMAR missing key <k>`; optional `commit`, `preconditions`, `hooks`, `screenshots`, `model_questions`, `priority_if_fails`, `expires`, `status`). Current live requests (6, the `.bak-*` copies are not `*.md` and are ignored): `LUL-1194-death-sequence-desktop-mobile.md`, `LUL-1614-win-sequence-full-loop.md`, `lul-2187-mission-panel-overlap.md`, `lul-2230-scent-trail.md`, `lul-2307-first-encounter-hints.md`, `lul-2351-embers-shop.md`.
+The channel by which any agent asks for a scenario the fixed nightly checks do not cover. Grammar is `REQUESTING-A-TEST.md` "Mechanism 1": a markdown file in `local-qa/requests/` with YAML front matter (`ticket`, `title`, `requested_by`, `branch`, `viewports`, `steps`, `expected` all required — the runner rejects a file missing any one with `NEEDS-GRAMMAR missing key <k>`; optional `commit`, `preconditions`, `hooks`, `screenshots`, `model_questions`, `priority_if_fails`, `expires`, `status`). Live requests: **68** on 2026-10-06; the `.bak-*` copies are not `*.md` and are ignored.
 
-The runner has its **own** viewport names, which are not the audit's: `desktop-1280x720`, `desktop-1920x1080`, `pixel5-landscape-727x393`, `iphone-se-landscape-667x375`. Writing `mobile-pixel5-landscape` in a request yields a per-viewport `NEEDS-GRAMMAR unknown viewport`.
+**The grammar now lives in the repo: `scripts/qa-request-grammar.mjs` (PR #1021, 2026-10-06).** CI runs `scripts/check-qa-requests.mjs` over `shared/local-qa/requests/`, so a request the tester cannot run fails its own PR. The runner imports the same module from its release/next checkout (`qa-regression/vendor/lullwood`), with an inline copy as the fallback. History:
+- **The crash:** a single malformed request (`lul-3150`, single-quoted hook args → uncaught `JSON.parse` throw) killed the runner and silently skipped every request sorted after it. That was 47 of 68, from 2026-09-23 to 2026-10-06, including LUL-3295's tree-tint check.
+- **The unsupported steps:** 42 more requests used step forms the runner did not know.
 
-Step verbs: `boot qaHooks [full] [seed=N]` (without `full` it appends `&qaWorld=micro`), `enter`, `hook qaXxx(args) as name`, `key <Code> [hold ms]`, `tap`/`touch`, `click <sel>`, `drag leftStick|rightStick|canvas dx,dy`, `wait_for <expr> within <ms>`, `poll <expr> every <ms> until <expr> within <ms>`, `sleep <=500`, `snap <name>`, `record <expr> as <var>`. Assertions: `dom … visible|hidden|detached|count N|text contains "…"|attr x = y`, `style …`, `var … `, `no-console-errors`, `no-overlap <snap>`.
+A parse error now marks only that request `NEEDS-GRAMMAR`, and the runner warns if fewer results than requests were written. After the grammar extension, 58 of 68 parse; the rest are done, expired or target a feature branch.
+
+The runner has its **own** viewport names, which are not the audit's: `desktop-1280x720`, `desktop-1920x1080`, `pixel5-landscape-727x393`, `iphone-se-landscape-667x375`. Since 2026-10-06 the names agents actually used resolve as aliases (`pixel5`, `mobile-727x393-landscape`, `mobile-pixel5-landscape-727x393`, `iphone-se`, `mobile-iphone-se-landscape-667x375`, `desktop`, …). Anything else is a per-viewport `NEEDS-GRAMMAR unknown viewport`, and the error lists the known names.
+
+Step verbs: `boot qaHooks [full] [seed=N] [qaMissionKind=…] [qaRoostIndex=…] [qaHour=…] [qaWorld=…] [qaNoRender=…]` (without `full` it appends `&qaWorld=micro`), `enter`, `hook qaXxx(args) as name` (strict JSON args, or a JS argument list evaluated against recorded vars: `'lion'`, `{kind:'bramble'}`, `idx`), `key <Code> [hold ms]`, `key <Code> down|up`, `tap`/`touch`, `click <sel>`, `drag leftStick|rightStick|canvas dx,dy`, `wait_for <expr> within <ms>`, `poll <expr> every <ms> until <expr> within <ms>`, `sleep <=10000`, `dom <sel> visible|hidden|detached` (as a step: waits up to 5 s), `snap <name>`, `record <expr> as <var>`. Assertions: `dom … visible|hidden|detached|count N|text contains "…"|text does not contain "…"|attr x = y|attr x contains "…"`, `style …`, `expr …` (an expression may name recorded vars directly), `var <dotted.path> =|>|<|>=|<=|differs from|is truthy|falsy|between`, `no-console-errors`, `no-overlap <snap>`. Synonyms normalised first: `wait N`, `key-down/-up/-press`, `==`, `!=`, `is <literal>`, `not-visible`, a trailing `(at snap)`.
 
 Per-request status, in the order the runner actually resolves it: front-matter `NEEDS-GRAMMAR` → `SKIPPED-DONE` (`status: done`) → `SKIPPED-EXPIRED` (`expires` in the past) → `COULD-NOT-VERIFY` (`branch` is not `release/next` — the rig only builds that branch) → step/assertion `NEEDS-GRAMMAR` → then, per viewport during execution, `NEEDS-HOOK` (a `qaXxx` hook the build does not expose — this aborts the whole request, not just the viewport), `COULD-NOT-VERIFY` (the 90 s per-viewport budget ran out mid-steps), `FAIL`, `PASS`. `NEEDS-HOOK` is therefore resolved *after* the skips, not before them.
 
 One documented status is **not implemented**: `REQUESTING-A-TEST.md` advertises `commit: abc1234` → `SKIPPED-OLD-BUILD` if the nightly build is older, but neither `commit` nor `SKIPPED-OLD-BUILD` appears anywhere in `request-runner.mjs`. The key is silently ignored.
 
-Gotchas baked into the parser: a `#` comment needs **two or more** leading spaces, because one space + `#` is a CSS id selector; `sleep` over 500 ms is rejected outright (polls, not sleeps); Playwright evaluates a string as an expression and will not call a function value, so the runner builds a real `Function` via `wrapExpr` (this silently passed every `wait_for` before it was fixed on 2026-09-08).
+Gotchas baked into the parser: a `#` comment needs **two or more** leading spaces, because one space + `#` is a CSS id selector; `sleep` over 10 s is rejected (it was 500 ms until 2026-10-06; prefer `wait_for` for state); Playwright evaluates a string as an expression and will not call a function value, so the runner builds a real `Function` via `wrapExpr` (this silently passed every `wait_for` before it was fixed on 2026-09-08).
 
 Output is `<run>/requests/<id>.json`, one PNG per `snap`, and `summary.json`. Exit is always 0 — results are data; `triage.py` turns them into tickets.
 
 ### `triage.py` and the vision-model verdict flow
 
 Takes `scenario.json`, the Playwright `results.json` (or `-`), a report path, and `--post`. It is the only component that files tickets from a nightly run.
+
+**Ticket freeze (founder, 2026-10-05):** while `~/.paperclip/shared/NO_NEW_TICKETS` exists, `file_ticket()` here and in `pr-e2e-watch`, `file-build-failure.py`, the board-integrity cron (runs without `--post`), the watchdog router (without `--post`) and the weekly studio review all file **nothing**. They still run, log, write reports, and `pr-e2e-watch` still posts the PR `local-qa` PASS/FAIL status the release cuts need. The request-feedback comment on a requesting ticket now posts only when that request's result changed since the last comment (`state/request-feedback.json`).
 
 The split is deliberate: **deterministic findings are ticketed without the model at all** (`DETERMINISTIC_KINDS` = `state-unreached`, `rig`, `console-error`, `control-over-end-screen`, `video-black`, `timing`, `content`, `network-error`, `critical-page`), from per-kind templates plus the finding's own `detail`/`expected`/`actual` and the driver's state sequence. `critical-page` findings are routed to the **CEO** (`6b780916-…`, founder directive 2026-09-09), not the CTO. The model is used for only two things — prose and a fix suggestion on `overlap` cases, and four narrow yes/no questions on screenshots:
 
@@ -2999,7 +3021,7 @@ Other tmpfs mounts: `/run` 3.1 G, `/run/user/1000` 1.6 G.
 
 ### systemd user services with Linger=yes
 
-Everything runs as the unprivileged `noam` user. There is no root available for these services — `loginctl show-user noam` reports `Linger=yes`, which is what makes `/run/user/1000` and the user manager survive without a login, so the fleet starts at boot and keeps running after every SSH session closes. Unit files live in `~/.config/systemd/user/`.
+Everything below runs as the unprivileged `noam` user. (Root is available: the founder has sudo, used on 2026-10-02 to install the one system unit, `lullwood-leaderboard.service`, which runs as its own `lullwood-lb` user; see the leaderboard section and `services/leaderboard-db/README.md`.) For the user fleet — `loginctl show-user noam` reports `Linger=yes`, which is what makes `/run/user/1000` and the user manager survive without a login, so the fleet starts at boot and keeps running after every SSH session closes. Unit files live in `~/.config/systemd/user/`.
 
 Limits below are the **effective** values from `systemctl --user show`, i.e. after drop-ins:
 
@@ -3012,6 +3034,9 @@ Limits below are the **effective** values from `systemctl --user show`, i.e. aft
 | `searxng.service` | active | `127.0.0.1:8888` | none — default `OOMPolicy=stop`, `Nice=10` |
 | `pr-e2e-watch.service` + `.timer` | timer-driven, every 5 min | — | `MemoryMax=8G`, `MemorySwapMax=0`, `CPUWeight=25`, `Nice=10` |
 | `local-qa-ondemand.service` + `.timer` | timer-driven, every 20 min (**running now**) | — | `MemoryMax=8G`, `MemorySwapMax=0`, `CPUWeight=25`, `Nice=10` |
+| `ollama-health.service` + `.timer` | timer-driven, every 5 min (added 2026-10-02) | — | oneshot; restarts a hung Ollama instance |
+
+**After a reboot `pr-e2e-watch.timer` is inactive for the first ~10 minutes, by design** (verified after the 2026-10-06 reboot). It starts at boot, then the `@reboot` boot-check stops it ("only 134s since boot, letting the box settle"), and the periodic boot-check restarts it once uptime passes 600 s and at least 4096 MB are available. The same check stops it whenever `MemAvailable` drops under 4096 MB during the night, which happens most nights. That is not a fault.
 
 Note the ollama-cpu row: the **unit file** still says `MemoryHigh=9.2G` / `MemoryMax=10.5G`. Those values are dead — `memory-guard.conf` overrides them to 10G/11G. Read the effective values, not the unit.
 
@@ -3030,12 +3055,13 @@ The drop-ins under `*.service.d/` carry the real operational history and are wor
 
 ### The crontab
 
-`crontab -l` as `noam` is the studio's real scheduler — 17 entries, all verified live:
+`crontab -l` as `noam` is the studio's real scheduler — 17 active entries, re-verified after the 2026-10-06 reboot (every entry due since boot had run):
 
 | Schedule | Command | Purpose |
 |---|---|---|
 | `* * * * *` | `memory-pressure-guard` | user-space earlyoom (below) |
-| `*/2` | `local-code/bin/ollama-idle-feature-scout-cron` → `local-code/idle-scout-cron.log` | idle-time local-model feature scouting |
+| ~~`*/30`~~ | ~~`local-code/bin/ollama-idle-feature-scout-cron`~~ | **disabled** — commented out 2026-09-18 (5 failures, zero usable leads), paused for good 2026-10-02 (`FEATURE_SCOUT_PAUSED` guard in all three scout scripts) |
+| `5 * * * *` | `local-qa/bin/qa-model-health` → `local-qa/health/cron.log` | hourly RAM-Qwen health check, GPU-Qwen fix advice, founder email (2026-10-06) |
 | `*/10` | `watchdog/bin/watchdog-cron` | quota watchdog: check, self-test, revive, resume, unquiet |
 | `*/10` | `the_gate/bin/gate-integrity-check --post` → `the_gate/state/integrity-check.log` | Gate wrapper integrity |
 | `*/10` | `lullwood-boot-check` | restart anything that is down |
@@ -3065,7 +3091,7 @@ Its tag comment carries the provenance: `# lullwood-local-qa (replaces lullwood-
 
 **Gotcha:** cron on this box has no `pam_systemd` session line — `grep -c pam_systemd /etc/pam.d/cron` returns **0** — so `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` are *not* set for cron jobs. Any cron script that talks to `systemctl --user` must export them itself; `lullwood-boot-check` and that `systemd-run` line both do. `ram-cleanup-cron`'s header documents a version of this bug that silently disabled its own safety net.
 
-`/etc/cron.d/` holds only `e2scrub_all` and `.placeholder`.
+`/etc/cron.d/` holds only `e2scrub_all` and `.placeholder`. Root's daily cron has one studio entry: `/etc/cron.daily/lullwood-leaderboard-backup`, written by `services/leaderboard-db/install.sh`, which copies the leaderboard's hourly SQLite snapshot to `/mnt/hdd/backups/lullwood-leaderboard/` and keeps 14 days.
 
 ### memory-pressure-guard — the user-space earlyoom
 
