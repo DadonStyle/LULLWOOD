@@ -101,6 +101,14 @@ test.describe('keybind remapping -- action verbs, full scope (LUL-5828)', () => 
   test('remapping interact via the real Settings UI changes which key grabs a throwable', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-5859: without a pinned clock, canGrabThrowable's per-frame recompute (read by
+    // #throwPrompt below) depends on the real RAF loop landing at least one frame inside
+    // expectRowHidden/expectRowVisible's real 3s timeout -- same real-time-vs-simulated-
+    // time race class LUL-5046 diagnosed for e2e/tree-pathing.spec.ts, just surfacing here
+    // as a starved frame on a contended rig instead of a wandering predator. Same remedy
+    // as the sibling 'forward' remap test above: park the RAF loop and drive a known
+    // number of deterministic steps after each key press instead of racing real time.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
     await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
@@ -117,10 +125,12 @@ test.describe('keybind remapping -- action verbs, full scope (LUL-5828)', () => 
     const stone = await qaHook(page, 'qaTeleportNearThrowable');
     expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
     await page.keyboard.press('KeyE');
+    await qaHook(page, 'qaAdvance', 1);
     await expectRowHidden(page, 'throwPrompt');
 
     // ...but the new key does: heldThrowable flips and #throwPrompt appears.
     await page.keyboard.press('KeyJ');
+    await qaHook(page, 'qaAdvance', 1);
     await expectRowVisible(page, 'throwPrompt');
   });
 
@@ -151,6 +161,10 @@ test.describe('keybind remapping -- action verbs, full scope (LUL-5828)', () => 
   }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-5859: qaAdvance() below requires qaSetFixedStep() to run first (engine/
+    // forest-engine.js throws otherwise) -- this test never called it, so the qaAdvance()
+    // below could never have passed.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const adminMode = await page.evaluate(() => document.body.dataset.adminMode);
     expect(adminMode, 'this assertion is only meaningful with the default (off) admin mode').toBe('0');
