@@ -145,7 +145,10 @@ for (const viewport of VIEWPORTS) {
     });
 
     test('a first-sighted wolf shows its caption once', async ({ page }) => {
-      await boot(page, { qaHooks: true });
+      // LUL-5744: see ../hints.spec.ts's own version of this test -- pin daytime so
+      // fireflyGlow's evening/night-only ambient hint can't claim a third preemptive
+      // slot clearPreemptiveHints() isn't budgeted for.
+      await boot(page, { qaHooks: true, qaHour: 12 });
       await enterMobile(page);
       await qaHook(page, 'qaSetFixedStep', FIXED_DT);
       await clearPreemptiveHints(page);

@@ -171,6 +171,9 @@ test.describe('keybind remapping -- action verbs, full scope (LUL-5828)', () => 
 
     const stone = await qaHook(page, 'qaTeleportNearThrowable');
     expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+    // LUL-5859/#1009: qaAdvance() below requires qaSetFixedStep() to run first (engine/
+    // forest-engine.js throws otherwise) -- this test never called it, so the qaAdvance()
+    // below could never have passed.
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', 1);
 

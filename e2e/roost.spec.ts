@@ -98,6 +98,15 @@ test.describe('roost scare (LUL-4894)', () => {
   test('captionsOn=true: the first player-thrown flush ever shows the one-shot hint pill', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-5859: pin the clock before the Settings round-trips below (enableCaptions is 5
+    // separate real DOM interactions) -- without it the real RAF loop keeps ticking the
+    // default predator roster the whole time, long enough for one of them to wander into
+    // updateRoosts()'s ambient flush trigger for whichever roost qaTeleportNearRoost()
+    // picks below, putting it on cooldown before the player's own throw and making that
+    // throw a no-op (roostFlushDeniedCue(), not flushRoost()) -- so the roostThrowCue
+    // caption this test asserts on never fires, same class of flake LUL-5046 already
+    // diagnosed and fixed for e2e/tree-pathing.spec.ts.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await enableCaptions(page);
     await qaHook(page, 'qaResetHints');
 
@@ -107,6 +116,7 @@ test.describe('roost scare (LUL-4894)', () => {
 
     const caption = page.locator('#captionToast');
     await throwAtLockedTarget(page);
+    await qaHook(page, 'qaAdvance', 1);
 
     await expect(caption).toContainText('throw a stone at a roost to startle it');
   });
