@@ -76,6 +76,10 @@ export function normStep(s) {
 
 /** Synonyms agents write, rewritten to the canonical assertion grammar. */
 export function normAssertion(s) {
+  // A line that already ends in `is true|false` is a complete canonical expr assertion: the comparison
+  // rewrites below must not wrap it again (they turned `expr x > 0 is true` into `... (0 is true) is true`,
+  // a syntax error, on 17 requests in the first full run, 2026-10-07).
+  if (/^expr .+ is (true|false)$/.test(s)) return s.replace(/\s+\(at [\w-]+\)$/, '');
   return s
     .replace(/\s+\(at [\w-]+\)$/, '')
     .replace(/^dom (.+?) not-visible$/, 'dom $1 hidden')

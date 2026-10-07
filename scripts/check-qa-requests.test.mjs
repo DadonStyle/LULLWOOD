@@ -87,3 +87,10 @@ test('check() flags only requests the tester cannot run', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('an expr that already ends in `is true` is not rewritten again (17 requests broke on this)', () => {
+  assert.deepEqual(parseAssertion('expr FE.qaProbeScentTrail().points.length > 0 is true'),
+    { kind: 'expr', expr: 'FE.qaProbeScentTrail().points.length > 0', op: 'is', v: true });
+  assert.deepEqual(parseAssertion('expr a == b is false'), { kind: 'expr', expr: 'a == b', op: 'is', v: false });
+  assert.deepEqual(parseAssertion('expr during > before'), { kind: 'expr', expr: '(during) > (before)', op: 'is', v: true });
+});
