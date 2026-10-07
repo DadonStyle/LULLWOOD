@@ -7685,7 +7685,16 @@ function toggleSound(){
 // display units and converts at this boundary (mirrors setPace/setFog above).
 function setPredatorVolume(v){
   predatorVolume = Math.max(0, Math.min(1, v));
-  if(audio) audio.predatorGain.gain.setTargetAtTime(predatorVolume, audio.ctx.currentTime, 0.05);
+  if(audio){
+    // LUL-5915: two setTargetAtTime calls in quick succession (e.g. slider dragged
+    // 0 -> 65 with no settle) can corrupt Chromium's AudioParam automation timeline and
+    // leave .value pinned at the node's construction default. Anchor the timeline at the
+    // param's current value first so the new ramp always starts from a known point.
+    const g = audio.predatorGain.gain, t = audio.ctx.currentTime;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.setTargetAtTime(predatorVolume, t, 0.05);
+  }
   pushState({ predatorVolume: predatorVolume * 100 });
 }
 function regenMap(){ if(!canRegenMap(runState())) return; generateMap((Math.random()*1e9)>>>0); }
