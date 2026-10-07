@@ -2809,6 +2809,15 @@ One documented status is **not implemented**: `REQUESTING-A-TEST.md` advertises 
 
 Gotchas baked into the parser: a `#` comment needs **two or more** leading spaces, because one space + `#` is a CSS id selector; `sleep` over 10 s is rejected (it was 500 ms until 2026-10-06; prefer `wait_for` for state); Playwright evaluates a string as an expression and will not call a function value, so the runner builds a real `Function` via `wrapExpr` (this silently passed every `wait_for` before it was fixed on 2026-09-08).
 
+**First full runs with the shared grammar (2026-10-07): 0 `NEEDS-GRAMMAR`** (43 the day before), but 29 FAIL / 11 COULD-NOT-VERIFY, much of it the rig rather than the game. Fixed the same day:
+- `expr x > 0 is true` was rewritten a second time into invalid JS (17 requests; PR #1040, which also strips the `(at snap)` suffix before that guard).
+- **Runner, server-side** (`request-runner.mjs`, backup `.bak-20261007-exec`):
+  - `poll` / `wait_for` treat an expression that throws (e.g. `cs()` of an element that does not exist yet) as "not yet", instead of crashing the step (10 requests).
+  - `click viewport-center` clicks the middle of the viewport (6 requests).
+  - `dom` / `style` assertions fail after 5 s instead of Playwright's 30 s default, which used to exhaust the 90 s per-viewport budget and turn real failures into `COULD-NOT-VERIFY`.
+
+What still fails after that is meant to be a real game finding.
+
 Output is `<run>/requests/<id>.json`, one PNG per `snap`, and `summary.json`. Exit is always 0 — results are data; `triage.py` turns them into tickets.
 
 ### `triage.py` and the vision-model verdict flow
