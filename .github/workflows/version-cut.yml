@@ -537,9 +537,12 @@ jobs:
           # --slurp wraps every page in one outer array (gh applies --jq per
           # page otherwise, which would only ever see the last comment of
           # whichever page it's on) -- .[][] flattens pages back to a flat
-          # list of comments before sorting across all of them.
+          # list of comments before sorting across all of them. LUL-5918:
+          # the runner's gh CLI rejects --slurp combined with --jq ("the
+          # --slurp option is not supported with --jq or --template") --
+          # pipe to a separate jq instead of using gh's built-in --jq.
           prev_json="$(gh api "repos/$REPO/issues/$number/comments" --paginate --slurp \
-            --jq '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- version-cut-suite-comment "))] | sort_by(.created_at) | last // empty')"
+            | jq '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- version-cut-suite-comment "))] | sort_by(.created_at) | last // empty')"
 
           prev_id=""
           prev_category=""
