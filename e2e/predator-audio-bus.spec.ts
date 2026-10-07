@@ -69,16 +69,26 @@ test.describe('predator audio bus volume (LUL-5829)', () => {
 
     // The setter ramps via setTargetAtTime(..., 0.05) against the real AudioContext
     // clock (ctx.currentTime), not the engine's simulated qaAdvance game-time clock
-    // -- this needs an actual wall-clock wait, not more sim steps, to settle.
-    await page.waitForTimeout(500);
-    expect(await qaHook(page, 'qaProbePredatorVolume')).toBeCloseTo(0, 2);
+    // -- this needs an actual wall-clock wait, not more sim steps, to settle. The
+    // headless rig's WebAudio render thread can stall processing that automation
+    // for well over 500ms under host CPU contention (LUL-5914), so poll instead
+    // of a single read after a fixed sleep.
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(0, 2);
 
     await stageAndLureWolf(page);
 
     // The real call fired (predatorCall real path, not fabricated state) and the
     // bus gain it was routed through is still silenced -- this is the WebAudio
     // node's actual .value, not a readback of the stored predatorVolume setting.
-    expect(await qaHook(page, 'qaProbePredatorVolume')).toBeCloseTo(0, 2);
+    // The headless rig's real WebAudio render thread can stall processing the
+    // scheduled setTargetAtTime automation for 1-2s+ under host CPU contention
+    // even while ctx.state reports 'running' (LUL-5914) -- poll instead of a
+    // single read right after the call.
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(0, 2);
   });
 
   test('raising the slider back up un-mutes the bus for the next real predator call', async ({ page }) => {
@@ -92,11 +102,17 @@ test.describe('predator audio bus volume (LUL-5829)', () => {
     await expect(page.getByLabel(/predator audio/i)).toHaveValue('65');
     await closeSettings(page);
 
-    await page.waitForTimeout(500);
-    expect(await qaHook(page, 'qaProbePredatorVolume')).toBeCloseTo(0.65, 2);
+    // See the muting test above (LUL-5914) -- poll instead of a fixed sleep.
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(0.65, 2);
 
     await stageAndLureWolf(page);
-    expect(await qaHook(page, 'qaProbePredatorVolume')).toBeCloseTo(0.65, 2);
+    // See the muting test above (LUL-5914) -- the real automation can still be
+    // settling when the real predator call returns, so poll the node's value.
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(0.65, 2);
   });
 
   test('persists across reload (LUL-2649 apply-on-ready gate)', async ({ page }) => {
