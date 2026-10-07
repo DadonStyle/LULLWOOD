@@ -115,6 +115,48 @@ test.describe('predator audio bus volume (LUL-5829)', () => {
       .toBeCloseTo(0.65, 2);
   });
 
+  test('LUL-5922: mute/raise/lower/re-trigger transition matrix holds across multiple real predator calls', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: 6, z: 0 }] });
+    await qaHook(page, 'qaLurePredatorKind', 'wolf');
+
+    await openSettings(page);
+
+    // Each step below mirrors a real transition a player can make -- mute, raise,
+    // lower, raise again -- back to back with no settle wait between the slider
+    // writes (same as the "raising back up" test above), then a real predator call
+    // is forced through the whole sequence's final value. LUL-5915 fixed the pinned-
+    // at-construction-default failure; this ticket's audit found a 2nd failure mode
+    // (a stale earlier ramp firing late, after the node had already read back
+    // correctly) that only a monotonic anchor + finite ramp (see setPredatorVolume())
+    // closes -- so this asserts well after each settle, across repeated real calls,
+    // not just immediately after the slider write.
+    const transitions = [0, 65, 20, 90, 0, 50];
+    for (const pct of transitions) {
+      await setPredatorAudioSlider(page, pct);
+      await expect(page.getByLabel(/predator audio/i)).toHaveValue(String(pct));
+    }
+    await closeSettings(page);
+
+    const expected = transitions[transitions.length - 1] / 100;
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(expected, 2);
+
+    // Fire two real predator calls in sequence (callTimer resets to 2.6-4.6s after
+    // each) -- a stale scheduled automation event from any of the transitions above
+    // would surface as a drift on the 2nd call even if the 1st reads clean.
+    for (let call = 0; call < 2; call++){
+      await qaHook(page, 'qaAdvance', stepsFor(5));
+      await expect
+        .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+        .toBeCloseTo(expected, 2);
+    }
+  });
+
   test('persists across reload (LUL-2649 apply-on-ready gate)', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);

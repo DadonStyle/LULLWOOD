@@ -3924,6 +3924,9 @@ let audio = null, started = false, soundOn = true;
 // Predator Audio slider in Accessibility settings. Internal unit is 0-1 WebAudio gain;
 // setPredatorVolume() converts from the Settings UI's 0-100 display units.
 let predatorVolume = 1;
+// LUL-5922: monotonic anchor for setPredatorVolume's AudioParam scheduling -- see
+// setPredatorVolume() below for why this exists.
+let predatorGainSchedAt = 0;
 function noise(ctx, sec, brown){
   const len = Math.floor(ctx.sampleRate*sec), b = ctx.createBuffer(1, len, ctx.sampleRate), d = b.getChannelData(0);
   let last = 0;
@@ -7686,14 +7689,24 @@ function toggleSound(){
 function setPredatorVolume(v){
   predatorVolume = Math.max(0, Math.min(1, v));
   if(audio){
-    // LUL-5915: two setTargetAtTime calls in quick succession (e.g. slider dragged
-    // 0 -> 65 with no settle) can corrupt Chromium's AudioParam automation timeline and
-    // leave .value pinned at the node's construction default. Anchor the timeline at the
-    // param's current value first so the new ramp always starts from a known point.
-    const g = audio.predatorGain.gain, t = audio.ctx.currentTime;
+    // LUL-5915 anchored the timeline at the param's current value before each new
+    // ramp, but two calls arriving within the same AudioContext render quantum (e.g.
+    // the slider dragged 0 -> 65 with no settle between) still schedule both ramps at
+    // an identical ctx.currentTime -- and setTargetAtTime's curve has no defined end,
+    // so cancelScheduledValues() mid-curve leaves Chromium's AudioParam timeline in an
+    // implementation-defined state (LUL-5922 audit: observed both pinned-at-construction-
+    // default and a stale earlier ramp resuming later, after a real predator call, even
+    // once the node had already read back correctly). Two changes fix both failure modes:
+    // (1) a strictly monotonic anchor time so no two calls ever schedule against the same
+    // instant, and (2) a finite linearRampToValueAtTime (explicit end) instead of
+    // setTargetAtTime's unbounded decay, so every cancelScheduledValues() call always has
+    // a well-defined value to leave the param at.
+    const g = audio.predatorGain.gain;
+    const t = Math.max(audio.ctx.currentTime, predatorGainSchedAt + 0.01);
     g.cancelScheduledValues(t);
     g.setValueAtTime(g.value, t);
-    g.setTargetAtTime(predatorVolume, t, 0.05);
+    g.linearRampToValueAtTime(predatorVolume, t + 0.08);
+    predatorGainSchedAt = t;
   }
   pushState({ predatorVolume: predatorVolume * 100 });
 }
