@@ -202,17 +202,26 @@ test.describe('scent acquisition behind cover (LUL-196)', () => {
     // Reset the predator to roam without relocating it. Verify state before
     // seeding scent so the check happens while no scent is active (predator
     // cannot have transitioned away via scentOnto yet).
-    const pos = await page.evaluate(
-      (i) => window.ForestEngine?.qaSetPredatorRoam?.(i) ?? null,
+    //
+    // LUL-5859: the reset and the state read MUST run in a single page.evaluate -- a
+    // single JS turn -- for the same reason the comment below already establishes for
+    // qaSetPredatorRoam + qaSeedScentPoint: two separate evaluate calls let a real game
+    // frame land in between, and if that frame's own checkScent() immediately flips the
+    // predator back out of roam (e.g. a still-live stale scent point from before this
+    // reset), the read below observes 'investigate'/'chase' instead of the 'roam' this
+    // reset just set, failing deterministically regardless of game logic. Same class of
+    // flake as LUL-645/LUL-882 below, just on the reset-then-verify pair instead of the
+    // reset-then-seed pair.
+    const roamResult = await page.evaluate(
+      (i) => {
+        const pos = window.ForestEngine?.qaSetPredatorRoam?.(i) ?? null;
+        const state = pos ? (window.ForestEngine?.qaPredatorState?.(i) ?? null) : null;
+        return { pos, state };
+      },
       idx,
     );
-    expect(pos, 'qaSetPredatorRoam must succeed for the staged predator').not.toBeNull();
-
-    const predAfterRoam = await page.evaluate(
-      (i) => window.ForestEngine?.qaPredatorState?.(i) ?? null,
-      idx,
-    );
-    expect(predAfterRoam?.state, 'predator must now be in roam').toBe('roam');
+    expect(roamResult.pos, 'qaSetPredatorRoam must succeed for the staged predator').not.toBeNull();
+    expect(roamResult.state?.state, 'predator must now be in roam').toBe('roam');
 
     // Seed a fresh scent point exactly at the predator's real position.
     // IMPORTANT: qaSetPredatorRoam and qaSeedScentPoint MUST run in a single

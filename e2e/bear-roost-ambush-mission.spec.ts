@@ -76,6 +76,15 @@ test.describe('Bear Roost Ambush mission (LUL-5456)', () => {
     // roostIndex check applies to this kind too, not just 'flush'/'lionRoostFlush'.
     await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'bearRoostAmbush', qaRoostIndex: 0 });
     await enter(page);
+    // LUL-5859: same real-time-vs-simulated-time race e2e/lion-roost-flush-mission.spec.ts's
+    // own guard test had -- repositionBeaconHunterForMission() drops the live bear within 50u
+    // of ROOSTS[0], well inside reach of ROOSTS[1] too at this seed's compressed inter-roost
+    // spacing. Without pinning the clock, the real RAF loop keeps ticking across every await
+    // below, long enough for the bear to wander into updateRoosts()'s ambient flush trigger
+    // for roost 1 BEFORE the player's own throw -- which puts roost 1 on cooldown and makes
+    // the deliberate throw below a no-op (roostFlushDeniedCue(), not flushRoost()), so
+    // burstActive reads false.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     const mission = await qaHook(page, 'qaProbeMission');
     expect(mission?.kind).toBe('bearRoostAmbush');
@@ -85,6 +94,7 @@ test.describe('Bear Roost Ambush mission (LUL-5456)', () => {
     const roost1 = await qaHook(page, 'qaTeleportNearRoost', 1);
     expect(roost1?.i).toBe(1);
     await throwAtLockedTarget(page);
+    await qaHook(page, 'qaAdvance', 1);
 
     const roost1State = await qaHook(page, 'qaProbeRoostState', 1);
     expect(roost1State.burstActive, 'the player-thrown flush path must have actually fired').toBe(true);

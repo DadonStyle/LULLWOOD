@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L9183 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L8040, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
+  button via `setTouchVeil()` L9192 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L8049, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.

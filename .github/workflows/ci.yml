@@ -170,6 +170,13 @@ jobs:
       - name: duplicate-logic guard
         run: node scripts/check-duplicate-logic.mjs
 
+      # LUL-3295 investigation (2026-10-06): one malformed local-QA request crashed the nightly
+      # request runner and silently skipped 47 of 68 requests for two weeks; 42 more used step
+      # forms the runner did not know. This parses every request with the same grammar module
+      # the runner imports, so a request the tester cannot run fails its own PR. No node_modules.
+      - name: local-QA request grammar guard
+        run: node scripts/check-qa-requests.mjs
+
       - run: npm ci
 
       - name: unit tests

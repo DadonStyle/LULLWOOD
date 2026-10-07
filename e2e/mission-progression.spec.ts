@@ -87,6 +87,16 @@ test.describe('deepwater (far/timed)', () => {
     const errs = trackConsoleErrors(page);
     await boot(page, { qaHooks: true, qaMissionKind: 'deepwater' });
     await enter(page);
+    // qaClearAllPredators precedent (e2e/day-night-cycle.spec.ts, e2e/hints.spec.ts,
+    // e2e/veil-overload.spec.ts): this test holds the player stationary through the
+    // settings-panel interaction below plus the shrunk-timer wait, long enough for an
+    // ambient roam predator to close in and kill them (same risk the qaClearAllPredators
+    // comment itself documents). An unrelated mid-poll death drops hudLive to false,
+    // which hides #captionToast along with everything else -- that reads here as "the
+    // caption never rendered" (LUL-5899) when the real cause is an untelegraphed kill,
+    // not a captionsOn bug. This test isolates mission-expiry/caption behaviour, not
+    // predator proximity, so park every predator first to remove the race entirely.
+    await qaHook(page, 'qaClearAllPredators');
     await enableCaptionsMuted(page);
 
     const mission = await qaHook(page, 'qaProbeMission');

@@ -110,7 +110,13 @@ test.describe('first-encounter hints (LUL-2307)', () => {
   });
 
   test('a first-sighted wolf shows its caption once', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    // LUL-5744: fireflyGlow is a HINT_PRIORITY entry gated only on evening/night
+    // timeOfDay, with no anchor/player-action needed at this seed's compressed
+    // micro-world firefly-cluster distances (spawn sits inside fireflyMeadow's
+    // unscaled 45u glow radius) -- pin daytime so clearPreemptiveHints() only
+    // has to drain the two time-only hints it was written for (landmark +
+    // whichever mission kind), not a third one the wall-clock hour decides.
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await clearPreemptiveHints(page);
@@ -166,7 +172,9 @@ test.describe('first-encounter hints (LUL-2307)', () => {
   // eligibility false in the same frame, and markHintSeen() was never reached
   // -- the hint reshowed on every subsequent encounter instead of once.
   test('hiding from a first-sighted wolf marks its hint seen instead of leaving it to reshow', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    // LUL-5744: see the previous test's comment -- pin daytime so fireflyGlow
+    // can't claim a third preemptive slot clearPreemptiveHints() isn't budgeted for.
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await clearPreemptiveHints(page);
@@ -209,7 +217,9 @@ test.describe('first-encounter hints (LUL-2307)', () => {
   });
 
   test('grabbing a throwable marks its hint seen instead of leaving it to reshow', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    // LUL-5744: see the first test's comment -- pin daytime so fireflyGlow
+    // can't claim a third preemptive slot clearPreemptiveHints() isn't budgeted for.
+    await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await clearPreemptiveHints(page);
