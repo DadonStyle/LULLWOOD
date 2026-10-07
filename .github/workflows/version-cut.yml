@@ -479,13 +479,65 @@ jobs:
           echo "::notice::dispatched base-branch-guard.yml for PR #$number"
 
           if [ "$SUITE_RESULT" = "success" ]; then
+            category=success
             comment="Combined-suite passed against the release/next+main merge tree: $RUN_URL"
           elif [ "$SUITE_RESULT" = "cancelled" ]; then
+            category=cancelled
             comment="**INCONCLUSIVE** -- the combined-suite run was cancelled ($RUN_URL), most likely superseded by a newer version-cut run under this workflow's shared \`version-cut\` concurrency group (or a runner-level shutdown), not a real test failure. A later version-cut run against the current tree will produce a real result; no action needed unless every subsequent run keeps cancelling."
           else
+            category=failure
             comment="**DO NOT MERGE** -- combined-suite result was \`$SUITE_RESULT\` against the release/next+main merge tree: $RUN_URL. Needs investigation before this cut can land."
           fi
-          gh pr comment "$number" --repo "$REPO" --body "$comment"
+
+          # LUL-5917: this PR stays open across many release/next merges, and
+          # under the current e2e baseline (~48-52 pre-existing failures
+          # spread across 6 shards) almost every run lands on
+          # category=failure -- posting a fresh bolded DO-NOT-MERGE comment
+          # each time is noise, not a new finding (4 near-identical comments
+          # in one night, each costing a reviewer a full investigation cycle
+          # to rule out). Track the last-posted category in a machine-
+          # readable marker and edit that comment in place while the
+          # category repeats; only post a brand-new comment when the
+          # category actually changes -- that's the transition a reviewer
+          # needs to see land.
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # --slurp wraps every page in one outer array (gh applies --jq per
+          # page otherwise, which would only ever see the last comment of
+          # whichever page it's on) -- .[][] flattens pages back to a flat
+          # list of comments before sorting across all of them.
+          prev_json="$(gh api "repos/$REPO/issues/$number/comments" --paginate --slurp \
+            --jq '[.[][] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- version-cut-suite-comment "))] | sort_by(.created_at) | last // empty')"
+
+          prev_id=""
+          prev_category=""
+          prev_first_seen="$now"
+          prev_count=0
+          if [ -n "$prev_json" ]; then
+            prev_id="$(echo "$prev_json" | jq -r '.id')"
+            prev_body="$(echo "$prev_json" | jq -r '.body')"
+            prev_category="$(echo "$prev_body" | grep -o 'category=[a-z]*' | head -1 | cut -d= -f2)"
+            prev_first_seen="$(echo "$prev_body" | grep -o 'first_seen=[^ ]*' | head -1 | cut -d= -f2)"
+            prev_count="$(echo "$prev_body" | grep -o 'count=[0-9]*' | head -1 | cut -d= -f2)"
+          fi
+
+          if [ -n "$prev_id" ] && [ "$prev_category" = "$category" ]; then
+            count=$((prev_count + 1))
+            printf '%s\n' \
+              "<!-- version-cut-suite-comment category=$category first_seen=$prev_first_seen count=$count -->" \
+              "$comment" \
+              '' \
+              "_(seen $count times in a row since $prev_first_seen, most recently $now -- not reposting a duplicate comment while the result stays \`$category\`; this comment updates in place instead.)_" \
+              > /tmp/version-cut-comment-body.md
+            gh api "repos/$REPO/issues/comments/$prev_id" -X PATCH -f body=@/tmp/version-cut-comment-body.md > /dev/null
+            echo "::notice::combined-suite result still $category -- updated existing PR comment #$prev_id in place (repeat $count) instead of posting a duplicate."
+          else
+            printf '%s\n' \
+              "<!-- version-cut-suite-comment category=$category first_seen=$now count=1 -->" \
+              "$comment" \
+              > /tmp/version-cut-comment-body.md
+            gh pr comment "$number" --repo "$REPO" --body-file /tmp/version-cut-comment-body.md
+            echo "::notice::combined-suite result is $category (changed from '${prev_category:-none}') -- posted a new PR comment."
+          fi
 
           # Founder directive (2026-08-28): arm auto-merge on the cut PR. This never
           # bypasses the Code Reviewer -- main's ruleset still requires their approval
