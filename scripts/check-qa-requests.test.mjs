@@ -93,4 +93,6 @@ test('an expr that already ends in `is true` is not rewritten again (17 requests
     { kind: 'expr', expr: 'FE.qaProbeScentTrail().points.length > 0', op: 'is', v: true });
   assert.deepEqual(parseAssertion('expr a == b is false'), { kind: 'expr', expr: 'a == b', op: 'is', v: false });
   assert.deepEqual(parseAssertion('expr during > before'), { kind: 'expr', expr: '(during) > (before)', op: 'is', v: true });
+  // review on #1040: the (at snap) annotation must not let the line slip past the guard
+  assert.deepEqual(parseAssertion('expr x > 0 is true (at foo-bar)'), parseAssertion('expr x > 0 is true'));
 });
