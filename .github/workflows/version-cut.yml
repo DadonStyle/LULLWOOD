@@ -566,7 +566,7 @@ jobs:
               '' \
               "_(seen $count times in a row since $prev_first_seen, most recently $now -- not reposting a duplicate comment while the result stays \`$category\` with the same failing shards; this comment updates in place instead.)_" \
               > /tmp/version-cut-comment-body.md
-            gh api "repos/$REPO/issues/comments/$prev_id" -X PATCH -f body=@/tmp/version-cut-comment-body.md > /dev/null
+            gh api "repos/$REPO/issues/comments/$prev_id" -X PATCH -F body=@/tmp/version-cut-comment-body.md > /dev/null
             echo "::notice::combined-suite result still $category (fingerprint unchanged: $FINGERPRINT) -- updated existing PR comment #$prev_id in place (repeat $count) instead of posting a duplicate."
           else
             printf '%s\n' \
