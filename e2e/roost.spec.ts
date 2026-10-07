@@ -44,6 +44,14 @@ test.describe('roost scare (LUL-4894)', () => {
   test('throwing a stone near a roost flushes it', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // LUL-5923: same real-time-vs-simulated-time race LUL-5859 fixed for this file's
+    // captionsOn test (and the shared-cooldown test below already has) -- without a
+    // pinned clock, the real RAF loop keeps ticking the default predator roster across
+    // every await below, long enough for one to wander into updateRoosts()'s ambient
+    // flush trigger for whichever roost qaTeleportNearRoost() picks, putting it on
+    // cooldown before the player's own throw and turning it into a no-op. LUL-5859
+    // only patched the other two tests in this file; this one was missed.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
 
     await grabAThrowable(page);
     const roost = await qaHook(page, 'qaTeleportNearRoost');
