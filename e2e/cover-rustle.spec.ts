@@ -156,9 +156,12 @@ test.describe('cover-rustle degradation (LUL-2856)', () => {
     await stageHidden(page);
 
     const caption = page.locator('#captionToast');
+    // LUL-5930: PAST_FIRST_ROLL_S (17.4s / FIXED_DT) is 870 steps -- 35 advanceChunked
+    // round-trips (helpers.ts's ADVANCE_CHUNK=25), the heaviest in this file, with no
+    // margin against the default 30s CI expect timeout on a contended rig (LUL-5927).
     await advanceChunked(page, stepsFor(PAST_FIRST_ROLL_S));
 
-    await expect(caption).toContainText('Sitting still too long stirs the brush');
+    await expect(caption).toContainText('Sitting still too long stirs the brush', { timeout: 60_000 });
   });
 
   test('still flashes under reduced motion, at the fixed-opacity clamp', async ({ page }) => {
