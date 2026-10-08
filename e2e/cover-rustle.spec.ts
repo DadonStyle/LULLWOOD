@@ -156,12 +156,16 @@ test.describe('cover-rustle degradation (LUL-2856)', () => {
     await stageHidden(page);
 
     const caption = page.locator('#captionToast');
-    // LUL-5930: PAST_FIRST_ROLL_S (17.4s / FIXED_DT) is 870 steps -- 35 advanceChunked
-    // round-trips (helpers.ts's ADVANCE_CHUNK=25), the heaviest in this file, with no
-    // margin against the default 30s CI expect timeout on a contended rig (LUL-5927).
-    await advanceChunked(page, stepsFor(PAST_FIRST_ROLL_S));
+    // LUL-5931 (correcting LUL-5930): widening this assertion's timeout was withdrawn --
+    // decisions/lul-5930-no-timeout-widen-correction on the wiki. PAST_FIRST_ROLL_S (17.4s
+    // / FIXED_DT) is 870 steps; the default ADVANCE_CHUNK=25 made this 35 round-trips, the
+    // heaviest in this file, with no margin against the default 30s CI expect timeout on a
+    // contended rig (LUL-5927). Fix is real wall-clock reduction instead: 870 divides evenly
+    // by 87, so a wider per-call chunk here cuts this to 10 round-trips without changing the
+    // total fixed-dt steps simulated or touching any timeout/assertion.
+    await advanceChunked(page, stepsFor(PAST_FIRST_ROLL_S), 87);
 
-    await expect(caption).toContainText('Sitting still too long stirs the brush', { timeout: 60_000 });
+    await expect(caption).toContainText('Sitting still too long stirs the brush');
   });
 
   test('still flashes under reduced motion, at the fixed-opacity clamp', async ({ page }) => {
