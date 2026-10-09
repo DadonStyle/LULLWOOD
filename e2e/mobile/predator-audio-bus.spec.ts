@@ -67,12 +67,66 @@ test.describe('predator audio bus volume (LUL-5829, mobile)', () => {
     await expect(page.getByLabel(/predator audio/i)).toHaveValue('0');
     await closeSettings(page);
 
-    // Real AudioContext ramp (setTargetAtTime(..., 0.05)), needs a wall-clock
-    // wait to settle -- same reasoning as the desktop spec.
-    await page.waitForTimeout(500);
-    expect(await qaHook(page, 'qaProbePredatorVolume')).toBeCloseTo(0, 2);
+    // Real AudioContext ramp against ctx.currentTime, not the sim clock -- the
+    // headless rig's render thread can stall processing it under host CPU
+    // contention (LUL-5914), so poll instead of a single read after a fixed sleep.
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(0, 2);
 
     await stageAndLureWolf(page);
-    expect(await qaHook(page, 'qaProbePredatorVolume')).toBeCloseTo(0, 2);
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(0, 2);
+  });
+
+  test('raising the slider back up un-mutes the bus for the next real predator call', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enterMobile(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+
+    await openSettings(page);
+    await setPredatorAudioSlider(page, 0);
+    await setPredatorAudioSlider(page, 65);
+    await expect(page.getByLabel(/predator audio/i)).toHaveValue('65');
+    await closeSettings(page);
+
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(0.65, 2);
+
+    await stageAndLureWolf(page);
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(0.65, 2);
+  });
+
+  test('LUL-5922: mute/raise/lower/re-trigger transition matrix holds across multiple real predator calls', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enterMobile(page);
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+
+    await qaHook(page, 'qaBuildScene', { predators: [{ kind: 'wolf', x: 6, z: 0 }] });
+    await qaHook(page, 'qaLurePredatorKind', 'wolf');
+
+    await openSettings(page);
+    const transitions = [0, 65, 20, 90, 0, 50];
+    for (const pct of transitions) {
+      await setPredatorAudioSlider(page, pct);
+      await expect(page.getByLabel(/predator audio/i)).toHaveValue(String(pct));
+    }
+    await closeSettings(page);
+
+    const expected = transitions[transitions.length - 1] / 100;
+    await expect
+      .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+      .toBeCloseTo(expected, 2);
+
+    for (let call = 0; call < 2; call++){
+      await qaHook(page, 'qaAdvance', stepsFor(5));
+      await expect
+        .poll(() => qaHook(page, 'qaProbePredatorVolume'), { timeout: 60_000 })
+        .toBeCloseTo(expected, 2);
+    }
   });
 });
