@@ -3869,9 +3869,15 @@ templated `pickupPrompt` copy with `adminMode` off) -- all in the micro world
   already forces the minimap off, `engine/tuning.js`), and
   `survivedSeconds*1000 >= PLAUSIBILITY_FLOOR_MS` (`lib/game/leaderboard.ts`,
   ~15.7s floor derived from the map's max theoretical traversal speed, not a
-  tunable to re-derive). Any one gate failing means no form at all —
-  deliberately silent by design (an eligibility check, not a refused player
-  input, so Q5 of `docs/FEATURE_CHECKLIST.md` does not apply here).
+  tunable to re-derive). Admin mode and the plausibility floor failing still
+  render nothing — neither is a real-player-facing case. The difficulty gate
+  failing (a normal Lantern/Night win) instead renders
+  `#leaderboardIneligibleNote` ("Switch to Blackout to compete for the
+  leaderboard.") — LUL-5944, closing the Q5 gap this section used to claim
+  didn't apply. The Blackout-only *submission* eligibility rule itself is
+  unchanged and is a ratified decision
+  (`decisions/lul-3264-leaderboard-accepted-2026-09-18`); this ticket only
+  adds the tell, it does not open submission to other tiers.
 
 **Behaviours & logic**
 - Nickname input is client-filtered to `[a-z0-9]{0,20}` on every keystroke
