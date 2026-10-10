@@ -3927,6 +3927,9 @@ let predatorVolume = 1;
 // LUL-5922: monotonic anchor for setPredatorVolume's AudioParam scheduling -- see
 // setPredatorVolume() below for why this exists.
 let predatorGainSchedAt = 0;
+// LUL-5941: last-commanded predatorGain value, tracked in JS instead of ever reading
+// AudioParam.gain.value back -- see setPredatorVolume() below for why this exists.
+let predatorGainAnchor = predatorVolume;
 function noise(ctx, sec, brown){
   const len = Math.floor(ctx.sampleRate*sec), b = ctx.createBuffer(1, len, ctx.sampleRate), d = b.getChannelData(0);
   let last = 0;
@@ -3957,6 +3960,7 @@ function startAudio(){
   const predatorGain = ctx.createGain();
   predatorGain.connect(master);
   predatorGain.gain.value = predatorVolume;
+  predatorGainAnchor = predatorVolume;
 
   const conv = ctx.createConvolver(); conv.buffer = impulse(ctx, 2.4, 3.0);
   const rev = ctx.createGain(); rev.gain.value = 0.5; conv.connect(rev); rev.connect(master);
@@ -7696,16 +7700,23 @@ function setPredatorVolume(v){
     // so cancelScheduledValues() mid-curve leaves Chromium's AudioParam timeline in an
     // implementation-defined state (LUL-5922 audit: observed both pinned-at-construction-
     // default and a stale earlier ramp resuming later, after a real predator call, even
-    // once the node had already read back correctly). Two changes fix both failure modes:
-    // (1) a strictly monotonic anchor time so no two calls ever schedule against the same
-    // instant, and (2) a finite linearRampToValueAtTime (explicit end) instead of
-    // setTargetAtTime's unbounded decay, so every cancelScheduledValues() call always has
-    // a well-defined value to leave the param at.
+    // once the node had already read back correctly). LUL-5922 also found that under
+    // host CPU contention the headless rig's render thread can lag ctx.currentTime by
+    // hundreds of ms, so reading `g.value` back to seed the next ramp (LUL-5941: on the
+    // mute-audio rig this render-thread lag can be unbounded -- see LUL-20 -- so the
+    // read-back can return the pre-automation construction default forever, not just a
+    // stale-but-progressing value) can re-pin the node instead of carrying it forward.
+    // Fix: never read the AudioParam back. Track the last-commanded value ourselves in
+    // predatorGainAnchor, and (2) use a finite linearRampToValueAtTime (explicit end)
+    // instead of setTargetAtTime's unbounded decay, so every cancelScheduledValues()
+    // call always has a well-defined value to leave the param at, and a strictly
+    // monotonic anchor time so no two calls ever schedule against the same instant.
     const g = audio.predatorGain.gain;
     const t = Math.max(audio.ctx.currentTime, predatorGainSchedAt + 0.01);
     g.cancelScheduledValues(t);
-    g.setValueAtTime(g.value, t);
+    g.setValueAtTime(predatorGainAnchor, t);
     g.linearRampToValueAtTime(predatorVolume, t + 0.08);
+    predatorGainAnchor = predatorVolume;
     predatorGainSchedAt = t;
   }
   pushState({ predatorVolume: predatorVolume * 100 });
