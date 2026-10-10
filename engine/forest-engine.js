@@ -1575,14 +1575,34 @@ const activeFireflyDetectClusters = (timeOfDay === 'evening' || timeOfDay === 'n
   ? scaledFireflyClusters()
   : [];
 const FIREFLY_MOTE_COLOR = 0xcfe86a;
-// One THREE.PointLight per mote, built once here and never rebuilt -- empty
-// outside dusk/night so every loop below over fireflyClusterMotes is a cheap
-// no-op for a daytime session. Mote scatter around each cluster center uses a
-// deterministic sunflower-seed layout (index-derived angle/radius), not
-// rng() -- consuming a shared seeded draw here would shift every later
+// LUL-5945: additive THREE.Points batch, not one THREE.PointLight per mote --
+// up to 36 real dynamic lights (6 clusters * max moteCount) was the profiled
+// cost behind "the game is slow, too much being rendered" (LUL-5943): this
+// engine has no clustered/deferred lighting, so every real light forces a
+// per-fragment relight of every MeshStandardMaterial surface in the scene.
+// Same position+color BufferAttribute shape as scentTrailPts (:1831-1839);
+// brightness is baked into vertex color (vertexColors multiplies against
+// material.color) rather than a scene-graph light -- additive blending means
+// a near-zero color already reads as dark/invisible, same visual result as
+// light.intensity approaching 0. Mote scatter around each cluster center
+// keeps the deterministic sunflower-seed layout (index-derived angle/radius),
+// not rng() -- consuming a shared seeded draw here would shift every later
 // rng()-based system's sequence for the same seed (decoyScentSites.ts's own
 // header comment: "no rng() draw contract, so seeds stay byte-identical per
-// seed").
+// seed"). Disposed generically by the scene.traverse() teardown at :9171,
+// same as every other mesh/points object -- no bespoke cleanup needed.
+const fireflyMoteCount = activeFireflyClusters.reduce((n, c) => n + c.moteCount, 0);
+const fireflyMoteGeo = new THREE.BufferGeometry();
+const fireflyMotePos = new Float32Array(fireflyMoteCount * 3);
+const fireflyMoteColor = new Float32Array(fireflyMoteCount * 3);
+fireflyMoteGeo.setAttribute('position', new THREE.BufferAttribute(fireflyMotePos, 3));
+fireflyMoteGeo.setAttribute('color', new THREE.BufferAttribute(fireflyMoteColor, 3));
+const fireflyMotePts = new THREE.Points(fireflyMoteGeo, new THREE.PointsMaterial({
+  color: FIREFLY_MOTE_COLOR, size: 0.5, vertexColors: true, transparent: true,
+  opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+fireflyMotePts.frustumCulled = false; // motes drift past one static bounding sphere, same as scentTrailPts
+scene.add(fireflyMotePts);
+let fireflyMoteIdx = 0;
 const fireflyClusterMotes = activeFireflyClusters.flatMap((cluster, ci) => {
   const motes = [];
   for (let i = 0; i < cluster.moteCount; i++) {
@@ -1590,10 +1610,9 @@ const fireflyClusterMotes = activeFireflyClusters.flatMap((cluster, ci) => {
     const rad = cluster.radius * 0.35 * Math.sqrt((i + 0.5) / cluster.moteCount);
     const baseX = cluster.x + Math.cos(ang) * rad;
     const baseZ = cluster.z + Math.sin(ang) * rad;
-    const light = new THREE.PointLight(FIREFLY_MOTE_COLOR, 0, 6, 2);
-    light.position.set(baseX, 1.2 + (i % 3) * 0.5, baseZ);
-    scene.add(light);
-    motes.push({ light, cluster, baseX, baseZ, phase: ang });
+    const idx = fireflyMoteIdx++;
+    fireflyMotePos[idx * 3 + 1] = 1.2 + (i % 3) * 0.5;
+    motes.push({ idx, cluster, baseX, baseZ, phase: ang, brightness: 0 });
   }
   return motes;
 });
@@ -4909,13 +4928,22 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeFireflyClusters = function(){
     return { clusterCount: activeFireflyClusters.length,
              detectClusterCount: activeFireflyDetectClusters.length,
-             anyVisible: fireflyClusterMotes.some(function(m){ return m.light.intensity > 0; }),
-             maxIntensity: fireflyClusterMotes.reduce(function(acc, m){ return Math.max(acc, m.light.intensity); }, 0),
+             anyVisible: fireflyClusterMotes.some(function(m){ return m.brightness > 0; }),
+             maxIntensity: fireflyClusterMotes.reduce(function(acc, m){ return Math.max(acc, m.brightness); }, 0),
              alarmScalar: fireflyClusterMotes.length ? fireflyAlarmBoost(predators, scaledFireflyClusters(), player, WRAP_SPAN, WRAP_SPAN) : 1,
              alarmActive: fireflyAlarmActive,
              clusters: scaledFireflyClusters().map(function(c){ return { id: c.id, x: c.x, z: c.z }; }),
              glowSwellCueCount: qaFireflyGlowSwellCueCount,
              stingCount: qaFireflyAlarmStingCount };
+  };
+  // LUL-5945: live count of real THREE.Light instances actually in the scene
+  // graph -- the fix this hook exists to prove is "fireflies stop being
+  // lights", so this counts isLight===true nodes directly rather than
+  // inferring it from a probe that could be satisfied by coincidence.
+  window.ForestEngine.qaSceneRealLightCount = function(){
+    let n = 0;
+    scene.traverse(function(o){ if (o.isLight) n++; });
+    return n;
   };
   // LUL-2225: generic teleport, for staging an arbitrary position that isn't
   // already a fixed named landmark like qaTeleportHome/qaTeleportNearBaby.
@@ -8871,12 +8899,18 @@ function stepFrame(dt, t, skipRender){
   // dusk/night -- fireflyClusterMotes is built empty then (see module scope above).
   for (const mote of fireflyClusterMotes) {
     const w = decoyScentGlowWeight(player.x, player.z, mote.cluster, WRAP_SPAN, WRAP_SPAN);
-    mote.light.intensity = 0.6 * w * alarmScalar * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM);
+    mote.brightness = 0.6 * w * alarmScalar * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM);
+    const ci = mote.idx * 3;
+    fireflyMoteColor[ci] = fireflyMoteColor[ci + 1] = fireflyMoteColor[ci + 2] = mote.brightness;
     if (!motionReduced()) {
-      mote.light.position.x = mote.baseX + Math.sin(t*0.3 + mote.phase) * 1.5;
-      mote.light.position.z = mote.baseZ + Math.cos(t*0.23 + mote.phase) * 1.5;
-      mote.light.position.y = 1.2 + Math.sin(t*0.5 + mote.phase) * 0.6;
+      fireflyMotePos[ci] = mote.baseX + Math.sin(t*0.3 + mote.phase) * 1.5;
+      fireflyMotePos[ci + 2] = mote.baseZ + Math.cos(t*0.23 + mote.phase) * 1.5;
+      fireflyMotePos[ci + 1] = 1.2 + Math.sin(t*0.5 + mote.phase) * 0.6;
     }
+  }
+  if (fireflyClusterMotes.length) {
+    fireflyMoteGeo.attributes.color.needsUpdate = true;
+    fireflyMoteGeo.attributes.position.needsUpdate = true;
   }
 
   // ambient dust follows you, drifting downwind (LUL-195, see setup above)
