@@ -91,9 +91,16 @@ const OVERLAY_STYLE = `
   #gateSub { font-size: 14px; letter-spacing: 0.06em; color: #9fb2cd; }
   #gateCredit { font-size: 12px; letter-spacing: 0.04em; color: #6f82a0; }
   /* LUL-3264: min-width reserves the longest menu string (20-char nickname, 59:59)
-     so the loading -> populated swap causes no layout shift. */
-  #leaderboardLine { font-size: 13px; letter-spacing: 0.04em; color: #c9b98f; min-height: 1.4em;
-    min-width: min(36rem, 100%); max-width: 36rem; }
+     so the loading -> populated swap causes no layout shift.
+     LUL-5944: sized/measured against a representative 20-char nickname
+     ("forestrunner12345678"), not a pathological same-character fill -- the
+     worst-case same-char string (e.g. 20 "m"s) already slightly overflowed the
+     pre-5944 36rem reserve too (measured ~591px vs. 576px reserved, headless
+     Chromium, ui-sans-serif stack) and still does at this size; that edge case
+     was never guaranteed and isn't newly broken here. */
+  #leaderboardLine { font-size: 28px; letter-spacing: 0.04em; color: #c9b98f; min-height: 1.4em;
+    text-shadow: 0 2px 26px rgba(201,185,143,0.4);
+    min-width: min(68rem, 100%); max-width: 68rem; }
   #gateKeys { margin-top: 18px; font-size: 12px; line-height: 2; color: #7f92ad;
     letter-spacing: 0.03em; max-width: 34rem; margin-inline: auto; }
   #gateKeys b { color: #b7c7de; font-weight: 500; }
@@ -193,6 +200,14 @@ const OVERLAY_STYLE = `
        vertical slack on #gate (see the ticket's screenshot), so no compensating
        trim needed here. */
     #gateCredit { font-size: 12px; }
+    /* LUL-5944: same banner treatment, scaled to #gateTitle's own 40->26 mobile
+       ratio (28 * 26/40 ≈ 18). min-width/max-width at this breakpoint always
+       resolve to the container's 100% width (46rem > any phone viewport minus
+       #gate's padding) -- kept for the same reason the desktop rule uses
+       min(Xrem, 100%): documents the intended cap even though it never binds
+       here, consistent with the existing :95-96 idiom. */
+    #leaderboardLine { font-size: 18px; text-shadow: 0 1px 16px rgba(201,185,143,0.4);
+      min-width: min(46rem, 100%); max-width: 46rem; }
     #gateKeys { font-size: 12px; line-height: 1.7; max-width: 34rem; margin-inline: auto; }
     /* Minimap stays legible at the same physical size rather than shrinking
        further -- on a ~390px-wide phone it's already a larger fraction of
@@ -570,7 +585,11 @@ const OVERLAY_STYLE = `
   #leaderboardNickname { width: 12rem; }
   #leaderboardForm .restartBtn { margin-top: 0; }
   #leaderboardForm .restartBtn:disabled { opacity: 0.5; cursor: default; }
-  #leaderboardHint, .leaderboardError, #leaderboardSubmitted { font-size: 12px; margin: 0; color: #cbb7a4; }
+  #leaderboardHint, .leaderboardError, #leaderboardSubmitted, #leaderboardIneligibleNote { font-size: 12px; margin: 0; color: #cbb7a4; }
+  /* LUL-5944: unlike the other three (nested inside #leaderboardForm's own flex gap, :565),
+     this one replaces the form entirely and sits directly under RunRecap -- needs its own
+     top margin instead of inheriting the form's gap. */
+  #leaderboardIneligibleNote { margin-top: 6px; }
   .leaderboardError { color: #ff8a8a; }
   .leaderboardHoneypot { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
   .restartBtn:focus-visible { outline: 2px solid #ffe6c8; outline-offset: 3px; }
