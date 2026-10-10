@@ -474,19 +474,19 @@ jobs:
               '' \
               "Combined-suite run: $RUN_URL" \
               '' \
-              '**Auto-merge (founder directive, 2026-08-28):** this workflow arms native' \
-              'GitHub auto-merge on this PR with a **merge commit** (not squash, so' \
-              'individual PR history survives on `main`) -- it merges itself the moment' \
-              'the Code Reviewer'"'"'s required approval lands and every required check is' \
-              'green, no manual click needed.' \
+              '**Merging this PR (decisions/no-native-merge-on-cut-prs,' \
+              'decisions/version-cut-auto-merge-arm-removed-2026-10-10):** this workflow' \
+              'never merges anything -- it only opens/refreshes this PR and reports the' \
+              'combined-suite result below. Approval alone does not merge it. The only' \
+              'way to merge a cut PR is for the Code Reviewer to approve via a GitHub' \
+              'review and then dispatch `cut-merge.yml` with this PR'"'"'s number.' \
               '' \
               'The combined-suite result above is **advisory only** (issue #311,' \
-              '2026-09-05): auto-merge is armed regardless of whether it passed. A red' \
-              'result does not block the merge -- read the DO NOT MERGE comment below (if' \
-              'present) and the shard logs before approving. The Code Reviewer'"'"'s approval' \
-              'plus `main`'"'"'s required status checks (combined-suite is not one of them)' \
-              'are the only load-bearing gates. See `systems/release-train` in the shared' \
-              'wiki.' \
+              '2026-09-05): it does not gate `cut-merge.yml`. A red result does not block' \
+              'the merge -- read the DO NOT MERGE comment below (if present) and the' \
+              'shard logs before approving. The Code Reviewer'"'"'s approval plus the' \
+              '`cut-merge.yml` dispatch are the only load-bearing gates. See' \
+              '`systems/release-train` in the shared wiki.' \
               > /tmp/cut-pr-body.md
 
             gh pr create --repo "$REPO" \
