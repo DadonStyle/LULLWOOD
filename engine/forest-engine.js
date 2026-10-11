@@ -4667,7 +4667,7 @@ let hudState = {
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
   // and persists it to localStorage (see components/Hud.tsx).
-  difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
+  difficulty: 'blackout', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
   // LUL-5805/LUL-5828: keybind remapping, same engine-owns-it/React-persists-it
   // split as runMode above. keyMapCollision is the Q5 refusal tell for a remap
