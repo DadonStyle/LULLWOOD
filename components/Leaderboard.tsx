@@ -94,8 +94,9 @@ type SubmitStatus = 'idle' | 'submitting' | 'done' | 'record' | 'rate_limited' |
 
 /**
  * Rendered only for an eligible run: a Blackout win with admin mode off
- * (Blackout already forces the minimap off, engine/tuning.js). Ineligible runs
- * get no form at all -- deliberately silent, see the spec's S3 notes.
+ * (Blackout already forces the minimap off, engine/tuning.js). Admin mode and
+ * the plausibility floor stay silent (not real-player-facing); a non-Blackout
+ * win instead renders #leaderboardIneligibleNote -- LUL-5944.
  */
 export function LeaderboardSubmitForm({ survivedSeconds, difficulty }: { survivedSeconds: number; difficulty: string }) {
   const [nickname, setNickname] = useState('');
@@ -107,7 +108,17 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty }: { survive
   const [adminMode] = useState(() => document.body.dataset.adminMode === '1');
 
   const timeMs = Math.round(survivedSeconds * 1000);
-  if (difficulty !== 'blackout' || adminMode || timeMs < PLAUSIBILITY_FLOOR_MS) return null;
+  // Feature Checklist Q5: a refused input needs a positive tell. adminMode is a dev
+  // tool and stays silent regardless of difficulty, checked first. The difficulty
+  // gate must come before the plausibility floor -- a normal Lantern/Night win is
+  // usually *faster* than the ~15.7s floor (it's the easier tier), so checking the
+  // floor first would swallow the tell for exactly the common case it exists for.
+  // The floor only matters once a run has already cleared the difficulty gate.
+  if (adminMode) return null;
+  if (difficulty !== 'blackout') {
+    return <p id="leaderboardIneligibleNote">Switch to Blackout to compete for the leaderboard.</p>;
+  }
+  if (timeMs < PLAUSIBILITY_FLOOR_MS) return null;
 
   const canSubmit = status === 'idle' || status === 'error' ? NICKNAME_PATTERN.test(nickname) && country !== '' : false;
 

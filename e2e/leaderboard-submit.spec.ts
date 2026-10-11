@@ -76,6 +76,7 @@ test.describe('leaderboard submit form', () => {
     await enter(page);
     await win(page);
     await expect(page.locator('#leaderboardForm')).toHaveCount(0);
+    await expect(page.locator('#leaderboardIneligibleNote')).toHaveText('Switch to Blackout to compete for the leaderboard.');
   });
 
   test('admin mode suppresses it even on an eligible blackout win', async ({ page, context }) => {
@@ -85,6 +86,7 @@ test.describe('leaderboard submit form', () => {
     await page.waitForTimeout(FLOOR_WAIT_MS);
     await win(page);
     await expect(page.locator('#leaderboardForm')).toHaveCount(0);
+    await expect(page.locator('#leaderboardIneligibleNote')).toHaveCount(0);
   });
 
   test('a blackout win under the plausibility floor gets no form', async ({ page, context }) => {
@@ -92,5 +94,6 @@ test.describe('leaderboard submit form', () => {
     await bootBlackout(page);
     await win(page);
     await expect(page.locator('#leaderboardForm')).toHaveCount(0);
+    await expect(page.locator('#leaderboardIneligibleNote')).toHaveCount(0);
   });
 });

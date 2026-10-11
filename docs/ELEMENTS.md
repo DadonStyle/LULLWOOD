@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L9205 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L8062, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
+  button via `setTouchVeil()` L9250 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L8101, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
@@ -1790,7 +1790,7 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L7146, the win path since
+  both `track()` call sites, in `finishPickup()` (L7174, the win path since
   `LUL-2281`) and `triggerDeath()` (L7626). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
@@ -1798,7 +1798,7 @@ not final tuning.
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7596) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3499) rather than recomputed later, since `player.x/z` can move on
+  (L7624) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3518) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1855,7 +1855,7 @@ not final tuning.
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
   run in progress — `hudState` field (`engine/forest-engine.js` L4427),
-  reset to 0 on `enter()` (L4758) and recomputed every frame (`stepFrame()`,
+  reset to 0 on `enter()` (L4777) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
   is neither won nor dead (L7731: `computeDepth(maxDistFromHome) +
@@ -3144,7 +3144,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7459) and `windAssistEndCue()` (L7468), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
+`windAssistStartCue()` (L7491) and `windAssistEndCue()` (L7500), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
 **QA hooks**: none new -- `qaProbeWind().movingAgainstWind` (existing) is sufficient for the
@@ -3599,15 +3599,15 @@ existing surface).
 
 **Audio**: `investigateCue(p)` (L4122-4136) -- a low, two-pulse searching
 tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
-caption already names the species -- `hearCry()` (L2780) is the one exception: it pushes no
+caption already names the species -- `hearCry()` (L2799) is the one exception: it pushes no
 caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
 responding to the child's cry gives the player zero species identification, audio or text, same
 as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2747),
-`hearThrowableNoise()` (L2763), `hearCry()` (L2780), the charge-overshoot handoff (`p.chargeRecoveryT`,
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2766),
+`hearThrowableNoise()` (L2782), `hearCry()` (L2799), the charge-overshoot handoff (`p.chargeRecoveryT`,
 L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
 sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
 of the driving ticket's six-line list, included for the same reason the other six are: a real
@@ -3645,13 +3645,18 @@ cue-triple exemption, same ruling as decisions/lul-2431-fire-tower-embers-cue-tr
 `mode === 'mobile'`, slices to the first `FIREFLY_MOBILE_CLUSTER_COUNT` (4, `fireflyClusters.ts:19`)
 entries -- desktop renders all 6. `scaledFireflyClusters()` (`:699-700`) scales every cluster's
 `x`/`z` by `CONFIG.fireflyScaleMul` (default `1`, `0.2` under `applyQaWorldMicroPreset()` so the
-clusters sit inside the QA micro map). One `THREE.PointLight` per mote is built once at module
-scope (`fireflyClusterMotes`, `:1471-1484`) on a deterministic sunflower-seed scatter around
-each cluster's center (no `rng()` consumed), empty outside dusk/night so the tick loop below is
-a no-op for a daytime session.
+clusters sit inside the QA micro map). Motes are drawn as one additive `THREE.Points` batch
+(`fireflyMotePts`, LUL-5945 -- previously one real `THREE.PointLight` per mote, up to 36 across
+6 clusters, which this engine's plain forward renderer with no clustered/deferred lighting had
+to relight into every `MeshStandardMaterial` surface in the scene every frame; replaced for
+render cost, see `docs/specs/lul-5945-firefly-render-cost.md`), built once at module scope
+(`fireflyClusterMotes`, `engine/forest-engine.js`) on a deterministic sunflower-seed scatter
+around each cluster's center (no `rng()` consumed), empty outside dusk/night so the tick loop
+below is a no-op for a daytime session.
 
-**Per-frame intensity** (`:8549-8561`) -- each mote's `light.intensity` is
-`0.6 * w * alarmScalar * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM)` (`:8555`), where `w` is
+**Per-frame intensity** -- each mote's `brightness` (written into the Points batch's vertex-color
+buffer attribute, LUL-5945; formerly `light.intensity`) is
+`0.6 * w * alarmScalar * (1 - rainfallAmount * CONFIG.FIREFLY_RAIN_DIM)`, where `w` is
 `decoyScentGlowWeight()`'s own proximity-to-cluster-center falloff (the same recipe the
 scent-mask/decoy-site brightening above already uses) plus idle sine/cosine drift, degrading to
 static under `motionReduced()`. No HUD meter and no readout beyond the mote glow itself (Q2/Q3
@@ -3869,9 +3874,15 @@ templated `pickupPrompt` copy with `adminMode` off) -- all in the micro world
   already forces the minimap off, `engine/tuning.js`), and
   `survivedSeconds*1000 >= PLAUSIBILITY_FLOOR_MS` (`lib/game/leaderboard.ts`,
   ~15.7s floor derived from the map's max theoretical traversal speed, not a
-  tunable to re-derive). Any one gate failing means no form at all —
-  deliberately silent by design (an eligibility check, not a refused player
-  input, so Q5 of `docs/FEATURE_CHECKLIST.md` does not apply here).
+  tunable to re-derive). Admin mode and the plausibility floor failing still
+  render nothing — neither is a real-player-facing case. The difficulty gate
+  failing (a normal Lantern/Night win) instead renders
+  `#leaderboardIneligibleNote` ("Switch to Blackout to compete for the
+  leaderboard.") — LUL-5944, closing the Q5 gap this section used to claim
+  didn't apply. The Blackout-only *submission* eligibility rule itself is
+  unchanged and is a ratified decision
+  (`decisions/lul-3264-leaderboard-accepted-2026-09-18`); this ticket only
+  adds the tell, it does not open submission to other tiers.
 
 **Behaviours & logic**
 - Nickname input is client-filtered to `[a-z0-9]{0,20}` on every keystroke
