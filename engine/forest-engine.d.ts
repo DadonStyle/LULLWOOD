@@ -74,6 +74,10 @@ declare global {
         pickingUp: boolean;
         taken: boolean;
       };
+      /** The THREE.Clock's live elapsedTime, so a test can poll for real
+       * engine-clock progress (e.g. under qaSetFixedStep) instead of relying
+       * on wall-clock waits. */
+      qaProbeElapsedTime?: () => number;
       /** LUL-1093: w2m(x,z)'s clamped pixel output plus the minimap canvas size (mm),
        * so a test can assert an arbitrary world point stays on-canvas. */
       qaProbeMinimapPoint?: (x: number, z: number) => { px: number; py: number; mm: number };
