@@ -33,6 +33,11 @@ async function sprintAgainstWind(page: import('@playwright/test').Page, steps: n
 
 test.describe('Beacon Hunter Deepwater mission (LUL-5462/LUL-5460)', () => {
   test('completes after a real Scent Veil break clears a real Beacon Hunter lock', async ({ page }) => {
+    // LUL-5953/LUL-5965: this file's geometry (dist-8 wolf, ~9.7u detect range) is built
+    // around night-tier detectMul (1) -- blackout's 0.7 default (since LUL-5953) would shrink
+    // that range under the fixed distance and the beacon lock would never fire. Pin 'night'
+    // explicitly, same as e2e/beacon-hunter.spec.ts:54.
+    await page.addInitScript(() => window.localStorage.setItem('lullwood:settings', JSON.stringify({ difficulty: 'night' })));
     await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'beaconDeepwater' });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
