@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { list, del } from '@vercel/blob';
 import { isPrunable } from '../../../../lib/dashboard/retention.ts';
 
@@ -16,6 +17,14 @@ import { isPrunable } from '../../../../lib/dashboard/retention.ts';
 
 let warnedAboutSecret = false;
 
+function tokenMatches(header: string | null, secret: string): boolean {
+  const given = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+  // Compare fixed-length digests so neither length nor content leaks through timing.
+  const a = createHash('sha256').update(given).digest();
+  const b = createHash('sha256').update(secret).digest();
+  return given.length > 0 && timingSafeEqual(a, b);
+}
+
 export async function GET(req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
@@ -26,8 +35,7 @@ export async function GET(req: Request): Promise<Response> {
     return new Response(null, { status: 401 });
   }
 
-  const provided = req.headers.get('authorization');
-  if (provided !== `Bearer ${secret}`) {
+  if (!tokenMatches(req.headers.get('authorization'), secret)) {
     return new Response(null, { status: 401 });
   }
 
