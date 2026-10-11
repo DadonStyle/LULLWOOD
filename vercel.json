@@ -1,3 +1,4 @@
 {
-  "ignoreCommand": "bash scripts/vercel-ignore-ci-only.sh"
+  "ignoreCommand": "bash scripts/vercel-ignore-ci-only.sh",
+  "crons": [{ "path": "/api/cron/prune-telemetry", "schedule": "0 7 * * *" }]
 }
