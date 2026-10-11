@@ -3,13 +3,12 @@
 // that moves simulation time from then on, by exactly the requested amount.
 // This does not rewrite any of the wall-clock-tuned specs (that's a separate
 // follow-up per docs/specs/lul-2071-deterministic-qa-clock.md); it only
-// proves the hook works. qaProbeElapsedTime is untyped in forest-engine.d.ts
-// (see map-seed.spec.ts), hence the `as any` reads, same as that spec.
+// proves the hook works.
 import { test, expect } from './fixtures';
-import { boot } from './helpers';
+import { boot, qaHook } from './helpers';
 
 async function readElapsedTime(page: import('@playwright/test').Page) {
-  return page.evaluate(() => (window as any).ForestEngine?.qaProbeElapsedTime?.() ?? 0);
+  return qaHook(page, 'qaProbeElapsedTime');
 }
 
 test.describe('deterministic QA test clock', () => {
