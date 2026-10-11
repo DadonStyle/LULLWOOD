@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import type { EngineActions, EngineHudState } from './Hud';
 import { fullscreenSupported, isFullscreenActive, toggleFullscreen, FULLSCREEN_CHANGE_EVENTS } from '@/lib/game/fullscreen';
 
@@ -105,6 +106,17 @@ export default function GameMenu({
 
       {open && (
         <div className="menuPanel">
+          <Link
+            href="/suggest"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="menuSuggest"
+            className="menuRow"
+            onClick={() => setOpen(false)}
+          >
+            Suggest something...
+          </Link>
+
           <button
             data-testid="menuPause"
             className="menuRow"
