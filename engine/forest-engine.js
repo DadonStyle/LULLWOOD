@@ -2158,7 +2158,7 @@ const PSPEC = Object.fromEntries(Object.entries(PSPEC_BASE).map(([k, v]) => [k, 
 const RUN = CONFIG.walk * STAMINA_SPRINT_MUL;
 for(const k in PSPEC) PSPEC[k].speed = RUN + CHASE_GAP / PSPEC[k].budget;
 
-let difficulty = 'night';
+let difficulty = 'blackout';
 function makePredator(kind){
   const s = PSPEC[kind], g = new THREE.Group();
   const H = s.h, L = s.len, Wd = s.sz, bodyY = H*0.62;
@@ -4667,7 +4667,7 @@ let hudState = {
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
   // and persists it to localStorage (see components/Hud.tsx).
-  difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
+  difficulty: 'blackout', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
   // LUL-5805/LUL-5828: keybind remapping, same engine-owns-it/React-persists-it
   // split as runMode above. keyMapCollision is the Q5 refusal tell for a remap

@@ -219,7 +219,7 @@ export default function SettingsPanel({
               checked={state.difficulty === d}
               onChange={() => actions?.setDifficulty(d)}
             />
-            {d === 'lantern' ? 'Lantern — forgiving' : d === 'night' ? 'Night — default' : 'Blackout — no mercy'}
+            {d === 'lantern' ? 'Lantern — forgiving' : d === 'night' ? 'Night' : 'Blackout — default, no mercy'}
           </label>
         ))}
       </fieldset>

@@ -154,7 +154,7 @@ export default function GameMenu({
                         actions?.setDifficulty(d);
                         setOpen(false);
                       }}
-                      title={d === 'lantern' ? 'Forgiving' : d === 'night' ? 'Default' : 'No mercy'}
+                      title={d === 'lantern' ? 'Forgiving' : d === 'night' ? 'Night' : 'Default — no mercy'}
                     >
                       {tierLabel}
                     </button>

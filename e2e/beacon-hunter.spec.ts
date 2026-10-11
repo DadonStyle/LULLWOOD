@@ -6,8 +6,9 @@
 // (corrected 2026-09-24).
 //
 // Geometry: player spawns at (0,0), forward is (0,-1). The wolf sits at
-// (0,-8), straight ahead and within detect range (~9.7u at this build's
-// difficulty default -- see qaPredatorState().detectRange), with a bramble
+// (0,-8), straight ahead and within detect range (~9.7u at night's detectMul,
+// pinned explicitly below since LUL-5953 made blackout's 0.7x the default --
+// see qaPredatorState().detectRange), with a bramble
 // prop at (0,-4) directly on the line between them, blocking canSee() via
 // the coverGrid LOS check -- same precedent as e2e/cover-rustle.spec.ts and
 // e2e/hide-alert.spec.ts's `props: [{ kind: 'bramble', x: 10, z: 0 }]`. A
@@ -47,6 +48,10 @@ async function sprintAgainstWind(page: import('@playwright/test').Page, steps: n
 
 test.describe('Beacon Hunter (LUL-4897): wind-signal wolf lock-on, cheap slice', () => {
   test('locks onto a sprinting-against-wind player through cover, with no scent trail -- bypassing sight and scent', async ({ page }) => {
+    // LUL-5953: this file's whole geometry (dist-8 wolf, ~9.7u detect range) is built
+    // around night-tier detectMul (1) -- blackout's 0.7 would shrink that range under the
+    // fixed distance and the beacon lock would never fire. Pin 'night' explicitly.
+    await page.addInitScript(() => window.localStorage.setItem('lullwood:settings', JSON.stringify({ difficulty: 'night' })));
     await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
@@ -74,6 +79,8 @@ test.describe('Beacon Hunter (LUL-4897): wind-signal wolf lock-on, cheap slice',
   });
 
   test('give-up: once the scentLock decays with sight still blocked, the chase downgrades and the lock clears', async ({ page }) => {
+    // LUL-5953: see the first test's comment -- pin 'night' so the initial lock-on still fires.
+    await page.addInitScript(() => window.localStorage.setItem('lullwood:settings', JSON.stringify({ difficulty: 'night' })));
     await boot(page, { qaHooks: true, qaHour: 12 });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
