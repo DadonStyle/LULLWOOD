@@ -74,6 +74,10 @@ declare global {
         pickingUp: boolean;
         taken: boolean;
       };
+      /** The THREE.Clock's live elapsedTime, so a test can poll for real
+       * engine-clock progress (e.g. under qaSetFixedStep) instead of relying
+       * on wall-clock waits. */
+      qaProbeElapsedTime?: () => number;
       /** LUL-1093: w2m(x,z)'s clamped pixel output plus the minimap canvas size (mm),
        * so a test can assert an arbitrary world point stays on-canvas. */
       qaProbeMinimapPoint?: (x: number, z: number) => { px: number; py: number; mm: number };
@@ -124,6 +128,16 @@ declare global {
         glowSwellCueCount: number;
         stingCount: number;
       };
+      /** LUL-5945: live count of real THREE.Light instances (`isLight===true`)
+       * in the scene graph right now -- proves the firefly-mote render-cost
+       * fix actually removed the per-mote THREE.PointLight, not just that the
+       * visual brightness math still works (qaProbeFireflyClusters covers
+       * that half). Baseline (sun/moon DirectionalLight, hemisphere light,
+       * any fixed landmark/beacon point lights) is whatever it is on the
+       * branch this runs against -- the test asserts the count does NOT
+       * increase when fireflies are active at night vs. absent at noon, not
+       * a specific baseline number. */
+      qaSceneRealLightCount?: () => number;
       /** LUL-83: the seed generateMap() actually used, plus the tree/baby/predator
        * positions it produced -- diff two loads' output to prove `?seed=` pins an
        * exact layout and no `?seed=` varies it. */

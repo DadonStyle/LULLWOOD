@@ -28,6 +28,8 @@ test.describe('leaderboard menu line', () => {
     await page.route('**/api/leaderboard/current', (route) => route.fulfill({ json: { record: RECORD } }));
     await boot(page);
     await expect(page.locator('#leaderboardLine')).toHaveText('ranger42 is the top rescuer at 2:05 — can you beat it?');
+    // LUL-5944: regression guard for the banner resize (13px -> 28px desktop).
+    expect(await page.locator('#leaderboardLine').evaluate((el) => getComputedStyle(el).fontSize)).toBe('28px');
     const cached = await page.evaluate((k) => window.localStorage.getItem(k), CACHE_KEY);
     expect(JSON.parse(cached!).record.nickname).toBe('ranger42');
   });

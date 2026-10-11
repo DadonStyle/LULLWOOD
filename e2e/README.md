@@ -47,3 +47,17 @@ a Tier B/C PR in review. Full mechanism and how to request a test or a hook: rea
 2. **Never assign to or resume the paused Game Tester.** Problems with the tester itself
    (this suite's runner, not an individual spec) go to the CEO as a ticket flagged for the
    founder.
+
+## Known accepted-flaky signatures
+
+- **`e2e/predator-audio-bus.spec.ts`** -- "raising the slider back up un-mutes the bus for the
+  next real predator call" and the transition-matrix test (6 rapid writes) can both
+  intermittently fail with a stuck-value signature (`Expected: <n>, Received: 1` or
+  `Received: <prior value>`), reproducing even on an unmodified baseline with no app-code
+  change (LUL-5934, LUL-5942). Root cause: the rig's `--mute-audio` Chromium flag
+  (`playwright.config.ts:38-52`, LUL-20) means WebAudio's render thread isn't guaranteed to
+  pump `AudioParam` automation every test session; this is a rig gap, not an app bug.
+  Playwright's own retry clears it in practice (retry0 fail / retry1 pass). Do not re-pin the
+  seed, widen the timeout, or treat a single isolated occurrence as a regression -- check
+  `git log` for actual changes to the implicated files first. Decision record: wiki
+  `decisions/lul-5942-predator-audio-bus-accepted-flaky-2026-10-10`.
