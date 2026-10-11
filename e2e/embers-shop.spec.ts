@@ -31,6 +31,13 @@ async function clickBuyButton(page: import('@playwright/test').Page, id: string)
 test.describe('embers shop (LUL-2351)', () => {
   test('buying each catalog item updates balance/tier text and fires the purchase cue', async ({ page, context }) => {
     await seedEmbers(context, HIGH_BALANCE_EMBERS);
+    // LUL-5953: this test is about generic shop UI mechanics, not difficulty pricing --
+    // pin 'night' explicitly (no longer the unseeded default) so the asserted Pocket
+    // Stones price below stays accurate. The dedicated blackout-price test right below
+    // this one already covers the difficulty-scaled branch.
+    await context.addInitScript(() => {
+      window.localStorage.setItem('lullwood:settings', JSON.stringify({ difficulty: 'night' }));
+    });
     const errs = trackConsoleErrors(page);
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     // LUL-2539: this test asserts an exact base scentLifetime below -- force wind off so the
@@ -54,7 +61,7 @@ test.describe('embers shop (LUL-2351)', () => {
     expect(probe.purchaseCueCount).toBe(2);
     expect(await qaHook(page, 'qaProbeScentLifetime')).toBeCloseTo(14 * 0.8, 5);
 
-    // Pocket Stones single tier: default engine difficulty is 'night' (LUL-2983), so
+    // Pocket Stones single tier: pinned to 'night' above (LUL-2983/LUL-5953), so
     // 120 embers, 1800 -> 1680, then maxed.
     await clickBuyButton(page, 'buy-pocketStones');
     await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1680');

@@ -2158,7 +2158,7 @@ const PSPEC = Object.fromEntries(Object.entries(PSPEC_BASE).map(([k, v]) => [k, 
 const RUN = CONFIG.walk * STAMINA_SPRINT_MUL;
 for(const k in PSPEC) PSPEC[k].speed = RUN + CHASE_GAP / PSPEC[k].budget;
 
-let difficulty = 'night';
+let difficulty = 'blackout';
 function makePredator(kind){
   const s = PSPEC[kind], g = new THREE.Group();
   const H = s.h, L = s.len, Wd = s.sz, bodyY = H*0.62;

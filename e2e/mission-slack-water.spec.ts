@@ -71,11 +71,11 @@ test('picking up the child while fog-tide is active completes Slack Water and pa
   await expect(page.locator('#missionPanel')).toBeHidden();
 
   await expect(page.locator('#winScreen')).toBeVisible({ timeout: 30_000 });
-  // boot()'s default tier is 'night' (engine/forest-engine.js `let difficulty = 'night'`,
-  // :1694), not 'lantern' -- computeWinPayout's win multiplier there is 1.75
+  // boot()'s default tier is 'blackout' (engine/forest-engine.js `let difficulty =
+  // 'blackout'`, LUL-5953) -- computeWinPayout's win multiplier there is 2.00
   // (lib/game/economy.ts TIER_MULTIPLIERS, not exported), so the bonus that actually lands
-  // in `total` is Math.round(MISSION_SLACKWATER_REWARD * 1.75), not the raw reward.
-  expect(await payoutGap(page)).toBe(Math.round(MISSION_SLACKWATER_REWARD * 1.75));
+  // in `total` is Math.round(MISSION_SLACKWATER_REWARD * 2.00), not the raw reward.
+  expect(await payoutGap(page)).toBe(Math.round(MISSION_SLACKWATER_REWARD * 2.0));
 
   expectNoConsoleErrors(errs);
 });

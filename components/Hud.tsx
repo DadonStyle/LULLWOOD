@@ -346,7 +346,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   staminaCharge: 1,
   chargeVisible: false,
   chargeToken: 0,
-  difficulty: 'night',
+  difficulty: 'blackout',
   runMode: 'hold',
   keyMap: {
     forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
