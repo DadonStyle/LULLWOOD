@@ -90,6 +90,24 @@ test('a veil-overload chase escape before the chapel dwell completes does not co
   const mission = await qaHook(page, 'qaProbeMission');
   expect(mission?.kind).toBe('chapelVeilEscape');
 
+  // LUL-5976: `qaSetFixedStep` only cancels the engine's *currently scheduled* real
+  // rAF frame (engine/forest-engine.js's `tick()` reschedules itself unconditionally
+  // every call) -- it does not stop the real-time loop retroactively. The test above
+  // (and ghost-veil-escape-mission.spec.ts, this file's own staging model) call
+  // qaSetFixedStep once, early, and stay in fixed-step mode for every scene it builds
+  // afterward, so this gap never bites them. This test called qaSetFixedStep *after*
+  // qaBuildScene (which sets the wolf's scentLock: 8 and starts its real-time decay
+  // immediately), with a `qaPredatorState` round trip in between -- under CPU
+  // contention (8 concurrent local-qa shards), that round trip gives the still-live
+  // real rAF loop enough uncontrolled wall-clock dt to decay scentLock past
+  // shouldDowngradeChase()'s gate before the deterministic 390-tick advance below even
+  // starts, so the predator is already 'investigate' (not 'chase') by the time KeyQ is
+  // pressed and veilOverloadTriggerActive never goes true. Fix: pin fixed-step mode
+  // before qaBuildScene, the same order every other scentLock-staging spec uses,
+  // so no real-time tick can run between scentLock being set and the fixed-step
+  // advance that's supposed to be its only clock.
+  await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+
   // Stage 2 attempted first, with no chapel dwell ever started -- must not complete.
   await qaHook(page, 'qaBuildScene', {
     predators: [{ kind: 'wolf', x: 40, z: 0, state: 'chase', scentLock: 8 }],
@@ -97,12 +115,13 @@ test('a veil-overload chase escape before the chapel dwell completes does not co
   const staged = await qaHook(page, 'qaPredatorState', 0);
   expect(staged.dist).toBeGreaterThan(staged.detectRange * 1.5);
 
-  await qaHook(page, 'qaSetFixedStep', FIXED_DT);
   await qaHook(page, 'qaAdvance', SCENT_TRACK_TICKS - 10, true);
+  const beforeOverload = await qaHook(page, 'qaPredatorState', 0);
+  expect(beforeOverload.state, 'must still be mid-chase right before Veil Overload activates').toBe('chase');
 
   await page.keyboard.press('KeyQ');
   const overload = await qaHook(page, 'qaProbeVeilOverload');
-  expect(overload.chargeT).toBeGreaterThan(0);
+  expect(overload.chargeT, 'KeyQ must have actually activated Veil Overload').toBeGreaterThan(0);
 
   // Same blind-chase-expiry shape as the test above -- lands on 'investigate', not 'roam'.
   await qaHook(page, 'qaAdvance', 20, true);
