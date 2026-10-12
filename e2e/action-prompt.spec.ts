@@ -19,10 +19,13 @@
 //    priority order (charge > objective > hide/veil > veil-overload > throwable > status),
 //    regardless of which currently have content.
 // 7. LUL-2336 (extended LUL-5166): qaForceAllActionRows() puts nine of
-//    #actionSlot's ten rows live with real content at once (no real
-//    playthrough state does; pickupPrompt is the one exception, mutually
-//    exclusive with throwPrompt by construction) -- none of their bounding
-//    boxes intersect, at 1280x720 and at a narrow mobile landscape width.
+//    #actionSlot's eleven rows live with real content at once (no real
+//    playthrough state does; pickupPrompt is one exception, mutually
+//    exclusive with throwPrompt by construction -- mudPrompt is the other,
+//    LUL-5565, not wired into this engine-side hook; see e2e/mud-zone.spec.ts
+//    and GameCanvas.tsx's LUL-5374 comment for its own, separately-measured
+//    suppression coverage) -- none of the nine's bounding boxes intersect,
+//    at 1280x720 and at a narrow mobile landscape width.
 // 8. LUL-5246: at a real short-landscape mobile viewport (Pixel 5 / iPhone SE
 //    landscape), with both #objective and #actionPrompt (hide/veil) populated
 //    at once, #objective's .actionPromptLine collapses to display:none and
@@ -689,7 +692,7 @@ test.describe('#actionSlot short-landscape suppression (LUL-5374)', () => {
 // staging, so it can never silently drift if a future edit reorders the JSX
 // inside #actionSlot (components/Hud.tsx).
 test.describe('#actionSlot row order', () => {
-  test('ten rows are always mounted, top to bottom in priority order', async ({ page }) => {
+  test('eleven rows are always mounted, top to bottom in priority order', async ({ page }) => {
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
     await enter(page);
 
@@ -699,7 +702,9 @@ test.describe('#actionSlot row order', () => {
     // do about being hunted" rows, kept adjacent.
     // LUL-5005: chapelSanctuaryPrompt inserted after climbPrompt, same "contextual
     // something-to-do row, before the terminal status row" placement.
-    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'veilOverloadPrompt', 'veilPrompt', 'throwPrompt', 'pickupPrompt', 'climbPrompt', 'chapelSanctuaryPrompt', 'status']);
+    // LUL-5565: mudPrompt inserted after chapelSanctuaryPrompt, before the terminal
+    // status row -- an ambient hazard read, not a "something to do" row, hence last.
+    expect(ids).toEqual(['chargePrompt', 'objective', 'actionPrompt', 'veilOverloadPrompt', 'veilPrompt', 'throwPrompt', 'pickupPrompt', 'climbPrompt', 'chapelSanctuaryPrompt', 'mudPrompt', 'status']);
 
     // Every row exists (not conditionally mounted) even with nothing to show.
     for (const id of ids) {

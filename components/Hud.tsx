@@ -100,6 +100,11 @@ export interface EngineHudState {
   chapelSanctuaryActive: boolean;
   chapelSanctuaryChargeT: number;
   chapelSanctuaryPromptVisible: boolean;
+  // LUL-5564/LUL-5565: Mud Zone terrain hazard -- true while the player's x/z falls
+  // inside any mudZones circle (engine/forest-engine.js's isInMudZone()). Drives the
+  // mudPrompt row below; no countdown/charge, it's a plain in/out read like
+  // coverPromptVisible rather than a timed resource like caveImmuneTimeLeft above.
+  inMudZone: boolean;
   // LUL-4960: M5 Cold Walk -- coldWalkOptIn is the persisted setting; coldWalkActive/
   // coldWalkBroken drive #coldWalkPanel, same shape as caveImmuneActive/veilOverloadActive.
   coldWalkOptIn: boolean;
@@ -330,6 +335,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   chapelSanctuaryActive: false,
   chapelSanctuaryChargeT: 0,
   chapelSanctuaryPromptVisible: false,
+  inMudZone: false,
   coldWalkOptIn: false,
   coldWalkActive: false,
   coldWalkBroken: false,
@@ -1243,10 +1249,11 @@ export default function Hud({
           <ActionPrompt>, in the founder's stated priority order top-to-bottom:
           charge dodge > objective (E) > hide-or-veil > veil-overload panic >
           scent-veil break > throwable > pickup (E) > vantage climb > chapel
-          sanctuary > status (LUL-5374: names all 10 rows -- this comment
-          previously named only 5 of them, which is how LUL-5373 happened, an
-          ambiguous partial list left the other 4 rows' relative priority
-          undocumented until a bug forced someone to re-derive it. See
+          sanctuary > mud zone > status (LUL-5374: names all 10 rows -- this
+          comment previously named only 5 of them, which is how LUL-5373
+          happened, an ambiguous partial list left the other 4 rows' relative
+          priority undocumented until a bug forced someone to re-derive it; LUL-5565
+          appends mudPrompt at the bottom of the same chain. See
           docs/specs/lul-5374-action-slot-full-row-suppression.md for the
           short-landscape :has() suppression rules in GameCanvas.tsx that
           enforce this same order when two rows would otherwise overlap).
@@ -1261,10 +1268,10 @@ export default function Hud({
           frame (LUL-2131 precedent -- previously only actionPrompt/throwPrompt
           carried this gate; extended to every row here for consistency, not a
           previously-reported bug on the other three).
-          LUL-5166: this grid now mounts 10 rows (1 charge + 9 regular --
+          LUL-5166/LUL-5565: this grid now mounts 11 rows (1 charge + 10 regular --
           objective, actionPrompt, veilOverloadPrompt, veilPrompt, throwPrompt,
-          pickupPrompt, climbPrompt, chapelSanctuaryPrompt, status), not the
-          five it started with -- #actionSlot's grid-template-rows/
+          pickupPrompt, climbPrompt, chapelSanctuaryPrompt, mudPrompt, status), not
+          the five it started with -- #actionSlot's grid-template-rows/
           --action-slot-height (GameCanvas.tsx) must be kept in lockstep with
           this count. Add a row here => add a track there in the same PR. */}
       <div id="actionSlot">
@@ -1396,6 +1403,19 @@ export default function Hud({
           visible={state.chapelSanctuaryPromptVisible && hudLive}
           tone="calm"
           text={`Press  ${formatKeyLabel(state.keyMap.interact)}  for chapel sanctuary — shelter 15s for a free charm against the mist`}
+        />
+        {/* LUL-5564/LUL-5565: Mud Zone terrain hazard -- ambient awareness row, not a
+            "something to do" prompt like the rows above it (there's no key to press,
+            nothing to grant); placed last in the chain, just above status, matching
+            that lower-urgency semantics. inMudZone is independent of every other row's
+            trigger (hidden, chasing, throwable...), so it can be visible alongside any
+            of them -- see GameCanvas.tsx's suppression chain for the short-landscape
+            pairs that were live-measured to actually overlap. */}
+        <ActionPrompt
+          id="mudPrompt"
+          visible={state.inMudZone && hudLive}
+          tone="calm"
+          text="In mud — slower, louder"
         />
         {/* `hiding` is not a second flag: status only ever appears while hidden
             (LUL-35 pass 2 removed the `statusHiding` field, which the engine

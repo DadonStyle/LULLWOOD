@@ -65,17 +65,17 @@ const OVERLAY_STYLE = `
     --action-slot-row-charge: 48px;
     --action-slot-gap: 6px;
     --action-slot-bottom: 24px;
-    /* LUL-5166: 9 regular rows, not 5 -- #actionSlot (Hud.tsx) mounts charge,
+    /* LUL-5166/LUL-5565: 10 regular rows, not 5 -- #actionSlot (Hud.tsx) mounts charge,
        objective, actionPrompt, veilOverloadPrompt, veilPrompt, throwPrompt,
-       pickupPrompt, climbPrompt, chapelSanctuaryPrompt and status (10 rows
-       total, 1 charge-height + 9 regular-height). This constant and
+       pickupPrompt, climbPrompt, chapelSanctuaryPrompt, mudPrompt and status (11 rows
+       total, 1 charge-height + 10 regular-height). This constant and
        grid-template-rows/row-gap below (#actionSlot) must always agree with
        Hud.tsx's actual <ActionPrompt> count -- when they drift, extra rows
        fall into implicit grid tracks sized to content, which grows
        #actionSlot taller than every pixel-math comment in this file assumes
        and can push its topmost (charge/JUMP) row off the top of a short
        viewport (layout-a9ddf9368c, mobile-pixel5-landscape). */
-    --action-slot-height: calc(var(--action-slot-row-charge) + (9 * var(--action-slot-row)) + (9 * var(--action-slot-gap))); }
+    --action-slot-height: calc(var(--action-slot-row-charge) + (10 * var(--action-slot-row)) + (10 * var(--action-slot-gap))); }
   canvas { display: block; }
 
   #vignette { position: fixed; inset: 0; z-index: 1; pointer-events: none;
@@ -649,8 +649,11 @@ const OVERLAY_STYLE = `
        of letting it grow with the row count avoids re-deriving all of it blind.
        LUL-5166: row re-solved for 9 regular rows (was 5) at the same 176px
        total -- 40 + 9*11.91 + 9*3.2 = 175.99 (gap left at 3.2px, only row
-       re-derived: (176 - 40 - 9*3.2) / 9 = 11.911, rounded to 11.91). */
-    html, body { --action-slot-row: 11.91px; --action-slot-row-charge: 40px; --action-slot-gap: 3.2px; }
+       re-derived: (176 - 40 - 9*3.2) / 9 = 11.911, rounded to 11.91).
+       LUL-5565: row re-solved again for 10 regular rows (mudPrompt added) at the
+       same 176px total, gap left at 3.2px as before -- (176 - 40 - 10*3.2) / 10 =
+       10.4 exactly, no rounding needed: 40 + 10*10.4 + 10*3.2 = 176. */
+    html, body { --action-slot-row: 10.4px; --action-slot-row-charge: 40px; --action-slot-gap: 3.2px; }
   }
   @media (max-height: 420px) and (pointer: coarse) and (hover: none),
          (max-height: 420px) and (max-width: 768px) {
@@ -702,18 +705,26 @@ const OVERLAY_STYLE = `
        suppression.md for both the collision matrix and the per-pair real-co-occurrence check.
        Priority order (highest wins, CTO decision on LUL-5373): chargePrompt > objective >
        actionPrompt > veilOverloadPrompt > veilPrompt > throwPrompt > pickupPrompt > climbPrompt
-       > chapelSanctuaryPrompt > status -- see Hud.tsx's own priority comment above #actionSlot.
-       climbPrompt/status is deliberately NOT suppressed here: climbPromptVisible requires
-       !hidden and statusVisible only turns true inside if(hidden), so they can never both be
-       true in real play -- the two only "collide" under qaForceAllActionRows's unconditional
-       force, a synthetic-only state (see the e2e test change note below). Every rule keys off
-       [data-visible="1"] (React-set from real engine state), never another row's rendered
-       display, so these compose safely with each other and with the rule above regardless of
-       evaluation order -- verified live: re-measuring with all 9 rules applied plus
-       qaForceAllActionRows() (worst case, all rows forced at once) shows zero remaining
+       > chapelSanctuaryPrompt > mudPrompt > status -- see Hud.tsx's own priority comment above
+       #actionSlot. climbPrompt/status is deliberately NOT suppressed here: climbPromptVisible
+       requires !hidden and statusVisible only turns true inside if(hidden), so they can never
+       both be true in real play -- the two only "collide" under qaForceAllActionRows's
+       unconditional force, a synthetic-only state (see the e2e test change note below). Every
+       rule keys off [data-visible="1"] (React-set from real engine state), never another row's
+       rendered display, so these compose safely with each other and with the rule above
+       regardless of evaluation order -- verified live: re-measuring with all 9 rules applied
+       plus qaForceAllActionRows() (worst case, all rows forced at once) shows zero remaining
        .actionPromptLine overlaps on both mobile-pixel5-landscape and mobile-iphone-se-landscape.
        (LUL-5179 below adds a 10th rule for the one real, non-forced pair this all-forced
-       measurement couldn't expose -- see its own comment.) */
+       measurement couldn't expose -- see its own comment.)
+       LUL-5565: mudPrompt's two new rules just below were live-measured the same way but
+       NOT through qaForceAllActionRows -- that hook (engine/forest-engine.js, out of this
+       ticket's file set) was never extended to force inMudZone, so e2e/action-prompt.spec.ts's
+       "all forceable rows live at once" coverage still only exercises the original 9; mudPrompt
+       is verified separately in e2e/mud-zone.spec.ts via real mud-zone placement instead of the
+       force hook. Flagged, not silently assumed covered -- a follow-up extending
+       qaForceAllActionRows to cover mudPrompt would fold it into that exhaustive check too, but
+       requires an engine-file change outside LUL-5565's scope. */
     body:has(#chargePrompt[data-visible="1"]) #actionPrompt .actionPromptLine { display: none !important; }
     /* LUL-5179: the rule above only covers chargePrompt<->actionPrompt; it does not reach
        objective, and LUL-5374's own suppression of objective keys off #actionPrompt's
@@ -738,6 +749,16 @@ const OVERLAY_STYLE = `
     body:has(#throwPrompt[data-visible="1"]) #climbPrompt .actionPromptLine { display: none !important; }
     body:has(#climbPrompt[data-visible="1"]) #chapelSanctuaryPrompt .actionPromptLine { display: none !important; }
     body:has(#chapelSanctuaryPrompt[data-visible="1"]) #status .actionPromptLine { display: none !important; }
+    /* LUL-5565: mudPrompt inserted into the same chain, between chapelSanctuaryPrompt and
+       status (Hud.tsx's priority comment above #actionSlot) -- unlike climbPrompt/status
+       above, inMudZone is a plain x/z read with no !hidden gate, so it really can co-occur
+       with either neighbor (hiding inside a mud zone for the mud/status pair, sheltering at
+       a chapel a mud zone happens to cover for the chapel/mud pair) -- confirmed live:
+       #mudPrompt's fixed track (158-189px at this breakpoint) measured ~17px of vertical
+       overlap against both #chapelSanctuaryPrompt (144-176px) and #status (172-203px)
+       before these two rules existed. */
+    body:has(#chapelSanctuaryPrompt[data-visible="1"]) #mudPrompt .actionPromptLine { display: none !important; }
+    body:has(#mudPrompt[data-visible="1"]) #status .actionPromptLine { display: none !important; }
     /* LUL-2414: the bottom self-anchored #hintCaption family (bog/stamina/
        veil/landmark, see the "Self/panel-anchored keys" rule above) positions
        itself at bottom: action-slot-bottom + action-slot-height + 10px --
@@ -914,9 +935,9 @@ const OVERLAY_STYLE = `
 
   #actionSlot { position: fixed; bottom: var(--action-slot-bottom); left: 50%; transform: translateX(-50%);
     z-index: 12; display: grid;
-    /* LUL-5166: 10 tracks (1 charge + 9 regular) to match Hud.tsx's actual
+    /* LUL-5166/LUL-5565: 11 tracks (1 charge + 10 regular) to match Hud.tsx's actual
        <ActionPrompt> count -- see the --action-slot-height comment above. */
-    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
+    grid-template-rows: var(--action-slot-row-charge) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row) var(--action-slot-row);
     row-gap: var(--action-slot-gap); justify-items: center; pointer-events: none; }
 
   .actionPromptRow { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; }
