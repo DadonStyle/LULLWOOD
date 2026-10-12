@@ -177,7 +177,10 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty }: { survive
           <option value="">country</option>
           {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <button type="submit" className="restartBtn" disabled={!canSubmit}>
+        {/* LUL-5967: own class, not .restartBtn -- shares restartBtn's styling via
+            GameCanvas.tsx's selector lists, but must stay a distinct class so
+            `#winText .restartBtn` (focus-management, LUL-1081 battery) stays unique. */}
+        <button type="submit" className="leaderboardSubmitBtn" disabled={!canSubmit}>
           {status === 'submitting' ? 'saving…' : 'Submit'}
         </button>
       </div>

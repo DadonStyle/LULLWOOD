@@ -190,7 +190,7 @@ const OVERLAY_STYLE = `
        min-height is the one property this override doesn't declare and so
        is not itself shadowed) rather than here. Do not "clean up" by
        reordering these two rules without re-verifying which one wins. */
-    .restartBtn { padding: 15px 24px; font-size: 16px; }
+    .restartBtn, .leaderboardSubmitBtn { padding: 15px 24px; font-size: 16px; }
     /* LUL-1043: same 44px rationale -- the Deeper Lungs buy button. */
     .buyBtn { padding: 13px 18px; font-size: 14px; }
     #gateTitle { font-size: 26px; }
@@ -565,7 +565,7 @@ const OVERLAY_STYLE = `
      though nothing is actually drawn on top of anything. */
   .emberGain { color: #ffdca8; font-weight: 500; white-space: nowrap; }
   .emberLoss { color: #ff8a8a; font-weight: 500; white-space: nowrap; }
-  .restartBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
+  .restartBtn, .leaderboardSubmitBtn { font: inherit; font-size: 15px; letter-spacing: 0.06em; color: #2a1a10; cursor: pointer;
     background: #f0c79a; border: none; border-radius: 10px; padding: 10px 24px; margin-top: 8px;
     /* LUL-1088 CASCADE-ORDER BUG GUARD: the mobile-only .restartBtn override up
        in the @media block sets padding/font-size but this later, unconditional
@@ -575,7 +575,7 @@ const OVERLAY_STYLE = `
        of source order and is what actually keeps this button >=44px tall on a
        phone. Keep this even if the two rules are ever reordered. */
     min-height: 48px; }
-  .restartBtn:hover { background: #f6d3ac; }
+  .restartBtn:hover, .leaderboardSubmitBtn:hover { background: #f6d3ac; }
   /* LUL-3264: leaderboard submit form on the Blackout win screen. */
   #leaderboardForm { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 6px; }
   #leaderboardForm label { font-size: 13px; letter-spacing: 0.05em; color: #ffdca8; }
@@ -583,8 +583,12 @@ const OVERLAY_STYLE = `
   #leaderboardNickname, #leaderboardCountry { font: inherit; font-size: 15px; color: #2a1a10; background: #f6e6d2;
     border: none; border-radius: 8px; padding: 10px 12px; min-height: 44px; }
   #leaderboardNickname { width: 12rem; }
-  #leaderboardForm .restartBtn { margin-top: 0; }
-  #leaderboardForm .restartBtn:disabled { opacity: 0.5; cursor: default; }
+  /* LUL-5967: was #leaderboardForm .restartBtn -- the button now carries its
+     own class (.leaderboardSubmitBtn) so #winText .restartBtn stays a unique
+     match for the real Play Again button; the #leaderboardForm scope is no
+     longer needed since the class itself only ever renders inside this form. */
+  .leaderboardSubmitBtn { margin-top: 0; }
+  .leaderboardSubmitBtn:disabled { opacity: 0.5; cursor: default; }
   #leaderboardHint, .leaderboardError, #leaderboardSubmitted, #leaderboardIneligibleNote { font-size: 12px; margin: 0; color: #cbb7a4; }
   /* LUL-5944: unlike the other three (nested inside #leaderboardForm's own flex gap, :565),
      this one replaces the form entirely and sits directly under RunRecap -- needs its own
@@ -592,7 +596,7 @@ const OVERLAY_STYLE = `
   #leaderboardIneligibleNote { margin-top: 6px; }
   .leaderboardError { color: #ff8a8a; }
   .leaderboardHoneypot { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
-  .restartBtn:focus-visible { outline: 2px solid #ffe6c8; outline-offset: 3px; }
+  .restartBtn:focus-visible, .leaderboardSubmitBtn:focus-visible { outline: 2px solid #ffe6c8; outline-offset: 3px; }
 
   /* LUL-1043: Embers shop -- Deeper Lungs I/II/III, the cheap version's one
      sink. Reused on #gate, #winScreen and #deathText (see Hud.tsx's
@@ -827,7 +831,7 @@ const OVERLAY_STYLE = `
     #winText p, #deathText p { margin: 0 0 2px; font-size: 11px; }
     #deathText p { margin: 0 0 2px !important; font-size: 11px !important; }
     #runChronicle { font-size: 10px; margin-top: 2px; }
-    .restartBtn { margin-top: 2px; padding: 6px 16px; }
+    .restartBtn, .leaderboardSubmitBtn { margin-top: 2px; padding: 6px 16px; }
     #embersShop { flex-direction: column; margin-top: 2px; gap: 1px; }
     /* LUL-3255: #embersShopBalance/.buyBtn were 11px/10px, under the 12px
        MIN_FONT_PX floor -- flagged every prod QA run (also reproduces on the

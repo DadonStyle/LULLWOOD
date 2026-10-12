@@ -71,7 +71,11 @@ test.describe('leaderboard submit form', () => {
     expect(Math.abs(body.time_ms / 1000 - (Number(m) * 60 + Number(s)))).toBeLessThanOrEqual(1);
   });
 
-  test('is absent on a lantern win', async ({ page }) => {
+  test('is absent on a lantern win', async ({ page, context }) => {
+    // LUL-5953 flipped the default difficulty night->blackout; this test needs
+    // a non-blackout run to exercise the ineligible-note path (same pinning
+    // LUL-5965 already applied to the other specs this flip broke).
+    await seedSettings(context, { difficulty: 'night' });
     await boot(page, { qaHooks: true });
     await enter(page);
     await win(page);
