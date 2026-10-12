@@ -3459,20 +3459,43 @@ predators can hear you farther"*. This bypasses the shared `HINT_PRIORITY`/`HINT
 candidate table other hints use (pushed directly via `pushState({ caption, captionId })`) --
 no exit cue, since there is nothing to announce on leaving (the slowdown/noise effect just stops).
 
-**HUD state** -- `inMudZone` is computed and pushed into the engine's per-frame `pushState()`
-call (`:8022`) but is not yet declared on the `EngineHudState` interface
-(`components/Hud.tsx:32`) and no component reads it -- there is no persistent on-screen "you are
-in mud" indicator today, only the one-shot enter cue/caption above. Also exposed on
-`qaPlayerState()` (`:5577`, typed at `engine/forest-engine.d.ts:324`) for tests. Per LUL-5564's
-own follow-up, a render site for this field is LUL-5565's scope, not this ticket's.
+**HUD state (LUL-5565)** -- `inMudZone` is computed and pushed into the engine's per-frame
+`pushState()` call (`:8022`), declared on `EngineHudState` (`components/Hud.tsx:107`) and
+defaulted in `INITIAL_HUD_STATE` (`:338`). Rendered as the `#mudPrompt` row inside `#actionSlot`
+(`components/Hud.tsx:1415`, `visible={state.inMudZone && hudLive}`, text "In mud — slower,
+louder") -- last in the row's documented priority chain (`Hud.tsx`'s comment above
+`#actionSlot`), right before `status`. The row is a plain ambient read, not a "something to
+do" prompt: no key, no gate. Also exposed on `qaPlayerState()` (`:5577`, typed at
+`engine/forest-engine.d.ts:324`) for tests, which this ticket's e2e coverage (below) uses
+directly rather than a synthetic force hook.
+
+Adding the row as the 11th `#actionSlot` track (1 charge + 10 regular, was 9) required the
+matching grid-track bump in `components/GameCanvas.tsx` (LUL-5166 rule): `--action-slot-height`
+and `grid-template-rows` (desktop), and the short-landscape (`max-height: 420px`) row-height
+re-derivation that keeps the same 176px total footprint (`--action-slot-row: 10.4px`, exact,
+no rounding). Live measurement at that breakpoint found `#mudPrompt` genuinely overlapping both
+its DOM-order neighbors (hiding inside a mud zone for the `status` pair, a mud zone covering the
+chapel for the `chapelSanctuaryPrompt` pair -- both real-reachable, not synthetic), so it joined
+the LUL-5374 `:has()` suppression chain between the two: `chapelSanctuaryPrompt` > `mudPrompt` >
+`status`. `qaForceAllActionRows` (engine-side, LUL-5564's file set) was not extended to force
+`inMudZone` -- `e2e/action-prompt.spec.ts`'s "all forceable rows live at once" coverage still
+only exercises the original 9; `mudPrompt`'s suppression pairs are verified in
+`e2e/mud-zone.spec.ts` via real mud-zone placement instead. Flagged as a gap for a follow-up
+engine-side ticket, not silently assumed covered.
 
 **QA hooks**: `qaPlayerState().inMudZone` (live boolean) is the only hook; no zone-geometry or
 cue-count probe exists yet (compare `qaProbeScentMaskSite()`'s `enterCueCount`).
 
-**Coverage**: `lib/game/mud.test.ts` covers the pure multiplier/geometry functions only. No
-`e2e/` spec or `shared/local-qa/requests/` file exists yet -- LUL-5564 is engine-core only; e2e
-opposing-system coverage (a predator staged inside a zone) and the local-qa request file are
-LUL-5565's scope.
+**Coverage** -- `lib/game/mud.test.ts` covers the pure multiplier/geometry functions.
+`e2e/mud-zone.spec.ts` (LUL-5565, new) drives real engine state (`qaBuildScene({mudZones})`,
+`qaTeleportTo`): `inMudZone`/`#mudPrompt` flip true/false across the zone boundary with
+`adminMode` off, the first-mud-entry caption fires once and not on a second entry
+(`qaResetHints` precedent from `e2e/hide-alert.spec.ts`), and the opposing-system proof Q11
+asks for -- a real roaming wolf staged 17.5u away (between `NOISE_RADIUS_WALK=14` and
+`NOISE_RADIUS_WALK * MUD_NOISE_MUL=21`) transitions out of `roam` while the player walks in
+place inside the zone, where the identical staging with no mud zone never does.
+`shared/local-qa/requests/lul-5558-mud-zone.md` (new) requests the nightly scenario on desktop
++ one landscape phone.
 
 ## Scent-Decoy Site (LUL-5566, cheap slice, plan LUL-5560)
 
