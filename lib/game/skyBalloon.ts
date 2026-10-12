@@ -76,6 +76,9 @@ export interface Balloon2DContext {
   clearRect(x: number, y: number, w: number, h: number): void;
   fillRect(x: number, y: number, w: number, h: number): void;
   fillText(text: string, x: number, y: number): void;
+  beginPath(): void;
+  ellipse(x: number, y: number, radiusX: number, radiusY: number, rotation: number, startAngle: number, endAngle: number): void;
+  fill(): void;
   font: string;
   fillStyle: string;
   textAlign: string;
@@ -83,12 +86,14 @@ export interface Balloon2DContext {
 }
 
 /**
- * Draws the balloon body, its text, and -- only for a flag-eligible state --
- * 2-3 vertical colour bars from `COUNTRY_PALETTES` next to the text (PART
- * 2.4's "simplest correct rendering," fidelity left to the implementer per
- * PART 2.5). Draws nothing (after the clear) for 'hidden' -- the caller is
- * expected to also hide the sprite group itself, this just keeps the texture
- * blank so nothing stale is left behind if it's ever shown again.
+ * Draws the balloon as a row of inflated letterform bubbles -- one filled
+ * oval per non-space character, the character itself on top -- per PART
+ * 2.5's "inflated oval/letterform body," plus -- only for a flag-eligible
+ * state -- 2-3 vertical colour bars from `COUNTRY_PALETTES` next to the text
+ * (PART 2.4's "simplest correct rendering," fidelity left to the implementer
+ * per PART 2.5). Draws nothing (after the clear) for 'hidden' -- the caller
+ * is expected to also hide the sprite group itself, this just keeps the
+ * texture blank so nothing stale is left behind if it's ever shown again.
  */
 export function drawSkyBalloonTexture(
   ctx: Balloon2DContext,
@@ -100,20 +105,39 @@ export function drawSkyBalloonTexture(
   ctx.clearRect(0, 0, width, height);
   if (status === 'hidden') return;
   const { text, hasFlag } = skyBalloonContent(status, record);
-  // Balloon body -- warm lantern-paper tone, reads through fog like the moon disc.
-  ctx.fillStyle = 'rgba(255, 248, 230, 0.92)';
-  ctx.fillRect(width * 0.04, height * 0.1, width * 0.92, height * 0.6);
+
+  let flagWidth = 0;
   if (hasFlag && record) {
     const colors = COUNTRY_PALETTES[record.country] ?? [];
-    const barWidth = (width * 0.18) / Math.max(1, colors.length);
+    const barWidth = (width * 0.14) / Math.max(1, colors.length);
     colors.forEach((hex, i) => {
       ctx.fillStyle = hex;
-      ctx.fillRect(width * 0.06 + i * barWidth, height * 0.16, barWidth, height * 0.48);
+      ctx.fillRect(width * 0.04 + i * barWidth, height * 0.3, barWidth, height * 0.4);
     });
+    flagWidth = colors.length * barWidth + width * 0.06;
   }
-  ctx.font = `${Math.round(height * 0.22)}px Georgia, 'Times New Roman', serif`;
+
+  const letters = [...text].filter((ch) => ch !== ' ');
+  const usableWidth = width - flagWidth - width * 0.04;
+  const glyphSpacing = usableWidth / Math.max(1, letters.length);
+  const glyphRadiusX = Math.min(glyphSpacing * 0.46, height * 0.3);
+  const glyphRadiusY = height * 0.32;
+  const centerY = height * 0.46;
+  ctx.font = `bold ${Math.round(Math.min(height * 0.3, glyphSpacing * 0.85))}px Georgia, 'Times New Roman', serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#2a1a10';
-  ctx.fillText(text, width * (hasFlag ? 0.58 : 0.5), height * 0.4);
+
+  let cursorX = flagWidth + width * 0.02 + glyphSpacing * 0.5;
+  for (const ch of text) {
+    if (ch !== ' ') {
+      // Inflated letterform bubble -- warm lantern-paper tone, reads through fog like the moon disc.
+      ctx.fillStyle = 'rgba(255, 248, 230, 0.95)';
+      ctx.beginPath();
+      ctx.ellipse(cursorX, centerY, glyphRadiusX, glyphRadiusY, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#2a1a10';
+      ctx.fillText(ch, cursorX, centerY);
+    }
+    cursorX += glyphSpacing;
+  }
 }

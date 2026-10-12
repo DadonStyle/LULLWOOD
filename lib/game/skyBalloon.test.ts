@@ -16,6 +16,9 @@ function makeCtxStub() {
     clearRect(x: number, y: number, w: number, h: number) { calls.push(['clearRect', x, y, w, h]); },
     fillRect(x: number, y: number, w: number, h: number) { calls.push(['fillRect', x, y, w, h, this.fillStyle]); },
     fillText(text: string, x: number, y: number) { calls.push(['fillText', text, x, y]); },
+    beginPath() { calls.push(['beginPath']); },
+    ellipse(x: number, y: number, rx: number, ry: number) { calls.push(['ellipse', x, y, rx, ry]); },
+    fill() { calls.push(['fill']); },
     font: '',
     fillStyle: '',
     textAlign: '',
@@ -96,20 +99,27 @@ test('drawSkyBalloonTexture: hidden only clears, draws nothing else', () => {
   assert.equal(ctx.calls[0][0], 'clearRect');
 });
 
-test('drawSkyBalloonTexture: loading draws the body + text, no flag bars', () => {
+test('drawSkyBalloonTexture: loading draws an inflated letterform bubble per character, no flag bars', () => {
   const ctx = makeCtxStub();
   drawSkyBalloonTexture(ctx, 'loading', null);
-  assert.ok(ctx.calls.some(c => c[0] === 'fillText' && c[1] === 'loading top rescuer'));
-  // body fillRect + no flag-bar fillRects => exactly one fillRect call
-  assert.equal(ctx.calls.filter(c => c[0] === 'fillRect').length, 1);
+  const letters = [...'loading top rescuer'].filter(ch => ch !== ' ');
+  // no flag bars for a non-flag-eligible state
+  assert.equal(ctx.calls.filter(c => c[0] === 'fillRect').length, 0);
+  // one inflated-oval bubble (beginPath+ellipse+fill) per non-space character
+  assert.equal(ctx.calls.filter(c => c[0] === 'ellipse').length, letters.length);
+  assert.equal(ctx.calls.filter(c => c[0] === 'fill').length, letters.length);
+  // the character is drawn on top of its own bubble, in source order
+  assert.deepEqual(ctx.calls.filter(c => c[0] === 'fillText').map(c => c[1]), letters);
 });
 
-test('drawSkyBalloonTexture: populated draws flag bars matching the country palette length', () => {
+test('drawSkyBalloonTexture: populated draws flag bars matching the country palette length plus a letterform bubble per character', () => {
   const ctx = makeCtxStub();
   drawSkyBalloonTexture(ctx, 'populated', { nickname: 'ranger42', country: 'JP', timeMs: 60_000 });
-  // JP has 2 colours (lib/game/country-palettes.ts) + 1 body fillRect = 3
-  assert.equal(ctx.calls.filter(c => c[0] === 'fillRect').length, 3);
-  assert.ok(ctx.calls.some(c => c[0] === 'fillText' && (c[1] as string).startsWith('ranger42')));
+  const letters = [...'ranger42 — 1:00'].filter(ch => ch !== ' ');
+  // JP has 2 colours (lib/game/country-palettes.ts) -- flag bars are the only fillRect calls now
+  assert.equal(ctx.calls.filter(c => c[0] === 'fillRect').length, 2);
+  assert.equal(ctx.calls.filter(c => c[0] === 'ellipse').length, letters.length);
+  assert.deepEqual(ctx.calls.filter(c => c[0] === 'fillText').map(c => c[1]), letters);
 });
 
 test('drawSkyBalloonTexture: clears the canvas before drawing anything else', () => {
