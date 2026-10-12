@@ -117,9 +117,16 @@ export function drawSkyBalloonTexture(
     flagWidth = colors.length * barWidth + width * 0.06;
   }
 
-  const letters = [...text].filter((ch) => ch !== ' ');
+  const chars = [...text];
+  const letters = chars.filter((ch) => ch !== ' ');
+  const spaceCount = chars.length - letters.length;
+  // A space still has to advance the cursor (word gaps), but it draws no bubble,
+  // so it must consume less of the budget than a lettered slot or the loop
+  // overruns the canvas by one unbudgeted slot per space (LUL-5980 P1).
+  const SPACE_ADVANCE_RATIO = 0.6;
   const usableWidth = width - flagWidth - width * 0.04;
-  const glyphSpacing = usableWidth / Math.max(1, letters.length);
+  const totalAdvanceUnits = letters.length + spaceCount * SPACE_ADVANCE_RATIO;
+  const glyphSpacing = usableWidth / Math.max(1, totalAdvanceUnits);
   const glyphRadiusX = Math.min(glyphSpacing * 0.46, height * 0.3);
   const glyphRadiusY = height * 0.32;
   const centerY = height * 0.46;
@@ -137,7 +144,9 @@ export function drawSkyBalloonTexture(
       ctx.fill();
       ctx.fillStyle = '#2a1a10';
       ctx.fillText(ch, cursorX, centerY);
+      cursorX += glyphSpacing;
+    } else {
+      cursorX += glyphSpacing * SPACE_ADVANCE_RATIO;
     }
-    cursorX += glyphSpacing;
   }
 }

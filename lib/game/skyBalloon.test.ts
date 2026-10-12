@@ -122,6 +122,26 @@ test('drawSkyBalloonTexture: populated draws flag bars matching the country pale
   assert.deepEqual(ctx.calls.filter(c => c[0] === 'fillText').map(c => c[1]), letters);
 });
 
+test('drawSkyBalloonTexture: every letterform bubble stays within the canvas bounds for all real content states (LUL-5980 regression -- spaces used to steal an unbudgeted cursor slot and overrun the right edge)', () => {
+  const cases: Array<['loading' | 'empty' | 'populated', { nickname: string; country: string; timeMs: number } | null]> = [
+    ['loading', null],
+    ['empty', null],
+    ['populated', { nickname: 'ranger42', country: 'JP', timeMs: 60_000 }],
+  ];
+  for (const [status, record] of cases) {
+    const ctx = makeCtxStub();
+    drawSkyBalloonTexture(ctx, status, record, SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_CANVAS_HEIGHT);
+    const ellipses = ctx.calls.filter(c => c[0] === 'ellipse') as Array<[string, number, number, number, number]>;
+    assert.ok(ellipses.length > 0, `expected at least one letterform bubble for ${status}`);
+    for (const [, x, , rx] of ellipses) {
+      assert.ok(x + rx <= SKY_BALLOON_CANVAS_WIDTH + 1e-6,
+        `${status}: bubble at x=${x} rx=${rx} overruns canvas width ${SKY_BALLOON_CANVAS_WIDTH}`);
+      assert.ok(x - rx >= -1e-6,
+        `${status}: bubble at x=${x} rx=${rx} underruns the left edge`);
+    }
+  }
+});
+
 test('drawSkyBalloonTexture: clears the canvas before drawing anything else', () => {
   const ctx = makeCtxStub();
   drawSkyBalloonTexture(ctx, 'empty', null, SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_CANVAS_HEIGHT);
