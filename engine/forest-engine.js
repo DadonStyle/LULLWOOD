@@ -518,19 +518,23 @@ const skyBalloonTex = new THREE.CanvasTexture(skyBalloonCanvas); skyBalloonTex.c
 const skyBalloonSprite = new THREE.Sprite(new THREE.SpriteMaterial({
   map: skyBalloonTex, transparent: true, opacity: 0, depthWrite: false, fog: false,
 }));
-skyBalloonSprite.scale.set(34, 34 * (SKY_BALLOON_CANVAS_HEIGHT / SKY_BALLOON_CANVAS_WIDTH), 1);
+// LUL-5980: bumped ~1.9x (34 -> 64, same ratio Sky Compass's 24 would need to
+// match "very big... see it and its shadow over the game") -- shadow radius
+// and trail offsets below are scaled by the same ratio so they still sit
+// correctly under the bigger sprite instead of reading as undersized relative to it.
+skyBalloonSprite.scale.set(64, 64 * (SKY_BALLOON_CANVAS_HEIGHT / SKY_BALLOON_CANVAS_WIDTH), 1);
 const skyBalloonShadow = new THREE.Mesh(
-  new THREE.CircleGeometry(13, 24),
+  new THREE.CircleGeometry(24, 24),
   new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false, fog: false }),
 );
-skyBalloonShadow.position.set(1.4, -10, -0.4);
+skyBalloonShadow.position.set(2.6, -19, -0.75);
 const skyBalloonTrails = [];
 for (let skyBalloonTrailI = 0; skyBalloonTrailI < 3; skyBalloonTrailI++) {
   const skyBalloonTrailGeo = new THREE.BufferGeometry();
-  const skyBalloonTrailSpread = (skyBalloonTrailI - 1) * 4;
+  const skyBalloonTrailSpread = (skyBalloonTrailI - 1) * 7.5;
   skyBalloonTrailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-    skyBalloonTrailSpread, -6, 0,
-    skyBalloonTrailSpread * 1.4, -16 - skyBalloonTrailI * 2, 0,
+    skyBalloonTrailSpread, -11, 0,
+    skyBalloonTrailSpread * 1.4, -30 - skyBalloonTrailI * 3.8, 0,
   ]), 3));
   const skyBalloonTrailLine = new THREE.Line(skyBalloonTrailGeo, new THREE.LineBasicMaterial({
     color: 0xd8c9a8, transparent: true, opacity: 0, fog: false,

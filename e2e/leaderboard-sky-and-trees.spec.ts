@@ -21,7 +21,23 @@ test.describe('sky balloon record-holder display', () => {
     const booting = boot(page, { qaHooks: true });
     // boot() waits for network idle, which the held response blocks -- loading
     // is asserted while boot is still in flight, same technique as
-    // e2e/leaderboard-menu.spec.ts's #leaderboardLine loading-state case.
+    // e2e/leaderboard-menu.spec.ts's #leaderboardLine loading-state case. Unlike
+    // that spec's locator-based assertion (auto-retrying, navigation-safe),
+    // qaHook() is a raw page.evaluate() -- issuing one before window.ForestEngine
+    // actually exists throws "Execution context was destroyed, most likely
+    // because of a navigation" (if too early, racing the real navigation) or a
+    // plain "qaProbeLeaderboardSky missing" error (if the navigation landed but
+    // init() hasn't run yet), and expect.poll() does not retry past either --
+    // it only retries a *returned* value that doesn't match, not a throw
+    // (LUL-5980). boot() can't be awaited first (that's the whole point here --
+    // it has to stay in flight so the held fetch can be released below), and
+    // boot()'s own internal "ForestEngine exists" check runs only *after* its
+    // page.goto() resolves, which itself won't resolve until that same held
+    // fetch goes quiet -- so this spec has to wait for the hook directly rather
+    // than piggyback on any part of boot()'s sequencing. waitForFunction (like
+    // waitForSelector/waitForURL, unlike a raw evaluate) survives the
+    // in-between navigation and re-polls in the new document.
+    await page.waitForFunction(() => Boolean((window as any).ForestEngine?.qaProbeLeaderboardSky), { timeout: 60_000 });
     await expect.poll(async () => (await qaHook(page, 'qaProbeLeaderboardSky')).text, { timeout: 60_000 })
       .toBe('loading top rescuer');
     release();

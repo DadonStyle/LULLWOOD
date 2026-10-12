@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L9257 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L8108, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
+  button via `setTouchVeil()` L9261 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L8112, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
@@ -1162,7 +1162,17 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
   `'be the first — --:--'` (no flag), and hidden entirely on a failed fetch
   with no cached record — `skyBalloonContent()`/`drawSkyBalloonTexture()`
   (`lib/game/skyBalloon.ts`), driven by `setLeaderboardRecord()`
-  (`engine/forest-engine.js:7640`).
+  (`engine/forest-engine.js:7869`).
+- `drawSkyBalloonTexture()` renders PART 2.5's "inflated balloon letterforms"
+  literally: one filled oval bubble per non-space character (evenly spaced
+  across the canvas, flag swatch excluded from the span), the character
+  drawn centered on top of its own bubble — not a single plain-text rect
+  (LUL-5980; was plain `fillRect` + `fillText` in system serif before this).
+- Sprite scale is 64 world units (34 before LUL-5980 -- ~40% bigger than the
+  Sky Compass glyphs' 24 wasn't "very big... see it and its shadow over the
+  game," per the founder's repeated ask). The shadow `CircleGeometry` radius
+  and the 3 trail line offsets are scaled by the same ~1.9x ratio so they
+  still sit correctly under the bigger sprite.
 - A small `CircleGeometry` shadow mesh and 3 thin `THREE.Line` trails hang
   below the main sprite, same low-opacity idiom as the moon's halo mesh.
 - Fade in from 0 opacity over 1.5s the first time the group becomes visible
@@ -1790,15 +1800,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L7181, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7633). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L7185, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7637). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7631) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3518) rather than recomputed later, since `player.x/z` can move on
+  (L7635) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3518) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -3144,7 +3154,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7498) and `windAssistEndCue()` (L7507), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
+`windAssistStartCue()` (L7502) and `windAssistEndCue()` (L7511), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
 **QA hooks**: none new -- `qaProbeWind().movingAgainstWind` (existing) is sufficient for the
@@ -3622,15 +3632,15 @@ existing surface).
 
 **Audio**: `investigateCue(p)` (L4122-4136) -- a low, two-pulse searching
 tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
-caption already names the species -- `hearCry()` (L2799) is the one exception: it pushes no
+caption already names the species -- `hearCry()` (L2803) is the one exception: it pushes no
 caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
 responding to the child's cry gives the player zero species identification, audio or text, same
 as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2766),
-`hearThrowableNoise()` (L2782), `hearCry()` (L2799), the charge-overshoot handoff (`p.chargeRecoveryT`,
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2770),
+`hearThrowableNoise()` (L2786), `hearCry()` (L2803), the charge-overshoot handoff (`p.chargeRecoveryT`,
 L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
 sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
 of the driving ticket's six-line list, included for the same reason the other six are: a real
