@@ -3883,6 +3883,13 @@ on(window, 'keydown', e => {
   // only way out of one, so it can't be blocked by being crouched.
   // e.repeat is dropped so holding Space down doesn't spam a jump every OS
   // auto-repeat tick; JUMP_DURATION is the only real cooldown once airborne.
+  // LUL-5966: preventDefault() unconditionally (not gated on `playing`) so the
+  // browser's native space-activates-focused-button behavior never fires once
+  // Hud.tsx's RESTART_FOCUS_DELAY_MS grace window focuses .restartBtn on the
+  // win/death screen -- without this, Space silently restarts via the native
+  // keyup activation instead of the jump gate below, which is already closed
+  // by !playing. Same F11 preventDefault precedent above.
+  if(e.code === keyMap.jump) e.preventDefault();
   if(e.code === keyMap.jump && playing && !paused && !e.repeat){
     if(hidden) exitHide();
     beginJump();
