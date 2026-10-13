@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import type { EngineActions, EngineHudState } from './Hud';
 import { MenuButton, MenuLinkButton } from './MenuButton';
 import { InfoDialog } from './InfoDialog';
