@@ -246,6 +246,28 @@ main.suggest-page .suggest-page__intro {
   margin-bottom: 32px;
 }
 
+/* /credits -- same shell as /suggest. */
+main.credits-page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 64px 24px 96px;
+  background: #0a0e15;
+  min-height: 100vh;
+  color: #9fb2cd;
+}
+main.credits-page h1 {
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: #d7e4f6;
+  margin-bottom: 16px;
+}
+main.credits-page a { color: #d7e4f6; text-decoration: underline; text-underline-offset: 2px; }
+main.credits-page .credits-page__intro { margin-bottom: 24px; }
+main.credits-page .credits-page__list { list-style: none; padding: 0; margin: 0 0 32px; }
+main.credits-page .credits-page__item { margin-bottom: 20px; line-height: 1.5; }
+main.credits-page .credits-page__detail { font-size: 14px; color: #6f82a0; }
+
 .suggestion-box {
   display: flex;
   flex-direction: column;

@@ -34,6 +34,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "yearly",
       priority: 0.4,
     },
+    {
+      url: `${SITE_URL}/credits`,
+      lastModified: new Date("2026-10-13T00:00:00.000Z"),
+      changeFrequency: "yearly",
+      priority: 0.2,
+    },
     ...devlogEntries,
   ];
 }

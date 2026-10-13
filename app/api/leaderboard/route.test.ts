@@ -50,7 +50,7 @@ function post(body: unknown, headers: Record<string, string> = {}) {
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
 }
-const good = { nickname: 'Ranger42', country: 'il', time_ms: 120_000, anon_id: '3f2504e0-4f89-41d3-9a0c-0305e82c3301' };
+const good = { nickname: 'RangerOne', country: 'il', time_ms: 120_000, anon_id: '3f2504e0-4f89-41d3-9a0c-0305e82c3301' };
 
 test('a valid submission is forwarded signed, normalized, with a salted IP hash and server-side build sha', async () => {
   process.env.VERCEL_GIT_COMMIT_SHA = 'abcdef1234567';
@@ -62,7 +62,7 @@ test('a valid submission is forwarded signed, normalized, with a salted IP hash 
   const s = sent[0];
   assert.equal(s.signed, true);
   assert.equal(s.path, '/v1/submit');
-  assert.equal(s.body!.nickname, 'ranger42');
+  assert.equal(s.body!.nickname, 'rangerone');
   assert.equal(s.body!.country, 'IL');
   assert.equal(s.body!.build_sha, 'abcdef1234567');
   assert.equal(s.body!.device_class, 'mobile');

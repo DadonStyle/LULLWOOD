@@ -7,7 +7,12 @@
 //
 // Threat-model references (B1..B9) are decisions/lul-3288-leaderboard-threat-model-accepted-2026-09-18.
 
-export const NICKNAME_PATTERN = /^[a-z0-9]{3,20}$/;
+// Letters only (founder 2026-10-13): the sky balloon spells the record-holder's
+// name in 3D letter balloons, which have no digits. Records saved earlier may
+// still contain digits; parseRecord() keeps reading them.
+export const NICKNAME_PATTERN = /^[a-z]{3,20}$/;
+// What a stored record may hold: the pre-2026-10-13 rule, still read back.
+const STORED_NICKNAME_PATTERN = /^[a-z0-9]{3,20}$/;
 export const MAX_BODY_BYTES = 2048; // app/api/suggestions/route.ts MAX_BODY_BYTES, same cap reused (B6)
 export const COOLDOWN_MS = 10_000; // app/api/suggestions/route.ts DEFAULT_COOLDOWN_MS, same value
 export const IP_LIMIT = 5;
@@ -32,6 +37,16 @@ export const COUNTRY_ALLOWLIST: ReadonlySet<string> = new Set([
   'DK', 'FI', 'PL', 'RU', 'CN', 'KR', 'ZA', 'NZ', 'IE', 'PT', 'AR', 'CL', 'TR', 'GR', 'IL',
 ]);
 
+// Display names for the country picker -- exactly the allowlist (unit-tested,
+// along with one public/flags/<code>.png per entry for the sky balloon).
+export const COUNTRY_NAMES: Readonly<Record<string, string>> = {
+  AR: 'Argentina', AU: 'Australia', BR: 'Brazil', CA: 'Canada', CL: 'Chile', CN: 'China',
+  DE: 'Germany', DK: 'Denmark', ES: 'Spain', FI: 'Finland', FR: 'France', GB: 'United Kingdom',
+  GR: 'Greece', IE: 'Ireland', IL: 'Israel', IN: 'India', IT: 'Italy', JP: 'Japan',
+  KR: 'South Korea', MX: 'Mexico', NL: 'Netherlands', NO: 'Norway', NZ: 'New Zealand', PL: 'Poland',
+  PT: 'Portugal', RU: 'Russia', SE: 'Sweden', TR: 'Turkey', US: 'United States', ZA: 'South Africa',
+};
+
 // B4: digit-substitution normalisation, applied after lowercasing.
 const LEET_MAP: Record<string, string> = { '4': 'a', '1': 'i', '0': 'o', '3': 'e', '5': 's' };
 export function normalizeForDenylist(nickname: string): string {
@@ -48,11 +63,11 @@ export function isDenylisted(nickname: string): boolean {
   return false;
 }
 
-/** B2: lowercased nickname, or null. Rejects anything outside [a-z0-9]{3,20}. */
-export function validateNickname(raw: unknown): string | null {
+/** B2: lowercased nickname, or null. Rejects anything outside [a-z]{3,20}. */
+export function validateNickname(raw: unknown, pattern: RegExp = NICKNAME_PATTERN): string | null {
   if (typeof raw !== 'string') return null;
   const lower = raw.toLowerCase();
-  if (!NICKNAME_PATTERN.test(lower)) return null;
+  if (!pattern.test(lower)) return null;
   if (isDenylisted(lower)) return null;
   return lower;
 }
@@ -109,7 +124,7 @@ export interface LeaderboardRecord {
 export function parseRecord(raw: unknown): LeaderboardRecord | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
-  const nickname = validateNickname(r.nickname);
+  const nickname = validateNickname(r.nickname, STORED_NICKNAME_PATTERN);
   const country = validateCountry(r.country);
   const timeMs = validateTimeMs(r.timeMs);
   if (nickname === null || country === null || timeMs === null) return null;

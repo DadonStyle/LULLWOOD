@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from 'react';
 import {
-  COUNTRY_ALLOWLIST, CLIENT_CACHE_KEY, NICKNAME_PATTERN, PLAUSIBILITY_FLOOR_MS,
+  COUNTRY_ALLOWLIST, COUNTRY_NAMES, CLIENT_CACHE_KEY, NICKNAME_PATTERN, PLAUSIBILITY_FLOOR_MS,
   parseRecord, encodeCachedRecord, decodeCachedRecord, type LeaderboardRecord,
 } from '@/lib/game/leaderboard';
 import { formatDuration } from '@/lib/ui/format-duration';
@@ -27,7 +27,8 @@ export type LeaderboardState =
   | { status: 'failed'; cached: LeaderboardRecord | null };
 
 const FETCH_TIMEOUT_MS = 5_000;
-const COUNTRIES = [...COUNTRY_ALLOWLIST].sort();
+// Sorted by display name; the value submitted is still the ISO code.
+const COUNTRIES = [...COUNTRY_ALLOWLIST].sort((a, b) => COUNTRY_NAMES[a].localeCompare(COUNTRY_NAMES[b]));
 
 function readCache(): LeaderboardRecord | null {
   try {
@@ -165,8 +166,8 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty }: { survive
         <input
           id="leaderboardNickname"
           value={nickname}
-          // UX only (B2): the server re-validates. Drops anything outside a-z0-9.
-          onChange={(e) => setNickname(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 20))}
+          // UX only (B2): the server re-validates. Drops anything outside a-z.
+          onChange={(e) => setNickname(e.target.value.toLowerCase().replace(/[^a-z]/g, '').slice(0, 20))}
           placeholder="nickname"
           autoComplete="off"
           spellCheck={false}
@@ -175,7 +176,7 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty }: { survive
         />
         <select id="leaderboardCountry" value={country} onChange={(e) => setCountry(e.target.value)} aria-label="country">
           <option value="">country</option>
-          {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          {COUNTRIES.map((c) => <option key={c} value={c}>{COUNTRY_NAMES[c]}</option>)}
         </select>
         {/* LUL-5967: own class, not .restartBtn -- shares restartBtn's styling via
             GameCanvas.tsx's selector lists, but must stay a distinct class so
