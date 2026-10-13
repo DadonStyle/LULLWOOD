@@ -85,5 +85,32 @@ test.describe('suggestion box input restriction', () => {
         /only english letters and spaces.*no numbers or symbols/i,
       );
     });
+
+    test(`${name}: a rejected keystroke mid-field does not bounce the cursor to the end (LUL-5982)`, async ({
+      page,
+    }) => {
+      // pressSequentially above only ever types at the end of the field, so
+      // it can't catch this: sanitize() rewrites the DOM value to a shorter
+      // string on a rejected character, and the browser resets
+      // selectionStart to the end of that write unless the component
+      // restores it. A player editing mid-sentence who hits a disallowed
+      // character gets silently bounced into append-only mode -- this is
+      // the "i can't type in the suggestion box" report.
+      await page.setViewportSize(viewport);
+      await page.goto('/suggest', { waitUntil: 'domcontentloaded' });
+
+      const textarea = page.locator('#suggestion-text');
+      await textarea.click();
+      await textarea.pressSequentially('hello world', { delay: 0 });
+
+      // Move the cursor to right after "hello" (index 5), then type a
+      // rejected character followed by a valid one.
+      await textarea.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(5, 5));
+      await textarea.pressSequentially('1x', { delay: 0 });
+
+      // The digit is dropped and "x" lands where the cursor was, not
+      // appended at the end.
+      await expect(textarea).toHaveValue('hellox world');
+    });
   }
 });
