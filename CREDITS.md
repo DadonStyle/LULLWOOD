@@ -1,5 +1,7 @@
 # Third-party assets
 
+The in-game Credits page (`/credits`) renders `lib/credits.ts`. Add every new third-party asset there and here.
+
 ## Letter-balloons (3D model)
 
 - **File:** `public/models/letter-balloons.glb`
@@ -8,7 +10,7 @@
 - **Author:** [danny_p3d](https://sketchfab.com/dannyp_3d)
 - **License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Commercial use allowed; the author must be credited.
 - **Changes:** split into one mesh per letter A–Z, recentred, rotated to Y-up, scaled to a cap height of 1, simplified and quantized. The material colour is replaced in the engine.
-- **Where it's credited in game:** the start gate (`#gateAssetCredit` in `components/Hud.tsx`). Keep that line whenever this model ships.
+- **Where it's credited in game:** the start gate (`#gateAssetCredit` in `components/Hud.tsx`) and the Credits page (`/credits`, from `lib/credits.ts`, linked from the in-game menu). Keep both whenever this model ships.
 
 ## flag-icons (country flags)
 
