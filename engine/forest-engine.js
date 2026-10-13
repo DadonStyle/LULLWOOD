@@ -2078,6 +2078,22 @@ if(qaParams && qaParams.get('qaWorld') === 'micro'){
   // DECOY_SCENT_SITES' raw (unscaled) positions.
   decoyScentGlowMeshes.forEach((m, i) => m.position.set(DECOY_SCENT_SITES[i].x * CONFIG.decoyScaleMul, 0.04, DECOY_SCENT_SITES[i].z * CONFIG.decoyScaleMul));
 }
+// LUL-5993: throw-stone impact landing visual -- single shared instance, modeled on
+// fireBoom/boomGroup above (not triggerRoostBurst's per-site array below: a thrown
+// stone has no fixed site and no throw cooldown, so a second throw before the first
+// visual decays just relocates this one instance, same as fireBoom already does).
+const throwImpactGroup = new THREE.Group(); throwImpactGroup.visible = false; scene.add(throwImpactGroup);
+const throwImpactStoneMesh = new THREE.Mesh(throwableGeo, throwableMat);
+throwImpactStoneMesh.scale.setScalar(0.28);   // matches layoutThrowableMeshes()'s stone scale, :1133
+const THROW_IMPACT_PTS = 8;   // dust, not an explosion -- same "keep small" precedent as ROOST_BURST_PTS above
+const tipArr = new Float32Array(THROW_IMPACT_PTS * 3), tipVel = [];
+const throwImpactPts = new THREE.Points(new THREE.BufferGeometry(),
+  new THREE.PointsMaterial({ color: 0x8a7a5c, size: 0.3, transparent: true, opacity: 1,
+    depthWrite: false, fog: false }));   // dust color, not ROOST_BURST's bird-silhouette dark
+throwImpactPts.geometry.setAttribute('position', new THREE.BufferAttribute(tipArr, 3));
+throwImpactGroup.add(throwImpactStoneMesh, throwImpactPts);
+let throwImpactStart = -1;
+let throwImpactReducedMotion = false;   // decided once per trigger, not re-checked every tick (see triggerThrowImpact)
 function fireBoom(x, y, z){
   boomGroup.position.set(x, y, z); boomGroup.visible = true; boomStart = 0;
   for(let i=0;i<BSP;i++){ const a=Math.random()*Math.PI*2, e=Math.acos(2*Math.random()-1), sp=(8+Math.random()*24)*BOOM_FOV_SCALE;
@@ -2115,6 +2131,44 @@ function updateBoom(dt){
   // FLASH_PEAK_OPACITY / 0.3, the same 0.3s fade window LUL-2605 used at 0.9.
   if(flashEl) flashEl.style.opacity = String(e <= 1.5 ? FLASH_PEAK_OPACITY : Math.max(0, FLASH_PEAK_OPACITY - (e - 1.5)*(FLASH_PEAK_OPACITY/0.3)));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
+}
+function triggerThrowImpact(x, z){
+  throwImpactGroup.position.set(x, 0.25, z);   // ground height, matches layoutThrowableMeshes() :1131
+  throwImpactGroup.visible = true;
+  throwImpactStart = 0;
+  throwImpactReducedMotion = motionReduced();   // decided once here, not re-polled in updateThrowImpact
+  throwImpactStoneMesh.material.opacity = 1;
+  if(throwImpactReducedMotion){
+    // LUL-5993: static full-opacity stone, no particle motion -- models the stoneMarkerPulseT
+    // opacity-branch SHAPE (motionReduced() ? flat value : animated ramp), not its exact numbers.
+    // Deliberately NOT modeled on triggerRoostBurst below, which has no reducedMotion gate at
+    // all -- a pre-existing gap this ticket does not copy forward.
+    throwImpactPts.material.opacity = 0;
+  } else {
+    tipVel.length = 0;
+    for(let k=0;k<THROW_IMPACT_PTS;k++){
+      const a = Math.random()*Math.PI*2;
+      tipVel.push([Math.cos(a)*0.8, 1.5 + Math.random()*1.5, Math.sin(a)*0.8]);
+      tipArr[k*3] = tipArr[k*3+1] = tipArr[k*3+2] = 0;
+    }
+    throwImpactPts.geometry.attributes.position.needsUpdate = true;
+    throwImpactPts.material.opacity = 1;
+  }
+}
+function updateThrowImpact(dt){
+  if(throwImpactStart < 0) return;
+  throwImpactStart += dt; const e = throwImpactStart;
+  if(!throwImpactReducedMotion){
+    const arr = throwImpactPts.geometry.attributes.position.array;
+    for(let k=0;k<THROW_IMPACT_PTS;k++){
+      arr[k*3]   += tipVel[k][0]*dt;
+      arr[k*3+1] += tipVel[k][1]*dt - 4*dt*e;
+      arr[k*3+2] += tipVel[k][2]*dt;
+    }
+    throwImpactPts.geometry.attributes.position.needsUpdate = true;
+    throwImpactPts.material.opacity = Math.max(0, 1 - e/1.3);
+  }
+  if(e > 1.3){ throwImpactGroup.visible = false; throwImpactStart = -1; }
 }
 // LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
 // spread, ~0.9s rise-and-fade. Keyed by roost index, independent of boomGroup.
@@ -6760,6 +6814,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   window.ForestEngine.qaProbeEmbersPurchase = function(){
     return { throwablesReserve, heldThrowable, purchaseCueCount: qaEmbersPurchaseCueCount };
   };
+  // [QA-HOOK] LUL-5993: exposes the throw-impact visual's transient state so a spec can assert
+  // it activates on throw and decays within the expected window, mirroring
+  // qaProbeEmbersPurchase's plain-state-readout shape.
+  window.ForestEngine.qaProbeThrowImpact = function(){
+    return { active: throwImpactStart >= 0, elapsedS: throwImpactStart };
+  };
   // [QA-HOOK] LUL-3003: the accumulated purchases_made array for the CURRENT run, plus
   // embers.tiers as it stands right now -- lets a spec assert a purchase() call landed in
   // the accumulator (id/tier/cost) without waiting for a win/loss track() call to read it.
@@ -7232,6 +7292,7 @@ function throwThrowable(){
   const landX = player.x + fx * THROWABLE_THROW_DISTANCE;
   const landZ = player.z + fz * THROWABLE_THROW_DISTANCE;
   leafRustle(false);   // landing thud reuses the existing percussive-hit primitive (CTO plan decision 7) -- player-audible, same call already used by hearNoise()
+  triggerThrowImpact(landX, landZ);
   for(const p of predators){
     if(p.inert) continue;
     const dist = Math.hypot(p.x - landX, p.z - landZ);
@@ -7792,6 +7853,7 @@ function restart(){
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
+  throwImpactGroup.visible = false; throwImpactStart = -1;
   winPendingActive = false; winPendingT = 0; if(winPendingEl) winPendingEl.style.opacity = '0';   // LUL-1633
   roostCooldown.fill(0); roostSprintDeniedPlayed.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
   decoyCooldown.fill(0);   // LUL-5566
@@ -9315,6 +9377,7 @@ function stepFrame(dt, t, skipRender){
   }
 
   updateBoom(dt);
+  updateThrowImpact(dt);
   if(!dead && !skipRender){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
   adaptResolution(dt, t);
 }

@@ -73,6 +73,34 @@ test.describe('throwables (LUL-1623)', () => {
     await expectRowHidden(page, 'throwPrompt', 3_000);
   });
 
+  test('throwing shows the landing visual and it decays', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+
+    const stone = await qaHook(page, 'qaTeleportNearThrowable');
+    expect(stone, 'qaTeleportNearThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+
+    await page.keyboard.press('KeyE');
+    await expectRowVisible(page, 'throwPrompt');
+
+    const locked = await page.evaluate(() => document.pointerLockElement !== null);
+    expect(locked, 'Pointer Lock must be engaged for the left-click below to reach throwThrowable()').toBe(true);
+    await page.mouse.click(VIEW_X, VIEW_Y);
+
+    const justAfter = await qaHook(page, 'qaProbeThrowImpact');
+    expect(justAfter?.active).toBe(true);
+    expect(justAfter?.elapsedS).toBeLessThan(0.1);
+
+    // qaSetFixedStep after the throw, not before -- the throw itself is a synchronous
+    // mousedown->throwThrowable() call (same as the test above), only the decay window
+    // below needs deterministic advancing.
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await qaHook(page, 'qaAdvance', stepsFor(1.5));
+
+    const after = await qaHook(page, 'qaProbeThrowImpact');
+    expect(after?.active).toBe(false);
+  });
+
   test('a thrown rock lures a nearby roaming predator into investigate', async ({ page }) => {
     test.setTimeout(30_000);
     await boot(page, { qaHooks: true });
@@ -104,6 +132,16 @@ test.describe('throwables (LUL-1623)', () => {
     const locked = await page.evaluate(() => document.pointerLockElement !== null);
     expect(locked, 'Pointer Lock must be engaged for the left-click below to reach throwThrowable()').toBe(true);
     await page.mouse.click(VIEW_X, VIEW_Y);
+
+    // LUL-5993: the landing visual (triggerThrowImpact()) must fire in the same frame as
+    // the noise-redirect logic above it, not staggered behind it -- this should hold
+    // trivially today since checkThrowableNoise()/hearThrowableNoise() both already run
+    // synchronously in throwThrowable() before triggerThrowImpact() is even reached; its
+    // value is catching a *future* edit that reorders the calls. Landing itself stays
+    // instant (no projectile arc/travel-time) per decisions/lul-1869's throw-timing economy
+    // and this ticket's explicit scope boundary.
+    const impactJustAfterThrow = await qaHook(page, 'qaProbeThrowImpact');
+    expect(impactJustAfterThrow?.active).toBe(true);
 
     const reachedInvestigate = await advanceUntil(page, async () => {
       const s = await qaHook(page, 'qaProbePredatorState', 'wolf');
