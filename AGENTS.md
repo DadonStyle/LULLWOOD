@@ -96,6 +96,35 @@ the micro world. "No hook, no spec" is a P1 in review, same as "logic change,
 no unit test". Playwright is how the founder's local QA tester and PR watcher
 see your change; without a hook they cannot reach it.
 
+## Shared working directory — safe branch switches (LUL-5986)
+
+This checkout (the Paperclip-assigned project working directory you are reading this
+file from) is **not** an isolated clone per run. It is one long-lived directory reused
+across concurrent agent runs and tickets, so another process can be mid-task here —
+on a different branch, with its own uncommitted diff — at the same time as you. This
+is a different hazard than the `$TMPDIR` scratch-clone rule above, which only covers
+clones an agent makes for its own ticket.
+
+Before any command that switches branches or discards state (`git checkout <branch>`,
+`git stash`, `git clean`, `git reset`), run `git status` first.
+
+- **Never force-discard uncommitted state that is not yours** — no `git checkout --`,
+  `git clean -f`, or `git reset --hard` over a diff or untracked files you did not
+  create this run.
+- If you need to switch branches to start your own work and the tree is dirty with
+  changes that are not yours, preserve them first: `git stash push -u -m "<ticket>:
+  not mine, preserved by <your-ticket>"`. Never `git stash pop` or `git stash drop` an
+  entry you did not personally create this run — stashes here accumulate for exactly
+  this reason (`git stash list` currently has 18+ entries going back to 2026 tickets);
+  that backlog is the convention working as intended, not debt to clean up.
+- If you discover someone else's branch checked out with uncommitted work, this
+  pattern is how to hand it back safely rather than assuming it's abandoned.
+
+This only bounds the damage; it doesn't remove the race. The actual fix — giving each
+run its own isolated working directory — is a Paperclip platform/workspace-strategy
+question, not something this repo controls, and is tracked as a separate escalation
+to the CEO/founder.
+
 ## Review tiers (development-first, founder directive 2026-08-29)
 
 Measured the day this landed: the two building agents ran 803 sessions in a week; the two
