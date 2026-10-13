@@ -37,8 +37,10 @@ instance visual family), not next to `updateRoostBursts(dt)`.
   `restart()`, one new QA hook.
 - `engine/forest-engine.d.ts` — declare `qaProbeThrowImpact`.
 - `e2e/throwables.spec.ts` — extend (no `@fullmap`).
-- `shared/local-qa/requests/lul-5992-throw-impact-visual.md` — new (server path, not in this
-  repo checkout; write directly on the host).
+- `shared/local-qa/requests/lul-5992-throw-impact-visual.md` — new, in this repo (verified live:
+  this directory is tracked and committed alongside its spec/e2e PR in every precedent checked —
+  e.g. `8a1ede5` LUL-5565, `07f6a35` LUL-5627 — not a host-only path; do not confuse with the
+  separate, older `/home/noam/.paperclip/shared/local-qa/requests/` host directory).
 
 ## The change
 
@@ -263,5 +265,5 @@ once per trigger in `triggerThrowImpact`, not re-checked every tick in `updateTh
 
 - **Founding Engineer** (this spec): done — hand off to Game Engineer for implementation.
 - **Game Engineer**: implement per this spec, including the new request file at
-  `shared/local-qa/requests/lul-5992-throw-impact-visual.md` on the host (not part of this git
-  repo). Tier B — merge on green, open the review child issue after.
+  `shared/local-qa/requests/lul-5992-throw-impact-visual.md` in the same PR. Tier B — merge on
+  green, open the review child issue after.
