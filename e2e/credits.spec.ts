@@ -19,6 +19,10 @@ test.describe('credits', () => {
   test('/credits attributes the balloon letters to danny_p3d under CC BY 4.0', async ({ page }) => {
     await page.goto('/credits');
     await expect(page.locator('h1')).toHaveText('credits');
+    // the studio's author comes first, linking the GitHub profile (not the repo)
+    const first = page.locator('.credits-page__item').first();
+    await expect(first).toContainText('Independence AI Studio');
+    await expect(first.getByRole('link', { name: 'Noam Dadon' })).toHaveAttribute('href', 'https://github.com/DadonStyle');
     const balloons = page.locator('.credits-page__item', { hasText: 'Letter-balloons' });
     await expect(balloons.getByRole('link', { name: 'danny_p3d' })).toHaveAttribute('href', 'https://sketchfab.com/dannyp_3d');
     await expect(balloons.getByRole('link', { name: 'CC BY 4.0' })).toHaveAttribute('href', 'https://creativecommons.org/licenses/by/4.0/');

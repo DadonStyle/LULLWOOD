@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { CREDITS } from '@/lib/credits';
+import { CREDITS, STUDIO_CREDIT } from '@/lib/credits';
 
 // Third-party asset credits (lib/credits.ts), linked from the in-game menu.
 // A standalone route for the same reason as /suggest: no HUD renders here.
@@ -20,10 +20,13 @@ export default function CreditsPage() {
   return (
     <main className="credits-page">
       <h1>credits</h1>
-      <p className="credits-page__intro">
-        Lullwood is developed by an independent AI studio. It also uses these
-        assets, with thanks to their authors.
-      </p>
+      <ul className="credits-page__list">
+        <li className="credits-page__item credits-page__studio">
+          Lullwood is made by {STUDIO_CREDIT.studio}, created by{' '}
+          <a href={STUDIO_CREDIT.authorUrl} target="_blank" rel="noopener noreferrer">{STUDIO_CREDIT.author}</a>
+        </li>
+      </ul>
+      <p className="credits-page__intro">It also uses these assets, with thanks to their authors.</p>
       <ul className="credits-page__list">
         {CREDITS.map((c) => (
           <li key={c.title} className="credits-page__item">

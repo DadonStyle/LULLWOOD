@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CREDITS } from './credits.ts';
+import { CREDITS, STUDIO_CREDIT } from './credits.ts';
+
+test('the studio credit names its author and links the GitHub profile, not the repo', () => {
+  assert.equal(STUDIO_CREDIT.author, 'Noam Dadon');
+  assert.equal(STUDIO_CREDIT.authorUrl, 'https://github.com/DadonStyle');
+});
 
 test('the balloon letters are credited to danny_p3d under CC BY 4.0, with every link CC BY asks for', () => {
   const balloons = CREDITS.find((c) => c.title === 'Letter-balloons');

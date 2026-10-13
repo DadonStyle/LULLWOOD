@@ -1,6 +1,6 @@
 # Third-party assets
 
-The in-game Credits page (`/credits`) renders `lib/credits.ts`. Add every new third-party asset there and here.
+The in-game Credits page (`/credits`) renders `lib/credits.ts`. It opens with the studio credit: Independence AI Studio, created by [Noam Dadon](https://github.com/DadonStyle). Add every new third-party asset there and here.
 
 ## Letter-balloons (3D model)
 

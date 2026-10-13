@@ -14,6 +14,14 @@ export interface Credit {
   changes?: string;
 }
 
+// Listed first on the credits page: the studio and the person behind it
+// (founder 2026-10-13: link the founder's GitHub profile, not the repo).
+export const STUDIO_CREDIT = {
+  studio: 'Independence AI Studio',
+  author: 'Noam Dadon',
+  authorUrl: 'https://github.com/DadonStyle',
+} as const;
+
 export const CREDITS: readonly Credit[] = [
   {
     title: 'Letter-balloons',
