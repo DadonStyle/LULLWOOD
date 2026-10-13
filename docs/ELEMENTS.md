@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L9250 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L8101, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
+  button via `setTouchVeil()` L9261 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L8112, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
@@ -1162,7 +1162,17 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
   `'be the first — --:--'` (no flag), and hidden entirely on a failed fetch
   with no cached record — `skyBalloonContent()`/`drawSkyBalloonTexture()`
   (`lib/game/skyBalloon.ts`), driven by `setLeaderboardRecord()`
-  (`engine/forest-engine.js:7640`).
+  (`engine/forest-engine.js:7869`).
+- `drawSkyBalloonTexture()` renders PART 2.5's "inflated balloon letterforms"
+  literally: one filled oval bubble per non-space character (evenly spaced
+  across the canvas, flag swatch excluded from the span), the character
+  drawn centered on top of its own bubble — not a single plain-text rect
+  (LUL-5980; was plain `fillRect` + `fillText` in system serif before this).
+- Sprite scale is 64 world units (34 before LUL-5980 -- ~40% bigger than the
+  Sky Compass glyphs' 24 wasn't "very big... see it and its shadow over the
+  game," per the founder's repeated ask). The shadow `CircleGeometry` radius
+  and the 3 trail line offsets are scaled by the same ~1.9x ratio so they
+  still sit correctly under the bigger sprite.
 - A small `CircleGeometry` shadow mesh and 3 thin `THREE.Line` trails hang
   below the main sprite, same low-opacity idiom as the moon's halo mesh.
 - Fade in from 0 opacity over 1.5s the first time the group becomes visible
@@ -1790,15 +1800,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L7174, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7626). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L7185, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7637). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7624) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3518) rather than recomputed later, since `player.x/z` can move on
+  (L7635) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3518) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -3144,7 +3154,7 @@ First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TE
 (`engine/forest-engine.js` L8336 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7491) and `windAssistEndCue()` (L7500), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
+`windAssistStartCue()` (L7502) and `windAssistEndCue()` (L7511), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
 **QA hooks**: none new -- `qaProbeWind().movingAgainstWind` (existing) is sufficient for the
@@ -3459,20 +3469,43 @@ predators can hear you farther"*. This bypasses the shared `HINT_PRIORITY`/`HINT
 candidate table other hints use (pushed directly via `pushState({ caption, captionId })`) --
 no exit cue, since there is nothing to announce on leaving (the slowdown/noise effect just stops).
 
-**HUD state** -- `inMudZone` is computed and pushed into the engine's per-frame `pushState()`
-call (`:8022`) but is not yet declared on the `EngineHudState` interface
-(`components/Hud.tsx:32`) and no component reads it -- there is no persistent on-screen "you are
-in mud" indicator today, only the one-shot enter cue/caption above. Also exposed on
-`qaPlayerState()` (`:5577`, typed at `engine/forest-engine.d.ts:324`) for tests. Per LUL-5564's
-own follow-up, a render site for this field is LUL-5565's scope, not this ticket's.
+**HUD state (LUL-5565)** -- `inMudZone` is computed and pushed into the engine's per-frame
+`pushState()` call (`:8022`), declared on `EngineHudState` (`components/Hud.tsx:107`) and
+defaulted in `INITIAL_HUD_STATE` (`:338`). Rendered as the `#mudPrompt` row inside `#actionSlot`
+(`components/Hud.tsx:1415`, `visible={state.inMudZone && hudLive}`, text "In mud — slower,
+louder") -- last in the row's documented priority chain (`Hud.tsx`'s comment above
+`#actionSlot`), right before `status`. The row is a plain ambient read, not a "something to
+do" prompt: no key, no gate. Also exposed on `qaPlayerState()` (`:5577`, typed at
+`engine/forest-engine.d.ts:324`) for tests, which this ticket's e2e coverage (below) uses
+directly rather than a synthetic force hook.
+
+Adding the row as the 11th `#actionSlot` track (1 charge + 10 regular, was 9) required the
+matching grid-track bump in `components/GameCanvas.tsx` (LUL-5166 rule): `--action-slot-height`
+and `grid-template-rows` (desktop), and the short-landscape (`max-height: 420px`) row-height
+re-derivation that keeps the same 176px total footprint (`--action-slot-row: 10.4px`, exact,
+no rounding). Live measurement at that breakpoint found `#mudPrompt` genuinely overlapping both
+its DOM-order neighbors (hiding inside a mud zone for the `status` pair, a mud zone covering the
+chapel for the `chapelSanctuaryPrompt` pair -- both real-reachable, not synthetic), so it joined
+the LUL-5374 `:has()` suppression chain between the two: `chapelSanctuaryPrompt` > `mudPrompt` >
+`status`. `qaForceAllActionRows` (engine-side, LUL-5564's file set) was not extended to force
+`inMudZone` -- `e2e/action-prompt.spec.ts`'s "all forceable rows live at once" coverage still
+only exercises the original 9; `mudPrompt`'s suppression pairs are verified in
+`e2e/mud-zone.spec.ts` via real mud-zone placement instead. Flagged as a gap for a follow-up
+engine-side ticket, not silently assumed covered.
 
 **QA hooks**: `qaPlayerState().inMudZone` (live boolean) is the only hook; no zone-geometry or
 cue-count probe exists yet (compare `qaProbeScentMaskSite()`'s `enterCueCount`).
 
-**Coverage**: `lib/game/mud.test.ts` covers the pure multiplier/geometry functions only. No
-`e2e/` spec or `shared/local-qa/requests/` file exists yet -- LUL-5564 is engine-core only; e2e
-opposing-system coverage (a predator staged inside a zone) and the local-qa request file are
-LUL-5565's scope.
+**Coverage** -- `lib/game/mud.test.ts` covers the pure multiplier/geometry functions.
+`e2e/mud-zone.spec.ts` (LUL-5565, new) drives real engine state (`qaBuildScene({mudZones})`,
+`qaTeleportTo`): `inMudZone`/`#mudPrompt` flip true/false across the zone boundary with
+`adminMode` off, the first-mud-entry caption fires once and not on a second entry
+(`qaResetHints` precedent from `e2e/hide-alert.spec.ts`), and the opposing-system proof Q11
+asks for -- a real roaming wolf staged 17.5u away (between `NOISE_RADIUS_WALK=14` and
+`NOISE_RADIUS_WALK * MUD_NOISE_MUL=21`) transitions out of `roam` while the player walks in
+place inside the zone, where the identical staging with no mud zone never does.
+`shared/local-qa/requests/lul-5558-mud-zone.md` (new) requests the nightly scenario on desktop
++ one landscape phone.
 
 ## Scent-Decoy Site (LUL-5566, cheap slice, plan LUL-5560)
 
@@ -3599,15 +3632,15 @@ existing surface).
 
 **Audio**: `investigateCue(p)` (L4122-4136) -- a low, two-pulse searching
 tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
-caption already names the species -- `hearCry()` (L2799) is the one exception: it pushes no
+caption already names the species -- `hearCry()` (L2803) is the one exception: it pushes no
 caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
 responding to the child's cry gives the player zero species identification, audio or text, same
 as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2766),
-`hearThrowableNoise()` (L2782), `hearCry()` (L2799), the charge-overshoot handoff (`p.chargeRecoveryT`,
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2770),
+`hearThrowableNoise()` (L2786), `hearCry()` (L2803), the charge-overshoot handoff (`p.chargeRecoveryT`,
 L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
 sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
 of the driving ticket's six-line list, included for the same reason the other six are: a real

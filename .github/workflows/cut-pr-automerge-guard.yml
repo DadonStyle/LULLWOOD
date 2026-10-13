@@ -1,0 +1,131 @@
+name: Cut PR auto-merge guard
+
+# LUL-5978, a hardening addition after a recurring incident: LUL-1041,
+# LUL-5919, LUL-5939 (twice) and LUL-5977 are all the SAME mistake --
+# someone with GitHub write access clicked the native "Enable auto-merge"
+# button directly on the cut PR (base=main, head=release/next). That is
+# banned outright, regardless of merge method, by
+# decisions/no-native-merge-on-cut-prs.md (shared wiki): a squash there
+# discards the second parent, so `main` and `release/next` stop sharing an
+# ancestor and the next cut opens with a spurious conflict on everything
+# both branches touched since. `cut-merge.yml` (workflow_dispatch,
+# hardcoded `--merge`) is the only sanctioned path. There is no ruleset
+# that can block this by merge method conditioned on source-branch shape
+# (see that decision doc's "Why there is no technical guard" -- a blanket
+# "main only accepts merge commits" rule would also block legitimate
+# squash hotfix PRs like #988/#990), so every recurrence so far has been
+# caught only by the Code Reviewer noticing and running
+# `gh pr merge --disable-auto` by hand, within gate authority. This
+# automates exactly that reaction -- it never arms auto-merge, only
+# disarms it, the instant it sees it armed on the cut PR shape.
+#
+# Two triggers:
+#
+#   pull_request (types: [auto_merge_enabled]): fires the instant a human
+#   or bot enables native auto-merge on any PR. Same-repo PR (this shape
+#   never comes from a fork), so the default GITHUB_TOKEN gets full
+#   `pull-requests: write` with no extra secret. The `branches: [main]`
+#   filter is coarse (matches base ref only, to avoid running this job on
+#   every PR in the repo) -- the script re-derives the exact
+#   base=main/head=release/next/open shape itself before touching
+#   anything, same defensive posture as cut-merge.yml's own shape check,
+#   so a legitimate squash hotfix PR with auto-merge enabled is never
+#   touched.
+#
+#   schedule: a backstop only, for the rare case the webhook delivery
+#   itself never reaches Actions (delivery is not guaranteed; GitHub does
+#   not retry a dropped `pull_request` event). It is a no-op every time
+#   the event-triggered run already won the race, because the check below
+#   only acts while auto-merge is still armed. NOTE (LUL-5595, see
+#   base-branch-guard.yml's own `on:` comment): scheduled runs on this repo
+#   are observed to silently gap for hours under platform load, so this
+#   backstop is defense-in-depth, not the primary mechanism -- the
+#   pull_request trigger above is.
+#
+# Always re-fetches each candidate PR's live state via `gh api` rather than
+# trusting the triggering event's payload, even on the pull_request path --
+# one extra read, but it means there is exactly one code path to reason
+# about instead of two, and it can never act on a payload that's gone stale
+# by the time the job actually runs.
+
+on:
+  pull_request:
+    types: [auto_merge_enabled]
+    branches: [main]
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  pull-requests: write
+
+jobs:
+  guard:
+    name: disarm native auto-merge on the cut PR shape
+    if: github.event_name == 'pull_request' || github.repository == 'DadonStyle/LULLWOOD'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: disarm if armed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # Candidate PR numbers: the one PR the event is about, if this run
+          # was triggered by one; otherwise (schedule/workflow_dispatch)
+          # every currently open PR based on main -- the shape check below
+          # narrows that down to the cut PR, if one even exists right now.
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$EVENT_PR_NUMBER" ]; then
+            candidates="$EVENT_PR_NUMBER"
+          else
+            candidates="$(gh pr list --repo "$REPO" --state open --base main --json number --jq '.[].number')"
+          fi
+
+          if [ -z "$candidates" ]; then
+            echo "::notice::no candidate PRs; nothing to check."
+            exit 0
+          fi
+
+          for number in $candidates; do
+            pr_json="$(gh api "repos/$REPO/pulls/$number")"
+            base="$(printf '%s' "$pr_json" | jq -r '.base.ref')"
+            head="$(printf '%s' "$pr_json" | jq -r '.head.ref')"
+            state="$(printf '%s' "$pr_json" | jq -r '.state')"
+            armed="$(printf '%s' "$pr_json" | jq -r 'if .auto_merge == null then "false" else "true" end')"
+
+            if [ "$base" != "main" ] || [ "$head" != "release/next" ] || [ "$state" != "open" ]; then
+              echo "::notice::#$number (base=$base head=$head state=$state) is not the cut PR shape; skipping."
+              continue
+            fi
+            if [ "$armed" != "true" ]; then
+              echo "::notice::#$number is the cut PR shape but native auto-merge is not armed; nothing to do."
+              continue
+            fi
+
+            echo "::warning::#$number (cut PR, base=main head=release/next) has native auto-merge armed -- disarming (LUL-5978, decisions/no-native-merge-on-cut-prs.md)."
+            gh pr merge "$number" --repo "$REPO" --disable-auto
+
+            printf '%s\n' \
+              '<!-- CUT_PR_AUTOMERGE_DISARMED -->' \
+              'Native GitHub auto-merge was just enabled on this PR and has been' \
+              'automatically disarmed.' \
+              '' \
+              'This is the cut PR (`release/next` -> `main`) -- per' \
+              '`decisions/no-native-merge-on-cut-prs.md` (LUL-1041/LUL-5919), it only' \
+              'ever merges via `.github/workflows/cut-merge.yml`' \
+              '(`workflow_dispatch`, hardcoded `--merge`), never native auto-merge of' \
+              'any method. A squash here breaks the shared-ancestor edge between' \
+              '`main` and `release/next`, and every later cut opens with a spurious' \
+              'conflict on anything both branches touched since.' \
+              '' \
+              'Dispatch `cut-merge.yml` with this PR number once it has a fresh' \
+              '`REVIEW: APPROVED` review and every required check is green.' \
+              '' \
+              'LUL-5978 (automated guard; prior hand-disarmed recurrences: LUL-1041,' \
+              'LUL-5919, LUL-5939, LUL-5977).' > /tmp/cut-pr-automerge-disarmed.md
+            gh pr comment "$number" --repo "$REPO" --body-file /tmp/cut-pr-automerge-disarmed.md
+          done

@@ -340,7 +340,8 @@ export const SCENT_LOCK_ENDURANCE_MULTIPLIER = { wolf: 1.0, bear: 1.4, lion: 0.8
 export const FORCE_HUNT_LOCK = 25;
 
 // LUL-26: difficulty presets. `night` is the existing tuning verbatim (every
-// multiplier is a no-op) and stays default. `activePerSpecies` trims the roster
+// multiplier is a no-op). LUL-5953: `blackout` is the default as of 2026-10-11,
+// not `night`. `activePerSpecies` trims the roster
 // without touching PSPEC itself; `detectMul` scales the sight-detect radius;
 // `glowMul` scales the child's existing idle/carry glow values.
 //

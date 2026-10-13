@@ -10,7 +10,11 @@
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook, expectRowVisible, expectRowHidden } from './helpers';
 
-test('a Space press right after the death reveal must not restart the run, but one after the grace window still does', async ({ page }) => {
+// LUL-5966: the jump keydown handler now calls preventDefault() unconditionally
+// (engine/forest-engine.js), removing Space from the native
+// activate-the-focused-button path at any timing -- Enter is the sole
+// surviving keyboard accessibility path for this button.
+test('a Space press never restarts the death screen, at reveal or later -- Enter is the keyboard accessibility path', async ({ page }) => {
   test.setTimeout(45_000);
   await boot(page, { qaHooks: true });
   await enter(page);
@@ -30,10 +34,14 @@ test('a Space press right after the death reveal must not restart the run, but o
   // asserts, not whether the element exists.
   await expectRowHidden(page, 'objective');
 
-  // A deliberate press once the grace window has actually elapsed still works --
-  // LUL-1194's accessibility path, not something this fix should remove.
+  // A deliberate press once the grace window has elapsed must still not restart.
   await page.waitForTimeout(2_000);
   await page.keyboard.press('Space');
+  await page.waitForTimeout(500);
+  await expect(page.locator('#deathScreen'), 'a deliberate Space after the grace window must not restart the run either').toBeVisible();
+
+  // Enter is the surviving keyboard accessibility path (LUL-1194).
+  await page.keyboard.press('Enter');
   await expect(page.locator('#deathScreen')).toBeHidden({ timeout: 5_000 });
   await expectRowVisible(page, 'objective');
 });

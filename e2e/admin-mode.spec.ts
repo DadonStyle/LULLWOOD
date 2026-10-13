@@ -18,7 +18,7 @@
 // and only renders once that menu is opened -- not visible on boot the way it was
 // pre-LUL-1085. Open it via the menuToggle testid first, same as e2e/mobile/admin-mode.spec.ts.
 import { test, expect } from './fixtures';
-import { boot, enter } from './helpers';
+import { boot, enter, qaHook } from './helpers';
 
 test.describe('admin mode', () => {
   test('defaults off: pace/mist panel is hidden, Settings stays reachable', async ({ page }) => {
@@ -50,8 +50,25 @@ test.describe('admin mode', () => {
   });
 
   test('toggling on reveals the panel; toggling off hides it again', async ({ page }) => {
-    await boot(page);
+    // LUL-5953/LUL-5965: blackout's own preset (engine/tuning.js's `minimap: false`) force-hides
+    // #minimap via an inline style set once per generateMap() (forest-engine.js:2297, by design --
+    // LUL-4341/LUL-3264, no minimap during a Blackout-only leaderboard run). Since LUL-5953 made
+    // blackout the default, this test's "admin mode reveals the minimap" assertion -- true under
+    // night/lantern's `minimap: true` -- now contradicts blackout's intentional always-off
+    // behaviour. Pin 'night' so this test keeps exercising the generic admin-mode toggle it was
+    // written for; blackout's forced-hide is a separate, already-covered behaviour
+    // (e2e/minimap-setting.spec.ts).
+    //
+    // setDifficulty() (called from SettingsPanel's persisted-settings apply-on-ready effect)
+    // only takes effect on the *next* generateMap() (its own comment) -- the localStorage pin
+    // alone doesn't reach the FIRST generateMap() that boot()+enter() already triggered with the
+    // engine's true default (blackout). qaRegenerateMap -- same fix e2e/minimap-setting.spec.ts's
+    // "hidden on blackout" test already uses -- forces a fresh generateMap() against the
+    // now-applied 'night' difficulty before this test touches #minimap.
+    await page.addInitScript(() => window.localStorage.setItem('lullwood:settings', JSON.stringify({ difficulty: 'night' })));
+    await boot(page, { qaHooks: true });
     await enter(page);
+    await qaHook(page, 'qaRegenerateMap', 1);
 
     // el.click(), not a real Playwright click/check -- see
     // wiki:systems/lul44-diagnosis-and-fix (HUD button/input clicks in this

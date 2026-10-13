@@ -68,17 +68,18 @@ test('win screen is mandatory and persists until the player restarts', async ({ 
   await expect(page.locator('#winScreen')).toBeHidden();
 });
 
-// LUL-1614: root cause of "after finding the child there is no winning screen,
-// the game just resumes". LUL-1194 focuses .restartBtn as soon as winRevealed
-// flips true, so keyboard-only players have an Enter/Space path back in. But
-// Space is also the jump key -- a player still holding/pressing it from the
-// carry leg has that keypress in flight the instant the button gains focus,
-// and the browser's native "activate the focused button on Space" fires
-// before the player has consciously seen "YOU WON", silently restarting the
-// run with zero click on the actual button. Hud.tsx now delays the focus
-// (RESTART_FOCUS_DELAY_MS) so an already-in-flight key can't reach it, while
-// a deliberate press after the delay still works -- both halves asserted here.
-test('a Space press right after the win reveal must not restart the run, but one after the grace window still does', async ({ page }) => {
+// LUL-1614/LUL-5966: root cause of "after finding the child there is no winning
+// screen, the game just resumes". LUL-1194 focuses .restartBtn as soon as
+// winRevealed flips true, so keyboard-only players have an Enter path back in.
+// Space is also the jump key, so a player still holding/pressing it from the
+// carry leg has that keypress in flight the instant the button gains focus --
+// the browser's native "activate the focused button on Space" would silently
+// restart the run with zero click on the actual button, before the player has
+// even seen "YOU WON". LUL-5966 made the jump keydown handler call
+// preventDefault() unconditionally, which removes Space (not Enter) from the
+// native-button-activation path entirely, at any timing -- Enter is now the
+// sole keyboard accessibility path for this button.
+test('a Space press never restarts the win screen, at reveal or later -- Enter is the keyboard accessibility path', async ({ page }) => {
   test.setTimeout(45_000);
   await boot(page, { qaHooks: true, qaWorld: 'micro' });
   await enter(page);
@@ -99,10 +100,15 @@ test('a Space press right after the win reveal must not restart the run, but one
   // the !winVisible gate on its `visible` prop (Hud.tsx) is what this asserts.
   await expectRowHidden(page, 'objective');
 
-  // A deliberate press once the grace window has actually elapsed still works --
-  // this is LUL-1194's accessibility path, not something this fix should remove.
+  // A deliberate press once the grace window has elapsed must still not restart --
+  // LUL-5966 removed Space from this path at any timing, not just at reveal.
   await page.waitForTimeout(2_000);
   await page.keyboard.press('Space');
+  await page.waitForTimeout(500);
+  await expect(page.locator('#winScreen'), 'a deliberate Space after the grace window must not restart the run either').toBeVisible();
+
+  // Enter is the surviving keyboard accessibility path (LUL-1194).
+  await page.keyboard.press('Enter');
   await expect(page.locator('#winScreen')).toBeHidden({ timeout: 5_000 });
   await expectRowVisible(page, 'objective');
 });

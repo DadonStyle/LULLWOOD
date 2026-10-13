@@ -35,6 +35,11 @@ const HIGH_BALANCE_EMBERS = { 'lullwood:embers': JSON.stringify({ balance: 2000,
 
 test('buying each catalog item updates balance/tier text and fires the purchase cue (mobile)', async ({ page, context }) => {
   await seedEmbers(context, HIGH_BALANCE_EMBERS);
+  // LUL-5953: pin 'night' explicitly (no longer the unseeded default) -- this test is
+  // about generic shop UI mechanics, not difficulty pricing; see ../embers-shop.spec.ts.
+  await context.addInitScript(() => {
+    window.localStorage.setItem('lullwood:settings', JSON.stringify({ difficulty: 'night' }));
+  });
   const errs = trackConsoleErrors(page);
   await boot(page, { qaHooks: true, qaWorld: 'micro' });
   // LUL-2539: this test asserts an exact base scentLifetime below -- force wind off so the
@@ -53,7 +58,7 @@ test('buying each catalog item updates balance/tier text and fires the purchase 
   await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1800');
   expect(await qaHook(page, 'qaProbeScentLifetime')).toBeCloseTo(14 * 0.8, 5);
 
-  // Default engine difficulty is 'night' (LUL-2983): 120 embers, 1800 -> 1680.
+  // Pinned to 'night' above (LUL-2983/LUL-5953): 120 embers, 1800 -> 1680.
   await clickBuyButton(page, 'buy-pocketStones');
   await expect(page.locator('#embersShopBalance')).toHaveText('Embers: 1680');
   probe = await qaHook(page, 'qaProbeEmbersPurchase');

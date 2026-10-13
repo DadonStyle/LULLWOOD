@@ -72,7 +72,7 @@ test.describe('chase_gap instrumentation (LUL-2392)', () => {
     const gap = await qaHook(page, 'qaProbeChaseGap');
     expect(gap).not.toBeNull();
     expect(gap.kind).toBe('wolf');
-    expect(gap.difficulty).toBe('night'); // engine default (`let difficulty = 'night'`)
+    expect(gap.difficulty).toBe('blackout'); // engine default (`let difficulty = 'blackout'`, LUL-5953)
     // (IMMUNITY_CLEAR_TICKS + 1) ticks * FIXED_DT since the give-up tick, +/- float-accumulation slop.
     const expectedMs = (IMMUNITY_CLEAR_TICKS + 1) * FIXED_DT * 1000;
     expect(gap.durationMs).toBeGreaterThan(expectedMs - 50);

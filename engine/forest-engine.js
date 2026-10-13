@@ -518,19 +518,23 @@ const skyBalloonTex = new THREE.CanvasTexture(skyBalloonCanvas); skyBalloonTex.c
 const skyBalloonSprite = new THREE.Sprite(new THREE.SpriteMaterial({
   map: skyBalloonTex, transparent: true, opacity: 0, depthWrite: false, fog: false,
 }));
-skyBalloonSprite.scale.set(34, 34 * (SKY_BALLOON_CANVAS_HEIGHT / SKY_BALLOON_CANVAS_WIDTH), 1);
+// LUL-5980: bumped ~1.9x (34 -> 64, same ratio Sky Compass's 24 would need to
+// match "very big... see it and its shadow over the game") -- shadow radius
+// and trail offsets below are scaled by the same ratio so they still sit
+// correctly under the bigger sprite instead of reading as undersized relative to it.
+skyBalloonSprite.scale.set(64, 64 * (SKY_BALLOON_CANVAS_HEIGHT / SKY_BALLOON_CANVAS_WIDTH), 1);
 const skyBalloonShadow = new THREE.Mesh(
-  new THREE.CircleGeometry(13, 24),
+  new THREE.CircleGeometry(24, 24),
   new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false, fog: false }),
 );
-skyBalloonShadow.position.set(1.4, -10, -0.4);
+skyBalloonShadow.position.set(2.6, -19, -0.75);
 const skyBalloonTrails = [];
 for (let skyBalloonTrailI = 0; skyBalloonTrailI < 3; skyBalloonTrailI++) {
   const skyBalloonTrailGeo = new THREE.BufferGeometry();
-  const skyBalloonTrailSpread = (skyBalloonTrailI - 1) * 4;
+  const skyBalloonTrailSpread = (skyBalloonTrailI - 1) * 7.5;
   skyBalloonTrailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-    skyBalloonTrailSpread, -6, 0,
-    skyBalloonTrailSpread * 1.4, -16 - skyBalloonTrailI * 2, 0,
+    skyBalloonTrailSpread, -11, 0,
+    skyBalloonTrailSpread * 1.4, -30 - skyBalloonTrailI * 3.8, 0,
   ]), 3));
   const skyBalloonTrailLine = new THREE.Line(skyBalloonTrailGeo, new THREE.LineBasicMaterial({
     color: 0xd8c9a8, transparent: true, opacity: 0, fog: false,
@@ -2158,7 +2162,7 @@ const PSPEC = Object.fromEntries(Object.entries(PSPEC_BASE).map(([k, v]) => [k, 
 const RUN = CONFIG.walk * STAMINA_SPRINT_MUL;
 for(const k in PSPEC) PSPEC[k].speed = RUN + CHASE_GAP / PSPEC[k].budget;
 
-let difficulty = 'night';
+let difficulty = 'blackout';
 function makePredator(kind){
   const s = PSPEC[kind], g = new THREE.Group();
   const H = s.h, L = s.len, Wd = s.sz, bodyY = H*0.62;
@@ -3883,6 +3887,13 @@ on(window, 'keydown', e => {
   // only way out of one, so it can't be blocked by being crouched.
   // e.repeat is dropped so holding Space down doesn't spam a jump every OS
   // auto-repeat tick; JUMP_DURATION is the only real cooldown once airborne.
+  // LUL-5966: preventDefault() unconditionally (not gated on `playing`) so the
+  // browser's native space-activates-focused-button behavior never fires once
+  // Hud.tsx's RESTART_FOCUS_DELAY_MS grace window focuses .restartBtn on the
+  // win/death screen -- without this, Space silently restarts via the native
+  // keyup activation instead of the jump gate below, which is already closed
+  // by !playing. Same F11 preventDefault precedent above.
+  if(e.code === keyMap.jump) e.preventDefault();
   if(e.code === keyMap.jump && playing && !paused && !e.repeat){
     if(hidden) exitHide();
     beginJump();
@@ -4667,7 +4678,7 @@ let hudState = {
   // LUL-26: difficulty + accessibility. Controlled the same way pace/fog
   // already are -- the engine is the source of truth, React only renders it
   // and persists it to localStorage (see components/Hud.tsx).
-  difficulty: 'night', runMode: 'hold', sensitivity: 1, invertY: false,
+  difficulty: 'blackout', runMode: 'hold', sensitivity: 1, invertY: false,
   reducedMotion: false, captionsOn: false, caption: null, captionId: 0,
   // LUL-5805/LUL-5828: keybind remapping, same engine-owns-it/React-persists-it
   // split as runMode above. keyMapCollision is the Q5 refusal tell for a remap

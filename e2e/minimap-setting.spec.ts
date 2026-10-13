@@ -21,9 +21,17 @@ test.describe('minimap setting', () => {
   });
 
   test('shown with adminMode:true', async ({ page, context }) => {
-    await seedSettings(context, { adminMode: true });
-    await boot(page);
+    // LUL-5953/LUL-5965: blackout (the default since LUL-5953) force-hides #minimap regardless
+    // of adminMode (engine/tuning.js's `minimap: false`, forest-engine.js:2297) -- pin 'night' so
+    // this stays a test of adminMode's own effect, not blackout's separately-covered override
+    // (the "hidden on blackout" test below). setDifficulty() (fired from SettingsPanel's
+    // apply-on-ready effect) only takes effect on the *next* generateMap(), so the localStorage
+    // pin alone doesn't reach the FIRST generateMap() boot()+enter() already triggered with the
+    // engine's true default (blackout) -- qaRegenerateMap forces a fresh one against 'night'.
+    await seedSettings(context, { adminMode: true, difficulty: 'night' });
+    await boot(page, { qaHooks: true });
     await enter(page);
+    await qaHook(page, 'qaRegenerateMap', 1);
     await expect(page.locator('#minimap')).toBeVisible();
     // confirms admin mode itself is genuinely on, not just a no-op seed
     await expect(page.locator('#pace')).toBeVisible();
@@ -37,9 +45,16 @@ test.describe('minimap setting', () => {
   });
 
   test('hidden on blackout regardless of admin mode', async ({ page, context }) => {
-    await seedSettings(context, { adminMode: true });
+    // LUL-5965: seed 'night' explicitly -- blackout is the default since LUL-5953, so without
+    // this pin the FIRST generateMap() (boot()+enter()) already bakes minimap:false before the
+    // test ever switches to blackout via the UI below, and the pre-switch assertion that the
+    // minimap starts out visible would fail for the wrong reason.
+    await seedSettings(context, { adminMode: true, difficulty: 'night' });
     await boot(page, { qaHooks: true });
     await enter(page);
+    // Same generateMap()-timing fix as the test above -- flush the 'night' pin into a real
+    // generateMap() before asserting the pre-blackout-switch baseline.
+    await qaHook(page, 'qaRegenerateMap', 1);
     await expect(page.locator('#minimap')).toBeVisible();
 
     // Real UI path, not fake state: pick "Blackout" in the actual Settings
@@ -58,13 +73,19 @@ test.describe('minimap setting', () => {
   });
 
   test('persists across reload', async ({ page, context }) => {
-    await seedSettings(context, { adminMode: true });
-    await boot(page);
+    // LUL-5965: pin 'night' -- blackout (the default since LUL-5953) force-hides #minimap
+    // regardless of adminMode, same reason as the two tests above. qaRegenerateMap flushes the
+    // pin into a real generateMap() each time, since setDifficulty() only takes effect on the
+    // *next* one and boot()+enter() alone bakes the engine's true default (blackout) first.
+    await seedSettings(context, { adminMode: true, difficulty: 'night' });
+    await boot(page, { qaHooks: true });
     await enter(page);
+    await qaHook(page, 'qaRegenerateMap', 1);
     await expect(page.locator('#minimap')).toBeVisible();
 
-    await boot(page);
+    await boot(page, { qaHooks: true });
     await enter(page);
+    await qaHook(page, 'qaRegenerateMap', 1);
     await expect(page.locator('#minimap')).toBeVisible();
   });
 });
