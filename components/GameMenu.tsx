@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { EngineActions, EngineHudState } from './Hud';
+import { MenuButton, MenuLinkButton } from './MenuButton';
+import { InfoDialog } from './InfoDialog';
+import { rescuerRules } from '@/lib/game/rescuerRules';
 import { fullscreenSupported, isFullscreenActive, toggleFullscreen, FULLSCREEN_CHANGE_EVENTS } from '@/lib/game/fullscreen';
 
 // LUL-124: fullscreen toggle, via lib/game/fullscreen.ts (LUL-2310) so this
@@ -32,13 +35,16 @@ export default function GameMenu({
   actions,
   onOpenSettings,
   onOpenChange,
+  recordTimeMs = null,
 }: {
   state: EngineHudState;
   actions: EngineActions | null;
   onOpenSettings: () => void;
   onOpenChange?: (open: boolean) => void;
+  recordTimeMs?: number | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
 
@@ -102,15 +108,19 @@ export default function GameMenu({
           </button>
         )}
 
-        <button
-          data-testid="menuSuggest"
-          className="suggestToggle"
-          onClick={() => window.open('/suggest', '_blank', 'noopener,noreferrer')}
-          aria-label="Suggest something for Lullwood"
-        >
-          <span className="suggestIcon">💬</span>
-        </button>
+        <MenuLinkButton testId="menuSuggest" href="/suggest" icon="💬" ariaLabel="Suggest something for Lullwood" />
+        <MenuLinkButton testId="menuCredits" href="/credits" icon="©" ariaLabel="Credits" />
+        <MenuButton testId="menuBeTheRescuer" ariaLabel="Be the rescuer: rules for taking first place" onClick={() => setRulesOpen(true)} wide>
+          Be the rescuer
+        </MenuButton>
       </div>
+
+      <InfoDialog open={rulesOpen} testId="rescuerRules" title="Be the rescuer" onClose={() => setRulesOpen(false)}>
+        <p>To take first place and have your name in the sky, your run has to meet every rule:</p>
+        <ul>
+          {rescuerRules(recordTimeMs).map((rule) => <li key={rule}>{rule}</li>)}
+        </ul>
+      </InfoDialog>
 
       {open && (
         <div className="menuPanel">
@@ -185,17 +195,6 @@ export default function GameMenu({
               </div>
             </div>
           )}
-
-          <Link
-            href="/credits"
-            target="_blank"
-            rel="noopener noreferrer"
-            data-testid="menuCredits"
-            className="menuRow"
-            onClick={() => setOpen(false)}
-          >
-            Credits
-          </Link>
 
           <button
             id="settingsBtn"
@@ -297,36 +296,6 @@ export default function GameMenu({
 
         .fsIconActive {
           transform: rotate(45deg);
-        }
-
-        .suggestToggle {
-          width: 48px;
-          height: 48px;
-          min-width: 48px;
-          min-height: 48px;
-          border: 1px solid #cdd9ea;
-          background: rgba(6, 9, 15, 0.8);
-          color: #cdd9ea;
-          font-size: 20px;
-          cursor: pointer;
-          border-radius: 4px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 0;
-          transition: background-color 0.2s;
-        }
-
-        .suggestToggle:hover {
-          background: rgba(6, 9, 15, 0.95);
-        }
-
-        .suggestToggle:active {
-          transform: scale(0.95);
-        }
-
-        .suggestIcon {
-          display: inline-block;
         }
 
         .menuPanel {

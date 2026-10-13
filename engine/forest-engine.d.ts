@@ -108,6 +108,10 @@ declare global {
        * loading or failed -- the canvas then draws the whole text);
        * `flagImageLoaded` is whether the flag picture replaced the colour bars;
        * `label` the small heading above the name ('' unless populated). */
+      /** Top-right run timer (#runTimer) and rescuer eligibility: the m:ss last
+       * shown, the live run seconds, and whether admin mode was on at any point
+       * of the current run (such a run can't take the top rescuer spot). */
+      qaProbeRunClock?: () => { label: string; seconds: number; adminUsedThisRun: boolean };
       qaProbeLeaderboardSky?: () => {
         visible: boolean; text: string; hasFlag: boolean;
         lettersLoaded: boolean; modelName: string; flagImageLoaded: boolean; label: string;
