@@ -465,6 +465,13 @@ const OVERLAY_STYLE = `
      default) and the QA tester actually see. LUL-4341: keyed back off
      data-admin-mode="1" now that minimap visibility is admin-gated again. */
   body[data-admin-mode="1"] #windIndicator { top: 184px; }
+  /* Top-right run timer (Hud.tsx #runTimer), left of the wind arrow. Same
+     plain white-with-dark-outline look as the sky balloon's time row. Under
+     admin mode the minimap owns the corner, so it drops with the wind arrow. */
+  #runTimer { position: fixed; top: 22px; right: 76px; z-index: 12; pointer-events: none;
+    font-size: 24px; font-weight: 700; letter-spacing: 0.04em; font-variant-numeric: tabular-nums;
+    color: #fff8e8; text-shadow: 0 0 2px rgba(20,14,8,0.9), 0 1px 3px rgba(20,14,8,0.9); }
+  body[data-admin-mode="1"] #runTimer { top: 186px; }
   body[data-admin-mode="1"] #windIndicatorHint { top: 228px; }
 
   /* LUL-2307: generic first-encounter hint caption, generalizing LUL-2230's
@@ -591,11 +598,11 @@ const OVERLAY_STYLE = `
      longer needed since the class itself only ever renders inside this form. */
   .leaderboardSubmitBtn { margin-top: 0; }
   .leaderboardSubmitBtn:disabled { opacity: 0.5; cursor: default; }
-  #leaderboardHint, .leaderboardError, #leaderboardSubmitted, #leaderboardIneligibleNote { font-size: 12px; margin: 0; color: #cbb7a4; }
+  #leaderboardHint, .leaderboardError, #leaderboardSubmitted, #leaderboardIneligibleNote, #leaderboardAdminNote { font-size: 12px; margin: 0; color: #cbb7a4; }
   /* LUL-5944: unlike the other three (nested inside #leaderboardForm's own flex gap, :565),
      this one replaces the form entirely and sits directly under RunRecap -- needs its own
      top margin instead of inheriting the form's gap. */
-  #leaderboardIneligibleNote { margin-top: 6px; }
+  #leaderboardIneligibleNote, #leaderboardAdminNote { margin-top: 6px; }
   .leaderboardError { color: #ff8a8a; }
   .leaderboardHoneypot { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
   .restartBtn:focus-visible, .leaderboardSubmitBtn:focus-visible { outline: 2px solid #ffe6c8; outline-offset: 3px; }

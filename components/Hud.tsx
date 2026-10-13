@@ -14,7 +14,7 @@ import { freshProgression, type Progression } from '@/lib/game/progression';
 import type { MissionKind, SecondaryKind } from '@/lib/game/mission';
 import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
-import { formatDuration } from '@/lib/ui/format-duration';
+import { formatDuration, formatRunTime } from '@/lib/ui/format-duration';
 import { formatKeyLabel } from '@/lib/ui/key-label';
 import { LeaderboardMenuLine, LeaderboardSubmitForm, useLeaderboardRecord, type LeaderboardState } from './Leaderboard';
 import type { SkyBalloonStatus, SkyBalloonRecord } from '@/lib/game/skyBalloon';
@@ -58,6 +58,11 @@ export interface EngineHudState {
   deathCause: 'charge' | 'hunt' | 'chase' | 'heard';
   lossRevealed: boolean;
   survivedSeconds: number;
+  // Top-right run timer (#runTimer): live run seconds, pushed by the engine
+  // whenever the shown m:ss changes; survivedSeconds replaces it once the run ends.
+  runClockSeconds: number;
+  // Admin mode was on at some point of this run: it can't take the top rescuer spot.
+  adminUsedThisRun: boolean;
   pace: number;
   fog: number;
   // LUL-1709: live time-of-run pacing clock, plain "h:mm AM/PM" text -- ticks from
@@ -265,6 +270,7 @@ export interface EngineActions {
   setTouchVeil: (v: boolean) => void;
   // LUL-26: difficulty + accessibility
   setDifficulty: (d: 'lantern' | 'night' | 'blackout') => void;
+  setAdminMode: (on: boolean) => void;
   setRunMode: (m: 'hold' | 'toggle') => void;
   setSensitivity: (v: number) => void;
   setInvertY: (v: boolean) => void;
@@ -316,6 +322,8 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   deathCause: 'chase',
   lossRevealed: false,
   survivedSeconds: 0,
+  runClockSeconds: 0,
+  adminUsedThisRun: false,
   pace: 6,
   fog: 0.04,
   timeOfRunClock: '6:00 AM',
@@ -678,6 +686,14 @@ function useCaptionToast(captionsOn: boolean, captionId: number) {
 // first pushState after arriveHome()/triggerDeath() lands, so this never
 // renders with stale data from a previous run (lastPayout is set in the
 // same pushState call as winVisible/deathVisible).
+// The current top rescuer's time for the "Be the rescuer" rules, or null when
+// the board is empty or not loaded (a failed fetch with a cache still counts).
+function leaderboardRecordTimeMs(lb: LeaderboardState): number | null {
+  if (lb.status === 'populated') return lb.record.timeMs;
+  if (lb.status === 'failed' && lb.cached) return lb.cached.timeMs;
+  return null;
+}
+
 function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, difficulty, personalBest, tierStats, newRecord }: { survivedSeconds: number; payout: RunPayout | null; balance: number; isDeath: boolean; chronicle: ChronicleEvent[]; difficulty: 'lantern' | 'night' | 'blackout'; personalBest: number | null; tierStats: { runs: number; wins: number; streak: number }; newRecord: boolean }) {
   const lines = formatChronicle(chronicle);
   const tierLabel = difficulty === 'lantern' ? 'Lantern' : difficulty === 'night' ? 'Night' : 'Blackout';
@@ -685,7 +701,7 @@ function RunRecap({ survivedSeconds, payout, balance, isDeath, chronicle, diffic
     <>
       <div id="runRecap">
         <p>
-          {tierLabel} · time survived: {formatDuration(survivedSeconds)}
+          {tierLabel} · time survived: {formatRunTime(survivedSeconds)}
           {payout && (
             <>
               <br />
@@ -983,7 +999,13 @@ export default function Hud({
         </button>
       </div>
 
-      <GameMenu state={state} actions={actions} onOpenSettings={() => setSettingsOpen(true)} onOpenChange={setMenuOpen} />
+      <GameMenu
+        state={state}
+        actions={actions}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenChange={setMenuOpen}
+        recordTimeMs={leaderboardRecordTimeMs(leaderboardState)}
+      />
       <SettingsPanel state={state} actions={actions} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       {/* LUL-26/LUL-2312: closed captions for predator calls -- the only warning
@@ -1187,6 +1209,14 @@ export default function Hud({
           keep drawing at z-index 12 over #winScreen/#deathScreen's z-index 25.
           It's below the modals visually either way, but it's still a live,
           ticking readout that has no business rendering once the run is over. */}
+      {/* Top-right run timer: the run's time exactly as the leaderboard and the
+          sky balloon will show it (formatRunTime). Live while playing, then the
+          final survivedSeconds on the end screens. */}
+      {state.entered && (
+        <div id="runTimer" aria-label="run time">
+          {formatRunTime(state.winVisible || state.deathVisible ? state.survivedSeconds : state.runClockSeconds)}
+        </div>
+      )}
       {state.entered && hudLive && (
         <div
           id="windIndicator"
@@ -1445,7 +1475,7 @@ export default function Hud({
             <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
-            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} />
+            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} adminUsedThisRun={state.adminUsedThisRun} />
             <button
               ref={winRestartRef}
               className="restartBtn"

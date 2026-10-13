@@ -27,6 +27,7 @@ import {
   skyBalloonNameLetters, layoutSkyBalloonName, skyBalloonLetterBob, skyBalloonFlagUrl,
 } from '@/lib/game/skyBalloon';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { formatRunTime } from '@/lib/ui/format-duration';
 import {
   freshRunState,
   isPlaying,
@@ -665,6 +666,13 @@ let fireflyAlarmActive = false, fireflyAlarmStingPlayed = false;
 const TIME_OF_RUN_DURATION_S = 120;
 const TIME_OF_RUN_FOG_DELTA = 0.10 - CONFIG.fog;   // additive fog-density term at full night
 let runElapsed = 0, timeOfRun = 0;
+// Top-right run timer (Hud.tsx #runTimer): last m:ss pushed, so the HUD only
+// re-renders when the shown value changes.
+let lastRunClockLabel = '';
+// Admin mode (SettingsPanel.tsx -> setAdminMode) and whether it was on at any
+// moment of the current run. A run that ever had it on can't take the top
+// rescuer spot (LeaderboardSubmitForm reads adminUsedThisRun at the win screen).
+let adminModeOn = false, adminUsedThisRun = false;
 // LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
 // found the point-light radius/intensity cut above unreadable against this
 // scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
@@ -4705,6 +4713,8 @@ let hudState = {
   winVisible: false, winRevealed: false,
   deathVisible: false, deathKind: 'wolf', deathCause: 'chase', lossRevealed: false,
   survivedSeconds: 0,
+  runClockSeconds: 0,
+  adminUsedThisRun: false,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
   // LUL-382: mist veil resource meter -- 1 is full charge, 0 is fully drained.
@@ -4843,6 +4853,9 @@ function enter(){
   // via the generic per-frame hint evaluation in stepFrame(), not from here.
   enteredAt = clock.elapsedTime;
   runElapsed = 0;
+  lastRunClockLabel = '';
+  adminUsedThisRun = adminModeOn;   // fresh run: tainted only if admin mode is on right now
+  pushState({ runClockSeconds: 0, adminUsedThisRun });
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   veilReserve = false; embersSpent = 0;   // LUL-1210: fresh run, no charm banked or spent
   coldWalkBroken = false;   // LUL-4960: fresh run, constraint not yet broken
@@ -5034,6 +5047,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
              pickingUp, taken: baby.taken };
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
+  // Top-right run timer + rescuer eligibility: the m:ss last pushed to #runTimer
+  // and whether admin mode was on at any point of the current run.
+  window.ForestEngine.qaProbeRunClock = function(){
+    return { label: lastRunClockLabel, seconds: entered ? Math.max(0, clock.elapsedTime - enteredAt) : 0, adminUsedThisRun };
+  };
 
   // LUL-2205: reads back the live day/night pacing values in one call so a
   // test can assert the engine-visible effect directly (per this file's
@@ -7835,6 +7853,15 @@ function regenMap(){ if(!canRegenMap(runState())) return; generateMap((Math.rand
 // LUL-26: difficulty + accessibility actions. Mirrors setPace/setFog above --
 // the engine applies the change and echoes the new value back via pushState
 // so React's controls stay driven by engine state, not a second local copy.
+// Admin mode lives in React (SettingsPanel.tsx, body[data-admin-mode]); the
+// engine only needs to know so a run that had it on at any point is marked.
+function setAdminMode(on){
+  adminModeOn = !!on;
+  if(adminModeOn && entered && !won && !dead && !adminUsedThisRun){
+    adminUsedThisRun = true;
+    pushState({ adminUsedThisRun });
+  }
+}
 function setDifficulty(d){
   if(!DIFFICULTY_PRESETS[d]) return;
   difficulty = d;
@@ -8182,6 +8209,14 @@ function stepFrame(dt, t, skipRender){
   const playing = isPlaying(runState()) && !paused;
 
   if(playing) runElapsed += dt;
+  // Top-right run timer: the exact clock win()/triggerDeath() turn into
+  // survivedSeconds (clock.elapsedTime - enteredAt, pauses included), pushed
+  // only when the shown m:ss changes, and frozen once the run is over.
+  if(entered && !won && !dead){
+    const runClockSeconds = Math.max(0, clock.elapsedTime - enteredAt);
+    const runClockLabel = formatRunTime(runClockSeconds);
+    if(runClockLabel !== lastRunClockLabel){ lastRunClockLabel = runClockLabel; pushState({ runClockSeconds }); }
+  }
   timeOfRun = clamp(runElapsed / TIME_OF_RUN_DURATION_S, 0, 1);
 
   // LUL-40/LUL-382: hold KeyF for the mist veil. Read every frame like `running`
@@ -9431,7 +9466,7 @@ tick();
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchClimb, triggerTouchShuffle, triggerTouchInteract,
            triggerTouchThrow,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload, triggerTouchScentVeil,
-           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions, setColdWalkOptIn,
+           setDifficulty, setAdminMode, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions, setColdWalkOptIn,
            // LUL-5805
            setKeyMap,
            setEmbers, purchase,

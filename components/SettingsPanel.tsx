@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { EngineActions, EngineHudState } from './Hud';
 import { isMobile } from '@/lib/input-mode';
 import { formatKeyLabel } from '@/lib/ui/key-label';
+import { InfoDialog } from './InfoDialog';
 
 // LUL-26: difficulty presets + accessibility, shipped together per the ticket.
 // Difficulty/runMode/sensitivity/invertY/reducedMotion/captionsOn are engine
@@ -156,6 +157,14 @@ export default function SettingsPanel({
     document.body.dataset.adminMode = adminMode ? '1' : '0';
   }, [adminMode]);
 
+  // The engine marks any run that has admin mode on at any point as unable to
+  // take the top rescuer spot (forest-engine.js setAdminMode/adminUsedThisRun).
+  useEffect(() => {
+    actions?.setAdminMode(adminMode);
+  }, [adminMode, actions]);
+  // Turning admin mode on says so up front, instead of a surprise at the win screen.
+  const [adminWarningOpen, setAdminWarningOpen] = useState(false);
+
   // Persist whenever any of these actually change -- after the apply-on-ready
   // effect above, so a mount with a stored `sensitivity: 1.4` doesn't get
   // immediately re-written as the engine's own default before it applies.
@@ -202,6 +211,12 @@ export default function SettingsPanel({
 
   return (
     <div id="settingsPanel" role="dialog" aria-label="Settings">
+      <InfoDialog open={adminWarningOpen} testId="adminModeWarning" title="Admin mode won't count" onClose={() => setAdminWarningOpen(false)}>
+        <p>
+          A run with admin mode turned on, even for a moment, can&apos;t be counted as the top rescuer. Turn it
+          off before you start a run if you want that run to count.
+        </p>
+      </InfoDialog>
       <div id="settingsHeader">
         <h2>Settings</h2>
         <button onClick={onClose} aria-label="Close settings">
@@ -309,7 +324,15 @@ export default function SettingsPanel({
           High-contrast HUD
         </label>
         <label className="radioRow">
-          <input type="checkbox" checked={adminMode} onChange={(e) => setAdminMode(e.target.checked)} />
+          <input
+            type="checkbox"
+            data-testid="adminModeToggle"
+            checked={adminMode}
+            onChange={(e) => {
+              setAdminMode(e.target.checked);
+              if (e.target.checked) setAdminWarningOpen(true);
+            }}
+          />
           Admin mode (show pace/mist panel + minimap)
         </label>
         {/* Fog density already has an adjustable control -- the "Mist" slider
