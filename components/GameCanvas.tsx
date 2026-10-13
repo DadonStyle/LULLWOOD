@@ -90,6 +90,8 @@ const OVERLAY_STYLE = `
     color: #d7e4f6; text-shadow: 0 2px 30px rgba(120,160,230,0.35); }
   #gateSub { font-size: 14px; letter-spacing: 0.06em; color: #9fb2cd; }
   #gateCredit { font-size: 12px; letter-spacing: 0.04em; color: #6f82a0; }
+  #gateAssetCredit { font-size: 12px; letter-spacing: 0.04em; color: #5d6f8c; }
+  #gateAssetCredit a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
   /* LUL-3264: min-width reserves the longest menu string (20-char nickname, 59:59)
      so the loading -> populated swap causes no layout shift.
      LUL-5944: sized/measured against a representative 20-char nickname

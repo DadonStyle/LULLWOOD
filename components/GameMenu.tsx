@@ -189,6 +189,17 @@ export default function GameMenu({
             </div>
           )}
 
+          <Link
+            href="/credits"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="menuCredits"
+            className="menuRow"
+            onClick={() => setOpen(false)}
+          >
+            Credits
+          </Link>
+
           <button
             id="settingsBtn"
             className="menuRow"

@@ -23,6 +23,12 @@ test.describe('start gate credits the studio', () => {
       const credit = page.locator('#gateCredit');
       await expect(credit).toBeVisible();
       await expect(credit).toHaveText('Developed by an independent AI studio');
+
+      // CC BY 4.0 attribution for the sky balloon's 3D letters (CREDITS.md)
+      const assetCredit = page.locator('#gateAssetCredit');
+      await expect(assetCredit).toBeVisible();
+      await expect(assetCredit).toContainText('danny_p3d');
+      await expect(assetCredit.getByRole('link', { name: 'CC BY 4.0' })).toHaveAttribute('href', 'https://creativecommons.org/licenses/by/4.0/');
     });
   }
 });

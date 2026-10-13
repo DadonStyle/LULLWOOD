@@ -220,7 +220,7 @@ export function createService(opts: ServiceOptions): Server {
 function alertCommand(path: string | undefined): ServiceOptions['onNewRecord'] {
   if (!path) return undefined;
   return (nickname, country, timeMs) => {
-    // execFile, fixed argv, no shell: nickname is already [a-z0-9]{3,20}, country [A-Z]{2}.
+    // execFile, fixed argv, no shell: nickname is already [a-z]{3,20}, country [A-Z]{2}.
     execFile(path, ['Lullwood: new leaderboard record', `${nickname} (${country}) ${(timeMs / 1000).toFixed(1)}s`],
       { timeout: 30_000 }, (err) => { if (err) console.error('[leaderboard-db] new-record alert failed:', err.message); });
   };
