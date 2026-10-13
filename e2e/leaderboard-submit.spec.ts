@@ -49,18 +49,20 @@ test.describe('leaderboard submit form', () => {
 
     const form = page.locator('#leaderboardForm');
     await expect(form).toBeVisible();
+    // Letters only: spaces, digits and punctuation are dropped as you type.
     await page.locator('#leaderboardNickname').fill('Ranger 42!');
-    await expect(page.locator('#leaderboardNickname')).toHaveValue('ranger42');
+    await expect(page.locator('#leaderboardNickname')).toHaveValue('ranger');
     // The restart button's delayed auto-focus must not steal focus mid-typing.
     await page.waitForTimeout(2_500);
     await expect(page.locator('#leaderboardNickname')).toBeFocused();
+    await expect(page.locator('#leaderboardCountry option[value="IL"]')).toHaveText('Israel');
     await page.locator('#leaderboardCountry').selectOption('IL');
     await page.locator('#leaderboardForm button[type="submit"]').click();
-    await expect(page.locator('#leaderboardSubmitted')).toHaveText(/New record! ranger42/);
+    await expect(page.locator('#leaderboardSubmitted')).toHaveText(/New record! ranger\b/);
 
     expect(posted).not.toBeNull();
     const body = posted as unknown as { nickname: string; country: string; time_ms: number; website: string };
-    expect(body.nickname).toBe('ranger42');
+    expect(body.nickname).toBe('ranger');
     expect(body.country).toBe('IL');
     expect(body.website).toBe('');
     expect(Number.isInteger(body.time_ms)).toBe(true);

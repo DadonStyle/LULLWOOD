@@ -20,9 +20,13 @@ import {
 } from '@/lib/game/skyCompass';
 import {
   skyBalloonDirection, skyBalloonContent, drawSkyBalloonTexture,
-  SKY_BALLOON_RADIUS, SKY_BALLOON_FADE_DURATION_S, SKY_BALLOON_OPACITY,
+  SKY_BALLOON_RADIUS, SKY_BALLOON_SCALE, SKY_BALLOON_FADE_DURATION_S, SKY_BALLOON_OPACITY,
   SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_CANVAS_HEIGHT,
+  SKY_BALLOON_LETTERS_URL, SKY_BALLOON_NAME_Y, SKY_BALLOON_SPRITE_WIDTH,
+  SKY_BALLOON_LABEL_Y, SKY_BALLOON_LABEL_CANVAS_HEIGHT, SKY_BALLOON_LABEL_TEXT, drawSkyBalloonLabel,
+  skyBalloonNameLetters, layoutSkyBalloonName, skyBalloonLetterBob, skyBalloonFlagUrl,
 } from '@/lib/game/skyBalloon';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import {
   freshRunState,
   isPlaying,
@@ -505,11 +509,9 @@ for (const skyCompassGlyph of SKY_COMPASS_GLYPHS) {
 // with the sun/moon disc. The canvas texture is drawn once below and redrawn in
 // place on every state/text change via setLeaderboardRecord() -- never
 // recreated (PART 2.5's "swap TEXT on state change, never re-create the balloon
-// objects"), same texture-reuse idiom as the Sky Compass glyphs above. Shadow
-// is a CircleGeometry mesh (not a Sprite) so it billboards via the group's own
-// quaternion copy, same as moonGroup's halo mesh (`:463-465`); the main sprite
-// self-billboards regardless (THREE.Sprite ignores inherited rotation), so the
-// group quaternion copy below is a harmless no-op for it.
+// objects"), same texture-reuse idiom as the Sky Compass glyphs above. The
+// sprite self-billboards (THREE.Sprite ignores inherited rotation); the group's
+// quaternion copy below is what keeps the 3D name row facing the camera.
 const skyBalloonDir = skyBalloonDirection(moonDir);
 const skyBalloonCanvas = document.createElement('canvas');
 skyBalloonCanvas.width = SKY_BALLOON_CANVAS_WIDTH; skyBalloonCanvas.height = SKY_BALLOON_CANVAS_HEIGHT;
@@ -518,31 +520,23 @@ const skyBalloonTex = new THREE.CanvasTexture(skyBalloonCanvas); skyBalloonTex.c
 const skyBalloonSprite = new THREE.Sprite(new THREE.SpriteMaterial({
   map: skyBalloonTex, transparent: true, opacity: 0, depthWrite: false, fog: false,
 }));
-// LUL-5980: bumped ~1.9x (34 -> 64, same ratio Sky Compass's 24 would need to
-// match "very big... see it and its shadow over the game") -- shadow radius
-// and trail offsets below are scaled by the same ratio so they still sit
-// correctly under the bigger sprite instead of reading as undersized relative to it.
-skyBalloonSprite.scale.set(64, 64 * (SKY_BALLOON_CANVAS_HEIGHT / SKY_BALLOON_CANVAS_WIDTH), 1);
-const skyBalloonShadow = new THREE.Mesh(
-  new THREE.CircleGeometry(24, 24),
-  new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthWrite: false, fog: false }),
-);
-skyBalloonShadow.position.set(2.6, -19, -0.75);
-const skyBalloonTrails = [];
-for (let skyBalloonTrailI = 0; skyBalloonTrailI < 3; skyBalloonTrailI++) {
-  const skyBalloonTrailGeo = new THREE.BufferGeometry();
-  const skyBalloonTrailSpread = (skyBalloonTrailI - 1) * 7.5;
-  skyBalloonTrailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-    skyBalloonTrailSpread, -11, 0,
-    skyBalloonTrailSpread * 1.4, -30 - skyBalloonTrailI * 3.8, 0,
-  ]), 3));
-  const skyBalloonTrailLine = new THREE.Line(skyBalloonTrailGeo, new THREE.LineBasicMaterial({
-    color: 0xd8c9a8, transparent: true, opacity: 0, fog: false,
-  }));
-  skyBalloonTrails.push(skyBalloonTrailLine);
-}
+// Flag + "time:" + time row under the 3D name. (The old dark shadow disc and
+// string lines under the sprite were removed with the 3D name, founder 2026-10-13.)
+skyBalloonSprite.scale.set(SKY_BALLOON_SPRITE_WIDTH, SKY_BALLOON_SPRITE_WIDTH * (SKY_BALLOON_CANVAS_HEIGHT / SKY_BALLOON_CANVAS_WIDTH), 1);
+// Small "The top rescuer:" label above the name (populated state only).
+const skyBalloonLabelCanvas = document.createElement('canvas');
+skyBalloonLabelCanvas.width = SKY_BALLOON_CANVAS_WIDTH; skyBalloonLabelCanvas.height = SKY_BALLOON_LABEL_CANVAS_HEIGHT;
+const skyBalloonLabelCtx = skyBalloonLabelCanvas.getContext('2d');
+const skyBalloonLabelTex = new THREE.CanvasTexture(skyBalloonLabelCanvas); skyBalloonLabelTex.colorSpace = THREE.SRGBColorSpace;
+const skyBalloonLabel = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: skyBalloonLabelTex, transparent: true, opacity: 0, depthWrite: false, fog: false,
+}));
+skyBalloonLabel.scale.set(SKY_BALLOON_SPRITE_WIDTH, SKY_BALLOON_SPRITE_WIDTH * (SKY_BALLOON_LABEL_CANVAS_HEIGHT / SKY_BALLOON_CANVAS_WIDTH), 1);
+skyBalloonLabel.position.y = SKY_BALLOON_LABEL_Y;
+let skyBalloonLabelText = ''; // for qaProbeLeaderboardSky()
 const skyBalloonGroup = new THREE.Group();
-skyBalloonGroup.add(skyBalloonShadow, skyBalloonSprite, ...skyBalloonTrails);
+skyBalloonGroup.add(skyBalloonSprite, skyBalloonLabel);
+skyBalloonGroup.scale.setScalar(SKY_BALLOON_SCALE); // nearer than the sun, same size on screen
 skyBalloonGroup.visible = false; // no-balloons-yet, until the first setLeaderboardRecord() call
 scene.add(skyBalloonGroup);
 let skyBalloonStatus = null;
@@ -550,6 +544,74 @@ let skyBalloonRecord = null;
 let skyBalloonOpacity = 0;
 let skyBalloonFading = false;
 let skyBalloonLastDrawn = { text: '', hasFlag: false }; // for qaProbeLeaderboardSky()
+// The record-holder's nickname in 3D balloon letters (lib/game/skyBalloon.ts,
+// "Letter-balloons" by danny_p3d, CC BY 4.0 -- credited on the start gate),
+// floating above the canvas sprite, which then carries only the flag + time.
+// The GLB loads async; until it arrives (or if it fails) the canvas draws the
+// whole "name — time" text exactly as before. Letter meshes are clones of the
+// loaded templates (shared geometry), rebuilt only when the nickname changes.
+const skyBalloonNameGroup = new THREE.Group();
+skyBalloonNameGroup.position.y = SKY_BALLOON_NAME_Y;
+skyBalloonGroup.add(skyBalloonNameGroup);
+const skyBalloonLetterMat = new THREE.MeshStandardMaterial({
+  color: 0xe0a33a, emissive: 0x4a2a08, emissiveIntensity: 0.5, roughness: 0.3, metalness: 0.4,
+  transparent: true, opacity: 0, fog: false, side: THREE.DoubleSide,
+});
+let skyBalloonLetterTemplates = null; // { A: Mesh, ... } once the GLB has loaded
+let skyBalloonNameBuilt = ''; // nickname currently spelled in 3D ('' = canvas fallback)
+let skyBalloonLettersDisposed = false;
+// Country flag pictures (flag-icons, MIT), loaded on first use per country.
+const skyBalloonFlagImages = {}; // country -> HTMLImageElement (drawn once complete)
+new GLTFLoader().load(SKY_BALLOON_LETTERS_URL, (gltf) => {
+  const templates = {};
+  gltf.scene.traverse((obj) => { if(obj.isMesh && /^[A-Z]$/.test(obj.name)) templates[obj.name] = obj; });
+  if(skyBalloonLettersDisposed){
+    for(const mesh of Object.values(templates)){ mesh.geometry.dispose(); mesh.material.dispose(); }
+    return;
+  }
+  skyBalloonLetterTemplates = templates;
+  if(skyBalloonGroup.visible) redrawSkyBalloon();
+}, undefined, () => { /* keep the canvas fallback */ });
+cleanupFns.push(() => {
+  skyBalloonLettersDisposed = true;
+  // The scene traverse disposes whatever is in the name row; this catches
+  // templates that are not currently on screen.
+  for(const mesh of Object.values(skyBalloonLetterTemplates || {})){ mesh.geometry.dispose(); mesh.material.dispose(); }
+  skyBalloonLetterMat.dispose();
+});
+// The loaded flag picture for `country`, or null while it loads / if it failed
+// (the canvas draws the palette bars meanwhile, then redraws once it arrives).
+function skyBalloonFlagImage(country){
+  if(!skyBalloonFlagImages[country]){
+    const img = new Image();
+    img.onload = () => { if(!skyBalloonLettersDisposed && skyBalloonGroup.visible) redrawSkyBalloon(); };
+    img.src = skyBalloonFlagUrl(country);
+    skyBalloonFlagImages[country] = img;
+  }
+  const img = skyBalloonFlagImages[country];
+  return (img.complete && img.naturalWidth > 0) ? img : null;
+}
+// Returns whether the nickname is now spelled in 3D (so the canvas can drop it).
+function rebuildSkyBalloonName(){
+  const letters = (skyBalloonStatus === 'populated' && skyBalloonRecord && skyBalloonLetterTemplates)
+    ? skyBalloonNameLetters(skyBalloonRecord.nickname).filter(ch => skyBalloonLetterTemplates[ch]) : [];
+  const name = letters.join('');
+  if(name === skyBalloonNameBuilt) return name !== '';
+  skyBalloonNameGroup.clear();
+  skyBalloonNameBuilt = name;
+  if(!name) return false;
+  const layout = layoutSkyBalloonName(letters.map(ch => skyBalloonLetterTemplates[ch].userData.width));
+  letters.forEach((ch, i) => {
+    const slot = new THREE.Group();
+    slot.position.x = layout.xs[i];
+    slot.scale.setScalar(layout.scale);
+    const letter = skyBalloonLetterTemplates[ch].clone(); // keeps the node's dequantization transform
+    letter.material = skyBalloonLetterMat;
+    slot.add(letter);
+    skyBalloonNameGroup.add(slot);
+  });
+  return true;
+}
 const playerLight = new THREE.PointLight(0x33456a, 0.7 * LEGACY_LIGHT_SCALE, 20, 2); camera.add(playerLight);
 // LUL-40/LUL-382: hold KeyF for the mist veil. The founder rejected the original
 // LUL-40 dim-only version as too small a lever (decisions/0012-feature-impact-bar) --
@@ -4908,7 +4970,15 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // probe that can't read pixels back out of a canvas texture) so a test can
   // assert the 4-state content/visibility mapping without a screenshot.
   window.ForestEngine.qaProbeLeaderboardSky = function(){
-    return { visible: skyBalloonGroup.visible, text: skyBalloonLastDrawn.text, hasFlag: skyBalloonLastDrawn.hasFlag };
+    return {
+      visible: skyBalloonGroup.visible, text: skyBalloonLastDrawn.text, hasFlag: skyBalloonLastDrawn.hasFlag,
+      // 3D balloon-letter nickname (digits dropped, upper-cased; '' = canvas
+      // fallback) and whether the flag picture has replaced the colour bars.
+      lettersLoaded: !!skyBalloonLetterTemplates,
+      modelName: skyBalloonNameBuilt,
+      flagImageLoaded: !!(skyBalloonRecord && skyBalloonFlagImage(skyBalloonRecord.country)),
+      label: skyBalloonLabelText,
+    };
   };
   // LUL-5707: active firefly-cluster count (0 outside dusk/night) plus whether
   // any mote is currently lit (distance-based falloff from the player), so a
@@ -7875,19 +7945,28 @@ function setLeaderboardRecord(status, record){
   if(skyBalloonStatus === 'hidden'){
     skyBalloonGroup.visible = false;
     skyBalloonLastDrawn = { text: '', hasFlag: false };
+    rebuildSkyBalloonName();
     return;
   }
   const skyBalloonFirstAppearance = !skyBalloonGroup.visible;
-  drawSkyBalloonTexture(skyBalloonCtx, skyBalloonStatus, skyBalloonRecord, SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_CANVAS_HEIGHT);
-  skyBalloonTex.needsUpdate = true;
-  skyBalloonLastDrawn = skyBalloonContent(skyBalloonStatus, skyBalloonRecord);
+  redrawSkyBalloon();
   skyBalloonGroup.visible = true;
   if(skyBalloonFirstAppearance){
     skyBalloonOpacity = 0;
-    skyBalloonSprite.material.opacity = 0; skyBalloonShadow.material.opacity = 0;
-    for(const skyBalloonTrail of skyBalloonTrails) skyBalloonTrail.material.opacity = 0;
+    skyBalloonSprite.material.opacity = 0; skyBalloonLetterMat.opacity = 0; skyBalloonLabel.material.opacity = 0;
     skyBalloonFading = true;
   }
+}
+// Also called when the letter model finishes loading after the record arrived.
+function redrawSkyBalloon(){
+  const nameInModel = rebuildSkyBalloonName();
+  const flagImage = (skyBalloonStatus === 'populated' && skyBalloonRecord) ? skyBalloonFlagImage(skyBalloonRecord.country) : null;
+  drawSkyBalloonTexture(skyBalloonCtx, skyBalloonStatus, skyBalloonRecord, SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_CANVAS_HEIGHT, nameInModel, flagImage);
+  skyBalloonTex.needsUpdate = true;
+  skyBalloonLabelText = (skyBalloonStatus === 'populated' && skyBalloonRecord) ? SKY_BALLOON_LABEL_TEXT : '';
+  drawSkyBalloonLabel(skyBalloonLabelCtx, skyBalloonLabelText, SKY_BALLOON_CANVAS_WIDTH, SKY_BALLOON_LABEL_CANVAS_HEIGHT);
+  skyBalloonLabelTex.needsUpdate = true;
+  skyBalloonLastDrawn = skyBalloonContent(skyBalloonStatus, skyBalloonRecord);
 }
 // LUL-1666: player's pre-run menu pick for the *next* draw. No-ops outside
 // the pre-run menu the same way setDifficulty tolerates a bad value -- an
@@ -9185,10 +9264,19 @@ function stepFrame(dt, t, skipRender){
   if(skyBalloonFading){
     skyBalloonOpacity = motionReduced() ? SKY_BALLOON_OPACITY
       : Math.min(SKY_BALLOON_OPACITY, skyBalloonOpacity + dt * (SKY_BALLOON_OPACITY / SKY_BALLOON_FADE_DURATION_S));
-    skyBalloonSprite.material.opacity = skyBalloonOpacity;
-    skyBalloonShadow.material.opacity = skyBalloonOpacity * 0.5;
-    for(const skyBalloonTrail of skyBalloonTrails) skyBalloonTrail.material.opacity = skyBalloonOpacity * 0.6;
+    // The 3D name and the flag/time row end fully solid (they draw in front of
+    // the sun, which must not show through); the fade still runs on the same clock.
+    skyBalloonLetterMat.opacity = skyBalloonOpacity / SKY_BALLOON_OPACITY;
+    skyBalloonSprite.material.opacity = skyBalloonOpacity / SKY_BALLOON_OPACITY;
+    skyBalloonLabel.material.opacity = skyBalloonOpacity / SKY_BALLOON_OPACITY;
     if(skyBalloonOpacity >= SKY_BALLOON_OPACITY) skyBalloonFading = false;
+  }
+  if(skyBalloonGroup.visible && !motionReduced()){
+    skyBalloonNameGroup.children.forEach((slot, i) => {
+      const bob = skyBalloonLetterBob(i, t, 4);
+      slot.position.y = bob.y;
+      slot.rotation.z = bob.tilt;
+    });
   }
 
   updateBoom(dt);

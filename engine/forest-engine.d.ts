@@ -103,8 +103,15 @@ declare global {
       /** LUL-5820: the sky balloon's current visibility + last-drawn text/flag
        * state, so a test can assert the loading/populated/empty/hidden content
        * mapping (docs/specs/lul-3264-leaderboard-wave2.md S4) without a
-       * screenshot. */
-      qaProbeLeaderboardSky?: () => { visible: boolean; text: string; hasFlag: boolean };
+       * screenshot. `modelName` is the nickname currently spelled in 3D balloon
+       * letters, upper-cased with digits dropped ('' while the letter model is
+       * loading or failed -- the canvas then draws the whole text);
+       * `flagImageLoaded` is whether the flag picture replaced the colour bars;
+       * `label` the small heading above the name ('' unless populated). */
+      qaProbeLeaderboardSky?: () => {
+        visible: boolean; text: string; hasFlag: boolean;
+        lettersLoaded: boolean; modelName: string; flagImageLoaded: boolean; label: string;
+      };
       /** LUL-5707: active firefly-cluster count (0 outside dusk/night) plus whether
        * any mote is currently lit (distance-based falloff from the player) -- lets a
        * test assert presence at night and absence at noon without scraping Three.js
