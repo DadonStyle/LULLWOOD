@@ -861,6 +861,20 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
   hiding during the investigate window still works exactly like a normal
   noise-hear; only the physical approach target differs while a decoy noise
   is active.
+- Landing also triggers a transient visual (LUL-5993, closing the one real
+  gap in the Throwable cue-triple — audio and explanation already shipped
+  above): `triggerThrowImpact(x, z)` (`:2135`) parks a shared
+  `throwImpactGroup` (`:2085`) — a landed-stone mesh + an 8-point dust burst
+  (`THROW_IMPACT_PTS`, `:2088`) — at the landing point, called from
+  `throwThrowable()` (`:7295`). `updateThrowImpact(dt)` (`:2158`, called from
+  `stepFrame()` at `:9380`) decays and hides it after 1.3s. One shared
+  instance, not a per-site array (modeled on `fireBoom`/`updateBoom`, not
+  `triggerRoostBurst`): a second throw before the first visual decays just
+  relocates it to the new landing point. `motionReduced()` is checked once
+  per trigger (`:2139`) — reduced motion holds the stone mesh at full opacity
+  with the dust `Points` fixed at `opacity = 0` for the whole lifetime (no
+  particle motion computed), not merely hidden after computing. QA hook:
+  `qaProbeThrowImpact()` (`:6820`) returns `{active, elapsedS}`.
 
 **Collision & physics profile**
 - No collider of any kind (neither actor). Detection-only: a one-shot
