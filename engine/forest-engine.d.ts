@@ -628,6 +628,9 @@ declare global {
        * a test can assert Pocket Stones granted +2 throws and a purchase played its
        * audio cue, without decoding actual WebAudio output. */
       qaProbeEmbersPurchase?: () => { throwablesReserve: number; heldThrowable: boolean; purchaseCueCount: number };
+      /** LUL-5993: the throw-impact landing visual's transient state (active + elapsed seconds since
+       * trigger, -1 while idle) -- lets a test assert it activates on throw and decays on schedule. */
+      qaProbeThrowImpact?: () => { active: boolean; elapsedS: number };
       /** LUL-3003: the accumulated purchases_made array for the CURRENT run (id/tier/cost,
        * matches lib/analytics.ts's PurchaseRecord), plus embers.tiers as it stands right now --
        * lets a test assert a purchase() call landed in the accumulator without waiting for a
