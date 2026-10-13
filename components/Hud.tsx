@@ -1026,6 +1026,16 @@ export default function Hud({
           <div id="gateTitle">LULLWOOD</div>
           <div id="gateSub">a lost child is somewhere in the dark &nbsp;·&nbsp; click to enter</div>
           <div id="gateCredit">Developed by an independent AI studio</div>
+          {/* CC BY 4.0 attribution for the sky balloon's 3D letters (CREDITS.md).
+              Links stop propagation so following one doesn't also enter the game. */}
+          <div id="gateAssetCredit">
+            balloon letters:{' '}
+            <a href="https://sketchfab.com/3d-models/letter-balloons-1dddbbd0e345485bbe557e68827ce9be" target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>&ldquo;Letter-balloons&rdquo;</a>
+            {' '}by{' '}
+            <a href="https://sketchfab.com/dannyp_3d" target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>danny_p3d</a>
+            {', '}
+            <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>CC BY 4.0</a>
+          </div>
           <LeaderboardMenuLine state={leaderboardState} />
           <div id="gateKeys">
             {mobile ? (

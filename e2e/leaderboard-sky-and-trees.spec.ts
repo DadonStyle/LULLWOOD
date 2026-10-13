@@ -55,6 +55,25 @@ test.describe('sky balloon record-holder display', () => {
     });
   });
 
+  test('the record-holder nickname is spelled in 3D balloon letters (digits dropped) under "The top rescuer:", with a flag picture', async ({ page }) => {
+    await page.route('**/api/leaderboard/current', (route) => route.fulfill({ json: { record: RECORD } }));
+    await boot(page, { qaHooks: true });
+    await expect.poll(async () => qaHook(page, 'qaProbeLeaderboardSky'), { timeout: 30_000 }).toMatchObject({
+      visible: true, lettersLoaded: true, modelName: 'RANGER', flagImageLoaded: true, label: 'The top rescuer:',
+      // probe text stays the semantic "name — time"; the canvas itself now draws only the flag + time
+      text: 'ranger42 — 2:05', hasFlag: true,
+    });
+  });
+
+  test('if the letter model fails to load, the canvas keeps the whole name', async ({ page }) => {
+    await page.route('**/models/letter-balloons.glb', (route) => route.fulfill({ status: 404, body: '' }));
+    await page.route('**/api/leaderboard/current', (route) => route.fulfill({ json: { record: RECORD } }));
+    await boot(page, { qaHooks: true });
+    await expect.poll(async () => qaHook(page, 'qaProbeLeaderboardSky')).toMatchObject({
+      visible: true, lettersLoaded: false, modelName: '', text: 'ranger42 — 2:05',
+    });
+  });
+
   test('a failed fetch with no cache hides the balloon entirely', async ({ page }) => {
     await page.route('**/api/leaderboard/current', (route) => route.fulfill({ json: { unavailable: true } }));
     await boot(page, { qaHooks: true });

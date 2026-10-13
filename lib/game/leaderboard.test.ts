@@ -1,17 +1,20 @@
 // Run: node --test lib/game/leaderboard.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 import {
   validateNickname, validateCountry, validateTimeMs, validateAnonId, normalizeForDenylist, isDenylisted,
-  clampListLimit, parseCursor, parseRecord, PLAUSIBILITY_FLOOR_MS, PLAUSIBILITY_CEILING_MS, LIST_DEFAULT_LIMIT,
+  clampListLimit, parseCursor, parseRecord, COUNTRY_ALLOWLIST, COUNTRY_NAMES, PLAUSIBILITY_FLOOR_MS, PLAUSIBILITY_CEILING_MS, LIST_DEFAULT_LIMIT,
 } from './leaderboard.ts';
 
 test('the plausibility floor is the documented ~15.7s', () => {
   assert.equal(PLAUSIBILITY_FLOOR_MS, 15_713);
 });
 
-test('validateNickname lowercases and enforces [a-z0-9]{3,20}', () => {
-  assert.equal(validateNickname('Ranger42'), 'ranger42');
+test('validateNickname lowercases and enforces [a-z]{3,20} (letters only)', () => {
+  assert.equal(validateNickname('Ranger'), 'ranger');
+  assert.equal(validateNickname('Ranger42'), null);
+  assert.equal(validateNickname('123'), null);
   assert.equal(validateNickname('abc'), 'abc');
   assert.equal(validateNickname('a'.repeat(20)), 'a'.repeat(20));
   for (const bad of ['ab', 'a'.repeat(21), 'has space', 'émile', 'semi;colon', '', 42, null, undefined, ['abc']]) {
@@ -90,4 +93,17 @@ test('S3/B8: the client cache round-trips, expires after 6h, and discards anythi
   assert.equal(decodeCachedRecord('{nope', now), null);
   assert.equal(decodeCachedRecord(JSON.stringify({ record: { ...rec, nickname: '<b>' }, storedAt: now }), now), null);
   assert.equal(decodeCachedRecord(null, now), null);
+});
+
+test('parseRecord still reads a record saved before nicknames became letters-only', () => {
+  const r = parseRecord({ id: 1, nickname: 'ranger42', country: 'IL', timeMs: 125_000, achievedAt: '2026-10-02T10:00:00.000Z' });
+  assert.equal(r?.nickname, 'ranger42');
+});
+
+test('the country picker names, the allowlist and the flag images match exactly', () => {
+  const allowed = [...COUNTRY_ALLOWLIST].sort();
+  assert.deepEqual(Object.keys(COUNTRY_NAMES).sort(), allowed);
+  const flags = readdirSync(new URL('../../public/flags/', import.meta.url)).map((f) => f.replace(/\.png$/, '').toUpperCase()).sort();
+  assert.deepEqual(flags, allowed);
+  assert.equal(COUNTRY_NAMES.IL, 'Israel');
 });
