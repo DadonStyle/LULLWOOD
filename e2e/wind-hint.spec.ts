@@ -39,7 +39,7 @@ test('wind hint text stays visible for the whole run, in default and admin mode'
   // pattern e2e/admin-mode.spec.ts uses), not a direct dataset write.
   await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
   await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
-  const adminToggle = page.getByLabel(/admin mode/i);
+  const adminToggle = page.getByTestId('adminModeToggle');
   await adminToggle.evaluate((el) => (el as HTMLInputElement).click());
   await expect(adminToggle).toBeChecked();
 

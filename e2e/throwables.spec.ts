@@ -85,16 +85,20 @@ test.describe('throwables (LUL-1623)', () => {
 
     const locked = await page.evaluate(() => document.pointerLockElement !== null);
     expect(locked, 'Pointer Lock must be engaged for the left-click below to reach throwThrowable()').toBe(true);
+
+    // qaSetFixedStep cancels the real rAF loop (engine/forest-engine.js) -- set it
+    // before the click, not after, so no real frame can tick throwImpactStart
+    // forward between throwThrowable()'s synchronous trigger and the probe below.
+    // Placing it after (as this test originally did) left a real-time gap across the
+    // click's mousedown->mouseup roundtrip and the probe's own page.evaluate() --
+    // CI load stretched that gap past the 0.1s assertion (observed 0.137-0.139s).
+    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await page.mouse.click(VIEW_X, VIEW_Y);
 
     const justAfter = await qaHook(page, 'qaProbeThrowImpact');
     expect(justAfter?.active).toBe(true);
     expect(justAfter?.elapsedS).toBeLessThan(0.1);
 
-    // qaSetFixedStep after the throw, not before -- the throw itself is a synchronous
-    // mousedown->throwThrowable() call (same as the test above), only the decay window
-    // below needs deterministic advancing.
-    await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await qaHook(page, 'qaAdvance', stepsFor(1.5));
 
     const after = await qaHook(page, 'qaProbeThrowImpact');

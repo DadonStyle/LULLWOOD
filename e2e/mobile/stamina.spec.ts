@@ -28,7 +28,7 @@ test('toggle-run sprint drains the stamina meter on mobile the same as desktop',
   await expect(settingsBtn).toBeVisible();
   await settingsBtn.evaluate((el) => (el as HTMLElement).click());
 
-  const adminToggle = page.getByLabel(/admin mode/i);
+  const adminToggle = page.getByTestId('adminModeToggle');
   await expect(adminToggle).not.toBeChecked();
   await adminToggle.evaluate((el) => (el as HTMLInputElement).click());
 

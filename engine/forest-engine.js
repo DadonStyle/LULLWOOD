@@ -6747,6 +6747,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // formula as throwThrowable() below), reset to a plain roaming state (same fields
   // qaOpenHideNearLion zeroes) so a test can prove a thrown stone's noise redirects an
   // otherwise-roaming predator into 'investigate', not just that it was already hunting.
+  // investigateCueCount=0 too (LUL-5996): without it, a predator that legitimately
+  // investigated something during boot's real-rAF window before this hook ever ran
+  // could still read a stale >0 count, failing the caller's own "started clean" guard.
   // Returns its predators index, or null if that species didn't spawn this seed.
   window.ForestEngine.qaStagePredatorNearThrowLanding = function(kind){
     const idx = predators.findIndex(p => p.kind === kind);
@@ -6757,7 +6760,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const landZ = player.z + fz * THROWABLE_THROW_DISTANCE;
     p.x = landX + (THROWABLE_NOISE_RADIUS - 4); p.z = landZ;
     p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
-    p.state = 'roam'; p.hunt = false;
+    p.state = 'roam'; p.hunt = false; p.investigateCueCount = 0;
     return { idx };
   };
   // [QA-HOOK] LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50

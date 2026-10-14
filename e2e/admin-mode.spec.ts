@@ -78,7 +78,7 @@ test.describe('admin mode', () => {
     // LUL-1085: settingsBtn lives inside GameMenu's hamburger panel, open it first.
     await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
     await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
-    const toggle = page.getByLabel(/admin mode/i);
+    const toggle = page.getByTestId('adminModeToggle');
     await expect(toggle).not.toBeChecked();
 
     await toggle.evaluate((el) => (el as HTMLInputElement).click());
