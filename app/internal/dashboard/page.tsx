@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { fetchEvents, isRange, type Range } from '@/lib/dashboard/blob-source';
+import { fetchEvents, isRange, type Range } from '@/lib/dashboard/event-source';
 import { computeFunnel, computeOutcomes, computeSessions, computeFeatureEngagement, computeEconomy, type EconomyMetrics, type EconomyTierKey } from '@/lib/dashboard/aggregate';
 
 // Reads live external data on every request -- must never be statically

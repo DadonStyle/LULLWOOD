@@ -8,10 +8,11 @@
 // contract as scripts/win-rate-by-tier.mjs (LUL-2461).
 //
 // Usage:
-//   BLOB_READ_WRITE_TOKEN=... node scripts/chase-gap-by-tier.mjs [--min-build=<sha>] [--range=24h|7d|30d]
+//   LEADERBOARD_API_URL=... LEADERBOARD_API_SECRET=... node scripts/chase-gap-by-tier.mjs [--min-build=<sha>] [--range=24h|7d|30d]
 //
-// Requires BLOB_READ_WRITE_TOKEN (Vercel Blob read access) in env, same degraded-mode
-// contract as lib/dashboard/blob-source.ts: no token means zero events back, not a
+// Requires LEADERBOARD_API_URL/LEADERBOARD_API_SECRET (the stats service on the
+// founder's server; events no longer go to Vercel Blob) in env, same degraded-mode
+// contract as lib/dashboard/event-source.ts: no config means zero events back, not a
 // crash. Deploy/env vars are the Founding Engineer's domain, not this script's.
 //
 // Default --min-build mirrors LUL-1441's build pin (d5e122f) -- same instrumentation
@@ -20,7 +21,7 @@
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { fetchEvents, isRange } from '../lib/dashboard/blob-source.ts';
+import { fetchEvents, isRange } from '../lib/dashboard/event-source.ts';
 import { computeChaseGapByTier } from '../lib/dashboard/aggregate.ts';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -59,7 +60,7 @@ async function main() {
   const events = await fetchEvents(range);
   console.log(`${events.length} event(s) fetched (range=${range}).`);
   if (events.length === 0) {
-    console.log('No events -- either no traffic in range, or BLOB_READ_WRITE_TOKEN is unset in this environment.');
+    console.log('No events -- either no traffic in range, or LEADERBOARD_API_URL/LEADERBOARD_API_SECRET is unset in this environment.');
     return;
   }
 

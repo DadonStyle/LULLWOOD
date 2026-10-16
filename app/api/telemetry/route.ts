@@ -1,12 +1,14 @@
-import { put } from '@vercel/blob';
 import { deviceFromUserAgent, countryFromHeaders } from '../../../lib/request-identity.ts';
 import { serviceConfig, callService } from '../../../lib/leaderboard/remote.ts';
 
-// LUL-482: POST /api/telemetry — Vercel Blob sink for analytics events.
-// If BLOB_READ_WRITE_TOKEN is absent, logs once per cold start and returns 204.
-// That is a degraded state, not an error — see LUL-482 and game/m4-analytics-plan.
-// A failed Blob write is treated the same way: logged, then 204. This route never
-// answers 5xx to a browser beacon (LUL-4342).
+// LUL-482: POST /api/telemetry — the analytics beacon. Validated events are
+// stored in the stats database on the founder's server (services/leaderboard-db/,
+// LUL-3264), which the agents query and the internal dashboard reads
+// (lib/dashboard/event-source.ts). Founder 2026-10-16: the extra copy this
+// route also wrote to Vercel Blob, one object per event, was dropped -- it used
+// up the store's Hobby-plan operations and nothing needs it any more.
+// An unconfigured or unreachable server is logged, never a 5xx to the beacon
+// (LUL-4342): this route always answers 204 to a valid event.
 //
 // Uses web-standard Request/Response (no next/server import) so the handler
 // is directly testable with node --test without mocking Next.js internals.
@@ -44,8 +46,6 @@ function isRateLimited(anonId: string): boolean {
   entry.count++;
   return entry.count > RATE_LIMIT;
 }
-
-let warnedAboutToken = false;
 
 const STATS_TIMEOUT_MS = 1_500;
 
@@ -101,54 +101,8 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: 'rate limited' }, { status: 429 });
   }
 
-  // LUL-3264 (SQLite variant): every validated event is also copied into the
-  // stats database on the founder's server (services/leaderboard-db/), where
-  // the agents can query it (win/loss land as typed `runs` rows). Same
-  // contract as the Blob write below: unconfigured or unreachable means the
-  // copy is skipped and logged, never a 5xx to the beacon. Short timeout so a
-  // slow server cannot hold the function open.
+  // Short timeout so a slow server cannot hold the function open.
   await forwardToStats(req, payload);
-
-  // No Blob store yet — degraded mode. Return 204, do not throw.
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    if (!warnedAboutToken) {
-      console.warn('[telemetry] BLOB_READ_WRITE_TOKEN is not set — events are not persisted (LUL-481)');
-      warnedAboutToken = true;
-    }
-    return new Response(null, { status: 204 });
-  }
-
-  // Blob path: events/{yyyy}/{mm}/{dd}/{uuid}.json
-  // Date segments are load-bearing for LUL-155 date-prefix listing.
-  const date = new Date(ts);
-  const yyyy = date.getUTCFullYear();
-  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(date.getUTCDate()).padStart(2, '0');
-  const uuid =
-    typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const blobPath = `events/${yyyy}/${mm}/${dd}/${uuid}.json`;
-
-  // LUL-4342: `access: 'public'` made every telemetry event world-readable at a
-  // Blob URL, and the store rejects it outright, so this `put()` threw on every
-  // single request once the token was finally set. The throw was unguarded, so
-  // the route answered 500 instead of persisting anything. The suggestions route
-  // already writes `access: 'private'` (PR #743/#744); telemetry never got the
-  // same change.
-  //
-  // The try/catch matters independently of the access mode. Telemetry is
-  // fire-and-forget from the browser: a failed write must never surface to the
-  // player as a 500, and it must never be silent either. Log loudly, return 204,
-  // same contract as the missing-token branch above.
-  try {
-    await put(blobPath, JSON.stringify(payload), {
-      access: 'private',
-      contentType: 'application/json',
-    });
-  } catch (err) {
-    console.error('[telemetry] blob write failed -- event dropped', blobPath, err);
-  }
 
   return new Response(null, { status: 204 });
 }

@@ -4,6 +4,7 @@ import { LeaderboardDb } from './db.ts';
 import {
   validateNickname, validateCountry, validateTimeMs, validateAnonId, clampListLimit, parseCursor,
 } from '../../lib/game/leaderboard.ts';
+import { SUGGESTION_TEXT_PATTERN } from '../../lib/suggestions/rules.ts';
 import { verify, usableSecret, SIGNATURE_HEADER, TIMESTAMP_HEADER, NONCE_HEADER, SIGNATURE_MAX_SKEW_MS } from '../../lib/leaderboard/signing.ts';
 
 // LUL-3264 (SQLite variant): the leaderboard + stats service on the founder's
@@ -166,6 +167,21 @@ export function createService(opts: ServiceOptions): Server {
     return stored ? [202, { stored: true }] : [202, { stored: false, reason: 'shed' }];
   }
 
+  function submitSuggestion(body: Record<string, unknown>): [number, unknown] {
+    if (typeof body.text !== 'string' || !SUGGESTION_TEXT_PATTERN.test(body.text)) throw new HttpError(400, 'invalid suggestion');
+    if (typeof body.ip_hash !== 'string' || !IP_HASH.test(body.ip_hash)) throw new HttpError(400, 'invalid suggestion');
+    const result = opts.db.submitSuggestion(body.text, body.ip_hash, now());
+    return result.ok ? [201, { id: result.id }] : [429, { error: result.reason }];
+  }
+
+  function readEvents(params: URLSearchParams): [number, unknown] {
+    const int = (v: string | null) => (v !== null && /^\d{1,15}$/.test(v) ? Number(v) : NaN);
+    const since = int(params.get('since'));
+    const until = int(params.get('until'));
+    if (!Number.isSafeInteger(since) || !Number.isSafeInteger(until) || since < 0 || until < since) throw new HttpError(400, 'invalid range');
+    return [200, { events: opts.db.eventsBetween(since, until) }];
+  }
+
   async function route(req: IncomingMessage): Promise<[number, unknown]> {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = req.url ?? '/';
@@ -176,6 +192,9 @@ export function createService(opts: ServiceOptions): Server {
 
     if (req.method === 'POST' && url.pathname === '/v1/submit') return submit(parseJsonObject(body));
     if (req.method === 'POST' && url.pathname === '/v1/events') return recordEvent(parseJsonObject(body));
+    if (req.method === 'POST' && url.pathname === '/v1/suggestions') return submitSuggestion(parseJsonObject(body));
+    if (req.method === 'GET' && url.pathname === '/v1/suggestions') return [200, { suggestions: opts.db.listSuggestions() }];
+    if (req.method === 'GET' && url.pathname === '/v1/events') return readEvents(url.searchParams);
     if (req.method === 'GET' && url.pathname === '/v1/current') return [200, { record: opts.db.current() }];
     if (req.method === 'GET' && url.pathname === '/v1/records') {
       return [200, opts.db.list(clampListLimit(url.searchParams.get('limit')), parseCursor(url.searchParams.get('cursor')))];
