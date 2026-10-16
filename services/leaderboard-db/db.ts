@@ -3,6 +3,10 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import {
   COOLDOWN_MS, IP_LIMIT, IP_WINDOW_MS, GLOBAL_LIMIT, GLOBAL_WINDOW_MS, type LeaderboardRecord,
 } from '../../lib/game/leaderboard.ts';
+import {
+  SUGGESTION_COOLDOWN_MS, SUGGESTION_IP_LIMIT, SUGGESTION_IP_WINDOW_MS, SUGGESTION_GLOBAL_LIMIT, SUGGESTION_GLOBAL_WINDOW_MS,
+  type StoredSuggestion,
+} from '../../lib/suggestions/rules.ts';
 
 // LUL-3264 (SQLite variant): storage for the leaderboard and for the stats the
 // studio's agents read. One file, one writer process (server.ts), WAL mode so
@@ -103,6 +107,19 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_received_idx ON events (received_at);
 CREATE INDEX IF NOT EXISTS events_event_idx ON events (event, received_at);
 
+-- Player suggestions (founder 2026-10-16: moved off Vercel Blob). Free text, but
+-- only ever [a-z ]{3,300} (lib/suggestions/rules.ts). The rows double as the
+-- rate-limit state, so the limits are checked and the row written in one
+-- transaction.
+CREATE TABLE IF NOT EXISTS suggestions (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  submitted_at INTEGER NOT NULL,
+  ip_hash      TEXT    NOT NULL,
+  text         TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS suggestions_ip_idx ON suggestions (ip_hash, submitted_at);
+CREATE INDEX IF NOT EXISTS suggestions_at_idx ON suggestions (submitted_at);
+
 CREATE TABLE IF NOT EXISTS admin_audit (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   at        INTEGER NOT NULL,
@@ -178,6 +195,13 @@ export interface SubmitInput {
   deviceClass: string | null;
   browser: string | null;
 }
+
+export type SuggestionResult =
+  | { ok: true; id: number }
+  | { ok: false; reason: 'cooldown' | 'ip-limit' | 'global-limit' };
+
+/** Most events the dashboard read (eventsBetween) returns in one call. */
+export const MAX_EVENTS_READ = 50_000;
 
 export type SubmitResult =
   | { ok: true; id: number; isRecord: boolean }
@@ -255,6 +279,12 @@ export class LeaderboardDb {
                       predator_kind, death_cause, distance_from_home_m, purchases_json, build_sha, device_class, browser, country)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
       prune: p('DELETE FROM events WHERE received_at < ?'),
+      eventsBetween: p('SELECT payload_json FROM events WHERE received_at >= ? AND received_at <= ? ORDER BY received_at LIMIT ?'),
+      lastSuggestionByIp: p('SELECT submitted_at FROM suggestions WHERE ip_hash = ? ORDER BY submitted_at DESC LIMIT 1'),
+      countSuggestionsByIp: p('SELECT count(*) AS n FROM suggestions WHERE ip_hash = ? AND submitted_at > ?'),
+      countSuggestions: p('SELECT count(*) AS n FROM suggestions WHERE submitted_at > ?'),
+      insertSuggestion: p('INSERT INTO suggestions (submitted_at, ip_hash, text) VALUES (?, ?, ?)'),
+      listSuggestions: p('SELECT submitted_at, ip_hash, text FROM suggestions ORDER BY submitted_at, id'),
       dbBytes: p('SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()'),
     };
   }
@@ -332,6 +362,49 @@ export class LeaderboardDb {
       }
     });
     return true;
+  }
+
+  /**
+   * Telemetry payloads received in [since, until], oldest first, for the
+   * internal dashboard (lib/dashboard/event-source.ts). Capped at
+   * MAX_EVENTS_READ rows; a row whose JSON no longer parses is skipped.
+   */
+  eventsBetween(since: number, until: number): Record<string, unknown>[] {
+    const rows = this.stmts.eventsBetween.all(since, until, MAX_EVENTS_READ) as Row[];
+    const out: Record<string, unknown>[] = [];
+    for (const r of rows) {
+      try {
+        out.push(JSON.parse(String(r.payload_json)));
+      } catch {
+        // skip
+      }
+    }
+    return out;
+  }
+
+  /** Stores one suggestion unless a limit is hit. Limits and insert share one transaction, so concurrent submissions can't both slip past. */
+  submitSuggestion(text: string, ipHash: string, now: number): SuggestionResult {
+    return this.tx(() => {
+      const last = this.stmts.lastSuggestionByIp.get(ipHash) as Row | undefined;
+      if (last && now - Number(last.submitted_at) < SUGGESTION_COOLDOWN_MS) return { ok: false, reason: 'cooldown' } as const;
+      if (Number((this.stmts.countSuggestionsByIp.get(ipHash, now - SUGGESTION_IP_WINDOW_MS) as Row).n) >= SUGGESTION_IP_LIMIT) {
+        return { ok: false, reason: 'ip-limit' } as const;
+      }
+      if (Number((this.stmts.countSuggestions.get(now - SUGGESTION_GLOBAL_WINDOW_MS) as Row).n) >= SUGGESTION_GLOBAL_LIMIT) {
+        return { ok: false, reason: 'global-limit' } as const;
+      }
+      const id = Number(this.stmts.insertSuggestion.run(now, ipHash, text).lastInsertRowid);
+      return { ok: true, id } as const;
+    });
+  }
+
+  /** Every stored suggestion, oldest first. */
+  listSuggestions(): StoredSuggestion[] {
+    return (this.stmts.listSuggestions.all() as Row[]).map((r) => ({
+      submitted_at: new Date(Number(r.submitted_at)).toISOString(),
+      ip_hash: String(r.ip_hash),
+      text: String(r.text),
+    }));
   }
 
   /**

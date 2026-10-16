@@ -15,6 +15,11 @@ Funnel with signed requests; players never talk to it directly.
 | `new-record-alert` | Emails the founder when a new record is set (opt-in) |
 | `lullwood-leaderboard.service` | Hardened **system** unit that runs as the user `lullwood-lb` |
 | `install.sh` | One-time setup and redeploy (`sudo`) |
+| `test-harness.ts` | Test-only: runs the real service on loopback behind the Vercel route tests |
+
+Signed routes: `POST /v1/submit`, `GET /v1/current`, `GET /v1/records`, `POST /v1/records/:id/invalidate`,
+`POST /v1/events`, `GET /v1/events?since=&until=` (internal dashboard), `POST /v1/suggestions`, `GET /v1/suggestions`
+(agents' suggestions reader).
 
 No npm dependencies. It needs Node ≥ 22.18 (type stripping and `node:sqlite`); the server has Node 24.
 
@@ -26,7 +31,8 @@ No npm dependencies. It needs Node ≥ 22.18 (type stripping and `node:sqlite`);
 | `current_record` | A one-row pointer to the record holder |
 | `players` | Nickname history: first seen, last seen, submission count, best time, last country |
 | `runs` | Every finished run from telemetry, win or loss, with typed columns: difficulty, time survived, predator, cause of death, distance from home, purchases, device, browser, country |
-| `events` | Every telemetry event, raw (validated JSON). Pruned after 180 days |
+| `events` | Every telemetry event, raw (validated JSON). Pruned after 180 days. The only copy: Vercel Blob is no longer used (founder 2026-10-16) |
+| `suggestions` | Every player suggestion (`[a-z ]{3,300}` only) with its salted IP hash. The rows are also the rate-limit state: 10 s cooldown, 5 per IP per hour, 200 a day (`lib/suggestions/rules.ts`) |
 | `admin_audit` | Every invalidate call |
 
 Views for agents: `v_runs_daily`, `v_deaths`, `v_devices`, `v_player_runs`, `v_funnel_daily`,
