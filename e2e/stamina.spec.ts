@@ -15,6 +15,13 @@ async function openAdminMode(page: import('@playwright/test').Page) {
   await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
   const toggle = page.getByTestId('adminModeToggle');
   await toggle.evaluate((el) => (el as HTMLInputElement).click());
+  // Turning admin mode on opens InfoDialog's "won't count" warning
+  // (SettingsPanel.tsx:214); its onKeyDown stopPropagation (PR#1097, added
+  // for the suggestion box) swallows the ShiftLeft keydown below if left
+  // open (LUL-6009). Dismiss via evaluate(), not a real .click() -- a
+  // trusted click here is what was latching desktop's pointerlockchange
+  // listener into paused=true (same class as every other click here).
+  await page.getByTestId('adminModeWarning-close').evaluate((el) => (el as HTMLElement).click());
   await expect(page.locator('#staminaState')).toBeVisible();
 }
 
