@@ -4,7 +4,8 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 // Reusable modal popup: a title, any content, and one dismiss button. Used for
-// the "Be the rescuer" rules and the admin-mode warning. Closes on the button,
+// the "Be the rescuer" rules, the suggestion box, the credits and the
+// admin-mode warning. Closes on the button,
 // Esc, or a click on the backdrop; focus moves to the dismiss button on open so
 // a keyboard player can close it straight away. Rendered into document.body
 // through a portal: a caller inside a positioned HUD element (e.g. #gameMenu,
@@ -51,6 +52,10 @@ export function InfoDialog({
         aria-labelledby={titleId}
         data-testid={testId}
         onClick={(e) => e.stopPropagation()}
+        // Typing in a popup (the suggestion box) must not reach the engine's
+        // window keydown listener and move the player. Esc is handled above,
+        // in the capture phase, before this runs.
+        onKeyDown={(e) => e.stopPropagation()}
       >
         <h2 id={titleId}>{title}</h2>
         <div className="infoDialogBody">{children}</div>
@@ -101,6 +106,7 @@ export function InfoDialog({
           margin: 0 0 12px;
         }
         .infoDialogClose {
+          margin-top: 12px;
           min-height: 44px;
           padding: 0 20px;
           border: 1px solid #cdd9ea;

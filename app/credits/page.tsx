@@ -1,9 +1,9 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { CREDITS, STUDIO_CREDIT } from '@/lib/credits';
+import { CreditsList } from '@/components/CreditsList';
 
-// Third-party asset credits (lib/credits.ts), linked from the in-game menu.
-// A standalone route for the same reason as /suggest: no HUD renders here.
+// Third-party asset credits (lib/credits.ts). The in-game menu shows the same
+// CreditsList in a popup; this standalone route stays for links and search.
 export const metadata: Metadata = {
   title: 'Credits',
   description: 'Third-party assets used in Lullwood and their authors.',
@@ -20,27 +20,7 @@ export default function CreditsPage() {
   return (
     <main className="credits-page">
       <h1>credits</h1>
-      <ul className="credits-page__list">
-        <li className="credits-page__item credits-page__studio">
-          Lullwood is made by {STUDIO_CREDIT.studio}, created by{' '}
-          <a href={STUDIO_CREDIT.authorUrl} target="_blank" rel="noopener noreferrer">{STUDIO_CREDIT.author}</a>
-        </li>
-      </ul>
-      <p className="credits-page__intro">It also uses these assets, with thanks to their authors.</p>
-      <ul className="credits-page__list">
-        {CREDITS.map((c) => (
-          <li key={c.title} className="credits-page__item">
-            <a href={c.sourceUrl} target="_blank" rel="noopener noreferrer">&ldquo;{c.title}&rdquo;</a>
-            {' '}by{' '}
-            <a href={c.authorUrl} target="_blank" rel="noopener noreferrer">{c.author}</a>
-            {', licensed under '}
-            <a href={c.licenseUrl} target="_blank" rel="noopener noreferrer">{c.license}</a>
-            <div className="credits-page__detail">
-              Used for {c.usedFor}.{c.changes ? ` Changes: ${c.changes}.` : ''}
-            </div>
-          </li>
-        ))}
-      </ul>
+      <CreditsList />
       <p><Link href="/">back to the game</Link></p>
     </main>
   );

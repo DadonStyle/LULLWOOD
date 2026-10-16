@@ -15,7 +15,7 @@
 // Both sticks are always-visible fixed-position circles, not thumb-anchored on
 // first touch. This guarantees their touch regions never overlap.
 
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { EngineActions } from './Hud';
 
 // Dead-zone: stick must move beyond this fraction before input is emitted.
@@ -240,6 +240,27 @@ function HoldBtn({ label, onHold, testId }: { label: string; onHold: (v: boolean
   );
 }
 
+/** Right edge (px) of GameMenu's top-left `.menuButtons` row, kept current as
+ * the row resizes (fullscreen support, a wider label). Null until measured. */
+function useMenuRowRight(active: boolean): number | null {
+  const [right, setRight] = useState<number | null>(null);
+  useEffect(() => {
+    if (!active) return;
+    const row = document.querySelector('#gameMenu .menuButtons');
+    if (!row) return;
+    const measure = () => setRight(Math.ceil(row.getBoundingClientRect().right));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    window.addEventListener('resize', measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [active]);
+  return right;
+}
+
 export default function MobileControls({
   actions,
   entered,
@@ -257,6 +278,8 @@ export default function MobileControls({
   deathVisible: boolean;
   menuOpen: boolean;
 }) {
+  // Measured before the early returns below (rules of hooks); see pauseWrapper.
+  const pauseLeft = useMenuRowRight(entered);
   if (!actions) return null;
   // LUL-2131: sticks/buttons sit at z-index 30/31, above #winScreen/#deathScreen's
   // z-index 25 (GameCanvas.tsx) -- they stayed mounted and tappable over the end
@@ -318,10 +341,14 @@ export default function MobileControls({
   // to 120px. Offset past the full two-button row so this wrapper clears
   // both; when fullscreen isn't supported the row is one button and this
   // just leaves extra harmless gap.
+  // Founder 2026-10-16: the row has since grown (Suggest, Credits, "Be the
+  // rescuer"), and the fixed 132px left put Pause on top of Suggest, eating its
+  // taps. Measure the row's real right edge instead of hardcoding it again, so
+  // the next button added there can't reintroduce the overlap.
   const pauseWrapper: React.CSSProperties = {
     position: 'fixed',
     top: 'calc(16px + env(safe-area-inset-top))',
-    left: 'calc(132px + env(safe-area-inset-left))',
+    left: `calc(${pauseLeft === null ? 132 : pauseLeft + 16}px + env(safe-area-inset-left))`,
     zIndex: 31,
     pointerEvents: 'auto',
   };
