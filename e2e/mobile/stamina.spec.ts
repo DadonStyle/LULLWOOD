@@ -32,6 +32,13 @@ test('toggle-run sprint drains the stamina meter on mobile the same as desktop',
   await expect(adminToggle).not.toBeChecked();
   await adminToggle.evaluate((el) => (el as HTMLInputElement).click());
 
+  // LUL-6005: toggling admin mode on opens InfoDialog's "Admin mode won't
+  // count" warning (SettingsPanel.tsx/InfoDialog.tsx) -- its full-viewport
+  // backdrop (z-index 70) sits above #settingsPanel (z-index 40) by design
+  // and blocks every other control until dismissed, same as a real player's
+  // first tap would. Dismiss it the same way a player would before continuing.
+  await page.getByTestId('adminModeWarning-close').click();
+
   // Same settings panel (e2e/mobile/toggle-run.spec.ts) -- switch runMode to
   // 'toggle' so the touch Run button renders.
   //
