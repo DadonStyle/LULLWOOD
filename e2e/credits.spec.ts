@@ -1,19 +1,18 @@
-// Third-party asset credits: a "Credits" row in GameMenu.tsx's panel opens
-// app/credits/page.tsx (lib/credits.ts), which carries the CC BY 4.0
-// attribution for the sky balloon's 3D letters (danny_p3d) and the flag-icons
-// credit. Same new-tab convention as the menuSuggest row.
+// Third-party asset credits: a Credits MenuButton next to Suggest (same
+// reusable component, only the URL differs) opens app/credits/page.tsx
+// (lib/credits.ts), which carries the CC BY 4.0 attribution for the sky
+// balloon's 3D letters (danny_p3d) and the flag-icons credit.
 import { test, expect } from './fixtures';
 import { boot } from './helpers';
 
 test.describe('credits', () => {
-  test('the menu has a Credits link to /credits', async ({ page }) => {
+  test('the Credits button (next to Suggest) opens /credits in a new tab', async ({ page }) => {
     await boot(page);
-    await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
-    const link = page.getByTestId('menuCredits');
-    await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute('href', '/credits');
-    await expect(link).toHaveAttribute('target', '_blank');
-    await expect(link).toHaveText('Credits');
+    const button = page.locator('#gameMenu .menuButtons').getByTestId('menuCredits');
+    await expect(button).toBeVisible();
+    await expect(button).toHaveAttribute('aria-label', 'Credits');
+    const [popup] = await Promise.all([page.waitForEvent('popup'), button.evaluate((el) => (el as HTMLElement).click())]);
+    await expect(popup).toHaveURL(/\/credits$/);
   });
 
   test('/credits attributes the balloon letters to danny_p3d under CC BY 4.0', async ({ page }) => {

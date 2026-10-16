@@ -94,12 +94,13 @@ export function LeaderboardMenuLine({ state }: { state: LeaderboardState }) {
 type SubmitStatus = 'idle' | 'submitting' | 'done' | 'record' | 'rate_limited' | 'error';
 
 /**
- * Rendered only for an eligible run: a Blackout win with admin mode off
- * (Blackout already forces the minimap off, engine/tuning.js). Admin mode and
- * the plausibility floor stay silent (not real-player-facing); a non-Blackout
- * win instead renders #leaderboardIneligibleNote -- LUL-5944.
+ * Rendered only for an eligible run: a Blackout win with admin mode off for the
+ * whole run (Blackout already forces the minimap off, engine/tuning.js). A run
+ * that had admin mode on at any point renders #leaderboardAdminNote instead
+ * (founder 2026-10-13: say so, don't stay silent); a non-Blackout win renders
+ * #leaderboardIneligibleNote -- LUL-5944. The plausibility floor stays silent.
  */
-export function LeaderboardSubmitForm({ survivedSeconds, difficulty }: { survivedSeconds: number; difficulty: string }) {
+export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedThisRun = false }: { survivedSeconds: number; difficulty: string; adminUsedThisRun?: boolean }) {
   const [nickname, setNickname] = useState('');
   const [country, setCountry] = useState('');
   const [honeypot, setHoneypot] = useState('');
@@ -109,13 +110,15 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty }: { survive
   const [adminMode] = useState(() => document.body.dataset.adminMode === '1');
 
   const timeMs = Math.round(survivedSeconds * 1000);
-  // Feature Checklist Q5: a refused input needs a positive tell. adminMode is a dev
-  // tool and stays silent regardless of difficulty, checked first. The difficulty
+  // Feature Checklist Q5: a refused input needs a positive tell. Admin mode (on
+  // now, or at any point of the run) is checked first and says so. The difficulty
   // gate must come before the plausibility floor -- a normal Lantern/Night win is
   // usually *faster* than the ~15.7s floor (it's the easier tier), so checking the
   // floor first would swallow the tell for exactly the common case it exists for.
   // The floor only matters once a run has already cleared the difficulty gate.
-  if (adminMode) return null;
+  if (adminMode || adminUsedThisRun) {
+    return <p id="leaderboardAdminNote">Admin mode was on during this run, so it can&apos;t be counted as the top rescuer.</p>;
+  }
   if (difficulty !== 'blackout') {
     return <p id="leaderboardIneligibleNote">Switch to Blackout to compete for the leaderboard.</p>;
   }

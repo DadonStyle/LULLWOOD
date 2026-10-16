@@ -44,7 +44,7 @@ test('admin mode defaults off and is reachable/toggleable on mobile', async ({ p
   await expect(settingsBtn, 'Settings must stay reachable on mobile even with admin mode off').toBeVisible();
   await settingsBtn.evaluate((el) => (el as HTMLElement).click());
 
-  const toggle = page.getByLabel(/admin mode/i);
+  const toggle = page.getByTestId('adminModeToggle');
   await expect(toggle).not.toBeChecked();
   await toggle.evaluate((el) => (el as HTMLInputElement).click());
 

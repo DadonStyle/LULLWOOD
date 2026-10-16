@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import type { EngineActions, EngineHudState } from './Hud';
+import { MenuButton, MenuLinkButton } from './MenuButton';
+import { InfoDialog } from './InfoDialog';
+import { rescuerRules } from '@/lib/game/rescuerRules';
 import { fullscreenSupported, isFullscreenActive, toggleFullscreen, FULLSCREEN_CHANGE_EVENTS } from '@/lib/game/fullscreen';
 
 // LUL-124: fullscreen toggle, via lib/game/fullscreen.ts (LUL-2310) so this
@@ -33,13 +35,16 @@ export default function GameMenu({
   actions,
   onOpenSettings,
   onOpenChange,
+  recordTimeMs = null,
 }: {
   state: EngineHudState;
   actions: EngineActions | null;
   onOpenSettings: () => void;
   onOpenChange?: (open: boolean) => void;
+  recordTimeMs?: number | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
 
@@ -102,21 +107,23 @@ export default function GameMenu({
             <span className={`fsIcon${isFullscreen ? ' fsIconActive' : ''}`}>⛶</span>
           </button>
         )}
+
+        <MenuLinkButton testId="menuSuggest" href="/suggest" icon="💬" ariaLabel="Suggest something for Lullwood" />
+        <MenuLinkButton testId="menuCredits" href="/credits" icon="©" ariaLabel="Credits" />
+        <MenuButton testId="menuBeTheRescuer" ariaLabel="Be the rescuer: rules for taking first place" onClick={() => setRulesOpen(true)} wide>
+          Be the rescuer
+        </MenuButton>
       </div>
+
+      <InfoDialog open={rulesOpen} testId="rescuerRules" title="Be the rescuer" onClose={() => setRulesOpen(false)}>
+        <p>To take first place and have your name in the sky, your run has to meet every rule:</p>
+        <ul>
+          {rescuerRules(recordTimeMs).map((rule) => <li key={rule}>{rule}</li>)}
+        </ul>
+      </InfoDialog>
 
       {open && (
         <div className="menuPanel">
-          <Link
-            href="/suggest"
-            target="_blank"
-            rel="noopener noreferrer"
-            data-testid="menuSuggest"
-            className="menuRow"
-            onClick={() => setOpen(false)}
-          >
-            Suggest something...
-          </Link>
-
           <button
             data-testid="menuPause"
             className="menuRow"
@@ -188,17 +195,6 @@ export default function GameMenu({
               </div>
             </div>
           )}
-
-          <Link
-            href="/credits"
-            target="_blank"
-            rel="noopener noreferrer"
-            data-testid="menuCredits"
-            className="menuRow"
-            onClick={() => setOpen(false)}
-          >
-            Credits
-          </Link>
 
           <button
             id="settingsBtn"

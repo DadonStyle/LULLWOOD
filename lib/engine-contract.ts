@@ -21,7 +21,7 @@ export const ENGINE_ACTION_KEYS = [
   'triggerTouchClimb',
   // LUL-5004
   'triggerTouchScentVeil',
-  'setDifficulty', 'setRunMode', 'setSensitivity', 'setInvertY', 'setReducedMotion', 'setCaptions', 'setColdWalkOptIn',
+  'setDifficulty', 'setAdminMode', 'setRunMode', 'setSensitivity', 'setInvertY', 'setReducedMotion', 'setCaptions', 'setColdWalkOptIn',
   // LUL-5805
   'setKeyMap',
   'setEmbers', 'purchase',

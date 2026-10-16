@@ -7,6 +7,7 @@
 // out in real time before winning (THREE.Clock is wall-clock based).
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
+import { formatDuration } from '../lib/ui/format-duration';
 
 const FLOOR_WAIT_MS = 16_500;
 
@@ -71,6 +72,11 @@ test.describe('leaderboard submit form', () => {
     const recap = (await page.locator('#runRecap').textContent()) ?? '';
     const [, m, s] = /time survived: (\d+):(\d{2})/.exec(recap)!;
     expect(Math.abs(body.time_ms / 1000 - (Number(m) * 60 + Number(s)))).toBeLessThanOrEqual(1);
+    // The top-right timer, the recap and the stored time (what the sky balloon
+    // will show) all read the same m:ss.
+    const timerText = await page.locator('#runTimer').textContent();
+    expect(timerText).toBe(`${m}:${s}`);
+    expect(formatDuration(body.time_ms / 1000)).toBe(timerText);
   });
 
   test('is absent on a lantern win', async ({ page, context }) => {

@@ -27,6 +27,7 @@ import {
   skyBalloonNameLetters, layoutSkyBalloonName, skyBalloonLetterBob, skyBalloonFlagUrl,
 } from '@/lib/game/skyBalloon';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { formatRunTime } from '@/lib/ui/format-duration';
 import {
   freshRunState,
   isPlaying,
@@ -665,6 +666,13 @@ let fireflyAlarmActive = false, fireflyAlarmStingPlayed = false;
 const TIME_OF_RUN_DURATION_S = 120;
 const TIME_OF_RUN_FOG_DELTA = 0.10 - CONFIG.fog;   // additive fog-density term at full night
 let runElapsed = 0, timeOfRun = 0;
+// Top-right run timer (Hud.tsx #runTimer): last m:ss pushed, so the HUD only
+// re-renders when the shown value changes.
+let lastRunClockLabel = '';
+// Admin mode (SettingsPanel.tsx -> setAdminMode) and whether it was on at any
+// moment of the current run. A run that ever had it on can't take the top
+// rescuer spot (LeaderboardSubmitForm reads adminUsedThisRun at the win screen).
+let adminModeOn = false, adminUsedThisRun = false;
 // LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
 // found the point-light radius/intensity cut above unreadable against this
 // scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
@@ -2070,6 +2078,22 @@ if(qaParams && qaParams.get('qaWorld') === 'micro'){
   // DECOY_SCENT_SITES' raw (unscaled) positions.
   decoyScentGlowMeshes.forEach((m, i) => m.position.set(DECOY_SCENT_SITES[i].x * CONFIG.decoyScaleMul, 0.04, DECOY_SCENT_SITES[i].z * CONFIG.decoyScaleMul));
 }
+// LUL-5993: throw-stone impact landing visual -- single shared instance, modeled on
+// fireBoom/boomGroup above (not triggerRoostBurst's per-site array below: a thrown
+// stone has no fixed site and no throw cooldown, so a second throw before the first
+// visual decays just relocates this one instance, same as fireBoom already does).
+const throwImpactGroup = new THREE.Group(); throwImpactGroup.visible = false; scene.add(throwImpactGroup);
+const throwImpactStoneMesh = new THREE.Mesh(throwableGeo, throwableMat);
+throwImpactStoneMesh.scale.setScalar(0.28);   // matches layoutThrowableMeshes()'s stone scale, :1133
+const THROW_IMPACT_PTS = 8;   // dust, not an explosion -- same "keep small" precedent as ROOST_BURST_PTS above
+const tipArr = new Float32Array(THROW_IMPACT_PTS * 3), tipVel = [];
+const throwImpactPts = new THREE.Points(new THREE.BufferGeometry(),
+  new THREE.PointsMaterial({ color: 0x8a7a5c, size: 0.3, transparent: true, opacity: 1,
+    depthWrite: false, fog: false }));   // dust color, not ROOST_BURST's bird-silhouette dark
+throwImpactPts.geometry.setAttribute('position', new THREE.BufferAttribute(tipArr, 3));
+throwImpactGroup.add(throwImpactStoneMesh, throwImpactPts);
+let throwImpactStart = -1;
+let throwImpactReducedMotion = false;   // decided once per trigger, not re-checked every tick (see triggerThrowImpact)
 function fireBoom(x, y, z){
   boomGroup.position.set(x, y, z); boomGroup.visible = true; boomStart = 0;
   for(let i=0;i<BSP;i++){ const a=Math.random()*Math.PI*2, e=Math.acos(2*Math.random()-1), sp=(8+Math.random()*24)*BOOM_FOV_SCALE;
@@ -2107,6 +2131,44 @@ function updateBoom(dt){
   // FLASH_PEAK_OPACITY / 0.3, the same 0.3s fade window LUL-2605 used at 0.9.
   if(flashEl) flashEl.style.opacity = String(e <= 1.5 ? FLASH_PEAK_OPACITY : Math.max(0, FLASH_PEAK_OPACITY - (e - 1.5)*(FLASH_PEAK_OPACITY/0.3)));
   if(e > 1.8){ boomGroup.visible = false; boomStart = -1; }
+}
+function triggerThrowImpact(x, z){
+  throwImpactGroup.position.set(x, 0.25, z);   // ground height, matches layoutThrowableMeshes() :1131
+  throwImpactGroup.visible = true;
+  throwImpactStart = 0;
+  throwImpactReducedMotion = motionReduced();   // decided once here, not re-polled in updateThrowImpact
+  throwImpactStoneMesh.material.opacity = 1;
+  if(throwImpactReducedMotion){
+    // LUL-5993: static full-opacity stone, no particle motion -- models the stoneMarkerPulseT
+    // opacity-branch SHAPE (motionReduced() ? flat value : animated ramp), not its exact numbers.
+    // Deliberately NOT modeled on triggerRoostBurst below, which has no reducedMotion gate at
+    // all -- a pre-existing gap this ticket does not copy forward.
+    throwImpactPts.material.opacity = 0;
+  } else {
+    tipVel.length = 0;
+    for(let k=0;k<THROW_IMPACT_PTS;k++){
+      const a = Math.random()*Math.PI*2;
+      tipVel.push([Math.cos(a)*0.8, 1.5 + Math.random()*1.5, Math.sin(a)*0.8]);
+      tipArr[k*3] = tipArr[k*3+1] = tipArr[k*3+2] = 0;
+    }
+    throwImpactPts.geometry.attributes.position.needsUpdate = true;
+    throwImpactPts.material.opacity = 1;
+  }
+}
+function updateThrowImpact(dt){
+  if(throwImpactStart < 0) return;
+  throwImpactStart += dt; const e = throwImpactStart;
+  if(!throwImpactReducedMotion){
+    const arr = throwImpactPts.geometry.attributes.position.array;
+    for(let k=0;k<THROW_IMPACT_PTS;k++){
+      arr[k*3]   += tipVel[k][0]*dt;
+      arr[k*3+1] += tipVel[k][1]*dt - 4*dt*e;
+      arr[k*3+2] += tipVel[k][2]*dt;
+    }
+    throwImpactPts.geometry.attributes.position.needsUpdate = true;
+    throwImpactPts.material.opacity = Math.max(0, 1 - e/1.3);
+  }
+  if(e > 1.3){ throwImpactGroup.visible = false; throwImpactStart = -1; }
 }
 // LUL-1914: slice (a) burst -- 10 points biased upward (bird-lift), small lateral
 // spread, ~0.9s rise-and-fade. Keyed by roost index, independent of boomGroup.
@@ -4705,6 +4767,8 @@ let hudState = {
   winVisible: false, winRevealed: false,
   deathVisible: false, deathKind: 'wolf', deathCause: 'chase', lossRevealed: false,
   survivedSeconds: 0,
+  runClockSeconds: 0,
+  adminUsedThisRun: false,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
   // LUL-382: mist veil resource meter -- 1 is full charge, 0 is fully drained.
@@ -4843,6 +4907,9 @@ function enter(){
   // via the generic per-frame hint evaluation in stepFrame(), not from here.
   enteredAt = clock.elapsedTime;
   runElapsed = 0;
+  lastRunClockLabel = '';
+  adminUsedThisRun = adminModeOn;   // fresh run: tainted only if admin mode is on right now
+  pushState({ runClockSeconds: 0, adminUsedThisRun });
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   veilReserve = false; embersSpent = 0;   // LUL-1210: fresh run, no charm banked or spent
   coldWalkBroken = false;   // LUL-4960: fresh run, constraint not yet broken
@@ -5034,6 +5101,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
              pickingUp, taken: baby.taken };
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
+  // Top-right run timer + rescuer eligibility: the m:ss last pushed to #runTimer
+  // and whether admin mode was on at any point of the current run.
+  window.ForestEngine.qaProbeRunClock = function(){
+    return { label: lastRunClockLabel, seconds: entered ? Math.max(0, clock.elapsedTime - enteredAt) : 0, adminUsedThisRun };
+  };
 
   // LUL-2205: reads back the live day/night pacing values in one call so a
   // test can assert the engine-visible effect directly (per this file's
@@ -6675,6 +6747,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // formula as throwThrowable() below), reset to a plain roaming state (same fields
   // qaOpenHideNearLion zeroes) so a test can prove a thrown stone's noise redirects an
   // otherwise-roaming predator into 'investigate', not just that it was already hunting.
+  // investigateCueCount=0 too (LUL-5996): without it, a predator that legitimately
+  // investigated something during boot's real-rAF window before this hook ever ran
+  // could still read a stale >0 count, failing the caller's own "started clean" guard.
   // Returns its predators index, or null if that species didn't spawn this seed.
   window.ForestEngine.qaStagePredatorNearThrowLanding = function(kind){
     const idx = predators.findIndex(p => p.kind === kind);
@@ -6685,7 +6760,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     const landZ = player.z + fz * THROWABLE_THROW_DISTANCE;
     p.x = landX + (THROWABLE_NOISE_RADIUS - 4); p.z = landZ;
     p.vx = p.vz = 0; p.alert = 0; p.reroute = 0; p.stuckT = 0;
-    p.state = 'roam'; p.hunt = false;
+    p.state = 'roam'; p.hunt = false; p.investigateCueCount = 0;
     return { idx };
   };
   // [QA-HOOK] LUL-2539: forces the high-wind scent-lifetime roll directly, bypassing the 50/50
@@ -6741,6 +6816,12 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // the cue-triple's audio leg, without decoding actual WebAudio output.
   window.ForestEngine.qaProbeEmbersPurchase = function(){
     return { throwablesReserve, heldThrowable, purchaseCueCount: qaEmbersPurchaseCueCount };
+  };
+  // [QA-HOOK] LUL-5993: exposes the throw-impact visual's transient state so a spec can assert
+  // it activates on throw and decays within the expected window, mirroring
+  // qaProbeEmbersPurchase's plain-state-readout shape.
+  window.ForestEngine.qaProbeThrowImpact = function(){
+    return { active: throwImpactStart >= 0, elapsedS: throwImpactStart };
   };
   // [QA-HOOK] LUL-3003: the accumulated purchases_made array for the CURRENT run, plus
   // embers.tiers as it stands right now -- lets a spec assert a purchase() call landed in
@@ -7214,6 +7295,7 @@ function throwThrowable(){
   const landX = player.x + fx * THROWABLE_THROW_DISTANCE;
   const landZ = player.z + fz * THROWABLE_THROW_DISTANCE;
   leafRustle(false);   // landing thud reuses the existing percussive-hit primitive (CTO plan decision 7) -- player-audible, same call already used by hearNoise()
+  triggerThrowImpact(landX, landZ);
   for(const p of predators){
     if(p.inert) continue;
     const dist = Math.hypot(p.x - landX, p.z - landZ);
@@ -7774,6 +7856,7 @@ function restart(){
   armsGroup.visible = false; babyGroup.visible = true; babyGroup.scale.setScalar(1);
   bundle.material.emissiveIntensity = babyHead.material.emissiveIntensity = 0.5;
   pickBoomed = false; boomGroup.visible = false; boomStart = -1; if(flashEl) flashEl.style.opacity = '0';
+  throwImpactGroup.visible = false; throwImpactStart = -1;
   winPendingActive = false; winPendingT = 0; if(winPendingEl) winPendingEl.style.opacity = '0';   // LUL-1633
   roostCooldown.fill(0); roostSprintDeniedPlayed.fill(0); roostBurstStart.fill(-1); roostGroups.forEach(g => g.visible = false);
   decoyCooldown.fill(0);   // LUL-5566
@@ -7835,6 +7918,15 @@ function regenMap(){ if(!canRegenMap(runState())) return; generateMap((Math.rand
 // LUL-26: difficulty + accessibility actions. Mirrors setPace/setFog above --
 // the engine applies the change and echoes the new value back via pushState
 // so React's controls stay driven by engine state, not a second local copy.
+// Admin mode lives in React (SettingsPanel.tsx, body[data-admin-mode]); the
+// engine only needs to know so a run that had it on at any point is marked.
+function setAdminMode(on){
+  adminModeOn = !!on;
+  if(adminModeOn && entered && !won && !dead && !adminUsedThisRun){
+    adminUsedThisRun = true;
+    pushState({ adminUsedThisRun });
+  }
+}
 function setDifficulty(d){
   if(!DIFFICULTY_PRESETS[d]) return;
   difficulty = d;
@@ -8182,6 +8274,14 @@ function stepFrame(dt, t, skipRender){
   const playing = isPlaying(runState()) && !paused;
 
   if(playing) runElapsed += dt;
+  // Top-right run timer: the exact clock win()/triggerDeath() turn into
+  // survivedSeconds (clock.elapsedTime - enteredAt, pauses included), pushed
+  // only when the shown m:ss changes, and frozen once the run is over.
+  if(entered && !won && !dead){
+    const runClockSeconds = Math.max(0, clock.elapsedTime - enteredAt);
+    const runClockLabel = formatRunTime(runClockSeconds);
+    if(runClockLabel !== lastRunClockLabel){ lastRunClockLabel = runClockLabel; pushState({ runClockSeconds }); }
+  }
   timeOfRun = clamp(runElapsed / TIME_OF_RUN_DURATION_S, 0, 1);
 
   // LUL-40/LUL-382: hold KeyF for the mist veil. Read every frame like `running`
@@ -9280,6 +9380,7 @@ function stepFrame(dt, t, skipRender){
   }
 
   updateBoom(dt);
+  updateThrowImpact(dt);
   if(!dead && !skipRender){ if(usePost) renderPost(t); else renderer.render(scene, camera); }
   adaptResolution(dt, t);
 }
@@ -9431,7 +9532,7 @@ tick();
            setTouchMove, setTouchLook, setTouchSprint, setTouchVeil, triggerTouchHide, triggerTouchClimb, triggerTouchShuffle, triggerTouchInteract,
            triggerTouchThrow,
            triggerTouchJump, triggerTouchPause, triggerTouchToggleRun, triggerTouchVeilOverload, triggerTouchScentVeil,
-           setDifficulty, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions, setColdWalkOptIn,
+           setDifficulty, setAdminMode, setRunMode, setSensitivity, setInvertY, setReducedMotion, setCaptions, setColdWalkOptIn,
            // LUL-5805
            setKeyMap,
            setEmbers, purchase,

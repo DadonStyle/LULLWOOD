@@ -13,7 +13,7 @@ async function openAdminMode(page: import('@playwright/test').Page) {
   // GameMenu's hamburger panel (LUL-1085).
   await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
   await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
-  const toggle = page.getByLabel(/admin mode/i);
+  const toggle = page.getByTestId('adminModeToggle');
   await toggle.evaluate((el) => (el as HTMLInputElement).click());
   await expect(page.locator('#staminaState')).toBeVisible();
 }
