@@ -43,6 +43,8 @@ export interface ActionPromptProps {
   keycap?: string;
   tone?: ActionPromptTone;
   progress?: ActionPromptProgress;
+  // Kept for callers; nothing in the row animates any more except the fade-in,
+  // which GameCanvas.tsx's prefers-reduced-motion rule already turns off.
   reducedMotion?: boolean;
   onPointerDown?: (e: React.PointerEvent) => void;
   id?: string;
@@ -54,17 +56,6 @@ export interface ActionPromptProps {
   ariaLive?: 'polite' | 'assertive';
 }
 
-// LUL-1780: reduced-motion still needs the red "act now" colour, just not the
-// flash -- same inline-style escape hatch the old #actionPrompt.urgent used
-// (GameCanvas.tsx's `@media (prefers-reduced-motion: reduce)` rule can't
-// reach into a CSS animation's *current frame* to freeze it there, so the
-// end colour is restated as a static style instead).
-const REDUCED_MOTION_URGENT_KEY_STYLE: React.CSSProperties = {
-  animation: 'none',
-  background: '#e8554a',
-  boxShadow: '0 2px 26px rgba(232,85,74,0.85)',
-};
-
 export default function ActionPrompt({
   visible,
   text,
@@ -72,7 +63,6 @@ export default function ActionPrompt({
   keycap,
   tone = 'calm',
   progress,
-  reducedMotion,
   onPointerDown,
   id,
   testId,
@@ -95,12 +85,8 @@ export default function ActionPrompt({
         <div className="actionPromptLine">
           {text}
           {keycap && (
-            <span
-              className="actionPromptKey"
-              style={tone === 'urgent' && reducedMotion ? REDUCED_MOTION_URGENT_KEY_STYLE : undefined}
-            >
-              {keycap}
-            </span>
+            // Plain bold key in the hint; a static chip only on a row the player taps.
+            <span className={onPointerDown ? 'actionPromptKey actionPromptKeyTap' : 'actionPromptKey'}>{keycap}</span>
           )}
           {suffix}
         </div>
