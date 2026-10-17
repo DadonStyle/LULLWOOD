@@ -43,6 +43,10 @@ test.describe('leaderboard submit form', () => {
       posted = route.request().postDataJSON();
       await route.fulfill({ status: 201, json: { isRecord: true } });
     });
+    let currentFetches = 0;
+    page.on('request', (r) => {
+      if (new URL(r.url()).pathname === '/api/leaderboard/current') currentFetches++;
+    });
     await seedSettings(context, { difficulty: 'blackout' });
     await bootBlackout(page);
     await page.waitForTimeout(FLOOR_WAIT_MS);
@@ -58,8 +62,11 @@ test.describe('leaderboard submit form', () => {
     await expect(page.locator('#leaderboardNickname')).toBeFocused();
     await expect(page.locator('#leaderboardCountry option[value="IL"]')).toHaveText('Israel');
     await page.locator('#leaderboardCountry').selectOption('IL');
+    const fetchesBeforeSubmit = currentFetches;
     await page.locator('#leaderboardForm button[type="submit"]').click();
     await expect(page.locator('#leaderboardSubmitted')).toHaveText(/New record! ranger\b/);
+    // A new record refetches the top rescuer, so the line and sky balloon show it.
+    await expect.poll(() => currentFetches).toBe(fetchesBeforeSubmit + 1);
 
     expect(posted).not.toBeNull();
     const body = posted as unknown as { nickname: string; country: string; time_ms: number; website: string };

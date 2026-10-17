@@ -850,7 +850,9 @@ export default function Hud({
   // LUL-5820: one fetch, shared by the gate's #leaderboardLine (below) and the
   // sky balloon (useLeaderboardSky) -- was two independent useLeaderboardRecord()
   // call sites each hitting /api/leaderboard/current before this.
-  const leaderboardState = useLeaderboardRecord();
+  // Bumped when a submit sets a new record, so the line and sky balloon refetch it.
+  const [leaderboardRefresh, setLeaderboardRefresh] = useState(0);
+  const leaderboardState = useLeaderboardRecord(leaderboardRefresh);
   useLeaderboardSky(actions, leaderboardState);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
@@ -1475,7 +1477,7 @@ export default function Hud({
             <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
-            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} adminUsedThisRun={state.adminUsedThisRun} />
+            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} adminUsedThisRun={state.adminUsedThisRun} onRecord={() => setLeaderboardRefresh((n) => n + 1)} />
             <button
               ref={winRestartRef}
               className="restartBtn"
