@@ -34,6 +34,9 @@ test('the survival embers are paid on the time at the grab, not on the ~11 s cin
   // cross 20 s and earn a survival unit; frozen at the grab it earns none.
   await boot(page, { qaHooks: true });
   await enter(page);
+  // The run idles for 12+ s first; an empty scene keeps a predator from ending it
+  // before the grab (qaBuildScene makes every unlisted predator inert).
+  await qaHook(page, 'qaBuildScene', {});
   await expect.poll(async () => (await runClock(page)).seconds, { timeout: 30_000 }).toBeGreaterThan(12);
   await page.evaluate(() => window.ForestEngine?.qaTeleportNearBaby?.());
   await page.waitForTimeout(300);
