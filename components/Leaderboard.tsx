@@ -46,7 +46,9 @@ function writeCache(record: LeaderboardRecord): void {
   }
 }
 
-export function useLeaderboardRecord(): LeaderboardState {
+// `refreshKey`: bump it to fetch /current again (after a submit that set a new
+// record). The current state stays on screen until the new answer lands.
+export function useLeaderboardRecord(refreshKey = 0): LeaderboardState {
   const [state, setState] = useState<LeaderboardState>({ status: 'loading' });
   useEffect(() => {
     let cancelled = false;
@@ -75,7 +77,7 @@ export function useLeaderboardRecord(): LeaderboardState {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshKey]);
   return state;
 }
 
@@ -100,7 +102,7 @@ type SubmitStatus = 'idle' | 'submitting' | 'done' | 'record' | 'rate_limited' |
  * (founder 2026-10-13: say so, don't stay silent); a non-Blackout win renders
  * #leaderboardIneligibleNote -- LUL-5944. The plausibility floor stays silent.
  */
-export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedThisRun = false }: { survivedSeconds: number; difficulty: string; adminUsedThisRun?: boolean }) {
+export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedThisRun = false, onRecord }: { survivedSeconds: number; difficulty: string; adminUsedThisRun?: boolean; onRecord?: () => void }) {
   const [nickname, setNickname] = useState('');
   const [country, setCountry] = useState('');
   const [honeypot, setHoneypot] = useState('');
@@ -139,6 +141,7 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedTh
       if (res.status === 201) {
         const body = (await res.json()) as { isRecord?: unknown };
         setStatus(body.isRecord === true ? 'record' : 'done');
+        if (body.isRecord === true) onRecord?.();
       } else if (res.status === 429) {
         setStatus('rate_limited');
       } else {
