@@ -4,10 +4,11 @@
 // VERCEL_PROJECT_PRODUCTION_URL is a bare hostname (no scheme), set on every
 // Vercel deployment (including previews) to the project's *production*
 // domain. Falling back to the hardcoded literal keeps this correct in any
-// environment where that var isn't set (local dev, CI).
+// environment where that var isn't set (local dev, CI). The literal is the
+// real domain: lullwood.vercel.app only 308s there (next.config.ts).
 export const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-  : 'https://lullwood.vercel.app';
+  : 'https://www.lullwoodgame.com';
 
 // SITE_NAME is the site's display name used in page titles and metadata
 export const SITE_NAME = 'Lullwood';

@@ -99,7 +99,7 @@ are generated from `lib/site.ts`.
 
 `public/<key>.txt` is the site's [IndexNow](https://www.indexnow.org/) key file — its
 content is the key itself. IndexNow keys are public by design. `scripts/indexnow.mjs`
-submits the URLs in `app/sitemap.ts` to Bing, DuckDuckGo, Yandex and Seznam in one call.
+reads the deployed `/sitemap.xml` and submits every URL in it to Bing, DuckDuckGo, Yandex and Seznam in one call.
 Run it manually after a deploy that changes sitemap URLs:
 
 ```bash
