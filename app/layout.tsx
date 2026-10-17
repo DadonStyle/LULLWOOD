@@ -8,6 +8,8 @@ import {
   SITE_TAGLINE,
   SITE_THEME_COLOR,
   GOOGLE_SITE_VERIFICATION,
+  GITHUB_URL,
+  SCREENSHOTS,
 } from "../lib/site";
 
 // LUL-529: two things this repo had zero of before.
@@ -120,10 +122,8 @@ const videoGameJsonLd = {
   image: `${SITE_URL}/opengraph-image.png`,
   // LUL-4841: schema.org's `screenshot` property is repeatable -- an array
   // qualifies for Google's screenshot gallery in a way a single value does
-  // not. Real gameplay screenshots are still blocked on the founder
-  // (LUL-3053); this reuses the one real asset in the repo rather than
-  // fabricating placeholder images Google would flag as misleading.
-  screenshot: [`${SITE_URL}/opengraph-image.png`],
+  // not. These are the in-engine screenshots app/page.tsx's gallery shows.
+  screenshot: SCREENSHOTS.map((file) => `${SITE_URL}/screenshots/${file}`),
   genre: ["Horror", "Survival", "Adventure"],
   gamePlatform: "Web Browser",
   // LUL-2375: "Game" is not a schema.org SoftwareApplication category value;
@@ -159,6 +159,10 @@ const siteJsonLd = {
       "@type": "WebSite",
       "@id": `${SITE_URL}#website`,
       name: SITE_NAME,
+      // Google's site-name system reads alternateName as fallbacks when it
+      // won't use the bare brand; "lullwood" alone is a contested term (a
+      // San Antonio street) that it also autocorrects to Gloomwood.
+      alternateName: ["Lullwood Game", "lullwoodgame.com"],
       url: SITE_URL,
       inLanguage: "en",
       publisher: { "@id": `${SITE_URL}#org` },
@@ -176,6 +180,10 @@ const siteJsonLd = {
       },
       description:
         "An all-AI game studio: design, engineering, and testing handled by a fleet of AI agents.",
+      // Ties this site to the other places Lullwood exists, so search engines
+      // and AI assistants resolve them to one entity. Add each new official
+      // profile (itch.io, YouTube, ...) here once it is live.
+      sameAs: [GITHUB_URL],
     },
   ],
 };

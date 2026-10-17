@@ -46,3 +46,15 @@ export const SITE_TAGLINE = 'A lost child is somewhere in the dark.';
 // than no tag at all).
 export const GOOGLE_SITE_VERIFICATION =
   process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined;
+
+// The public game repo -- the one official profile besides this site
+// (app/layout.tsx's Organization `sameAs`).
+export const GITHUB_URL = 'https://github.com/DadonStyle/LULLWOOD';
+
+// In-engine screenshots in public/screenshots/, shown in app/page.tsx's
+// gallery and listed in the VideoGame JSON-LD.
+export const SCREENSHOTS = [
+  'lullwood-night-forest-pine-trees.png',
+  'lullwood-dense-pine-forest-snow.png',
+  'lullwood-forest-rock-outcrop-night.png',
+];
