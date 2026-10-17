@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import GameLoader from "@/components/GameLoader";
+import { FAQ, faqJsonLd } from "@/lib/faq";
 
 // LUL-2375: the canonical is per page, not inherited from the layout -- with
 // it on the layout every child route (/suggest) declared itself a duplicate
@@ -90,6 +91,19 @@ export default function Home() {
               light and cuts how far predators can see you
             </li>
             <li>
+              <strong>Q</strong> — veil overload, a panic burn of the veil
+            </li>
+            <li>
+              <strong>G</strong> — break your scent trail with the scent veil
+            </li>
+            <li>
+              <strong>C</strong> — climb a vantage rock to look out over the
+              forest
+            </li>
+            <li>
+              <strong>R</strong> — shuffle to another hiding spot
+            </li>
+            <li>
               <strong>E</strong> — lift the child (this is the win)
             </li>
             <li>
@@ -175,33 +189,12 @@ export default function Home() {
         </section>
         <section>
           <h2>Questions</h2>
-          <h3>Is Lullwood free?</h3>
-          <p>
-            Yes. It is free to play in the browser, with no purchase, no
-            account and no ads.
-          </p>
-          <h3>Do I need to download or install anything?</h3>
-          <p>
-            No. Lullwood runs in any modern browser that supports WebGL. It
-            loads on the page you are reading.
-          </p>
-          <h3>Can I play it on a phone?</h3>
-          <p>
-            Yes. There are on-screen touch controls with twin sticks for
-            movement and look, plus buttons for jumping, hiding, the mist
-            veil and lifting the child.
-          </p>
-          <h3>Is it scary?</h3>
-          <p>
-            It is a horror game built on tension rather than jump scares.
-            The fear comes from being hunted while unarmed, and from having
-            to stay still while something searches for you nearby.
-          </p>
-          <h3>How long is a run?</h3>
-          <p>
-            A successful run takes a few minutes. Dying is common early on,
-            and each attempt generates a fresh forest layout.
-          </p>
+          {FAQ.map(({ question, answer }) => (
+            <div key={question}>
+              <h3>{question}</h3>
+              <p>{answer}</p>
+            </div>
+          ))}
         </section>
         <section>
           <h2>Got an idea?</h2>
@@ -212,7 +205,27 @@ export default function Home() {
             — the founder reads every suggestion by hand.
           </p>
         </section>
+        <section>
+          <h2>More about Lullwood</h2>
+          <ul>
+            <li>
+              <Link href="/devlog">The Lullwood devlog</Link> — how the game
+              is built, post by post
+            </li>
+            <li>
+              <Link href="/credits">Credits</Link> — the third-party assets
+              in the game and the people who made them
+            </li>
+          </ul>
+        </section>
       </main>
+      <script
+        type="application/ld+json"
+        // Built from lib/faq.ts, the same list the Questions section renders.
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(faqJsonLd).replace(/</g, "\\u003c"),
+        }}
+      />
     </>
   );
 }
