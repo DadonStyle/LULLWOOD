@@ -66,13 +66,18 @@ test.describe('roost flush -- player-sprint noise event (LUL-2389 slice b)', () 
     await boot(page, { qaHooks: true });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
-    await stageAndApproach(page, 10);
+    // Wolf 10u past the roost on the far side (still inside ROOST_NOISE_RADIUS(14))
+    // so it sits 13u from the player at z+3, not 7u: at 7u it could spot the
+    // player within the 1 s and switch to 'chase' -- unrelated to the flush, and
+    // it failed release cut #1105 at random (local QA rig, 2026-10-17).
+    await stageAndApproach(page, -10);
 
     // No ShiftLeft held -- running stays false.
     await qaHook(page, 'qaAdvance', stepsFor(1));
 
+    // No flush noise: the wolf was never sent to investigate the roost.
     const after = await qaHook(page, 'qaProbePredatorState', 'wolf');
-    expect(after.state).toBe('roam');
+    expect(after.state).not.toBe('investigate');
     expect(after.noiseTarget).toBeNull();
 
     const roost = await qaHook(page, 'qaProbeRoostState', ROOST_INDEX);
