@@ -29,10 +29,10 @@ Cue-triple audit: see `docs/CUES.md`.
 **What it can do**
 - Move (WASD/arrows), walk or run (`Shift`, hold by default; toggle if the
   `runMode==='toggle'` accessibility setting is on, `ShiftLeft`/`ShiftRight`
-  edge-detect at L1526-1527 flips `toggleRunOn`),
+  edge-detect at L1532-1527 flips `toggleRunOn`),
   look (mouse via Pointer Lock, or drag-fallback, or touch stick on mobile) —
   `applyLook()`, movement block in `tick()`,
-  `running` derivation at L2822. In toggle mode, touch's analogue is
+  `running` derivation at L2828. In toggle mode, touch's analogue is
   `triggerTouchToggleRun()` (gated on the same  `runMode==='toggle'` check; `MobileControls.tsx`'s `touchToggleRun` button
   only renders in that mode).
 - Jump at any time while playing, not gated on being chased — `beginJump()`,
@@ -62,8 +62,8 @@ Cue-triple audit: see `docs/CUES.md`.
   `STILL_DETECT_CUT`=0.82 — never reaches 1, so standing still in the open
   next to a predator still gets you caught — `effectiveDetect()`).
 - Dim the personal follow-light (hold `KeyF`, or hold touch's `touchVeil`
-  button via `setTouchVeil()` L9498 — `veilHeld` reads `keys['KeyF'] ||
-  touchVeil` at L8339, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
+  button via `setTouchVeil()` L9511 — `veilHeld` reads `keys['KeyF'] ||
+  touchVeil` at L8352, mirrored the same way in `qaPlayerState()`'s return  object, so the two inputs are equivalent, not independent) —  `LIGHT_NORMAL`/`LIGHT_DIMMED` (`engine/tuning.js`),
   applied in `tick()`; paired with a screen-edge
   vignette cue (`applyVignette()`), **and**, as of `LUL-291`, a real
   detection multiplier — see the Follow-light section.
@@ -122,7 +122,7 @@ Cue-triple audit: see `docs/CUES.md`.
   only**), but branch `lul-26-difficulty-accessibility` is **not merged**.
   `engine/forest-engine.js` on `main` has no such identifiers today
   (verified by grep, 2026-08-18) and its own settings-panel comment
-  (L1712-1713) says so directly: "There is no separate modal settings
+  (L1718-1713) says so directly: "There is no separate modal settings
   surface today (LUL-70, still backlog)." Previous revisions of this doc
   cited engine line numbers for this bullet as if it were live; that was
   wrong at every revision, not just a drift artifact — see the LUL-411
@@ -161,7 +161,7 @@ Cue-triple audit: see `docs/CUES.md`.
   button, and `tick()`'s movement-breaks-cover check) already funnel
   through, so `feature_engagement('hide')` fires on every hide entry again.
 - Eye height (`eyeH`) is damped toward `hidden ? 1.05 : CONFIG.eye` (2.2) at
-  an ~0.3s time constant (`Math.min(1, dt*8)`, L2292), not snapped. **Fixed,
+  an ~0.3s time constant (`Math.min(1, dt*8)`, L2298), not snapped. **Fixed,
   LUL-273:** `canopyBlockedR()`/`blocked()` now recompute each tree's canopy
   radius live against this same `eyeH` (`canopyRadiusAtEye(t.s, eyeH,
   CANOPY_GEO)`) instead of the `crCanopy` cached at map-gen time for a fixed
@@ -170,7 +170,7 @@ Cue-triple audit: see `docs/CUES.md`.
   eye height sits closer to its wider base. See wiki
   `game/lul267-canopy-collision-fix`.
 - Player FOV for "can the player see the charging predator" gating is ~130°
-  total (`PLAYER_FOV_COS`, `cos(65°)`, L1699) — independent of the render
+  total (`PLAYER_FOV_COS`, `cos(65°)`, L1705) — independent of the render
   camera's own 70° vertical FOV (`camera`); this is a gameplay cone, not
   the literal viewport.
 
@@ -180,7 +180,7 @@ Cue-triple audit: see `docs/CUES.md`.
   rotated-AABB cover props. No collider vs. home, fog, child, or
   predators — see above.
 - No vertical/ground collision at all: eye height is a formula
-  (`eyeH + bob + jumpY`, L2395), never a raycast against the ground mesh.
+  (`eyeH + bob + jumpY`, L2401), never a raycast against the ground mesh.
 - Two different downstream checks read player position without going through
   `blocked()`: `hasLOS()` (sight, rotated-AABB raycast, includes tagged
   trees `s>1.4`) and the distance-only scent/noise/pickup/win checks above —
@@ -201,7 +201,7 @@ Cue-triple audit: see `docs/CUES.md`.
   glowing and idly bobbing, marked by ambient "wisp" particles
   (`placeBabyWisps()`) so it's spottable through fog.
 - Be picked up once (`baby.taken`, `pickup()`), triggering a scripted
-  10s pickup cinematic (`tick()`'s `pickingUp` branch, L2349-2379) that ends
+  10s pickup cinematic (`tick()`'s `pickingUp` branch, L2355-2379) that ends
   in a sky-burst (`fireBoom()`). **As of `LUL-2953`**, the burst's mesh scale
   (`boomFlash`/`boomRing`/`bspPts`) is multiplied by `BOOM_FOV_SCALE` — the
   ratio between mobile's wider `CAMERA_FOV` (LUL-69) and the desktop 70°
@@ -326,7 +326,7 @@ one geometry builder (`makePredator()`), differentiated by the
 
 **What they can do (shared)**
 - Roam via random waypoints when nothing has noticed the player
-  (`state==='roam'`, L1030-1039). A predator that gives up an
+  (`state==='roam'`, L1036-1039). A predator that gives up an
   investigate/sniff or flank/hold loop (never a chase's distance-based
   give-up) stashes the player's position and gets a bounded number of
   ring-biased return-sweep waypoints (`LKP_MAX_SWEEPS`, `pickRoamWaypoint()`,
@@ -395,7 +395,7 @@ one geometry builder (`makePredator()`), differentiated by the
 - **Wolf and lion only**: telegraph-and-charge at 7-16 units range
   (`CHARGE_TRIGGER_MIN/MAX`, `lib/game/charge.ts`), dodgeable by a
   well-timed jump. Bear deliberately excluded — "the slow unavoidable
-  threat" (L1052-1053 comment) — contrast with wolf/lion is the design
+  threat" (L1058-1053 comment) — contrast with wolf/lion is the design
   intent, not an oversight.
 - Catch (kill) the player at `dist < rad+1.3` while actively seeing/hunting
   them (`triggerDeath()`, multiple call sites in `updatePredators()`).
@@ -420,7 +420,7 @@ one geometry builder (`makePredator()`), differentiated by the
   `formatChronicle()`, never player-facing).
 - **NOT live on `main`** — parking predators off-map (`p.inert`, `x=z=-9999`)
   under a lower difficulty preset's `activePerSpecies` was built on the
-  unmerged LUL-26 branch. `placePredators()` on `main` (L704-726) has no
+  unmerged LUL-26 branch. `placePredators()` on `main` (L710-726) has no
   `p.inert`/`activePerSpecies`/difficulty logic at all (verified by grep,
   2026-08-18) — every predator always spawns active, every seed, today. Same
   root cause as the Player/Child LUL-26 notes above.
@@ -1035,7 +1035,7 @@ See `docs/specs/lul-4528-rock-vantage-climb.md`.
 **Behaviours & logic**
 - Single scalar (`density`), read once per frame by the renderer itself.
   `forest-engine.js` now re-derives it every frame from `fogBase` +
-  `veilAmount` via `veilFogDensity()` (`lib/game/veil.ts`, called at L2677)
+  `veilAmount` via `veilFogDensity()` (`lib/game/veil.ts`, called at L2683)
   while the veil is in play — no longer a pure pass-through of whatever
   `setFog()` last set.
 
@@ -1362,7 +1362,7 @@ Two ownership domains, split at the LUL-34/LUL-35 boundary:
   (`#runRecap`). **Not** difficulty/accessibility controls or captions —
   those were built on the unmerged LUL-26 branch; see the Player section's
   note. There is no separate modal settings surface on `main` today
-  (engine's own comment, L1692-1693: "LUL-70, still backlog").
+  (engine's own comment, L1698-1693: "LUL-70, still backlog").
   LUL-2312 pulled every one of those bottom-centre prompts (`#objective`,
   `#actionPrompt`, `#throwPrompt`, `#chargePrompt`, `#status`) plus
   `#captionToast` into one component, `ActionPrompt` (`components/
@@ -1722,7 +1722,7 @@ not final tuning.
 - Render every piece of state the engine pushes (`pushState()`, only sends
   a patch when a value actually changed).
 - Send **actions back**, never state: the full API `init()` returns
-  (L3182-3185) is `enter`, `restart`, `setPace`, `setFog`, `toggleSound`,
+  (L3188-3185) is `enter`, `restart`, `setPace`, `setFog`, `toggleSound`,
   `regenMap`, and nine touch-control setters (`setTouchMove`/`setTouchLook`/
   `setTouchSprint`/`triggerTouchHide`/`triggerTouchInteract`/
   `triggerTouchJump`/`triggerTouchPause`/`triggerTouchToggleRun`/
@@ -1814,15 +1814,15 @@ not final tuning.
   before first win/death this session), read by HUD on win/death screens to
   display what was earned. Matches `RunPayout` shape in `lib/game/economy.ts`.
 - `win`/`loss` telemetry events (LUL-1450): `difficulty: Difficulty` field added to
-  both `track()` call sites, in `finishPickup()` (L7360, the win path since
-  `LUL-2281`) and `triggerDeath()` (L7809). The `difficulty` module-level
+  both `track()` call sites, in `finishPickup()` (L7373, the win path since
+  `LUL-2281`) and `triggerDeath()` (L7822). The `difficulty` module-level
   variable is in scope at both sites. The economy
   dashboard (`lib/dashboard/aggregate.ts`) groups these events by tier into
   `byDifficulty` on `EconomyResult`; events without a `difficulty` field land in
   `unattributed`.
 - `loss` telemetry event (LUL-2461): `distance_from_home_m` field added --
   distance from `CONFIG.home` to `player.x/z` at the moment `triggerDeath()`
-  (L7810) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3518) rather than recomputed later, since `player.x/z` can move on
+  (L7823) fires, computed and stored in `deathDistanceFromHomeM` (module-level,  set at L3524) rather than recomputed later, since `player.x/z` can move on
   once the death screen is up. Deliberately not `maxDistFromHome` (the run's
   furthest point, already used by `computeDeathPayout`) -- this is where the
   run actually ended. Also exposed on `qaProbeDeath()` as
@@ -1878,11 +1878,11 @@ not final tuning.
     max-tier gate) so the item stays single-tier; `nextCost()`/`purchase()`
     take an optional `difficulty` arg that special-cases `pocketStones` only.
 - `livePileEmbers` (LUL-1315): live, unbanked depth+survival total for the
-  run in progress — `hudState` field (`engine/forest-engine.js` L4446),
-  reset to 0 on `enter()` (L4922) and recomputed every frame (`stepFrame()`,
+  run in progress — `hudState` field (`engine/forest-engine.js` L4452),
+  reset to 0 on `enter()` (L4934) and recomputed every frame (`stepFrame()`,
   called each `tick()` -- LUL-2071 extracted the per-frame body out of `tick()`
   so a QA test clock can call it directly) while the run
-  is neither won nor dead (L7754: `computeDepth(maxDistFromHome) +
+  is neither won nor dead (L7767: `computeDepth(maxDistFromHome) +
   computeSurvival(clock.elapsedTime - enteredAt)`, both pure helpers from
   `lib/game/economy.ts`). Rendered as `#embersPile` ("Unbanked: N") next to
   `#embersBalance` in `components/Hud.tsx` (L489), hidden once a win/death
@@ -2002,7 +2002,7 @@ not final tuning.
 - Audio cue (`staminaExertionCue()`): a short breath/exertion tone (~200Hz sine, 0.25s decay) plays once when stamina drops below 0.45 charge, and resets the cue as soon as stamina climbs back past 0.55 (hysteresis bands `0.45`/`0.55`, `staminaLowCuePlayed` flag). Also pushes a caption (`'breathing hard'`) when captions are on.
 
 **What it can do**
-- Gate the player's sprint speed (`stepFrame()` at L8325, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
+- Gate the player's sprint speed (`stepFrame()` at L8338, LUL-2071's extracted per-frame body): `maxSpd = (running ? walk*sprintSpeedMul(staminaCharge) : walk) * ...`, so the player still moves at walk pace when running with zero stamina, but gains speed as stamina refills.
 - Play an audio telegraph when nearing zero charge, so the player knows they're nearly exhausted.
 - Reset to full on each new run: `staminaCharge = 1` on `restart()` (alongside `staminaLowCuePlayed`).
 **What it CANNOT do**
@@ -3155,20 +3155,20 @@ engine flag is genuinely true.
 
 **LUL-3149 (Wind-Assisted Evasion)** adds two new, always-on effects to this same trigger --
 `running && movingAgainstWind`, reusing the already-computed `movingAgainstWind` rather than
-re-deriving it (`engine/forest-engine.js` L7537) -- stacking on top of the LUL-3009 scent
+re-deriving it (`engine/forest-engine.js` L7550) -- stacking on top of the LUL-3009 scent
 effect above rather than replacing it: a `WIND_ASSIST_SPEED_MUL` (1.2, `lib/game/stamina.ts`)
-speed bonus applied to `spd` inside `stepFrame()` (L8301), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
-footstep-radius reduction applied to `noiseRadius` (L7985), replacing the plain sprint radius
+speed bonus applied to `spd` inside `stepFrame()` (L8314), and a `NOISE_RADIUS_RUN_WIND` (16.8, `lib/game/noise.ts`)
+footstep-radius reduction applied to `noiseRadius` (L7998), replacing the plain sprint radius
 only while the bonus is active. No new HUD element (checklist Q7/Q9): `#windIndicator`'s pulse
 is a strict superset condition (`running && movingAgainstWind` implies `movingAgainstWind`) so
 it already fires correctly for the sprint-bonus window; both the `title` and the always-visible
 `#windIndicatorHint` caption (`components/Hud.tsx`) were updated to name all three effects.
 
 First encounter gets a one-shot `'windAssist'` entry in `HINT_PRIORITY`/`HINT_TEXT`
-(`engine/forest-engine.js` L8384 for the eligibility case), positioned below the danger hints
+(`engine/forest-engine.js` L8397 for the eligibility case), positioned below the danger hints
 and `'stamina'`, above `'cover'`/`'caveImmune'` (LUL-4893's `'windPulse'` now sits directly below
 it). A rising/falling sine-sweep audio cue pair,
-`windAssistStartCue()` (L7677) and `windAssistEndCue()` (L7686), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
+`windAssistStartCue()` (L7690) and `windAssistEndCue()` (L7699), edge-triggers on the combined`running && movingAgainstWind` transition (not on `movingAgainstWind` alone -- walking against
 the wind stays silent on this cue, keeping only the existing scent effect).
 
 **QA hooks**: none new -- `qaProbeWind().movingAgainstWind` (existing) is sufficient for the
@@ -3202,12 +3202,12 @@ instead of walking a pure straight line at it. `biasTowardWind(ux, uz, windX, wi
 (`lib/game/predator.ts` L400) blends a unit heading toward the wind vector by `strength`
 (`INVESTIGATION_DOWNWIND_BIAS`=0.3, L399), re-normalized so callers keep treating the result as
 a unit heading. Wired at the `'approach'` sub-phase's heading computation inside `stepFrame()`
-(`engine/forest-engine.js` L2871-2879), gated on `p.scentLock > 0` -- a noise- or sight-originated
+(`engine/forest-engine.js` L2877-2879), gated on `p.scentLock > 0` -- a noise- or sight-originated
 approach into the same `'approach'` sub-phase is untouched, only a scent-originated one favors
 downwind, matching the narrative ("predators hunt downwind of scent") the wiki spec cites.
 
 No new persisted per-predator flag: the HUD push re-derives the identical `state === 'investigate'
-&& inv === 'approach' && scentLock > 0` condition every frame (`engine/forest-engine.js` L7659)
+&& inv === 'approach' && scentLock > 0` condition every frame (`engine/forest-engine.js` L7672)
 into a new read-only `EngineHudState` field, `investigationDownwindActive` (`components/Hud.tsx`).
 
 Cue triple. **Visual**: reuses `#windIndicator`'s arrow/pulse language (Q9 duplicate-proof) rather
@@ -3220,16 +3220,16 @@ same precedent as LUL-3009's `windIndicatorActive`) keeps the color off the teal
 family so it doesn't read as another wind-assist prompt. **Audio**: `scentOnto()`'s existing
 `predatorCall`/growl cue (`leafRustle(false)`) gained an optional `panVal` parameter panned toward
 the downwind direction. **Caption**: a new one-shot `'downwindInvestigation'` entry in
-`HINT_PRIORITY` (`engine/forest-engine.js` L2073) and its eligibility check (L7849, the identical
+`HINT_PRIORITY` (`engine/forest-engine.js` L2079) and its eligibility check (L7862, the identical
 gate expression as the HUD field above), positioned in the priority list between `'windAssist'`
 and `'windPulse'`. Exact copy: `"predators hunt downwind of your scent — position yourself upwind
-to escape"` (L2094).
+to escape"` (L2100).
 
 **QA hooks**: `qaBuildScene()`'s per-predator spec gained additive `inv`/`scentLock` overrides
-(`engine/forest-engine.js` L6086-6071) -- direct-to-`'investigate'`/`'approach'` staging otherwise
+(`engine/forest-engine.js` L6099-6071) -- direct-to-`'investigate'`/`'approach'` staging otherwise
 can't exercise the `scentLock > 0` gate, since every other field this block force-resets already;
 not a fake-state hook, it sets the same real fields every other `qaBuildScene` field already sets.
-`qaProbePredatorState()` gained `x`/`z`/`inv` (L4598-4583) so a test can measure real positional
+`qaProbePredatorState()` gained `x`/`z`/`inv` (L4604-4583) so a test can measure real positional
 drift over several ticks and confirm the predator is still in the `'approach'` sub-phase this bias
 applies to.
 
@@ -3249,7 +3249,7 @@ gives up 20% sooner (reverts to investigating sooner when the trail goes cold), 
 baseline. New `SCENT_LOCK_ENDURANCE_MULTIPLIER` (`engine/tuning.js`, `{ wolf: 1.0, bear: 1.4, lion:
 0.8 }`, placeholder ratios -- Game Economist owns real tuning numbers), applied at `p.scentLock =
 SCENT_TRACK_TIME * SCENT_LOCK_ENDURANCE_MULTIPLIER[p.kind]` at every real chase-entry assignment
-site (`engine/forest-engine.js` L2550, L2572, L5551, L5982, L6127, L6399 -- the last inside
+site (`engine/forest-engine.js` L2556, L2578, L5564, L5995, L6140, L6412 -- the last inside
 `qaSetPredatorChasing`, which mirrors every real site's own statement, not a special case).
 Applied at assignment time only, not inside the shared `tickTimers()` decay (`lib/game/predator.ts`
 L172-177, also used by `chargeCooldown`) -- same "touch the read, not the shared decay" shape as
@@ -3644,29 +3644,29 @@ stays the chase-state cue (howl/roar/growl, kind-specific); investigate needed i
 cue per Q7/Q9 of the Feature Checklist (don't reuse the chase call verbatim, don't duplicate an
 existing surface).
 
-**Audio**: `investigateCue(p)` (L4141-4136) -- a low, two-pulse searching
+**Audio**: `investigateCue(p)` (L4147-4136) -- a low, two-pulse searching
 tone (120->95Hz sine, two 0.5s pulses 0.55s apart), kind-agnostic since most entry sites' own
-caption already names the species -- `hearCry()` (L2927) is the one exception: it pushes no
+caption already names the species -- `hearCry()` (L2933) is the one exception: it pushes no
 caption on investigate entry (confirmed by grep; no caller pushes one either), so a predator
 responding to the child's cry gives the player zero species identification, audio or text, same
 as every other entry site's cue. Panned toward the predator's bearing (`bearingPan`/`bearingOf`)
 and distance-attenuated (`callVolumeMul`), same spatial treatment as `predatorCall()`/`scentOnto()`'s
 growl, so it reads as coming from the animal, not a flat stereo blip.
 
-**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2894),
-`hearThrowableNoise()` (L2910), `hearCry()` (L2927), the charge-overshoot handoff (`p.chargeRecoveryT`,
-L2820), the 30s force-hunt escalation losing sight (`p.hunt`, L2884), the chase downgrade on losing
-sight/scentLock expiry via `shouldDowngradeChase()` (L2963 -- a seventh real site found independently
+**Trigger** -- called at every real `p.state = 'investigate'` assignment: `hearNoise()` (L2900),
+`hearThrowableNoise()` (L2916), `hearCry()` (L2933), the charge-overshoot handoff (`p.chargeRecoveryT`,
+L2826), the 30s force-hunt escalation losing sight (`p.hunt`, L2890), the chase downgrade on losing
+sight/scentLock expiry via `shouldDowngradeChase()` (L2969 -- a seventh real site found independently
 of the driving ticket's six-line list, included for the same reason the other six are: a real
 `p.state='investigate'` assignment reachable in normal play), and the hidden-mid-chase contact-range
-handoff (`isCaught(dist, p.rad)`, L3024). Not wired at `qaStagePredatorGiveUp`'s direct investigate/sniff
-force-set (L5282) -- that's test staging, not a real-play entry (Q1.5: no real trigger reachability
+handoff (`isCaught(dist, p.rad)`, L3030). Not wired at `qaStagePredatorGiveUp`'s direct investigate/sniff
+force-set (L5295) -- that's test staging, not a real-play entry (Q1.5: no real trigger reachability
 there to cite).
 
 **QA hooks**: no new hook function -- `investigateCueCount` (per-predator, counted before the
 audio/soundOn gate, same "counter-before-gate" idiom as `qaProbeRoostState`'s `deniedCueCount`) is
-added to the existing `qaProbePredatorState(kind)`'s return object (L4914),
-and reset to 0 alongside `scentCalls` at predator spawn/restart (L2006, L2079, L2202).
+added to the existing `qaProbePredatorState(kind)`'s return object (L4920),
+and reset to 0 alongside `scentCalls` at predator spawn/restart (L2012, L2085, L2208).
 
 Covered by `e2e/throwables.spec.ts` ("a thrown rock lures a nearby roaming predator into
 investigate"): a real player-thrown rock lands within `THROWABLE_NOISE_RADIUS` of a staged roaming
