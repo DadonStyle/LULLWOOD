@@ -675,6 +675,11 @@ let lastRunClockLabel = '';
 // below -- the top-right timer, the leaderboard time, mission limits, survival
 // embers -- leaves the pause out and the timer still equals the stored time.
 let pauseStartedAt = null;
+// Founder 2026-10-17: the run's time stops the moment the child is picked up
+// (E accepted in pickup()), not when the ~11 s pickup cinematic ends. Holds
+// runSeconds() at that instant (null until then); the timer, the win screen and
+// the leaderboard time all read it, so a record is the time to reach the child.
+let runFrozenAt = null;
 // Admin mode (SettingsPanel.tsx -> setAdminMode) and whether it was on at any
 // moment of the current run. A run that ever had it on can't take the top
 // rescuer spot (LeaderboardSubmitForm reads adminUsedThisRun at the win screen).
@@ -4922,6 +4927,7 @@ const pausePrompt = document.getElementById('pausePrompt');
 // backlog); if one ships later, move this call site to its open handler.
 /** Seconds of this run so far, pauses excluded (frozen while paused). */
 function runSeconds(){
+  if(runFrozenAt !== null) return runFrozenAt;
   return Math.max(0, (pauseStartedAt !== null ? pauseStartedAt : clock.elapsedTime) - enteredAt);
 }
 function setPaused(p){
@@ -4938,6 +4944,7 @@ function enter(){
   // via the generic per-frame hint evaluation in stepFrame(), not from here.
   enteredAt = clock.elapsedTime;
   pauseStartedAt = null;   // a pause before this run started doesn't shift it
+  runFrozenAt = null;
   runElapsed = 0;
   lastRunClockLabel = '';
   adminUsedThisRun = adminModeOn;   // fresh run: tainted only if admin mode is on right now
@@ -7276,6 +7283,8 @@ function pickup(){
   // for why the timing matters (Fog Tide's window is 20s, the cinematic is ~11.3s).
   if(mission && canCompleteSlackWater(mission, fogTideActive)) mission = completeMission(mission);
   baby.taken = next.babyTaken; pickingUp = next.pickingUp;
+  runFrozenAt = runSeconds();   // the child is saved: the run's time stops here
+  pushState({ runClockSeconds: runFrozenAt });
   pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found
   pushState({ objectiveVisible: false, statusVisible: false });
@@ -8337,7 +8346,8 @@ function stepFrame(dt, t, skipRender){
   if(playing) runElapsed += dt;
   // Top-right run timer: the exact clock win()/triggerDeath() turn into
   // survivedSeconds (runSeconds(), pauses excluded), pushed only when the
-  // shown m:ss changes, and frozen while paused and once the run is over.
+  // shown m:ss changes, and frozen while paused, from the moment the child is
+  // picked up, and once the run is over.
   if(entered && !won && !dead){
     const runClockSeconds = runSeconds();
     const runClockLabel = formatRunTime(runClockSeconds);
