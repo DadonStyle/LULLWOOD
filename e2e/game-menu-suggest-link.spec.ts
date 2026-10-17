@@ -13,6 +13,9 @@
 // pointer events"). This is the same limitation `fullscreenToggle` already
 // lives with (e2e/fullscreen-key.spec.ts uses the same `.evaluate(el.click())`
 // dispatch) -- a synthetic click still runs the real onClick handler.
+// A real player can only click the menu with the mouse released (Esc), so the
+// in-run tests release the pointer lock first: with it held, Linux Chromium
+// routes clicks and keys away from the popup (local QA rig, 2026-10-17).
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 
@@ -39,6 +42,7 @@ test.describe('GameMenu suggestion box entry point', () => {
     await page.route('**/api/suggestions', (route) => route.fulfill({ status: 204 }));
     await boot(page);
     await enter(page);
+    await page.evaluate(() => document.exitPointerLock());
 
     const suggestButton = page.getByTestId('menuSuggest');
     await expect(suggestButton).toBeVisible();
@@ -63,7 +67,18 @@ test.describe('GameMenu suggestion box entry point', () => {
   test('typing in the popup does not move the player (keys stay in the text box)', async ({ page }) => {
     await boot(page, { qaHooks: true });
     await enter(page);
+    // Release the mouse (which pauses the run), open the popup, then un-pause from
+    // the menu so the world is live while the player types.
+    await page.evaluate(() => document.exitPointerLock());
     await click(page.getByTestId('menuSuggest'));
+    // Releasing the lock pauses the run where a lock was held (Linux); where it
+    // never was (macOS headless) there's nothing to un-pause.
+    await page.waitForTimeout(300);
+    if ((await qaHook(page, 'qaPlayerState'))?.paused) {
+      await click(page.getByTestId('menuToggle'));
+      await click(page.getByTestId('menuPause'));
+    }
+    await expect.poll(async () => (await qaHook(page, 'qaPlayerState'))?.paused).toBe(false);
     const textarea = page.getByTestId('suggestPopup').locator('#suggestion-text');
     await textarea.focus();
 
