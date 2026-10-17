@@ -24,7 +24,7 @@ test.describe('credits', () => {
 
   test('/credits attributes the balloon letters to danny_p3d under CC BY 4.0', async ({ page }) => {
     await page.goto('/credits');
-    await expect(page.locator('h1')).toHaveText('credits');
+    await expect(page.locator('h1')).toHaveText('Credits');
     // the studio's author comes first, linking the GitHub profile (not the repo)
     const first = page.locator('.credits-page__item').first();
     await expect(first).toContainText('Independence AI Studio');
