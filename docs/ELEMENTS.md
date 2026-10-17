@@ -48,6 +48,11 @@ Cue-triple audit: see `docs/CUES.md`.
 - Pause the run (`Escape`, desktop-only key) or resume it — touch has no
   pointer-lock re-acquire to resume with, so `triggerTouchPause()`
   (`MobileControls.tsx`'s `touchPause` button) toggles both  directions instead of only pausing.
+  A pause freezes the run clock (founder 2026-10-17): the top-right run timer,
+  the leaderboard survived time, mission time limits and survival-ember
+  accrual all stop while paused, and the paused span is excluded once the run
+  resumes (`runSeconds()`, `engine/forest-engine.js:4924`; `setPaused()` slides
+  `enteredAt` forward by the pause).
 - Enter a `hidden` stance (`KeyH` / touch Hide) — but **only** while standing
   within `HIDE_RADIUS` (2.2u) of a `bramble` cover prop's true,
   rotation-aware rectangular edge (`HIDE_KINDS`, L278-279; `findHideSpot()`,
