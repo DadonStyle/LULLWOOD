@@ -56,6 +56,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "yearly",
       priority: 0.2,
     },
+    {
+      url: `${SITE_URL}/how-to-survive`,
+      lastModified: new Date("2026-10-18T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
     ...devlogEntries,
   ];
 }

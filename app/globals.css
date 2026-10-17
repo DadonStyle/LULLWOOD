@@ -233,6 +233,32 @@ main.not-found-page .not-found-page__heading {
   margin-bottom: 8px;
 }
 
+/* /how-to-survive -- reuses the devlog-post shell above; only lists, figures
+   and the footer's stacked links are new. */
+main.guide-page .devlog-body ul {
+  margin: 0 0 20px 20px;
+  font-size: 15px;
+}
+main.guide-page .devlog-body li {
+  margin-bottom: 10px;
+}
+main.guide-page .devlog-body strong {
+  color: #cdd9ea;
+  font-weight: 500;
+}
+main.guide-page figure {
+  margin: 28px 0;
+}
+main.guide-page figure img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  display: block;
+}
+main.guide-page .devlog-footer p + p {
+  margin-top: 8px;
+}
+
 @media (max-width: 480px) {
   main.devlog-index,
   main.devlog-post {
