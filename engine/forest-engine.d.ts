@@ -65,6 +65,8 @@ declare global {
        * the stored predatorVolume setting -- lets a test assert setPredatorVolume()
        * actually changed the gain stage predator-call/threat SFX route through. */
       qaProbePredatorVolume?: () => number;
+      /** Founder 2026-10-17: suspends the AudioContext (frozen audio clock) and resolves to its state. */
+      qaSuspendAudio?: () => Promise<string | null>;
       /** LUL-2122: babyLight's live intensity/distance plus the pickup/taken
        * state flags, so a test can assert the interact button actually reached
        * pickup() instead of only that it rendered and was tappable. */

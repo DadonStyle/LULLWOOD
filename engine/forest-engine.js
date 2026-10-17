@@ -4084,6 +4084,10 @@ let predatorGainSchedAt = 0;
 // LUL-5941: last-commanded predatorGain value, tracked in JS instead of ever reading
 // AudioParam.gain.value back -- see setPredatorVolume() below for why this exists.
 let predatorGainAnchor = predatorVolume;
+// Founder 2026-10-17: wall-clock time (performance.now(), ms) when startAudio()
+// built the context -- setPredatorVolume() compares it with ctx.currentTime to
+// tell a running audio clock from a frozen one. See audioClockStalled().
+let audioStartWallMs = 0;
 function noise(ctx, sec, brown){
   const len = Math.floor(ctx.sampleRate*sec), b = ctx.createBuffer(1, len, ctx.sampleRate), d = b.getChannelData(0);
   let last = 0;
@@ -4099,6 +4103,7 @@ function impulse(ctx, sec, decay){
 function startAudio(){
   const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return;
   const ctx = new AC();
+  audioStartWallMs = performance.now();
   // LUL-1112: iOS constructs AudioContext in suspended state regardless of user
   // activation. Explicit resume() is required inside the gesture, even though
   // resume() on an already-running context is a spec no-op, so this is safe
@@ -4115,6 +4120,20 @@ function startAudio(){
   predatorGain.connect(master);
   predatorGain.gain.value = predatorVolume;
   predatorGainAnchor = predatorVolume;
+  // Founder 2026-10-17: a permanent silent input keeps this node awake. Chromium
+  // puts a GainNode to sleep once the last sound routed through it ends (every
+  // predator call is a short one-shot), and a sleeping node's gain timeline
+  // doesn't advance: setPredatorVolume()'s ramp only lands when the next sound
+  // wakes it, and `.gain.value` reads the old level until then. Players still
+  // heard the right level (the node catches up the instant a call plays), but
+  // qaProbePredatorVolume() read 1 after a mute, which is why the
+  // predator-audio-bus specs failed at random on the local QA rig (verified in
+  // Chromium: asleep -> 1, with this source -> the new value). Offset 0, so it
+  // adds nothing to the mix.
+  const predatorKeepAwake = ctx.createConstantSource();
+  predatorKeepAwake.offset.value = 0;
+  predatorKeepAwake.connect(predatorGain);
+  predatorKeepAwake.start();
 
   const conv = ctx.createConvolver(); conv.buffer = impulse(ctx, 2.4, 3.0);
   const rev = ctx.createGain(); rev.gain.value = 0.5; conv.connect(rev); rev.connect(master);
@@ -4996,6 +5015,10 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // LUL-5829: exposes the real predatorGain WebAudio node's current .value (not just
   // the stored predatorVolume setting) so a test can assert setPredatorVolume() actually
   // changed the gain stage predator-call/threat SFX route through, not only React state.
+  // Founder 2026-10-17: freezes the audio clock on purpose (ctx.suspend()), so a
+  // test can prove setPredatorVolume() still lands when the clock isn't moving --
+  // the state the muted local QA rig falls into at random. Resolves once suspended.
+  window.ForestEngine.qaSuspendAudio = function(){ return audio ? audio.ctx.suspend().then(function(){ return audio.ctx.state; }) : Promise.resolve(null); };
   window.ForestEngine.qaProbePredatorVolume = function(){ return audio && audio.predatorGain ? audio.predatorGain.gain.value : predatorVolume; };
   // LUL-1093: exposes w2m()'s clamped output directly so a test can assert
   // "this world point stays on-canvas" for both the player arrow (which calls
@@ -7882,6 +7905,15 @@ function toggleSound(){
 // LUL-5829: Predator Audio slider -- ducks predator-call/threat SFX independently of
 // the soundOn master mute. `v` is 0-1 WebAudio gain; the Settings UI deals in 0-100
 // display units and converts at this boundary (mirrors setPace/setFog above).
+// True when the audio clock isn't keeping up with real time: the context is
+// suspended, or more than half a second after startAudio() it has advanced
+// less than a tenth of the wall-clock time since. A running context tracks
+// wall time closely, so this never fires for a real player once audio started.
+function audioClockStalled(ctx){
+  if(ctx.state !== 'running') return true;
+  const wallS = (performance.now() - audioStartWallMs) / 1000;
+  return wallS > 0.5 && ctx.currentTime < wallS * 0.1;
+}
 function setPredatorVolume(v){
   predatorVolume = Math.max(0, Math.min(1, v));
   if(audio){
@@ -7904,6 +7936,22 @@ function setPredatorVolume(v){
     // call always has a well-defined value to leave the param at, and a strictly
     // monotonic anchor time so no two calls ever schedule against the same instant.
     const g = audio.predatorGain.gain;
+    // Founder 2026-10-17: a frozen audio clock (suspended context, or the muted
+    // headless test rig whose render thread stops -- ctx.currentTime stuck near
+    // 0 while state still says 'running') never reaches the ramp below, so the
+    // node stayed at its previous value forever and the predator-audio-bus
+    // e2e specs failed at random on the local QA rig (verified: with the clock
+    // frozen a scheduled ramp reads back 1 indefinitely; a direct .value write
+    // takes effect at once). Nothing is audible while the clock is frozen, so
+    // there is no click to smooth: drop any pending automation and set the
+    // value outright. A running clock -- every real player -- keeps the ramp.
+    if(audioClockStalled(audio.ctx)){
+      g.cancelScheduledValues(0);
+      g.value = predatorVolume;
+      predatorGainAnchor = predatorVolume;
+      pushState({ predatorVolume: predatorVolume * 100 });
+      return;
+    }
     const t = Math.max(audio.ctx.currentTime, predatorGainSchedAt + 0.01);
     g.cancelScheduledValues(t);
     g.setValueAtTime(predatorGainAnchor, t);
