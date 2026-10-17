@@ -679,6 +679,12 @@ let pauseStartedAt = null;
 // (E accepted in pickup()), not when the ~11 s pickup cinematic ends. Holds
 // runSeconds() at that instant (null until then); the timer, the win screen and
 // the leaderboard time all read it, so a record is the time to reach the child.
+// LUL-6012 (review P1 on PR#1104): that frozen value does NOT decide
+// finishPickup()'s rewards -- the survival embers (computeSurvival) and a
+// speedrun secondary's time limit are judged on liveRunSeconds(), the real
+// elapsed time including the cinematic, same as before PR#1104. Freezing the
+// economy too would be a real balance change (every win banks ~11.3s less
+// survival credit) needing founder sign-off this PR never got.
 let runFrozenAt = null;
 // Admin mode (SettingsPanel.tsx -> setAdminMode) and whether it was on at any
 // moment of the current run. A run that ever had it on can't take the top
@@ -8657,7 +8663,12 @@ function stepFrame(dt, t, skipRender){
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this
   // frame so it also holds correctly through the pickup cinematic and the
-  // carry leg, not just while the movement block above is live.
+  // carry leg, not just while the movement block above is live. The survival
+  // term below reads runSeconds(), which stops at the pickup (founder
+  // 2026-10-17) -- this is only the live HUD preview, though: the real
+  // payout computed in finishPickup() uses liveRunSeconds() instead (LUL-6012),
+  // so it does count the cinematic. This preview can under-read the final
+  // survival credit by one unit for a grab timed right at a 20s boundary.
   if(entered){
     const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
     if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
