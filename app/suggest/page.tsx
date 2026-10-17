@@ -1,5 +1,8 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import SuggestionBox from '@/components/SuggestionBox';
+import JsonLd from '@/components/JsonLd';
+import { SOCIAL_OPEN_GRAPH, SOCIAL_TWITTER, breadcrumbJsonLd } from '@/lib/seo';
 
 // LUL-1918: standalone route, not a HUD overlay. This is a deliberate choice
 // against embedding the box in GameMenu.tsx -- a separate page can never
@@ -13,23 +16,33 @@ export const metadata: Metadata = {
   // this page is a duplicate of the homepage.
   alternates: { canonical: '/suggest' },
   openGraph: {
+    ...SOCIAL_OPEN_GRAPH,
     title: 'Suggest something — Lullwood',
     description: 'Send the Lullwood team an idea. The founder reads every suggestion by hand.',
     url: '/suggest',
     type: 'website',
+  },
+  twitter: {
+    ...SOCIAL_TWITTER,
+    title: 'Suggest something — Lullwood',
+    description: 'Send the Lullwood team an idea. The founder reads every suggestion by hand.',
   },
 };
 
 export default function SuggestPage() {
   return (
     <main className="suggest-page">
-      <h1>suggest something</h1>
+      <JsonLd data={breadcrumbJsonLd([{ name: 'Suggest something', path: '/suggest' }])} />
+      <h1>Suggest something</h1>
       <p className="suggest-page__intro">
         Have an idea for Lullwood? Type it below. No login, no forms beyond this
         one box. The founder reads every suggestion by hand, in order, and
         writes up the ones that get built.
       </p>
       <SuggestionBox />
+      {/* The only route with no way back: a visitor landing here from search
+          had to edit the URL to reach the game. */}
+      <p className="suggest-page__back"><Link href="/">Back to the game</Link></p>
     </main>
   );
 }
