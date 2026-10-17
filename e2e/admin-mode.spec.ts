@@ -95,4 +95,37 @@ test.describe('admin mode', () => {
     await expect(page.locator('#pace')).toBeHidden();
     await expect(page.locator('#minimap')).toBeHidden();
   });
+
+  test('toggling off resets pace, mist and sound to their defaults', async ({ page }) => {
+    await boot(page);
+    await enter(page);
+
+    await page.getByTestId('menuToggle').evaluate((el) => (el as HTMLElement).click());
+    await page.locator('#settingsBtn').evaluate((el) => (el as HTMLElement).click());
+    const toggle = page.getByTestId('adminModeToggle');
+    await toggle.evaluate((el) => (el as HTMLInputElement).click());
+    await expect(toggle).toBeChecked();
+
+    // Native value setter + input event, which is what React listens for on a controlled range.
+    const setRange = (selector: string, value: string) =>
+      page.locator(selector).evaluate((el, v) => {
+        const input = el as HTMLInputElement;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, v);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }, value);
+    await setRange('#pace', '10');
+    await setRange('#fog', '0.1');
+    await page.locator('#sound').evaluate((el) => (el as HTMLElement).click());
+    await expect(page.locator('#paceVal')).toHaveText('10');
+    await expect(page.locator('#sound')).toHaveText('Sound: off');
+
+    await toggle.evaluate((el) => (el as HTMLInputElement).click());
+    await expect(toggle).not.toBeChecked();
+
+    // Back on, only to read the panel: every knob is at its default.
+    await toggle.evaluate((el) => (el as HTMLInputElement).click());
+    await expect(page.locator('#pace')).toHaveValue('6');
+    await expect(page.locator('#fog')).toHaveValue('0.04');
+    await expect(page.locator('#sound')).toHaveText('Sound: on');
+  });
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import type { EngineActions, EngineHudState } from './Hud';
+import { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
 import { isMobile } from '@/lib/input-mode';
 import { formatKeyLabel } from '@/lib/ui/key-label';
 import { InfoDialog } from './InfoDialog';
@@ -164,6 +164,13 @@ export default function SettingsPanel({
   }, [adminMode, actions]);
   // Turning admin mode on says so up front, instead of a surprise at the win screen.
   const [adminWarningOpen, setAdminWarningOpen] = useState(false);
+  // Turning admin mode off puts the #panel knobs (pace, mist, sound) back to
+  // their defaults, so a tuned value doesn't carry on hidden into normal play.
+  const resetAdminPanel = () => {
+    actions?.setPace(INITIAL_HUD_STATE.pace);
+    actions?.setFog(INITIAL_HUD_STATE.fog);
+    if (state.soundOn !== INITIAL_HUD_STATE.soundOn) actions?.toggleSound();
+  };
 
   // Persist whenever any of these actually change -- after the apply-on-ready
   // effect above, so a mount with a stored `sensitivity: 1.4` doesn't get
@@ -331,6 +338,7 @@ export default function SettingsPanel({
             onChange={(e) => {
               setAdminMode(e.target.checked);
               if (e.target.checked) setAdminWarningOpen(true);
+              else resetAdminPanel();
             }}
           />
           Admin mode (show pace/mist panel + minimap)
