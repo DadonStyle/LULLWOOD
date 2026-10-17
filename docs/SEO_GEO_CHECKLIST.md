@@ -27,7 +27,7 @@ Google's position is that AI Overviews and AI Mode need no special markup: ordin
 | Helpful 404 (single title, single `noindex`); unknown devlog slug returns a real 404 | #1115 |
 | Sitemap: fixed homepage `lastmod`, screenshot image entries | #1115 |
 | `/how-to-survive` player guide (Article + BreadcrumbList) | #1117 |
-| `/games-like-slender` comparison page | in progress |
+| `/games-like-slender` comparison page (Article + BreadcrumbList) | #1119 |
 | IndexNow submits every sitemap URL (it only sent the homepage) | #1116 |
 | In-game rules say "lift the child", not "carry them home" | #1118 |
 | GitHub repo description (stale "carry them home") and topics | done directly on GitHub |
