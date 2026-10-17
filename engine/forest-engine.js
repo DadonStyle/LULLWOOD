@@ -679,6 +679,9 @@ let pauseStartedAt = null;
 // (E accepted in pickup()), not when the ~11 s pickup cinematic ends. Holds
 // runSeconds() at that instant (null until then); the timer, the win screen and
 // the leaderboard time all read it, so a record is the time to reach the child.
+// That frozen value also decides finishPickup()'s rewards: the survival embers
+// (computeSurvival) and a speedrun secondary's time limit are judged on the time
+// at the grab, by design -- the cinematic is not the player's time.
 let runFrozenAt = null;
 // Admin mode (SettingsPanel.tsx -> setAdminMode) and whether it was on at any
 // moment of the current run. A run that ever had it on can't take the top
@@ -8625,7 +8628,9 @@ function stepFrame(dt, t, skipRender){
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this
   // frame so it also holds correctly through the pickup cinematic and the
-  // carry leg, not just while the movement block above is live.
+  // carry leg, not just while the movement block above is live. The survival
+  // term below reads runSeconds(), which stops at the pickup (founder
+  // 2026-10-17), so it -- like the final payout -- counts no cinematic time.
   if(entered){
     const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
     if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
