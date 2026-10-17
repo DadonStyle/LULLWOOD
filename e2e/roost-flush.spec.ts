@@ -21,6 +21,19 @@ const stepsFor = (seconds: number) => Math.ceil(seconds / FIXED_DT);
 // rather than duplicating the 0.2 multiplier here.
 const ROOST_INDEX = 0;
 
+// LUL-6019: the 10u-from-roost placement below (predatorDz=10, player teleported to
+// z+3) puts the wolf exactly 7u from the player -- inside ROOST_NOISE_RADIUS(14) for
+// the noise channel this file exercises, but also right on the edge of the wolf's own
+// sight range. effectiveDetect() folds in timeOfDayDetectMul(timeOfDay)
+// (lib/game/timeOfDay.ts), and timeOfDay defaults to the real wall-clock hour
+// (engine/forest-engine.js:383) when `?qaHour=` isn't passed -- unpinned, this measured
+// as canSee()===false (effectiveDetect ~5.6u) at night (0.8x) but canSee()===true
+// (~7.0u) at every other hour, so a plain sight-based chase pre-empts the noise-flush
+// assertions below depending only on what hour the suite happens to run at. Same bug
+// class as LUL-5146/e2e/scent.spec.ts; qaHour: 2 keeps canSee() false regardless of
+// real time.
+const QA_HOUR_NIGHT = 2;
+
 /** Scaled (engine-internal) centre of ROOSTS[ROOST_INDEX]. Also repositions the player
  * to throw distance as a side effect -- harmless, every caller re-teleports after. */
 async function roostCenter(page: import('@playwright/test').Page) {
@@ -40,7 +53,7 @@ async function stageAndApproach(page: import('@playwright/test').Page, predatorD
 
 test.describe('roost flush -- player-sprint noise event (LUL-2389 slice b)', () => {
   test('sprinting within ROOST_TRIGGER_RADIUS flushes and sends a nearby predator to the roost, not the player', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaHour: QA_HOUR_NIGHT });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     const { x, z } = await stageAndApproach(page, 10);   // 10u from roost -- inside ROOST_NOISE_RADIUS(14)
@@ -63,7 +76,7 @@ test.describe('roost flush -- player-sprint noise event (LUL-2389 slice b)', () 
   });
 
   test('walking the same radius does not flush', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaHour: QA_HOUR_NIGHT });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await stageAndApproach(page, 10);
@@ -80,7 +93,7 @@ test.describe('roost flush -- player-sprint noise event (LUL-2389 slice b)', () 
   });
 
   test('per-roost cooldown blocks a second flush inside ROOST_COOLDOWN', async ({ page }) => {
-    await boot(page, { qaHooks: true });
+    await boot(page, { qaHooks: true, qaHour: QA_HOUR_NIGHT });
     await enter(page);
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
     await stageAndApproach(page, 10);
