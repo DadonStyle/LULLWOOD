@@ -2,8 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { EngineActions, EngineHudState } from './Hud';
-import { MenuButton, MenuLinkButton } from './MenuButton';
+import { MenuButton } from './MenuButton';
+import { MenuTooltip } from './MenuTooltip';
 import { InfoDialog } from './InfoDialog';
+import SuggestionBox from './SuggestionBox';
+import { CreditsList } from './CreditsList';
+import { MENU_TIPS } from '@/lib/ui/menu-tips';
 import { rescuerRules } from '@/lib/game/rescuerRules';
 import { fullscreenSupported, isFullscreenActive, toggleFullscreen, FULLSCREEN_CHANGE_EVENTS } from '@/lib/game/fullscreen';
 
@@ -44,7 +48,10 @@ export default function GameMenu({
   recordTimeMs?: number | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [rulesOpen, setRulesOpen] = useState(false);
+  // Which top-row popup is open: the rescuer rules, the suggestion box or the
+  // credits. All three use the same InfoDialog, so only one shows at a time.
+  const [popup, setPopup] = useState<'rules' | 'suggest' | 'credits' | null>(null);
+  const closePopup = () => setPopup(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const { supported: fullscreenSupported, isFullscreen, toggle: toggleFullscreen } = useFullscreen();
 
@@ -87,39 +94,60 @@ export default function GameMenu({
   return (
     <div id="gameMenu" ref={menuRef}>
       <div className="menuButtons">
-        <button
-          data-testid="menuToggle"
-          className="menuToggle"
-          onClick={() => setOpen(!open)}
-          aria-label={open ? 'Close menu' : 'Open menu'}
-          aria-expanded={open}
-        >
-          ☰
-        </button>
+        <MenuTooltip id="menuToggle-tooltip" tip={MENU_TIPS.menu} hidden={open}>
+          <button
+            data-testid="menuToggle"
+            className="menuToggle"
+            onClick={() => setOpen(!open)}
+            aria-label={open ? 'Close menu' : 'Open menu'}
+            aria-expanded={open}
+            aria-describedby={open ? undefined : 'menuToggle-tooltip'}
+          >
+            ☰
+          </button>
+        </MenuTooltip>
 
         {fullscreenSupported && (
-          <button
-            data-testid="fullscreenToggle"
-            className={`fullscreenToggle${isFullscreen ? ' active' : ''}`}
-            onClick={toggleFullscreen}
-            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-          >
-            <span className={`fsIcon${isFullscreen ? ' fsIconActive' : ''}`}>⛶</span>
-          </button>
+          <MenuTooltip id="fullscreenToggle-tooltip" tip={isFullscreen ? MENU_TIPS.fullscreenExit : MENU_TIPS.fullscreenEnter}>
+            <button
+              data-testid="fullscreenToggle"
+              className={`fullscreenToggle${isFullscreen ? ' active' : ''}`}
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              aria-describedby="fullscreenToggle-tooltip"
+            >
+              <span className={`fsIcon${isFullscreen ? ' fsIconActive' : ''}`}>⛶</span>
+            </button>
+          </MenuTooltip>
         )}
 
-        <MenuLinkButton testId="menuSuggest" href="/suggest" icon="💬" ariaLabel="Suggest something for Lullwood" />
-        <MenuLinkButton testId="menuCredits" href="/credits" icon="©" ariaLabel="Credits" />
-        <MenuButton testId="menuBeTheRescuer" ariaLabel="Be the rescuer: rules for taking first place" onClick={() => setRulesOpen(true)} wide>
+        <MenuButton testId="menuSuggest" ariaLabel="Suggest something for Lullwood" tip={MENU_TIPS.suggest} onClick={() => setPopup('suggest')}>
+          <span aria-hidden="true">💬</span>
+        </MenuButton>
+        <MenuButton testId="menuCredits" ariaLabel="Credits" tip={MENU_TIPS.credits} onClick={() => setPopup('credits')}>
+          <span aria-hidden="true">©</span>
+        </MenuButton>
+        <MenuButton testId="menuBeTheRescuer" ariaLabel="Be the rescuer: rules for taking first place" tip={MENU_TIPS.rescuer} onClick={() => setPopup('rules')} wide>
           Be the rescuer
         </MenuButton>
       </div>
 
-      <InfoDialog open={rulesOpen} testId="rescuerRules" title="Be the rescuer" onClose={() => setRulesOpen(false)}>
+      <InfoDialog open={popup === 'rules'} testId="rescuerRules" title="Be the rescuer" onClose={closePopup}>
         <p>To take first place and have your name in the sky, your run has to meet every rule:</p>
         <ul>
           {rescuerRules(recordTimeMs).map((rule) => <li key={rule}>{rule}</li>)}
         </ul>
+      </InfoDialog>
+
+      <InfoDialog open={popup === 'suggest'} testId="suggestPopup" title="Suggest something" onClose={closePopup} closeLabel="Close">
+        <p>Have an idea for Lullwood? Type it below. The founder reads every suggestion by hand.</p>
+        <SuggestionBox />
+      </InfoDialog>
+
+      <InfoDialog open={popup === 'credits'} testId="creditsPopup" title="Credits" onClose={closePopup} closeLabel="Close">
+        <div className="credits-popup">
+          <CreditsList />
+        </div>
       </InfoDialog>
 
       {open && (
@@ -219,11 +247,17 @@ export default function GameMenu({
       )}
 
       <style jsx>{`
+        /* z-index 21, one above #gate (20, components/GameCanvas.tsx): the gate
+           is a full-screen click-to-start layer rendered after this menu, so at
+           an equal z-index it covered the whole button row and a real click on
+           ☰/💬/©/"Be the rescuer" on the start screen started the run instead
+           (founder 2026-10-16). Still under #winPendingCue/#flash (22/23) and
+           the end screens (25), where this menu unmounts anyway. */
         #gameMenu {
           position: fixed;
           top: 16px;
           left: 16px;
-          z-index: 20;
+          z-index: 21;
           font-family: inherit;
         }
 

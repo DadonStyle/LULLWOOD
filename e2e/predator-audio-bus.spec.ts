@@ -179,4 +179,18 @@ test.describe('predator audio bus volume (LUL-5829)', () => {
     const gain = await qaHook(page, 'qaProbePredatorVolume');
     expect(gain).toBeCloseTo(0.4, 2);
   });
+  test('with the audio clock frozen, the slider still sets the gain at once (local QA rig flake, founder 2026-10-17)', async ({ page }) => {
+    await boot(page, { qaHooks: true });
+    await enter(page);
+    expect(await qaHook(page, 'qaSuspendAudio')).toBe('suspended');
+
+    await openSettings(page);
+    await setPredatorAudioSlider(page, 0);
+    // No polling: with the clock frozen a scheduled ramp would never run, so the
+    // value must already be there on the very next read.
+    expect(await qaHook(page, 'qaProbePredatorVolume')).toBeCloseTo(0, 2);
+    await setPredatorAudioSlider(page, 65);
+    expect(await qaHook(page, 'qaProbePredatorVolume')).toBeCloseTo(0.65, 2);
+    await closeSettings(page);
+  });
 });

@@ -17,11 +17,12 @@ id lullwood-lb >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /
 # The founder's account (and so the agents, which run as it) can read the hourly snapshot via the group.
 usermod -aG lullwood-lb "$OWNER"
 
-install -d -m 0755 /opt/lullwood-leaderboard/app/services/leaderboard-db /opt/lullwood-leaderboard/app/lib/game /opt/lullwood-leaderboard/app/lib/leaderboard
+install -d -m 0755 /opt/lullwood-leaderboard/app/services/leaderboard-db /opt/lullwood-leaderboard/app/lib/game /opt/lullwood-leaderboard/app/lib/leaderboard /opt/lullwood-leaderboard/app/lib/suggestions
 install -m 0644 "$REPO"/services/leaderboard-db/{db.ts,server.ts,stats.ts} /opt/lullwood-leaderboard/app/services/leaderboard-db/
 install -m 0755 "$REPO"/services/leaderboard-db/new-record-alert /opt/lullwood-leaderboard/app/services/leaderboard-db/
 install -m 0644 "$REPO"/lib/game/leaderboard.ts /opt/lullwood-leaderboard/app/lib/game/
 install -m 0644 "$REPO"/lib/leaderboard/signing.ts /opt/lullwood-leaderboard/app/lib/leaderboard/
+install -m 0644 "$REPO"/lib/suggestions/rules.ts /opt/lullwood-leaderboard/app/lib/suggestions/
 printf '{ "type": "module" }\n' > /opt/lullwood-leaderboard/app/package.json
 
 install -d -m 0750 -o root -g lullwood-lb /etc/lullwood-leaderboard

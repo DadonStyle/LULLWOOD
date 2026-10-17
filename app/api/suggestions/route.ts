@@ -1,212 +1,39 @@
-import { put, get } from '@vercel/blob';
 import { getClientIp, hashIp, usableSalt } from '../../../lib/request-identity.ts';
+import { serviceConfig, callService } from '../../../lib/leaderboard/remote.ts';
+import { SUGGESTION_TEXT_PATTERN } from '../../../lib/suggestions/rules.ts';
 
 // LUL-1918/LUL-2963/LUL-2993: POST /api/suggestions -- player suggestion
 // intake for the suggestion box (parent LUL-1917). Re-validates the UI's
-// lowercase-a-z-and-space restriction server-side, independently, byte for
-// byte -- duplication with components/SuggestionBox.tsx is intentional
-// (LUL-1917 guard 2).
+// lowercase-a-z-and-space restriction server-side, independently --
+// duplication with components/SuggestionBox.tsx is intentional (LUL-1917
+// guard 2).
 //
 // Uses web-standard Request/Response (no next/server import), same reasoning
-// as app/api/telemetry/route.ts: directly testable with node --test, no
-// Next.js runtime mocking required.
+// as app/api/telemetry/route.ts: directly testable with node --test.
 //
-// Security posture (see PR body for the full note):
+// Security posture:
 // - Text is DATA only, restricted to `^[a-z ]{3,300}$` -- lowercase English
-//   letters and spaces, no digits, no punctuation, no other scripts. It is
-//   fenced as "untrusted player text" wherever it is persisted and is never
-//   placed anywhere it could be read as an instruction.
-// - IP addresses are never stored raw -- only a salted SHA-256 hash, used
-//   both for rate-limit bucketing and as an audit trail on the stored record.
+//   letters and spaces, no digits, no punctuation, no other scripts.
+// - IP addresses are never stored raw -- only a salted SHA-256 hash, used for
+//   rate limiting and as an audit trail on the stored row.
+// - LUL-3288 A1: the client IP comes from `x-vercel-forwarded-for`, else the
+//   LAST `x-forwarded-for` hop -- never the client-controlled first one
+//   (lib/request-identity.ts).
+// - LUL-3288 A2: never hash with an empty salt; a missing
+//   SUGGESTIONS_IP_HASH_SALT fails closed with a 503.
 //
-// LUL-3288 (founder security review, 2026-09-18): three defects fixed here,
-// confirmed live and inherited by nothing yet (the leaderboard write path
-// this route's guards were slated to seed does not exist in the repo as of
-// this fix):
-// - A1: `getClientIp` used to trust the client-supplied FIRST hop of
-//   `x-forwarded-for`, which a client can set to anything and rotate per
-//   request -- a complete, curl-only bypass of the cooldown/rate limit. Now
-//   uses Vercel's platform-appended `x-vercel-forwarded-for`, falling back
-//   to the LAST `x-forwarded-for` hop (the one appended by the nearest
-//   trusted proxy, not the client-controlled first one).
-// - A2: `hashIp` used to default the salt to `''` when
-//   `SUGGESTIONS_IP_HASH_SALT` was unset, making every stored "hash" a
-//   plain `sha256(ip)` -- reversible via a precomputed IPv4 rainbow table in
-//   minutes. The route now fails closed (503, loud `console.error`) instead
-//   of ever hashing with an empty salt.
-// - A3: the cooldown/per-IP/global counters used to be plain in-process
-//   `Map`s -- reset on every cold start, and each concurrent Lambda instance
-//   kept its own, so the effective limit was "per instance, until it
-//   recycles". They now live in the same Blob store the suggestions
-//   themselves are written to, under a `suggestions/_ratelimit/` prefix, so
-//   the limits are shared across instances and survive cold starts. This is
-//   still best-effort (a plain read-then-write, no compare-and-swap --
-//   concurrent requests can race and both see themselves as "first"), which
-//   is an acceptable tradeoff for a low-traffic suggestion form; it is NOT
-//   an acceptable pattern to copy forward for the leaderboard's
-//   record-write path, which needs real atomicity (see the leaderboard
-//   threat-model doc this ticket also produced).
-// LUL-2993 (founder review, 2026-09-17): LUL-2963's local-disk storage
-// (`/mnt/hdd/lullwood-suggestions`) never persisted a single suggestion in
-// production -- the Vercel serverless runtime for www.lullwoodgame.com gets a
-// fresh, isolated, non-persistent filesystem per invocation with no route to
-// any physical disk on this box, so every write failed and every submit
-// degraded to a silent 503. This route now writes to the same Vercel Blob
-// store app/api/telemetry/route.ts already uses (BLOB_READ_WRITE_TOKEN is
-// live there), under a `suggestions/` prefix instead of `events/`. Unlike
-// telemetry's degrade-to-204-on-missing-token contract (acceptable there --
-// analytics loss is not urgent), a missing token or a failed `put()` here is
-// treated as an incident: logged loudly with `console.error` so it surfaces
-// in Vercel's function logs, not merely `console.warn`'d once and forgotten.
+// Storage (founder 2026-10-16): suggestions used to be one Vercel Blob object
+// each, with the cooldown and rate-limit counters as more Blob objects, and the
+// store ran out of its Hobby-plan operations. They now live in the SQLite
+// service on the founder's server (services/leaderboard-db/, same signed
+// Tailscale Funnel hop as the leaderboard: LEADERBOARD_API_URL/_SECRET). The
+// service checks the 10 s cooldown, 5/IP/hour and 200/day limits and stores
+// the row in one transaction, so the limits are now exact instead of the old
+// best-effort read-then-write. An unreachable service is an incident, not a
+// silent success: logged loudly, 503 to the player.
 
-const TEXT_PATTERN = /^[a-z ]{3,300}$/;
 const MAX_BODY_BYTES = 2048;
-
-// Abuse guards: state lives in the Blob store (see A3 note above) so it is
-// shared across Lambda instances and survives cold starts.
-const DEFAULT_COOLDOWN_MS = 10 * 1000; // founder direction 2026-09-16: 1 suggestion per 10s per IP
-
-function cooldownMs(): number {
-  // Overridable only so route.test.ts can run many same-IP requests back to
-  // back without a real 10s sleep per test; production always gets the
-  // 10s default, no env var is set for it anywhere else.
-  const override = Number(process.env.SUGGESTIONS_COOLDOWN_MS_TEST_OVERRIDE);
-  return Number.isFinite(override) && override >= 0 ? override : DEFAULT_COOLDOWN_MS;
-}
-
-const IP_LIMIT = 5;
-const IP_WINDOW_MS = 60 * 60 * 1000; // 1 hour
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-const GLOBAL_LIMIT = 200;
-
-const RATE_LIMIT_PREFIX = 'suggestions/_ratelimit';
-
-interface RateWindow {
-  count: number;
-  resetAt: number;
-}
-
-interface CooldownRecord {
-  lastSubmitAt: number;
-}
-
-/** Reads one rate-limit record back. Never throws -- a missing object, a
- * missing token, or a transient Blob error all just mean "no record yet",
- * which fails a single request open. That is the same best-effort tradeoff
- * the old in-memory Maps made on every cold start, just rarer now. */
-async function readRateRecord<T>(path: string): Promise<T | null> {
-  try {
-    const result = await get(path, { access: 'private' });
-    if (!result || !result.stream) return null;
-    return (await new Response(result.stream).json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-async function writeRateRecord(path: string, data: RateWindow | CooldownRecord): Promise<void> {
-  try {
-    await put(path, JSON.stringify(data), {
-      access: 'private',
-      contentType: 'application/json',
-      addRandomSuffix: false,
-      allowOverwrite: true,
-    });
-  } catch (err) {
-    console.error('[suggestions] rate-limit state write failed -- this request fails open', err);
-  }
-}
-
-/** Returns null (never `''`) if the salt is unset or empty -- the caller
- * must fail closed rather than hash with an empty salt (A2). */
-function getIpHashSalt(): string | null {
-  return usableSalt(process.env.SUGGESTIONS_IP_HASH_SALT);
-}
-
-async function isInCooldown(ipHash: string): Promise<boolean> {
-  const path = `${RATE_LIMIT_PREFIX}/cooldown/${ipHash}.json`;
-  const now = Date.now();
-  const record = await readRateRecord<CooldownRecord>(path);
-  if (record && now - record.lastSubmitAt < cooldownMs()) {
-    return true;
-  }
-  await writeRateRecord(path, { lastSubmitAt: now });
-  return false;
-}
-
-async function isIpRateLimited(ipHash: string): Promise<boolean> {
-  const path = `${RATE_LIMIT_PREFIX}/ipcount/${ipHash}.json`;
-  const now = Date.now();
-  const record = await readRateRecord<RateWindow>(path);
-  if (!record || now >= record.resetAt) {
-    await writeRateRecord(path, { count: 1, resetAt: now + IP_WINDOW_MS });
-    return false;
-  }
-  const count = record.count + 1;
-  await writeRateRecord(path, { count, resetAt: record.resetAt });
-  return count > IP_LIMIT;
-}
-
-async function isGlobalRateLimited(): Promise<boolean> {
-  const path = `${RATE_LIMIT_PREFIX}/global.json`;
-  const now = Date.now();
-  const record = await readRateRecord<RateWindow>(path);
-  const stale = !record || now >= record.resetAt;
-  const count = stale ? 1 : record.count + 1;
-  const resetAt = stale ? now + DAY_MS : record.resetAt;
-  await writeRateRecord(path, { count, resetAt });
-  return count > GLOBAL_LIMIT;
-}
-
-// Blob path: suggestions/{yyyy}/{mm}/{dd}/{uuid}.json -- same date-prefix
-// layout as app/api/telemetry/route.ts (see lib/dashboard/blob-source.ts for
-// why: Blob has no query engine, so a reader lists date folders and fetches
-// each object).
-function blobPath(now: Date): string {
-  const yyyy = now.getUTCFullYear();
-  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(now.getUTCDate()).padStart(2, '0');
-  const uuid =
-    typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return `suggestions/${yyyy}/${mm}/${dd}/${uuid}.json`;
-}
-
-/**
- * Writes one suggestion to the Blob store. Assumes the caller already
- * checked `BLOB_READ_WRITE_TOKEN` is set. Returns false (never throws) on a
- * failed `put()`, logged loudly with `console.error` on every occurrence
- * (not throttled the way the telemetry route throttles its warning) because
- * a dropped suggestion is the kind of silent data loss LUL-2993 was filed
- * over; the caller degrades to 503.
- */
-async function writeSuggestion(text: string, ipHash: string): Promise<boolean> {
-  const now = new Date();
-  const record = {
-    submitted_at: now.toISOString(),
-    ip_hash: ipHash,
-    text,
-  };
-
-  try {
-    // access: 'private' (not telemetry's 'public') -- deliberate, per LUL-2993
-    // founder review: telemetry's public blobs are anonymous event counters,
-    // but a suggestion is free-form human text a player typed, so its URL
-    // must not be guessable/fetchable by anyone holding it. Reading a
-    // private blob back (lib/suggestions/blob-source.ts) requires the same
-    // BLOB_READ_WRITE_TOKEN this write already needs.
-    await put(blobPath(now), JSON.stringify(record), {
-      access: 'private',
-      contentType: 'application/json',
-    });
-    return true;
-  } catch (err) {
-    console.error('[suggestions] CRITICAL: Blob store write failed -- suggestion intake is degraded', err);
-    return false;
-  }
-}
+const UNAVAILABLE = { error: 'suggestion intake unavailable' };
 
 export async function POST(req: Request): Promise<Response> {
   const contentLength = Number(req.headers.get('content-length') ?? '0');
@@ -237,41 +64,31 @@ export async function POST(req: Request): Promise<Response> {
     return new Response(null, { status: 204 });
   }
 
-  if (typeof text !== 'string' || !TEXT_PATTERN.test(text)) {
+  if (typeof text !== 'string' || !SUGGESTION_TEXT_PATTERN.test(text)) {
     return Response.json({ error: 'text must match ^[a-z ]{3,300}$' }, { status: 400 });
   }
 
-  // Both checks below are service-configuration gates, not per-request
-  // quota -- fail fast before spending a Blob round-trip on rate-limit
-  // state that can never lead anywhere but a 503 anyway.
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.error('[suggestions] CRITICAL: BLOB_READ_WRITE_TOKEN is not set -- suggestion intake is completely down');
-    return Response.json({ error: 'suggestion intake unavailable' }, { status: 503 });
-  }
-
-  const salt = getIpHashSalt();
+  // Service-configuration gates, checked after the text so a bad request
+  // still gets its 400.
+  const salt = usableSalt(process.env.SUGGESTIONS_IP_HASH_SALT);
   if (!salt) {
-    // A2: never hash with an empty/missing salt -- that turns the "hash"
-    // into a reversible sha256(ip), precomputable across the whole IPv4
-    // space in minutes.
     console.error('[suggestions] CRITICAL: SUGGESTIONS_IP_HASH_SALT is not set -- refusing to hash IPs with an empty salt');
-    return Response.json({ error: 'suggestion intake unavailable' }, { status: 503 });
+    return Response.json(UNAVAILABLE, { status: 503 });
+  }
+  const config = serviceConfig();
+  if (!config) {
+    console.error('[suggestions] CRITICAL: LEADERBOARD_API_URL or LEADERBOARD_API_SECRET is not set -- suggestion intake is down');
+    return Response.json(UNAVAILABLE, { status: 503 });
   }
 
-  const ipHash = hashIp(getClientIp(req), salt);
-
-  if (await isInCooldown(ipHash)) {
-    return Response.json({ error: 'please wait a few seconds before sending another suggestion' }, { status: 429 });
+  const result = await callService(config, 'POST', '/v1/suggestions', { text, ip_hash: hashIp(getClientIp(req), salt) });
+  if (result?.status === 201) return new Response(null, { status: 204 });
+  if (result?.status === 429) {
+    const reason = (result.body as { error?: unknown } | null)?.error;
+    return reason === 'cooldown'
+      ? Response.json({ error: 'please wait a few seconds before sending another suggestion' }, { status: 429 })
+      : Response.json({ error: 'rate limited' }, { status: 429 });
   }
-
-  if ((await isIpRateLimited(ipHash)) || (await isGlobalRateLimited())) {
-    return Response.json({ error: 'rate limited' }, { status: 429 });
-  }
-
-  const created = await writeSuggestion(text, ipHash);
-  if (!created) {
-    return Response.json({ error: 'suggestion intake unavailable' }, { status: 503 });
-  }
-
-  return new Response(null, { status: 204 });
+  console.error('[suggestions] CRITICAL: the suggestion service did not store the suggestion', result?.status ?? 'unreachable');
+  return Response.json(UNAVAILABLE, { status: 503 });
 }

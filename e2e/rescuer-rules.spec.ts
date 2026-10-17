@@ -27,8 +27,6 @@ test.describe('menu buttons, rescuer rules and admin mode', () => {
     const row = page.locator('#gameMenu .menuButtons');
     for (const id of ['menuSuggest', 'menuCredits', 'menuBeTheRescuer']) await expect(row.getByTestId(id)).toBeVisible();
     await expect(row.getByTestId('menuBeTheRescuer')).toHaveText('Be the rescuer');
-    const [popup] = await Promise.all([page.waitForEvent('popup'), click(page.getByTestId('menuCredits'))]);
-    await expect(popup).toHaveURL(/\/credits$/);
   });
 
   test('Be the rescuer opens the rules popup, naming the time to beat; Esc and the button close it', async ({ page }) => {

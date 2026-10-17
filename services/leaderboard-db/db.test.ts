@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LeaderboardDb, MAX_EVENTS_PER_DAY, EVENT_RETENTION_DAYS, type SubmitInput } from './db.ts';
 import { COOLDOWN_MS, IP_LIMIT, GLOBAL_LIMIT } from '../../lib/game/leaderboard.ts';
+import { SUGGESTION_COOLDOWN_MS, SUGGESTION_IP_LIMIT, SUGGESTION_IP_WINDOW_MS, SUGGESTION_GLOBAL_LIMIT } from '../../lib/suggestions/rules.ts';
 
 const T0 = 1_790_000_000_000;
 let ipSeq = 0;
@@ -158,4 +159,29 @@ test('snapshot writes a consistent, independently openable copy', () => withDb((
   db.snapshot(snap); // overwriting an existing snapshot works too
   const copy = new LeaderboardDb(snap);
   try { assert.equal(copy.current()?.nickname, 'snapme'); } finally { copy.close(); }
+}));
+
+test('suggestions: 10 s cooldown, 5 per IP per hour, 200 a day overall; stored oldest first', () => withDb((db) => {
+  const a = ip();
+  assert.deepEqual(db.submitSuggestion('first idea', a, T0), { ok: true, id: 1 });
+  assert.deepEqual(db.submitSuggestion('too soon', a, T0 + SUGGESTION_COOLDOWN_MS - 1), { ok: false, reason: 'cooldown' });
+  for (let i = 1; i < SUGGESTION_IP_LIMIT; i++) assert.equal(db.submitSuggestion('more', a, T0 + i * SUGGESTION_COOLDOWN_MS).ok, true);
+  assert.deepEqual(db.submitSuggestion('one too many', a, T0 + SUGGESTION_IP_LIMIT * SUGGESTION_COOLDOWN_MS), { ok: false, reason: 'ip-limit' });
+  assert.equal(db.submitSuggestion('next hour', a, T0 + SUGGESTION_IP_WINDOW_MS + 1).ok, true);
+  const list = db.listSuggestions();
+  assert.equal(list[0].text, 'first idea');
+  assert.equal(list[0].submitted_at, new Date(T0).toISOString());
+  assert.equal(list.length, SUGGESTION_IP_LIMIT + 1);
+}));
+
+test('suggestions: the global daily cap stops everyone once reached', () => withDb((db) => {
+  for (let i = 0; i < SUGGESTION_GLOBAL_LIMIT; i++) assert.equal(db.submitSuggestion('idea', ip(), T0 + i).ok, true);
+  assert.deepEqual(db.submitSuggestion('late', ip(), T0 + SUGGESTION_GLOBAL_LIMIT), { ok: false, reason: 'global-limit' });
+}));
+
+test('eventsBetween returns stored payloads in the received_at window, oldest first', () => withDb((db) => {
+  const ev = (event: string, at: number) => db.recordEvent({ event, eventTs: at, anonId: null, buildSha: null, path: '/', deviceClass: null, browser: null, country: null, payload: { event, ts: at } }, at);
+  ev('page_view', T0); ev('game_start', T0 + 10); ev('win', T0 + 20);
+  assert.deepEqual(db.eventsBetween(T0 + 5, T0 + 20).map((e) => e.event), ['game_start', 'win']);
+  assert.deepEqual(db.eventsBetween(T0 + 30, T0 + 40), []);
 }));

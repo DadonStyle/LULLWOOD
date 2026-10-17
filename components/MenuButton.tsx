@@ -1,26 +1,32 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { MenuTooltip, type MenuTip } from './MenuTooltip';
 
 // One square (or, with `wide`, text) button in GameMenu's top-left
 // `.menuButtons` row, next to the hamburger and fullscreen toggles. LUL-5983
 // introduced the first standalone one (suggestion box); Credits and "Be the
-// rescuer" reuse it instead of copying its styles.
+// rescuer" reuse it instead of copying its styles. Every one carries a
+// MenuTooltip (what it is, plus a call to action).
 export function MenuButton({
   testId,
   ariaLabel,
   onClick,
+  tip,
   wide = false,
   children,
 }: {
   testId: string;
   ariaLabel: string;
   onClick: () => void;
+  tip: MenuTip;
   wide?: boolean;
   children: ReactNode;
 }) {
+  const tipId = `${testId}-tooltip`;
   return (
-    <button data-testid={testId} className={`menuButton${wide ? ' menuButtonWide' : ''}`} onClick={onClick} aria-label={ariaLabel}>
+    <MenuTooltip id={tipId} tip={tip}>
+    <button data-testid={testId} className={`menuButton${wide ? ' menuButtonWide' : ''}`} onClick={onClick} aria-label={ariaLabel} aria-describedby={tipId}>
       {children}
       <style jsx>{`
         .menuButton {
@@ -53,16 +59,6 @@ export function MenuButton({
         }
       `}</style>
     </button>
-  );
-}
-
-/** A MenuButton that opens a site page in a new tab -- so a player who has
- * entered a run doesn't lose it by clicking through (LUL-5983). Only the URL,
- * icon and label differ between uses (/suggest, /credits). */
-export function MenuLinkButton({ testId, href, icon, ariaLabel }: { testId: string; href: string; icon: ReactNode; ariaLabel: string }) {
-  return (
-    <MenuButton testId={testId} ariaLabel={ariaLabel} onClick={() => window.open(href, '_blank', 'noopener,noreferrer')}>
-      <span aria-hidden="true">{icon}</span>
-    </MenuButton>
+    </MenuTooltip>
   );
 }
