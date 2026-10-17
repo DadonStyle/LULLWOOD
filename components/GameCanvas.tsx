@@ -696,7 +696,7 @@ const OVERLAY_STYLE = `
        same way #hint is. */
     #hintCaption[data-hint-key="deepwater"] { display: none !important; }
     /* LUL-5246: .actionPromptLine renders ~31px (plain text) to ~44px (rows with a
-       .actionPromptKey chip) regardless of breakpoint (no font-size/padding override exists
+       keycap chip -- only the tappable .actionPromptKeyTap one since 2026-10-17) regardless of breakpoint (no font-size/padding override exists
        for this class) but --action-slot-row above shrinks the track to 11.91px, so any two
        adjacent populated rows overlap by ~16-29px. Uniform row-height growth to fix this
        generally is mathematically infeasible in the remaining --action-slot-bottom budget
@@ -962,21 +962,19 @@ const OVERLAY_STYLE = `
   .actionPromptRow[data-tone="status"] .actionPromptLine { color: var(--action-pill-color-status); border-color: var(--action-pill-border-status); }
   /* LUL-5004: Scent Veil's refusal path -- visible, not hidden (Q5), just grayed. */
   .actionPromptRow[data-tone="disabled"] .actionPromptLine { color: var(--action-pill-color-disabled); border-color: var(--action-pill-border-disabled); }
-  .actionPromptRow[data-tone="disabled"] .actionPromptKey {
-    color: var(--action-pill-key-color-disabled); background: var(--action-pill-key-bg-disabled); box-shadow: none; }
-  .actionPromptKey { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600; letter-spacing: 0.08em;
+  /* Founder 2026-10-17: the key is plain bold text inside the hint ("Press H to
+     hide in the bramble"), no chip and no blinking. It takes the row's colour;
+     an urgent row's key turns a steady red. The one exception is a row the
+     player taps (mobile charge-dodge JUMP, ActionPrompt's onPointerDown): it
+     keeps a static chip, since that chip is the tap target's only affordance. */
+  .actionPromptKey { font-weight: 700; letter-spacing: 0.08em; padding: 0 2px; color: inherit; }
+  .actionPromptRow[data-tone="urgent"] .actionPromptKey { color: var(--action-pill-urgent-bg); }
+  .actionPromptKey.actionPromptKeyTap { padding: 5px 14px; border-radius: 8px; font-size: 15px; font-weight: 600;
     color: var(--action-pill-key-color); background: var(--action-pill-key-bg); box-shadow: var(--action-pill-key-shadow); }
-  /* LUL-1780: tone="urgent" is the one flashing state -- background/box-shadow
-     only, never transform, so the row's own translateX(-50%)-free flex layout
-     is never at risk of the chargePulse-on-transform bug (decisions/
-     lul1089-prompt-surface). This also now covers the charge-dodge keycap,
-     which used to run its own always-on amber scale-pulse (chargePulse) --
-     unified onto the same red flash as every other urgent row so the whole
-     component family satisfies "opacity only, no scale/bounce" below. */
-  .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: urgentFlash 0.42s ease-in-out infinite alternate; }
-  @keyframes urgentFlash {
-    from { background: var(--action-pill-key-bg); box-shadow: var(--action-pill-key-shadow); }
-    to   { background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); } }
+  .actionPromptRow[data-tone="urgent"] .actionPromptKey.actionPromptKeyTap {
+    color: var(--action-pill-key-color); background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); }
+  .actionPromptRow[data-tone="disabled"] .actionPromptKey.actionPromptKeyTap {
+    color: var(--action-pill-key-color-disabled); background: var(--action-pill-key-bg-disabled); box-shadow: none; }
   /* LUL-2312 rule 4: transitions are opacity-only, 120-180ms, nothing pops --
      a row's pill fades in on mount; there is deliberately no exit transition,
      matching every one of these prompts' existing (zero-transition) hide
@@ -984,7 +982,6 @@ const OVERLAY_STYLE = `
   @keyframes actionPromptFadeIn { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) {
     .actionPromptLine { animation: none; }
-    .actionPromptRow[data-tone="urgent"] .actionPromptKey { animation: none; background: var(--action-pill-urgent-bg); box-shadow: var(--action-pill-urgent-shadow); }
     /* LUL-3009: Hud.tsx already skips the class under reducedMotion -- this is the same
        belt-and-suspenders fallback #actionPromptLine gets above, not the primary gate. */
     #windIndicator.windIndicatorActive { animation: none; }

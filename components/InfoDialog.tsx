@@ -27,9 +27,20 @@ export function InfoDialog({
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
+  // Deliberately keyed on `open` alone, not `onClose`: callers like GameMenu
+  // pass an inline `() => setPopup(null)` that gets a new identity on every
+  // re-render, and this component re-renders every frame while a run is live
+  // (HUD state -- veilCharge/staminaCharge -- changes most ticks). Keying
+  // this effect on `onClose` reran focus() on every one of those frames,
+  // continuously stealing focus back to the Close button and dropping
+  // keystrokes out of the suggestion box textarea (LUL-6015).
   useEffect(() => {
     if (!open) return;
     closeRef.current?.focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         // Esc also means "pause/menu" to the engine; this dialog consumes it.

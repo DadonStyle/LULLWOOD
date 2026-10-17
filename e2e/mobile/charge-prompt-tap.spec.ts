@@ -35,6 +35,8 @@ test('tapping the #chargePrompt pill itself starts a jump, same as the Jump butt
   // shared .actionPromptKey class (components/ActionPrompt.tsx), scoped to
   // this row since every row's keycap uses the same class.
   await expect(chargePrompt.locator('.actionPromptKey')).toHaveText('JUMP');
+  // The tappable row keeps its chip (the tap target's affordance), founder 2026-10-17.
+  await expect(chargePrompt.locator('.actionPromptKey')).toHaveClass(/actionPromptKeyTap/);
 
   const before = await page.evaluate(() => window.ForestEngine?.qaPlayerState?.());
   expect(before?.jumping).toBe(false);

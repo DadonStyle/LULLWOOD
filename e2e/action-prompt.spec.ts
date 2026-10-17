@@ -73,12 +73,19 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
     const text = await prompt.textContent();
     // Should contain the desktop calm bramble string -- bramble is the only
     // hide-eligible cover kind since LUL-2311, so `kind` can only be 'bramble'.
-    const noun = 'bush';
-    // Desktop calm: "Press  H  to hide in the bush"
+    // LUL-5684: the prompt names the real cover kind (bramble), not a fixed "bush".
+    const noun = 'bramble';
+    // Desktop calm: "Press  H  to hide in the bramble"
     expect(text, 'Calm prompt must name the noun and contain key H').toMatch(new RegExp(`H.*to hide in the ${noun}|to hide in the ${noun}`));
 
     // #actionPrompt must NOT carry tone="urgent" at this point (no chasing predator)
     await expect(prompt).not.toHaveAttribute('data-tone', 'urgent');
+
+    // Founder 2026-10-17: the key is plain text inside the hint -- no chip.
+    const key = prompt.locator('.actionPromptKey');
+    await expect(key).toHaveText('H');
+    expect(await key.evaluate((el) => getComputedStyle(el).backgroundColor), 'no chip background').toBe('rgba(0, 0, 0, 0)');
+    expect(await key.evaluate((el) => getComputedStyle(el).boxShadow), 'no chip glow').toBe('none');
 
     expectNoConsoleErrors(errs);
   });
@@ -153,6 +160,11 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
 
     await expectRowVisible(page, 'actionPrompt');
     await expect(page.locator('#actionPrompt')).toHaveAttribute('data-tone', 'urgent');
+    // Founder 2026-10-17: urgent no longer blinks -- the key is steady red text, no chip.
+    const urgentKey = page.locator('#actionPrompt .actionPromptKey');
+    expect(await urgentKey.evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
+    expect(await urgentKey.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+    expect(await urgentKey.evaluate((el) => getComputedStyle(el).color)).toBe('rgb(232, 85, 74)');
 
     expectNoConsoleErrors(errs);
   });
@@ -318,7 +330,7 @@ test.describe('#actionSlot — hide and veil contextual prompt row', () => {
       if (!el) return null;
       return window.getComputedStyle(el).animationName;
     });
-    expect(animName, 'urgentFlash animation must be suppressed under reduced motion').toBe('none');
+    expect(animName, 'the urgent key must not animate under reduced motion').toBe('none');
 
     expectNoConsoleErrors(errs);
   });

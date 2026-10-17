@@ -669,6 +669,20 @@ let runElapsed = 0, timeOfRun = 0;
 // Top-right run timer (Hud.tsx #runTimer): last m:ss pushed, so the HUD only
 // re-renders when the shown value changes.
 let lastRunClockLabel = '';
+// Founder 2026-10-17: pausing stops the run clock. clock.elapsedTime at the
+// moment of the current pause (null when not paused mid-run); setPaused(false)
+// slides enteredAt forward by the paused span, so every "time since enter"
+// below -- the top-right timer, the leaderboard time, mission limits, survival
+// embers -- leaves the pause out and the timer still equals the stored time.
+let pauseStartedAt = null;
+// Founder 2026-10-17: the run's time stops the moment the child is picked up
+// (E accepted in pickup()), not when the ~11 s pickup cinematic ends. Holds
+// runSeconds() at that instant (null until then); the timer, the win screen and
+// the leaderboard time all read it, so a record is the time to reach the child.
+// That frozen value also decides finishPickup()'s rewards: the survival embers
+// (computeSurvival) and a speedrun secondary's time limit are judged on the time
+// at the grab, by design -- the cinematic is not the player's time.
+let runFrozenAt = null;
 // Admin mode (SettingsPanel.tsx -> setAdminMode) and whether it was on at any
 // moment of the current run. A run that ever had it on can't take the top
 // rescuer spot (LeaderboardSubmitForm reads adminUsedThisRun at the win screen).
@@ -3815,7 +3829,7 @@ let throwableGrabCount = 0;   // LUL-2307: bumped by grabThrowable() -- dismiss-
 // DOM/Three.js) turns it into display lines; this file only appends codes.
 let chronicle = [];
 function logChronicle(code, args){
-  chronicle.push({ t: Math.max(0, clock.elapsedTime - enteredAt), code, args: args || null });
+  chronicle.push({ t: runSeconds(), code, args: args || null });
   if(chronicle.length > 40) chronicle.shift();   // hard cap -- formatChronicle() also caps what it renders
 }
 // LUL-1194: the death cutscene is full-length and unskippable exactly once --
@@ -4914,8 +4928,15 @@ const pausePrompt = document.getElementById('pausePrompt');
 // (#panel: pace/fog/sound/regen/fullscreen) is what stays reachable while
 // paused. There is no separate modal settings surface today (LUL-70, still
 // backlog); if one ships later, move this call site to its open handler.
+/** Seconds of this run so far, pauses excluded (frozen while paused). */
+function runSeconds(){
+  if(runFrozenAt !== null) return runFrozenAt;
+  return Math.max(0, (pauseStartedAt !== null ? pauseStartedAt : clock.elapsedTime) - enteredAt);
+}
 function setPaused(p){
   if(p && !paused) track({ event: 'feature_engagement', feature: 'options_menu', action: 'opened' });
+  if(p && !paused && entered && pauseStartedAt === null) pauseStartedAt = clock.elapsedTime;
+  if(!p && pauseStartedAt !== null){ enteredAt += clock.elapsedTime - pauseStartedAt; pauseStartedAt = null; }
   paused = p; pausePrompt.style.display = p ? 'flex' : 'none';
 }
 function enter(){
@@ -4925,6 +4946,8 @@ function enter(){
   // 'landmark' hint (HINT_PRIORITY above), so it only actually shows once ever,
   // via the generic per-frame hint evaluation in stepFrame(), not from here.
   enteredAt = clock.elapsedTime;
+  pauseStartedAt = null;   // a pause before this run started doesn't shift it
+  runFrozenAt = null;
   runElapsed = 0;
   lastRunClockLabel = '';
   adminUsedThisRun = adminModeOn;   // fresh run: tainted only if admin mode is on right now
@@ -5127,7 +5150,7 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // Top-right run timer + rescuer eligibility: the m:ss last pushed to #runTimer
   // and whether admin mode was on at any point of the current run.
   window.ForestEngine.qaProbeRunClock = function(){
-    return { label: lastRunClockLabel, seconds: entered ? Math.max(0, clock.elapsedTime - enteredAt) : 0, adminUsedThisRun };
+    return { label: lastRunClockLabel, seconds: entered ? runSeconds() : 0, adminUsedThisRun };
   };
 
   // LUL-2205: reads back the live day/night pacing values in one call so a
@@ -7263,6 +7286,8 @@ function pickup(){
   // for why the timing matters (Fog Tide's window is 20s, the cinematic is ~11.3s).
   if(mission && canCompleteSlackWater(mission, fogTideActive)) mission = completeMission(mission);
   baby.taken = next.babyTaken; pickingUp = next.pickingUp;
+  runFrozenAt = runSeconds();   // the child is saved: the run's time stops here
+  pushState({ runClockSeconds: runFrozenAt });
   pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found
   pushState({ objectiveVisible: false, statusVisible: false });
@@ -7377,7 +7402,7 @@ function finishPickup(){
   // reveal is polled against boomStart in tick() instead, so it fires exactly
   // when the burst itself retires (undilated mirror of revealLoss()'s
   // CUT_END poll on the death path).
-  const survivedSeconds = Math.max(0, clock.elapsedTime - enteredAt);
+  const survivedSeconds = runSeconds();
   // LUL-303: updatePredators() (the only other place that clears the charge
   // HUD) stops running once `playing` goes false here, so a charge/telegraph
   // in flight at the exact moment of arrival would otherwise render on top
@@ -8323,10 +8348,11 @@ function stepFrame(dt, t, skipRender){
 
   if(playing) runElapsed += dt;
   // Top-right run timer: the exact clock win()/triggerDeath() turn into
-  // survivedSeconds (clock.elapsedTime - enteredAt, pauses included), pushed
-  // only when the shown m:ss changes, and frozen once the run is over.
+  // survivedSeconds (runSeconds(), pauses excluded), pushed only when the
+  // shown m:ss changes, and frozen while paused, from the moment the child is
+  // picked up, and once the run is over.
   if(entered && !won && !dead){
-    const runClockSeconds = Math.max(0, clock.elapsedTime - enteredAt);
+    const runClockSeconds = runSeconds();
     const runClockLabel = formatRunTime(runClockSeconds);
     if(runClockLabel !== lastRunClockLabel){ lastRunClockLabel = runClockLabel; pushState({ runClockSeconds }); }
   }
@@ -8602,12 +8628,14 @@ function stepFrame(dt, t, skipRender){
   // LUL-1043: Embers' `depth` term -- displacement from home, not path length
   // (that's `dist` above). Tracked every tick regardless of movement this
   // frame so it also holds correctly through the pickup cinematic and the
-  // carry leg, not just while the movement block above is live.
+  // carry leg, not just while the movement block above is live. The survival
+  // term below reads runSeconds(), which stops at the pickup (founder
+  // 2026-10-17), so it -- like the final payout -- counts no cinematic time.
   if(entered){
     const distFromHome = Math.hypot(player.x - CONFIG.home.x, player.z - CONFIG.home.z);
     if(distFromHome > maxDistFromHome) maxDistFromHome = distFromHome;
     if(!won && !dead){
-      pushState({ livePileEmbers: computeDepth(maxDistFromHome) + computeSurvival(clock.elapsedTime - enteredAt) - embersSpent });
+      pushState({ livePileEmbers: computeDepth(maxDistFromHome) + computeSurvival(runSeconds()) - embersSpent });
     }
   }
 
@@ -8834,7 +8862,7 @@ function stepFrame(dt, t, skipRender){
   // fail cue/caption fires exactly once, the instant checkMissionExpiry flips the status.
   if(mission){
     const wasActive = mission.status === 'active';
-    mission = checkMissionExpiry(mission, clock.elapsedTime - enteredAt);
+    mission = checkMissionExpiry(mission, runSeconds());
     if(wasActive && mission.status === 'expired'){
       pushState({ caption: 'the mission window has closed -- no bonus this run', captionId: ++captionSeq });
       missionExpiredSting();
@@ -8974,11 +9002,11 @@ function stepFrame(dt, t, skipRender){
       missionStatus: mission ? mission.status : null,
       // LUL-3010: only the far/timed variant carries a timer; null for oakHollow (untimed).
       missionTimerSeconds: mission && mission.target.timeLimitSeconds != null
-        ? Math.max(0, Math.round(mission.target.timeLimitSeconds - (clock.elapsedTime - enteredAt)))
+        ? Math.max(0, Math.round(mission.target.timeLimitSeconds - runSeconds()))
         : null,
       secondaryKind: mission && mission.secondary ? mission.secondary.data.kind : null,
       secondaryStatus: mission && mission.secondary
-        ? (secondaryComplete(mission, clock.elapsedTime - enteredAt) ? 'complete' : 'active')
+        ? (secondaryComplete(mission, runSeconds()) ? 'complete' : 'active')
         : null,
       // LUL-1666: retrieval -> whole meters/distance for the Hud's progress
       // indicator; speedrun -> seconds remaining for its countdown. One field,
@@ -8986,7 +9014,7 @@ function stepFrame(dt, t, skipRender){
       secondaryProgress: mission && mission.secondary
         ? (mission.secondary.data.kind === 'retrieval'
             ? { kind: 'retrieval', retrieved: mission.secondary.data.retrieved, distance: Math.round(distSecondaryItem) }
-            : { kind: 'speedrun', remainingSeconds: Math.max(0, Math.round(mission.secondary.data.timeLimitSeconds - (clock.elapsedTime - enteredAt))) })
+            : { kind: 'speedrun', remainingSeconds: Math.max(0, Math.round(mission.secondary.data.timeLimitSeconds - runSeconds())) })
         : null,
       caveImmuneActive: caveImmuneT > 0,
       caveImmuneTimeLeft: caveImmuneT,
