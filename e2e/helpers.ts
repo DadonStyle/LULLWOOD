@@ -72,6 +72,10 @@ export function expectNoConsoleErrors({
  * `qaRoostIndex` (LUL-5116) forces generateMap()'s flush-mission roost-index draw to a
  * known `ROOSTS` index instead of the real rng() draw; only meaningful when `qaMissionKind`
  * is also `'flush'`, (LUL-5160) `'beaconRoostFlush'`, or (LUL-5426) `'lionRoostFlush'`.
+ * `qaSecondaryChoice` (LUL-6012) forces the *first* generateMap() call's secondary draw --
+ * the real pre-run menu pick (setSecondaryChoice()) is read too late for a fresh-page test
+ * to land one deterministically any other way. Only meaningful when `qaMissionKind` is
+ * `'deepwater'`, the only `SECONDARY_SUPPORTED_MISSIONS` entry.
  * `seedWelcomeSplashSeen` (LUL-2612) pre-seeds `lullwood:welcomeSeen` in
  * localStorage before the first byte loads, same technique as the
  * `RETURNING_PLAYER` init script in returning-player.spec.ts -- every
@@ -97,6 +101,7 @@ export async function boot(
     qaHour = null,
     qaMissionKind = null,
     qaRoostIndex = null,
+    qaSecondaryChoice = null,
     seedWelcomeSplashSeen = true,
   }: {
     qaHooks?: boolean;
@@ -125,6 +130,7 @@ export async function boot(
       | 'chapelVeilEscape'
       | null;
     qaRoostIndex?: number | null;
+    qaSecondaryChoice?: 'retrieval' | 'speedrun' | null;
     seedWelcomeSplashSeen?: boolean;
   } = {},
 ) {
@@ -139,6 +145,7 @@ export async function boot(
   if (qaHour !== null) params.set('qaHour', String(qaHour));
   if (qaMissionKind !== null) params.set('qaMissionKind', qaMissionKind);
   if (qaRoostIndex !== null) params.set('qaRoostIndex', String(qaRoostIndex));
+  if (qaSecondaryChoice !== null) params.set('qaSecondaryChoice', qaSecondaryChoice);
   const query = params.toString();
   await page.goto(query ? `/?${query}` : '/', { waitUntil: 'networkidle', timeout: 120_000 });
   // Both canvases exist = the engine's WebGL canvas joined the minimap canvas

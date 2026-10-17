@@ -6,7 +6,7 @@
 // consumer that cares most about the exact fields) and re-used here so
 // there's a single source of truth.
 import type { EngineActions, EngineHudState } from '@/components/Hud';
-import type { MissionKind } from '@/lib/game/mission';
+import type { MissionKind, MissionSecondaryState } from '@/lib/game/mission';
 
 // LUL-276: inputMode picks which listeners the engine binds -- 'desktop'
 // (default) wires pointer-lock/mouse, 'mobile' leaves those unbound and
@@ -693,8 +693,9 @@ declare global {
       qaTeleportAtMissionTarget?: () => { kind: MissionKind; x: number; z: number; status: 'active' | 'complete' | 'expired' } | null;
       /** LUL-2187/LUL-2209: raw mission state without moving the player -- same
        * fields qaTeleportNearMission returns as a side effect, for a test that
-       * only needs to read, not teleport. */
-      qaProbeMission?: () => { kind: MissionKind; status: 'active' | 'complete' | 'expired'; x: number; z: number; roostIndex?: number } | null;
+       * only needs to read, not teleport. `secondary` (LUL-6012) added so a test
+       * can confirm a forced ?qaSecondaryChoice= draw actually landed. */
+      qaProbeMission?: () => { kind: MissionKind; status: 'active' | 'complete' | 'expired'; x: number; z: number; roostIndex?: number; secondary: MissionSecondaryState | null } | null;
       /** LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e staging.
        * See engine/forest-engine.js's qaSetFogTideClock for the full rationale. */
       qaSetFogTideClock?: (seconds: number) => void;
@@ -704,6 +705,11 @@ declare global {
        * checkMissionExpiry() trips on the next frame. No-op (null) if the mission has no
        * timer (near variant / already resolved). */
       qaShrinkMissionTimer?: (seconds: number) => { kind: 'deepwater' | 'oakHollow'; timeLimitSeconds: number } | null;
+      /** LUL-6012: sibling of qaShrinkMissionTimer, but for the speedrun secondary's own
+       * timeLimitSeconds (mission.secondary, not mission.target) -- stages a scenario where
+       * the real elapsed time crosses the secondary's limit during the pickup cinematic.
+       * No-op (null) if there's no secondary or it isn't the 'speedrun' variant. */
+      qaShrinkSecondaryTimer?: (seconds: number) => { timeLimitSeconds: number } | null;
       /** LUL-2230: exactly what the last frame drew for the scent trail visual
        * -- `points.length` always equals the draw range the renderer used
        * this tick, so a test can assert the picture directly instead of

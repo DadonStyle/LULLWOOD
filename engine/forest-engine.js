@@ -1961,7 +1961,12 @@ let missionHumTimer = 2;   // LUL-1258: mirrors childCry's cryTimer init -- firs
 let missionUnlocks = { deepwater: false };
 // LUL-1666: the player's pre-run menu choice for the *next* draw -- 'none' by
 // default. Read once at pickMission() time in generateMap(), not re-read mid-run.
-let secondaryChoice = null;
+// LUL-6012: ?qaSecondaryChoice=<retrieval|speedrun> forces the *first* generateMap()
+// call's draw (module-init, before the gate's setSecondaryChoice() click is even
+// possible -- the boot-time generateMap(resolveInitialSeed()) call below runs before
+// any GameMenu interaction) -- same read-once-at-module-init shape as qaForcedMissionKind.
+const qaForcedSecondaryChoice = qaParams ? qaParams.get('qaSecondaryChoice') : null;
+let secondaryChoice = (qaForcedSecondaryChoice === 'retrieval' || qaForcedSecondaryChoice === 'speedrun') ? qaForcedSecondaryChoice : null;
 
 const babyGroup = new THREE.Group();
 const bundle = new THREE.Mesh(new THREE.SphereGeometry(0.42, 16, 12),
@@ -4928,6 +4933,13 @@ const pausePrompt = document.getElementById('pausePrompt');
 /** Seconds of this run so far, pauses excluded (frozen while paused). */
 function runSeconds(){
   if(runFrozenAt !== null) return runFrozenAt;
+  return liveRunSeconds();
+}
+// LUL-6012: runSeconds()'s un-frozen formula, pulled out on its own -- finishPickup()'s
+// secondaryComplete()/computeWinPayout() checks run ~11.3s after pickup() sets
+// runFrozenAt (review on PR#1104) and need the real elapsed time through that cinematic,
+// not the frozen instant the displayed clock/leaderboard time intentionally hold at.
+function liveRunSeconds(){
   return Math.max(0, (pauseStartedAt !== null ? pauseStartedAt : clock.elapsedTime) - enteredAt);
 }
 function setPaused(p){
@@ -5365,7 +5377,9 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // returns the same fields as a side effect of teleporting, this is for a
   // test that wants to read mission state without also moving the player.
   window.ForestEngine.qaProbeMission = function(){
-    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z, roostIndex: mission.target.roostIndex };
+    // LUL-6012: secondary included so a test can confirm a forced ?qaSecondaryChoice=
+    // draw actually landed before staging the rest of the scenario off it.
+    return mission && { kind: mission.target.kind, status: mission.status, x: mission.target.x, z: mission.target.z, roostIndex: mission.target.roostIndex, secondary: mission.secondary };
   };
 
   // [QA-HOOK] LUL-4958: directly sets the fog-tide cycle accumulator for deterministic e2e
@@ -6991,6 +7005,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
     mission = { ...mission, target: { ...mission.target, timeLimitSeconds: seconds } };
     return { kind: mission.target.kind, timeLimitSeconds: mission.target.timeLimitSeconds };
   };
+  // [QA-HOOK] LUL-6012: sibling of qaShrinkMissionTimer, but for the speedrun secondary's
+  // own timeLimitSeconds (mission.secondary, not mission.target) -- unlike the primary
+  // mission's timer, secondaryComplete() has no per-tick expiry path, it's only ever read
+  // at finishPickup(), so this just stages the number a test needs there. No-op (returns
+  // null) if there's no secondary or it isn't the timed ('speedrun') variant.
+  window.ForestEngine.qaShrinkSecondaryTimer = function(seconds){
+    if(!mission || !mission.secondary || mission.secondary.data.kind !== 'speedrun') return null;
+    mission = { ...mission, secondary: { data: { ...mission.secondary.data, timeLimitSeconds: seconds } } };
+    return { timeLimitSeconds: mission.secondary.data.timeLimitSeconds };
+  };
 
   // [QA-HOOK] LUL-2230: exactly what the last frame drew for the scent trail
   // visual, so a test can assert the picture without depending on Vector3
@@ -7400,6 +7424,14 @@ function finishPickup(){
   // when the burst itself retires (undilated mirror of revealLoss()'s
   // CUT_END poll on the death path).
   const survivedSeconds = runSeconds();
+  // LUL-6012 (review P1 on PR#1104): secondaryComplete()/computeWinPayout() run here,
+  // ~11.3s after pickup() froze runSeconds() -- reusing the frozen value would let a
+  // run that crosses a speedrun secondary's time limit (or a survival-ember unit
+  // boundary) DURING the cinematic still bank the bonus/unit it wouldn't have earned
+  // before PR#1104. These two checks get their own unfrozen read; survivedSeconds
+  // above stays frozen for the displayed clock, the win screen, the leaderboard time
+  // (recordRun below) and analytics, exactly as PR#1104 intended.
+  const economySeconds = liveRunSeconds();
   // LUL-303: updatePredators() (the only other place that clears the charge
   // HUD) stops running once `playing` goes false here, so a charge/telegraph
   // in flight at the exact moment of arrival would otherwise render on top
@@ -7414,12 +7446,12 @@ function finishPickup(){
   // win the secondary without ever completing the deepwater baseline this
   // run (already unlocked from a prior run), or complete the baseline and
   // still miss the secondary. Never gates the win itself (see spec S1).
-  const secondaryWon = mission ? secondaryComplete(mission, survivedSeconds) : false;
+  const secondaryWon = mission ? secondaryComplete(mission, economySeconds) : false;
   const secondaryBonus = secondaryWon
     ? (mission.secondary.data.kind === 'retrieval' ? FIREPOWER_RETRIEVAL_BONUS : FIREPOWER_SPEEDRUN_BONUS)
     : 0;
   const coldWalkBonus = (coldWalkOptIn && !coldWalkBroken) ? COLD_WALK_REWARD : 0;
-  const payout = applySpend(computeWinPayout(maxDistFromHome, survivedSeconds, difficulty, missionBonus, secondaryBonus, coldWalkBonus), embersSpent);
+  const payout = applySpend(computeWinPayout(maxDistFromHome, economySeconds, difficulty, missionBonus, secondaryBonus, coldWalkBonus), embersSpent);
   // LUL-1666: unlock is keyed on the *baseline* completing, independent of
   // whether a secondary was even attempted this run -- guardrail is "complete
   // the mission once", not "complete a secondary once". Persisted by
