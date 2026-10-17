@@ -18,6 +18,8 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 ## Pages
 
 - [Play Lullwood](https://www.lullwoodgame.com/): the game, plus how to play, controls and an FAQ
+- [How to survive Lullwood](https://www.lullwoodgame.com/how-to-survive): player guide to predators, hiding, the mist veil and each difficulty
+- [Games like Slender](https://www.lullwoodgame.com/games-like-slender): Slender-style horror games and how Lullwood compares
 - [Devlog](https://www.lullwoodgame.com/devlog): how the game is built
 - [Credits](https://www.lullwoodgame.com/credits): third-party assets and their authors
 - [Suggest something](https://www.lullwoodgame.com/suggest): send the founder an idea

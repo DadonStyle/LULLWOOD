@@ -209,6 +209,15 @@ export default function Home() {
           <h2>More about Lullwood</h2>
           <ul>
             <li>
+              <Link href="/how-to-survive">How to survive Lullwood</Link> — how
+              predators find you, hiding, the mist veil and tips for each
+              difficulty
+            </li>
+            <li>
+              <Link href="/games-like-slender">Games like Slender</Link> — what
+              makes the genre work, and where Lullwood fits
+            </li>
+            <li>
               <Link href="/devlog">The Lullwood devlog</Link> — how the game
               is built, post by post
             </li>

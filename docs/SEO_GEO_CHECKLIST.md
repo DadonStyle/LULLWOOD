@@ -30,16 +30,16 @@ Google's position is that AI Overviews and AI Mode need no special markup: ordin
 | `/games-like-slender` comparison page (Article + BreadcrumbList) | #1119 |
 | IndexNow submits every sitemap URL (it only sent the homepage) | #1116 |
 | In-game rules say "lift the child", not "carry them home" | #1118 |
+| Homepage and `llms.txt` link to /how-to-survive and /games-like-slender | this PR |
 | GitHub repo description (stale "carry them home") and topics | done directly on GitHub |
 
 ## On-site: still open
 
-1. **Link the homepage to /how-to-survive and /games-like-slender** once #1114, #1117 and the comparison page have merged. The "More about Lullwood" list in `app/page.tsx` is the place.
-2. **Add each new official profile to `Organization.sameAs`** (`app/layout.tsx`) as it goes live: itch.io, YouTube, Reddit, CrazyGames.
-3. **Run `node scripts/indexnow.mjs`** once after these PRs deploy, so Bing, DuckDuckGo, Yandex and Seznam hear about the new URLs. Bing also feeds ChatGPT search and Copilot. Do this at most once per deploy.
-4. **A gameplay video** (a trailer or a 60-second clip) embedded on the homepage with `VideoObject` JSON-LD. Video results and AI answers both draw on video. This needs the clip first.
-5. **Performance (Core Web Vitals):** the Three.js engine (about 455 KB compressed) loads on every visit before the player interacts, and about 47 KB of CSS comments ship inside `components/GameCanvas.tsx`'s style string. Deferring the engine until the first click would help LCP and INP, but it changes boot and the gate flow, so it needs a product decision and a play test (Tier C territory).
-6. **Do not** build near-duplicate keyword pages (`/free-horror-game-online`, `/horror-game-no-download` and so on). Google treats them as doorway pages ([spam policies](https://developers.google.com/search/docs/essentials/spam-policies)). Each new page has to do a job no other page does.
+1. **Add each new official profile to `Organization.sameAs`** (`app/layout.tsx`) as it goes live: itch.io, YouTube, Reddit, CrazyGames.
+2. **Run `node scripts/indexnow.mjs`** once after these PRs deploy, so Bing, DuckDuckGo, Yandex and Seznam hear about the new URLs. Bing also feeds ChatGPT search and Copilot. Do this at most once per deploy.
+3. **A gameplay video** (a trailer or a 60-second clip) embedded on the homepage with `VideoObject` JSON-LD. Video results and AI answers both draw on video. This needs the clip first.
+4. **Performance (Core Web Vitals):** the Three.js engine (about 455 KB compressed) loads on every visit before the player interacts, and about 47 KB of CSS comments ship inside `components/GameCanvas.tsx`'s style string. Deferring the engine until the first click would help LCP and INP, but it changes boot and the gate flow, so it needs a product decision and a play test (Tier C territory).
+5. **Do not** build near-duplicate keyword pages (`/free-horror-game-online`, `/horror-game-no-download` and so on). Google treats them as doorway pages ([spam policies](https://developers.google.com/search/docs/essentials/spam-policies)). Each new page has to do a job no other page does.
 
 ## Founder-only (accounts, posting, spend)
 

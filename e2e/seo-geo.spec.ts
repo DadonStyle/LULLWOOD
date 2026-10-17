@@ -35,10 +35,12 @@ test.describe('SEO/GEO homepage signals', () => {
     for (const url of game.screenshot) expect(new URL(url).pathname).toMatch(/^\/screenshots\/lullwood-.+\.png$/);
   });
 
-  test('the homepage links to the devlog and credits in server-rendered HTML', async ({ request }) => {
+  test('the homepage links to the guide pages, devlog and credits in server-rendered HTML', async ({ request }) => {
     const html = await (await request.get('/')).text();
     expect(html).toContain('href="/devlog"');
     expect(html).toContain('href="/credits"');
+    expect(html).toContain('href="/how-to-survive"');
+    expect(html).toContain('href="/games-like-slender"');
   });
 
   test('/llms.txt is served as plain text', async ({ request }) => {
