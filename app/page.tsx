@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import GameLoader from "@/components/GameLoader";
 import { FAQ, faqJsonLd } from "@/lib/faq";
+import { videoGameJsonLd } from "@/lib/game-jsonld";
 
 // LUL-2375: the canonical is per page, not inherited from the layout -- with
 // it on the layout every child route (/suggest) declared itself a duplicate
@@ -228,6 +229,12 @@ export default function Home() {
           </ul>
         </section>
       </main>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(videoGameJsonLd).replace(/</g, "\\u003c"),
+        }}
+      />
       <script
         type="application/ld+json"
         // Built from lib/faq.ts, the same list the Questions section renders.

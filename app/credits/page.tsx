@@ -8,19 +8,19 @@ import { SOCIAL_OPEN_GRAPH, SOCIAL_TWITTER, breadcrumbJsonLd } from '@/lib/seo';
 // CreditsList in a popup; this standalone route stays for links and search.
 export const metadata: Metadata = {
   title: 'Credits',
-  description: 'Third-party assets used in Lullwood and their authors.',
+  description: 'Third-party 3D models and icons used in Lullwood, the free browser horror game, with their authors and licenses.',
   alternates: { canonical: '/credits' },
   openGraph: {
     ...SOCIAL_OPEN_GRAPH,
     title: 'Credits — Lullwood',
-    description: 'Third-party assets used in Lullwood and their authors.',
+    description: 'Third-party 3D models and icons used in Lullwood, the free browser horror game, with their authors and licenses.',
     url: '/credits',
     type: 'website',
   },
   twitter: {
     ...SOCIAL_TWITTER,
     title: 'Credits — Lullwood',
-    description: 'Third-party assets used in Lullwood and their authors.',
+    description: 'Third-party 3D models and icons used in Lullwood, the free browser horror game, with their authors and licenses.',
   },
 };
 

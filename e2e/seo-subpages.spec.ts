@@ -103,3 +103,18 @@ test.describe('SEO on subpages', () => {
     });
   }
 });
+
+test('the VideoGame node is homepage-only, and points at the shared Organization', async ({ page }) => {
+  const types = async (path: string) => {
+    await page.goto(path, { waitUntil: 'domcontentloaded' });
+    const blocks = await page.locator('script[type="application/ld+json"]').allTextContents();
+    return blocks.map((b) => JSON.parse(b) as Record<string, unknown>);
+  };
+  const home = await types('/?qaWorld=micro');
+  const game = home.find((d) => d['@type'] === 'VideoGame') as { author: { '@id': string }; publisher: { '@id': string } };
+  expect(game.author['@id']).toMatch(/#org$/);
+  expect(game.publisher['@id']).toMatch(/#org$/);
+  for (const path of ['/devlog', '/credits', '/how-to-survive', '/no-such-page']) {
+    expect((await types(path)).some((d) => d['@type'] === 'VideoGame'), path).toBe(false);
+  }
+});

@@ -22,7 +22,11 @@ test.describe('SEO metadata', () => {
     const head = await page.evaluate(() => {
       const meta = (name: string, attr: 'name' | 'property' = 'property') =>
         document.querySelector(`meta[${attr}="${name}"]`)?.getAttribute('content') ?? null;
-      const jsonLd = document.querySelector('script[type="application/ld+json"]')?.textContent ?? null;
+      // The VideoGame node is homepage-only (lib/game-jsonld.ts), after the layout's site graph.
+      const jsonLd =
+        Array.from(document.querySelectorAll('script[type="application/ld+json"]'))
+          .map((s) => s.textContent ?? '')
+          .find((t) => JSON.parse(t)['@type'] === 'VideoGame') ?? null;
       return {
         ogTitle: meta('og:title'),
         ogDescription: meta('og:description'),
