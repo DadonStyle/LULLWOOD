@@ -5,7 +5,7 @@ import { COOLDOWN_MS, IP_LIMIT, PLAUSIBILITY_FLOOR_MS } from './leaderboard.ts';
 
 test('rescuerRules: covers every gate a run has to pass', () => {
   const text = rescuerRules(null).join('\n');
-  for (const needle of ['Blackout', 'admin mode', 'carry them home', 'top-right', '3-20 letters', 'country']) {
+  for (const needle of ['Blackout', 'admin mode', 'lift them', 'top-right', '3-20 letters', 'country']) {
     assert.ok(text.includes(needle), needle);
   }
 });

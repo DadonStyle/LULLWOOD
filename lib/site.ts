@@ -4,10 +4,11 @@
 // VERCEL_PROJECT_PRODUCTION_URL is a bare hostname (no scheme), set on every
 // Vercel deployment (including previews) to the project's *production*
 // domain. Falling back to the hardcoded literal keeps this correct in any
-// environment where that var isn't set (local dev, CI).
+// environment where that var isn't set (local dev, CI). The literal is the
+// real domain: lullwood.vercel.app only 308s there (next.config.ts).
 export const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-  : 'https://lullwood.vercel.app';
+  : 'https://www.lullwoodgame.com';
 
 // SITE_NAME is the site's display name used in page titles and metadata
 export const SITE_NAME = 'Lullwood';
@@ -46,3 +47,15 @@ export const SITE_TAGLINE = 'A lost child is somewhere in the dark.';
 // than no tag at all).
 export const GOOGLE_SITE_VERIFICATION =
   process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined;
+
+// The public game repo -- the one official profile besides this site
+// (app/layout.tsx's Organization `sameAs`).
+export const GITHUB_URL = 'https://github.com/DadonStyle/LULLWOOD';
+
+// In-engine screenshots in public/screenshots/, shown in app/page.tsx's
+// gallery and listed in the VideoGame JSON-LD.
+export const SCREENSHOTS = [
+  'lullwood-night-forest-pine-trees.png',
+  'lullwood-dense-pine-forest-snow.png',
+  'lullwood-forest-rock-outcrop-night.png',
+];

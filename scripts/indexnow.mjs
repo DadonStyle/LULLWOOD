@@ -14,7 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-  : 'https://lullwood.vercel.app';
+  : 'https://www.lullwoodgame.com';
 const HOST = new URL(SITE_URL).host;
 
 const keyFile = readdirSync(path.join(ROOT, 'public')).find((f) => /^[0-9a-f]{32}\.txt$/.test(f));
@@ -24,8 +24,15 @@ if (!keyFile) {
 const KEY = keyFile.replace(/\.txt$/, '');
 const KEY_LOCATION = `${SITE_URL}/${keyFile}`;
 
-// Mirrors the URLs currently listed in app/sitemap.ts. Update both together.
-const urlList = [SITE_URL];
+// Every URL in the deployed sitemap, read live so this can never drift from
+// app/sitemap.ts (a hand-copied list here only ever held the homepage).
+const sitemap = await fetch(`${SITE_URL}/sitemap.xml`);
+if (!sitemap.ok) throw new Error(`sitemap.xml: HTTP ${sitemap.status}`);
+const urlList = [...(await sitemap.text()).matchAll(/<loc>([^<]+)<\/loc>/g)]
+  .map((m) => m[1].trim())
+  .filter((url) => new URL(url).host === HOST);
+if (urlList.length === 0) throw new Error('sitemap.xml lists no URLs on this host');
+console.log(`IndexNow: submitting ${urlList.length} URLs`);
 
 const res = await fetch('https://api.indexnow.org/indexnow', {
   method: 'POST',

@@ -2,6 +2,21 @@ import type { MetadataRoute } from "next";
 import { SITE_URL } from "../lib/site";
 import { getAllPosts } from "../lib/devlog";
 
+// The last real homepage content change (gameplay screenshots, 2026-10-02);
+// bump it by hand when the copy or media change again. It used to be
+// `new Date()`, which stamped a fresh lastmod on every build -- Google learns
+// that a lastmod which always moves carries no signal and stops trusting it,
+// for this URL and the rest of the sitemap.
+const HOME_LAST_MODIFIED = new Date("2026-10-02T00:00:00.000Z");
+
+// The homepage's gameplay screenshots (public/screenshots), listed so Google
+// Images can attribute them to the page they appear on.
+const HOME_SCREENSHOTS = [
+  "lullwood-night-forest-pine-trees.png",
+  "lullwood-dense-pine-forest-snow.png",
+  "lullwood-forest-rock-outcrop-night.png",
+];
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const posts = getAllPosts();
 
@@ -23,9 +38,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     {
       url: SITE_URL,
-      lastModified: new Date(),
+      lastModified: HOME_LAST_MODIFIED,
       changeFrequency: "monthly",
       priority: 1,
+      images: HOME_SCREENSHOTS.map((file) => `${SITE_URL}/screenshots/${file}`),
     },
     // LUL-2375: indexable, linked from the homepage, was missing here.
     {
@@ -39,6 +55,18 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: new Date("2026-10-13T00:00:00.000Z"),
       changeFrequency: "yearly",
       priority: 0.2,
+    },
+    {
+      url: `${SITE_URL}/how-to-survive`,
+      lastModified: new Date("2026-10-18T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
+      url: `${SITE_URL}/games-like-slender`,
+      lastModified: new Date("2026-10-18T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.5,
     },
     ...devlogEntries,
   ];

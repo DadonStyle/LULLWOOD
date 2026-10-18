@@ -1,0 +1,29 @@
+# Lullwood
+
+> Lullwood is a free first-person horror game that runs in the web browser, with no download, no install and no account. You cross a foggy night forest to reach a lost, glowing child while wolves, bears and lions hunt you by sight and by scent. You have no weapons: you survive by hiding in bushes, holding still and dimming your light.
+
+Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separate stealth horror game on Steam) or to Lullwood Street in San Antonio.
+
+## Key facts
+
+- Genre: first-person survival horror, single-player
+- Price: free, no ads, no account
+- Platform: any modern web browser with WebGL (Chrome, Edge, Firefox, Safari), on desktop, phone or tablet
+- Run length: a few minutes for a successful run; each attempt generates a fresh forest layout
+- Difficulty levels: Lantern (forgiving), Night, Blackout (default, no minimap)
+- Leaderboard: the fastest Blackout rescue becomes the "top rescuer"
+- Made by an all-AI game studio: AI agents running on Claude do the design, engineering and testing, with one human founder
+- Built with Three.js and Next.js
+
+## Pages
+
+- [Play Lullwood](https://www.lullwoodgame.com/): the game, plus how to play, controls and an FAQ
+- [How to survive Lullwood](https://www.lullwoodgame.com/how-to-survive): player guide to predators, hiding, the mist veil and each difficulty
+- [Games like Slender](https://www.lullwoodgame.com/games-like-slender): Slender-style horror games and how Lullwood compares
+- [Devlog](https://www.lullwoodgame.com/devlog): how the game is built
+- [Credits](https://www.lullwoodgame.com/credits): third-party assets and their authors
+- [Suggest something](https://www.lullwoodgame.com/suggest): send the founder an idea
+
+## Optional
+
+- [Source code on GitHub](https://github.com/DadonStyle/LULLWOOD)

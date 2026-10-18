@@ -199,6 +199,65 @@ main.devlog-post .devlog-footer a {
 main.devlog-post .devlog-footer a:hover {
   color: #9fb2cd;
 }
+main.devlog-post .devlog-play {
+  font-size: 15px;
+  margin-bottom: 20px;
+}
+main.devlog-post .devlog-footer .devlog-play a {
+  color: #d7e4f6;
+}
+main.devlog-post .devlog-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+}
+main.devlog-post .devlog-pager__next {
+  margin-left: auto;
+  text-align: right;
+}
+
+/* app/not-found.tsx borrows the devlog index shell for its post list. */
+main.not-found-page .not-found-page__play {
+  font-size: 18px;
+  margin-bottom: 40px;
+}
+main.not-found-page .not-found-page__play a,
+main.not-found-page .not-found-page__heading a {
+  color: #d7e4f6;
+}
+main.not-found-page .not-found-page__heading {
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: #6a8cb0;
+  margin-bottom: 8px;
+}
+
+/* /how-to-survive -- reuses the devlog-post shell above; only lists, figures
+   and the footer's stacked links are new. */
+main.guide-page .devlog-body ul {
+  margin: 0 0 20px 20px;
+  font-size: 15px;
+}
+main.guide-page .devlog-body li {
+  margin-bottom: 10px;
+}
+main.guide-page .devlog-body strong {
+  color: #cdd9ea;
+  font-weight: 500;
+}
+main.guide-page figure {
+  margin: 28px 0;
+}
+main.guide-page figure img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  display: block;
+}
+main.guide-page .devlog-footer p + p {
+  margin-top: 8px;
+}
 
 @media (max-width: 480px) {
   main.devlog-index,
@@ -244,6 +303,17 @@ main.suggest-page h1 {
 }
 main.suggest-page .suggest-page__intro {
   margin-bottom: 32px;
+}
+main.suggest-page .suggest-page__back {
+  margin-top: 32px;
+  font-size: 13px;
+}
+main.suggest-page .suggest-page__back a {
+  color: #6a8cb0;
+  text-decoration: none;
+}
+main.suggest-page .suggest-page__back a:hover {
+  color: #9fb2cd;
 }
 
 /* /credits -- same shell as /suggest. The list classes are unscoped so the

@@ -8,6 +8,9 @@ export interface PostMeta {
   slug: string;
   title: string;
   date: string; // YYYY-MM-DD
+  // YYYY-MM-DD of the last substantive edit. Leave unset for a post that has
+  // not changed since it went up -- dateModified then falls back to `date`.
+  updated?: string;
   description: string;
 }
 
@@ -50,4 +53,14 @@ export function getAllPosts(): PostMeta[] {
 
 export function getPost(slug: string): PostMeta | undefined {
   return POSTS.find((p) => p.slug === slug);
+}
+
+// The chronological neighbours of a post, for its prev/next links: `older`
+// was published just before it, `newer` just after. Either is undefined at
+// the ends of the list (or for an unknown slug).
+export function getAdjacentPosts(slug: string): { older?: PostMeta; newer?: PostMeta } {
+  const posts = getAllPosts(); // newest first
+  const i = posts.findIndex((p) => p.slug === slug);
+  if (i === -1) return {};
+  return { newer: posts[i - 1], older: posts[i + 1] };
 }
