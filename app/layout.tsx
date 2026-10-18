@@ -9,7 +9,6 @@ import {
   SITE_THEME_COLOR,
   GOOGLE_SITE_VERIFICATION,
   GITHUB_URL,
-  SCREENSHOTS,
 } from "../lib/site";
 
 // LUL-529: two things this repo had zero of before.
@@ -109,49 +108,11 @@ export const metadata: Metadata = {
   },
 };
 
-const videoGameJsonLd = {
-  "@context": "https://schema.org",
-  "@type": "VideoGame",
-  "@id": `${SITE_URL}#game`,
-  name: SITE_NAME,
-  description: SITE_DESCRIPTION,
-  url: SITE_URL,
-  // `image` is what lets the entry qualify for an image-bearing rich result;
-  // without it the VideoGame node is text-only. Reuses the OG asset Next
-  // already generates from app/opengraph-image.png.
-  image: `${SITE_URL}/opengraph-image.png`,
-  // LUL-4841: schema.org's `screenshot` property is repeatable -- an array
-  // qualifies for Google's screenshot gallery in a way a single value does
-  // not. These are the in-engine screenshots app/page.tsx's gallery shows.
-  screenshot: SCREENSHOTS.map((file) => `${SITE_URL}/screenshots/${file}`),
-  genre: ["Horror", "Survival", "Adventure"],
-  gamePlatform: "Web Browser",
-  // LUL-2375: "Game" is not a schema.org SoftwareApplication category value;
-  // "GameApplication" is the enumerated one Google's software-app rich result
-  // recognises.
-  applicationCategory: "GameApplication",
-  applicationSubCategory: "Horror Game",
-  operatingSystem: "Any browser with WebGL",
-  datePublished: "2026-08-14",
-  browserRequirements: "Requires a WebGL-capable browser",
-  playMode: "SinglePlayer",
-  inLanguage: "en",
-  isAccessibleForFree: true,
-  author: { "@type": "Organization", name: SITE_NAME, url: SITE_URL, description: "An all-AI game studio: design, engineering, and testing handled by a fleet of AI agents." },
-  publisher: { "@type": "Organization", name: SITE_NAME, url: SITE_URL, description: "An all-AI game studio: design, engineering, and testing handled by a fleet of AI agents." },
-  offers: {
-    "@type": "Offer",
-    price: "0",
-    priceCurrency: "USD",
-    availability: "https://schema.org/InStock",
-  },
-};
-
 // LUL-2375: WebSite + Organization nodes. WebSite (name + url) is what Google
 // reads for the "site name" shown above the URL in results; Organization
-// (name + url + logo) is what it reads for the brand icon/knowledge card. The
-// VideoGame node above stays first in the document -- e2e/seo.spec.ts reads
-// the first ld+json block and asserts on it.
+// (name + url + logo) is what it reads for the brand icon/knowledge card. They
+// stay on every page so each page's author/publisher @id (lib/seo.ts ORG_REF)
+// resolves; the VideoGame node is homepage-only (lib/game-jsonld.ts).
 const siteJsonLd = {
   "@context": "https://schema.org",
   "@graph": [
@@ -218,12 +179,6 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           // Static, hand-authored object above -- nothing user-supplied ever
           // reaches this JSON, but escape "<" anyway so a future edit can't
           // accidentally break out of the script tag.
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify(videoGameJsonLd).replace(/</g, "\\u003c"),
-          }}
-        />
-        <script
-          type="application/ld+json"
           dangerouslySetInnerHTML={{
             __html: JSON.stringify(siteJsonLd).replace(/</g, "\\u003c"),
           }}
