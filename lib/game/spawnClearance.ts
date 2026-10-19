@@ -19,3 +19,32 @@ export const FULL_MAP_HALF = 240;
 export function spawnClearanceScale(half: number): number {
   return Math.min(1, half / FULL_MAP_HALF);
 }
+
+// placePredators() runs before cover, landmarks and the cave exist, and checks
+// tree trunks only, so a predator can start inside a rock or landmark and be
+// wedged from the first frame. Once the whole map is built, the engine nudges
+// each blocked predator to the nearest free spot found by this search. It walks
+// rings outward from the original spot in a fixed order and draws no rng(), so
+// every seed keeps its layout for predators that were already clear.
+export const CLEAR_SPOT_STEP = 1.5;
+export const CLEAR_SPOT_MAX_RADIUS = 60;
+const CLEAR_SPOT_ANGLES = 16;
+
+/** Nearest point to (x, z), on rings CLEAR_SPOT_STEP apart up to
+ * CLEAR_SPOT_MAX_RADIUS, for which `isFree` is true. Returns (x, z) itself
+ * when it is already free, or null when nothing in range is. */
+export function findClearSpot(
+  x: number,
+  z: number,
+  isFree: (x: number, z: number) => boolean,
+): { x: number; z: number } | null {
+  if (isFree(x, z)) return { x, z };
+  for (let r = CLEAR_SPOT_STEP; r <= CLEAR_SPOT_MAX_RADIUS; r += CLEAR_SPOT_STEP) {
+    for (let i = 0; i < CLEAR_SPOT_ANGLES; i++) {
+      const a = (i / CLEAR_SPOT_ANGLES) * Math.PI * 2;
+      const cx = x + Math.cos(a) * r, cz = z + Math.sin(a) * r;
+      if (isFree(cx, cz)) return { x: cx, z: cz };
+    }
+  }
+  return null;
+}
