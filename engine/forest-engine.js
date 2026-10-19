@@ -101,7 +101,7 @@ import {
 import { mudSpeedMultiplier, mudNoiseMultiplier, isInMudZone } from '@/lib/game/mud';
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
-import { spawnClearanceScale } from '@/lib/game/spawnClearance';
+import { spawnClearanceScale, findClearSpot } from '@/lib/game/spawnClearance';
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, NOISE_RADIUS_RUN_WIND, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S, SHUFFLE_COOLDOWN_S } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
 import { bearingOf, bearingPan, callVolumeMul } from '@/lib/game/bearing';
@@ -1572,6 +1572,7 @@ function generateMap(seed){
   // This is the true last rng() consumer in generateMap() today; appending here is the
   // only spot that "appends, doesn't reorder" the stream for real.
   generateMudZones();
+  clearPredatorSpawns();   // after every collider exists; draws no rng -- see the function
   // LUL-2249: hand off from "every populated chunk instantiated up front" to
   // the streamed ring, now that treeData/coverData are all at their final,
   // post-thin state. Drop whatever the PREVIOUS seed left live (those meshes
@@ -2441,6 +2442,37 @@ function placePredators(){
   sinceBelowMinHunters = 0;
   activeCharges = 0; pushState({ chargeVisible: false });
 }
+// placePredators() runs while only the trees exist and checks trunks only, so a
+// predator could start inside a rock, bramble, landmark or the cave and stay
+// wedged from the first frame. Once generateMap() has built every collider,
+// rebuild coverGrid from the final coverData (generateMap() resets it to the
+// streamed ring right after this, and the copy built earlier can be stale)
+// and move each blocked predator to the nearest spot that predatorBlocked() -- the check its
+// own movement uses -- accepts, still respecting placePredators()' distance
+// from the player's spawn and from the child. findClearSpot() draws no rng(),
+// so every seed keeps its layout for predators that were already clear.
+function clearPredatorSpawns(){
+  const clearScale = spawnClearanceScale(half);
+  buildCoverGrid();
+  let moved = 0;
+  for(const p of predators){
+    if(p.inert) continue;
+    const r = Math.max(p.rad + 0.5, p.moveRad);
+    const spot = findClearSpot(p.x, p.z, (x, z) =>
+      x >= -half+margin && x <= half-margin && z >= -half+margin && z <= half-margin &&
+      x*x+z*z >= 2500*clearScale*clearScale && Math.hypot(x-baby.x, z-baby.z) >= 34*clearScale &&
+      !predatorBlocked(x, z, r));
+    if(!spot || (spot.x === p.x && spot.z === p.z)) continue;
+    p.x = spot.x; p.z = spot.z; p.wpx = spot.x; p.wpz = spot.z;
+    p.g.position.set(p.x, 0, p.z);
+    const [ccx, ccz] = chunkXZ(p.x, p.z), [pcx, pcz] = chunkXZ(player.x, player.z);
+    p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
+    p.g.visible = !p.parked;
+    moved++;
+  }
+  lastSpawnNudges = moved;
+}
+let lastSpawnNudges = 0;
 function relocateParkedHunter(pcx, pcz){
   const target = predators.find(p => !p.inert && p.parked);   // lowest array index, per the ticket
   if(!target) return;   // every non-inert predator already active -- guarantee already holds
@@ -7030,6 +7062,14 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
   // test drive the real generateMap() path (qaRegenerateMap) over several seeds and confirm
   // a mud zone always lands near scaledDecoyScentSites()[0], without reproducing the
   // forced-overlap gap qaBuildScene's own mudZones override would otherwise paper over.
+  // [QA-HOOK] Predator spawns: how many non-inert predators start inside a
+  // collider (predatorBlocked() at their spawn), and how many generateMap()'s
+  // clearPredatorSpawns() pass had to move to get there.
+  window.ForestEngine.qaProbePredatorSpawns = function(){
+    const blocked = predators.filter(p => !p.inert && predatorBlocked(p.x, p.z, Math.max(p.rad + 0.5, p.moveRad)))
+      .map(p => ({ kind: p.kind, x: p.x, z: p.z, variant: p.variant }));
+    return { active: predators.filter(p => !p.inert).length, blocked: blocked.length, blockedAt: blocked, nudged: lastSpawnNudges };
+  };
   window.ForestEngine.qaProbeMudZones = function(){
     return mudZones.map(m => ({ x: m.x, z: m.z, r: m.r }));
   };
