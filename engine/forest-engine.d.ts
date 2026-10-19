@@ -755,6 +755,9 @@ declare global {
        * sites). Used to confirm, over real qaRegenerateMap(seed) draws, that a mud
        * zone always lands near the Decoy Scent Site (Mudbound Decoy Amplification). */
       qaProbeMudZones?: () => { x: number; z: number; r: number }[];
+      /** Predator spawn check: active predators, how many start inside a collider,
+       * and how many the last generateMap() moved clear (clearPredatorSpawns()). */
+      qaProbePredatorSpawns?: () => { active: number; blocked: number; blockedAt: { kind: string; x: number; z: number; variant?: string }[]; nudged: number };
       /** LUL-2230: sets the camera yaw directly (the same `player.yaw` every
        * look-input path writes) so a test can turn to face its own scent
        * trail without pointer lock. Read-only otherwise -- no movement. */
