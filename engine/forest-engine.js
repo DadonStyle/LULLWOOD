@@ -2392,6 +2392,14 @@ let sinceBelowMinHunters = 0;   // LUL-2250: seconds the active-hunter count has
 let bearingPulseT = 0, bearingPulseSide = null;   // LUL-1308: screen-edge glow for off-screen predator bearing
 let approachPianoActive = false;   // LUL-1620: QA-visible mirror of the piano gate below, no raw Web Audio exposure
 let coverAmt = 0;   // LUL-144: eased 0..1 desaturation driven by the cover-feedback scan below
+// Shared by placePredators() and clearPredatorSpawns(): both require a spawn to
+// clear 2500*clearScale^2 from the player's spawn origin and 34*clearScale from
+// the baby. The collider check itself is intentionally NOT shared -- placePredators()
+// runs pre-coverGrid and must use blockedR(), clearPredatorSpawns() runs post-coverGrid
+// and must use predatorBlocked() (see clearPredatorSpawns()'s comment below).
+function predatorSpawnDistanceOk(x, z, clearScale){
+  return x*x+z*z >= 2500*clearScale*clearScale && Math.hypot(x-baby.x, z-baby.z) >= 34*clearScale;
+}
 function placePredators(){
   // LUL-26: `night` (default) has activePerSpecies:3, so `p.inert` is false
   // for every predator and this loop draws exactly the RNG sequence it always
@@ -2424,7 +2432,7 @@ function placePredators(){
     // the threshold.
     let x, z, tries = 0;
     do { x=rnd(-half+margin, half-margin); z=rnd(-half+margin, half-margin); tries++; }
-    while((x*x+z*z < 2500*clearScale*clearScale || Math.hypot(x-baby.x, z-baby.z) < 34*clearScale || blockedR(x, z, p.rad+0.5)) && tries < 60);
+    while((!predatorSpawnDistanceOk(x, z, clearScale) || blockedR(x, z, p.rad+0.5)) && tries < 60);
     p.x=x; p.z=z; p.wpx=x; p.wpz=z; p.vx=0; p.vz=0; p.yaw=rng()*Math.PI*2;
     const [ccx, ccz] = chunkXZ(x, z), [pcx, pcz] = chunkXZ(player.x, player.z);
     p.parked = Math.max(Math.abs(ccx-pcx), Math.abs(ccz-pcz)) > STREAM_RADIUS_CHUNKS;
@@ -2460,7 +2468,7 @@ function clearPredatorSpawns(){
     const r = Math.max(p.rad + 0.5, p.moveRad);
     const spot = findClearSpot(p.x, p.z, (x, z) =>
       x >= -half+margin && x <= half-margin && z >= -half+margin && z <= half-margin &&
-      x*x+z*z >= 2500*clearScale*clearScale && Math.hypot(x-baby.x, z-baby.z) >= 34*clearScale &&
+      predatorSpawnDistanceOk(x, z, clearScale) &&
       !predatorBlocked(x, z, r));
     if(!spot || (spot.x === p.x && spot.z === p.z)) continue;
     p.x = spot.x; p.z = spot.z; p.wpx = spot.x; p.wpz = spot.z;
