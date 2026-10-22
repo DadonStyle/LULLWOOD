@@ -114,20 +114,15 @@ export default function WolvesGuidePage() {
             <h2>How the pack aims the flank</h2>
             <ul>
               <li>
-                <strong>Who leads.</strong> The pack orients on whichever
-                chasing wolf is actually closest to you right now, not
-                whichever one committed first. If the lead wolf falls behind
-                and a flanker ends up nearer, the pincer re-centers on the new
-                nearest one.
-              </li>
-              <li>
                 <strong>Where the flankers go.</strong> Each flanker&apos;s
                 ambush point is your own current movement heading, rotated 60
                 degrees to one side, out to about 1.4 times that flanker&apos;s
                 own distance from you — the farther a wolf already is, the
                 wider its swing. With three wolves hunting (the most that ever
-                flank at once), the two non-leaders alternate sides: one angles
-                ahead-left, the other ahead-right.
+                flank at once), the two flankers alternate sides: one angles
+                ahead-left, the other ahead-right. Neither flanker aims at the
+                chasing wolf — each one tracks only your heading and its own
+                distance from you.
               </li>
               <li>
                 <strong>Lag you can use.</strong> A flank path recomputes at
@@ -149,8 +144,9 @@ export default function WolvesGuidePage() {
               nothing re-triggers it, it gives up and returns to roaming
               immediately — no backing off, no searching, unlike a wolf that
               loses a direct chase and sweeps the area a few times first. And
-              the whole pincer collapses together: the moment the lead wolf
-              loses you, every flanking wolf stands down too, even mid-sniff.
+              the whole pincer collapses together: the moment no wolf is
+              still actively chasing you, every flanking wolf stands down
+              too, even mid-sniff.
             </p>
 
             <figure>
@@ -171,9 +167,10 @@ export default function WolvesGuidePage() {
               under half that speed: barely faster than your own walk. That
               trot is the one gap in the pack&apos;s math you can exploit —
               you can put real ground between yourself and a flanker even
-              while the lead wolf is gaining on you, so cutting toward cover
-              on a flanker&apos;s approach side, rather than away from the
-              leader, is often the faster way to bramble.
+              while the wolf actually chasing you is gaining on you, so
+              cutting toward cover on a flanker&apos;s approach side, rather
+              than away from the one chasing you, is often the faster way to
+              bramble.
             </p>
 
             <h2>The Beacon Hunter: the one wolf the pack math doesn&apos;t cover</h2>
@@ -205,7 +202,7 @@ export default function WolvesGuidePage() {
               </li>
               <li>
                 <strong>Night and Blackout both run three wolves per
-                species</strong> — enough for the full one-leader,
+                species</strong> — enough for the full one-chaser,
                 two-flanker shape. Night, with full-strength sight but a
                 minimap to help you track where they&apos;ve gone, is the
                 easiest place to learn to read a pincer forming.
