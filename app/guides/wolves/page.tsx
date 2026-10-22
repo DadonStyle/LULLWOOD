@@ -15,8 +15,8 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 const TITLE = "How to Survive Wolves in Lullwood: the Pack Flank Guide";
 const DESCRIPTION =
   "How to survive wolves in Lullwood: the pack flanks 60° off your line while a Beacon Hunter reads the wind. Real distances, timings and how to break both.";
-const PUBLISHED = "2026-10-27";
-const MODIFIED = "2026-10-27";
+const PUBLISHED = "2026-10-22";
+const MODIFIED = "2026-10-22";
 const PAGE_URL = `${SITE_URL}/guides/wolves`;
 // Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
 const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
@@ -88,7 +88,7 @@ export default function WolvesGuidePage() {
         <article>
           <header>
             <h1>How to survive wolves in Lullwood</h1>
-            <time dateTime={MODIFIED}>Updated October 27, 2026</time>
+            <time dateTime={MODIFIED}>Updated October 22, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
