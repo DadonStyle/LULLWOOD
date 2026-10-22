@@ -530,6 +530,26 @@ const OVERLAY_STYLE = `
     left: 50%; top: auto; transform: translateX(-50%);
     bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px);
   }
+  /* LUL-6062: #captionToast (predator-call caption, the sole channel for a deaf/HoH
+     player per LUL-26) shares this exact bottom-center slot on purpose, but its engine
+     state (state.caption) and the hint family's (state.hintVisible) have no mutual-
+     exclusion gate, so a bear roar during e.g. the landmark hint lands both pills on the
+     same line. #captionToast keeps its slot (life-safety channel, same precedent as
+     LUL-5373/LUL-5374's action-slot priority order); the hint pill stacks one row above
+     it instead of being suppressed, since landmark must stay visible (e2e/mobile/
+     hints.spec.ts, LUL-2414). :has() only matches while the toast is actually mounted,
+     so this adds zero offset when it isn't shown. 48px clears a wrapped captionToast
+     pill (LUL-5246: .actionPromptLine measured at 31-44px/line) plus a gap. */
+  body:has(#captionToast) #hintCaption[data-hint-key="bog"],
+  body:has(#captionToast) #hintCaption[data-hint-key="stamina"],
+  body:has(#captionToast) #hintCaption[data-hint-key="veil"],
+  body:has(#captionToast) #hintCaption[data-hint-key="landmark"],
+  body:has(#captionToast) #hintCaption[data-hint-key="oakHollow"],
+  body:has(#captionToast) #hintCaption[data-hint-key="skyCompassNavigation"],
+  body:has(#captionToast) #hintCaption[data-hint-key="scentMask"],
+  body:has(#captionToast) #hintCaption[data-hint-key="decoyScent"] {
+    bottom: calc(var(--action-slot-bottom) + var(--action-slot-height) + 10px + 48px);
+  }
   /* deepwater: below #missionPanel's top:76px/left:16px corner (:320 above). */
   #hintCaption[data-hint-key="deepwater"] { left: 16px; top: 110px; transform: none; }
   /* caveImmune: below #caveImmunePanel's top:56px/left:50% corner (:332 above); reuses
