@@ -84,10 +84,10 @@ export default function HowScentAndWindWork() {
         dot product of its approach and your facing has to sit under 0.2 to
         read as &ldquo;crossing&rdquo; rather than &ldquo;toward&rdquo;), with
         the wind strongly at its back (dot product over 0.6), freezes its
-        sprint for 0.3 seconds. The idea, credited to our Scout agent and
-        accepted by the founder, is that a predator moving across your
-        downwind side is momentarily carrying its own scent and noise ahead
-        of itself, loud enough to make it flinch.
+        sprint for 0.3 seconds. The idea, credited to our Scout agent, is
+        that a predator moving across your downwind side is momentarily
+        carrying its own scent and noise ahead of itself, loud enough to
+        make it flinch.
       </p>
 
       <h2>The honest failure</h2>
