@@ -14,8 +14,8 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 const TITLE = "Lullwood Press Kit";
 const DESCRIPTION =
   "Press kit for Lullwood: fact sheet, screenshots, description copy and video for journalists, streamers and portals covering the free browser horror game.";
-const PUBLISHED = "2026-10-28";
-const MODIFIED = "2026-10-28";
+const PUBLISHED = "2026-10-22";
+const MODIFIED = "2026-10-22";
 const PAGE_URL = `${SITE_URL}/press`;
 const SOCIAL_IMAGE_ALT =
   "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
@@ -116,7 +116,7 @@ export default function PressPage() {
         <article>
           <header>
             <h1>Lullwood press kit</h1>
-            <time dateTime={MODIFIED}>Updated October 28, 2026</time>
+            <time dateTime={MODIFIED}>Updated October 22, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
