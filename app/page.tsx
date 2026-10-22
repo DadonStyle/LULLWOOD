@@ -223,6 +223,10 @@ export default function Home() {
               is built, post by post
             </li>
             <li>
+              <Link href="/press">Press kit</Link> — fact sheet,
+              screenshots, cover art and a clip, free to use
+            </li>
+            <li>
               <Link href="/credits">Credits</Link> — the third-party assets
               in the game and the people who made them
             </li>

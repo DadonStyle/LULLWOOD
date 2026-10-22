@@ -74,6 +74,22 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "monthly",
       priority: 0.5,
     },
+    {
+      url: `${SITE_URL}/press`,
+      lastModified: new Date("2026-10-28T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.4,
+      images: [
+        `${SITE_URL}/screenshots/lullwood-night-forest-pine-trees.png`,
+        `${SITE_URL}/screenshots/lullwood-dense-pine-forest-snow.png`,
+        `${SITE_URL}/screenshots/lullwood-forest-rock-outcrop-night.png`,
+        `${SITE_URL}/press/lullwood-04-distant-glow.png`,
+        `${SITE_URL}/press/lullwood-05-under-canopy.png`,
+        `${SITE_URL}/press/lullwood-06-night-clearing.png`,
+        `${SITE_URL}/press/lullwood-cover-a.png`,
+        `${SITE_URL}/press/lullwood-cover-b.png`,
+      ],
+    },
     ...devlogEntries,
   ];
 }
