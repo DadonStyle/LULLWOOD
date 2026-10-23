@@ -88,10 +88,17 @@
 //     the PR author's (guard 2 in tier-approve.yml) -- a PR opened under
 //     `auto-pr.yml`'s normal `github-actions[bot]` identity would not have
 //     tripped that guard and would have auto-merged a founder-only page with
-//     zero review. Listed by page, not as a blanket `app/**` carve-out:
-//     `app/how-to-survive/page.tsx` and `app/games-like-slender/page.tsx`
-//     predate this channel (built 2026-10-18, before the 2026-10-22 founder
-//     decision) and are ordinary Tier B app surface, not on this list.
+//     zero review. `lib/faq.ts` gets the same by-name listing as
+//     `lib/devlog.ts`: it is the `faq` channel's content source exactly as
+//     devlog.ts is the `devlog` channel's (both added together in commit
+//     0f23ce5/PR#1114, 2026-10-18), so the same gap applies to it. Listed by
+//     page, not as a blanket `app/**` carve-out: `app/how-to-survive/page.tsx`
+//     and `app/games-like-slender/page.tsx` are ordinary Tier B app surface,
+//     not on this list -- the operative test is "is this one of the five
+//     channels CHANNELS.md names" (devlog, guides, faq, press, llms.txt), not
+//     when the file was built. Both of those pages and `public/llms.txt`
+//     were built in the same 2026-10-18 commit, but llms.txt is on this list
+//     and they are not, because llms.txt is a named channel and they aren't.
 //     `public/llms.txt` matters here for a second reason: unguarded, it
 //     would ride the `public/** -> A` rule below to a zero-review merge,
 //     worse than devlog's accidental Tier B.
@@ -114,6 +121,7 @@ import { pathToFileURL } from 'node:url';
 // the only place both documents need to agree.
 const OWNED_PAGES = [
   /^lib\/devlog\.ts$/,
+  /^lib\/faq\.ts$/,
   /^app\/(devlog|guides|faq|press)\//,
   /^public\/llms\.txt$/,
 ];

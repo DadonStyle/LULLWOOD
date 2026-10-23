@@ -102,6 +102,7 @@ test('Tier A still wins for lib/game/*.test.ts (test files stay unreviewed-tier)
 // author identity involved.
 test('Tier C: owned-page / founder-merge channel files, regardless of what their path alone would otherwise classify as', () => {
   assert.equal(tier('lib/devlog.ts'), 'C', 'would otherwise be lib/** -> B');
+  assert.equal(tier('lib/faq.ts'), 'C', 'LUL-6075 review gap: faq channel content source, same shape as lib/devlog.ts');
   assert.equal(tier('app/devlog/page.tsx'), 'C', 'would otherwise be app/** -> B');
   assert.equal(tier('app/devlog/posts/some-post.tsx'), 'C', 'the LUL-6052 incident shape');
   assert.equal(tier('app/guides/wolves/page.tsx'), 'C');
@@ -115,8 +116,8 @@ test('Tier C: a manifest path cannot be auto-approved even when every other file
 });
 
 test('owned-page rule is a named list, not a blanket app/** carve-out', () => {
-  assert.equal(tier('app/how-to-survive/page.tsx'), 'B', 'predates the 2026-10-22 founder-merge channel decision');
-  assert.equal(tier('app/games-like-slender/page.tsx'), 'B', 'predates the 2026-10-22 founder-merge channel decision');
+  assert.equal(tier('app/how-to-survive/page.tsx'), 'B', 'not one of CHANNELS.md\'s five named channels');
+  assert.equal(tier('app/games-like-slender/page.tsx'), 'B', 'not one of CHANNELS.md\'s five named channels');
   assert.equal(tier('app/page.tsx'), 'B', 'ordinary app surface outside the named owned-page dirs');
 });
 
