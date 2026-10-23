@@ -75,6 +75,26 @@
 //     no diff at all to give it, so the downgrade only fires when a caller
 //     supplies one -- both production consumers (tier-approve.yml,
 //     check-review-gap.mjs) always do.
+//   - OWNED_PAGES below (devlog, guides, faq, press, llms.txt) are forced C
+//     regardless of what their path alone would classify as, and that check
+//     runs before every other rule. `CHANNELS.md` (owner: Growth Lead,
+//     founder decision 2026-10-22) carves these website pages into their own
+//     merge lane: "the Producer opens a PR without [ship], and the founder
+//     merges it. The Reviewer must PASS it first." -- no Code Reviewer step
+//     at all, by design. Path classification alone cannot see that: LUL-6074
+//     found PR#1147 (branch `lul-6072-fix`) routing `lib/devlog.ts` through
+//     this pipeline as a plain Tier B `lib/**` file, and it was stopped only
+//     by the coincidence that the approving token's GitHub identity matched
+//     the PR author's (guard 2 in tier-approve.yml) -- a PR opened under
+//     `auto-pr.yml`'s normal `github-actions[bot]` identity would not have
+//     tripped that guard and would have auto-merged a founder-only page with
+//     zero review. Listed by page, not as a blanket `app/**` carve-out:
+//     `app/how-to-survive/page.tsx` and `app/games-like-slender/page.tsx`
+//     predate this channel (built 2026-10-18, before the 2026-10-22 founder
+//     decision) and are ordinary Tier B app surface, not on this list.
+//     `public/llms.txt` matters here for a second reason: unguarded, it
+//     would ride the `public/** -> A` rule below to a zero-review merge,
+//     worse than devlog's accidental Tier B.
 //
 // Usage: node scripts/pr-tier.mjs <file> [file...]
 //        node scripts/pr-tier.mjs --stdin
@@ -87,7 +107,23 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
+// Owned-page / founder-merge channel (CHANNELS.md, decision 2026-10-22).
+// See the OWNED_PAGES bullet in the file-level comment above for why this
+// exists and why it is a named list, not a blanket app/**/public/** rule.
+// Keep this list in sync with CHANNELS.md's "Website pages" row -- it is
+// the only place both documents need to agree.
+const OWNED_PAGES = [
+  /^lib\/devlog\.ts$/,
+  /^app\/(devlog|guides|faq|press)\//,
+  /^public\/llms\.txt$/,
+];
+
 const rules = [
+  // --- Owned pages: forced C ahead of every other rule, including the
+  // other Tier C rules below (a no-op there) and, critically, public/** ->
+  // A, which would otherwise auto-merge llms.txt with zero review. ---
+  ...OWNED_PAGES.map((re) => [re, 'C']),
+
   // --- Tier C: never auto-approved. Checked first; first match wins. ---
   [/^\.github\//, 'C'],
   [/^scripts\//, 'C'],
