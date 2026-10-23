@@ -54,8 +54,17 @@ test.describe('Beacon Roost Flush mission (LUL-5160)', () => {
     // explicitly, same as e2e/beacon-hunter.spec.ts:54.
     await page.addInitScript(() => window.localStorage.setItem('lullwood:settings', JSON.stringify({ difficulty: 'night' })));
     await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'beaconRoostFlush', qaRoostIndex: 0 });
-    await enter(page);
+    // LUL-6080: qaSetFixedStep() before enter(), not after -- same LUL-2283 hazard already
+    // fixed for e2e/predator-determinism.spec.ts/map-seed.spec.ts. enter()'s ~1200ms real-time
+    // wait let the boot-time-placed roaming beaconHunter wolf tick real frames and occasionally
+    // ambiently flush a roost before this test's deterministic phase ran, consuming the
+    // mission's one-shot flush before the scripted throw below.
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await enter(page);
+    // Parking the RAF loop before enter() means nothing has pushed state yet -- one settle
+    // tick so #missionPanel below reflects the just-booted mission (e2e/action-prompt.spec.ts
+    // pattern).
+    await qaHook(page, 'qaAdvance', 1);
     await qaHook(page, 'qaBuildScene', {
       predators: [{ kind: 'wolf', x: 0, z: -8, state: 'roam', variant: 'beaconHunter' }],
       props: [{ kind: 'bramble', x: 0, z: -4 }],
@@ -112,9 +121,7 @@ test.describe('Beacon Roost Flush mission (LUL-5160)', () => {
   test('does not complete when a different (unmarked) roost is flushed by a player throw', async ({ page }) => {
     // Proves the roost-specific guard (canCompleteFlush()'s roostIndex check) applies to this
     // kind too, not just plain 'flush' -- mirrors e2e/mission-flush.spec.ts's own guard test.
-    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'beaconRoostFlush', qaRoostIndex: 0 });
-    await enter(page);
-    // LUL-5859: this kind's repositionBeaconHunterForMission() (engine/forest-engine.js)
+    // LUL-5859/LUL-6080: this kind's repositionBeaconHunterForMission() (engine/forest-engine.js)
     // relocates a live, roaming beaconHunter wolf to within 50u of ROOSTS[0] -- well inside
     // reach of ROOSTS[1] too at this seed's compressed inter-roost spacing. Without pinning
     // the clock, the real RAF loop keeps ticking across every await below (page.evaluate/
@@ -124,7 +131,11 @@ test.describe('Beacon Roost Flush mission (LUL-5160)', () => {
     // (the roostFlushDeniedCue() branch, not flushRoost()), so burstActive reads false. Same
     // qaSetFixedStep()-cancels-the-real-RAF-loop fix LUL-5046 already established for
     // e2e/tree-pathing.spec.ts's identical real-time-vs-simulated-time class of flake.
+    // qaSetFixedStep() must run before enter(), not after -- same LUL-2283 ordering hazard
+    // this file's first test hit too.
+    await boot(page, { qaHooks: true, qaHour: 12, qaMissionKind: 'beaconRoostFlush', qaRoostIndex: 0 });
     await qaHook(page, 'qaSetFixedStep', FIXED_DT);
+    await enter(page);
 
     const mission = await qaHook(page, 'qaProbeMission');
     expect(mission?.kind).toBe('beaconRoostFlush');

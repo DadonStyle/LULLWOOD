@@ -66,14 +66,26 @@ name: Approve parked CI runs
 # A fork's head repository can never equal `github.repository`, so a fork
 # PR's parked run is never touched here and stays exactly as gated as
 # GitHub's own policy already makes it.
+#
+# LUL-6066: `release/next` pushes are the cut PR's head (base=main,
+# head=release/next) -- every one of them spawns a fresh parked
+# `local-qa-gate.yml` run via that PR's `pull_request: synchronize`, and
+# until now nothing immediate re-triggered this approval step for them, so
+# the cut PR sat with its `local-qa` status entirely missing (not even
+# `pending`) until the 30-minute schedule happened to catch up. Confirmed
+# live 2026-10-22: the schedule missed its ~14:27Z beat on PR#1143, leaving
+# run 39797376214 parked for 30+ minutes past when it should have cleared.
+# Adding `release/next` here closes that gap the same way `main` already
+# does for every other PR.
 
 on:
   push:
-    branches: [main]
+    branches: [main, release/next]
   schedule:
     # Fallback cadence in case the push trigger is missed (e.g. a merge that
-    # landed while this workflow itself was mid-update). Same 30-minute
-    # ballpark as the checks this feeds.
+    # landed while this workflow itself was mid-update, or a missed cron
+    # tick -- LUL-6066 measured one live). Same 30-minute ballpark as the
+    # checks this feeds.
     - cron: '*/30 * * * *'
   workflow_dispatch: {}
 
