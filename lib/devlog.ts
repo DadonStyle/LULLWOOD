@@ -20,7 +20,7 @@ const POSTS: PostMeta[] = [
   {
     slug: 'how-scent-and-wind-work',
     title: 'How scent and wind work',
-    date: '2026-10-26',
+    date: '2026-10-22',
     description:
       'Wind is one vector, rolled once per map — and it quietly rewrites scent radius, scent lifetime, footstep noise, sprint speed, predator approach and a predator freeze. Six systems, one constant, read from the source.',
   },
