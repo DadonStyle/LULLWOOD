@@ -15,6 +15,18 @@
 //   re-arms this to pending for the new sha -- a stale PASS for an old sha
 //   can never carry a new sha across the gate.
 //
+//   LUL-6086: a `pull_request` run queued by GitHub Actions can execute
+//   *after* an `issue_comment` run for the SAME sha has already landed the
+//   real success/failure verdict -- e.g. version-cut.yml refreshes the cut
+//   PR, queuing a `pull_request` run that a slow runner delays by 15+
+//   minutes, while the tester's PASS|FAIL comment lands and is processed in
+//   the meantime. Unconditionally re-arming to pending in that window
+//   clobbers the real verdict back to pending with no new sha to justify it,
+//   and nothing ever re-fires to set it back. handlePullRequest() guards
+//   this by reading the current `local-qa` status for the sha first and
+//   no-op'ing if it is already success/failure -- only a genuinely new or
+//   still-pending sha gets (re-)armed.
+//
 //   LUL-5775: a direct-to-main PR (any head branch other than release/next)
 //   carrying the `emergency-hotfix` label auto-passes instead of arming
 //   pending. The nightly tester (shared/local-qa/bin/pr-e2e-watch.mjs,
@@ -68,6 +80,7 @@
 //      Actions env -- this only runs inside a workflow, unlike the other
 //      scripts/*-check.mjs detectors which run against ambient `gh auth`).
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { ghFetch, ghPost } from './lib/github-fetch.mjs';
 
 const DEFAULT_REPO = 'DadonStyle/LULLWOOD';
@@ -94,6 +107,15 @@ async function setStatus(repo, token, sha, state, description, targetUrl) {
   console.log(`set local-qa=${state} on ${sha}: ${description}`);
 }
 
+// LUL-6086: the combined-status endpoint dedupes to the latest status per
+// context, which is exactly "what does `local-qa` currently say for this
+// sha" -- the same question cut-merge.yml's required check answers off.
+async function getLatestLocalQaState(repo, token, sha) {
+  const combined = await ghFetch(`https://api.github.com/repos/${repo}/commits/${sha}/status`, token);
+  const match = (combined.statuses || []).find((s) => s.context === 'local-qa');
+  return match ? match.state : null;
+}
+
 async function handlePullRequest(repo, token, event) {
   const pr = event.pull_request;
   if (!pr) throw new Error('pull_request event with no pull_request payload');
@@ -103,6 +125,11 @@ async function handlePullRequest(repo, token, event) {
   }
   if (isEmergencyHotfix(pr)) {
     await setStatus(repo, token, pr.head.sha, 'success', `local-qa: auto-pass -- emergency-hotfix label, gated by Code Reviewer approval + required CI checks instead of the tester`);
+    return;
+  }
+  const existingState = await getLatestLocalQaState(repo, token, pr.head.sha);
+  if (existingState === 'success' || existingState === 'failure') {
+    console.log(`local-qa is already ${existingState} for ${pr.head.sha} (a newer issue_comment verdict already landed) -- this pull_request run was delayed in the Actions queue, not re-arming to pending`);
     return;
   }
   await setStatus(repo, token, pr.head.sha, 'pending', 'awaiting local-qa PASS|FAIL comment for this sha');
@@ -183,7 +210,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err.stack || err.message);
-  process.exit(1);
-});
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  main().catch((err) => {
+    console.error(err.stack || err.message);
+    process.exit(1);
+  });
+}
+
+export { handlePullRequest, handleIssueComment, handleWorkflowDispatch, getLatestLocalQaState, isEmergencyHotfix };
