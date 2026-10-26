@@ -1,6 +1,19 @@
+import Link from "next/link";
+
 export default function TheReturnTrip() {
   return (
     <>
+      <aside className="devlog-note">
+        <p className="devlog-note__label">
+          <time dateTime="2026-10-26">Superseded, October 26, 2026</time>
+        </p>
+        <p>
+          This post describes the carry-home win condition as it shipped in
+          September 2026. LUL-2281 cut the return leg — lifting the child is
+          the win now, on the spot, with no trip back to survive. Current
+          rules: <Link href="/how-to-survive">how to survive Lullwood</Link>.
+        </p>
+      </aside>
       <p>
         Lullwood shipped with a simple win condition: find the glowing child
         and get close enough to pick her up. That was the whole run. We

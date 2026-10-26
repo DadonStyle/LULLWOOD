@@ -99,6 +99,15 @@ export default async function DevlogPost({ params }: Props) {
                 { year: "numeric", month: "long", day: "numeric" }
               )}
             </time>
+            {post.updated && post.updated !== post.date && (
+              <time dateTime={post.updated} className="devlog-updated">
+                Updated{" "}
+                {new Date(post.updated + "T12:00:00Z").toLocaleDateString(
+                  "en-US",
+                  { year: "numeric", month: "long", day: "numeric" }
+                )}
+              </time>
+            )}
           </header>
           <div className="devlog-body">
             <Content />

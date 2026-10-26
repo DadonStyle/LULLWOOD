@@ -29,7 +29,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     ...posts.map((post) => ({
       url: `${SITE_URL}/devlog/${post.slug}`,
-      lastModified: new Date(post.date),
+      // post.updated, when set, is the last substantive edit (LUL-6091) --
+      // falling back to post.date silently dropped it here before, so a
+      // post's own lastmod could contradict its JSON-LD dateModified.
+      lastModified: new Date(post.updated ?? post.date),
       changeFrequency: "yearly" as const,
       priority: 0.6,
     })),
