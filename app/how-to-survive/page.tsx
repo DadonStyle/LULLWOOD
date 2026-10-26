@@ -321,6 +321,7 @@ export default function HowToSurvivePage() {
         </article>
         <footer className="devlog-footer">
           <p><Link href="/">Play Lullwood free in your browser</Link></p>
+          <p><Link href="/guides">See all Lullwood guides</Link></p>
           <p><Link href="/devlog">Read the Lullwood devlog</Link> for how these systems were built.</p>
         </footer>
       </main>

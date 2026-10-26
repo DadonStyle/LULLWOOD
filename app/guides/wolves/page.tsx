@@ -238,6 +238,7 @@ export default function WolvesGuidePage() {
             </Link>{" "}
             for hiding, scent, the mist veil and bears and lions.
           </p>
+          <p><Link href="/guides">See all Lullwood guides</Link></p>
           <p><Link href="/">Play Lullwood free in your browser</Link></p>
         </footer>
       </main>

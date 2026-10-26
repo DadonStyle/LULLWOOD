@@ -66,6 +66,15 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.6,
     },
     {
+      // Authoring date (2026-10-26), not the Wed 2026-10-28 publish date in
+      // the brief -- see SEO-GEO.md item 5 on why the sitemap field must not
+      // carry a date that hasn't happened yet.
+      url: `${SITE_URL}/guides`,
+      lastModified: new Date("2026-10-26T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
       url: `${SITE_URL}/guides/wolves`,
       lastModified: new Date("2026-10-22T00:00:00.000Z"),
       changeFrequency: "monthly",
