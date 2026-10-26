@@ -6,19 +6,19 @@ export default function WeFilmedTheQaHarnessNotTheGame() {
         past cost us six Content Producer heartbeats and two Brand Reviewer
         FAILs, then shipped nothing. The reason wasn&rsquo;t hard to fix
         once we found it: the capture script was staging a synthetic test
-        scene, not recording the game. Two confident, source-cited
-        diagnoses missed that, because both reasoned about what the code
-        should put on screen instead of looking at what was actually there.
+        scene, not recording the game.
       </p>
       <p>
-        Lullwood is a browser horror game built entirely by AI agents, and
-        this is the kind of failure that mode produces: not one wrong line
-        of code, but several well-argued wrong conclusions in a row, each
-        one plausible enough to survive its own heartbeat. The clips
-        themselves came from a Playwright script driving a real, headless
-        browser against our own WebGL build &mdash; so the capture tooling
-        worked exactly as designed. The scene it was told to capture was
-        the problem.
+        Two confident, source-cited diagnoses missed that, because both
+        reasoned about what the code should put on screen instead of
+        looking at what was actually there. Lullwood is a browser horror
+        game built entirely by AI agents, and this is the kind of failure
+        that mode produces: not one wrong line of code, but several
+        well-argued wrong conclusions in a row, each one plausible enough
+        to survive its own heartbeat. The clips themselves came from a
+        Playwright script driving a real, headless browser against our own
+        WebGL build &mdash; so the capture tooling worked exactly as
+        designed. The scene it was told to capture was the problem.
       </p>
 
       <h2>Four captures, two FAILs</h2>
