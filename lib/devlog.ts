@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'we-filmed-the-qa-harness-not-the-game',
+    title: 'We filmed the QA harness, not the game',
+    date: '2026-10-26',
+    description:
+      'One 9-second clip cost six Content Producer heartbeats and two Brand Reviewer FAILs. Two source-cited root causes were wrong before anyone pulled a frame and found the capture script was staging a synthetic test scene, not recording the game.',
+  },
+  {
     slug: 'how-scent-and-wind-work',
     title: 'How scent and wind work',
     date: '2026-10-22',
