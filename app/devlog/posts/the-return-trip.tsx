@@ -3,15 +3,38 @@ import Link from "next/link";
 export default function TheReturnTrip() {
   return (
     <>
-      <aside className="devlog-note">
-        <p className="devlog-note__label">
+      <aside
+        style={{
+          borderLeft: "3px solid #4a5f82",
+          background: "#0f1621",
+          padding: "14px 18px",
+          marginBottom: 28,
+          borderRadius: "0 4px 4px 0",
+        }}
+      >
+        <p
+          style={{
+            fontSize: 11,
+            letterSpacing: "0.06em",
+            textTransform: "uppercase",
+            color: "#6a8cb0",
+            marginBottom: 6,
+          }}
+        >
           <time dateTime="2026-10-26">Superseded, October 26, 2026</time>
         </p>
-        <p>
+        <p style={{ fontSize: 14, color: "#9fb2cd", marginBottom: 0 }}>
           This post describes the carry-home win condition as it shipped in
           September 2026. LUL-2281 cut the return leg — lifting the child is
           the win now, on the spot, with no trip back to survive. Current
-          rules: <Link href="/how-to-survive">how to survive Lullwood</Link>.
+          rules:{" "}
+          <Link
+            href="/how-to-survive"
+            style={{ color: "#8fb0d6", textDecoration: "underline" }}
+          >
+            how to survive Lullwood
+          </Link>
+          .
         </p>
       </aside>
       <p>

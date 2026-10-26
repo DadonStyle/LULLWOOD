@@ -161,35 +161,7 @@ main.devlog-post article header time {
   font-size: 12px;
   color: #5c7090;
   display: block;
-}
-main.devlog-post article header time:last-of-type {
   margin-bottom: 32px;
-}
-main.devlog-post article header .devlog-updated {
-  color: #4a5f82;
-}
-main.devlog-post .devlog-body .devlog-note {
-  border-left: 3px solid #4a5f82;
-  background: #0f1621;
-  padding: 14px 18px;
-  margin-bottom: 28px;
-  border-radius: 0 4px 4px 0;
-}
-main.devlog-post .devlog-body .devlog-note__label {
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #6a8cb0;
-  margin-bottom: 6px;
-}
-main.devlog-post .devlog-body .devlog-note p {
-  font-size: 14px;
-  color: #9fb2cd;
-  margin-bottom: 0;
-}
-main.devlog-post .devlog-body .devlog-note a {
-  color: #8fb0d6;
-  text-decoration: underline;
 }
 main.devlog-post .devlog-body p {
   font-size: 15px;
