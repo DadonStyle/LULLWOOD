@@ -1,4 +1,4 @@
-import { SCREENSHOTS, SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "./site.ts";
+import { BLUESKY_URL, GITHUB_URL, SCREENSHOTS, SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "./site.ts";
 import { ORG_REF } from "./seo.ts";
 
 // The game itself, as a schema.org VideoGame. Homepage-only (app/page.tsx):
@@ -37,6 +37,9 @@ export const videoGameJsonLd = {
   // organisation rather than two more anonymous copies.
   author: ORG_REF,
   publisher: ORG_REF,
+  // Same official-profile list as the Organization node: the Bluesky account
+  // posts as this game, so both nodes claim it (LUL-6101).
+  sameAs: [GITHUB_URL, BLUESKY_URL],
   offers: {
     "@type": "Offer",
     price: "0",
