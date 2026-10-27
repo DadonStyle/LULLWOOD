@@ -4,7 +4,7 @@
 // fallbacks and sameAs, and /llms.txt is served. Static HTML only, no gameplay.
 import { test, expect } from './fixtures';
 import { FAQ } from '../lib/faq';
-import { GITHUB_URL } from '../lib/site';
+import { BLUESKY_URL, GITHUB_URL } from '../lib/site';
 
 type JsonLd = Record<string, unknown> & { '@type'?: string; '@graph'?: Record<string, unknown>[] };
 
@@ -20,23 +20,41 @@ test.describe('SEO/GEO homepage signals', () => {
     }));
     const lds = blocks.map((b) => JSON.parse(b) as JsonLd);
 
-    const faq = lds.find((d) => d['@type'] === 'FAQPage') as { mainEntity: { name: string; acceptedAnswer: { text: string } }[] } | undefined;
-    expect(faq).toBeTruthy();
-    const marked = faq!.mainEntity.map((q) => ({ question: q.name, answer: q.acceptedAnswer.text }));
-    expect(marked).toEqual(FAQ);
+    // The FAQPage schema lives on /faq only (duplicate structured data otherwise).
+    expect(lds.filter((d) => d['@type'] === 'FAQPage')).toHaveLength(0);
     expect(visible).toEqual(FAQ);
 
     const graph = lds.flatMap((d) => d['@graph'] ?? []);
     expect(graph.find((n) => n['@type'] === 'WebSite')?.alternateName).toEqual(['Lullwood Game', 'lullwoodgame.com']);
-    expect(graph.find((n) => n['@type'] === 'Organization')?.sameAs).toContain(GITHUB_URL);
+    expect(graph.find((n) => n['@type'] === 'Organization')?.sameAs).toEqual(
+      expect.arrayContaining([GITHUB_URL, BLUESKY_URL]),
+    );
 
-    const game = lds.find((d) => d['@type'] === 'VideoGame') as { screenshot: string[] };
+    const game = lds.find((d) => d['@type'] === 'VideoGame') as { screenshot: string[]; sameAs: string[] };
+    expect(game.sameAs).toEqual(expect.arrayContaining([GITHUB_URL, BLUESKY_URL]));
     expect(game.screenshot.length).toBeGreaterThanOrEqual(3);
     for (const url of game.screenshot) expect(new URL(url).pathname).toMatch(/^\/screenshots\/lullwood-.+\.png$/);
   });
 
+  test('/faq emits exactly one FAQPage that matches its visible questions', async ({ page }) => {
+    await page.goto('/faq', { waitUntil: 'domcontentloaded' });
+    const { blocks, visible } = await page.evaluate(() => ({
+      blocks: Array.from(document.querySelectorAll('script[type="application/ld+json"]')).map((s) => s.textContent ?? ''),
+      visible: Array.from(document.querySelectorAll('main h2')).map((h) => ({
+        question: h.textContent ?? '',
+        answer: h.nextElementSibling?.textContent ?? '',
+      })),
+    }));
+    const lds = blocks.map((b) => JSON.parse(b) as JsonLd);
+    const faqs = lds.filter((d) => d['@type'] === 'FAQPage') as unknown as { mainEntity: { name: string; acceptedAnswer: { text: string } }[] }[];
+    expect(faqs).toHaveLength(1);
+    expect(faqs[0].mainEntity.map((q) => ({ question: q.name, answer: q.acceptedAnswer.text }))).toEqual(FAQ);
+    expect(visible).toEqual(FAQ);
+  });
+
   test('the homepage links to the guide pages, devlog and credits in server-rendered HTML', async ({ request }) => {
     const html = await (await request.get('/')).text();
+    expect(html).toContain('href="/faq"');
     expect(html).toContain('href="/devlog"');
     expect(html).toContain('href="/credits"');
     expect(html).toContain('href="/how-to-survive"');

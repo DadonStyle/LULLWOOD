@@ -12,6 +12,11 @@ name: Version cut finalize
 #   3. get everything `main` just gained back onto `release/next`, and arm
 #      that PR to merge itself with `--merge` (LUL-1041) once green.
 #
+# Two further jobs, independent of `finalize` so neither can block tagging or the
+# sync-back (LUL-6107): `pages-changed` diffs the cut for a page change, and
+# `indexnow` (only if it did) waits for the Production deployment then runs
+# scripts/indexnow.mjs. See that job's comment.
+#
 # "Recreate release/next from main" (LUL-492 §3.5) is NOT implemented as a
 # reset or force-push. release/next carries the same `pull_request` and
 # `non_fast_forward` rules as main (systems/release-train) -- direct pushes
@@ -205,3 +210,95 @@ jobs:
           if ! GH_TOKEN="$SHIP_REVIEW_TOKEN" gh pr merge "$NUMBER" --repo "$REPO" --merge --auto; then
             echo "::warning::could not arm auto-merge (--merge) on sync-back PR #$NUMBER; it stays open. Merge it by hand with --merge, never --squash. LUL-1041."
           fi
+
+  # LUL-6107. scripts/indexnow.mjs reads the LIVE sitemap.xml, so it must run only
+  # after Vercel's Production deployment of this exact merge commit is live (merge
+  # to main is not deploy-live), and only when the cut changed a page: cuts are
+  # near-daily and IndexNow treats resubmitting an unchanged sitemap as abuse.
+  # Google has no IndexNow; that path is Search Console.
+  pages-changed:
+    name: did the cut change a page
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'release/next' &&
+      github.repository == 'DadonStyle/LULLWOOD'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      pages: ${{ steps.diff.outputs.pages }}
+    steps:
+      # A closed-PR event checks out the PR merge ref by default; pin the real
+      # merge commit so `^1` is main's previous tip.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 2
+
+      - name: diff the cut against main's previous tip
+        id: diff
+        env:
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          hits="$(git diff --name-only "$SHA^1" "$SHA" | grep -E '^(app/(.*/)?page\.tsx|app/sitemap\.ts|lib/devlog\.ts|lib/faq\.ts|public/llms\.txt)$' || true)"
+          if [ -n "$hits" ]; then
+            echo "pages=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::cut changed page files, IndexNow will run:"
+            printf '%s\n' "$hits"
+          else
+            echo "pages=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::cut changed no page files; IndexNow skipped."
+          fi
+
+  indexnow:
+    name: submit sitemap to IndexNow
+    needs: pages-changed
+    if: needs.pages-changed.outputs.pages == 'true'
+    runs-on: ubuntu-latest
+    # Never fail or block the release over a search-engine ping.
+    continue-on-error: true
+    timeout-minutes: 40
+    concurrency:
+      group: indexnow-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      deployments: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: wait for the Production deployment of this merge commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            id="$(gh api "repos/$REPO/deployments?sha=$SHA&environment=Production" --jq '.[0].id // empty')"
+            if [ -n "$id" ]; then
+              state="$(gh api "repos/$REPO/deployments/$id/statuses" --jq '.[0].state // "none"')"
+              echo "attempt $i: deployment $id state=$state"
+              case "$state" in
+                success) exit 0 ;;
+                failure|error|inactive)
+                  echo "::error::Production deployment $id ended $state; not submitting a stale sitemap."
+                  exit 1 ;;
+              esac
+            else
+              echo "attempt $i: no Production deployment for $SHA yet"
+            fi
+            sleep 30
+          done
+          echo "::error::no successful Production deployment for $SHA within 30 minutes; not submitting a stale sitemap."
+          exit 1
+
+      - name: submit to IndexNow
+        run: node scripts/indexnow.mjs

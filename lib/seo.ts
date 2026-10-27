@@ -16,6 +16,11 @@ export const SOCIAL_OPEN_GRAPH = { siteName: SITE_NAME, locale: 'en_US', images:
 
 export const SOCIAL_TWITTER = { card: 'summary_large_image' as const, images: [SOCIAL_IMAGE] };
 
+// Feed autodiscovery (`<link rel="alternate" type="application/atom+xml">`).
+// Next merges `alternates` shallowly, so every page that sets its own canonical
+// must spread this back in or the link disappears from that page.
+export const DEVLOG_FEED_TYPES = { 'application/atom+xml': [{ url: '/feed.xml', title: 'Lullwood devlog' }] };
+
 // The Organization node app/layout.tsx emits on every page. Referencing it by
 // @id lets Google join a page's author/publisher to the same entity instead of
 // reading a second, anonymous org; `name` stays for parsers that don't resolve

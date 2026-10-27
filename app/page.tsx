@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import GameLoader from "@/components/GameLoader";
-import { FAQ, faqJsonLd } from "@/lib/faq";
+import { FAQ } from "@/lib/faq";
 import { videoGameJsonLd } from "@/lib/game-jsonld";
+import { DEVLOG_FEED_TYPES } from "@/lib/seo";
 
 // LUL-2375: the canonical is per page, not inherited from the layout -- with
 // it on the layout every child route (/suggest) declared itself a duplicate
@@ -11,7 +12,7 @@ import { videoGameJsonLd } from "@/lib/game-jsonld";
 // a page-level `openGraph` would REPLACE the layout's whole openGraph object
 // (Next merges metadata per top-level key), dropping the social description.
 export const metadata: Metadata = {
-  alternates: { canonical: "/" },
+  alternates: { canonical: "/", types: DEVLOG_FEED_TYPES },
 };
 
 // Server-rendered content shell, LUL-46 (M3b). The game itself stays
@@ -196,6 +197,9 @@ export default function Home() {
               <p>{answer}</p>
             </div>
           ))}
+          <p>
+            <Link href="/faq">All questions about Lullwood →</Link>
+          </p>
         </section>
         <section>
           <h2>Got an idea?</h2>
@@ -237,13 +241,6 @@ export default function Home() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{
           __html: JSON.stringify(videoGameJsonLd).replace(/</g, "\\u003c"),
-        }}
-      />
-      <script
-        type="application/ld+json"
-        // Built from lib/faq.ts, the same list the Questions section renders.
-        dangerouslySetInnerHTML={{
-          __html: JSON.stringify(faqJsonLd).replace(/</g, "\\u003c"),
         }}
       />
     </>

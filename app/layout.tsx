@@ -9,7 +9,9 @@ import {
   SITE_THEME_COLOR,
   GOOGLE_SITE_VERIFICATION,
   GITHUB_URL,
+  BLUESKY_URL,
 } from "../lib/site";
+import { DEVLOG_FEED_TYPES } from "../lib/seo";
 
 // LUL-529: two things this repo had zero of before.
 // - `viewportFit: 'cover'` is what makes every `env(safe-area-inset-*)` in
@@ -56,6 +58,7 @@ export const metadata: Metadata = {
   creator: SITE_NAME,
   publisher: SITE_NAME,
   category: "games",
+  alternates: { types: DEVLOG_FEED_TYPES },
   // LUL-2375: no `alternates.canonical` here on purpose -- a layout-level
   // canonical is inherited by every child route, so /suggest was declaring
   // itself a duplicate of "/". Each page sets its own (app/page.tsx,
@@ -144,7 +147,7 @@ const siteJsonLd = {
       // Ties this site to the other places Lullwood exists, so search engines
       // and AI assistants resolve them to one entity. Add each new official
       // profile (itch.io, YouTube, ...) here once it is live.
-      sameAs: [GITHUB_URL],
+      sameAs: [GITHUB_URL, BLUESKY_URL],
     },
   ],
 };

@@ -100,13 +100,16 @@ are generated from `lib/site.ts`.
 `public/<key>.txt` is the site's [IndexNow](https://www.indexnow.org/) key file — its
 content is the key itself. IndexNow keys are public by design. `scripts/indexnow.mjs`
 reads the deployed `/sitemap.xml` and submits every URL in it to Bing, DuckDuckGo, Yandex and Seznam in one call.
-Run it manually after a deploy that changes sitemap URLs:
+It runs automatically from the `indexnow` job in `.github/workflows/version-cut-finalize.yml`:
+once per production cut, after the Production deployment is live, and only when the cut touched a
+page (`app/**/page.tsx`, `app/sitemap.ts`, `lib/devlog.ts`, `lib/faq.ts`, `public/llms.txt`). The job
+log carries the URL count and a single `IndexNow: HTTP <code>` line. If that job failed, run it by hand:
 
 ```bash
 node scripts/indexnow.mjs
 ```
 
-It is **not** wired into CI — pinging on every push is treated as abuse. Google does not
+Do not add any other trigger — pinging on every push is treated as abuse. Google does not
 consume IndexNow; it discovers the site via Search Console and the sitemap.
 
 ## Status
