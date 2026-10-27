@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import GameLoader from "@/components/GameLoader";
-import { FAQ, faqJsonLd } from "@/lib/faq";
+import { FAQ } from "@/lib/faq";
 import { videoGameJsonLd } from "@/lib/game-jsonld";
 
 // LUL-2375: the canonical is per page, not inherited from the layout -- with
@@ -196,6 +196,9 @@ export default function Home() {
               <p>{answer}</p>
             </div>
           ))}
+          <p>
+            <Link href="/faq">All questions about Lullwood →</Link>
+          </p>
         </section>
         <section>
           <h2>Got an idea?</h2>
@@ -233,13 +236,6 @@ export default function Home() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{
           __html: JSON.stringify(videoGameJsonLd).replace(/</g, "\\u003c"),
-        }}
-      />
-      <script
-        type="application/ld+json"
-        // Built from lib/faq.ts, the same list the Questions section renders.
-        dangerouslySetInnerHTML={{
-          __html: JSON.stringify(faqJsonLd).replace(/</g, "\\u003c"),
         }}
       />
     </>
