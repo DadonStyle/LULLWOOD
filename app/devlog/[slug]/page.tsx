@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import JsonLd from "@/components/JsonLd";
 import { getAdjacentPosts, getAllPosts, getPost } from "@/lib/devlog";
 import {
+  DEVLOG_FEED_TYPES,
   ORG_REF,
   SOCIAL_IMAGE,
   SOCIAL_OPEN_GRAPH,
@@ -31,7 +32,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: post.title,
     description: post.description,
-    alternates: { canonical: `/devlog/${slug}` },
+    alternates: { canonical: `/devlog/${slug}`, types: DEVLOG_FEED_TYPES },
     openGraph: {
       ...SOCIAL_OPEN_GRAPH,
       title: `${post.title} — Lullwood Devlog`,
