@@ -36,7 +36,7 @@ Google's position is that AI Overviews and AI Mode need no special markup: ordin
 ## On-site: still open
 
 1. **Add each new official profile to `Organization.sameAs`** (`app/layout.tsx`) as it goes live: itch.io, YouTube, Reddit, CrazyGames.
-2. **Run `node scripts/indexnow.mjs`** once after these PRs deploy, so Bing, DuckDuckGo, Yandex and Seznam hear about the new URLs. Bing also feeds ChatGPT search and Copilot. Do this at most once per deploy.
+2. **IndexNow now runs automatically** on every production cut that touches a page (LUL-6107, `version-cut-finalize.yml`); run `node scripts/indexnow.mjs` by hand only if that job failed. It tells Bing, DuckDuckGo, Yandex and Seznam hear about the new URLs. Bing also feeds ChatGPT search and Copilot. Do this at most once per deploy.
 3. **A gameplay video** (a trailer or a 60-second clip) embedded on the homepage with `VideoObject` JSON-LD. Video results and AI answers both draw on video. This needs the clip first.
 4. **Performance (Core Web Vitals):** the Three.js engine (about 455 KB compressed) loads on every visit before the player interacts, and about 47 KB of CSS comments ship inside `components/GameCanvas.tsx`'s style string. Deferring the engine until the first click would help LCP and INP, but it changes boot and the gate flow, so it needs a product decision and a play test (Tier C territory).
 5. **Do not** build near-duplicate keyword pages (`/free-horror-game-online`, `/horror-game-no-download` and so on). Google treats them as doorway pages ([spam policies](https://developers.google.com/search/docs/essentials/spam-policies)). Each new page has to do a job no other page does.
