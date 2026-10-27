@@ -4,7 +4,7 @@
 // fallbacks and sameAs, and /llms.txt is served. Static HTML only, no gameplay.
 import { test, expect } from './fixtures';
 import { FAQ } from '../lib/faq';
-import { BLUESKY_URL, GITHUB_URL } from '../lib/site';
+import { BLUESKY_URL, DEVTO_URL, GITHUB_URL } from '../lib/site';
 
 type JsonLd = Record<string, unknown> & { '@type'?: string; '@graph'?: Record<string, unknown>[] };
 
@@ -27,11 +27,11 @@ test.describe('SEO/GEO homepage signals', () => {
     const graph = lds.flatMap((d) => d['@graph'] ?? []);
     expect(graph.find((n) => n['@type'] === 'WebSite')?.alternateName).toEqual(['Lullwood Game', 'lullwoodgame.com']);
     expect(graph.find((n) => n['@type'] === 'Organization')?.sameAs).toEqual(
-      expect.arrayContaining([GITHUB_URL, BLUESKY_URL]),
+      expect.arrayContaining([GITHUB_URL, BLUESKY_URL, DEVTO_URL]),
     );
 
     const game = lds.find((d) => d['@type'] === 'VideoGame') as { screenshot: string[]; sameAs: string[] };
-    expect(game.sameAs).toEqual(expect.arrayContaining([GITHUB_URL, BLUESKY_URL]));
+    expect(game.sameAs).toEqual(expect.arrayContaining([GITHUB_URL, BLUESKY_URL, DEVTO_URL]));
     expect(game.screenshot.length).toBeGreaterThanOrEqual(3);
     for (const url of game.screenshot) expect(new URL(url).pathname).toMatch(/^\/screenshots\/lullwood-.+\.png$/);
   });
