@@ -266,7 +266,10 @@ export default function HowToSurvivePage() {
                 escape line, so running straight can put you into them. One wolf
                 each game is a <em>Beacon Hunter</em>: it ignores sight and scent and
                 locks on the moment you sprint into the wind within its range. Its
-                eyes turn blue-teal when it does.
+                eyes turn blue-teal when it does. See{" "}
+                <Link href="/guides/wolves">how to survive wolves</Link> for the
+                exact flank distances, timings and how the Beacon Hunter&apos;s
+                lock really works.
               </li>
               <li>
                 <strong>Bear.</strong> The slowest and shortest-sighted, but the best
@@ -355,7 +358,8 @@ export default function HowToSurvivePage() {
               her direction, and the coloured lights on the six landmarks above the
               fog. Approach carefully: predators within about 32 units of her hear
               the same cry and investigate. Press E beside her to lift her. That
-              wins the run on the spot and stops the timer.
+              wins the run on the spot and stops the timer. The objective has its own
+              page: <Link href="/guides/how-to-win">how do you win Lullwood</Link>.
             </p>
 
             <figure>
@@ -397,6 +401,7 @@ export default function HowToSurvivePage() {
         </article>
         <footer className="devlog-footer">
           <p><Link href="/">Play Lullwood free in your browser</Link></p>
+          <p><Link href="/guides">See all Lullwood guides</Link></p>
           <p><Link href="/devlog">Read the Lullwood devlog</Link> for how these systems were built.</p>
         </footer>
       </main>

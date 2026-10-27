@@ -29,7 +29,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     ...posts.map((post) => ({
       url: `${SITE_URL}/devlog/${post.slug}`,
-      lastModified: new Date(post.date),
+      // post.updated, when set, is the last substantive edit (LUL-6091) --
+      // falling back to post.date silently dropped it here before, so a
+      // post's own lastmod could contradict its JSON-LD dateModified.
+      lastModified: new Date(post.updated ?? post.date),
       changeFrequency: "yearly" as const,
       priority: 0.6,
     })),
@@ -63,6 +66,27 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.6,
     },
     {
+      // Authoring date (2026-10-26), not the Wed 2026-10-28 publish date in
+      // the brief -- see SEO-GEO.md item 5 on why the sitemap field must not
+      // carry a date that hasn't happened yet.
+      url: `${SITE_URL}/guides`,
+      lastModified: new Date("2026-10-26T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
+      url: `${SITE_URL}/guides/wolves`,
+      lastModified: new Date("2026-10-22T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
+      url: `${SITE_URL}/guides/how-to-win`,
+      lastModified: new Date("2026-10-27T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
       url: `${SITE_URL}/faq`,
       lastModified: new Date("2026-10-27T00:00:00.000Z"),
       changeFrequency: "monthly",
@@ -73,6 +97,22 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: new Date("2026-10-18T00:00:00.000Z"),
       changeFrequency: "monthly",
       priority: 0.5,
+    },
+    {
+      url: `${SITE_URL}/press`,
+      lastModified: new Date("2026-10-22T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.4,
+      images: [
+        `${SITE_URL}/screenshots/lullwood-night-forest-pine-trees.png`,
+        `${SITE_URL}/screenshots/lullwood-dense-pine-forest-snow.png`,
+        `${SITE_URL}/screenshots/lullwood-forest-rock-outcrop-night.png`,
+        `${SITE_URL}/press/lullwood-04-distant-glow.png`,
+        `${SITE_URL}/press/lullwood-05-under-canopy.png`,
+        `${SITE_URL}/press/lullwood-06-night-clearing.png`,
+        `${SITE_URL}/press/lullwood-cover-a.png`,
+        `${SITE_URL}/press/lullwood-cover-b.png`,
+      ],
     },
     ...devlogEntries,
   ];

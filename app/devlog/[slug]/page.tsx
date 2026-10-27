@@ -94,12 +94,28 @@ export default async function DevlogPost({ params }: Props) {
         <article>
           <header>
             <h1>{post.title}</h1>
-            <time dateTime={post.date}>
+            <time
+              dateTime={post.date}
+              style={
+                post.updated && post.updated !== post.date
+                  ? { marginBottom: 0 }
+                  : undefined
+              }
+            >
               {new Date(post.date + "T12:00:00Z").toLocaleDateString(
                 "en-US",
                 { year: "numeric", month: "long", day: "numeric" }
               )}
             </time>
+            {post.updated && post.updated !== post.date && (
+              <time dateTime={post.updated} style={{ color: "#4a5f82" }}>
+                Updated{" "}
+                {new Date(post.updated + "T12:00:00Z").toLocaleDateString(
+                  "en-US",
+                  { year: "numeric", month: "long", day: "numeric" }
+                )}
+              </time>
+            )}
           </header>
           <div className="devlog-body">
             <Content />

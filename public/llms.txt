@@ -18,11 +18,17 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 ## Pages
 
 - [Play Lullwood](https://www.lullwoodgame.com/): the game, plus how to play, controls and an FAQ
+- [Lullwood guides](https://www.lullwoodgame.com/guides): hub for player guides, starting with wolves; bears and lions aren't written yet
 - [How to survive Lullwood](https://www.lullwoodgame.com/how-to-survive): player guide to predators, hiding, the mist veil and each difficulty, including how to survive a bear
+- [How to survive wolves in Lullwood](https://www.lullwoodgame.com/guides/wolves): the pack's flanking geometry, timings and the Beacon Hunter's wind lock
+- [How do you win Lullwood?](https://www.lullwoodgame.com/guides/how-to-win): the win condition: reach the child and press E to lift her; there is no trip home
 - [Lullwood FAQ](https://www.lullwoodgame.com/faq): answers to common questions about price, phones, controls and the predators
 - [Games like Slender](https://www.lullwoodgame.com/games-like-slender): Slender-style horror games and how Lullwood compares
 - [Devlog](https://www.lullwoodgame.com/devlog): how the game is built
 - [Devlog feed (Atom)](https://www.lullwoodgame.com/feed.xml): every devlog post, newest first
+- [How scent and wind work](https://www.lullwoodgame.com/devlog/how-scent-and-wind-work): how one wind vector drives scent radius, scent lifetime, footstep noise, sprint speed and predator behaviour, read from the source
+- [We filmed the QA harness, not the game](https://www.lullwoodgame.com/devlog/we-filmed-the-qa-harness-not-the-game): how a staged Playwright capture against a synthetic QA scene, not the real game, cost six heartbeats and two wrong root causes before anyone pulled a frame
+- [Press kit](https://www.lullwoodgame.com/press): fact sheet, screenshots, cover art and a clip for press and portals
 - [Credits](https://www.lullwoodgame.com/credits): third-party assets and their authors
 - [Suggest something](https://www.lullwoodgame.com/suggest): send the founder an idea
 
