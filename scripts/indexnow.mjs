@@ -1,6 +1,9 @@
-// Self-serve search-engine submission for LUL-173. Not part of the build or CI --
-// IndexNow treats frequent pinging as abuse and will start ignoring the key.
-// Run manually, at most once per production deploy:
+// Self-serve search-engine submission for LUL-173. Run automatically by the
+// `indexnow` job in .github/workflows/version-cut-finalize.yml (LUL-6107): once per
+// production cut, after the Production deployment is live, and only when that cut
+// touched a page (app/**/page.tsx, app/sitemap.ts, lib/devlog.ts, lib/faq.ts,
+// public/llms.txt). IndexNow treats frequent pinging as abuse and will start ignoring
+// the key, so do not add a second trigger. Manual run, only if that job failed:
 //
 //   node scripts/indexnow.mjs
 //
