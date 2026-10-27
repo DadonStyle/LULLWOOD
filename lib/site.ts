@@ -52,6 +52,13 @@ export const GOOGLE_SITE_VERIFICATION =
 // (app/layout.tsx's Organization `sameAs`).
 export const GITHUB_URL = 'https://github.com/DadonStyle/LULLWOOD';
 
+// The official Lullwood Bluesky account. The handle stays `petgem` (an old
+// account the founder already owned); the display name and bio are the brand,
+// set 2026-10-27 (LUL-6101). Listed in app/layout.tsx's Organization `sameAs`
+// and lib/game-jsonld.ts's VideoGame `sameAs` so search and answer engines
+// resolve the profile and this site to one entity rather than two.
+export const BLUESKY_URL = 'https://bsky.app/profile/petgem.bsky.social';
+
 // In-engine screenshots in public/screenshots/, shown in app/page.tsx's
 // gallery and listed in the VideoGame JSON-LD.
 export const SCREENSHOTS = [
