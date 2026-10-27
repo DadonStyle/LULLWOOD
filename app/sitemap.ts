@@ -58,7 +58,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     {
       url: `${SITE_URL}/how-to-survive`,
-      lastModified: new Date("2026-10-18T00:00:00.000Z"),
+      lastModified: new Date("2026-10-27T00:00:00.000Z"),
       changeFrequency: "monthly",
       priority: 0.6,
     },
