@@ -10,6 +10,7 @@ import {
   GOOGLE_SITE_VERIFICATION,
   GITHUB_URL,
   BLUESKY_URL,
+  DEVTO_URL,
 } from "../lib/site";
 import { DEVLOG_FEED_TYPES } from "../lib/seo";
 
@@ -147,7 +148,7 @@ const siteJsonLd = {
       // Ties this site to the other places Lullwood exists, so search engines
       // and AI assistants resolve them to one entity. Add each new official
       // profile (itch.io, YouTube, ...) here once it is live.
-      sameAs: [GITHUB_URL, BLUESKY_URL],
+      sameAs: [GITHUB_URL, BLUESKY_URL, DEVTO_URL],
     },
   ],
 };

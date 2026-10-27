@@ -59,6 +59,13 @@ export const GITHUB_URL = 'https://github.com/DadonStyle/LULLWOOD';
 // resolve the profile and this site to one entity rather than two.
 export const BLUESKY_URL = 'https://bsky.app/profile/petgem.bsky.social';
 
+// The official Lullwood dev.to account, created 2026-10-28. It publishes
+// canonical cross-posts of our devlog (canonical_url always points back at
+// www.lullwoodgame.com), so search engines should resolve it and this site to
+// one entity. Listed in app/layout.tsx's Organization `sameAs` and
+// lib/game-jsonld.ts's VideoGame `sameAs` (LUL-6124).
+export const DEVTO_URL = 'https://dev.to/lullwoodgamer';
+
 // In-engine screenshots in public/screenshots/, shown in app/page.tsx's
 // gallery and listed in the VideoGame JSON-LD.
 export const SCREENSHOTS = [
