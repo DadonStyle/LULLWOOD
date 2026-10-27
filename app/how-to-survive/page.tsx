@@ -283,7 +283,8 @@ export default function HowToSurvivePage() {
               her direction, and the coloured lights on the six landmarks above the
               fog. Approach carefully: predators within about 32 units of her hear
               the same cry and investigate. Press E beside her to lift her. That
-              wins the run on the spot and stops the timer.
+              wins the run on the spot and stops the timer. The objective has its own
+              page: <Link href="/guides/how-to-win">how do you win Lullwood</Link>.
             </p>
 
             <figure>

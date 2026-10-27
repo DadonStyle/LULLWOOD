@@ -215,6 +215,10 @@ export default function Home() {
               difficulty
             </li>
             <li>
+              <Link href="/guides/how-to-win">How do you win Lullwood?</Link> —
+              the win condition: lift the child, no trip home
+            </li>
+            <li>
               <Link href="/games-like-slender">Games like Slender</Link> — what
               makes the genre work, and where Lullwood fits
             </li>

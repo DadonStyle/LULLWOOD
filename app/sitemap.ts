@@ -63,6 +63,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.6,
     },
     {
+      url: `${SITE_URL}/guides/how-to-win`,
+      lastModified: new Date("2026-10-27T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
       url: `${SITE_URL}/games-like-slender`,
       lastModified: new Date("2026-10-18T00:00:00.000Z"),
       changeFrequency: "monthly",
