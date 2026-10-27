@@ -75,9 +75,13 @@
 //     no diff at all to give it, so the downgrade only fires when a caller
 //     supplies one -- both production consumers (tier-approve.yml,
 //     check-review-gap.mjs) always do.
-//   - OWNED_PAGES below (devlog, guides, faq, press, llms.txt) are forced C
-//     regardless of what their path alone would classify as, and that check
-//     runs before every other rule. `CHANNELS.md` (owner: Growth Lead,
+//   - OWNED_PAGES below (devlog, guides, faq, press, llms.txt) are pinned to
+//     Tier B (merge on green, review after) ahead of every other rule.
+//     LUL-6105, founder decision 2026-10-27: these pages now auto-publish
+//     after a Brand Reviewer PASS, replacing the founder-merge lane below.
+//     They stay pinned (not left to path rules) so `public/llms.txt` can
+//     never ride `public/** -> A` to a zero-review merge. History, from when
+//     they were pinned to C: `CHANNELS.md` (owner: Growth Lead,
 //     founder decision 2026-10-22) carves these website pages into their own
 //     merge lane: "the Producer opens a PR without [ship], and the founder
 //     merges it. The Reviewer must PASS it first." -- no Code Reviewer step
@@ -114,7 +118,8 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-// Owned-page / founder-merge channel (CHANNELS.md, decision 2026-10-22).
+// Owned-page channel (CHANNELS.md). Founder-merge lane 2026-10-22, Tier B
+// auto-publish after Brand Reviewer PASS since 2026-10-27 (LUL-6105).
 // See the OWNED_PAGES bullet in the file-level comment above for why this
 // exists and why it is a named list, not a blanket app/**/public/** rule.
 // Keep this list in sync with CHANNELS.md's "Website pages" row -- it is
@@ -127,10 +132,9 @@ const OWNED_PAGES = [
 ];
 
 const rules = [
-  // --- Owned pages: forced C ahead of every other rule, including the
-  // other Tier C rules below (a no-op there) and, critically, public/** ->
-  // A, which would otherwise auto-merge llms.txt with zero review. ---
-  ...OWNED_PAGES.map((re) => [re, 'C']),
+  // --- Owned pages: pinned to B ahead of every other rule, so public/** ->
+  // A can never auto-merge llms.txt with zero review (LUL-6105). ---
+  ...OWNED_PAGES.map((re) => [re, 'B']),
 
   // --- Tier C: never auto-approved. Checked first; first match wins. ---
   [/^\.github\//, 'C'],

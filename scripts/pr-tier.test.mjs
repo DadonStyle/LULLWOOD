@@ -94,25 +94,22 @@ test('Tier A still wins for lib/game/*.test.ts (test files stay unreviewed-tier)
   assert.equal(tier('lib/game/cover.test.ts'), 'A');
 });
 
-// LUL-6075/LUL-6074: PR#1147 (branch lul-6072-fix) routed lib/devlog.ts --
-// an owned-page / founder-merge-channel file (CHANNELS.md) -- through
-// tier-approve.yml as a plain Tier B lib/** file, stopped only by the
-// coincidence that the approving token's identity matched the author's.
-// These assert the guard is mechanical: path-only, no branch name or
-// author identity involved.
-test('Tier C: owned-page / founder-merge channel files, regardless of what their path alone would otherwise classify as', () => {
-  assert.equal(tier('lib/devlog.ts'), 'C', 'would otherwise be lib/** -> B');
-  assert.equal(tier('lib/faq.ts'), 'C', 'LUL-6075 review gap: faq channel content source, same shape as lib/devlog.ts');
-  assert.equal(tier('app/devlog/page.tsx'), 'C', 'would otherwise be app/** -> B');
-  assert.equal(tier('app/devlog/posts/some-post.tsx'), 'C', 'the LUL-6052 incident shape');
-  assert.equal(tier('app/guides/wolves/page.tsx'), 'C');
-  assert.equal(tier('app/faq/page.tsx'), 'C');
-  assert.equal(tier('app/press/page.tsx'), 'C');
-  assert.equal(tier('public/llms.txt'), 'C', 'would otherwise be public/** -> A, zero review');
+// LUL-6105 (founder 2026-10-27): owned marketing pages auto-publish after a
+// Brand Reviewer PASS, so they are pinned to Tier B. Pinned (not left to the
+// path rules) so public/llms.txt never falls through to public/** -> A.
+test('Tier B: owned-page channel files, pinned regardless of what their path alone would classify as', () => {
+  assert.equal(tier('lib/devlog.ts'), 'B');
+  assert.equal(tier('lib/faq.ts'), 'B');
+  assert.equal(tier('app/devlog/page.tsx'), 'B');
+  assert.equal(tier('app/devlog/posts/some-post.tsx'), 'B');
+  assert.equal(tier('app/guides/wolves/page.tsx'), 'B');
+  assert.equal(tier('app/faq/page.tsx'), 'B');
+  assert.equal(tier('app/press/page.tsx'), 'B');
+  assert.equal(tier('public/llms.txt'), 'B', 'not public/** -> A: still needs CI green');
 });
 
 test('Tier C: a manifest path cannot be auto-approved even when every other file in the diff is Tier A/B', () => {
-  assert.equal(tier('lib/devlog.ts', 'app/page.tsx', 'README.md'), 'C');
+  assert.equal(tier('package.json', 'app/page.tsx', 'README.md'), 'C');
 });
 
 test('owned-page rule is a named list, not a blanket app/** carve-out', () => {
