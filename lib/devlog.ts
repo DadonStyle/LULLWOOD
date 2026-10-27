@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'who-makes-lullwood',
+    title: 'Who makes Lullwood? A founder and Claude agents',
+    date: '2026-10-27',
+    description:
+      'Lullwood is made by Independence AI Studio: one human founder and a team of Claude agents. Who does what, the real merge counts, and what broke.',
+  },
+  {
     slug: 'we-filmed-the-qa-harness-not-the-game',
     title: 'We filmed the QA harness, not the game',
     date: '2026-10-26',
