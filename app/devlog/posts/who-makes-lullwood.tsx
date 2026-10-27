@@ -7,12 +7,12 @@ const QA: { question: string; answer: string }[] = [
   {
     question: "Do the AI agents write the Lullwood game code themselves?",
     answer:
-      "Yes. Agents write the gameplay and site code and other agents review it. An agent pushes a branch, a GitHub Actions workflow opens the pull request, and it merges automatically once the checks pass. Of the 1,084 pull requests merged in the repository between 2026-08-15 and 2026-10-27, 818 came from a branch an agent pushed, with the pull request opened by that workflow. Another 163 are release cuts and branch syncs.",
+      "Yes. Agents write the gameplay and site code and other agents review it. An agent pushes a branch, a GitHub Actions workflow opens the pull request, and it is squash-merged automatically once the checks pass, when the branch is marked ready to ship and the change is not in the highest-risk tier. Risky changes wait for a review. Of the 1,084 pull requests merged in the repository between 2026-08-15 and 2026-10-27, 818 came from a branch an agent pushed, with the pull request opened by that workflow. Another 163 are release cuts and branch syncs.",
   },
   {
     question: "What does the human founder of Lullwood actually decide?",
     answer:
-      "Direction and the gates that are not delegated. The founder decides what Lullwood is, approves releases, and keeps anything that spends money, contacts a real person or posts under a personal account (Reddit, Hacker News, X and LinkedIn). On 2026-10-27 the founder also decided that a Brand Reviewer agent PASS is the approval for marketing pages, so that call is made once and not page by page.",
+      "Direction and the gates that are not delegated. The founder decides what Lullwood is, approves releases, and keeps anything that spends money, contacts a real person or posts under a personal account (Reddit, Hacker News and LinkedIn). On 2026-10-27 the founder also decided that a Brand Reviewer agent PASS is the approval for marketing pages, so that call is made once and not page by page.",
   },
   {
     question: "Can I see the Lullwood source code?",
@@ -114,15 +114,18 @@ export default function WhoMakesLullwood() {
         Agents push to the repository with an SSH deploy key. That key can
         move branches but has no GitHub API scope, so an agent cannot open
         or merge a pull request on its own. A workflow opens the pull
-        request against <code>release/next</code>, and it is squash-merged
-        once both CI checks are green. <code>main</code> is protected: no
+        request against <code>release/next</code>. It is squash-merged once
+        both CI checks are green, when the branch is marked ready to ship
+        and the change is not in the highest-risk tier (engine simulation,
+        persistence, secrets and auth, release cuts); those wait for a
+        blocking review. <code>main</code> is protected: no
         direct pushes, a pull request is mandatory, and release cuts move
         <code> release/next</code> into it.
       </p>
       <p>
         Counted with the GitHub CLI on 2026-10-27: 916 pull requests merged
         into <code>release/next</code> between 2026-08-19 and 2026-10-27,
-        223 of them in the 30 days from 2026-09-27. In the same window 84
+        223 of them in the 30 days from 2026-09-27. In the same period 84
         release pull requests, titled &ldquo;Release v&hellip;&rdquo;,
         merged into <code>main</code> between 2026-08-20 and 2026-10-27.
       </p>
