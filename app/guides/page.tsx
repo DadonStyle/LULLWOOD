@@ -104,6 +104,14 @@ export default function GuidesHubPage() {
               </li>
               <li>
                 <strong>
+                  <Link href="/guides/fireflies">Do fireflies help in Lullwood?</Link>
+                </strong>{" "}
+                — no: standing in a firefly cluster&apos;s glow raises how far
+                predators can see you by up to 30%. When they appear and what
+                rain does.
+              </li>
+              <li>
+                <strong>
                   <Link href="/guides/how-to-win">How you win Lullwood</Link>
                 </strong>{" "}
                 — the win condition: reach the child and press E. There is no
