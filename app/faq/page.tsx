@@ -71,7 +71,7 @@ export default function FaqPage() {
             <p>
               Lullwood is a free first-person horror game you play in your web
               browser, with nothing to download or install. You cross a foggy
-              night forest to find a lost, glowing child and carry them home while
+              night forest to reach a lost, glowing child and lift her while
               wolves, bears and lions hunt you by sight and by scent. Hiding and
               holding still is how you survive.
             </p>

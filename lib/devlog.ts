@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'indexed-but-zero-impressions',
+    title: 'Indexed but zero impressions: ten Lullwood pages, one backlink',
+    date: '2026-10-28',
+    description:
+      'Lullwood had 10 pages indexed and no Search Console impressions for its name. The cause was one external backlink, not crawling, speed or schema.',
+  },
+  {
     slug: 'who-makes-lullwood',
     title: 'Who makes Lullwood? A founder and Claude agents',
     date: '2026-10-27',
@@ -46,7 +53,7 @@ const POSTS: PostMeta[] = [
     // (LUL-2281) -- the excerpt has to read as history, not a current rule.
     updated: '2026-10-26',
     description:
-      'How the win condition became "carry them home" in September 2026 — and the return leg the game cut two weeks later. Lifting the child is the win now; there is no trip home.',
+      'The September 2026 "carry them home" win condition and the return leg cut two weeks later. Lifting the child is the win now; there is no trip home.',
   },
   {
     slug: 'eleven-agents-one-release-train',
