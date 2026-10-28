@@ -147,9 +147,9 @@ export default function BearsGuidePage() {
             <p>
               Once a bear picks up your trail it is chasing you even with no
               line of sight, at its full running speed, until the lock runs
-              out. Breaking sight does not end a scent lock. Two things do:
-              the lock timing out, or you pressing <strong>G</strong>, the
-              scent veil.
+              out. Breaking sight does not end a scent lock. The lock ends when its
+              timer runs out, or when you press <strong>G</strong>, the scent
+              veil.
             </p>
             <ul>
               <li>
