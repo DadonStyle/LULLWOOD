@@ -62,6 +62,14 @@ while IFS= read -r path; do
       denied+=("$path (scripts/ and dependency manifests are Tier C -- decisions/0014-tier-b-automation, amendment 3)") ;;
     # The Tier B surface proper.
     components/*|app/*|lib/*) ;;
+    # LUL-6105 (founder 2026-10-27): marketing-page assets auto-publish after a
+    # Brand Reviewer PASS, same lane as the app/ pages that use them.
+    public/llms.txt|public/press/*|public/marketing/*) ;;
+    # Tier A paths riding along with a Tier B change (a page plus its e2e
+    # spec, or plus a doc). Tier A is lower risk than B, so a mixed A+B diff
+    # is Tier B; without this, each allowlist rejects the other tier's files
+    # and the PR can never self-merge (PR #1177, 2026-10-28).
+    *.md|e2e/*|playwright.config.ts) ;;
     *) denied+=("$path") ;;
   esac
 done

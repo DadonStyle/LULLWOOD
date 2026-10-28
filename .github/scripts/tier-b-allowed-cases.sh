@@ -45,6 +45,9 @@ check_allow "components/ only"                    components/Hud.tsx
 check_allow "app/ only"                           app/page.tsx
 check_allow "lib/ outside the lib/game/* carve-out" lib/game/economy.ts lib/input-mode.ts
 check_allow "mixed allowed paths"                 components/Hud.tsx app/layout.tsx lib/game/economy.ts
+check_allow "marketing assets (LUL-6105)"          public/llms.txt public/press/cover.png public/marketing/og.png app/press/page.tsx
+check_deny "other public/ files stay out of Tier B"   public/death.mp4
+check_allow "mixed Tier A + B (page + e2e spec + doc)" app/layout.tsx lib/site.ts e2e/seo-geo.spec.ts README.md
 
 # --- amendment 1: engine/ is excluded whole -------------------------------
 check_deny "engine/ forbidden (amendment 1)" engine/forest-engine.js

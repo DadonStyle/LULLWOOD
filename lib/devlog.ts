@@ -18,9 +18,23 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'who-makes-lullwood',
+    title: 'Who makes Lullwood? A founder and Claude agents',
+    date: '2026-10-27',
+    description:
+      'Lullwood is made by Independence AI Studio: one human founder and a team of Claude agents. Who does what, the real merge counts, and what broke.',
+  },
+  {
+    slug: 'we-filmed-the-qa-harness-not-the-game',
+    title: 'We filmed the QA harness, not the game',
+    date: '2026-10-26',
+    description:
+      'One 9-second clip cost six Content Producer heartbeats and two Brand Reviewer FAILs. Two source-cited root causes were wrong before anyone pulled a frame and found the capture script was staging a synthetic test scene, not recording the game.',
+  },
+  {
     slug: 'how-scent-and-wind-work',
     title: 'How scent and wind work',
-    date: '2026-10-26',
+    date: '2026-10-22',
     description:
       'Wind is one vector, rolled once per map — and it quietly rewrites scent radius, scent lifetime, footstep noise, sprint speed, predator approach and a predator freeze. Six systems, one constant, read from the source.',
   },
@@ -28,8 +42,11 @@ const POSTS: PostMeta[] = [
     slug: 'the-return-trip',
     title: 'The return trip',
     date: '2026-09-05',
+    // LUL-6091: the carry-home mechanic this post announced is gone
+    // (LUL-2281) -- the excerpt has to read as history, not a current rule.
+    updated: '2026-10-26',
     description:
-      'How the win condition changed from "reach the child" to "carry them home" — and why the predators can still take you on the way back.',
+      'How the win condition became "carry them home" in September 2026 — and the return leg the game cut two weeks later. Lifting the child is the win now; there is no trip home.',
   },
   {
     slug: 'eleven-agents-one-release-train',

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import JsonLd from "@/components/JsonLd";
 import { getAdjacentPosts, getAllPosts, getPost } from "@/lib/devlog";
 import {
+  DEVLOG_FEED_TYPES,
   ORG_REF,
   SOCIAL_IMAGE,
   SOCIAL_OPEN_GRAPH,
@@ -31,7 +32,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return {
     title: post.title,
     description: post.description,
-    alternates: { canonical: `/devlog/${slug}` },
+    alternates: { canonical: `/devlog/${slug}`, types: DEVLOG_FEED_TYPES },
     openGraph: {
       ...SOCIAL_OPEN_GRAPH,
       title: `${post.title} — Lullwood Devlog`,
@@ -93,12 +94,28 @@ export default async function DevlogPost({ params }: Props) {
         <article>
           <header>
             <h1>{post.title}</h1>
-            <time dateTime={post.date}>
+            <time
+              dateTime={post.date}
+              style={
+                post.updated && post.updated !== post.date
+                  ? { marginBottom: 0 }
+                  : undefined
+              }
+            >
               {new Date(post.date + "T12:00:00Z").toLocaleDateString(
                 "en-US",
                 { year: "numeric", month: "long", day: "numeric" }
               )}
             </time>
+            {post.updated && post.updated !== post.date && (
+              <time dateTime={post.updated} style={{ color: "#4a5f82" }}>
+                Updated{" "}
+                {new Date(post.updated + "T12:00:00Z").toLocaleDateString(
+                  "en-US",
+                  { year: "numeric", month: "long", day: "numeric" }
+                )}
+              </time>
+            )}
           </header>
           <div className="devlog-body">
             <Content />

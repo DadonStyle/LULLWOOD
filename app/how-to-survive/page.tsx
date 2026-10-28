@@ -6,13 +6,15 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 // Player guide (SEO): every number below is read from the shipped tuning, not
 // invented -- engine/tuning.js (PSPEC, DIFFICULTY_PRESETS, CHASE_GAP) and
 // lib/game/* (scent, noise, veil, veilOverload, stamina, cover, charge, jump,
-// rockClimb, predator, dayNight, economy, leaderboard). A retune there makes
+// rockClimb, predator, dayNight, economy, leaderboard). The bear section also
+// reads lib/game/pack.ts (wolves-only flanking) and lib/game/charge.ts +
+// engine/forest-engine.js (wolf/lion-only charge gate). A retune there makes
 // this copy stale, so check it when those constants move.
 const TITLE = "How to Survive Lullwood: Hiding, Scent and Predator Guide";
 const DESCRIPTION =
   "How to survive Lullwood: how wolves, bears and lions track you by sight and scent, when to hide in bramble, how the mist veil works, and how to win.";
 const PUBLISHED = "2026-10-18";
-const MODIFIED = "2026-10-18";
+const MODIFIED = "2026-10-27";
 const PAGE_URL = `${SITE_URL}/how-to-survive`;
 // Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
 const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
@@ -45,6 +47,29 @@ export const metadata: Metadata = {
   },
 };
 
+const BEAR_FAQ = [
+  {
+    question: "Can you outrun a bear in Lullwood?",
+    answer:
+      "No. A bear chases at about 13.9 units a second and your full sprint is 10.8, and sprinting empties your stamina in about six seconds. The bear is the slowest of the three predators, so it gives you the longest warning, about 9 seconds from the moment it spots you. Spend that time reaching bramble or breaking line of sight.",
+  },
+  {
+    question: "Does hiding work on bears in Lullwood?",
+    answer:
+      "Yes, while the bear is only looking for you. A player hiding in bramble is seen only at touching distance, about 2.8 units for a bear. It does not work on its own once a bear has locked onto your scent, because the bear keeps walking to where you are. Break the lock with G or Q first, then hold still.",
+  },
+  {
+    question: "Does the mist veil work on a bear in Lullwood?",
+    answer:
+      "Only against its eyes. The veil cuts predator sight to 35%, which shrinks a bear's base 30-unit sight to about 10 units, but it does nothing against scent, and scent is the bear's strongest sense. If a bear is following your trail, use G or Q instead.",
+  },
+  {
+    question: "How long does a bear follow your scent in Lullwood?",
+    answer:
+      "About 11 seconds once it locks on, against 8 for a wolf and about 6 for a lion. A bear also picks up a fresh trail from about 40% farther away. Moving into the wind shrinks your scent by 20%, and standing still lays no new trail.",
+  },
+];
+
 const jsonLd = {
   "@context": "https://schema.org",
   "@graph": [
@@ -61,6 +86,15 @@ const jsonLd = {
       publisher: { "@id": `${SITE_URL}#org` },
       mainEntityOfPage: { "@type": "WebPage", "@id": PAGE_URL },
       about: { "@id": `${SITE_URL}#game` },
+    },
+    {
+      "@type": "FAQPage",
+      "@id": `${PAGE_URL}#bear-faq`,
+      mainEntity: BEAR_FAQ.map(({ question, answer }) => ({
+        "@type": "Question",
+        name: question,
+        acceptedAnswer: { "@type": "Answer", text: answer },
+      })),
     },
     {
       "@type": "BreadcrumbList",
@@ -87,7 +121,7 @@ export default function HowToSurvivePage() {
         <article>
           <header>
             <h1>How to survive Lullwood</h1>
-            <time dateTime={MODIFIED}>Updated October 18, 2026</time>
+            <time dateTime={MODIFIED}>Updated October 27, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
@@ -232,7 +266,10 @@ export default function HowToSurvivePage() {
                 escape line, so running straight can put you into them. One wolf
                 each game is a <em>Beacon Hunter</em>: it ignores sight and scent and
                 locks on the moment you sprint into the wind within its range. Its
-                eyes turn blue-teal when it does.
+                eyes turn blue-teal when it does. See{" "}
+                <Link href="/guides/wolves">how to survive wolves</Link> for the
+                exact flank distances, timings and how the Beacon Hunter&apos;s
+                lock really works.
               </li>
               <li>
                 <strong>Bear.</strong> The slowest and shortest-sighted, but the best
@@ -252,6 +289,44 @@ export default function HowToSurvivePage() {
               is followed by a lunge, and the whole thing lasts one second. Jump
               inside it and the animal overshoots; it can&apos;t charge again for
               10 seconds. Ducking into a bush mid-charge won&apos;t save you.
+            </p>
+
+            <h2>How do you survive a bear in Lullwood?</h2>
+            <p>
+              Lullwood&apos;s bear never charges or flanks, so surviving it means
+              staying off its trail, not out of its sight. It is the slowest
+              predator with the shortest sight, but the strongest nose: it picks
+              up your scent about 40% farther out and holds a trail for roughly 11
+              seconds.
+            </p>
+            <p>
+              That is the opposite of a wolf. A wolf or lion telegraphs a
+              one-second lunge that a jump beats, and one chasing wolf sends the
+              others round your sides. A bear has no lunge to jump and calls no
+              pack, so the tricks that save you from wolves have nothing to work on.
+              It just keeps coming along your trail at about 13.9 units a second.
+            </p>
+            <ul>
+              <li>
+                <strong>Keep the trail thin.</strong> Your trail is picked up from
+                about 3.1 units while walking and 5.0 while sprinting (2.2 and 3.6
+                for a wolf). Stand still and you lay none.
+              </li>
+              <li>
+                <strong>Break the lock, then hold still.</strong> A bear that has
+                locked onto your scent keeps closing on you even with no line of
+                sight. Move into the wind and press <strong>G</strong> to cut every
+                scent lock for 30% stamina, or <strong>Q</strong> if you still have
+                your overload. Then hide in bramble.
+              </li>
+              <li>
+                <strong>Don&apos;t spend the mist veil on a bear.</strong> It cuts
+                sight only, and sight is the bear&apos;s weakest sense.
+              </li>
+            </ul>
+            <p>
+              The wind and scent rules behind this are in{" "}
+              <Link href="/devlog/how-scent-and-wind-work">how scent and wind work in Lullwood</Link>.
             </p>
 
             <h2>Difficulty tips</h2>
@@ -283,7 +358,8 @@ export default function HowToSurvivePage() {
               her direction, and the coloured lights on the six landmarks above the
               fog. Approach carefully: predators within about 32 units of her hear
               the same cry and investigate. Press E beside her to lift her. That
-              wins the run on the spot and stops the timer.
+              wins the run on the spot and stops the timer. The objective has its own
+              page: <Link href="/guides/how-to-win">how do you win Lullwood</Link>.
             </p>
 
             <figure>
@@ -314,10 +390,18 @@ export default function HowToSurvivePage() {
               <li><strong>Veiling against a scent chase.</strong> The veil cuts sight only; use G or Q.</li>
               <li><strong>Sprinting into the wind near the Beacon Hunter.</strong> That is exactly what calls it.</li>
             </ul>
+            <h2>Bear questions</h2>
+            {BEAR_FAQ.map(({ question, answer }) => (
+              <div key={question}>
+                <h3>{question}</h3>
+                <p>{answer}</p>
+              </div>
+            ))}
           </div>
         </article>
         <footer className="devlog-footer">
           <p><Link href="/">Play Lullwood free in your browser</Link></p>
+          <p><Link href="/guides">See all Lullwood guides</Link></p>
           <p><Link href="/devlog">Read the Lullwood devlog</Link> for how these systems were built.</p>
         </footer>
       </main>
