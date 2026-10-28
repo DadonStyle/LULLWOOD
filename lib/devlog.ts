@@ -46,7 +46,7 @@ const POSTS: PostMeta[] = [
     // (LUL-2281) -- the excerpt has to read as history, not a current rule.
     updated: '2026-10-26',
     description:
-      'How the win condition became "carry them home" in September 2026 — and the return leg the game cut two weeks later. Lifting the child is the win now; there is no trip home.',
+      'The September 2026 "carry them home" win condition and the return leg cut two weeks later. Lifting the child is the win now; there is no trip home.',
   },
   {
     slug: 'eleven-agents-one-release-train',

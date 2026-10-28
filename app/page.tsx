@@ -114,7 +114,8 @@ export default function Home() {
           </ul>
           <p>
             On a phone or tablet the same actions are on screen: twin sticks
-            to move and look, and buttons for jump, hide, veil and lift.
+            to move and look, and buttons for jump, hide, veil and lift. Hold the
+            phone in landscape; portrait shows a rotate prompt.
           </p>
         </section>
         <section>
