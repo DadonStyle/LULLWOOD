@@ -245,8 +245,8 @@ export default function LionsGuidePage() {
                 (about 34 units). The place to learn the charge.
               </li>
               <li>
-                <strong>Night:</strong> three lions at full sight (48 units) and
-                a minimap, so you can see where they have gone.
+                <strong>Night:</strong> three lions at full sight (48 units)
+                and a minimap.
               </li>
               <li>
                 <strong>Blackout</strong> (the default): three lions at 70%
