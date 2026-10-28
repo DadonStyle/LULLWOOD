@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'why-the-lion-goes-half-blind-at-night',
+    title: "Why Lullwood's lion goes half-blind at night while the wolf gets sharper",
+    date: '2026-10-28',
+    description:
+      "In Lullwood the lion's sight fades to half by 150 seconds while wolves and bears see up to 30% farther. Why one hunter fades, and what it does to your route.",
+  },
+  {
     slug: 'indexed-but-zero-impressions',
     title: 'Indexed but zero impressions: ten Lullwood pages, one backlink',
     date: '2026-10-28',

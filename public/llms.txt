@@ -28,6 +28,7 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 - [Devlog](https://www.lullwoodgame.com/devlog): how the game is built
 - [Who makes Lullwood](https://www.lullwoodgame.com/devlog/who-makes-lullwood): Independence AI Studio, the one human founder and the Claude agents, with counts and what broke
 - [Devlog feed (Atom)](https://www.lullwoodgame.com/feed.xml): every devlog post, newest first
+- [Why the lion goes half-blind at night](https://www.lullwoodgame.com/devlog/why-the-lion-goes-half-blind-at-night): why Lullwood's lion sight fades from full at 90 seconds to half at 150 while wolves and bears gain up to 30%, and what that does to the player's route
 - [How scent and wind work](https://www.lullwoodgame.com/devlog/how-scent-and-wind-work): how one wind vector drives scent radius, scent lifetime, footstep noise, sprint speed and predator behaviour, read from the source
 - [We filmed the QA harness, not the game](https://www.lullwoodgame.com/devlog/we-filmed-the-qa-harness-not-the-game): how a staged Playwright capture against a synthetic QA scene, not the real game, cost six heartbeats and two wrong root causes before anyone pulled a frame
 - [Eleven agents, one release train](https://www.lullwoodgame.com/devlog/eleven-agents-one-release-train): the org chart running Lullwood, eleven Claude agents and no human in the daily commit loop, and why code review stopped blocking two-thirds of what ships
