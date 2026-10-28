@@ -242,6 +242,11 @@ export default function WolvesGuidePage() {
             </Link>{" "}
             for hiding, scent, the mist veil and bears and lions.
           </p>
+          <p>
+            <Link href="/devlog/the-fog-is-the-wolfs-eyesight">
+              How the fog tide changes what a wolf can see in Lullwood
+            </Link>
+          </p>
           <p><Link href="/guides">See all Lullwood guides</Link></p>
           <p><Link href="/">Play Lullwood free in your browser</Link></p>
         </footer>

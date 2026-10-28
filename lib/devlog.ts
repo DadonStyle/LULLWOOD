@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'the-fog-is-the-wolfs-eyesight',
+    title: "The fog is the wolf's eyesight: Lullwood's fog tide",
+    date: '2026-10-28',
+    description:
+      'Every 90 seconds a fog tide in Lullwood cuts predator sight by up to 35% inside three fixed patches. The clock, the telegraph and the cost, from the source.',
+  },
+  {
     slug: 'indexed-but-zero-impressions',
     title: 'Indexed but zero impressions: ten Lullwood pages, one backlink',
     date: '2026-10-28',
