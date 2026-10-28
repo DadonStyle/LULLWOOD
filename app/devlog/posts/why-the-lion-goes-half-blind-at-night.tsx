@@ -55,7 +55,7 @@ export default function WhyTheLionGoesHalfBlindAtNight() {
         sky already darken over a run on a separate pacing clock, and that
         clock already raises every predator&rsquo;s sight by up to 30% over the
         same 120 seconds. Layering a new &minus;50% on the lion on top of the
-        existing +30% would have had two ramps cancel each other in the same
+        existing +30% would have had two ramps fight each other in the same
         window. The engineering resolution on the note says that reads as
         incoherent to the player and to QA, so the lion&rsquo;s curve replaces
         the ambient one instead of stacking with it. Wolves and bears keep the
@@ -102,8 +102,8 @@ export default function WhyTheLionGoesHalfBlindAtNight() {
       <p>
         The base radii above are the starting point, and a real sight check
         multiplies in more. The difficulty tier does (Lantern and Blackout are
-        both 0.7, Night is 1.0). The mist veil does, cutting sight to 35% while
-        it is held. So does the fog tide, up to 35% less for a predator standing
+        both 0.7, Night is 1.0). The mist veil does, cutting sight to as little as 35%
+        while it is held. So does the fog tide, up to 35% less for a predator standing
         inside one of its patches. One modifier is keyed to the clock on your own
         machine: the local hour of day scales every predator&rsquo;s sight
         between 0.8 at night and 1.15 at noon. All of these multiply together,
