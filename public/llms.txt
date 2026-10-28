@@ -36,3 +36,5 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 ## Optional
 
 - [Source code on GitHub](https://github.com/DadonStyle/LULLWOOD)
+- [Lullwood on Bluesky](https://bsky.app/profile/petgem.bsky.social): short posts and gameplay clips
+- [Lullwood on dev.to](https://dev.to/lullwoodgamer): developer write-ups about how the game is built

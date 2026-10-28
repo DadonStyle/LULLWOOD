@@ -29,14 +29,14 @@ const POSTS: PostMeta[] = [
     title: 'We filmed the QA harness, not the game',
     date: '2026-10-26',
     description:
-      'One 9-second clip cost six Content Producer heartbeats and two Brand Reviewer FAILs. Two source-cited root causes were wrong before anyone pulled a frame and found the capture script was staging a synthetic test scene, not recording the game.',
+      'One 9-second clip cost six heartbeats and two Reviewer FAILs. The capture script was staging a synthetic QA scene, not recording the game.',
   },
   {
     slug: 'how-scent-and-wind-work',
     title: 'How scent and wind work',
     date: '2026-10-22',
     description:
-      'Wind is one vector, rolled once per map — and it quietly rewrites scent radius, scent lifetime, footstep noise, sprint speed, predator approach and a predator freeze. Six systems, one constant, read from the source.',
+      'One wind vector, rolled once per map, rewrites scent radius, scent lifetime, footstep noise, sprint speed and predator behaviour. Read from the source.',
   },
   {
     slug: 'the-return-trip',

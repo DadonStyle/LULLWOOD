@@ -27,7 +27,7 @@ export const SITE_TITLE = 'Lullwood — Free Browser Horror Game, No Download';
 // LUL-2281 (2026-09-09) made lifting the child the win -- there is no carry-home
 // leg any more, so the snippet must not promise one (founder SEO pass 2026-09-11).
 export const SITE_DESCRIPTION =
-  'A glowing child is lost in the fog. Cross a night forest, hide from wolves, bears and lions that hunt by sight and scent, and reach her first. Free in browser.';
+  'A glowing child is lost in the fog. Cross a night forest, hide from wolves, bears and lions that hunt by sight and scent, and reach her. Free in browser.';
 
 // Brand colour for the manifest / theme-color -- the HUD's night ground
 // (components/GameCanvas.tsx's #panel/#settingsPanel chrome uses
