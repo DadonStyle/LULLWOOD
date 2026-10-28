@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function WeFilmedTheQaHarnessNotTheGame() {
   return (
     <>
@@ -11,8 +13,9 @@ export default function WeFilmedTheQaHarnessNotTheGame() {
       <p>
         Two confident, source-cited diagnoses missed that, because both
         reasoned about what the code should put on screen instead of
-        looking at what was actually there. Lullwood is a browser horror
-        game built entirely by AI agents, and this is the kind of failure
+        looking at what was actually there. Lullwood is a{' '}
+        <Link href="/">browser horror game</Link> built entirely by{' '}
+        <Link href="/devlog/eleven-agents-one-release-train">AI agents</Link>, and this is the kind of failure
         that mode produces: not one wrong line of code, but several
         well-argued wrong conclusions in a row, each one plausible enough
         to survive its own heartbeat. The clips themselves came from a

@@ -81,6 +81,12 @@ export default function FaqPage() {
                 <p>{answer}</p>
               </section>
             ))}
+            <p>
+              For the long versions, read{" "}
+              <Link href="/guides/how-to-win">how you win Lullwood</Link>,{" "}
+              <Link href="/how-to-survive">surviving the forest in Lullwood</Link>,
+              or <Link href="/games-like-slender">how Lullwood compares to games like Slender</Link>.
+            </p>
           </div>
         </article>
         <footer className="devlog-footer">

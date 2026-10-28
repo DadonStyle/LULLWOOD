@@ -30,6 +30,13 @@ export default function CreditsPage() {
       <JsonLd data={breadcrumbJsonLd([{ name: 'Credits', path: '/credits' }])} />
       <h1>Credits</h1>
       <CreditsList />
+      <p>
+        Lullwood is made by Independence AI Studio, one human founder plus
+        Claude agents: see <Link href="/devlog/who-makes-lullwood">who makes Lullwood</Link>.
+        Writing about the game? The <Link href="/press">Lullwood press kit</Link> has
+        the fact sheet and images.
+      </p>
+
       <p><Link href="/">back to the game</Link></p>
     </main>
   );
