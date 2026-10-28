@@ -207,7 +207,9 @@ export default function HowToWinPage() {
               The{" "}
               <Link href="/how-to-survive">how to survive Lullwood guide</Link>{" "}
               covers the predators, hiding, scent and the mist veil that decide
-              whether you get there.
+              whether you get there, and{" "}
+              <Link href="/guides/wolves">how to survive wolves in Lullwood</Link>{" "}
+              goes deep on the wolf pack.
             </p>
 
             <h2>How do you win faster?</h2>

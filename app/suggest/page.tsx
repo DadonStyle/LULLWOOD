@@ -39,6 +39,12 @@ export default function SuggestPage() {
         one box. The founder reads every suggestion by hand, in order, and
         writes up the ones that get built.
       </p>
+      <p className="suggest-page__intro">
+        Looking for an answer rather than an idea? The{" "}
+        <Link href="/faq">Lullwood FAQ</Link> and the{" "}
+        <Link href="/how-to-survive">guide to surviving Lullwood</Link> may already
+        have it.
+      </p>
       <SuggestionBox />
       {/* The only route with no way back: a visitor landing here from search
           had to edit the URL to reach the game. */}

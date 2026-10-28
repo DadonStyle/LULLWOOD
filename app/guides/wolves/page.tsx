@@ -102,7 +102,9 @@ export default function WolvesGuidePage() {
 
             <h2>Why wolves are different</h2>
             <p>
-              Bears and lions hunt alone. Wolves are the only predator in
+              Bears and lions hunt alone, and{" "}
+              <Link href="/how-to-survive">the Lullwood survival guide</Link>{" "}
+              covers them. Wolves are the only predator in
               Lullwood that coordinates: the instant one wolf sees or scents
               you and enters a real chase, every other wolf that isn&apos;t
               already hunting on its own becomes a flanker, routed around you
@@ -227,7 +229,8 @@ export default function WolvesGuidePage() {
               The single thing to carry out of this page: wolves are the only
               predator in Lullwood that flanks, so the pack reads the same
               straight line you&apos;re running as an invitation, not a
-              threat. Break the line, and you break the pincer.
+              threat. Break the line, and you break the pincer. What counts as a win is in{" "}
+              <Link href="/guides/how-to-win">how to win Lullwood</Link>.
             </p>
           </div>
         </article>
