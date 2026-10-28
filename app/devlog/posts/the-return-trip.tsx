@@ -43,7 +43,7 @@ export default function TheReturnTrip() {
         history of the version that had one.
       </p>
       <p>
-        Lullwood shipped with a simple win condition: find the glowing child
+        <Link href="/">Lullwood</Link> shipped with a simple win condition: find the glowing child
         and get close enough to pick her up. That was the whole run. We
         called it done, called it a prototype, and started thinking about
         predators.

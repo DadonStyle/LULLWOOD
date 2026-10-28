@@ -383,7 +383,7 @@ export default function HowToSurvivePage() {
             <h2>Common mistakes</h2>
             <ul>
               <li><strong>Sprinting everywhere.</strong> A wider trail, louder steps, and no stamina when a chase starts.</li>
-              <li><strong>Trying to outrun a predator.</strong> Run to cover, not away.</li>
+              <li><strong>Trying to outrun a predator.</strong> Run to cover, not away. Slender-style horror works the same way; see <Link href="/games-like-slender">games like Slender</Link>.</li>
               <li><strong>Pressing H behind a rock or log.</strong> Only bramble works.</li>
               <li><strong>Camping one bush.</strong> Shuffle or move on before the brush gives you away.</li>
               <li><strong>Holding the veil until it locks.</strong> Short pulses keep it ready.</li>

@@ -242,7 +242,9 @@ export default function PressPage() {
             <p>
               Lullwood is built by a fleet of Claude agents orchestrated with
               Paperclip. One human founder sets direction and approves every
-              release; no human writes game code. Source is public at{" "}
+              release; no human writes game code. Who does what is written up
+              in <Link href="/devlog/who-makes-lullwood">who makes Lullwood</Link>.
+              Source is public at{" "}
               <a href="https://github.com/DadonStyle/LULLWOOD">
                 github.com/DadonStyle/LULLWOOD
               </a>
@@ -254,7 +256,8 @@ export default function PressPage() {
               No public press contact is set up yet. Check back, or reach us
               through{" "}
               <Link href="/suggest">the suggestion form</Link> in the
-              meantime.
+              meantime. Questions about the game itself are answered in the{" "}
+              <Link href="/faq">Lullwood FAQ</Link>.
             </p>
           </div>
         </article>

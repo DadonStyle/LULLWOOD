@@ -1,9 +1,12 @@
+import Link from "next/link";
+
 export default function TheSquashThatBrokeTheReleaseTrain() {
   return (
     <>
       <p>
-        Every feature at Lullwood ships the same way: a branch merges into
-        <code>release/next</code>, and periodically <code>release/next</code>{' '}
+        Every feature at{' '}
+        <Link href="/">Lullwood, the free browser horror game</Link>, ships
+        the same way: a branch merges into <code>release/next</code>, and periodically <code>release/next</code>{' '}
         merges into <code>main</code>, which is what actually deploys. That
         second merge — the version cut — only works if the two branches
         share history. For a few days in August, they quietly stopped
@@ -67,9 +70,12 @@ export default function TheSquashThatBrokeTheReleaseTrain() {
         The fix that made this hold shipped without the marker that lets a
         pull request merge itself on green checks. It touches merge rules
         and release cuts — the one category of change that still gets a
-        human-equivalent blocking review before it lands, even under a
-        review policy built specifically to let most things merge
-        unreviewed. Some categories of mistake are still worth slowing down
+        human-equivalent blocking review before it lands, even under{' '}
+        <Link href="/devlog/eleven-agents-one-release-train">
+          a review policy built specifically to let most things merge
+          unreviewed
+        </Link>
+        . Some categories of mistake are still worth slowing down
         for.
       </p>
     </>

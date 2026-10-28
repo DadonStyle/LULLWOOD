@@ -1,8 +1,10 @@
+import Link from "next/link";
+
 export default function TheLakeWasNeverForest() {
   return (
     <>
       <p>
-        Lullwood shipped with a lake and a bog. Neither belonged. The
+        <Link href="/">Lullwood</Link> shipped with a lake and a bog. Neither belonged. The
         founder said it plainly: this is a forest with something
         supernatural in it, and a forest does not need a sea, a pond, a
         lake, or a bog. So we cut them, along with the one mission built on
@@ -23,7 +25,8 @@ export default function TheLakeWasNeverForest() {
         creeps in when a mechanic is built once and never revisited. Deleting
         the lake did not just simplify the map. It closed a bug that had
         been quietly making the water more dangerous to hide near than it
-        should have been.
+        should have been. How hiding works today is in{' '}
+        <Link href="/how-to-survive">how to survive in Lullwood</Link>.
       </p>
       <p>
         The bog was never really scenery either. Its own code called it

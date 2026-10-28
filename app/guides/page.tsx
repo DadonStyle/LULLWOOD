@@ -102,6 +102,20 @@ export default function GuidesHubPage() {
                 — why a bear is not a big wolf: no charge, no flank, the best
                 nose, and the scent veil that breaks its lock.
               </li>
+              <li>
+                <strong>
+                  <Link href="/guides/how-to-win">How you win Lullwood</Link>
+                </strong>{" "}
+                — the win condition: reach the child and press E. There is no
+                trip home afterwards.
+              </li>
+              <li>
+                <strong>
+                  <Link href="/games-like-slender">Games like Slender: how Lullwood compares</Link>
+                </strong>{" "}
+                — what makes a Slender-style game work, the well-known games in
+                the mold, and where Lullwood differs.
+              </li>
             </ul>
 
             <h2>Coming later</h2>
