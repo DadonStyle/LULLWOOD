@@ -130,7 +130,7 @@ export default function BearsGuidePage() {
               </li>
               <li>
                 <strong>It sees the shortest.</strong> About 30 units, against
-                42 for a wolf and 48 for a lion. Sight is the bear&apos;s weakest
+                42 for a wolf and 48 for <Link href="/guides/lions">a lion</Link>. Sight is the bear&apos;s weakest
                 sense and scent is its strongest.
               </li>
               <li>
@@ -251,7 +251,9 @@ export default function BearsGuidePage() {
         <footer className="devlog-footer">
           <p>
             <Link href="/guides/wolves">Read how to survive wolves in Lullwood</Link>{" "}
-            for the pack flank, the other half of the predator picture.
+            for the pack flank, and{" "}
+            <Link href="/guides/lions">how to survive lions in Lullwood</Link>{" "}
+            for the fastest predator.
           </p>
           <p><Link href="/guides">See all Lullwood guides</Link></p>
           <p><Link href="/">Play Lullwood free in your browser</Link></p>

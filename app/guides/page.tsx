@@ -5,12 +5,11 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 // Guides hub (LUL-6092). This is an index, not an article -- no claim here
 // goes beyond what /how-to-survive or /guides/wolves already state, and both
 // of those are re-verified against the shipped game, not restated from
-// memory. Lions have no guide yet: name that honestly, and do not
-// link a page that 404s (BRAND.md bans claims we cannot back).
+// memory. Every spoke linked here must exist (a 404 link is a defect).
 const TITLE = "Lullwood Guides: How to Survive the Night Forest";
 const DESCRIPTION =
   "Guides for Lullwood, the free browser horror game with no download: how to survive wolves, read scent and wind, and reach the lost child alive.";
-const MODIFIED = "2026-10-28";
+const MODIFIED = "2026-11-02";
 const PAGE_URL = `${SITE_URL}/guides`;
 // Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
 const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
@@ -65,7 +64,7 @@ export default function GuidesHubPage() {
         <article>
           <header>
             <h1>Lullwood guides</h1>
-            <time dateTime={MODIFIED}>Updated October 28, 2026</time>
+            <time dateTime={MODIFIED}>Updated November 2, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
@@ -74,7 +73,8 @@ export default function GuidesHubPage() {
               break line of sight, keep your scent trail thin, and freeze in
               bramble when a predator is close. These guides cover the
               general systems and go deep on each predator, starting with the
-              wolf pack&apos;s flanking and the bear&apos;s scent lock.
+              wolf pack&apos;s flanking, the bear&apos;s scent lock and the
+              lion&apos;s dusk window.
             </p>
 
             <h2>Guides live now</h2>
@@ -104,6 +104,13 @@ export default function GuidesHubPage() {
               </li>
               <li>
                 <strong>
+                  <Link href="/guides/lions">How to survive lions</Link>
+                </strong>{" "}
+                — the fastest hunter: about 4 seconds of warning, the
+                charge you jump, and the dusk window when its sight halves.
+              </li>
+              <li>
+                <strong>
                   <Link href="/guides/how-to-win">How you win Lullwood</Link>
                 </strong>{" "}
                 — the win condition: reach the child and press E. There is no
@@ -118,12 +125,6 @@ export default function GuidesHubPage() {
               </li>
             </ul>
 
-            <h2>Coming later</h2>
-            <p>
-              Lions don&apos;t have their own guide yet. Until they do,{" "}
-              <Link href="/how-to-survive">the full survival guide</Link>{" "}
-              covers them at a general level.
-            </p>
           </div>
         </article>
         <footer className="devlog-footer">

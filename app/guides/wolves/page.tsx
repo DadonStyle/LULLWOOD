@@ -102,9 +102,9 @@ export default function WolvesGuidePage() {
 
             <h2>Why wolves are different</h2>
             <p>
-              Bears and lions hunt alone, and{" "}
-              <Link href="/how-to-survive">the Lullwood survival guide</Link>{" "}
-              covers them. Wolves are the only predator in
+              Bears and lions hunt alone: see{" "}
+              <Link href="/guides/lions">how to survive lions in Lullwood</Link>{" "}
+              and <Link href="/how-to-survive">the Lullwood survival guide</Link>. Wolves are the only predator in
               Lullwood that coordinates: the instant one wolf sees or scents
               you and enters a real chase, every other wolf that isn&apos;t
               already hunting on its own becomes a flanker, routed around you
