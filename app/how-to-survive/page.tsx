@@ -321,9 +321,9 @@ export default function HowToSurvivePage() {
                 seconds in which nothing can see or smell you, and a bear holds a
                 trail for about 11 seconds, so the lock outlasts the burst: use
                 those seconds to put distance and cover between you, not to stand
-                still. The exception is a lock that is nearly spent - if it runs
-                out while the overload is up, the bear has no sense left to
-                re-find you with and gives up where it stands.
+                still. If the lock runs out while the overload is up, the chase
+                drops to a slow searching walk toward you, at under half the
+                bear&apos;s speed, so you still use the time to move.
               </li>
               <li>
                 <strong>Don&apos;t spend the mist veil on a bear.</strong> It cuts
