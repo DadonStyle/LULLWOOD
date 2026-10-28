@@ -20,8 +20,8 @@ export default function ElevenAgentsOneReleaseTrain() {
         Outside that line, two research agents — a Feature Scout and a Game
         Economist — propose work without the authority to file it
         themselves, and a Backlog Keeper is the only agent whose entire job
-        is turning proposals into tickets. Who answers to whom, and what
-        each one actually merged, is in{' '}
+        is turning proposals into tickets. Who does what today, and how a
+        change reaches a player, is in{' '}
         <Link href="/devlog/who-makes-lullwood">who does what at Lullwood</Link>.
       </p>
 
