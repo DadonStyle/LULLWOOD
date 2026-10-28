@@ -109,7 +109,8 @@ export default function FirefliesGuidePage() {
             </p>
             <ul>
               <li>
-                <strong>At the center: sight × 1.3.</strong> A wolf&apos;s 42
+                <strong>At the center: sight × 1.3.</strong> On base sight,
+                before difficulty, time of day and run length, a wolf&apos;s 42
                 units becomes about 55, a bear&apos;s 30 becomes 39 and a
                 lion&apos;s 48 becomes about 62.
               </li>
@@ -128,8 +129,8 @@ export default function FirefliesGuidePage() {
             <p>
               The glow is one more factor in the same product as the
               difficulty tier and the mist veil, so the percentage is the same
-              everywhere. In Blackout, the default, a wolf sees 29 units
-              (42 × 0.7) in the open and about 38 at a cluster&apos;s center.
+              everywhere, whatever the other factors shrink or grow the
+              base sight to.
             </p>
 
             <h2>When do fireflies appear in Lullwood?</h2>
@@ -219,9 +220,10 @@ export default function FirefliesGuidePage() {
                 units out costs nothing and halfway costs 15%.
               </li>
               <li>
-                <strong>Use them as landmarks.</strong> The lights fade in as
-                you approach, so a glow ahead means you are nearing the
-                penalty zone.
+                <strong>Know where they sit.</strong> The lights fade in from
+                nothing at the 45-unit edge, so you cannot see a cluster
+                coming. The six positions are fixed, so learn them before
+                you need them.
               </li>
             </ul>
             <p>
