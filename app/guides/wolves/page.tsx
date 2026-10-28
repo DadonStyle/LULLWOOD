@@ -108,7 +108,8 @@ export default function WolvesGuidePage() {
               already hunting on its own becomes a flanker, routed around you
               instead of at you. Treat three wolves as one animal and the
               other two arrive from your sides while you&apos;re still
-              watching the one in front.
+              watching the one in front. A bear works the other way round; see{" "}
+              <Link href="/guides/bears">how bears hunt differently in Lullwood</Link>.
             </p>
 
             <h2>How the pack aims the flank</h2>
