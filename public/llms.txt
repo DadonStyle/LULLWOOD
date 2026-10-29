@@ -23,6 +23,7 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 - [How to survive wolves in Lullwood](https://www.lullwoodgame.com/guides/wolves): the pack's flanking geometry, timings and the Beacon Hunter's wind lock
 - [How to escape a bear in Lullwood](https://www.lullwoodgame.com/guides/bears): why a bear is not a big wolf: no charge, no flank, the best nose, and the scent veil (G) that breaks its lock
 - [Do fireflies help in Lullwood?](https://www.lullwoodgame.com/guides/fireflies): no: a firefly cluster's glow raises predator sight range by up to 30%; when clusters appear, what rain does and what the alarm flare means
+- [Is Lullwood too hard?](https://www.lullwoodgame.com/guides/difficulty-tiers): Lantern, Night and Blackout compared: Blackout is the default, its predators see 30% less far than Night's but there are nine and they start hunting; how to switch tier
 - [How do you win Lullwood?](https://www.lullwoodgame.com/guides/how-to-win): the win condition: reach the child and press E to lift her; there is no trip home
 - [Lullwood FAQ](https://www.lullwoodgame.com/faq): answers to common questions about price, phones, controls and the predators
 - [Games like Slender](https://www.lullwoodgame.com/games-like-slender): Slender-style horror games and how Lullwood compares

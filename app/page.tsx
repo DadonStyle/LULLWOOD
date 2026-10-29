@@ -220,6 +220,10 @@ export default function Home() {
               difficulty
             </li>
             <li>
+              <Link href="/guides/difficulty-tiers">Is Lullwood too hard?</Link> —
+              what Lantern, Night and Blackout change, and how to switch
+            </li>
+            <li>
               <Link href="/guides/how-to-win">How do you win Lullwood?</Link> —
               the win condition: lift the child, no trip home
             </li>
