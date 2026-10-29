@@ -228,6 +228,11 @@ export default function Home() {
               the win condition: lift the child, no trip home
             </li>
             <li>
+              <Link href="/guides/throwing-stones">Can you distract wolves in Lullwood?</Link> —
+              throw a stone to pull a predator off your trail, and what it
+              does not fix
+            </li>
+            <li>
               <Link href="/guides">Lullwood guides</Link> — how to survive
               the wolves and bears, and how the fireflies work
             </li>
