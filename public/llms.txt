@@ -8,7 +8,7 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 
 - Genre: first-person survival horror, single-player
 - Price: free, no ads, no account
-- Platform: any modern web browser with WebGL (Chrome, Edge, Firefox, Safari), on desktop, phone or tablet
+- Platform: any modern web browser with WebGL (Chrome, Edge, Firefox, Safari), on desktop, phone or tablet (phones must be held in landscape)
 - Run length: a few minutes for a successful run; each attempt generates a fresh forest layout
 - Difficulty levels: Lantern (forgiving), Night, Blackout (default, no minimap)
 - Leaderboard: the fastest Blackout rescue becomes the "top rescuer"
@@ -18,17 +18,24 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 ## Pages
 
 - [Play Lullwood](https://www.lullwoodgame.com/): the game, plus how to play, controls and an FAQ
-- [Lullwood guides](https://www.lullwoodgame.com/guides): hub for player guides, starting with wolves; bears and lions aren't written yet
+- [Lullwood guides](https://www.lullwoodgame.com/guides): hub for player guides: wolves and bears so far; lions aren't written yet
 - [How to survive Lullwood](https://www.lullwoodgame.com/how-to-survive): player guide to predators, hiding, the mist veil and each difficulty, including how to survive a bear
 - [How to survive wolves in Lullwood](https://www.lullwoodgame.com/guides/wolves): the pack's flanking geometry, timings and the Beacon Hunter's wind lock
+- [How to escape a bear in Lullwood](https://www.lullwoodgame.com/guides/bears): why a bear is not a big wolf: no charge, no flank, the best nose, and the scent veil (G) that breaks its lock
+- [Do fireflies help in Lullwood?](https://www.lullwoodgame.com/guides/fireflies): no: a firefly cluster's glow raises predator sight range by up to 30%; when clusters appear, what rain does and what the alarm flare means
 - [How do you win Lullwood?](https://www.lullwoodgame.com/guides/how-to-win): the win condition: reach the child and press E to lift her; there is no trip home
 - [Lullwood FAQ](https://www.lullwoodgame.com/faq): answers to common questions about price, phones, controls and the predators
 - [Games like Slender](https://www.lullwoodgame.com/games-like-slender): Slender-style horror games and how Lullwood compares
 - [Devlog](https://www.lullwoodgame.com/devlog): how the game is built
 - [Who makes Lullwood](https://www.lullwoodgame.com/devlog/who-makes-lullwood): Independence AI Studio, the one human founder and the Claude agents, with counts and what broke
 - [Devlog feed (Atom)](https://www.lullwoodgame.com/feed.xml): every devlog post, newest first
+- [The fog is the wolf's eyesight](https://www.lullwoodgame.com/devlog/the-fog-is-the-wolfs-eyesight): how Lullwood's fog tide (a 90 second cycle, 20 seconds active, a drone 10 seconds ahead) cuts predator sight by up to 35% inside three fixed patches, and what it costs the player
 - [How scent and wind work](https://www.lullwoodgame.com/devlog/how-scent-and-wind-work): how one wind vector drives scent radius, scent lifetime, footstep noise, sprint speed and predator behaviour, read from the source
 - [We filmed the QA harness, not the game](https://www.lullwoodgame.com/devlog/we-filmed-the-qa-harness-not-the-game): how a staged Playwright capture against a synthetic QA scene, not the real game, cost six heartbeats and two wrong root causes before anyone pulled a frame
+- [Eleven agents, one release train](https://www.lullwoodgame.com/devlog/eleven-agents-one-release-train): the org chart running Lullwood, eleven Claude agents and no human in the daily commit loop, and why code review stopped blocking two-thirds of what ships
+- [The squash that broke the release train](https://www.lullwoodgame.com/devlog/the-squash-that-broke-the-release-train): how a squash merge discarded a repair commit's parent and made every release cut open with a conflict
+- [The lake was never forest](https://www.lullwoodgame.com/devlog/the-lake-was-never-forest): why the lake, the bog and the mission built on the lake were deleted, and what replaced the mission
+- [The return trip (superseded)](https://www.lullwoodgame.com/devlog/the-return-trip): history of the September 2026 carry-home win condition and the return leg the game cut two weeks later; today lifting the child is the win and there is no trip home
 - [Press kit](https://www.lullwoodgame.com/press): fact sheet, screenshots, cover art and a clip for press and portals
 - [Credits](https://www.lullwoodgame.com/credits): third-party assets and their authors
 - [Suggest something](https://www.lullwoodgame.com/suggest): send the founder an idea

@@ -32,7 +32,7 @@ export const FAQ: FaqEntry[] = [
   {
     question: 'Can I play Lullwood on a phone or tablet?',
     answer:
-      'Yes. Lullwood has on-screen touch controls: twin sticks for movement and look, plus buttons for jumping, hiding, the mist veil and lifting the child.',
+      'Yes. Lullwood has on-screen touch controls: twin sticks for movement and look, plus buttons for jumping, hiding, the mist veil and lifting the child. Hold the phone in landscape; portrait shows a rotate prompt.',
   },
   {
     question: 'Is Lullwood scary?',

@@ -102,13 +102,16 @@ export default function WolvesGuidePage() {
 
             <h2>Why wolves are different</h2>
             <p>
-              Bears and lions hunt alone. Wolves are the only predator in
+              Bears and lions hunt alone, and{" "}
+              <Link href="/how-to-survive">the Lullwood survival guide</Link>{" "}
+              covers them. Wolves are the only predator in
               Lullwood that coordinates: the instant one wolf sees or scents
               you and enters a real chase, every other wolf that isn&apos;t
               already hunting on its own becomes a flanker, routed around you
               instead of at you. Treat three wolves as one animal and the
               other two arrive from your sides while you&apos;re still
-              watching the one in front.
+              watching the one in front. A bear works the other way round; see{" "}
+              <Link href="/guides/bears">how bears hunt differently in Lullwood</Link>.
             </p>
 
             <h2>How the pack aims the flank</h2>
@@ -227,7 +230,8 @@ export default function WolvesGuidePage() {
               The single thing to carry out of this page: wolves are the only
               predator in Lullwood that flanks, so the pack reads the same
               straight line you&apos;re running as an invitation, not a
-              threat. Break the line, and you break the pincer.
+              threat. Break the line, and you break the pincer. What counts as a win is in{" "}
+              <Link href="/guides/how-to-win">how to win Lullwood</Link>.
             </p>
           </div>
         </article>
@@ -237,6 +241,11 @@ export default function WolvesGuidePage() {
               Read the full survival guide
             </Link>{" "}
             for hiding, scent, the mist veil and bears and lions.
+          </p>
+          <p>
+            <Link href="/devlog/the-fog-is-the-wolfs-eyesight">
+              How the fog tide changes what a wolf can see in Lullwood
+            </Link>
           </p>
           <p><Link href="/guides">See all Lullwood guides</Link></p>
           <p><Link href="/">Play Lullwood free in your browser</Link></p>

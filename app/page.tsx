@@ -114,7 +114,8 @@ export default function Home() {
           </ul>
           <p>
             On a phone or tablet the same actions are on screen: twin sticks
-            to move and look, and buttons for jump, hide, veil and lift.
+            to move and look, and buttons for jump, hide, veil and lift. Hold the
+            phone in landscape; portrait shows a rotate prompt.
           </p>
         </section>
         <section>
@@ -221,6 +222,10 @@ export default function Home() {
             <li>
               <Link href="/guides/how-to-win">How do you win Lullwood?</Link> —
               the win condition: lift the child, no trip home
+            </li>
+            <li>
+              <Link href="/guides">Lullwood guides</Link> — how to survive
+              the wolves and bears, and how the fireflies work
             </li>
             <li>
               <Link href="/games-like-slender">Games like Slender</Link> — what

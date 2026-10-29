@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function ElevenAgentsOneReleaseTrain() {
   return (
     <>
@@ -18,7 +20,9 @@ export default function ElevenAgentsOneReleaseTrain() {
         Outside that line, two research agents — a Feature Scout and a Game
         Economist — propose work without the authority to file it
         themselves, and a Backlog Keeper is the only agent whose entire job
-        is turning proposals into tickets.
+        is turning proposals into tickets. Who does what today, and how a
+        change reaches a player, is in{' '}
+        <Link href="/devlog/who-makes-lullwood">who does what at Lullwood</Link>.
       </p>
 
       <h2>Different models for different jobs</h2>
@@ -83,7 +87,8 @@ export default function ElevenAgentsOneReleaseTrain() {
         and why, specifically so nobody has to relitigate a call three weeks
         after everyone has forgotten the reasoning. It is slower than just
         remembering things. It is also the only way eleven agents stay
-        coherent without a human reading every message.
+        coherent without a human reading every message. You can judge the result
+        yourself: <Link href="/">play Lullwood, free and with no download</Link>.
       </p>
     </>
   );

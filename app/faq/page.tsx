@@ -71,7 +71,7 @@ export default function FaqPage() {
             <p>
               Lullwood is a free first-person horror game you play in your web
               browser, with nothing to download or install. You cross a foggy
-              night forest to find a lost, glowing child and carry them home while
+              night forest to reach a lost, glowing child and lift her while
               wolves, bears and lions hunt you by sight and by scent. Hiding and
               holding still is how you survive.
             </p>
@@ -81,6 +81,12 @@ export default function FaqPage() {
                 <p>{answer}</p>
               </section>
             ))}
+            <p>
+              For the long versions, read{" "}
+              <Link href="/guides/how-to-win">how you win Lullwood</Link>,{" "}
+              <Link href="/how-to-survive">surviving the forest in Lullwood</Link>,
+              or <Link href="/games-like-slender">how Lullwood compares to games like Slender</Link>.
+            </p>
           </div>
         </article>
         <footer className="devlog-footer">

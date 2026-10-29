@@ -56,12 +56,12 @@ const BEAR_FAQ = [
   {
     question: "Does hiding work on bears in Lullwood?",
     answer:
-      "Yes, while the bear is only looking for you. A player hiding in bramble is seen only at touching distance, about 2.8 units for a bear. It does not work on its own once a bear has locked onto your scent, because the bear keeps walking to where you are. Break the lock with G or Q first, then hold still.",
+      "Yes, while the bear is only looking for you. A player hiding in bramble is seen only at touching distance, about 2.8 units for a bear. It does not work on its own once a bear has locked onto your scent, because the bear keeps walking to where you are. Only G breaks that lock: move into the wind and press G, then hold still. Q is not a lock break - it buys 7 seconds in which nothing can see or smell you, so spend it getting away, not hiding in place.",
   },
   {
     question: "Does the mist veil work on a bear in Lullwood?",
     answer:
-      "Only against its eyes. The veil cuts predator sight to 35%, which shrinks a bear's base 30-unit sight to about 10 units, but it does nothing against scent, and scent is the bear's strongest sense. If a bear is following your trail, use G or Q instead.",
+      "Only against its eyes. The veil cuts predator sight to 35%, which shrinks a bear's base 30-unit sight to about 10 units, but it does nothing against scent, and scent is the bear's strongest sense. If a bear is following your trail, break the lock with G instead.",
   },
   {
     question: "How long does a bear follow your scent in Lullwood?",
@@ -316,8 +316,14 @@ export default function HowToSurvivePage() {
                 <strong>Break the lock, then hold still.</strong> A bear that has
                 locked onto your scent keeps closing on you even with no line of
                 sight. Move into the wind and press <strong>G</strong> to cut every
-                scent lock for 30% stamina, or <strong>Q</strong> if you still have
-                your overload. Then hide in bramble.
+                scent lock for 30% stamina - once per lock - then hide in bramble.{" "}
+                <strong>Q</strong> does not release the lock. It gives you 7
+                seconds in which nothing can see or smell you, and a bear holds a
+                trail for about 11 seconds, so the lock outlasts the burst: use
+                those seconds to put distance and cover between you, not to stand
+                still. If the lock runs out while the overload is up, the chase
+                drops to a slow searching walk toward you, at under half the
+                bear&apos;s speed, so you still use the time to move.
               </li>
               <li>
                 <strong>Don&apos;t spend the mist veil on a bear.</strong> It cuts
@@ -383,11 +389,11 @@ export default function HowToSurvivePage() {
             <h2>Common mistakes</h2>
             <ul>
               <li><strong>Sprinting everywhere.</strong> A wider trail, louder steps, and no stamina when a chase starts.</li>
-              <li><strong>Trying to outrun a predator.</strong> Run to cover, not away.</li>
+              <li><strong>Trying to outrun a predator.</strong> Run to cover, not away. Slender-style horror works the same way; see <Link href="/games-like-slender">games like Slender</Link>.</li>
               <li><strong>Pressing H behind a rock or log.</strong> Only bramble works.</li>
               <li><strong>Camping one bush.</strong> Shuffle or move on before the brush gives you away.</li>
               <li><strong>Holding the veil until it locks.</strong> Short pulses keep it ready.</li>
-              <li><strong>Veiling against a scent chase.</strong> The veil cuts sight only; use G or Q.</li>
+              <li><strong>Veiling against a scent chase.</strong> The veil cuts sight only, and Q does not break a lock either; move into the wind and press G.</li>
               <li><strong>Sprinting into the wind near the Beacon Hunter.</strong> That is exactly what calls it.</li>
             </ul>
             <h2>Bear questions</h2>

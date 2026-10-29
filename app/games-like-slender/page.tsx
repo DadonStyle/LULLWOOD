@@ -183,8 +183,8 @@ export default function GamesLikeSlenderPage() {
               Lullwood is a first-person horror game that runs in your browser.
               You cross a foggy forest at night to reach a lost child. She glows,
               and her cry carries through the trees, so you can find her by
-              listening. You have no weapon. Lifting her ends the run as a win;
-              getting caught ends it as a loss.
+              listening. You have no weapon. Lifting her ends the run as a win (<Link href="/guides/how-to-win">how to win Lullwood</Link>{" "}
+              has the details); getting caught ends it as a loss.
             </p>
             <p>
               Like Slender, you cannot outrun the threat. Every predator is
@@ -200,7 +200,8 @@ export default function GamesLikeSlenderPage() {
               leaves a scent trail that the wind carries downwind. A predator
               that crosses your trail can follow it without ever seeing you. Each
               species is different: the lion sees farthest, the bear has the best
-              nose, and wolves hunt as a pack.
+              nose, and wolves hunt as a pack, which the{" "}
+              <Link href="/guides/wolves">wolf survival guide</Link> covers in depth.
             </p>
             <p>
               <strong>You can hide.</strong> Walk into a bramble bush and press
@@ -232,8 +233,8 @@ export default function GamesLikeSlenderPage() {
               If you want the original experience, the Slender games and their
               successors are still the reference points. If you want to be hunted
               in a dark forest right now, in a browser tab, with predators that
-              follow your scent as well as your silhouette, Lullwood is free and
-              takes a few seconds to start.
+              follow your scent as well as your silhouette, you can <Link href="/">play Lullwood free in the browser</Link>,
+              and it takes a few seconds to start.
             </p>
           </div>
         </article>
