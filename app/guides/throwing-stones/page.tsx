@@ -162,14 +162,15 @@ export default function ThrowingStonesGuidePage() {
               <li>
                 <strong>Some states ignore the stone.</strong> A predator in the
                 middle of a charge finishes the charge first. One in a forced
-                hunt keeps coming straight at you for as long as it can see you:
-                that is Blackout&apos;s opening hunt, and the 30-second
-                escalation when nothing has come near you. The stone only
-                takes effect once it loses sight of you.
+                hunt keeps coming straight at you for as long as it can see you.
+                Blackout&apos;s opening hunt can still be pulled to the stone
+                once it loses sight of you. The 30-second escalation, when
+                nothing has come near you, cannot: it keeps tracking you by
+                scent after it loses sight and ignores the stone.
               </li>
               <li>
-                <strong>A stone does not hide you.</strong> It moves the
-                predator&apos;s attention, not yours. Use the seconds to break
+                <strong>A stone does not hide you.</strong> It only moves
+                the predator&apos;s attention. Use the seconds to break
                 line of sight and hide.
               </li>
             </ul>

@@ -122,8 +122,8 @@ export default function GuidesHubPage() {
                 <strong>
                   <Link href="/guides/throwing-stones">Can you distract wolves in Lullwood?</Link>
                 </strong>{" "}
-                — yes, briefly: throw a stone with a left click and every
-                predator within 24 units of where it lands walks over to it.
+                — yes, briefly: throw a stone with a left click and predators
+                within 24 units of where it lands usually walk over to it.
                 What it fixes and what it does not.
               </li>
               <li>
