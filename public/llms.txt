@@ -28,6 +28,7 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 - [Games like Slender](https://www.lullwoodgame.com/games-like-slender): Slender-style horror games and how Lullwood compares
 - [Devlog](https://www.lullwoodgame.com/devlog): how the game is built
 - [Who makes Lullwood](https://www.lullwoodgame.com/devlog/who-makes-lullwood): Independence AI Studio, the one human founder and the Claude agents, with counts and what broke
+- [Is Lullwood made by AI?](https://www.lullwoodgame.com/devlog/ai-disclosure-game): yes, AI agents on Claude and one founder; what a game jam rule, Steam's Content Survey, itch.io's AI tag and our own page each ask a game to disclose
 - [Devlog feed (Atom)](https://www.lullwoodgame.com/feed.xml): every devlog post, newest first
 - [The fog is the wolf's eyesight](https://www.lullwoodgame.com/devlog/the-fog-is-the-wolfs-eyesight): how Lullwood's fog tide (a 90 second cycle, 20 seconds active, a drone 10 seconds ahead) cuts predator sight by up to 35% inside three fixed patches, and what it costs the player
 - [How scent and wind work](https://www.lullwoodgame.com/devlog/how-scent-and-wind-work): how one wind vector drives scent radius, scent lifetime, footstep noise, sprint speed and predator behaviour, read from the source

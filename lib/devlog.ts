@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'ai-disclosure-game',
+    title: 'Is Lullwood made by AI? AI disclosure in a game',
+    date: '2026-11-05',
+    description:
+      'Is Lullwood made by AI? Yes: Claude agents and one founder. What a game jam rule, Steam, itch.io and our own page each ask a game to disclose.',
+  },
+  {
     slug: 'the-fog-is-the-wolfs-eyesight',
     title: "The fog is the wolf's eyesight: Lullwood's fog tide",
     date: '2026-10-28',
