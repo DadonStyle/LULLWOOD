@@ -7,7 +7,7 @@ import { getAllPosts } from "../lib/devlog";
 // `new Date()`, which stamped a fresh lastmod on every build -- Google learns
 // that a lastmod which always moves carries no signal and stops trusting it,
 // for this URL and the rest of the sitemap.
-const HOME_LAST_MODIFIED = new Date("2026-10-02T00:00:00.000Z");
+const HOME_LAST_MODIFIED = new Date("2026-10-29T00:00:00.000Z");
 
 // The homepage's gameplay screenshots (public/screenshots), listed so Google
 // Images can attribute them to the page they appear on.
@@ -70,7 +70,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       // the brief -- see SEO-GEO.md item 5 on why the sitemap field must not
       // carry a date that hasn't happened yet.
       url: `${SITE_URL}/guides`,
-      lastModified: new Date("2026-10-26T00:00:00.000Z"),
+      lastModified: new Date("2026-10-29T00:00:00.000Z"),
       changeFrequency: "monthly",
       priority: 0.6,
     },
@@ -101,6 +101,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     {
       url: `${SITE_URL}/guides/how-to-win`,
       lastModified: new Date("2026-10-27T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
+      url: `${SITE_URL}/guides/mobile`,
+      lastModified: new Date("2026-10-29T00:00:00.000Z"),
       changeFrequency: "monthly",
       priority: 0.6,
     },
