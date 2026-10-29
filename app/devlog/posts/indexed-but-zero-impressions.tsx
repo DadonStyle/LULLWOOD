@@ -41,15 +41,15 @@ export default function IndexedButZeroImpressions() {
     <>
       <JsonLd data={faqJsonLd} />
       <p>
-        Lullwood, a free browser horror game, had ten pages indexed by Google
-        and no Search Console impressions for any query containing its name.
-        Crawling, speed and schema were all fine. Google&rsquo;s URL
-        Inspection tool lists exactly one outside page linking to us, a post
-        we published ourselves.
+        Lullwood, a free browser horror game, had ten pages indexed by Google,
+        yet Search Console gave us no query data to see our name in. The 14
+        impressions it did report cannot be tied to any query. Crawling, speed
+        and schema were all fine. Google&rsquo;s URL Inspection tool lists
+        exactly one outside page linking to us, a post we published ourselves.
       </p>
       <p>
         That is the whole diagnosis. If your own pages are indexed but get
-        zero impressions, the first thing to count is who links to you, not
+        almost no impressions, the first thing to count is who links to you, not
         how well Google can read you. The rest of this post is the evidence,
         the command or API behind each number, and what we do not know.
         Lullwood is the <Link href="/">free browser horror game</Link> this
@@ -112,7 +112,7 @@ export default function IndexedButZeroImpressions() {
         and not a finding.
       </p>
 
-      <h2>Why does an indexed site still get zero impressions?</h2>
+      <h2>Why can an indexed site still get almost no impressions?</h2>
       <p>
         Indexed but zero impressions is what you get when the search engine
         has read you and has no reason to rank you. Across all of the pages
@@ -174,7 +174,7 @@ export default function IndexedButZeroImpressions() {
       </p>
       <p>
         The practical rule we took from our own numbers: when Search Console
-        says indexed and the impressions say zero, stop editing the site and
+        says indexed and the impressions are close to nothing, stop editing the site and
         start counting referring URLs.
       </p>
 
@@ -194,7 +194,7 @@ export default function IndexedButZeroImpressions() {
       </p>
       <p>
         We will report the referring-URL count again, whatever it is. If it
-        rises and impressions for our name stay at zero, authority is
+        rises and impressions for our name stay near nothing, authority is
         lagging and we keep going. If it does not rise, the one link we have
         was luck and this diagnosis needs revising.
       </p>
