@@ -196,7 +196,7 @@ export default function MobileGuidePage() {
               </li>
               <li>
                 <strong>Hide</strong> (bottom right): the H key. It only works at
-                bramble, the one hiding spot in the forest, same as desktop.
+                the one kind of hiding spot, bramble, same as desktop.
                 When you stand next to one the game prints &ldquo;Tap Hide to
                 slip into the bramble&rdquo;.
               </li>
@@ -207,8 +207,8 @@ export default function MobileGuidePage() {
               </li>
               <li>
                 <strong>Veil:</strong> the F key, but you hold the button instead
-                of the key. It is the mist veil that holds off what is hunting
-                you.
+                of the key. It is the mist veil, which cuts how far predators
+                can see you.
               </li>
               <li>
                 <strong>Pause</strong> (top, next to the menu buttons): the Esc
