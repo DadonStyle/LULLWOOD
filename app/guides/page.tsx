@@ -112,6 +112,14 @@ export default function GuidesHubPage() {
               </li>
               <li>
                 <strong>
+                  <Link href="/guides/difficulty-tiers">Is Lullwood too hard?</Link>
+                </strong>{" "}
+                — Lantern, Night and Blackout: what each tier changes, why
+                Blackout is harder even though its predators see less far, and
+                how to switch.
+              </li>
+              <li>
+                <strong>
                   <Link href="/guides/how-to-win">How you win Lullwood</Link>
                 </strong>{" "}
                 — the win condition: reach the child and press E. There is no
