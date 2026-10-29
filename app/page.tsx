@@ -225,7 +225,7 @@ export default function Home() {
             </li>
             <li>
               <Link href="/guides">Lullwood guides</Link> — how to survive
-              each predator, one page each
+              the wolves and bears, and how the fireflies work
             </li>
             <li>
               <Link href="/games-like-slender">Games like Slender</Link> — what
