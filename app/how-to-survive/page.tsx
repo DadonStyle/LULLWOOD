@@ -352,6 +352,8 @@ export default function HowToSurvivePage() {
               </li>
             </ul>
             <p>
+              The full comparison is in{" "}
+              <Link href="/guides/difficulty-tiers">is Lullwood too hard</Link>.
               Runs earn Embers (a win pays 1.75 times the Lantern amount on Night,
               twice on Blackout) for the shop: Deeper Lungs adds veil time, Quiet
               Step makes scent fade faster, and Pocket Stones gives two extra

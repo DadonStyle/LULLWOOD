@@ -10,7 +10,7 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 const TITLE = "Lullwood Guides: How to Survive the Night Forest";
 const DESCRIPTION =
   "Guides for Lullwood, the free browser horror game with no download: how to survive wolves, read scent and wind, and reach the lost child alive.";
-const MODIFIED = "2026-10-28";
+const MODIFIED = "2026-10-29";
 const PAGE_URL = `${SITE_URL}/guides`;
 // Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
 const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
@@ -65,7 +65,7 @@ export default function GuidesHubPage() {
         <article>
           <header>
             <h1>Lullwood guides</h1>
-            <time dateTime={MODIFIED}>Updated October 28, 2026</time>
+            <time dateTime={MODIFIED}>Updated October 29, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
@@ -112,10 +112,25 @@ export default function GuidesHubPage() {
               </li>
               <li>
                 <strong>
+                  <Link href="/guides/difficulty-tiers">Is Lullwood too hard?</Link>
+                </strong>{" "}
+                — Lantern, Night and Blackout: what each tier changes, why
+                Blackout is harder even though its predators see less far, and
+                how to switch.
+              </li>
+              <li>
+                <strong>
                   <Link href="/guides/how-to-win">How you win Lullwood</Link>
                 </strong>{" "}
                 — the win condition: reach the child and press E. There is no
                 trip home afterwards.
+              </li>
+              <li>
+                <strong>
+                  <Link href="/guides/mobile">Can you play Lullwood on a phone?</Link>
+                </strong>{" "}
+                — yes, in landscape with no keyboard: every on-screen control,
+                which prompts are tap rows, and what a short phone screen hides.
               </li>
               <li>
                 <strong>
