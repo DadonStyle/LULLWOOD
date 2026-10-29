@@ -29,7 +29,7 @@ const QA = [
   {
     question: "Is there an easy mode in Lullwood?",
     answer:
-      "Yes. Lantern is the forgiving tier: one wolf, one bear and one lion instead of three of each, predators that see 30% less far than on Night, a child whose glow is 1.6 times as strong, and a longer wait before hiding in one spot starts to rustle. Pick it in Settings under Difficulty.",
+      "Yes. Lantern is the forgiving tier: one wolf, one bear and one lion instead of three of each, predators that see 30% less far than on Night, a child whose glow is 1.6 times as strong, and a longer wait before hiding in one spot starts to rustle. Pick it in Settings under Difficulty, then press Try again: the number of predators and the child's distance only change on the next run, while sight and glow change straight away.",
   },
   {
     question: "What is the default difficulty in Lullwood?",
@@ -39,7 +39,7 @@ const QA = [
   {
     question: "Do wolves, bears and lions see further on Blackout?",
     answer:
-      "No. Blackout predators see 30% less far than Night predators, the same reduction Lantern has. Blackout is harder because there are nine of them, they start hunting, you get no minimap, and the brush gives you away sooner when you hide too long.",
+      "No. Blackout predators see 30% less far than Night predators, the same reduction Lantern has. Blackout is harder because there are nine of them, they start hunting, the brush gives you away sooner when you hide too long, and, once the setting is saved, the child can spawn farther away.",
   },
   {
     question: "Does Lullwood have a minimap?",
@@ -203,9 +203,8 @@ export default function DifficultyTiersPage() {
               There are nine of them rather than three. Each starts in a
               hunting state, which sends it straight at you as soon as it can
               see you; one that loses sight of you drops back to
-              investigating. You get no minimap. Hiding in one bush starts
-              giving you away after 8 seconds instead of 12. And the child is
-              farther away. So on Blackout, move from cover to cover rather than
+              investigating. Hiding in one bush starts giving you away after 8
+              seconds instead of 12. And the child is farther away. So on Blackout, move from cover to cover rather than
               waiting out a chase in one bush.
             </p>
 
