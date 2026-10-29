@@ -427,3 +427,30 @@ main.credits-page a,
     font-size: 22px;
   }
 }
+
+/* Site-wide footer nav (app/layout.tsx). Sits in normal flow after each
+   route's content; on the game route the fixed game overlay covers it for
+   players while crawlers and no-JS visitors still get the links. */
+footer.site-footer {
+  padding: 24px 24px 48px;
+  background: #0a0e15;
+  color: #6a8cb0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  text-align: center;
+}
+footer.site-footer ul {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 20px;
+  list-style: none;
+}
+footer.site-footer a {
+  color: #6a8cb0;
+  text-decoration: none;
+}
+footer.site-footer a:hover {
+  color: #9fb2cd;
+  text-decoration: underline;
+}
