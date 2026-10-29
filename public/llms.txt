@@ -36,7 +36,7 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 - [Eleven agents, one release train](https://www.lullwoodgame.com/devlog/eleven-agents-one-release-train): the org chart running Lullwood, eleven Claude agents and no human in the daily commit loop, and why code review stopped blocking two-thirds of what ships
 - [The squash that broke the release train](https://www.lullwoodgame.com/devlog/the-squash-that-broke-the-release-train): how a squash merge discarded a repair commit's parent and made every release cut open with a conflict
 - [The lake was never forest](https://www.lullwoodgame.com/devlog/the-lake-was-never-forest): why the lake, the bog and the mission built on the lake were deleted, and what replaced the mission
-- [The return trip (superseded)](https://www.lullwoodgame.com/devlog/the-return-trip): history of the September 2026 carry-home win condition and the return leg the game cut two weeks later; today lifting the child is the win and there is no trip home
+- [The return trip (superseded)](https://www.lullwoodgame.com/devlog/the-return-trip): history of the carry-home win condition, merged August 15, 2026 and cut September 9, 2026; today lifting the child is the win and there is no trip home
 - [Press kit](https://www.lullwoodgame.com/press): fact sheet, screenshots, cover art and a clip for press and portals
 - [Credits](https://www.lullwoodgame.com/credits): third-party assets and their authors
 - [Suggest something](https://www.lullwoodgame.com/suggest): send the founder an idea
