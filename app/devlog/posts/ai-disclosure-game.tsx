@@ -59,12 +59,12 @@ export default function AiDisclosureGame() {
 
       <h2>What does a game jam rule actually say about AI?</h2>
       <p>
-        Spooky Jam 2026 on itch.io runs from November 6 to 8. Its page{" "}
+        Spooky Jam 2026 on itch.io (November 6 to 8, 2026) has a page{" "}
         (<a href="https://itch.io/jam/spooky-game-jam-26">
           itch.io/jam/spooky-game-jam-26
         </a>
-        , read 2026-10-29) states the rule in one sentence, and repeats it in
-        a second place on the same page:
+        , read 2026-10-29) that states the rule in one sentence and repeats it in
+        a second place:
       </p>
       <blockquote>
         <p>
