@@ -3,7 +3,7 @@
 // .ts files natively via type-stripping, no build step needed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { track, setSink, startSessionTracking, type AnalyticsEvent } from './analytics.ts';
+import { track, setSink, startSessionTracking, readAttribution, type AnalyticsEvent } from './analytics.ts';
 
 test('track() never throws, even when the sink throws', () => {
   setSink(() => {
@@ -105,4 +105,134 @@ test('game_start carries the viewport shape; other events do not', () => {
   assert.equal(start.dpr, 2.67);
   assert.equal(typeof start.touch, 'boolean');
   assert.equal('viewport_w' in captured[1], false);
+});
+
+// LUL-6229: readAttribution() caches in module state, so each case loads a fresh
+// copy of the module via a unique query string.
+let attrImport = 0;
+async function freshAttribution(opts: {
+  referrer?: string;
+  search?: string;
+  hostname?: string;
+  storage?: 'normal' | 'throwing';
+  store?: Record<string, string>;
+}) {
+  const g = globalThis as Record<string, unknown>;
+  const prevWindow = g.window;
+  const prevDocument = g.document;
+  const store = opts.store ?? {};
+  const storage =
+    opts.storage === 'throwing'
+      ? {
+          getItem: () => {
+            throw new Error('denied');
+          },
+          setItem: () => {
+            throw new Error('denied');
+          },
+        }
+      : { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; } };
+  g.window = {
+    location: { hostname: opts.hostname ?? 'www.lullwoodgame.com', search: opts.search ?? '', pathname: '/' },
+    sessionStorage: storage,
+  };
+  g.document = { referrer: opts.referrer ?? '' };
+  try {
+    const mod = (await import(`./analytics.ts?attr=${attrImport++}`)) as { readAttribution: typeof readAttribution };
+    return { read: mod.readAttribution, store, restore: () => { g.window = prevWindow; g.document = prevDocument; } };
+  } catch (e) {
+    g.window = prevWindow;
+    g.document = prevDocument;
+    throw e;
+  }
+}
+
+test('readAttribution: referrer is host only, lowercased', async () => {
+  const t = await freshAttribution({ referrer: 'https://Dev.To/someone/post?x=1#frag' });
+  try {
+    assert.deepEqual(t.read(), { referrer_host: 'dev.to' });
+  } finally {
+    t.restore();
+  }
+});
+
+test('readAttribution: internal referrer is dropped; absent keys are omitted, not empty', async () => {
+  const t = await freshAttribution({ referrer: 'https://www.lullwoodgame.com/devlog/x' });
+  try {
+    const a = t.read();
+    assert.deepEqual(a, {});
+    assert.equal('referrer_host' in a, false);
+    assert.equal('utm_source' in a, false);
+  } finally {
+    t.restore();
+  }
+});
+
+test('readAttribution: parses utm_*; empty utm value is omitted', async () => {
+  const t = await freshAttribution({ search: '?utm_source=packtest&utm_medium=seoeng&utm_campaign=&other=1' });
+  try {
+    assert.deepEqual(t.read(), { utm_source: 'packtest', utm_medium: 'seoeng' });
+  } finally {
+    t.restore();
+  }
+});
+
+test('readAttribution: values are sanitised to the server whitelist', async () => {
+  const t = await freshAttribution({
+    search: `?utm_source=My%20Source&utm_medium=%23%25%3F&utm_campaign=${'a'.repeat(100)}`,
+  });
+  try {
+    const a = t.read();
+    assert.equal(a.utm_source, 'my-source');
+    assert.equal(a.utm_medium, '---');
+    assert.equal(a.utm_campaign, 'a'.repeat(64));
+    for (const v of Object.values(a)) assert.match(v as string, /^[A-Za-z0-9_.:/-]{0,64}$/);
+  } finally {
+    t.restore();
+  }
+});
+
+test('readAttribution: first touch wins, a second call never overwrites', async () => {
+  const store: Record<string, string> = {};
+  const t = await freshAttribution({ referrer: 'https://dev.to/', search: '?utm_source=first', store });
+  try {
+    assert.deepEqual(t.read(), { referrer_host: 'dev.to', utm_source: 'first' });
+    (globalThis as { window: { location: { search: string } } }).window.location.search = '?utm_source=second';
+    (globalThis as { document: { referrer: string } }).document.referrer = 'https://example.org/';
+    assert.deepEqual(t.read(), { referrer_host: 'dev.to', utm_source: 'first' });
+    assert.ok(store['lullwood:attr']);
+  } finally {
+    t.restore();
+  }
+});
+
+test('readAttribution: a stored value from an earlier route is reused in a new module load', async () => {
+  const store = { 'lullwood:attr': JSON.stringify({ referrer_host: 'dev.to' }) };
+  const t = await freshAttribution({ referrer: 'https://www.lullwoodgame.com/devlog', store });
+  try {
+    assert.deepEqual(t.read(), { referrer_host: 'dev.to' });
+  } finally {
+    t.restore();
+  }
+});
+
+test('readAttribution: sessionStorage throwing still returns a value and never throws', async () => {
+  const t = await freshAttribution({ referrer: 'https://dev.to/', storage: 'throwing' });
+  try {
+    assert.deepEqual(t.read(), { referrer_host: 'dev.to' });
+    assert.deepEqual(t.read(), { referrer_host: 'dev.to' });
+  } finally {
+    t.restore();
+  }
+});
+
+test('readAttribution: SSR (no window) returns {}', () => {
+  const g = globalThis as Record<string, unknown>;
+  const prev = g.window;
+  delete g.window;
+  try {
+    assert.deepEqual(readAttribution(), {});
+  } finally {
+    g.window = prev;
+  }
 });
