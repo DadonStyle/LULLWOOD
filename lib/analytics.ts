@@ -25,7 +25,8 @@ export interface PurchaseRecord {
 }
 
 export type AnalyticsEventInput =
-  | { event: 'page_view' }
+  // LUL-6229: first-touch attribution from readAttribution(); keys omitted when absent.
+  | { event: 'page_view'; referrer_host?: string; utm_source?: string; utm_medium?: string; utm_campaign?: string }
   | { event: 'cta_start_clicked' }
   // LUL-3264 (stats DB): `viewport_w`/`viewport_h` (CSS px), `dpr` and `touch` are
   // attached by track() itself, not by the engine call site -- see readViewport().
@@ -122,6 +123,80 @@ export function setSink(next: Sink) {
 }
 
 let reachedGameplay = false;
+
+export interface Attribution {
+  referrer_host?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+}
+
+const ATTR_KEY = 'lullwood:attr';
+
+// services/leaderboard-db/server.ts rejects the WHOLE event if any payload string
+// fails /^[A-Za-z0-9_.:\/-]{0,64}$/, so every value is squeezed into that set here.
+function sanitizeAttr(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  const clean = raw.toLowerCase().replace(/[^a-z0-9_.:/-]/g, '-').slice(0, 64);
+  return clean || undefined;
+}
+
+function computeAttribution(): Attribution {
+  const out: Attribution = {};
+  try {
+    if (document.referrer) {
+      const host = new URL(document.referrer).hostname.toLowerCase();
+      if (host && host !== window.location.hostname.toLowerCase()) {
+        const v = sanitizeAttr(host);
+        if (v) out.referrer_host = v;
+      }
+    }
+  } catch {
+    // unparseable referrer -- skip it
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    for (const key of ['utm_source', 'utm_medium', 'utm_campaign'] as const) {
+      const v = sanitizeAttr(params.get(key));
+      if (v) out[key] = v;
+    }
+  } catch {
+    // malformed query -- skip it
+  }
+  return out;
+}
+
+let cachedAttribution: Attribution | null = null;
+/**
+ * LUL-6229: first-touch referrer host + utm_* for this browser session, stored in
+ * sessionStorage so landing on a non-game route and clicking through to `/` keeps
+ * the original source. Never throws; keys are omitted when absent.
+ */
+export function readAttribution(): Attribution {
+  if (typeof window === 'undefined') return {};
+  try {
+    try {
+      const stored = window.sessionStorage.getItem(ATTR_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Attribution;
+      }
+    } catch {
+      // private mode / corrupt value -- fall through and recompute
+    }
+    if (cachedAttribution) return cachedAttribution;
+    const fresh = computeAttribution();
+    cachedAttribution = fresh;
+    try {
+      window.sessionStorage.setItem(ATTR_KEY, JSON.stringify(fresh));
+    } catch {
+      // private mode -- the in-memory copy still keeps first-touch for this page load
+    }
+    return fresh;
+  } catch {
+    return {};
+  }
+}
 
 /**
  * LUL-3264: screen shape at game start, for the stats DB's device breakdown

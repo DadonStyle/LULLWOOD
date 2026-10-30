@@ -14,6 +14,7 @@ import {
 } from "../lib/site";
 import { DEVLOG_FEED_TYPES } from "../lib/seo";
 import { SiteFooter } from "../components/SiteFooter";
+import { AttributionCapture } from "../components/AttributionCapture";
 
 // LUL-529: two things this repo had zero of before.
 // - `viewportFit: 'cover'` is what makes every `env(safe-area-inset-*)` in
@@ -188,6 +189,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             __html: JSON.stringify(siteJsonLd).replace(/</g, "\\u003c"),
           }}
         />
+        <AttributionCapture />
         {children}
         <SiteFooter />
       </body>
