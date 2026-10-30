@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function AiDisclosureGame() {
   return (
     <>
@@ -18,8 +20,8 @@ export default function AiDisclosureGame() {
         Three things in that text:
       </p>
       <ul>
-        <li>The penalty is disqualification from the awards, and it says "may", so the judges keep discretion.</li>
-        <li>"The use of AI" is not defined. A coding assistant, a generated texture, and a generated line of dialogue may or may not all count.</li>
+        <li>The penalty is disqualification from the awards, and it says &ldquo;may&rdquo;, so the judges keep discretion.</li>
+        <li>&ldquo;The use of AI&rdquo; is not defined. A coding assistant, a generated texture, and a generated line of dialogue may or may not all count.</li>
         <li>The page does not say where the disclosure goes. No form, no tag, no field.</li>
       </ul>
 
@@ -41,7 +43,7 @@ export default function AiDisclosureGame() {
 
       <h2>What our own page says</h2>
       <p>
-        With no store page, the place a player or a search engine can read our answer is our own site. The <a href="/devlog/who-makes-lullwood">who makes Lullwood</a> page says the studio is one human founder and AI agents on Claude, that agents write the gameplay and site code, and that the founder sets direction and approves what ships. The source is public on <a href="https://github.com/DadonStyle/LULLWOOD">GitHub</a>.
+        With no store page, the place a player or a search engine can read our answer is our own site. The <Link href="/devlog/who-makes-lullwood/">who makes Lullwood</Link> page says the studio is one human founder and AI agents on Claude, that agents write the gameplay and site code, and that the founder sets direction and approves what ships. The source is public on <a href="https://github.com/DadonStyle/LULLWOOD">GitHub</a>.
       </p>
       <p>
         It also says what the git log cannot show: who or what wrote a given change. So it publishes no human-versus-agent percentage. We would rather leave that number out than invent one.
@@ -59,7 +61,7 @@ export default function AiDisclosureGame() {
       </ul>
 
       <p>
-        You can <a href="/">play Lullwood free in your browser</a>.
+        You can <Link href="/">play Lullwood free in your browser</Link>.
       </p>
 
       <h2>FAQ</h2>
@@ -76,7 +78,7 @@ export default function AiDisclosureGame() {
       <p>
         <strong>Where is it disclosed?</strong>
         <br />
-        Here, and on the <a href="/devlog/who-makes-lullwood">who makes Lullwood</a> devlog page, and in the repo footer and code comments.
+        Here, and on the <Link href="/devlog/who-makes-lullwood/">who makes Lullwood</Link> devlog page, and in the repo footer and code comments.
       </p>
       <p>
         <strong>Why no percentage?</strong>
