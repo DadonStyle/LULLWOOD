@@ -242,6 +242,11 @@ export default function Home() {
               is built, post by post
             </li>
             <li>
+              <Link href="/devlog/ai-disclosure-game">Is Lullwood made by AI?</Link>{" "}
+              — yes, and what a game jam rule and a store form ask a game to
+              disclose
+            </li>
+            <li>
               <Link href="/press">Press kit</Link> — fact sheet,
               screenshots, cover art and a clip, free to use
             </li>

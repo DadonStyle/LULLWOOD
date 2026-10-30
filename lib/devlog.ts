@@ -19,10 +19,10 @@ export interface PostMeta {
 const POSTS: PostMeta[] = [
   {
     slug: 'ai-disclosure-game',
-    title: 'What AI disclosure actually asks',
+    title: 'Is Lullwood made by AI? AI disclosure in a game',
     date: '2026-10-30',
     description:
-      "Spooky Jam 2026, Steam, and itch.io each ask for different things. Here's what we read.",
+      'Is Lullwood made by AI? Yes: Claude agents and one founder. What a game jam rule, Steam, itch.io and our own page each ask a game to disclose.',
   },
   {
     slug: 'the-fog-is-the-wolfs-eyesight',
