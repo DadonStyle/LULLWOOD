@@ -36,7 +36,7 @@ const POSTS: PostMeta[] = [
     title: 'Indexed but zero impressions: ten Lullwood pages, one backlink',
     date: '2026-10-28',
     description:
-      'Lullwood had 10 pages indexed and no query data in Search Console. The cause was one external backlink, not crawling, speed or schema.',
+      'Lullwood had 10 pages indexed and 14 impressions reported in Search Console, but no queries tied to those impressions. The cause was one external backlink, not crawling, speed or schema.',
   },
   {
     slug: 'who-makes-lullwood',
