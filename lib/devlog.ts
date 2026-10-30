@@ -20,7 +20,7 @@ const POSTS: PostMeta[] = [
   {
     slug: 'ai-disclosure-game',
     title: 'Is Lullwood made by AI? AI disclosure in a game',
-    date: '2026-11-05',
+    date: '2026-10-30',
     description:
       'Is Lullwood made by AI? Yes: Claude agents and one founder. What a game jam rule, Steam, itch.io and our own page each ask a game to disclose.',
   },
@@ -36,7 +36,7 @@ const POSTS: PostMeta[] = [
     title: 'Indexed but zero impressions: ten Lullwood pages, one backlink',
     date: '2026-10-28',
     description:
-      'Lullwood had 10 pages indexed and no query data in Search Console. The cause was one external backlink, not crawling, speed or schema.',
+      'Lullwood had 10 pages indexed and 14 impressions reported in Search Console, but no queries tied to those impressions. The cause was one external backlink, not crawling, speed or schema.',
   },
   {
     slug: 'who-makes-lullwood',
@@ -65,9 +65,9 @@ const POSTS: PostMeta[] = [
     date: '2026-09-05',
     // LUL-6091: the carry-home mechanic this post announced is gone
     // (LUL-2281) -- the excerpt has to read as history, not a current rule.
-    updated: '2026-10-26',
+    updated: '2026-10-29',
     description:
-      'The September 2026 "carry them home" win condition and the return leg cut two weeks later. Lifting the child is the win now; there is no trip home.',
+      'The "carry them home" win condition merged on August 15, 2026 and cut on September 9, 2026. Lifting the child is the win now; there is no trip home.',
   },
   {
     slug: 'eleven-agents-one-release-train',

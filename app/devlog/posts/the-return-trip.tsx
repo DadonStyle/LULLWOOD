@@ -24,8 +24,8 @@ export default function TheReturnTrip() {
           <time dateTime="2026-10-26">Superseded, October 26, 2026</time>
         </p>
         <p style={{ fontSize: 14, color: "#9fb2cd", marginBottom: 0 }}>
-          This post describes the carry-home win condition as it shipped in
-          September 2026. LUL-2281 cut the return leg — lifting the child is
+          This post describes the carry-home win condition as it ran from
+          August 15 to September 9, 2026. LUL-2281 cut the return leg — lifting the child is
           the win now, on the spot, with no trip back to survive. Current
           rules:{" "}
           <Link
@@ -49,50 +49,40 @@ export default function TheReturnTrip() {
         predators.
       </p>
       <p>
-        Then someone played it and said: <em>&ldquo;Once I found her it felt
-        over. I just walked back.&rdquo;</em>
+        That ending had a cost: the moment you reached her, the run was over,
+        and nothing came after it. The return trip, ticket LUL-38, merged on
+        August 15, 2026 and made the pickup the midpoint instead.
       </p>
       <p>
-        That sentence broke the loop. The child wasn&rsquo;t a destination
-        problem — she was a load-bearing story beat. The moment you had her in your arms, the emotional register flipped. You were no longer the one lost in the dark. She was. And someone carrying a frightened
-        child does not walk quietly; they move fast, they breathe harder,
-        they make noise.
+        The idea was that the child isn&rsquo;t only a destination — she is a
+        load-bearing story beat. The moment you had her in your arms, the emotional register flipped. You were no longer the one lost in the dark. She was. And someone carrying a frightened
+        child does not walk quietly; they are easier to see and they make
+        noise.
       </p>
 
       <h2>What changed</h2>
       <p>
-        In that September win condition, pickup was the midpoint, not the end. Collecting the child armed the death guard: predators could take you before you reached the treeline, and they did, because you were louder when you carried her. You had to make it back.
+        In that win condition, pickup was the midpoint, not the end. Collecting the child did not end the run: predators could still take you on the way back to the spawn point, where home was. You had to make it back.
       </p>
       <p>
-        The code change was three lines in <code>forest-engine.js</code>.
         The design change was everything. A horror game that ends the moment
-        you find the thing you were looking for has no second act. The forest knew you had her. So did the bear.
+        you find the thing you were looking for has no second act.
       </p>
 
-      <h2>The implementation detail worth noting</h2>
+      <h2>What carrying cost the player</h2>
       <p>
-        The original design had predators pause their hunt the moment you
-        touched the child — the idea being that they &ldquo;see&rdquo; you
-        pick her up and circle. We cut it immediately. Predators that
-        theatrically stop on a story beat are predators that break
-        immersion. What shipped instead was simpler and scarier: they never knew you were carrying her. They just kept hunting. It was your problem to solve.
-      </p>
-      <p>
-        The scent model did not distinguish carried weight. The sound model did — running with the child raised your noise signature by a factor the wolves could detect at forty units. You found that out on your own, usually on the return trip, usually once.
+        The cost was built into numbers the predators already used. While
+        you carried the child, a predator&rsquo;s detect range was multiplied
+        by 1.35. A carried child also cried on a two-second timer, and a
+        roaming predator within 5.6 units of you heard each pulse (a hidden carrier with live sniff immunity was exempt). Walking
+        pace was scaled down while you carried her.
       </p>
 
-      <h2>Why it felt right</h2>
-      <p>
-        The strongest moment in the playtest after this shipped: a player
-        who had been cautious all run — slow, methodical, hiding every thirty
-        seconds — picked up the child and immediately started sprinting for
-        the treeline. They had the instinct right. The execution was wrong.
-        A bear caught them twelve units out.
-      </p>
+      <h2>What it was meant to teach</h2>
       <p>
         The lesson the game is trying to teach — that stillness is the
         survival verb, not speed — became legible only once there was
-        something on the line for the return trip. The original win condition did not have that. This one did.
+        something on the line for the return trip. The original win condition did not have that. This one did, until LUL-2281 cut it on September 9, 2026, 25 days after it merged.
       </p>
     </>
   );
