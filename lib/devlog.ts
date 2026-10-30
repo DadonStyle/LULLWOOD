@@ -20,7 +20,7 @@ const POSTS: PostMeta[] = [
   {
     slug: 'ai-disclosure-game',
     title: 'What AI disclosure actually asks',
-    date: '2026-11-05',
+    date: '2026-10-30',
     description:
       "Spooky Jam 2026, Steam, and itch.io each ask for different things. Here's what we read.",
   },
