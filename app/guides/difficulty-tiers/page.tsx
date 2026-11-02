@@ -39,7 +39,7 @@ const QA = [
   {
     question: "Do wolves, bears and lions see further on Blackout?",
     answer:
-      "No. Blackout predators see 30% less far than Night predators, the same reduction Lantern has. Blackout is harder because they start hunting, the brush gives you away sooner when you hide too long, there is no minimap, and, once the setting is saved, the child can spawn farther away.",
+      "No. Blackout predators see 30% less far than Night predators, the same reduction Lantern has. Blackout is harder because they start hunting, the brush gives you away sooner when you hide too long, and, once the setting is saved, the child can spawn farther away.",
   },
   {
     question: "Does Lullwood have a minimap?",
