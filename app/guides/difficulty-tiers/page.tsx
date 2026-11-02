@@ -39,7 +39,7 @@ const QA = [
   {
     question: "Do wolves, bears and lions see further on Blackout?",
     answer:
-      "No. Blackout predators see 30% less far than Night predators, the same reduction Lantern has. Blackout is harder because there are nine of them, they start hunting, the brush gives you away sooner when you hide too long, and, once the setting is saved, the child can spawn farther away.",
+      "No. Blackout predators see 30% less far than Night predators, the same reduction Lantern has. Blackout is harder because they start hunting, the brush gives you away sooner when you hide too long, there is no minimap, and, once the setting is saved, the child can spawn farther away.",
   },
   {
     question: "Does Lullwood have a minimap?",
@@ -200,10 +200,10 @@ export default function DifficultyTiersPage() {
             </p>
             <p>
               What makes Blackout hard is everything around the predators.
-              There are nine of them rather than three. Each starts in a
-              hunting state, which sends it straight at you as soon as it can
-              see you; one that loses sight of you drops back to
-              investigating. Hiding in one bush starts giving you away after 8
+              There are nine of them, three of each species, where Lantern has
+              three in total. Each starts in a hunting state, which sends it
+              straight at you as soon as it can see you; one that loses sight
+              of you drops back to investigating. Hiding in one bush starts giving you away after 8
               seconds instead of 12. And the child is farther away. So on Blackout, move from cover to cover rather than
               waiting out a chase in one bush.
             </p>
