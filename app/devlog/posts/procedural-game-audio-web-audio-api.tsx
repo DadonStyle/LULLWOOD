@@ -111,10 +111,12 @@ export default function ProceduralGameAudioWebAudioApi() {
       </p>
       <p>
         The wind answers your movement. Each frame, in the calm bed, its gain
-        is <code>0.05 + move01 * 0.10</code> and its filter cutoff is{' '}
+        is <code>0.05 + move01 * 0.10</code>, before a time-of-day factor (1 at
+        night, 0.6 at noon) and a fog-tide duck, and its filter cutoff is{' '}
         <code>320 + move01 * 900</code> Hz (L9136-9137), where{' '}
         <code>move01</code> runs from 0 standing still to 1 at full sprint. A
-        sprint triples the wind&rsquo;s gain and opens its filter to 1,220 Hz.
+        sprint triples the wind&rsquo;s base gain and opens its filter to 1,220
+        Hz.
       </p>
 
       <h2>The calm bed is a chord, the chase is a different one</h2>
@@ -229,7 +231,10 @@ export default function ProceduralGameAudioWebAudioApi() {
         It also means Web Audio behaviour becomes your bugs. Chromium puts a{' '}
         <code>GainNode</code> to sleep once the last sound routed through it
         ends, and a sleeping node&rsquo;s gain timeline does not advance, so
-        the predator-volume slider read stale values. The fix (L4177-4190) is a
+        the node&rsquo;s <code>.gain.value</code> read the old level, so{' '}
+        <code>qaProbePredatorVolume()</code> returned stale values and the
+        predator-audio specs failed at random. Players heard the right level.
+        The fix (L4177-4190) is a
         silent <code>ConstantSourceNode</code> with an offset of 0, connected
         to that gain node so it never sleeps. On iOS, the context starts
         suspended whatever the user did, so <code>startAudio()</code> calls{' '}
