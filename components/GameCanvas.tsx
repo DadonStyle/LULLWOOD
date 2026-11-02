@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Hud, { INITIAL_HUD_STATE, type EngineActions, type EngineHudState } from './Hud';
 import WelcomeSplash from './WelcomeSplash';
-import { track, startSessionTracking } from '@/lib/analytics';
+import { track, startSessionTracking, readAttribution } from '@/lib/analytics';
 import { initTelemetryTransport } from '@/lib/telemetry-transport';
 import { isMobile } from '@/lib/input-mode';
 import { assertEngineContract } from '@/lib/engine-contract';
@@ -1101,7 +1101,7 @@ export default function GameCanvas() {
   // living inside the dynamic-import one below.
   useEffect(() => {
     initTelemetryTransport();
-    track({ event: 'page_view' });
+    track({ event: 'page_view', ...readAttribution() });
     return startSessionTracking();
   }, []);
 

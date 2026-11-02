@@ -115,7 +115,9 @@ export default function Home() {
           <p>
             On a phone or tablet the same actions are on screen: twin sticks
             to move and look, and buttons for jump, hide, veil and lift. Hold the
-            phone in landscape; portrait shows a rotate prompt.
+            phone in landscape; portrait shows a rotate prompt. The{" "}
+            <Link href="/guides/mobile">phone controls guide</Link> lists every
+            on-screen control and what a short phone screen hides.
           </p>
         </section>
         <section>
@@ -243,6 +245,11 @@ export default function Home() {
             <li>
               <Link href="/devlog">The Lullwood devlog</Link> — how the game
               is built, post by post
+            </li>
+            <li>
+              <Link href="/devlog/ai-disclosure-game">Is Lullwood made by AI?</Link>{" "}
+              — yes, and what a game jam rule and a store form ask a game to
+              disclose
             </li>
             <li>
               <Link href="/press">Press kit</Link> — fact sheet,

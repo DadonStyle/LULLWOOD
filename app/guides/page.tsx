@@ -135,6 +135,13 @@ export default function GuidesHubPage() {
               </li>
               <li>
                 <strong>
+                  <Link href="/guides/mobile">Can you play Lullwood on a phone?</Link>
+                </strong>{" "}
+                — yes, in landscape with no keyboard: every on-screen control,
+                which prompts are tap rows, and what a short phone screen hides.
+              </li>
+              <li>
+                <strong>
                   <Link href="/games-like-slender">Games like Slender: how Lullwood compares</Link>
                 </strong>{" "}
                 — what makes a Slender-style game work, the well-known games in

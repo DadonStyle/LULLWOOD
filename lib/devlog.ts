@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'ai-disclosure-game',
+    title: 'Is Lullwood made by AI? AI disclosure in a game',
+    date: '2026-10-30',
+    description:
+      'Is Lullwood made by AI? Yes: Claude agents and one founder. What a game jam rule, Steam, itch.io and our own page each ask a game to disclose.',
+  },
+  {
     slug: 'the-fog-is-the-wolfs-eyesight',
     title: "The fog is the wolf's eyesight: Lullwood's fog tide",
     date: '2026-10-28',
@@ -29,7 +36,7 @@ const POSTS: PostMeta[] = [
     title: 'Indexed but zero impressions: ten Lullwood pages, one backlink',
     date: '2026-10-28',
     description:
-      'Lullwood had 10 pages indexed and no query data in Search Console. The cause was one external backlink, not crawling, speed or schema.',
+      'Lullwood had 10 pages indexed and 14 impressions reported in Search Console, but no queries tied to those impressions. The cause was one external backlink, not crawling, speed or schema.',
   },
   {
     slug: 'who-makes-lullwood',
