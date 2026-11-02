@@ -31,11 +31,26 @@ export default function CanTheWolfSeeYou() {
         <code>effectiveDetect</code> (L734-737) is the predator&rsquo;s base
         detect radius, times one minus a stillness cut, times a multiplier the
         caller supplies. A wolf&rsquo;s base radius is 42 units
-        (<code>engine/tuning.js</code> L317). Stillness ramps in over 1.2
-        seconds of holding still and can cut the radius by 82% (
-        <code>STILL_RAMP</code> and <code>STILL_DETECT_CUT</code>, L723-724), so
-        a player who has stayed still for 1.2 seconds shrinks a wolf&rsquo;s 42
-        to about 7.6 units, before any other multiplier.
+        (<code>engine/tuning.js</code> L317).
+      </p>
+      <p>
+        The stillness term is zero unless the player is in the hide stance:{' '}
+        <code>state.hidden ? min(1, hideTime / STILL_RAMP) : 0</code> (L735).
+        The engine sets <code>hidden</code> only in <code>enterHide</code>{' '}
+        (<code>engine/forest-engine.js</code> L4405-4406), which{' '}
+        <code>toggleHidden</code> reaches when the player presses H with a
+        bramble within 2.2 units of its edge (L4475-4479;{' '}
+        <code>HIDE_RADIUS</code>, <code>cover.ts</code> L633), and any movement
+        key breaks the stance (L8374). <code>hideTime</code> counts up from
+        there (L8375). So a player who simply stops in the open keeps the full
+        42; the source says standing still in the open next to a predator still
+        gets you caught (<code>cover.ts</code> L711-712). A player who is
+        hidden, within 2.2 of the bramble&rsquo;s edge but outside its
+        footprint, ramps the cut in over 1.2 seconds and takes up to 82% off
+        (<code>STILL_RAMP</code> and <code>STILL_DETECT_CUT</code>, L723-724).
+        That is a wolf&rsquo;s 42 shrinking to about 7.6 units, before any other
+        multiplier. A hidden player inside the footprint never reaches this
+        arithmetic; the branch below returns first.
       </p>
       <p>
         The caller is the engine&rsquo;s own <code>canSee</code> wrapper
@@ -102,7 +117,8 @@ export default function CanTheWolfSeeYou() {
         code finds no use of it. Rocks, logs and brambles are drawn as instanced meshes (
         <code>ensureCoverChunk</code>, <code>forest-engine.js</code> L1313-1341)
         but the logic reads plain data: the same boxes, filed into a map by{' '}
-        <code>buildCoverGrid</code> (L997-1002). A sight test touches a few
+        <code>buildCoverGrid</code> (<code>engine/forest-engine.js</code>{' '}
+        L997-1002). A sight test touches a few
         rectangles and never a scene mesh.
       </p>
       <p>
@@ -131,10 +147,12 @@ export default function CanTheWolfSeeYou() {
       <h2>One limit we measured</h2>
       <p>
         A cover box is filed under one cell: the one its centre is in (
-        <code>buildCoverGrid</code>, L997-1002). <code>hasLOS</code> reads only
-        the cells its own samples land in (L580-585). Player collision and{' '}
+        <code>buildCoverGrid</code> in <code>engine/forest-engine.js</code>,
+        L997-1002). <code>hasLOS</code> reads only the cells its own samples
+        land in (<code>cover.ts</code> L580-585). Player collision and{' '}
         <code>insideHideFootprint</code> read the surrounding 3 by 3 block of
-        cells instead (<code>neighbourhood</code>, L301; used at L699).{' '}
+        cells instead (<code>neighbourhood</code>, L301; used by{' '}
+        <code>coverBlockedR</code> at L431 and by the footprint test at L699).{' '}
         <code>hasLOS</code> does not. So a long box centred just across a cell
         line can overhang into a cell the line samples without ever being
         read.
@@ -175,8 +193,9 @@ export default function CanTheWolfSeeYou() {
 
       <h2>What it means in play</h2>
       <p>
-        Cover and stillness are separate dials. Cover removes the line between
-        you and the wolf. Stillness shrinks the radius it has to beat. The
+        Cover and the hide stance are separate dials. Cover removes the line
+        between you and the wolf. Hiding at a bramble and staying put shrinks
+        the radius it has to beat. The
         practical side, with the timings, is in{' '}
         <Link href="/guides/wolves">how to survive wolves in Lullwood</Link>{' '}
         and <Link href="/how-to-survive">the Lullwood survival guide</Link>.{' '}
