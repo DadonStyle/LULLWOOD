@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'procedural-game-audio-web-audio-api',
+    title: 'Horror audio with zero audio files: Web Audio in a three.js game',
+    date: '2026-11-02',
+    description:
+      "Lullwood ships no audio files. Wind, rain, a fog-tide drone and the child's cry are Web Audio noise, oscillators and gain targets. What we searched, and the code.",
+  },
+  {
     slug: 'ai-disclosure-game',
     title: 'Is Lullwood made by AI? AI disclosure in a game',
     date: '2026-10-30',
