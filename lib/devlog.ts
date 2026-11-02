@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'a-night-forest-with-one-model-file',
+    title: 'A night forest with one model file: what Lullwood ships instead of assets',
+    date: '2026-11-10',
+    description:
+      'Lullwood, a free three.js browser horror game, ships one .glb and no audio files. A cold first load measured in a browser: 676 KB, 153 KB of it that one model.',
+  },
+  {
     slug: 'ai-disclosure-game',
     title: 'Is Lullwood made by AI? AI disclosure in a game',
     date: '2026-10-30',
