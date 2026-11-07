@@ -120,6 +120,14 @@ export default function GuidesHubPage() {
               </li>
               <li>
                 <strong>
+                  <Link href="/guides/throwing-stones">Can you distract wolves in Lullwood?</Link>
+                </strong>{" "}
+                — yes, briefly: throw a stone with a left click and predators
+                within 24 units of where it lands usually walk over to it.
+                What it fixes and what it does not.
+              </li>
+              <li>
+                <strong>
                   <Link href="/guides/how-to-win">How you win Lullwood</Link>
                 </strong>{" "}
                 — the win condition: reach the child and press E. There is no
