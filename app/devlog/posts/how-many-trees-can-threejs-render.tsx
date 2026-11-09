@@ -6,9 +6,9 @@ export default function HowManyTreesCanThreejsRender() {
       <p>
         Lullwood draws 5,200 trees in a browser tab by splitting them into 64
         chunks, each its own three-part InstancedMesh, so three.js can
-        frustum-cull whole chunks, and by building at most the 25 chunks
-        around the player. The heaviest whole frame we measured was 82,740 triangles.
-        The forest alone, drawn as one pool, would be 270,400.
+        frustum-cull whole chunks, and by building only the chunks near the
+        player: 25 at spawn, 36 at most while walking. The heaviest whole
+        frame we measured was 101,996 triangles; one pool would be 270,400.
       </p>
       <p>
         We build Lullwood, a free first-person horror game for the browser,
@@ -87,7 +87,10 @@ export default function HowManyTreesCanThreejsRender() {
         player has changed chunk (<code>updateStreamedChunks</code>,
         L1273-1275, called at L8639), and building a chunk makes no{' '}
         <code>rng()</code> call, so the map is identical either way. The map is still 5,200 trees in
-        data. At most 25 of the 64 chunks are ever meshes.
+        data. The ring is 25 chunks, but the unload band keeps the chunks you just
+        left, so a walking player can have up to 36 of the 64 as meshes: six
+        per axis, two ahead and three behind (L1286-1291). We derived 36 from
+        that rule and then measured it.
       </p>
 
       <h2>The numbers, and the number we do not have</h2>
@@ -111,7 +114,16 @@ export default function HowManyTreesCanThreejsRender() {
         <li>
           The same position changes with the heading. From (0, 200) the frame
           was 75,928 triangles facing one way and 19,582 facing the other.
-          That is the frustum test working.
+          That is consistent with the frustum test, though the heading also
+          changes which cover props and predators are in view.
+        </li>
+        <li>
+          Walking changes the chunk count. We stepped the player one chunk at
+          a time, teleporting to each chunk centre because the unload rule
+          reads only the chunk index, along a staircase path across the map.
+          Live chunks climbed to 35, and a path that doubled back across a
+          boundary reached 36 chunks and 2,983 trees. The heaviest whole frame
+          in those walks was 101,996 triangles and 219 draw calls.
         </li>
       </ul>
       <p>
@@ -138,8 +150,8 @@ export default function HowManyTreesCanThreejsRender() {
       <h2>What it costs</h2>
       <p>
         Chunking trades triangles for draw calls. Each live chunk is three
-        meshes, so a full ring can submit up to 75 tree draw calls where the
-        old pool submitted 3, and three.js culls per object, which is why the
+        meshes, so a full ring can submit 75 tree draw calls at spawn and up to
+        108 (36 chunks times 3) while walking, where the old pool submitted 3, and three.js culls per object, which is why the
         chunks exist at all. We do not know where the frame-time break-even
         sits on a low-end phone, and we ran no benchmark of the old and new
         versions against each other, so this post makes no speed claim.
