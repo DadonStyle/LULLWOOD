@@ -18,11 +18,32 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'how-many-trees-can-threejs-render',
+    title: 'How many trees can three.js render? 5,200 in Lullwood, with chunked InstancedMesh',
+    date: '2026-11-09',
+    description:
+      'Lullwood draws 5,200 trees with 64 chunked InstancedMesh trios, frustum culling and a 5x5 streaming ring. Real draw-call and triangle counts, from the source.',
+  },
+  {
     slug: 'can-the-wolf-see-you',
     title: "Can the wolf see you? Line of sight in Lullwood without a raycaster",
     date: '2026-11-02',
     description:
       'Can a wolf see you in Lullwood? A distance check, then a walk along the line through a spatial hash of cover boxes. No three.js Raycaster. Read from the source.',
+  },
+  {
+    slug: 'procedural-game-audio-web-audio-api',
+    title: 'Horror audio with zero audio files: Web Audio in a three.js game',
+    date: '2026-11-02',
+    description:
+      "Lullwood ships no audio files. Wind, rain, a fog-tide drone and the child's cry are Web Audio noise, oscillators and gain targets. What we searched, and the code.",
+  },
+  {
+    slug: 'a-night-forest-with-one-model-file',
+    title: 'A night forest with one model file: what Lullwood ships instead of assets',
+    date: '2026-11-09',
+    description:
+      'Lullwood, a free three.js browser horror game, ships one .glb and no audio files. A cold first load measured in a browser: 676 KB, 153 KB of it that one model.',
   },
   {
     slug: 'ai-disclosure-game',
