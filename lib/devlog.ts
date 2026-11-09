@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'how-many-trees-can-threejs-render',
+    title: 'How many trees can three.js render? 5,200 in Lullwood, with chunked InstancedMesh',
+    date: '2026-11-16',
+    description:
+      'Lullwood draws 5,200 trees with 64 chunked InstancedMesh trios, frustum culling and a 5x5 streaming ring. Real draw-call and triangle counts, from the source.',
+  },
+  {
     slug: 'can-the-wolf-see-you',
     title: "Can the wolf see you? Line of sight in Lullwood without a raycaster",
     date: '2026-11-02',
