@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'can-the-wolf-see-you',
+    title: "Can the wolf see you? Line of sight in Lullwood without a raycaster",
+    date: '2026-11-02',
+    description:
+      'Can a wolf see you in Lullwood? A distance check, then a walk along the line through a spatial hash of cover boxes. No three.js Raycaster. Read from the source.',
+  },
+  {
     slug: 'procedural-game-audio-web-audio-api',
     title: 'Horror audio with zero audio files: Web Audio in a three.js game',
     date: '2026-11-02',
