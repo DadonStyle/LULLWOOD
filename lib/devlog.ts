@@ -20,7 +20,7 @@ const POSTS: PostMeta[] = [
   {
     slug: 'how-many-trees-can-threejs-render',
     title: 'How many trees can three.js render? 5,200 in Lullwood, with chunked InstancedMesh',
-    date: '2026-11-16',
+    date: '2026-11-09',
     description:
       'Lullwood draws 5,200 trees with 64 chunked InstancedMesh trios, frustum culling and a 5x5 streaming ring. Real draw-call and triangle counts, from the source.',
   },
