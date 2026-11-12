@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'a-rules-popup-that-cannot-lie-about-its-numbers',
+    title: 'A rules popup that cannot lie about its numbers: how Lullwood builds "Be the rescuer"',
+    date: '2026-11-12',
+    description:
+      "Lullwood's \"Be the rescuer\" popup reads its numbers from the constants the server enforces. What that fixes, what a test pins, and the three hand-typed claims it misses.",
+  },
+  {
     slug: 'how-many-trees-can-threejs-render',
     title: 'How many trees can three.js render? 5,200 in Lullwood, with chunked InstancedMesh',
     date: '2026-11-09',
