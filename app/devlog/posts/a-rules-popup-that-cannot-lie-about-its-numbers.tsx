@@ -18,11 +18,11 @@ export default function ARulesPopupThatCannotLieAboutItsNumbers() {
     <>
       <p>
         Lullwood&rsquo;s &ldquo;Be the rescuer&rdquo; popup lists what a run
-        has to meet to take first place on the leaderboard. Its three numbers
-        are not typed into the popup. They are read from the constants the
-        leaderboard server enforces, so those numbers cannot drift from the
-        check. The sentences around them are still hand-typed, and this post
-        is about where that line falls.
+        has to meet to take first place on the leaderboard. Three of its numbers
+        are read, not typed: they come from the constants the leaderboard
+        server enforces, so those numbers cannot drift from the check. The
+        sentences around them are hand-typed, and this post is about where
+        that line falls.
       </p>
       <p>
         We build <Link href="/">Lullwood</Link>, a free browser horror game, in
@@ -37,8 +37,9 @@ export default function ARulesPopupThatCannotLieAboutItsNumbers() {
         <code>rescuerRules</code> is in <code>lib/game/rescuerRules.ts</code>{" "}
         (L14-28). It returns eight strings, in the order a player meets the
         rules. The popup in <code>components/GameMenu.tsx</code> maps them
-        straight into a list (L138). Here it is, with the lines that carry no
-        number elided:
+        straight into a list (L138). Here it is, with five of the eight strings
+        replaced by comments. The three left in are the first rule, for
+        orientation, and the two that read a constant.
       </p>
       <pre
         style={{
