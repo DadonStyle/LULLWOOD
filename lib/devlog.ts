@@ -25,6 +25,13 @@ const POSTS: PostMeta[] = [
       "Lullwood's \"Be the rescuer\" popup reads its numbers from the constants the server enforces. What that fixes, what a test pins, and the three hand-typed claims it misses.",
   },
   {
+    slug: 'why-an-ai-built-browser-game-is-threejs',
+    title: 'Why Lullwood, an AI-built browser game, is built in three.js',
+    date: '2026-11-12',
+    description:
+      'Lullwood is three.js because its agents work on text. What git counts as binary in the repo (47 of 793 files, one model), and one real diff. No engine comparison.',
+  },
+  {
     slug: 'how-many-trees-can-threejs-render',
     title: 'How many trees can three.js render? 5,200 in Lullwood, with chunked InstancedMesh',
     date: '2026-11-09',
