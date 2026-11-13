@@ -454,3 +454,21 @@ footer.site-footer a:hover {
   color: #9fb2cd;
   text-decoration: underline;
 }
+
+/* Site-wide "Play Lullwood" header (components/SiteHeader.tsx), every route but the game. */
+header.site-header {
+  padding: 14px 24px;
+  background: #0a0e15;
+  border-bottom: 1px solid #16202e;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  text-align: center;
+}
+header.site-header a {
+  color: #d7e4f6;
+  text-decoration: none;
+  letter-spacing: 0.04em;
+}
+header.site-header a:hover {
+  text-decoration: underline;
+}
