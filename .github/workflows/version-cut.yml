@@ -509,9 +509,12 @@ jobs:
           elif [ "$SUITE_RESULT" = "cancelled" ]; then
             category=cancelled
             comment="**INCONCLUSIVE** -- the combined-suite run was cancelled ($RUN_URL), most likely superseded by a newer version-cut run under this workflow's shared \`version-cut\` concurrency group (or a runner-level shutdown), not a real test failure. A later version-cut run against the current tree will produce a real result; no action needed unless every subsequent run keeps cancelling."
+          elif [ "$FINGERPRINT" = "non-advisory-job-failure" ] || [ "$FINGERPRINT" = "infra-no-shard-outcomes" ]; then
+            category=failure
+            comment="**DO NOT MERGE** -- combined-suite result was \`$SUITE_RESULT\` (\`$FINGERPRINT\`) against the release/next+main merge tree: $RUN_URL. Needs investigation before this cut can land."
           else
             category=failure
-            comment="**DO NOT MERGE** -- combined-suite result was \`$SUITE_RESULT\` against the release/next+main merge tree: $RUN_URL. Needs investigation before this cut can land."
+            comment="**ADVISORY** -- playwright failures in shard(s) \`$FINGERPRINT\` against the release/next+main merge tree: $RUN_URL. Playwright is advisory (LUL-1702/LUL-3582), not a merge gate -- compare the failing set against the chronic baseline; merge is governed by the required checks and local-qa."
           fi
 
           # LUL-5917: this PR stays open across many release/next merges, and

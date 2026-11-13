@@ -65,7 +65,7 @@ test.describe('SEO on subpages', () => {
 
   test('devlog post: links to the game and to its older and newer neighbours', async ({ page }) => {
     await page.goto(`/devlog/${middle.slug}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser' })).toHaveAttribute('href', '/');
+    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser', exact: true })).toHaveAttribute('href', '/');
     await expect(page.locator('a[rel="prev"]')).toHaveAttribute('href', `/devlog/${posts[2].slug}`);
     await expect(page.locator('a[rel="next"]')).toHaveAttribute('href', `/devlog/${posts[0].slug}`);
   });
@@ -97,7 +97,7 @@ test.describe('SEO on subpages', () => {
       );
       expect(robots).toEqual(['noindex']);
 
-      await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser' })).toHaveAttribute('href', '/');
+      await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser', exact: true })).toHaveAttribute('href', '/');
       await expect(page.locator('main a[href="/devlog"]')).toBeVisible();
       await expect(page.locator(`main a[href="/devlog/${posts[0].slug}"]`)).toBeVisible();
     });
