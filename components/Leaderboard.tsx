@@ -5,6 +5,7 @@ import {
   COUNTRY_ALLOWLIST, COUNTRY_NAMES, CLIENT_CACHE_KEY, NICKNAME_PATTERN,
   parseRecord, encodeCachedRecord, decodeCachedRecord, validateRunId, leaderboardSubmitGate, type LeaderboardRecord,
 } from '@/lib/game/leaderboard';
+import type { RunTrace } from '@/lib/game/run-trace';
 import { formatDuration } from '@/lib/ui/format-duration';
 import { getAnonId } from '@/lib/analytics';
 
@@ -90,19 +91,26 @@ function postJson(path: string, body: unknown): Promise<Response> {
   });
 }
 
-interface RunSessionState { serial: number; runId: string; finished: boolean }
+interface RunSessionState { serial: number; runId: string; finished: boolean; refused: boolean }
+
+/** What the win screen needs from the run session: the confirmed run id, or whether the service refused the run. */
+export interface RunSessionResult { runId: string | null; refused: boolean }
 
 /**
  * Server-timed run session for the current run (lib/game/leaderboard.ts "run
  * sessions"). `runSerial` changes on every engine enter() (restarts too): a
  * Blackout run then gets a run id from /api/run/start. `runFinished` turns true
  * at the lift, when the run clock stops: the finish goes to /api/run/finish
- * right then, because the win screen shows ~11 s later. Returns the run id once
- * the service has both stamps, else null (start failed, the run is not
- * Blackout, or the start answer came back after the lift and is dropped --
- * its finish would be late and fail the clock check anyway).
+ * right then, with the engine's proof-of-play trace (lib/game/run-trace.ts),
+ * because the win screen shows ~11 s later. Returns the run id once the
+ * service has both stamps, else null (start failed, the run is not Blackout,
+ * or the start answer came back after the lift and is dropped -- its finish
+ * would be late and fail the clock check anyway). `refused` is true when the
+ * service answered the finish with a 400 (for example invalid_trace): that
+ * run can't be submitted, and the win screen says so instead of offering the
+ * form. A network error or 503 leaves it false (the untimed note).
  */
-export function useRunSession(runSerial: number, difficulty: string, runFinished: boolean): string | null {
+export function useRunSession(runSerial: number, difficulty: string, runFinished: boolean, runTrace: RunTrace | null = null): RunSessionResult {
   const [session, setSession] = useState<RunSessionState | null>(null);
   // Last serial a start was decided for / a lift was seen for. Each is acted on
   // once per run; difficulty is read when the run starts (a change mid-run only
@@ -119,7 +127,7 @@ export function useRunSession(runSerial: number, difficulty: string, runFinished
       .then(async (res) => (res.status === 201 ? validateRunId(((await res.json()) as { run_id?: unknown })?.run_id) : null))
       .catch(() => null)
       .then((runId) => {
-        if (runId && startedFor.current === serial && liftedFor.current !== serial) setSession({ serial, runId, finished: false });
+        if (runId && startedFor.current === serial && liftedFor.current !== serial) setSession({ serial, runId, finished: false, refused: false });
       });
   }, [runSerial, difficulty]);
 
@@ -128,14 +136,16 @@ export function useRunSession(runSerial: number, difficulty: string, runFinished
     liftedFor.current = runSerial;
     if (!session || session.serial !== runSerial) return;
     const { serial, runId } = session;
-    postJson('/api/run/finish', { run_id: runId, anon_id: getAnonId() })
+    postJson('/api/run/finish', { run_id: runId, anon_id: getAnonId(), ...(runTrace ? { trace: runTrace } : {}) })
       .then((res) => {
         if (res.ok) setSession((prev) => (prev && prev.serial === serial ? { ...prev, finished: true } : prev));
+        else if (res.status === 400) setSession((prev) => (prev && prev.serial === serial ? { ...prev, refused: true } : prev));
       })
       .catch(() => {});
-  }, [runFinished, runSerial, session]);
+  }, [runFinished, runSerial, session, runTrace]);
 
-  return session && session.serial === runSerial && session.finished ? session.runId : null;
+  const current = session && session.serial === runSerial ? session : null;
+  return { runId: current && current.finished ? current.runId : null, refused: current?.refused ?? false };
 }
 
 const recordLine = (r: LeaderboardRecord) => `${r.nickname} is the top rescuer at ${formatDuration(r.timeMs / 1000)} — can you beat it?`;
@@ -159,11 +169,13 @@ type SubmitStatus = 'idle' | 'submitting' | 'done' | 'record' | 'rate_limited' |
  * (founder 2026-10-13: say so, don't stay silent); a non-Blackout win renders
  * #leaderboardIneligibleNote -- LUL-5944. The plausibility floor stays silent.
  * A run paused at any point renders #leaderboardPausedNote, and a run the
- * server did not time (no run id from useRunSession) #leaderboardUntimedNote
- * (lib/game/leaderboard.ts leaderboardSubmitGate has the order).
+ * server did not time (no run id from useRunSession) #leaderboardUntimedNote,
+ * and a run the server refused at the finish (its path did not check out)
+ * #leaderboardUnverifiedNote (lib/game/leaderboard.ts leaderboardSubmitGate
+ * has the order).
  */
-export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedThisRun = false, pausedThisRun = false, runId, onRecord }: {
-  survivedSeconds: number; difficulty: string; adminUsedThisRun?: boolean; pausedThisRun?: boolean; runId: string | null; onRecord?: () => void;
+export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedThisRun = false, pausedThisRun = false, runId, runRefused = false, onRecord }: {
+  survivedSeconds: number; difficulty: string; adminUsedThisRun?: boolean; pausedThisRun?: boolean; runId: string | null; runRefused?: boolean; onRecord?: () => void;
 }) {
   const [nickname, setNickname] = useState('');
   const [country, setCountry] = useState('');
@@ -181,7 +193,7 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedTh
   // usually *faster* than the ~15.7s floor (it's the easier tier), so checking the
   // floor first would swallow the tell for exactly the common case it exists for.
   // The floor only matters once a run has already cleared the difficulty gate.
-  const gate = leaderboardSubmitGate({ adminMode, adminUsedThisRun, difficulty, timeMs, pausedThisRun, runId });
+  const gate = leaderboardSubmitGate({ adminMode, adminUsedThisRun, difficulty, timeMs, pausedThisRun, runId, runRefused });
   if (gate === 'admin') {
     return <p id="leaderboardAdminNote">Admin mode was on during this run, so it can&apos;t be counted as the top rescuer.</p>;
   }
@@ -190,6 +202,9 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedTh
   }
   if (gate === 'hidden') return null;
   if (gate === 'paused') return <p id="leaderboardPausedNote">Paused runs can&apos;t be counted as the top rescuer.</p>;
+  if (gate === 'unverified') {
+    return <p id="leaderboardUnverifiedNote">The server couldn&apos;t verify this run, so it can&apos;t be counted as the top rescuer.</p>;
+  }
   if (gate === 'untimed') {
     return <p id="leaderboardUntimedNote">The server couldn&apos;t time this run, so it can&apos;t be counted as the top rescuer.</p>;
   }

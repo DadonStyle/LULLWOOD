@@ -8,13 +8,15 @@ import assert from 'node:assert/strict';
 import { POST as START } from './start/route.ts';
 import { POST as FINISH } from './finish/route.ts';
 import { POST as SUBMIT } from '../leaderboard/route.ts';
-import { startTestService } from '../../../services/leaderboard-db/test-harness.ts';
+import { startTestService, honestTrace } from '../../../services/leaderboard-db/test-harness.ts';
 import { RUN_START_IP_LIMIT } from '../../../lib/game/leaderboard.ts';
+import { decodeSamples, encodeSamples, MAX_FINISH_BODY_BYTES } from '../../../lib/game/run-trace.ts';
 
 let svc: Awaited<ReturnType<typeof startTestService>>;
 let offset = 0;
+const serviceLog: string[] = [];
 before(async () => {
-  svc = await startTestService('r'.repeat(48), () => Date.now() + offset);
+  svc = await startTestService('r'.repeat(48), () => Date.now() + offset, (line) => serviceLog.push(line));
   process.env.LEADERBOARD_IP_HASH_SALT = 'pepper';
 });
 after(async () => {
@@ -34,14 +36,14 @@ function post(path: string, body: unknown, ip = '198.51.100.7') {
   });
 }
 
-/** A Blackout run that started `ms` ago by the service clock and was lifted just now. */
-async function play(ms: number, ip = nextIp()): Promise<string> {
+/** A Blackout run that started `ms` ago by the service clock and was lifted just now; the client's run clock read `traceMs`. */
+async function play(ms: number, ip = nextIp(), traceMs = ms): Promise<string> {
   offset = -ms;
   const res = await START(post('/api/run/start', { difficulty: 'blackout', anon_id: ANON }, ip));
   offset = 0;
   assert.equal(res.status, 201);
   const { run_id } = await res.json();
-  const fin = await FINISH(post('/api/run/finish', { run_id, anon_id: ANON }, ip));
+  const fin = await FINISH(post('/api/run/finish', { run_id, anon_id: ANON, trace: honestTrace(traceMs) }, ip));
   assert.deepEqual([fin.status, await fin.json()], [200, { ok: true }]);
   return run_id;
 }
@@ -77,12 +79,51 @@ test('finish: a malformed or unknown run id is a 400 with a plain message', asyn
   for (const run_id of [undefined, 'x', 'A'.repeat(32)]) {
     assert.equal((await FINISH(post('/api/run/finish', { run_id }))).status, 400);
   }
-  const res = await FINISH(post('/api/run/finish', { run_id: 'f'.repeat(32), anon_id: ANON }));
-  assert.deepEqual([res.status, await res.json()], [400, { error: 'this run could not be verified' }]);
+  const res = await FINISH(post('/api/run/finish', { run_id: 'f'.repeat(32), anon_id: ANON, trace: honestTrace(20_000) }));
+  assert.deepEqual([res.status, await res.json()], [400, { error: 'this run could not be verified', code: 'invalid_run' }]);
+});
+
+test('finish: a forged trace is refused by the route before the service is called', async () => {
+  offset = -20_000;
+  const { run_id } = await (await START(post('/api/run/start', { difficulty: 'blackout', anon_id: ANON }, nextIp()))).json();
+  offset = 0;
+  serviceLog.length = 0;
+  const trace = honestTrace(20_000);
+  const coords = decodeSamples(trace.samples)!;
+  coords[20] += 200; // one sample jumps 50 u
+  for (const bad of [{ ...trace, samples: encodeSamples(coords) }, { ...trace, child: [3, 4] }, { ...trace, v: 9 }, 'path']) {
+    const res = await FINISH(post('/api/run/finish', { run_id, anon_id: ANON, trace: bad }));
+    assert.deepEqual([res.status, await res.json()], [400, { error: 'this run\'s path could not be verified', code: 'invalid_trace' }]);
+  }
+  assert.deepEqual(serviceLog.filter((l) => l.includes('/v1/runs/finish')), [], 'the service never saw them');
+  assert.equal(svc.db.db.prepare('SELECT finished_at FROM run_sessions WHERE id = ?').get(run_id)!.finished_at, null);
+  // An oversized body is refused outright.
+  assert.equal((await FINISH(post('/api/run/finish', { run_id, pad: 'x'.repeat(MAX_FINISH_BODY_BYTES) }))).status, 413);
+});
+
+test('finish: without a trace the service refuses the run (trace required by default) and the client gets the code', async () => {
+  offset = -20_000;
+  const { run_id } = await (await START(post('/api/run/start', { difficulty: 'blackout', anon_id: ANON }, nextIp()))).json();
+  offset = 0;
+  const res = await FINISH(post('/api/run/finish', { run_id, anon_id: ANON }));
+  assert.deepEqual([res.status, await res.json()], [400, { error: 'this run\'s path could not be verified', code: 'invalid_trace' }]);
+  const row = svc.db.db.prepare('SELECT finished_at FROM run_sessions WHERE id = ?').get(run_id)!;
+  assert.equal(row.finished_at, null);
+});
+
+test('finish: the route forwards only the trace fields the service reads', async () => {
+  offset = -20_000;
+  const ip = nextIp();
+  const { run_id } = await (await START(post('/api/run/start', { difficulty: 'blackout', anon_id: ANON }, ip))).json();
+  offset = 0;
+  const res = await FINISH(post('/api/run/finish', { run_id, anon_id: ANON, trace: { ...honestTrace(20_000), note: 'ignore me' } }, ip));
+  assert.equal(res.status, 200);
+  const trace = svc.db.db.prepare('SELECT end_ms FROM run_traces WHERE run_id = ?').get(run_id)!;
+  assert.equal(trace.end_ms, 20_000);
 });
 
 test('submit: a run timed by the service is stored with the client time', async () => {
-  const run_id = await play(20_000);
+  const run_id = await play(20_000, nextIp(), 20_300);
   const res = await SUBMIT(post('/api/leaderboard', entry({ time_ms: 20_300, run_id }), nextIp()));
   assert.equal(res.status, 201);
   const row = svc.db.db.prepare('SELECT time_ms FROM record_holders ORDER BY id DESC LIMIT 1').get()!;

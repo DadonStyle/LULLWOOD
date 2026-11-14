@@ -77,6 +77,13 @@ curl -X POST -H "Authorization: Bearer $LEADERBOARD_ADMIN_TOKEN" \
   -d '{"reason":"impossible time"}' https://www.lullwoodgame.com/api/leaderboard/<id>/invalidate
 ```
 
+**Proof of play (`LB_TRACE_REQUIRED`).** By default a run must be finished with a valid trace
+(`lib/game/run-trace.ts`) to be submitted. For a deploy transition only, add
+`LB_TRACE_REQUIRED=0` to `/etc/lullwood-leaderboard/env` and restart: a finish without a trace is
+then accepted again (a trace that is sent is still checked). Remove the line and restart to end
+the window. Refusals are logged with their reason: `journalctl -u lullwood-leaderboard | grep
+invalid_trace`. Forged telemetry wins are dropped and logged as `telemetry win dropped`.
+
 Backups: `/mnt/hdd/backups/lullwood-leaderboard/stats-YYYY-MM-DD.db`, nightly, kept 14 days. To
 restore, stop the service, copy a backup over `data/leaderboard.db`, then start it again.
 

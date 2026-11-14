@@ -167,17 +167,98 @@ Tests: `lib/game/leaderboard.test.ts`, `services/leaderboard-db/db.test.ts` and 
 **What phase 1 does not stop.** A script can still call start, wait the real time, call finish and
 submit a time that matches. So a forged time can no longer be *shorter than the wall-clock time
 the script waited*, and never under the floor by the server's clock -- but a script that waits
-16 s still passes. Closing that needs evidence of the run itself (phase 2, e.g. signed engine
-checkpoints or an input replay checked on the server). Network latency between the start and
+16 s still passes. Phase 2 (R2 below) asks for evidence of the run itself. Network latency between the start and
 finish calls counts against the 1.5 s tolerance; a slow cold start on `/api/run/start` can make an
 honest run fail with `clock_mismatch` (the player is told the time could not be verified).
 
-## Accepted risks (carried over)
+## R2. Proof of play: the run's path (phase 2, 2026-11-14)
 
-Run times can still be forged within the limits of R1 above: the game remains client-authoritative,
-and the response beyond R1 is operational (admin invalidate plus the alert). Offensive nicknames
-will slip past the denylist; deletion is the control. Launch-day gaming is expected; the
-new-record email exists so nobody has to watch a dashboard.
+**What was still open.** After R1 a script could start a run, wait 16 s, finish it and submit a
+matching time without playing. `/api/telemetry` also took any win event as sent (a 0 ms Blackout
+win landed in the stats database).
+
+**Fix.** The run finish must carry a trace of the run (`lib/game/run-trace.ts`):
+
+1. The engine records the player's position (int16, 0.25 u steps) every 1 s of run time from
+   `enter()` at home, plus one sample at the lift with the child's position (`pickup()`). Samples
+   are added for every second boundary passed, so a hidden or throttled tab still has the right
+   count (the player cannot move while no frames run). At 240 samples every other one is dropped
+   and the interval doubles (1 s → 16 s max), so the trace is at most 1,288 base64 characters for
+   any run up to the 1 h ceiling. The body cap of `/api/run/finish` is that plus 1 KB (2.3 KB); the
+   service cap stays 4 KB.
+2. `useRunSession` sends it with `POST /api/run/finish`. The route checks it with `checkRunTrace`
+   (an invalid one never reaches the service), forwards only the known fields, and the service
+   checks it again before it stamps `finished_at`. The checks, all with margins against false
+   rejections: the version and shape; an interval of 1 s × 2ⁿ, only as long as the run length
+   needs; one sample per interval from 0 to `end_ms` (±1); every position on the map (±250 u); the
+   first sample within 12 u of home; the child at least 110 u from home (the game's lowest spawn
+   is 120 u -- the Blackout spawn is 192 u, but a first run after a difficulty change can still use
+   the normal spawn); the lift sample within 8 u of the child (the game allows 3.6 u); and no step
+   faster than 1.5 × the fastest the player can move (6 u/s × 1.8 sprint × 1.2 wind assist =
+   12.96 u/s, so 19.44 u/s) plus 2 u per step for quantisation and the small hide/shuffle snaps.
+3. A refusal is `400 { error: 'invalid_trace' }` (the route adds the player sentence). The service
+   logs the reason (`finish refused: invalid_trace reason=too_fast (sample 12: ...)`), never the
+   path. Nothing is stamped, so the session can't be submitted (`run_unfinished`). The client shows
+   `#leaderboardUnverifiedNote` ("The server couldn't verify this run …") instead of the form, in
+   the style of the paused and untimed notes.
+4. The service keeps the accepted trace's `end_ms` in `run_traces` (schema version 3, pruned with
+   `run_sessions` after 1 h). `checkRunSubmit` then requires `|time_ms − end_ms| ≤ 250 ms` (both
+   come from the same frozen run clock), after the R1 checks.
+5. **Transition flag.** `LB_TRACE_REQUIRED` (service env, default: required). `LB_TRACE_REQUIRED=0`
+   accepts a finish without a trace for the deploy window, so an app build that does not send one
+   still works; a trace that *is* sent is always checked.
+6. **Telemetry.** `implausibleWin` (`lib/game/leaderboard.ts`): a win event with no usable time, a
+   Blackout win under `PLAUSIBILITY_FLOOR_MS`, or any win under `WIN_FLOOR_ANY_TIER_MS` (~4.6 s:
+   120 u at 12.96 u/s, halved like the floor) is answered 204 by `/api/telemetry` like any other
+   event but not forwarded, and the service drops it again (`202 { stored: false, reason:
+   'implausible' }`, logged as `telemetry win dropped`). Losses and every other event are untouched.
+
+**Deploy order.** The two halves are independent in one direction only. Ship the **app first**
+(Vercel): an R1 service ignores the extra `trace` field and keeps working. Then ship the
+**service**, where the trace becomes required. Tabs opened before the app deploy still send no
+trace; to be kind to them, start the service with `LB_TRACE_REQUIRED=0` and remove it after a day.
+Shipping the service first with the default (required) setting would refuse every finish from the
+old app -- if the service must go first, start it with `LB_TRACE_REQUIRED=0` until the app is live.
+
+Tests: `lib/game/run-trace.test.ts` (recorder, encoding, honest runs incl. low FPS, a hidden tab, a
+one-hour run and the fastest legal run; every refusal reason), `lib/game/leaderboard.test.ts`,
+`services/leaderboard-db/db.test.ts` and `server.test.ts` ("trace: ...", "events: a win with an
+impossible time ..."), `app/api/run/route.test.ts`, `app/api/telemetry/route.test.ts`,
+`e2e/leaderboard-submit.spec.ts` (the trace is sent and matches the run; the unverified note).
+
+## Accepted risks
+
+**What R1 + R2 now cover.** A forged leaderboard time needs, for every submission: a run session
+started and finished on the server's clock at least `PLAUSIBILITY_FLOOR_MS` apart, matching the
+claimed time within 1.5 s; and a trace that walks from home to a plausible child position at a
+legal speed, with one sample per second of the claimed time, ending exactly at that time. The
+"start, wait, finish, submit" script is refused at the finish. Forged sub-floor telemetry wins no
+longer reach the stats database.
+
+**What is still not covered.**
+
+- **A synthesised trace.** The game is still client-authoritative. Someone who reads the client
+  code can generate a plausible path (a walk to a point 110+ u away at under 19 u/s) and send it,
+  then wait the real time. Their time is then bounded by the walk they faked, not by playing. The
+  server does not know the real child position (it depends on the map seed and the Blackout
+  spawn draw), the trees, predators or collisions, so it can't tell a real path from a smooth
+  invented one. Closing this would need the server to replay the run (a seeded map the server
+  can regenerate plus an input log), which is far heavier.
+- **No server nonce in the trace.** A nonce from `/runs/start` mixed into the trace would add
+  nothing while the client computes the trace: the same script would mix it in too.
+- **The fastest legal path is still accepted.** A real run that sprints straight to a Blackout
+  child takes about 15–18 s (192 u at 10.8–12.96 u/s); a fake that does the same passes. The response is operational: admin
+  invalidate plus the new-record alert, and the refusal log.
+- **Telemetry is still unsigned.** Only impossible *win times* are dropped. Plausible but fake
+  events (and losses) are still accepted, as before; the in-memory per-anon_id limit is the only
+  throttle.
+- **False rejections.** The margins are wide (1.5× the real top speed, ±1 sample, 8 u at the
+  child, 110 u spawn floor), and a refusal only costs that one run's leaderboard entry, with a
+  clear note. Watch `invalid_trace` in the service log after the deploy; a reason that shows up for
+  honest players means a margin to widen, not a player to block.
+
+Offensive nicknames will slip past the denylist; deletion is the control. Launch-day gaming is
+expected; the new-record email exists so nobody has to watch a dashboard.
 
 ## Launch checklist (founder actions, in order)
 

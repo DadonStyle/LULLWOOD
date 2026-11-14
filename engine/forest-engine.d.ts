@@ -116,6 +116,7 @@ declare global {
        * can't take the top rescuer spot), and the run serial (+1 per enter(),
        * the key of the server run session). */
       qaProbeRunClock?: () => { label: string; seconds: number; adminUsedThisRun: boolean; pausedThisRun: boolean; runSerial: number };
+      qaRunTrace?: () => { finished: { v: number; interval_ms: number; end_ms: number; child: [number, number]; samples: string } | null; samplesSoFar: number; intervalMs: number };
       qaProbeLeaderboardSky?: () => {
         visible: boolean; text: string; hasFlag: boolean;
         lettersLoaded: boolean; modelName: string; flagImageLoaded: boolean; label: string;
