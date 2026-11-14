@@ -34,7 +34,7 @@ test.describe('survival guide page', () => {
     const crumbs = nodes.find((n) => n['@type'] === 'BreadcrumbList');
     expect(crumbs.itemListElement.map((i: { name: string }) => i.name)).toEqual(['Home', 'How to survive']);
 
-    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser' })).toHaveAttribute('href', '/');
+    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser', exact: true })).toHaveAttribute('href', '/');
     await expect(page.getByRole('link', { name: 'Read the Lullwood devlog' })).toHaveAttribute('href', '/devlog');
   });
 
