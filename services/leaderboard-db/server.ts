@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { LeaderboardDb } from './db.ts';
 import {
   validateNickname, validateCountry, validateTimeMs, validateAnonId, clampListLimit, parseCursor,
+  validateRunId, validateDifficulty, RUN_REJECT_CODES,
 } from '../../lib/game/leaderboard.ts';
 import { SUGGESTION_TEXT_PATTERN } from '../../lib/suggestions/rules.ts';
 import { verify, usableSecret, SIGNATURE_HEADER, TIMESTAMP_HEADER, NONCE_HEADER, SIGNATURE_MAX_SKEW_MS } from '../../lib/leaderboard/signing.ts';
@@ -137,14 +138,32 @@ export function createService(opts: ServiceOptions): Server {
     if (nickname === null || country === null || timeMs === null) throw new HttpError(400, 'invalid submission');
     if (typeof body.ip_hash !== 'string' || !IP_HASH.test(body.ip_hash)) throw new HttpError(400, 'invalid submission');
     if (typeof body.build_sha !== 'string' || !BUILD_SHA.test(body.build_sha)) throw new HttpError(400, 'invalid submission');
+    // Server-timed run session: a submission without a valid run id is refused.
+    const runId = validateRunId(body.run_id);
+    if (runId === null) return [400, { error: 'invalid_run' }];
     const result = opts.db.submit({
-      nickname, country, timeMs,
+      runId, nickname, country, timeMs,
       buildSha: body.build_sha, ipHash: body.ip_hash,
       anonId: validateAnonId(body.anon_id), deviceClass: optionalToken(body.device_class), browser: optionalToken(body.browser),
     }, now());
-    if (!result.ok) return [429, { error: result.reason }];
+    if (!result.ok) return [RUN_REJECT_CODES.has(result.reason) ? 400 : 429, { error: result.reason }];
     if (result.isRecord) opts.onNewRecord?.(nickname, country, timeMs);
     return [201, { id: result.id, isRecord: result.isRecord }];
+  }
+
+  function startRun(body: Record<string, unknown>): [number, unknown] {
+    const difficulty = validateDifficulty(body.difficulty);
+    if (difficulty === null) throw new HttpError(400, 'invalid run');
+    if (typeof body.ip_hash !== 'string' || !IP_HASH.test(body.ip_hash)) throw new HttpError(400, 'invalid run');
+    const result = opts.db.startRun({ difficulty, anonId: validateAnonId(body.anon_id), ipHash: body.ip_hash }, now());
+    return result.ok ? [201, { run_id: result.runId }] : [429, { error: result.reason }];
+  }
+
+  function finishRun(body: Record<string, unknown>): [number, unknown] {
+    const runId = validateRunId(body.run_id);
+    if (runId === null) return [400, { error: 'invalid_run' }];
+    const result = opts.db.finishRun(runId, validateAnonId(body.anon_id), now());
+    return result.ok ? [200, { ok: true }] : [400, { error: result.reason }];
   }
 
   function recordEvent(body: Record<string, unknown>): [number, unknown] {
@@ -191,6 +210,8 @@ export function createService(opts: ServiceOptions): Server {
     authenticate(req, path, body);
 
     if (req.method === 'POST' && url.pathname === '/v1/submit') return submit(parseJsonObject(body));
+    if (req.method === 'POST' && url.pathname === '/v1/runs/start') return startRun(parseJsonObject(body));
+    if (req.method === 'POST' && url.pathname === '/v1/runs/finish') return finishRun(parseJsonObject(body));
     if (req.method === 'POST' && url.pathname === '/v1/events') return recordEvent(parseJsonObject(body));
     if (req.method === 'POST' && url.pathname === '/v1/suggestions') return submitSuggestion(parseJsonObject(body));
     if (req.method === 'GET' && url.pathname === '/v1/suggestions') return [200, { suggestions: opts.db.listSuggestions() }];

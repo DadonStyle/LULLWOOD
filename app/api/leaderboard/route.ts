@@ -1,9 +1,10 @@
 import {
   validateNickname, validateCountry, validateTimeMs, validateAnonId, clampListLimit, parseCursor, parseRecord, MAX_BODY_BYTES,
-  type LeaderboardRecord,
+  validateRunId, runRejectMessage, RUN_REJECT_CODES, type LeaderboardRecord,
 } from '../../../lib/game/leaderboard.ts';
 import { getClientIp, hashIp, usableSalt, deviceFromUserAgent } from '../../../lib/request-identity.ts';
 import { serviceConfig, callService } from '../../../lib/leaderboard/remote.ts';
+import { readJsonObject } from '../../../lib/leaderboard/json-body.ts';
 
 // LUL-3264 wave 1, S1 (write) + S2 (winners table), SQLite variant. Storage is
 // the leaderboard service on the founder's server (services/leaderboard-db/),
@@ -17,25 +18,17 @@ import { serviceConfig, callService } from '../../../lib/leaderboard/remote.ts';
 // validates it all again. Rate limits (cooldown, per-IP, global) live in the
 // service's SQLite transaction, keyed by the salted IP hash computed here --
 // never in this function's memory (threat model A3).
+//
+// Every submission carries the run id from app/api/run/start (server-timed
+// run sessions, lib/game/leaderboard.ts). The service checks it against its
+// own clock; this handler only checks the format and turns the service's
+// refusal code into a player-facing sentence.
 
 const unavailable = () => Response.json({ error: 'leaderboard unavailable' }, { status: 503 });
 
 export async function POST(req: Request): Promise<Response> {
-  const contentLength = Number(req.headers.get('content-length') ?? '0');
-  if (contentLength > MAX_BODY_BYTES) return Response.json({ error: 'payload too large' }, { status: 413 });
-
-  let payload: unknown;
-  try {
-    const raw = await req.text();
-    if (raw.length > MAX_BODY_BYTES) return Response.json({ error: 'payload too large' }, { status: 413 });
-    payload = JSON.parse(raw);
-  } catch {
-    return Response.json({ error: 'invalid json' }, { status: 400 });
-  }
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return Response.json({ error: 'invalid payload' }, { status: 400 });
-  }
-  const body = payload as Record<string, unknown>;
+  const body = await readJsonObject(req, MAX_BODY_BYTES);
+  if (body instanceof Response) return body;
 
   // Honeypot (B11): bot-noise reduction only, not a security control.
   if (typeof body.website === 'string' && body.website.length > 0) return new Response(null, { status: 204 });
@@ -46,6 +39,8 @@ export async function POST(req: Request): Promise<Response> {
   if (nickname === null) return Response.json({ error: 'nickname must be 3-20 letters or digits' }, { status: 400 });
   if (country === null) return Response.json({ error: 'unsupported country' }, { status: 400 });
   if (timeMs === null) return Response.json({ error: 'invalid time' }, { status: 400 });
+  const runId = validateRunId(body.run_id);
+  if (runId === null) return Response.json({ error: runRejectMessage('invalid_run') }, { status: 400 });
 
   const salt = usableSalt(process.env.LEADERBOARD_IP_HASH_SALT);
   const config = serviceConfig();
@@ -56,6 +51,7 @@ export async function POST(req: Request): Promise<Response> {
 
   const device = deviceFromUserAgent(req.headers.get('user-agent'));
   const result = await callService(config, 'POST', '/v1/submit', {
+    run_id: runId,
     nickname,
     country,
     time_ms: timeMs,
@@ -76,7 +72,10 @@ export async function POST(req: Request): Promise<Response> {
     const message = reason === 'cooldown' ? 'please wait a few seconds before submitting again' : 'rate limited';
     return Response.json({ error: message }, { status: 429 });
   }
-  if (result.status === 400) return Response.json({ error: 'invalid submission' }, { status: 400 });
+  if (result.status === 400) {
+    const code = (result.body as { error?: unknown })?.error;
+    return Response.json({ error: RUN_REJECT_CODES.has(String(code)) ? runRejectMessage(code) : 'invalid submission' }, { status: 400 });
+  }
   console.error('[leaderboard] unexpected service status on submit', result.status);
   return unavailable();
 }

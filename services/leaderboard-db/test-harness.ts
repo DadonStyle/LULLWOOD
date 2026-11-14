@@ -12,10 +12,13 @@ import { createService } from './server.ts';
 // https origin that the patched fetch rewrites to the loopback server.
 export const FAKE_SERVICE_URL = 'https://lb.example.ts.net';
 
-export async function startTestService(secret: string): Promise<{ db: LeaderboardDb; down: () => void; stop: () => Promise<void> }> {
+// `now`: the service's clock (signature check and database), for tests that
+// play a run session. Keep it within SIGNATURE_MAX_SKEW_MS of Date.now(): the
+// routes sign with the real clock.
+export async function startTestService(secret: string, now?: () => number): Promise<{ db: LeaderboardDb; down: () => void; stop: () => Promise<void> }> {
   const dir = mkdtempSync(join(tmpdir(), 'lbtest-'));
   const db = new LeaderboardDb(join(dir, 'lb.db'));
-  const server = createService({ db, secret, log: () => {} });
+  const server = createService({ db, secret, now, log: () => {} });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const local = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const realFetch = globalThis.fetch;

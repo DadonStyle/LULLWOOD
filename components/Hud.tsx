@@ -16,7 +16,7 @@ import { formatChronicle, type ChronicleEvent } from '@/lib/game/chronicle';
 import { CHARGE_WINDOW } from '@/lib/game/charge';
 import { formatDuration, formatRunTime } from '@/lib/ui/format-duration';
 import { formatKeyLabel } from '@/lib/ui/key-label';
-import { LeaderboardMenuLine, LeaderboardSubmitForm, useLeaderboardRecord, type LeaderboardState } from './Leaderboard';
+import { LeaderboardMenuLine, LeaderboardSubmitForm, useLeaderboardRecord, useRunSession, type LeaderboardState } from './Leaderboard';
 import type { SkyBalloonStatus, SkyBalloonRecord } from '@/lib/game/skyBalloon';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
@@ -63,6 +63,11 @@ export interface EngineHudState {
   runClockSeconds: number;
   // Admin mode was on at some point of this run: it can't take the top rescuer spot.
   adminUsedThisRun: boolean;
+  // Server-timed run sessions (Leaderboard.tsx useRunSession): +1 on every
+  // enter(); true from the lift (run clock stopped); paused before the lift.
+  runSerial: number;
+  runFinished: boolean;
+  pausedThisRun: boolean;
   pace: number;
   fog: number;
   // LUL-1709: live time-of-run pacing clock, plain "h:mm AM/PM" text -- ticks from
@@ -324,6 +329,9 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   survivedSeconds: 0,
   runClockSeconds: 0,
   adminUsedThisRun: false,
+  runSerial: 0,
+  runFinished: false,
+  pausedThisRun: false,
   pace: 6,
   fog: 0.04,
   timeOfRunClock: '6:00 AM',
@@ -854,6 +862,9 @@ export default function Hud({
   const [leaderboardRefresh, setLeaderboardRefresh] = useState(0);
   const leaderboardState = useLeaderboardRecord(leaderboardRefresh);
   useLeaderboardSky(actions, leaderboardState);
+  // Server-timed run session for the current Blackout run: the run id the
+  // win-screen form must send (null hides the form behind a note).
+  const runId = useRunSession(state.runSerial, state.difficulty, state.runFinished);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
@@ -1477,7 +1488,7 @@ export default function Hud({
             <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
-            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} adminUsedThisRun={state.adminUsedThisRun} onRecord={() => setLeaderboardRefresh((n) => n + 1)} />
+            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} adminUsedThisRun={state.adminUsedThisRun} pausedThisRun={state.pausedThisRun} runId={runId} onRecord={() => setLeaderboardRefresh((n) => n + 1)} />
             <button
               ref={winRestartRef}
               className="restartBtn"
