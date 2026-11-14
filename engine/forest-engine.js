@@ -687,6 +687,13 @@ let runFrozenAt = null;
 // moment of the current run. A run that ever had it on can't take the top
 // rescuer spot (LeaderboardSubmitForm reads adminUsedThisRun at the win screen).
 let adminModeOn = false, adminUsedThisRun = false;
+// Server-timed run sessions (lib/game/leaderboard.ts): React (components/Leaderboard.tsx
+// useRunSession, called by Hud.tsx) asks the leaderboard service for a run id when runSerial
+// changes (every enter(), restarts included) and reports the finish when
+// runFinished turns true (the lift, the moment the run clock stops). The
+// service's clock keeps counting through a pause, so a run that was paused at
+// any moment before the lift can't take the top rescuer spot either.
+let pausedThisRun = false, runSerial = 0;
 // LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
 // found the point-light radius/intensity cut above unreadable against this
 // scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
@@ -4842,6 +4849,7 @@ let hudState = {
   survivedSeconds: 0,
   runClockSeconds: 0,
   adminUsedThisRun: false,
+  runSerial: 0, runFinished: false, pausedThisRun: false,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
   // LUL-382: mist veil resource meter -- 1 is full charge, 0 is fully drained.
@@ -4976,6 +4984,10 @@ function runSeconds(){
 function setPaused(p){
   if(p && !paused) track({ event: 'feature_engagement', feature: 'options_menu', action: 'opened' });
   if(p && !paused && entered && pauseStartedAt === null) pauseStartedAt = clock.elapsedTime;
+  if(p && !paused && entered && runFrozenAt === null && !won && !dead && !pausedThisRun){
+    pausedThisRun = true;
+    pushState({ pausedThisRun });
+  }
   if(!p && pauseStartedAt !== null){ enteredAt += clock.elapsedTime - pauseStartedAt; pauseStartedAt = null; }
   paused = p; pausePrompt.style.display = p ? 'flex' : 'none';
 }
@@ -4991,7 +5003,8 @@ function enter(){
   runElapsed = 0;
   lastRunClockLabel = '';
   adminUsedThisRun = adminModeOn;   // fresh run: tainted only if admin mode is on right now
-  pushState({ runClockSeconds: 0, adminUsedThisRun });
+  runSerial++; pausedThisRun = false;   // fresh run: new server run session, not paused yet
+  pushState({ runClockSeconds: 0, adminUsedThisRun, runSerial, runFinished: false, pausedThisRun });
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   veilReserve = false; embersSpent = 0;   // LUL-1210: fresh run, no charm banked or spent
   coldWalkBroken = false;   // LUL-4960: fresh run, constraint not yet broken
@@ -5187,10 +5200,11 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
              pickingUp, taken: baby.taken };
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
-  // Top-right run timer + rescuer eligibility: the m:ss last pushed to #runTimer
-  // and whether admin mode was on at any point of the current run.
+  // Top-right run timer + rescuer eligibility: the m:ss last pushed to #runTimer,
+  // whether admin mode was on / the run was paused at any point of the current
+  // run, and the run serial the server run session is keyed on.
   window.ForestEngine.qaProbeRunClock = function(){
-    return { label: lastRunClockLabel, seconds: entered ? runSeconds() : 0, adminUsedThisRun };
+    return { label: lastRunClockLabel, seconds: entered ? runSeconds() : 0, adminUsedThisRun, pausedThisRun, runSerial };
   };
 
   // LUL-2205: reads back the live day/night pacing values in one call so a
@@ -7335,7 +7349,7 @@ function pickup(){
   if(mission && canCompleteSlackWater(mission, fogTideActive)) mission = completeMission(mission);
   baby.taken = next.babyTaken; pickingUp = next.pickingUp;
   runFrozenAt = runSeconds();   // the child is saved: the run's time stops here
-  pushState({ runClockSeconds: runFrozenAt });
+  pushState({ runClockSeconds: runFrozenAt, runFinished: true });   // runFinished: Hud.tsx reports the finish to the service now
   pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found
   pushState({ objectiveVisible: false, statusVisible: false });

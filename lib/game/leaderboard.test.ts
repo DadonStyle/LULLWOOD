@@ -5,6 +5,8 @@ import { readdirSync } from 'node:fs';
 import {
   validateNickname, validateCountry, validateTimeMs, validateAnonId, normalizeForDenylist, isDenylisted,
   clampListLimit, parseCursor, parseRecord, COUNTRY_ALLOWLIST, COUNTRY_NAMES, PLAUSIBILITY_FLOOR_MS, PLAUSIBILITY_CEILING_MS, LIST_DEFAULT_LIMIT,
+  validateRunId, validateDifficulty, checkRunSubmit, checkRunFinish, runRejectMessage, leaderboardSubmitGate,
+  RUN_ID_PATTERN, RUN_CLOCK_TOLERANCE_MS, RUN_SESSION_TTL_MS, RUN_REJECT_CODES, type RunSession,
 } from './leaderboard.ts';
 
 test('the plausibility floor is the documented ~15.7s', () => {
@@ -106,4 +108,75 @@ test('the country picker names, the allowlist and the flag images match exactly'
   const flags = readdirSync(new URL('../../public/flags/', import.meta.url)).map((f) => f.replace(/\.png$/, '').toUpperCase()).sort();
   assert.deepEqual(flags, allowed);
   assert.equal(COUNTRY_NAMES.IL, 'Israel');
+});
+
+// ---- server-timed run sessions ----
+
+const T = 1_790_000_000_000;
+const ANON = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+const session = (over: Partial<RunSession> = {}): RunSession => ({
+  startedAt: T, finishedAt: T + 60_000, usedAt: null, difficulty: 'blackout', anonId: ANON, ...over,
+});
+
+test('validateRunId accepts only 32 lower-case hex characters', () => {
+  assert.equal(validateRunId('a'.repeat(32)), 'a'.repeat(32));
+  for (const bad of ['A'.repeat(32), 'a'.repeat(31), 'a'.repeat(33), 'g'.repeat(32), `${'a'.repeat(31)}\n`, 5, null, undefined]) {
+    assert.equal(validateRunId(bad), null, String(bad));
+  }
+  assert.ok(RUN_ID_PATTERN.test('0123456789abcdef0123456789abcdef'));
+});
+
+test('validateDifficulty accepts only the three presets', () => {
+  for (const d of ['lantern', 'night', 'blackout']) assert.equal(validateDifficulty(d), d);
+  for (const bad of ['Blackout', 'hard', '', 1, null]) assert.equal(validateDifficulty(bad), null, String(bad));
+});
+
+test('checkRunSubmit: a finished blackout run whose time agrees with the server clock passes', () => {
+  assert.equal(checkRunSubmit(session(), { timeMs: 60_000, anonId: ANON }, T + 90_000), null);
+  assert.equal(checkRunSubmit(session(), { timeMs: 60_000 + RUN_CLOCK_TOLERANCE_MS, anonId: ANON }, T + 90_000), null);
+  assert.equal(checkRunSubmit(session(), { timeMs: 60_000 - RUN_CLOCK_TOLERANCE_MS, anonId: ANON }, T + 90_000), null);
+  assert.equal(checkRunSubmit(session({ anonId: null }), { timeMs: 60_000, anonId: null }, T + 90_000), null, 'a session without anon_id binds nothing');
+});
+
+test('checkRunSubmit: each refusal has its own code', () => {
+  const claim = { timeMs: 60_000, anonId: ANON };
+  assert.equal(checkRunSubmit(null, claim, T), 'invalid_run');
+  assert.equal(checkRunSubmit(session({ anonId: 'ffffffff-4f89-41d3-9a0c-0305e82c3301' }), claim, T + 90_000), 'invalid_run');
+  assert.equal(checkRunSubmit(session(), { ...claim, anonId: null }, T + 90_000), 'invalid_run', 'a bound session needs its anon_id');
+  assert.equal(checkRunSubmit(session({ difficulty: 'night' }), claim, T + 90_000), 'invalid_run');
+  assert.equal(checkRunSubmit(session({ usedAt: T + 80_000 }), claim, T + 90_000), 'run_used');
+  assert.equal(checkRunSubmit(session(), claim, T + RUN_SESSION_TTL_MS + 1), 'run_expired');
+  assert.equal(checkRunSubmit(session({ finishedAt: null }), claim, T + 90_000), 'run_unfinished');
+  assert.equal(checkRunSubmit(session({ finishedAt: T + 15_000 }), { ...claim, timeMs: 16_000 }, T + 90_000), 'too_fast');
+  // Client claims 16 s, the server measured 31 s: the forged-time case.
+  assert.equal(checkRunSubmit(session({ finishedAt: T + 31_000 }), { ...claim, timeMs: 16_000 }, T + 90_000), 'clock_mismatch');
+  // And the other direction: claims longer than the server saw.
+  assert.equal(checkRunSubmit(session({ finishedAt: T + 20_000 }), { ...claim, timeMs: 30_000 }, T + 90_000), 'clock_mismatch');
+  assert.equal(checkRunSubmit(session(), { ...claim, timeMs: 60_000 + RUN_CLOCK_TOLERANCE_MS + 1 }, T + 90_000), 'clock_mismatch');
+});
+
+test('checkRunFinish: refuses unknown, foreign, used and expired sessions only', () => {
+  assert.equal(checkRunFinish(session({ finishedAt: null }), ANON, T + 30_000), null);
+  assert.equal(checkRunFinish(session({ difficulty: 'night', finishedAt: null }), ANON, T + 30_000), null);
+  assert.equal(checkRunFinish(null, ANON, T), 'invalid_run');
+  assert.equal(checkRunFinish(session(), null, T + 30_000), 'invalid_run');
+  assert.equal(checkRunFinish(session({ usedAt: T + 1 }), ANON, T + 30_000), 'run_used');
+  assert.equal(checkRunFinish(session(), ANON, T + RUN_SESSION_TTL_MS + 1), 'run_expired');
+});
+
+test('runRejectMessage: user-safe text for every code, and a generic one for anything else', () => {
+  for (const code of RUN_REJECT_CODES) assert.match(runRejectMessage(code), /^this run/);
+  assert.equal(runRejectMessage('<script>'), 'this run could not be verified');
+  assert.equal(runRejectMessage(undefined), 'this run could not be verified');
+});
+
+test('leaderboardSubmitGate: admin, then difficulty, then the silent floor, then pause, then the run id', () => {
+  const ok = { adminMode: false, adminUsedThisRun: false, difficulty: 'blackout', timeMs: 60_000, pausedThisRun: false, runId: 'a'.repeat(32) };
+  assert.equal(leaderboardSubmitGate(ok), 'form');
+  assert.equal(leaderboardSubmitGate({ ...ok, adminMode: true, difficulty: 'night', pausedThisRun: true }), 'admin');
+  assert.equal(leaderboardSubmitGate({ ...ok, adminUsedThisRun: true }), 'admin');
+  assert.equal(leaderboardSubmitGate({ ...ok, difficulty: 'night', runId: null }), 'ineligible');
+  assert.equal(leaderboardSubmitGate({ ...ok, timeMs: PLAUSIBILITY_FLOOR_MS - 1, pausedThisRun: true }), 'hidden');
+  assert.equal(leaderboardSubmitGate({ ...ok, pausedThisRun: true, runId: null }), 'paused');
+  assert.equal(leaderboardSubmitGate({ ...ok, runId: null }), 'untimed');
 });

@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
-  COUNTRY_ALLOWLIST, COUNTRY_NAMES, CLIENT_CACHE_KEY, NICKNAME_PATTERN, PLAUSIBILITY_FLOOR_MS,
-  parseRecord, encodeCachedRecord, decodeCachedRecord, type LeaderboardRecord,
+  COUNTRY_ALLOWLIST, COUNTRY_NAMES, CLIENT_CACHE_KEY, NICKNAME_PATTERN,
+  parseRecord, encodeCachedRecord, decodeCachedRecord, validateRunId, leaderboardSubmitGate, type LeaderboardRecord,
 } from '@/lib/game/leaderboard';
 import { formatDuration } from '@/lib/ui/format-duration';
 import { getAnonId } from '@/lib/analytics';
@@ -81,6 +81,63 @@ export function useLeaderboardRecord(refreshKey = 0): LeaderboardState {
   return state;
 }
 
+function postJson(path: string, body: unknown): Promise<Response> {
+  return fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+}
+
+interface RunSessionState { serial: number; runId: string; finished: boolean }
+
+/**
+ * Server-timed run session for the current run (lib/game/leaderboard.ts "run
+ * sessions"). `runSerial` changes on every engine enter() (restarts too): a
+ * Blackout run then gets a run id from /api/run/start. `runFinished` turns true
+ * at the lift, when the run clock stops: the finish goes to /api/run/finish
+ * right then, because the win screen shows ~11 s later. Returns the run id once
+ * the service has both stamps, else null (start failed, the run is not
+ * Blackout, or the start answer came back after the lift and is dropped --
+ * its finish would be late and fail the clock check anyway).
+ */
+export function useRunSession(runSerial: number, difficulty: string, runFinished: boolean): string | null {
+  const [session, setSession] = useState<RunSessionState | null>(null);
+  // Last serial a start was decided for / a lift was seen for. Each is acted on
+  // once per run; difficulty is read when the run starts (a change mid-run only
+  // applies to the next run, same as the engine).
+  const startedFor = useRef(0);
+  const liftedFor = useRef(0);
+
+  useEffect(() => {
+    if (runSerial === 0 || startedFor.current === runSerial) return;
+    startedFor.current = runSerial;
+    if (difficulty !== 'blackout') return;
+    const serial = runSerial;
+    postJson('/api/run/start', { difficulty, anon_id: getAnonId() })
+      .then(async (res) => (res.status === 201 ? validateRunId(((await res.json()) as { run_id?: unknown })?.run_id) : null))
+      .catch(() => null)
+      .then((runId) => {
+        if (runId && startedFor.current === serial && liftedFor.current !== serial) setSession({ serial, runId, finished: false });
+      });
+  }, [runSerial, difficulty]);
+
+  useEffect(() => {
+    if (!runFinished || liftedFor.current === runSerial) return;
+    liftedFor.current = runSerial;
+    if (!session || session.serial !== runSerial) return;
+    const { serial, runId } = session;
+    postJson('/api/run/finish', { run_id: runId, anon_id: getAnonId() })
+      .then((res) => {
+        if (res.ok) setSession((prev) => (prev && prev.serial === serial ? { ...prev, finished: true } : prev));
+      })
+      .catch(() => {});
+  }, [runFinished, runSerial, session]);
+
+  return session && session.serial === runSerial && session.finished ? session.runId : null;
+}
+
 const recordLine = (r: LeaderboardRecord) => `${r.nickname} is the top rescuer at ${formatDuration(r.timeMs / 1000)} — can you beat it?`;
 
 export function LeaderboardMenuLine({ state }: { state: LeaderboardState }) {
@@ -93,7 +150,7 @@ export function LeaderboardMenuLine({ state }: { state: LeaderboardState }) {
   return <div id="leaderboardLine" data-state={state.status}>{text}</div>;
 }
 
-type SubmitStatus = 'idle' | 'submitting' | 'done' | 'record' | 'rate_limited' | 'error';
+type SubmitStatus = 'idle' | 'submitting' | 'done' | 'record' | 'rate_limited' | 'rejected' | 'error';
 
 /**
  * Rendered only for an eligible run: a Blackout win with admin mode off for the
@@ -101,12 +158,18 @@ type SubmitStatus = 'idle' | 'submitting' | 'done' | 'record' | 'rate_limited' |
  * that had admin mode on at any point renders #leaderboardAdminNote instead
  * (founder 2026-10-13: say so, don't stay silent); a non-Blackout win renders
  * #leaderboardIneligibleNote -- LUL-5944. The plausibility floor stays silent.
+ * A run paused at any point renders #leaderboardPausedNote, and a run the
+ * server did not time (no run id from useRunSession) #leaderboardUntimedNote
+ * (lib/game/leaderboard.ts leaderboardSubmitGate has the order).
  */
-export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedThisRun = false, onRecord }: { survivedSeconds: number; difficulty: string; adminUsedThisRun?: boolean; onRecord?: () => void }) {
+export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedThisRun = false, pausedThisRun = false, runId, onRecord }: {
+  survivedSeconds: number; difficulty: string; adminUsedThisRun?: boolean; pausedThisRun?: boolean; runId: string | null; onRecord?: () => void;
+}) {
   const [nickname, setNickname] = useState('');
   const [country, setCountry] = useState('');
   const [honeypot, setHoneypot] = useState('');
   const [status, setStatus] = useState<SubmitStatus>('idle');
+  const [rejection, setRejection] = useState('');
   // Read once when the win screen mounts (SettingsPanel.tsx writes body[data-admin-mode]).
   // The game UI is client-only (ssr:false), so document always exists here.
   const [adminMode] = useState(() => document.body.dataset.adminMode === '1');
@@ -118,13 +181,18 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedTh
   // usually *faster* than the ~15.7s floor (it's the easier tier), so checking the
   // floor first would swallow the tell for exactly the common case it exists for.
   // The floor only matters once a run has already cleared the difficulty gate.
-  if (adminMode || adminUsedThisRun) {
+  const gate = leaderboardSubmitGate({ adminMode, adminUsedThisRun, difficulty, timeMs, pausedThisRun, runId });
+  if (gate === 'admin') {
     return <p id="leaderboardAdminNote">Admin mode was on during this run, so it can&apos;t be counted as the top rescuer.</p>;
   }
-  if (difficulty !== 'blackout') {
+  if (gate === 'ineligible') {
     return <p id="leaderboardIneligibleNote">Switch to Blackout to compete for the leaderboard.</p>;
   }
-  if (timeMs < PLAUSIBILITY_FLOOR_MS) return null;
+  if (gate === 'hidden') return null;
+  if (gate === 'paused') return <p id="leaderboardPausedNote">Paused runs can&apos;t be counted as the top rescuer.</p>;
+  if (gate === 'untimed') {
+    return <p id="leaderboardUntimedNote">The server couldn&apos;t time this run, so it can&apos;t be counted as the top rescuer.</p>;
+  }
 
   const canSubmit = status === 'idle' || status === 'error' ? NICKNAME_PATTERN.test(nickname) && country !== '' : false;
 
@@ -136,7 +204,7 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedTh
       const res = await fetch('/api/leaderboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nickname, country, time_ms: timeMs, anon_id: getAnonId(), website: honeypot }),
+        body: JSON.stringify({ nickname, country, time_ms: timeMs, anon_id: getAnonId(), run_id: runId, website: honeypot }),
       });
       if (res.status === 201) {
         const body = (await res.json()) as { isRecord?: unknown };
@@ -144,6 +212,11 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedTh
         if (body.isRecord === true) onRecord?.();
       } else if (res.status === 429) {
         setStatus('rate_limited');
+      } else if (res.status === 400) {
+        // The run itself was refused (used, expired, time not verified): retrying won't help.
+        const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        setRejection(typeof body?.error === 'string' ? body.error.slice(0, 80) : 'this run could not be verified');
+        setStatus('rejected');
       } else {
         setStatus('error');
       }
@@ -205,6 +278,7 @@ export function LeaderboardSubmitForm({ survivedSeconds, difficulty, adminUsedTh
       />
       {status === 'rate_limited' && <p role="alert" className="leaderboardError">Too many submissions — try again in a little while.</p>}
       {status === 'error' && <p role="alert" className="leaderboardError">That could not be saved. Try again.</p>}
+      {status === 'rejected' && <p role="alert" className="leaderboardError">Not saved: {rejection}.</p>}
     </form>
   );
 }

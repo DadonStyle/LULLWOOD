@@ -133,12 +133,51 @@ lost on power loss). There is an hourly consistent snapshot and a nightly copy t
 Redirects are refused (`redirect: 'error'`), so a misconfigured URL cannot be bounced elsewhere.
 Funnel terminates TLS with a valid certificate.
 
-## Accepted risks (carried over, unchanged)
+## R1. Run times: server-timed run sessions (phase 1, 2026-11-14)
 
-Run times can be forged: the game is client-authoritative, and the response is operational (admin
-invalidate plus the alert). Offensive nicknames will slip past the denylist; deletion is the
-control. Launch-day gaming is expected; the new-record email exists so nobody has to watch a
-dashboard.
+**What happened.** `POST /api/leaderboard` trusted `time_ms` from the browser and only checked the
+15.7 s .. 1 h range. A script sent `time_ms: 16000` and took the record.
+
+**Fix (phase 1).** The service now times every Blackout run on its own clock:
+
+1. When a run starts (`enter()` bumps `runSerial`; `components/Leaderboard.tsx` `useRunSession`),
+   the browser calls `POST /api/run/start {difficulty, anon_id}`. The route hashes the IP and calls
+   the signed `POST /v1/runs/start`, which stores a `run_sessions` row (128-bit random id, server
+   `started_at`) and answers `{run_id}`. Starts are limited to `RUN_START_IP_LIMIT` (60) per IP hash
+   per hour; rows older than 1 h are pruned on each start.
+2. When the child is lifted (the moment the run clock stops, ~11 s before the win screen), the
+   browser calls `POST /api/run/finish {run_id, anon_id}` → `/v1/runs/finish`, which stamps
+   `finished_at` once.
+3. `POST /api/leaderboard` requires a strict-hex `run_id` (400 without it). In one `BEGIN IMMEDIATE`
+   transaction the service checks (`checkRunSubmit` in `lib/game/leaderboard.ts`): the session
+   exists, is unused, is at most 1 h old, is Blackout, has the same `anon_id` (when it has one), is
+   finished, `finished_at - started_at` ≥ `PLAUSIBILITY_FLOOR_MS`, and that differs from `time_ms`
+   by at most `RUN_CLOCK_TOLERANCE_MS` (1.5 s). Then it sets `used_at` and stores the client
+   `time_ms`, so the board still equals the in-game timer. A refusal answers 400 with only a code
+   (`invalid_run`, `run_used`, `run_expired`, `run_unfinished`, `too_fast`, `clock_mismatch`) and
+   writes nothing; the route turns the code into a short sentence.
+4. The server clock does not stop for a pause, so a run paused at any point before the lift shows
+   `#leaderboardPausedNote` instead of the form; a run with no confirmed run id shows
+   `#leaderboardUntimedNote`.
+
+Tests: `lib/game/leaderboard.test.ts`, `services/leaderboard-db/db.test.ts` and `server.test.ts`
+("runs: ..."), `app/api/run/route.test.ts` (routes plus the real service), `app/api/leaderboard/route.test.ts`,
+`e2e/leaderboard-submit.spec.ts`.
+
+**What phase 1 does not stop.** A script can still call start, wait the real time, call finish and
+submit a time that matches. So a forged time can no longer be *shorter than the wall-clock time
+the script waited*, and never under the floor by the server's clock -- but a script that waits
+16 s still passes. Closing that needs evidence of the run itself (phase 2, e.g. signed engine
+checkpoints or an input replay checked on the server). Network latency between the start and
+finish calls counts against the 1.5 s tolerance; a slow cold start on `/api/run/start` can make an
+honest run fail with `clock_mismatch` (the player is told the time could not be verified).
+
+## Accepted risks (carried over)
+
+Run times can still be forged within the limits of R1 above: the game remains client-authoritative,
+and the response beyond R1 is operational (admin invalidate plus the alert). Offensive nicknames
+will slip past the denylist; deletion is the control. Launch-day gaming is expected; the
+new-record email exists so nobody has to watch a dashboard.
 
 ## Launch checklist (founder actions, in order)
 

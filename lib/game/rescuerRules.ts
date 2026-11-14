@@ -16,6 +16,7 @@ export function rescuerRules(recordTimeMs: number | null): string[] {
   return [
     'Play on Blackout difficulty (the default).',
     'Keep admin mode off for the whole run. Turning it on even once means that run can\'t count.',
+    'Don\'t pause before you reach the child. The server times the run, and its clock doesn\'t stop for a pause.',
     'Win the run: reach the lost child and lift them. There is no trip home after that.',
     recordTimeMs === null
       ? 'Be the fastest: while no one holds the record yet, any valid win takes first place.'

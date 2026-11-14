@@ -618,11 +618,11 @@ const OVERLAY_STYLE = `
      longer needed since the class itself only ever renders inside this form. */
   .leaderboardSubmitBtn { margin-top: 0; }
   .leaderboardSubmitBtn:disabled { opacity: 0.5; cursor: default; }
-  #leaderboardHint, .leaderboardError, #leaderboardSubmitted, #leaderboardIneligibleNote, #leaderboardAdminNote { font-size: 12px; margin: 0; color: #cbb7a4; }
+  #leaderboardHint, .leaderboardError, #leaderboardSubmitted, #leaderboardIneligibleNote, #leaderboardAdminNote, #leaderboardPausedNote, #leaderboardUntimedNote { font-size: 12px; margin: 0; color: #cbb7a4; }
   /* LUL-5944: unlike the other three (nested inside #leaderboardForm's own flex gap, :565),
      this one replaces the form entirely and sits directly under RunRecap -- needs its own
      top margin instead of inheriting the form's gap. */
-  #leaderboardIneligibleNote, #leaderboardAdminNote { margin-top: 6px; }
+  #leaderboardIneligibleNote, #leaderboardAdminNote, #leaderboardPausedNote, #leaderboardUntimedNote { margin-top: 6px; }
   .leaderboardError { color: #ff8a8a; }
   .leaderboardHoneypot { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
   .restartBtn:focus-visible, .leaderboardSubmitBtn:focus-visible { outline: 2px solid #ffe6c8; outline-offset: 3px; }

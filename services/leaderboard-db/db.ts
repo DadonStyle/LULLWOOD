@@ -1,7 +1,10 @@
+import { randomBytes } from 'node:crypto';
 import { renameSync, rmSync } from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import {
   COOLDOWN_MS, IP_LIMIT, IP_WINDOW_MS, GLOBAL_LIMIT, GLOBAL_WINDOW_MS, type LeaderboardRecord,
+  RUN_START_IP_LIMIT, RUN_START_WINDOW_MS, RUN_SESSION_TTL_MS, checkRunSubmit, checkRunFinish,
+  type RunSession, type RunRejectCode,
 } from '../../lib/game/leaderboard.ts';
 import {
   SUGGESTION_COOLDOWN_MS, SUGGESTION_IP_LIMIT, SUGGESTION_IP_WINDOW_MS, SUGGESTION_GLOBAL_LIMIT, SUGGESTION_GLOBAL_WINDOW_MS,
@@ -20,8 +23,11 @@ import {
 // submissions are serialized end to end and the second one's compare-and-set
 // sees the first one's committed pointer (the concurrency requirement from the
 // LUL-3264 execution review, tested in db.test.ts).
+//
+// Schema changes are additive only (CREATE ... IF NOT EXISTS), so a new
+// version opens an old file in place: version 2 added run_sessions.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -120,6 +126,23 @@ CREATE TABLE IF NOT EXISTS suggestions (
 CREATE INDEX IF NOT EXISTS suggestions_ip_idx ON suggestions (ip_hash, submitted_at);
 CREATE INDEX IF NOT EXISTS suggestions_at_idx ON suggestions (submitted_at);
 
+-- Server-timed run sessions (lib/game/leaderboard.ts "run sessions"). One row
+-- per Blackout run start; finished_at is stamped when the child is lifted and
+-- used_at when the run is submitted. Rows double as the start rate-limit state
+-- and are pruned once older than RUN_SESSION_TTL_MS (1 h), so the table only
+-- ever holds the last hour of starts.
+CREATE TABLE IF NOT EXISTS run_sessions (
+  id          TEXT    PRIMARY KEY CHECK (length(id) = 32),   -- 128-bit random, hex
+  started_at  INTEGER NOT NULL,                               -- epoch ms, server clock
+  finished_at INTEGER,
+  difficulty  TEXT    NOT NULL,
+  anon_id     TEXT,
+  ip_hash     TEXT    NOT NULL CHECK (length(ip_hash) = 64),
+  used_at     INTEGER
+);
+CREATE INDEX IF NOT EXISTS run_sessions_ip_idx ON run_sessions (ip_hash, started_at);
+CREATE INDEX IF NOT EXISTS run_sessions_started_idx ON run_sessions (started_at);
+
 CREATE TABLE IF NOT EXISTS admin_audit (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   at        INTEGER NOT NULL,
@@ -186,6 +209,8 @@ export const MAX_EVENTS_PER_DAY = 100_000;
 export const MAX_DB_BYTES = 2 * 1024 * 1024 * 1024;
 
 export interface SubmitInput {
+  /** The run session this submission claims (validated hex, see RUN_ID_PATTERN). */
+  runId: string;
   nickname: string;
   country: string;
   timeMs: number;
@@ -205,7 +230,17 @@ export const MAX_EVENTS_READ = 50_000;
 
 export type SubmitResult =
   | { ok: true; id: number; isRecord: boolean }
-  | { ok: false; reason: 'cooldown' | 'ip-limit' | 'global-limit' };
+  | { ok: false; reason: 'cooldown' | 'ip-limit' | 'global-limit' }
+  | { ok: false; reason: RunRejectCode };
+
+export interface StartRunInput {
+  difficulty: string;
+  anonId: string | null;
+  ipHash: string;
+}
+
+export type StartRunResult = { ok: true; runId: string } | { ok: false; reason: 'start-limit' };
+export type FinishRunResult = { ok: true } | { ok: false; reason: RunRejectCode };
 
 export interface EventInput {
   event: string;
@@ -229,6 +264,17 @@ function toRecord(row: Row | undefined): LeaderboardRecord | null {
     country: String(row.country),
     timeMs: Number(row.time_ms),
     achievedAt: new Date(Number(row.achieved_at)).toISOString(),
+  };
+}
+
+function toSession(row: Row | undefined): RunSession | null {
+  if (!row) return null;
+  return {
+    startedAt: Number(row.started_at),
+    finishedAt: row.finished_at === null ? null : Number(row.finished_at),
+    usedAt: row.used_at === null ? null : Number(row.used_at),
+    difficulty: String(row.difficulty),
+    anonId: row.anon_id === null ? null : String(row.anon_id),
   };
 }
 
@@ -285,6 +331,12 @@ export class LeaderboardDb {
       countSuggestions: p('SELECT count(*) AS n FROM suggestions WHERE submitted_at > ?'),
       insertSuggestion: p('INSERT INTO suggestions (submitted_at, ip_hash, text) VALUES (?, ?, ?)'),
       listSuggestions: p('SELECT submitted_at, ip_hash, text FROM suggestions ORDER BY submitted_at, id'),
+      countStartsByIp: p('SELECT count(*) AS n FROM run_sessions WHERE ip_hash = ? AND started_at > ?'),
+      pruneSessions: p('DELETE FROM run_sessions WHERE started_at < ?'),
+      insertSession: p('INSERT INTO run_sessions (id, started_at, difficulty, anon_id, ip_hash) VALUES (?, ?, ?, ?, ?)'),
+      getSession: p('SELECT started_at, finished_at, used_at, difficulty, anon_id FROM run_sessions WHERE id = ?'),
+      finishSession: p('UPDATE run_sessions SET finished_at = ? WHERE id = ? AND finished_at IS NULL'),
+      useSession: p('UPDATE run_sessions SET used_at = ? WHERE id = ? AND used_at IS NULL'),
       dbBytes: p('SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()'),
     };
   }
@@ -301,13 +353,50 @@ export class LeaderboardDb {
     }
   }
 
+  /**
+   * Opens a run session, unless this IP hash already started RUN_START_IP_LIMIT
+   * runs in the window. Sessions older than the TTL are pruned in the same
+   * transaction; they can no longer be finished or submitted anyway.
+   */
+  startRun(input: StartRunInput, now: number): StartRunResult {
+    return this.tx(() => {
+      this.stmts.pruneSessions.run(now - RUN_SESSION_TTL_MS);
+      if (Number((this.stmts.countStartsByIp.get(input.ipHash, now - RUN_START_WINDOW_MS) as Row).n) >= RUN_START_IP_LIMIT) {
+        return { ok: false, reason: 'start-limit' } as const;
+      }
+      const runId = randomBytes(16).toString('hex');
+      this.stmts.insertSession.run(runId, now, input.difficulty, input.anonId, input.ipHash);
+      return { ok: true, runId } as const;
+    });
+  }
+
+  /** Stamps the moment the run's clock stopped. A second call keeps the first stamp. */
+  finishRun(runId: string, anonId: string | null, now: number): FinishRunResult {
+    return this.tx(() => {
+      const reject = checkRunFinish(toSession(this.stmts.getSession.get(runId) as Row | undefined), anonId, now);
+      if (reject) return { ok: false, reason: reject } as const;
+      this.stmts.finishSession.run(now, runId);
+      return { ok: true } as const;
+    });
+  }
+
+  /**
+   * One transaction: the run session check (lib/game/leaderboard.ts
+   * checkRunSubmit), the rate limits, then the session is marked used and the
+   * record stored. A refusal writes nothing, so a run refused by the cooldown
+   * can be submitted again once it passes.
+   */
   submit(input: SubmitInput, now: number): SubmitResult {
     return this.tx(() => {
+      const session = toSession(this.stmts.getSession.get(input.runId) as Row | undefined);
+      const reject = checkRunSubmit(session, { timeMs: input.timeMs, anonId: input.anonId }, now);
+      if (reject) return { ok: false, reason: reject } as const;
       const last = this.stmts.lastByIp.get(input.ipHash) as Row | undefined;
       if (last && now - Number(last.achieved_at) < COOLDOWN_MS) return { ok: false, reason: 'cooldown' } as const;
       if (Number((this.stmts.countByIp.get(input.ipHash, now - IP_WINDOW_MS) as Row).n) >= IP_LIMIT) return { ok: false, reason: 'ip-limit' } as const;
       if (Number((this.stmts.countAll.get(now - GLOBAL_WINDOW_MS) as Row).n) >= GLOBAL_LIMIT) return { ok: false, reason: 'global-limit' } as const;
 
+      if (Number(this.stmts.useSession.run(now, input.runId).changes) !== 1) return { ok: false, reason: 'run_used' } as const;
       const id = Number(this.stmts.insertHolder.run(
         input.nickname, input.country, input.timeMs, input.buildSha, now, input.ipHash, input.anonId, input.deviceClass, input.browser,
       ).lastInsertRowid);
