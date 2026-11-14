@@ -3,7 +3,7 @@ import { getClientIp, hashIp, usableSalt } from '../../../../lib/request-identit
 import { serviceConfig, callService } from '../../../../lib/leaderboard/remote.ts';
 import { readJsonObject } from '../../../../lib/leaderboard/json-body.ts';
 
-// POST /api/run/start { difficulty, anon_id } -> 201 { run_id }
+// POST /api/run/start { difficulty, anon_id } -> 201 { run_id } | 200 { unavailable: true } | 429
 //
 // Server-timed run sessions (lib/game/leaderboard.ts "run sessions"): the
 // client calls this when a Blackout run starts. The leaderboard service stamps
@@ -12,7 +12,11 @@ import { readJsonObject } from '../../../../lib/leaderboard/json-body.ts';
 // The IP hash is computed exactly as app/api/leaderboard/route.ts does it, so
 // the service can rate-limit starts per IP (RUN_START_IP_LIMIT).
 
-const unavailable = () => Response.json({ error: 'run timing unavailable' }, { status: 503 });
+// Fetched on every Blackout run start, so never a 5xx while the service is
+// unconfigured or down (a 5xx is a browser console error in every QA/preview
+// run; same convention as app/api/leaderboard/current). The client treats any
+// non-201 as "no run id": the run is simply not leaderboard-eligible.
+const unavailable = () => Response.json({ unavailable: true }, { headers: { 'cache-control': 'no-store' } });
 
 export async function POST(req: Request): Promise<Response> {
   const body = await readJsonObject(req, MAX_BODY_BYTES);
