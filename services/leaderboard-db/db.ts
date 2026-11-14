@@ -25,9 +25,10 @@ import {
 // LUL-3264 execution review, tested in db.test.ts).
 //
 // Schema changes are additive only (CREATE ... IF NOT EXISTS), so a new
-// version opens an old file in place: version 2 added run_sessions.
+// version opens an old file in place: version 2 added run_sessions, version 3
+// run_traces.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -143,6 +144,17 @@ CREATE TABLE IF NOT EXISTS run_sessions (
 CREATE INDEX IF NOT EXISTS run_sessions_ip_idx ON run_sessions (ip_hash, started_at);
 CREATE INDEX IF NOT EXISTS run_sessions_started_idx ON run_sessions (started_at);
 
+-- Proof of play (lib/game/run-trace.ts): one row per run session whose finish
+-- carried a valid trace. Only the run time the trace ends at is kept (the
+-- submitted time_ms must match it), not the path. Pruned with run_sessions.
+CREATE TABLE IF NOT EXISTS run_traces (
+  run_id     TEXT    PRIMARY KEY CHECK (length(run_id) = 32),
+  end_ms     INTEGER NOT NULL,
+  samples    INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS run_traces_created_idx ON run_traces (created_at);
+
 CREATE TABLE IF NOT EXISTS admin_audit (
   id        INTEGER PRIMARY KEY AUTOINCREMENT,
   at        INTEGER NOT NULL,
@@ -242,6 +254,12 @@ export interface StartRunInput {
 export type StartRunResult = { ok: true; runId: string } | { ok: false; reason: 'start-limit' };
 export type FinishRunResult = { ok: true } | { ok: false; reason: RunRejectCode };
 
+/** A trace that already passed checkRunTrace (lib/game/run-trace.ts). */
+export interface AcceptedTrace {
+  endMs: number;
+  samples: number;
+}
+
 export interface EventInput {
   event: string;
   eventTs: number | null;
@@ -275,6 +293,7 @@ function toSession(row: Row | undefined): RunSession | null {
     usedAt: row.used_at === null ? null : Number(row.used_at),
     difficulty: String(row.difficulty),
     anonId: row.anon_id === null ? null : String(row.anon_id),
+    traceEndMs: row.trace_end_ms === null || row.trace_end_ms === undefined ? null : Number(row.trace_end_ms),
   };
 }
 
@@ -333,8 +352,11 @@ export class LeaderboardDb {
       listSuggestions: p('SELECT submitted_at, ip_hash, text FROM suggestions ORDER BY submitted_at, id'),
       countStartsByIp: p('SELECT count(*) AS n FROM run_sessions WHERE ip_hash = ? AND started_at > ?'),
       pruneSessions: p('DELETE FROM run_sessions WHERE started_at < ?'),
+      pruneTraces: p('DELETE FROM run_traces WHERE created_at < ?'),
+      insertTrace: p('INSERT OR IGNORE INTO run_traces (run_id, end_ms, samples, created_at) VALUES (?, ?, ?, ?)'),
       insertSession: p('INSERT INTO run_sessions (id, started_at, difficulty, anon_id, ip_hash) VALUES (?, ?, ?, ?, ?)'),
-      getSession: p('SELECT started_at, finished_at, used_at, difficulty, anon_id FROM run_sessions WHERE id = ?'),
+      getSession: p(`SELECT s.started_at, s.finished_at, s.used_at, s.difficulty, s.anon_id, t.end_ms AS trace_end_ms
+                     FROM run_sessions s LEFT JOIN run_traces t ON t.run_id = s.id WHERE s.id = ?`),
       finishSession: p('UPDATE run_sessions SET finished_at = ? WHERE id = ? AND finished_at IS NULL'),
       useSession: p('UPDATE run_sessions SET used_at = ? WHERE id = ? AND used_at IS NULL'),
       dbBytes: p('SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()'),
@@ -361,6 +383,7 @@ export class LeaderboardDb {
   startRun(input: StartRunInput, now: number): StartRunResult {
     return this.tx(() => {
       this.stmts.pruneSessions.run(now - RUN_SESSION_TTL_MS);
+      this.stmts.pruneTraces.run(now - RUN_SESSION_TTL_MS);
       if (Number((this.stmts.countStartsByIp.get(input.ipHash, now - RUN_START_WINDOW_MS) as Row).n) >= RUN_START_IP_LIMIT) {
         return { ok: false, reason: 'start-limit' } as const;
       }
@@ -370,12 +393,16 @@ export class LeaderboardDb {
     });
   }
 
-  /** Stamps the moment the run's clock stopped. A second call keeps the first stamp. */
-  finishRun(runId: string, anonId: string | null, now: number): FinishRunResult {
+  /**
+   * Stamps the moment the run's clock stopped. A second call keeps the first
+   * stamp, and the first accepted trace (the caller has already checked it).
+   */
+  finishRun(runId: string, anonId: string | null, now: number, trace: AcceptedTrace | null = null): FinishRunResult {
     return this.tx(() => {
       const reject = checkRunFinish(toSession(this.stmts.getSession.get(runId) as Row | undefined), anonId, now);
       if (reject) return { ok: false, reason: reject } as const;
       this.stmts.finishSession.run(now, runId);
+      if (trace) this.stmts.insertTrace.run(runId, trace.endMs, trace.samples, now);
       return { ok: true } as const;
     });
   }
@@ -386,10 +413,10 @@ export class LeaderboardDb {
    * record stored. A refusal writes nothing, so a run refused by the cooldown
    * can be submitted again once it passes.
    */
-  submit(input: SubmitInput, now: number): SubmitResult {
+  submit(input: SubmitInput, now: number, opts: { requireTrace?: boolean } = {}): SubmitResult {
     return this.tx(() => {
       const session = toSession(this.stmts.getSession.get(input.runId) as Row | undefined);
-      const reject = checkRunSubmit(session, { timeMs: input.timeMs, anonId: input.anonId }, now);
+      const reject = checkRunSubmit(session, { timeMs: input.timeMs, anonId: input.anonId }, now, opts);
       if (reject) return { ok: false, reason: reject } as const;
       const last = this.stmts.lastByIp.get(input.ipHash) as Row | undefined;
       if (last && now - Number(last.achieved_at) < COOLDOWN_MS) return { ok: false, reason: 'cooldown' } as const;

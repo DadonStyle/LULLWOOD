@@ -12,6 +12,12 @@
 // clock check itself is unit-tested in services/leaderboard-db/ and
 // app/api/run/route.test.ts); unmocked, the start fails and the win screen says
 // the run couldn't be timed.
+//
+// Proof of play (lib/game/run-trace.ts): the finish carries the engine's
+// trace. The teleport win here would fail the real trace check (it is
+// unit-tested there and in services/leaderboard-db/), so these tests only
+// check that the trace is sent and matches the run, and that a refused finish
+// gets its own note.
 import { test, expect } from './fixtures';
 import { boot, enter, qaHook } from './helpers';
 import { formatDuration } from '../lib/ui/format-duration';
@@ -45,8 +51,12 @@ async function seedSettings(context: import('@playwright/test').BrowserContext, 
   }, settings);
 }
 
-async function bootBlackout(page: import('@playwright/test').Page) {
+// `routes` registers this test's run-session mocks. It runs after boot(),
+// because boot() installs its own /api/run/start stub and the route
+// registered last wins -- a mock registered before boot() never sees a call.
+async function bootBlackout(page: import('@playwright/test').Page, routes: () => Promise<unknown> = async () => {}) {
   await boot(page, { qaHooks: true });
+  await routes();
   await qaHook(page, 'qaRegenerateMap', 1);
   await enter(page);
 }
@@ -71,15 +81,25 @@ test.describe('leaderboard submit form', () => {
     page.on('request', (r) => {
       if (new URL(r.url()).pathname === '/api/leaderboard/current') currentFetches++;
     });
-    const runCalls = await mockRunSession(page);
+    let runCalls: Awaited<ReturnType<typeof mockRunSession>> = [];
     await seedSettings(context, { difficulty: 'blackout' });
-    await bootBlackout(page);
+    await bootBlackout(page, async () => { runCalls = await mockRunSession(page); });
     await page.waitForTimeout(FLOOR_WAIT_MS);
     await win(page);
     // The run started a session and reported the lift, both with the same run id.
     expect(runCalls.map((c) => c.path)).toEqual(['/api/run/start', '/api/run/finish']);
     expect(runCalls[0].body.difficulty).toBe('blackout');
     expect(runCalls[1].body.run_id).toBe(RUN_ID);
+    // The finish carries the engine's trace of this run (qaRunTrace), which
+    // ends at the child, at the run time the form will post.
+    const trace = runCalls[1].body.trace as { v: number; interval_ms: number; end_ms: number; child: [number, number]; samples: string };
+    expect(trace).toEqual((await qaHook(page, 'qaRunTrace')).finished);
+    expect(trace.v).toBe(1);
+    expect(trace.interval_ms).toBe(1_000);
+    expect(trace.end_ms).toBeGreaterThanOrEqual(15_713);
+    expect(trace.samples).toMatch(/^[A-Za-z0-9+/]+=*$/);
+    const baby = await qaHook(page, 'qaProbeBaby');
+    expect(trace.child).toEqual([Math.round(baby.x * 100) / 100, Math.round(baby.z * 100) / 100]);
 
     const form = page.locator('#leaderboardForm');
     await expect(form).toBeVisible();
@@ -105,6 +125,7 @@ test.describe('leaderboard submit form', () => {
     expect(body.website).toBe('');
     expect(Number.isInteger(body.time_ms)).toBe(true);
     expect(body.time_ms).toBeGreaterThanOrEqual(15_713);
+    expect(body.time_ms).toBe(trace.end_ms);
     // Same number RunRecap shows (m:ss of state.survivedSeconds), not a second timer.
     const recap = (await page.locator('#runRecap').textContent()) ?? '';
     const [, m, s] = /time survived: (\d+):(\d{2})/.exec(recap)!;
@@ -118,9 +139,8 @@ test.describe('leaderboard submit form', () => {
 
   test('a blackout run paused at any point gets the paused note, not the form', async ({ page, context }) => {
     test.setTimeout(120_000);
-    await mockRunSession(page);
     await seedSettings(context, { difficulty: 'blackout' });
-    await bootBlackout(page);
+    await bootBlackout(page, () => mockRunSession(page));
     // Pause and resume through the game menu (same path as e2e/pause-run-timer.spec.ts).
     await click(page.getByTestId('menuToggle'));
     await click(page.getByTestId('menuPause'));
@@ -137,9 +157,8 @@ test.describe('leaderboard submit form', () => {
 
   test('a blackout run the server could not time (start failed) gets the untimed note, not the form', async ({ page, context }) => {
     test.setTimeout(120_000);
-    await page.route('**/api/run/start', (route) => route.fulfill({ status: 503, json: { error: 'run timing unavailable' } }));
     await seedSettings(context, { difficulty: 'blackout' });
-    await bootBlackout(page);
+    await bootBlackout(page, () => page.route('**/api/run/start', (route) => route.fulfill({ status: 503, json: { error: 'run timing unavailable' } })));
     const probe = await qaHook(page, 'qaProbeRunClock');
     expect(probe.pausedThisRun).toBe(false);
     expect(probe.runSerial).toBeGreaterThan(0);
@@ -147,6 +166,25 @@ test.describe('leaderboard submit form', () => {
     await win(page);
     await expect(page.locator('#leaderboardForm')).toHaveCount(0);
     await expect(page.locator('#leaderboardUntimedNote')).toHaveText("The server couldn't time this run, so it can't be counted as the top rescuer.");
+  });
+
+  test('a blackout run the server refused at the finish (path not verified) gets the unverified note, not the form', async ({ page, context }) => {
+    test.setTimeout(120_000);
+    let runCalls: Awaited<ReturnType<typeof mockRunSession>> = [];
+    await seedSettings(context, { difficulty: 'blackout' });
+    await bootBlackout(page, async () => {
+      runCalls = await mockRunSession(page);
+      await page.route('**/api/run/finish', async (route) => {
+        runCalls.push({ path: '/api/run/finish', body: route.request().postDataJSON() });
+        await route.fulfill({ status: 400, json: { error: "this run's path could not be verified", code: 'invalid_trace' } });
+      });
+    });
+    await page.waitForTimeout(FLOOR_WAIT_MS);
+    await win(page);
+    expect(runCalls.map((c) => c.path)).toEqual(['/api/run/start', '/api/run/finish']);
+    expect(runCalls[1].body.trace).toBeTruthy();
+    await expect(page.locator('#leaderboardForm')).toHaveCount(0);
+    await expect(page.locator('#leaderboardUnverifiedNote')).toHaveText("The server couldn't verify this run, so it can't be counted as the top rescuer.");
   });
 
   test('is absent on a lantern win', async ({ page, context }) => {

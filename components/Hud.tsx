@@ -18,6 +18,7 @@ import { formatDuration, formatRunTime } from '@/lib/ui/format-duration';
 import { formatKeyLabel } from '@/lib/ui/key-label';
 import { LeaderboardMenuLine, LeaderboardSubmitForm, useLeaderboardRecord, useRunSession, type LeaderboardState } from './Leaderboard';
 import type { SkyBalloonStatus, SkyBalloonRecord } from '@/lib/game/skyBalloon';
+import type { RunTrace } from '@/lib/game/run-trace';
 
 // LUL-34 (M2b): the HUD lifted out of engine/forest-engine.js's DOM writes into
 // React. The engine emits a plain state object via `init(onStateChange)`;
@@ -68,6 +69,9 @@ export interface EngineHudState {
   runSerial: number;
   runFinished: boolean;
   pausedThisRun: boolean;
+  // Proof of play (lib/game/run-trace.ts): the path the engine recorded,
+  // pushed at the lift together with runFinished; null until then.
+  runTrace: RunTrace | null;
   pace: number;
   fog: number;
   // LUL-1709: live time-of-run pacing clock, plain "h:mm AM/PM" text -- ticks from
@@ -332,6 +336,7 @@ export const INITIAL_HUD_STATE: EngineHudState = {
   runSerial: 0,
   runFinished: false,
   pausedThisRun: false,
+  runTrace: null,
   pace: 6,
   fog: 0.04,
   timeOfRunClock: '6:00 AM',
@@ -864,7 +869,7 @@ export default function Hud({
   useLeaderboardSky(actions, leaderboardState);
   // Server-timed run session for the current Blackout run: the run id the
   // win-screen form must send (null hides the form behind a note).
-  const runId = useRunSession(state.runSerial, state.difficulty, state.runFinished);
+  const runSession = useRunSession(state.runSerial, state.difficulty, state.runFinished, state.runTrace);
   // LUL-276: decided once per mount (GameCanvas is ssr:false, so this never
   // runs on the server and there's no hydration mismatch to worry about).
   // Exactly one of DesktopControls/MobileControls mounts below.
@@ -1488,7 +1493,7 @@ export default function Hud({
             <p id="winDialogue">You&apos;ve brought her home.</p>
             <p>the child is safe — you lifted her into the light</p>
             <RunRecap survivedSeconds={state.survivedSeconds} payout={state.lastPayout} balance={state.embersBalance} isDeath={false} chronicle={state.chronicle} difficulty={state.difficulty} personalBest={state.personalBest} tierStats={state.tierStats} newRecord={state.newRecord} />
-            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} adminUsedThisRun={state.adminUsedThisRun} pausedThisRun={state.pausedThisRun} runId={runId} onRecord={() => setLeaderboardRefresh((n) => n + 1)} />
+            <LeaderboardSubmitForm survivedSeconds={state.survivedSeconds} difficulty={state.difficulty} adminUsedThisRun={state.adminUsedThisRun} pausedThisRun={state.pausedThisRun} runId={runSession.runId} runRefused={runSession.refused} onRecord={() => setLeaderboardRefresh((n) => n + 1)} />
             <button
               ref={winRestartRef}
               className="restartBtn"

@@ -1,5 +1,6 @@
 import { deviceFromUserAgent, countryFromHeaders } from '../../../lib/request-identity.ts';
 import { serviceConfig, callService } from '../../../lib/leaderboard/remote.ts';
+import { implausibleWin } from '../../../lib/game/leaderboard.ts';
 
 // LUL-482: POST /api/telemetry — the analytics beacon. Validated events are
 // stored in the stats database on the founder's server (services/leaderboard-db/,
@@ -9,6 +10,12 @@ import { serviceConfig, callService } from '../../../lib/leaderboard/remote.ts';
 // up the store's Hobby-plan operations and nothing needs it any more.
 // An unconfigured or unreachable server is logged, never a 5xx to the beacon
 // (LUL-4342): this route always answers 204 to a valid event.
+//
+// A win with an impossible time (lib/game/leaderboard.ts implausibleWin: a
+// Blackout win under the plausibility floor, any win faster than the game
+// allows, or no usable time) is forged: it is answered 204 like any event, so
+// the sender learns nothing, but it is not forwarded to the stats database.
+// The service drops it again on its side.
 //
 // Uses web-standard Request/Response (no next/server import) so the handler
 // is directly testable with node --test without mocking Next.js internals.
@@ -99,6 +106,12 @@ export async function POST(req: Request): Promise<Response> {
 
   if (isRateLimited(anon_id)) {
     return Response.json({ error: 'rate limited' }, { status: 429 });
+  }
+
+  const impossible = implausibleWin(payload);
+  if (impossible) {
+    console.warn('[telemetry] impossible win dropped:', impossible);
+    return new Response(null, { status: 204 });
   }
 
   // Short timeout so a slow server cannot hold the function open.

@@ -127,6 +127,7 @@ test('each service run refusal maps to a user-safe message; anything else stays 
     ['run_unfinished', 'this run\'s time could not be verified'],
     ['too_fast', 'this run\'s time could not be verified'],
     ['clock_mismatch', 'this run\'s time could not be verified'],
+    ['invalid_trace', 'this run\'s path could not be verified'],
     ['invalid submission', 'invalid submission'],
     ['<b>internal detail</b>', 'invalid submission'],
   ];

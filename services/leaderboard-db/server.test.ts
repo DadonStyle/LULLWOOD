@@ -8,7 +8,9 @@ import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { LeaderboardDb } from './db.ts';
-import { createService, MAX_REQUEST_BYTES } from './server.ts';
+import { createService, MAX_REQUEST_BYTES, traceRequiredFromEnv } from './server.ts';
+import { honestTrace } from './test-harness.ts';
+import { encodeSamples, decodeSamples, MAX_FINISH_BODY_BYTES, TRACE_MAX_ENCODED } from '../../lib/game/run-trace.ts';
 import { signedHeaders } from '../../lib/leaderboard/signing.ts';
 import { RUN_CLOCK_TOLERANCE_MS, RUN_START_IP_LIMIT, PLAUSIBILITY_FLOOR_MS } from '../../lib/game/leaderboard.ts';
 
@@ -22,11 +24,12 @@ let base: string;
 const BASE = 1_790_000_000_000;
 let clock = BASE;
 const records: string[] = [];
+const logs: string[] = [];
 
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'lbsrv-'));
   db = new LeaderboardDb(join(dir, 'lb.db'));
-  server = createService({ db, secret: SECRET, now: () => clock, log: () => {}, onNewRecord: (n) => records.push(n) });
+  server = createService({ db, secret: SECRET, now: () => clock, log: (line) => logs.push(line), onNewRecord: (n) => records.push(n) });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -47,18 +50,20 @@ async function call(method: string, path: string, body?: unknown, opts: { secret
 /**
  * Plays a run session against the service: started `serverMs` + 5 s ago,
  * finished 5 s ago (the lift), so a submit "now" sees serverMs on the server clock.
+ * The finish carries the honest trace of a run of `traceMs` (the client's own
+ * run clock, which differs from the server's by the network latency).
  */
-async function playRun(serverMs: number, anonId?: string, difficulty = 'blackout'): Promise<string> {
+async function playRun(serverMs: number, anonId?: string, difficulty = 'blackout', traceMs = serverMs): Promise<string> {
   clock = BASE - serverMs - 5_000;
   const started = await call('POST', '/v1/runs/start', { difficulty, ip_hash: ipHash(), anon_id: anonId });
   assert.equal(started.status, 201);
   clock += serverMs;
-  assert.deepEqual(await call('POST', '/v1/runs/finish', { run_id: started.body.run_id, anon_id: anonId }), { status: 200, body: { ok: true } });
+  assert.deepEqual(await call('POST', '/v1/runs/finish', { run_id: started.body.run_id, anon_id: anonId, trace: honestTrace(traceMs) }), { status: 200, body: { ok: true } });
   clock = BASE;
   return started.body.run_id;
 }
 
-const playable = (t: unknown) => (typeof t === 'number' && Number.isFinite(t) && t > 0 && t < 3_600_000 ? Math.round(t) : 120_000);
+const playable = (t: unknown) => (typeof t === 'number' && Number.isFinite(t) && t >= PLAUSIBILITY_FLOOR_MS && t < 3_600_000 ? Math.round(t) : 120_000);
 const submission = async (over: Record<string, unknown> = {}) => ({
   nickname: 'ranger', country: 'IL', time_ms: 120_000, ip_hash: ipHash(), build_sha: 'abc1234',
   run_id: await playRun(playable(over.time_ms ?? 120_000)), ...over,
@@ -209,12 +214,12 @@ test('runs: start answers only a run id, finish only ok; both re-validate their 
     assert.equal((await call('POST', '/v1/runs/start', { difficulty: 'blackout', ip_hash: ipHash(), ...bad })).status, 400, JSON.stringify(bad));
   }
   for (const bad of [{}, { run_id: 'A'.repeat(32) }, { run_id: 'x' }, { run_id: 'f'.repeat(32) }]) {
-    assert.deepEqual(await call('POST', '/v1/runs/finish', bad), { status: 400, body: { error: 'invalid_run' } }, JSON.stringify(bad));
+    assert.deepEqual(await call('POST', '/v1/runs/finish', { ...bad, trace: honestTrace(20_000) }), { status: 400, body: { error: 'invalid_run' } }, JSON.stringify(bad));
   }
 });
 
 test('runs: a submit with a valid run is stored with the client time', async () => {
-  const runId = await playRun(60_000, ANON);
+  const runId = await playRun(60_000, ANON, 'blackout', 60_700);
   const r = await call('POST', '/v1/submit', { nickname: 'timed', country: 'IL', time_ms: 60_700, ip_hash: ipHash(), build_sha: 'abc1234', anon_id: ANON, run_id: runId });
   assert.equal(r.status, 201);
   const row = db.db.prepare('SELECT time_ms FROM record_holders WHERE id = ?').get(r.body.id)!;
@@ -244,7 +249,7 @@ test('runs: each refused run is a 400 with only a code, and stores nothing', asy
   clock = BASE - 2 * 60 * 60 * 1000;
   const old = (await call('POST', '/v1/runs/start', { difficulty: 'blackout', ip_hash: ipHash(), anon_id: ANON })).body.run_id;
   clock += 60_000;
-  await call('POST', '/v1/runs/finish', { run_id: old, anon_id: ANON });
+  await call('POST', '/v1/runs/finish', { run_id: old, anon_id: ANON, trace: honestTrace(60_000) });
   clock = BASE;
   assert.deepEqual(await submit({ run_id: old }), { status: 400, body: { error: 'run_expired' } });
   assert.equal(count(), before);
@@ -253,6 +258,108 @@ test('runs: each refused run is a 400 with only a code, and stores nothing', asy
   assert.equal((await submit({ run_id: used })).status, 201);
   assert.deepEqual(await submit({ run_id: used }), { status: 400, body: { error: 'run_used' } }, 'reused run_id');
   assert.equal(count(), before + 1);
+});
+
+// ---- proof of play (lib/game/run-trace.ts) ----
+
+async function startRun(at: number): Promise<string> {
+  clock = at;
+  const r = await call('POST', '/v1/runs/start', { difficulty: 'blackout', ip_hash: ipHash(), anon_id: ANON });
+  assert.equal(r.status, 201);
+  return r.body.run_id;
+}
+
+test('trace: the largest trace fits both body caps', () => {
+  const finish = JSON.stringify({ run_id: 'f'.repeat(32), anon_id: ANON, trace: { v: 1, interval_ms: 16_000, end_ms: 3_599_999, child: [-123.45, 234.56], samples: 'A'.repeat(TRACE_MAX_ENCODED) } });
+  assert.ok(finish.length < MAX_FINISH_BODY_BYTES, `${finish.length}`);
+  assert.ok(MAX_FINISH_BODY_BYTES < MAX_REQUEST_BYTES);
+});
+
+test('trace: a finish without a trace, or with a forged one, is refused with invalid_trace and stamps nothing', async () => {
+  const runId = await startRun(BASE - 40_000);
+  clock = BASE - 5_000;
+  logs.length = 0;
+  assert.deepEqual(await call('POST', '/v1/runs/finish', { run_id: runId, anon_id: ANON }), { status: 400, body: { error: 'invalid_trace' } });
+  // The scripted run: waited the time out at home, never walked to the child.
+  const idle = honestTrace(35_000);
+  const coords = decodeSamples(idle.samples)!.map(() => 0);
+  assert.deepEqual(await call('POST', '/v1/runs/finish', { run_id: runId, anon_id: ANON, trace: { ...idle, samples: encodeSamples(coords) } }), { status: 400, body: { error: 'invalid_trace' } });
+  assert.deepEqual(await call('POST', '/v1/runs/finish', { run_id: runId, anon_id: ANON, trace: 'x' }), { status: 400, body: { error: 'invalid_trace' } });
+  // Each refusal is logged with its reason, never with the path.
+  assert.deepEqual(logs.filter((l) => l.includes('finish refused')), [
+    '[leaderboard-db] finish refused: invalid_trace reason=missing',
+    '[leaderboard-db] finish refused: invalid_trace reason=end_not_at_child',
+    '[leaderboard-db] finish refused: invalid_trace reason=shape',
+  ]);
+  assert.equal(db.db.prepare('SELECT finished_at FROM run_sessions WHERE id = ?').get(runId)!.finished_at, null);
+  clock = BASE;
+  const submit = await call('POST', '/v1/submit', { nickname: 'idler', country: 'IL', time_ms: 35_000, ip_hash: ipHash(), build_sha: 'abc1234', anon_id: ANON, run_id: runId });
+  assert.deepEqual(submit, { status: 400, body: { error: 'run_unfinished' } });
+});
+
+test('trace: the submitted time must be the time the trace ends at', async () => {
+  // Server measured 35 s, the trace ends at 35 s, the claim is 34 s: inside the
+  // phase 1 clock tolerance, but not the time that was played.
+  const runId = await playRun(35_000, ANON);
+  logs.length = 0;
+  const r = await call('POST', '/v1/submit', { nickname: 'shaver', country: 'IL', time_ms: 34_000, ip_hash: ipHash(), build_sha: 'abc1234', anon_id: ANON, run_id: runId });
+  assert.deepEqual(r, { status: 400, body: { error: 'invalid_trace' } });
+  assert.ok(logs.some((l) => l.includes('submit refused: invalid_trace')));
+  assert.equal((await call('POST', '/v1/submit', { nickname: 'shaver', country: 'IL', time_ms: 35_000, ip_hash: ipHash(), build_sha: 'abc1234', anon_id: ANON, run_id: runId })).status, 201);
+});
+
+test('trace: the transition flag accepts a finish without a trace, but still checks one that is sent', async () => {
+  const dir2 = mkdtempSync(join(tmpdir(), 'lbsrv-'));
+  const db2 = new LeaderboardDb(join(dir2, 'lb.db'));
+  const s2 = createService({ db: db2, secret: SECRET, now: () => clock, log: () => {}, requireTrace: false });
+  await new Promise<void>((r) => s2.listen(0, '127.0.0.1', r));
+  const base2 = `http://127.0.0.1:${(s2.address() as AddressInfo).port}`;
+  const call2 = async (path: string, body: unknown) => {
+    const text = JSON.stringify(body);
+    const headers = { 'content-type': 'application/json', ...signedHeaders(SECRET, 'POST', path, text, clock, randomBytes(16).toString('hex')) };
+    const res = await fetch(base2 + path, { method: 'POST', headers, body: text });
+    return { status: res.status, body: await res.json() };
+  };
+  try {
+    clock = BASE - 45_000;
+    const old = (await call2('/v1/runs/start', { difficulty: 'blackout', ip_hash: ipHash(), anon_id: ANON })).body.run_id;
+    const forged = (await call2('/v1/runs/start', { difficulty: 'blackout', ip_hash: ipHash(), anon_id: ANON })).body.run_id;
+    clock = BASE - 5_000;
+    assert.deepEqual(await call2('/v1/runs/finish', { run_id: old, anon_id: ANON }), { status: 200, body: { ok: true } }, 'an app build without the trace');
+    assert.deepEqual(await call2('/v1/runs/finish', { run_id: forged, anon_id: ANON, trace: { ...honestTrace(40_000), child: [0, 0] } }), { status: 400, body: { error: 'invalid_trace' } });
+    clock = BASE;
+    assert.equal((await call2('/v1/submit', { nickname: 'oldapp', country: 'IL', time_ms: 40_000, ip_hash: ipHash(), build_sha: 'abc1234', anon_id: ANON, run_id: old })).status, 201);
+  } finally {
+    clock = BASE;
+    await new Promise<void>((r) => s2.close(() => r()));
+    db2.close();
+    rmSync(dir2, { recursive: true, force: true });
+  }
+});
+
+test('trace: LB_TRACE_REQUIRED keeps the trace required unless it is explicitly turned off', () => {
+  for (const v of [undefined, '', '1', 'true', 'yes', 'on', 'garbage']) assert.equal(traceRequiredFromEnv(v), true, String(v));
+  for (const v of ['0', 'false', 'off', 'no', ' FALSE ']) assert.equal(traceRequiredFromEnv(v), false, v);
+});
+
+test('events: a win with an impossible time is dropped and logged; real wins and losses are stored', async () => {
+  const count = () => Number(db.db.prepare("SELECT count(*) AS n FROM events WHERE event = 'win'").get()!.n);
+  const before = count();
+  logs.length = 0;
+  for (const payload of [
+    { event: 'win', difficulty: 'blackout', time_survived_ms: 0 },
+    { event: 'win', difficulty: 'blackout', time_survived_ms: PLAUSIBILITY_FLOOR_MS - 1 },
+    { event: 'win', difficulty: 'lantern', time_survived_ms: 1_200 },
+    { event: 'win', difficulty: 'night' },
+  ]) {
+    assert.deepEqual(await call('POST', '/v1/events', { payload }), { status: 202, body: { stored: false, reason: 'implausible' } }, JSON.stringify(payload));
+  }
+  assert.equal(count(), before);
+  assert.equal(logs.filter((l) => l.includes('telemetry win dropped')).length, 4);
+  assert.deepEqual(await call('POST', '/v1/events', { payload: { event: 'win', difficulty: 'blackout', time_survived_ms: 61_000 } }), { status: 202, body: { stored: true } });
+  assert.deepEqual(await call('POST', '/v1/events', { payload: { event: 'win', difficulty: 'lantern', time_survived_ms: 12_000 } }), { status: 202, body: { stored: true } });
+  assert.deepEqual(await call('POST', '/v1/events', { payload: { event: 'loss', difficulty: 'blackout', time_survived_ms: 0 } }), { status: 202, body: { stored: true } });
+  assert.equal(count(), before + 2);
 });
 
 test('runs: starts are rate-limited per IP hash with 429 { error: start-limit }', async () => {

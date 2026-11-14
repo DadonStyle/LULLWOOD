@@ -7,7 +7,9 @@ import {
   clampListLimit, parseCursor, parseRecord, COUNTRY_ALLOWLIST, COUNTRY_NAMES, PLAUSIBILITY_FLOOR_MS, PLAUSIBILITY_CEILING_MS, LIST_DEFAULT_LIMIT,
   validateRunId, validateDifficulty, checkRunSubmit, checkRunFinish, runRejectMessage, leaderboardSubmitGate,
   RUN_ID_PATTERN, RUN_CLOCK_TOLERANCE_MS, RUN_SESSION_TTL_MS, RUN_REJECT_CODES, type RunSession,
+  implausibleWin, WIN_FLOOR_ANY_TIER_MS,
 } from './leaderboard.ts';
+import { TRACE_TIME_TOLERANCE_MS } from './run-trace.ts';
 
 test('the plausibility floor is the documented ~15.7s', () => {
   assert.equal(PLAUSIBILITY_FLOOR_MS, 15_713);
@@ -115,7 +117,7 @@ test('the country picker names, the allowlist and the flag images match exactly'
 const T = 1_790_000_000_000;
 const ANON = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
 const session = (over: Partial<RunSession> = {}): RunSession => ({
-  startedAt: T, finishedAt: T + 60_000, usedAt: null, difficulty: 'blackout', anonId: ANON, ...over,
+  startedAt: T, finishedAt: T + 60_000, usedAt: null, difficulty: 'blackout', anonId: ANON, traceEndMs: null, ...over,
 });
 
 test('validateRunId accepts only 32 lower-case hex characters', () => {
@@ -155,6 +157,39 @@ test('checkRunSubmit: each refusal has its own code', () => {
   assert.equal(checkRunSubmit(session(), { ...claim, timeMs: 60_000 + RUN_CLOCK_TOLERANCE_MS + 1 }, T + 90_000), 'clock_mismatch');
 });
 
+test('checkRunSubmit: proof of play -- the claimed time must be the time the trace ends at', () => {
+  const claim = { timeMs: 60_000, anonId: ANON };
+  const traced = session({ traceEndMs: 60_000 });
+  assert.equal(checkRunSubmit(traced, claim, T + 90_000, { requireTrace: true }), null);
+  assert.equal(checkRunSubmit(traced, { ...claim, timeMs: 60_000 + TRACE_TIME_TOLERANCE_MS }, T + 90_000, { requireTrace: true }), null);
+  // Within the server clock tolerance, but not the trace's own time.
+  assert.equal(checkRunSubmit(traced, { ...claim, timeMs: 60_000 + TRACE_TIME_TOLERANCE_MS + 1 }, T + 90_000, { requireTrace: true }), 'invalid_trace');
+  assert.equal(checkRunSubmit(traced, { ...claim, timeMs: 59_000 }, T + 90_000), 'invalid_trace', 'a trace is checked even when not required');
+  // No trace: refused only while the trace is required (the default after the transition).
+  assert.equal(checkRunSubmit(session(), claim, T + 90_000, { requireTrace: true }), 'invalid_trace');
+  assert.equal(checkRunSubmit(session(), claim, T + 90_000, { requireTrace: false }), null);
+  // The phase 1 checks still come first.
+  assert.equal(checkRunSubmit(session({ traceEndMs: 16_000, finishedAt: T + 31_000 }), { ...claim, timeMs: 16_000 }, T + 90_000, { requireTrace: true }), 'clock_mismatch');
+});
+
+test('implausibleWin: drops forged telemetry wins, keeps every real event', () => {
+  assert.equal(implausibleWin({ event: 'win', difficulty: 'blackout', time_survived_ms: 0 }), 'below_floor');
+  assert.equal(implausibleWin({ event: 'win', difficulty: 'blackout', time_survived_ms: PLAUSIBILITY_FLOOR_MS - 1 }), 'below_floor');
+  assert.equal(implausibleWin({ event: 'win', difficulty: 'blackout', time_survived_ms: PLAUSIBILITY_FLOOR_MS }), null);
+  // Lantern/Night wins are legitimately faster than the Blackout floor.
+  assert.equal(implausibleWin({ event: 'win', difficulty: 'lantern', time_survived_ms: 12_000 }), null);
+  assert.equal(implausibleWin({ event: 'win', difficulty: 'night', time_survived_ms: WIN_FLOOR_ANY_TIER_MS - 1 }), 'below_floor');
+  assert.equal(implausibleWin({ event: 'win', time_survived_ms: 1_000 }), 'below_floor', 'no difficulty: the any-tier floor');
+  for (const bad of [undefined, '20000', -5, Number.NaN, Infinity, null]) {
+    assert.equal(implausibleWin({ event: 'win', difficulty: 'blackout', time_survived_ms: bad }), 'bad_time', String(bad));
+  }
+  // Losses and every other event pass through, even with a 0 ms time.
+  assert.equal(implausibleWin({ event: 'loss', difficulty: 'blackout', time_survived_ms: 0 }), null);
+  assert.equal(implausibleWin({ event: 'page_view' }), null);
+  // The any-tier floor stays well under the fastest possible real win (120 u at 12.96 u/s = 9.26 s).
+  assert.ok(WIN_FLOOR_ANY_TIER_MS > 4_000 && WIN_FLOOR_ANY_TIER_MS < 5_000, String(WIN_FLOOR_ANY_TIER_MS));
+});
+
 test('checkRunFinish: refuses unknown, foreign, used and expired sessions only', () => {
   assert.equal(checkRunFinish(session({ finishedAt: null }), ANON, T + 30_000), null);
   assert.equal(checkRunFinish(session({ difficulty: 'night', finishedAt: null }), ANON, T + 30_000), null);
@@ -178,5 +213,7 @@ test('leaderboardSubmitGate: admin, then difficulty, then the silent floor, then
   assert.equal(leaderboardSubmitGate({ ...ok, difficulty: 'night', runId: null }), 'ineligible');
   assert.equal(leaderboardSubmitGate({ ...ok, timeMs: PLAUSIBILITY_FLOOR_MS - 1, pausedThisRun: true }), 'hidden');
   assert.equal(leaderboardSubmitGate({ ...ok, pausedThisRun: true, runId: null }), 'paused');
+  assert.equal(leaderboardSubmitGate({ ...ok, pausedThisRun: true, runId: null, runRefused: true }), 'paused');
+  assert.equal(leaderboardSubmitGate({ ...ok, runId: null, runRefused: true }), 'unverified');
   assert.equal(leaderboardSubmitGate({ ...ok, runId: null }), 'untimed');
 });

@@ -4,10 +4,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { LeaderboardDb, MAX_EVENTS_PER_DAY, EVENT_RETENTION_DAYS, type SubmitInput } from './db.ts';
+import { LeaderboardDb, MAX_EVENTS_PER_DAY, EVENT_RETENTION_DAYS, SCHEMA_VERSION, type SubmitInput } from './db.ts';
 import {
   COOLDOWN_MS, IP_LIMIT, GLOBAL_LIMIT, PLAUSIBILITY_FLOOR_MS, RUN_CLOCK_TOLERANCE_MS, RUN_SESSION_TTL_MS, RUN_START_IP_LIMIT, RUN_START_WINDOW_MS,
 } from '../../lib/game/leaderboard.ts';
+import { TRACE_TIME_TOLERANCE_MS } from '../../lib/game/run-trace.ts';
 import { SUGGESTION_COOLDOWN_MS, SUGGESTION_IP_LIMIT, SUGGESTION_IP_WINDOW_MS, SUGGESTION_GLOBAL_LIMIT } from '../../lib/suggestions/rules.ts';
 
 const T0 = 1_790_000_000_000;
@@ -319,6 +320,49 @@ test('a version-1 database file opens in place and gains run_sessions', () => wi
   const reopened = new LeaderboardDb(path);
   try {
     assert.equal(reopened.startRun({ difficulty: 'blackout', anonId: null, ipHash: ip() }, T0).ok, true);
-    assert.equal(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()!.value, '2');
+    assert.equal(reopened.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()!.value, String(SCHEMA_VERSION));
   } finally { reopened.close(); }
+}));
+
+test('a version-2 database file opens in place and gains run_traces; its sessions stay usable', () => withDb((db, path) => {
+  const id = (db.startRun({ difficulty: 'blackout', anonId: null, ipHash: ip() }, T0) as { runId: string }).runId;
+  db.db.exec('DROP TABLE run_traces');
+  db.db.prepare("UPDATE meta SET value = '2' WHERE key = 'schema_version'").run();
+  const reopened = new LeaderboardDb(path);
+  try {
+    assert.equal(SCHEMA_VERSION, 3);
+    assert.deepEqual(reopened.finishRun(id, null, T0 + 60_000, { endMs: 60_000, samples: 62 }), { ok: true });
+    assert.equal(reopened.submit({ ...entry({ timeMs: 60_000 }), runId: id }, T0 + 70_000, { requireTrace: true }).ok, true);
+  } finally { reopened.close(); }
+}));
+
+// ---- proof of play (lib/game/run-trace.ts) ----
+
+const traceRow = (db: LeaderboardDb, id: string) => db.db.prepare('SELECT * FROM run_traces WHERE run_id = ?').get(id);
+
+test('trace: finish keeps the first accepted trace; submit must claim its time when traced', () => withDb((db) => {
+  const id = (db.startRun({ difficulty: 'blackout', anonId: ANON, ipHash: ip() }, T0) as { runId: string }).runId;
+  assert.deepEqual(db.finishRun(id, ANON, T0 + 60_000, { endMs: 59_800, samples: 61 }), { ok: true });
+  assert.deepEqual(db.finishRun(id, ANON, T0 + 61_000, { endMs: 30_000, samples: 31 }), { ok: true });
+  const row = traceRow(db, id)!;
+  assert.deepEqual([row.end_ms, row.samples, row.created_at], [59_800, 61, T0 + 60_000]);
+  const e = entry({ timeMs: 59_800 + TRACE_TIME_TOLERANCE_MS + 1, anonId: ANON });
+  assert.deepEqual(db.submit({ ...e, runId: id }, T0 + 70_000), { ok: false, reason: 'invalid_trace' }, 'checked even without requireTrace');
+  assert.equal(sessionRow(db, id)!.used_at, null, 'a refused run stays unused');
+  assert.equal(db.submit({ ...e, timeMs: 59_800, runId: id }, T0 + 70_000, { requireTrace: true }).ok, true);
+}));
+
+test('trace: with requireTrace a run finished without a trace is refused, without it (transition) it is accepted', () => withDb((db) => {
+  const e = entry({ timeMs: 60_000 });
+  const id = startedRun(db, e, T0);
+  assert.deepEqual(db.submit({ ...e, runId: id }, T0, { requireTrace: true }), { ok: false, reason: 'invalid_trace' });
+  assert.equal(db.submit({ ...e, runId: id }, T0, { requireTrace: false }).ok, true);
+}));
+
+test('trace: rows are pruned with the sessions', () => withDb((db) => {
+  const id = (db.startRun({ difficulty: 'blackout', anonId: null, ipHash: ip() }, T0) as { runId: string }).runId;
+  db.finishRun(id, null, T0 + 60_000, { endMs: 60_000, samples: 61 });
+  db.startRun({ difficulty: 'blackout', anonId: null, ipHash: ip() }, T0 + 60_000 + RUN_SESSION_TTL_MS + 1);
+  assert.equal(traceRow(db, id), undefined);
+  assert.equal(Number(db.db.prepare('SELECT count(*) AS n FROM run_traces').get()!.n), 0);
 }));
