@@ -2,7 +2,7 @@
 // see ../minimap-setting.spec.ts for the desktop spec and the full writeup.
 // Same landscape-viewport / manual-tap pattern as ./admin-mode.spec.ts.
 import { test, expect } from '../fixtures';
-import { boot } from '../helpers';
+import { boot, qaHook } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)
 
@@ -13,13 +13,16 @@ async function seedSettings(context: import('@playwright/test').BrowserContext, 
 }
 
 test('minimap defaults off on mobile, and shows with adminMode:true', async ({ page, context }) => {
-  await seedSettings(context, { adminMode: true });
-  await boot(page);
+  // LUL-6456: pin 'night' -- blackout (default since LUL-5953) hides the minimap regardless of
+  // adminMode; qaRegenerateMap redoes the first generateMap() against the applied difficulty.
+  await seedSettings(context, { adminMode: true, difficulty: 'night' });
+  await boot(page, { qaHooks: true });
 
   const viewport = page.viewportSize();
   if (!viewport) throw new Error('mobile project must have a viewport size');
   await page.mouse.click(viewport.width / 2, viewport.height / 2);
   await page.waitForTimeout(1200); // gate fade settle
+  await qaHook(page, 'qaRegenerateMap', 1);
 
   await expect(page.locator('#minimap')).toBeVisible();
   // confirms admin mode itself is genuinely on, not just a no-op seed
