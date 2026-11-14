@@ -163,16 +163,20 @@ test('start: more than RUN_START_IP_LIMIT starts an hour from one IP get 429', a
   assert.equal((await START(post('/api/run/start', { difficulty: 'blackout' }, nextIp()))).status, 201);
 });
 
-test('start and finish: a missing salt or service config, or an unreachable service, is 503', async () => {
+test('start: a missing salt or service config, or an unreachable service, is 200 { unavailable } (never 5xx); finish stays 503', async () => {
+  const startUnavailable = async () => {
+    const res = await START(post('/api/run/start', { difficulty: 'blackout' }));
+    assert.deepEqual([res.status, await res.json(), res.headers.get('cache-control')], [200, { unavailable: true }, 'no-store']);
+  };
   delete process.env.LEADERBOARD_IP_HASH_SALT;
-  assert.equal((await START(post('/api/run/start', { difficulty: 'blackout' }))).status, 503);
+  await startUnavailable();
   process.env.LEADERBOARD_IP_HASH_SALT = 'pepper';
   const url = process.env.LEADERBOARD_API_URL;
   delete process.env.LEADERBOARD_API_URL;
-  assert.equal((await START(post('/api/run/start', { difficulty: 'blackout' }))).status, 503);
+  await startUnavailable();
   assert.equal((await FINISH(post('/api/run/finish', { run_id: 'a'.repeat(32) }))).status, 503);
   process.env.LEADERBOARD_API_URL = url;
   svc.down();
-  assert.equal((await START(post('/api/run/start', { difficulty: 'blackout' }))).status, 503);
+  await startUnavailable();
   assert.equal((await FINISH(post('/api/run/finish', { run_id: 'a'.repeat(32) }))).status, 503);
 });
