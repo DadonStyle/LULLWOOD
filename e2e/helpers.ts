@@ -131,6 +131,12 @@ export async function boot(
   if (seedWelcomeSplashSeen) {
     await page.addInitScript(() => window.localStorage.setItem('lullwood:welcomeSeen', '1'));
   }
+  // The CI/QA server has no leaderboard service, so the real /api/run/start answers
+  // 503 and the browser logs a console error that fails every no-console-errors
+  // check. A 200 that is not the 201 the client needs keeps the same "no run
+  // session" outcome silently. Specs that exercise run sessions register their own
+  // page.route afterwards, which takes precedence.
+  await page.route('**/api/run/start', (route) => route.fulfill({ status: 200, json: { unavailable: true } }));
   const params = new URLSearchParams();
   if (qaHooks) params.set('qaHooks', '1');
   if (seed !== null) params.set('seed', String(seed));

@@ -101,6 +101,7 @@ import {
 import { mudSpeedMultiplier, mudNoiseMultiplier, isInMudZone } from '@/lib/game/mud';
 import { pickCommittedAvoidDirection, findLocalPath, LOCAL_SEARCH_ARRIVE_R } from '@/lib/game/steer';
 import { wrapCoord, wrapDelta } from '@/lib/game/wrap';
+import { createTraceRecorder, recordTracePosition, finishTrace } from '@/lib/game/run-trace';
 import { spawnClearanceScale, findClearSpot } from '@/lib/game/spawnClearance';
 import { isNoiseHeard, NOISE_RADIUS_WALK, NOISE_RADIUS_RUN, NOISE_RADIUS_RUN_WIND, checkThrowableNoise, THROWABLE_NOISE_RADIUS, CRY_NOISE_RADIUS, HIDE_ALERT_RADIUS, COVER_RUSTLE_THRESHOLD_S, COVER_RUSTLE_INTERVAL_S, SHUFFLE_COOLDOWN_S } from '@/lib/game/noise';
 import { selectPackLeaderIndex, flankTarget, FLANK_RECOMPUTE, FLANK_ARRIVE_R, FLANK_SPEED_MUL } from '@/lib/game/pack';
@@ -687,6 +688,17 @@ let runFrozenAt = null;
 // moment of the current run. A run that ever had it on can't take the top
 // rescuer spot (LeaderboardSubmitForm reads adminUsedThisRun at the win screen).
 let adminModeOn = false, adminUsedThisRun = false;
+// Server-timed run sessions (lib/game/leaderboard.ts): React (components/Leaderboard.tsx
+// useRunSession, called by Hud.tsx) asks the leaderboard service for a run id when runSerial
+// changes (every enter(), restarts included) and reports the finish when
+// runFinished turns true (the lift, the moment the run clock stops). The
+// service's clock keeps counting through a pause, so a run that was paused at
+// any moment before the lift can't take the top rescuer spot either.
+let pausedThisRun = false, runSerial = 0;
+// Proof of play (lib/game/run-trace.ts): the player's position every interval
+// of run time, from enter() at home to the lift. pickup() turns it into the
+// trace React sends with the run finish; lastRunTrace keeps it for qaRunTrace().
+let runTraceRec = createTraceRecorder(), lastRunTrace = null;
 // LUL-313: LUL-292's browser QA pass (pixel diff, methodology in the ticket)
 // found the point-light radius/intensity cut above unreadable against this
 // scene -- ambient/moonlight/fog dominate perceived brightness, so a smaller
@@ -4842,6 +4854,7 @@ let hudState = {
   survivedSeconds: 0,
   runClockSeconds: 0,
   adminUsedThisRun: false,
+  runSerial: 0, runFinished: false, pausedThisRun: false, runTrace: null,
   pace: CONFIG.walk, fog: CONFIG.fog, soundOn: true,
   lightDimmed: false,
   // LUL-382: mist veil resource meter -- 1 is full charge, 0 is fully drained.
@@ -4976,6 +4989,10 @@ function runSeconds(){
 function setPaused(p){
   if(p && !paused) track({ event: 'feature_engagement', feature: 'options_menu', action: 'opened' });
   if(p && !paused && entered && pauseStartedAt === null) pauseStartedAt = clock.elapsedTime;
+  if(p && !paused && entered && runFrozenAt === null && !won && !dead && !pausedThisRun){
+    pausedThisRun = true;
+    pushState({ pausedThisRun });
+  }
   if(!p && pauseStartedAt !== null){ enteredAt += clock.elapsedTime - pauseStartedAt; pauseStartedAt = null; }
   paused = p; pausePrompt.style.display = p ? 'flex' : 'none';
 }
@@ -4991,7 +5008,10 @@ function enter(){
   runElapsed = 0;
   lastRunClockLabel = '';
   adminUsedThisRun = adminModeOn;   // fresh run: tainted only if admin mode is on right now
-  pushState({ runClockSeconds: 0, adminUsedThisRun });
+  runSerial++; pausedThisRun = false;   // fresh run: new server run session, not paused yet
+  runTraceRec = createTraceRecorder(); lastRunTrace = null;
+  recordTracePosition(runTraceRec, 0, player.x, player.z);   // the run starts at home
+  pushState({ runClockSeconds: 0, adminUsedThisRun, runSerial, runFinished: false, pausedThisRun, runTrace: null });
   maxDistFromHome = 0;   // LUL-1043: fresh run, fresh depth high-water mark
   veilReserve = false; embersSpent = 0;   // LUL-1210: fresh run, no charm banked or spent
   coldWalkBroken = false;   // LUL-4960: fresh run, constraint not yet broken
@@ -5187,10 +5207,16 @@ if(typeof window !== 'undefined' && new URLSearchParams(window.location.search).
              pickingUp, taken: baby.taken };
   };
   window.ForestEngine.qaProbeElapsedTime = function(){ return clock.elapsedTime; };
-  // Top-right run timer + rescuer eligibility: the m:ss last pushed to #runTimer
-  // and whether admin mode was on at any point of the current run.
+  // Top-right run timer + rescuer eligibility: the m:ss last pushed to #runTimer,
+  // whether admin mode was on / the run was paused at any point of the current
+  // run, and the run serial the server run session is keyed on.
   window.ForestEngine.qaProbeRunClock = function(){
-    return { label: lastRunClockLabel, seconds: entered ? runSeconds() : 0, adminUsedThisRun };
+    return { label: lastRunClockLabel, seconds: entered ? runSeconds() : 0, adminUsedThisRun, pausedThisRun, runSerial };
+  };
+  // Proof of play (lib/game/run-trace.ts): the trace of the current run --
+  // the finished one sent at the lift, or the samples recorded so far.
+  window.ForestEngine.qaRunTrace = function(){
+    return { finished: lastRunTrace, samplesSoFar: runTraceRec.coords.length / 2, intervalMs: runTraceRec.intervalMs };
   };
 
   // LUL-2205: reads back the live day/night pacing values in one call so a
@@ -7335,7 +7361,8 @@ function pickup(){
   if(mission && canCompleteSlackWater(mission, fogTideActive)) mission = completeMission(mission);
   baby.taken = next.babyTaken; pickingUp = next.pickingUp;
   runFrozenAt = runSeconds();   // the child is saved: the run's time stops here
-  pushState({ runClockSeconds: runFrozenAt });
+  lastRunTrace = finishTrace(runTraceRec, runFrozenAt * 1000, player.x, player.z, baby);
+  pushState({ runClockSeconds: runFrozenAt, runFinished: true, runTrace: lastRunTrace });   // runFinished: Hud.tsx reports the finish (with the trace) to the service now
   pickStart = clock.elapsedTime; pickBoomed = false; hidden = false; hideSpot = null; lastHideSpot = null; coverProbeAccum = 0; mountedOnRock = false; rockClimbT = 0;
   bwisps.visible = false;   // LUL-38: the beacon wisps marked where the child was found
   pushState({ objectiveVisible: false, statusVisible: false });
@@ -8401,6 +8428,7 @@ function stepFrame(dt, t, skipRender){
   // picked up, and once the run is over.
   if(entered && !won && !dead){
     const runClockSeconds = runSeconds();
+    if(runFrozenAt === null) recordTracePosition(runTraceRec, runClockSeconds * 1000, player.x, player.z);
     const runClockLabel = formatRunTime(runClockSeconds);
     if(runClockLabel !== lastRunClockLabel){ lastRunClockLabel = runClockLabel; pushState({ runClockSeconds }); }
   }
