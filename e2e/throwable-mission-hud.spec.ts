@@ -14,7 +14,13 @@ test.describe('#throwPrompt via qaGrabThrowable()', () => {
   test('grabbing the nearest stone shows #throwPrompt; restart clears it', async ({ page }) => {
     const errs = trackConsoleErrors(page);
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    // LUL-6456: blackout (default since LUL-5953) starts its predators hunting, and
+    // qaGrabThrowable() teleports next to a seed-placed stone -- a bear ran the player down within
+    // a second of enter()'s real-time wait. Park the RAF loop before enter() (LUL-6080 pattern) so
+    // nothing simulates until the test's own qaAdvance, then one settle tick to push state.
+    await qaHook(page, 'qaSetFixedStep', 0.02);
     await enter(page);
+    await qaHook(page, 'qaAdvance', 1);
 
     // Made to fail once on purpose: with no throwable held yet, the prompt must not be shown.
     // LUL-2312: #throwPrompt is one of #actionSlot's always-mounted rows now --
@@ -23,6 +29,7 @@ test.describe('#throwPrompt via qaGrabThrowable()', () => {
 
     const grabbed = await qaHook(page, 'qaGrabThrowable');
     expect(grabbed, 'qaGrabThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+    await qaHook(page, 'qaAdvance', 1);
 
     await expectRowVisible(page, 'throwPrompt');
     await expect(page.locator('#throwPrompt')).toContainText('click to throw');
@@ -37,16 +44,25 @@ test.describe('#throwPrompt via qaGrabThrowable()', () => {
   test('restart() clears heldThrowable and hides #throwPrompt', async ({ page }) => {
     test.setTimeout(45_000);
     await boot(page, { qaHooks: true, qaWorld: 'micro' });
+    // LUL-6456: blackout (default since LUL-5953) starts its predators hunting, and
+    // qaGrabThrowable() teleports next to a seed-placed stone -- a bear ran the player down within
+    // a second of enter()'s real-time wait. Park the RAF loop before enter() (LUL-6080 pattern) so
+    // nothing simulates until the test's own qaAdvance, then one settle tick to push state.
+    await qaHook(page, 'qaSetFixedStep', 0.02);
     await enter(page);
+    await qaHook(page, 'qaAdvance', 1);
 
     const grabbed = await qaHook(page, 'qaGrabThrowable');
     expect(grabbed).not.toBeNull();
+    await qaHook(page, 'qaAdvance', 1);
     await expectRowVisible(page, 'throwPrompt');
 
     expect(await qaHook(page, 'qaForceDeath', 'wolf', 'hunt')).toBe(true);
+    await qaHook(page, 'qaAdvance', 250); // loop is parked: advance past the loss reveal (CUT_END ~4.2s)
     // "Try again" -- the only in-game restart() path (e2e/death-sequence.spec.ts's convention).
     await expect(page.locator('#deathText')).toHaveCSS('opacity', '1', { timeout: 10_000 });
     await page.locator('.restartBtn').evaluate((el) => (el as HTMLElement).click());
+    await qaHook(page, 'qaAdvance', 1);
 
     await expectRowHidden(page, 'throwPrompt', 5_000);
   });

@@ -17,7 +17,7 @@ Funnel with signed requests; players never talk to it directly.
 | `install.sh` | One-time setup and redeploy (`sudo`) |
 | `test-harness.ts` | Test-only: runs the real service on loopback behind the Vercel route tests |
 
-Signed routes: `POST /v1/submit`, `GET /v1/current`, `GET /v1/records`, `POST /v1/records/:id/invalidate`,
+Signed routes: `POST /v1/runs/start`, `POST /v1/runs/finish`, `POST /v1/submit` (needs a finished `run_id`), `GET /v1/current`, `GET /v1/records`, `POST /v1/records/:id/invalidate`,
 `POST /v1/events`, `GET /v1/events?since=&until=` (internal dashboard), `POST /v1/suggestions`, `GET /v1/suggestions`
 (agents' suggestions reader).
 
@@ -33,6 +33,7 @@ No npm dependencies. It needs Node ≥ 22.18 (type stripping and `node:sqlite`);
 | `runs` | Every finished run from telemetry, win or loss, with typed columns: difficulty, time survived, predator, cause of death, distance from home, purchases, device, browser, country |
 | `events` | Every telemetry event, raw (validated JSON). Pruned after 180 days. The only copy: Vercel Blob is no longer used (founder 2026-10-16) |
 | `suggestions` | Every player suggestion (`[a-z ]{3,300}` only) with its salted IP hash. The rows are also the rate-limit state: 10 s cooldown, 5 per IP per hour, 200 a day (`lib/suggestions/rules.ts`) |
+| `run_sessions` | Server-timed run sessions: one row per Blackout run start (random id, server start/finish/used times, difficulty, anon_id, salted IP hash). Also the start rate-limit state (60 per IP per hour); rows older than 1 h are pruned. See "R1" in `docs/specs/lul-3264-leaderboard-security.md` |
 | `admin_audit` | Every invalidate call |
 
 Views for agents: `v_runs_daily`, `v_deaths`, `v_devices`, `v_player_runs`, `v_funnel_daily`,
@@ -75,6 +76,13 @@ curl -s http://127.0.0.1:8787/healthz          # loopback health check
 curl -X POST -H "Authorization: Bearer $LEADERBOARD_ADMIN_TOKEN" \
   -d '{"reason":"impossible time"}' https://www.lullwoodgame.com/api/leaderboard/<id>/invalidate
 ```
+
+**Proof of play (`LB_TRACE_REQUIRED`).** By default a run must be finished with a valid trace
+(`lib/game/run-trace.ts`) to be submitted. For a deploy transition only, add
+`LB_TRACE_REQUIRED=0` to `/etc/lullwood-leaderboard/env` and restart: a finish without a trace is
+then accepted again (a trace that is sent is still checked). Remove the line and restart to end
+the window. Refusals are logged with their reason: `journalctl -u lullwood-leaderboard | grep
+invalid_trace`. Forged telemetry wins are dropped and logged as `telemetry win dropped`.
 
 Backups: `/mnt/hdd/backups/lullwood-leaderboard/stats-YYYY-MM-DD.db`, nightly, kept 14 days. To
 restore, stop the service, copy a backup over `data/leaderboard.db`, then start it again.

@@ -9,17 +9,23 @@ test.use({ viewport: { width: 727, height: 393 } });
 
 test('qaGrabThrowable() shows #throwPrompt (mobile copy) and mounts the Throw button', async ({ page }) => {
   await boot(page, { qaHooks: true });
+  // LUL-6456: blackout (default since LUL-5953) starts its predators hunting, and qaGrabThrowable()
+  // teleports next to a seed-placed stone -- park the RAF loop before the entering tap so nothing
+  // simulates until qaAdvance (LUL-6080 pattern), then one settle tick to push state.
+  await qaHook(page, 'qaSetFixedStep', 0.02);
 
   const viewport = page.viewportSize();
   if (!viewport) throw new Error('mobile project must have a viewport size');
   await page.mouse.click(viewport.width / 2, viewport.height / 2);
   await page.waitForTimeout(1200); // gate fade settle
+  await qaHook(page, 'qaAdvance', 1);
 
   // Made to fail once on purpose: the Throw button only mounts while holding a stone.
   await expect(page.getByTestId('mobileControls').getByText('Throw')).toHaveCount(0);
 
   const grabbed = await qaHook(page, 'qaGrabThrowable');
   expect(grabbed, 'qaGrabThrowable returned null -- no untaken stone at this seed').not.toBeNull();
+  await qaHook(page, 'qaAdvance', 1);
 
   const prompt = page.locator('#throwPrompt');
   await expectRowVisible(page, 'throwPrompt');

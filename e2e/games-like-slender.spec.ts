@@ -37,7 +37,7 @@ test.describe('games like Slender page', () => {
     const crumbs = nodes.find((n) => n['@type'] === 'BreadcrumbList');
     expect(crumbs.itemListElement.map((i: { name: string }) => i.name)).toEqual(['Home', 'Games like Slender']);
 
-    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser' })).toHaveAttribute('href', '/');
+    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser', exact: true })).toHaveAttribute('href', '/');
     await expect(page.getByRole('link', { name: 'Lullwood survival guide' })).toHaveAttribute('href', '/how-to-survive');
     await expect(page.getByRole('link', { name: 'Read the Lullwood devlog' })).toHaveAttribute('href', '/devlog');
   });

@@ -7,6 +7,8 @@
 //
 // Threat-model references (B1..B9) are decisions/lul-3288-leaderboard-threat-model-accepted-2026-09-18.
 
+import { GAME_MAX_SPEED, TRACE_TIME_TOLERANCE_MS } from './run-trace.ts';
+
 // Letters only (founder 2026-10-13): the sky balloon spells the record-holder's
 // name in 3D letter balloons, which have no digits. Records saved earlier may
 // still contain digits; parseRecord() keeps reading them.
@@ -94,6 +96,144 @@ export function validateAnonId(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const lower = raw.toLowerCase();
   return UUID_PATTERN.test(lower) ? lower : null;
+}
+
+// ---------------------------------------------------------------------------
+// Server-timed run sessions (phase 1 of the "run times can be forged" fix,
+// docs/specs/lul-3264-leaderboard-security.md "R1"). The browser asks the
+// service for a run id when a Blackout run starts (POST /v1/runs/start), tells
+// it when the child is lifted (POST /v1/runs/finish -- the run clock stops
+// there, ~11 s before the win screen shows the form), and the submission must
+// carry that id. The service measures finish - start on its own clock and the
+// claimed time_ms must agree with it to within RUN_CLOCK_TOLERANCE_MS. The
+// stored time is still the client's time_ms, so the board equals the timer.
+
+/** 128-bit random id, lower-case hex. */
+export const RUN_ID_PATTERN = /^[0-9a-f]{32}$/;
+/** Largest allowed gap between the claimed time and the server-measured time. */
+export const RUN_CLOCK_TOLERANCE_MS = 1_500;
+/** A session can be finished or submitted only this long after it started (= the time ceiling). */
+export const RUN_SESSION_TTL_MS = PLAUSIBILITY_CEILING_MS;
+/** Run starts per IP hash per window. Blackout deaths can be quick, so this leaves room for restarts. */
+export const RUN_START_IP_LIMIT = 60;
+export const RUN_START_WINDOW_MS = 60 * 60 * 1000;
+export const DIFFICULTIES: ReadonlySet<string> = new Set(['lantern', 'night', 'blackout']);
+
+/**
+ * Why the service refused a run id. The service answers only this code (400 { error: code }).
+ * invalid_trace (phase 2, lib/game/run-trace.ts): the finish carried no
+ * trace or one that is not a plausible run, or the submitted time is not the
+ * time the trace ends at.
+ */
+export type RunRejectCode = 'invalid_run' | 'run_used' | 'run_expired' | 'run_unfinished' | 'too_fast' | 'clock_mismatch' | 'invalid_trace';
+export const RUN_REJECT_CODES: ReadonlySet<string> = new Set<RunRejectCode>(
+  ['invalid_run', 'run_used', 'run_expired', 'run_unfinished', 'too_fast', 'clock_mismatch', 'invalid_trace'],
+);
+
+export function validateRunId(raw: unknown): string | null {
+  return typeof raw === 'string' && RUN_ID_PATTERN.test(raw) ? raw : null;
+}
+
+export function validateDifficulty(raw: unknown): string | null {
+  return typeof raw === 'string' && DIFFICULTIES.has(raw) ? raw : null;
+}
+
+/** One run_sessions row as the service reads it. Times are server epoch ms. */
+export interface RunSession {
+  startedAt: number;
+  finishedAt: number | null;
+  usedAt: number | null;
+  difficulty: string;
+  anonId: string | null;
+  /** end_ms of the trace accepted at finish (lib/game/run-trace.ts), or null when the finish had none. */
+  traceEndMs: number | null;
+}
+
+// Shared by finish and submit. A session bound to an anon_id answers
+// invalid_run to any other anon_id, so it reveals nothing to a guesser.
+function checkRunCommon(s: RunSession | null, anonId: string | null, now: number): RunRejectCode | null {
+  if (!s) return 'invalid_run';
+  if (s.anonId !== null && s.anonId !== anonId) return 'invalid_run';
+  if (s.usedAt !== null) return 'run_used';
+  if (now - s.startedAt > RUN_SESSION_TTL_MS) return 'run_expired';
+  return null;
+}
+
+/** Can this session be marked finished now? (Finishing twice keeps the first time -- see db.ts.) */
+export function checkRunFinish(s: RunSession | null, anonId: string | null, now: number): RunRejectCode | null {
+  return checkRunCommon(s, anonId, now);
+}
+
+/**
+ * Can a submission claiming `timeMs` use this session now? Null means yes.
+ * `requireTrace` (the service's LB_TRACE_REQUIRED, default on) refuses a
+ * session that was finished without a trace; a session with a trace must
+ * claim the time that trace ends at, whatever the flag says.
+ */
+export function checkRunSubmit(
+  s: RunSession | null, claim: { timeMs: number; anonId: string | null }, now: number, opts: { requireTrace?: boolean } = {},
+): RunRejectCode | null {
+  const common = checkRunCommon(s, claim.anonId, now);
+  if (common) return common;
+  const session = s!;
+  if (session.difficulty !== 'blackout') return 'invalid_run';
+  if (session.finishedAt === null) return 'run_unfinished';
+  const serverMs = session.finishedAt - session.startedAt;
+  if (serverMs < PLAUSIBILITY_FLOOR_MS) return 'too_fast';
+  if (Math.abs(serverMs - claim.timeMs) > RUN_CLOCK_TOLERANCE_MS) return 'clock_mismatch';
+  if (session.traceEndMs === null) return opts.requireTrace ? 'invalid_trace' : null;
+  if (Math.abs(session.traceEndMs - claim.timeMs) > TRACE_TIME_TOLERANCE_MS) return 'invalid_trace';
+  return null;
+}
+
+/** Player-facing text for a refused run (app/api/leaderboard/route.ts). Never echoes anything else. */
+export function runRejectMessage(code: unknown): string {
+  if (code === 'run_used') return 'this run was already submitted';
+  if (code === 'run_expired') return 'this run is too old to submit';
+  if (code === 'run_unfinished' || code === 'too_fast' || code === 'clock_mismatch') return 'this run\'s time could not be verified';
+  if (code === 'invalid_trace') return 'this run\'s path could not be verified';
+  return 'this run could not be verified';
+}
+
+/**
+ * What the win screen shows instead of (or as) the submit form, in the order
+ * the checks apply. 'hidden' is the silent plausibility floor. 'paused' and
+ * 'untimed' are the run-session gates: server time keeps counting during a
+ * pause, so a paused run would fail the clock check anyway, and a run whose
+ * start or finish never reached the service has nothing to check against.
+ * 'unverified': the service answered the finish with a refusal (for example
+ * invalid_trace), so a submission would be refused too.
+ */
+export type SubmitGate = 'admin' | 'ineligible' | 'hidden' | 'paused' | 'unverified' | 'untimed' | 'form';
+export function leaderboardSubmitGate(run: {
+  adminMode: boolean; adminUsedThisRun: boolean; difficulty: string; timeMs: number; pausedThisRun: boolean; runId: string | null;
+  runRefused?: boolean;
+}): SubmitGate {
+  if (run.adminMode || run.adminUsedThisRun) return 'admin';
+  if (run.difficulty !== 'blackout') return 'ineligible';
+  if (run.timeMs < PLAUSIBILITY_FLOOR_MS) return 'hidden';
+  if (run.pausedThisRun) return 'paused';
+  if (run.runRefused) return 'unverified';
+  if (run.runId === null) return 'untimed';
+  return 'form';
+}
+
+// Telemetry wins (app/api/telemetry, POST /v1/events). The beacon is not
+// signed by the game, so a win event's time is whatever the sender wrote. A
+// win faster than the game allows is dropped before it reaches the stats
+// database: Blackout below PLAUSIBILITY_FLOOR_MS; any tier below the time to
+// walk to the nearest possible child (120 u, generateMap's normal spawn) at
+// the fastest possible speed, halved like the floor. Normal play never comes
+// near either value.
+export const WIN_FLOOR_ANY_TIER_MS = Math.round((120 / GAME_MAX_SPEED) * 1000 * PLAUSIBILITY_MARGIN); // ~4_630
+
+/** Null for any event that is not a win, or a win with a possible time; otherwise why the win is impossible. */
+export function implausibleWin(payload: Record<string, unknown>): 'bad_time' | 'below_floor' | null {
+  if (payload.event !== 'win') return null;
+  const t = payload.time_survived_ms;
+  if (typeof t !== 'number' || !Number.isFinite(t) || t < 0) return 'bad_time';
+  const floor = payload.difficulty === 'blackout' ? PLAUSIBILITY_FLOOR_MS : WIN_FLOOR_ANY_TIER_MS;
+  return t < floor ? 'below_floor' : null;
 }
 
 /** Pagination clamp for the winners table (B3): never 400s, always a safe integer. */
