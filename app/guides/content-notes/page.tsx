@@ -25,7 +25,8 @@ import { socialImage } from "@/lib/seo";
 //   approach notes + bearing pulse  pianoTimer :8847-8858 (interval 1.3 s -> 0.35 s
 //                                   within 46 units; glow skipped when the predator is
 //                                   ahead, :8857), pianoNote :4805, bearingPulseT
-//                                   :8894-8896, #bearingPulse GameCanvas.tsx :1042-1045
+//                                   :8894-8896 (no motionReduced() check), #bearingPulse
+//                                   GameCanvas.tsx :1042-1045
 //   child's cry                     childCry :3011, cryTimer :9132-9139
 //   settings                        components/SettingsPanel.tsx :278-303 (reduced
 //                                   motion, captions, Predator Audio), captionsOn
@@ -255,7 +256,8 @@ export default function ContentNotesPage() {
                 <strong>Red edge pulse as a predator closes in.</strong> At most
                 one pulse per piano note, shown only when the predator is to
                 your side or behind, so up to every 0.35 seconds, just under
-                three times a second, when one is very close.
+                three times a second, when one is very close. Reduced motion
+                does not change it.
               </li>
               <li>
                 <strong>Green edge flash when the brush rustles.</strong> Up to
@@ -290,8 +292,8 @@ export default function ContentNotesPage() {
               <li>
                 <strong>Reduced motion</strong> (Settings): covers head bob, the
                 pickup camera swing and dust, and the rustle flash, but not the
-                spot flash or the lift flash above. It also follows your
-                system&apos;s reduced-motion preference.
+                spot flash, the lift flash or the red closing-in pulse above.
+                It also follows your system&apos;s reduced-motion preference.
               </li>
             </ul>
 
