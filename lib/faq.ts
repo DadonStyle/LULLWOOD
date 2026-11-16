@@ -37,7 +37,7 @@ export const FAQ: FaqEntry[] = [
   {
     question: 'Is Lullwood scary?',
     answer:
-      'Lullwood is a horror game built on tension rather than jump scares. The fear comes from being hunted while unarmed, and from having to stay still while something searches for you nearby.',
+      'Lullwood is a horror game built on tension more than jump scares. The fear comes from being hunted while unarmed, and from having to stay still while something searches for you nearby. It does have sudden moments: a sharp stinger when a predator spots you, and a short death clip when one catches you. The content notes page lists each one and how to turn it down.',
   },
   {
     question: 'Can you fight the predators?',
