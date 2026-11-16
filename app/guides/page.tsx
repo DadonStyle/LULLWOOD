@@ -135,6 +135,13 @@ export default function GuidesHubPage() {
               </li>
               <li>
                 <strong>
+                  <Link href="/guides/controls">What are the controls in Lullwood?</Link>
+                </strong>{" "}
+                — every key on a keyboard, the one people miss (hold F), and
+                how to remap the eleven actions that can be remapped.
+              </li>
+              <li>
+                <strong>
                   <Link href="/guides/mobile">Can you play Lullwood on a phone?</Link>
                 </strong>{" "}
                 — yes, in landscape with no keyboard: every on-screen control,
