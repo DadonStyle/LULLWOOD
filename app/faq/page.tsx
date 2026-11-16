@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { FAQ, faqJsonLd } from "@/lib/faq";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { socialImage } from "@/lib/seo";
 
 // The one URL that carries the FAQPage JSON-LD. The home page renders the same
 // list as visible text only: the same FAQPage on two URLs is duplicate
@@ -11,8 +12,6 @@ const DESCRIPTION =
   "Answers to common questions about Lullwood, the free first-person horror game you play in your browser: price, phones, controls, predators and more.";
 const MODIFIED = "2026-10-27";
 const PAGE_URL = `${SITE_URL}/faq`;
-// Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
-const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
 
 export const metadata: Metadata = {
   title: { absolute: TITLE },
@@ -27,13 +26,13 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     locale: "en_US",
     type: "website",
-    images: [{ url: "/opengraph-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
   twitter: {
     card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: "/twitter-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
 };
 

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { socialImage } from "@/lib/seo";
 
 // Guides hub (LUL-6092). This is an index, not an article -- no claim here
 // goes beyond what /how-to-survive or /guides/wolves already state, and both
@@ -12,8 +13,6 @@ const DESCRIPTION =
   "Guides for Lullwood, the free browser horror game with no download: how to survive wolves, read scent and wind, and reach the lost child alive.";
 const MODIFIED = "2026-10-29";
 const PAGE_URL = `${SITE_URL}/guides`;
-// Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
-const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
 
 export const metadata: Metadata = {
   // `absolute`: the layout template would append " — Lullwood" to a title that
@@ -29,13 +28,13 @@ export const metadata: Metadata = {
     locale: "en_US",
     // Index page, not an article -- "website" here, no publishedTime.
     type: "website",
-    images: [{ url: "/opengraph-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
   twitter: {
     card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: "/twitter-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
 };
 

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { socialImage } from "@/lib/seo";
 
 // Player guide (SEO): do fireflies help? Every number below was read from the
 // shipped code on origin/release/next (56d50eb) the day this was written:
@@ -18,8 +19,6 @@ const DESCRIPTION =
 const PUBLISHED = "2026-10-28";
 const MODIFIED = "2026-10-28";
 const PAGE_URL = `${SITE_URL}/guides/fireflies`;
-// Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
-const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
 
 export const metadata: Metadata = {
   // `absolute`: the layout template would append " — Lullwood" to a title that
@@ -34,7 +33,7 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     locale: "en_US",
     type: "article",
-    images: [{ url: "/opengraph-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
     publishedTime: PUBLISHED,
     modifiedTime: MODIFIED,
   },
@@ -42,7 +41,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: "/twitter-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
 };
 

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { socialImage } from "@/lib/seo";
 
 // Player guide (SEO): what Lantern, Night and Blackout change. Every number
 // is read from origin/release/next at 6b536bb, the day this was written, and
@@ -20,8 +21,6 @@ const PUBLISHED = "2026-10-29";
 const MODIFIED = "2026-10-29";
 const PATH = "/guides/difficulty-tiers";
 const PAGE_URL = `${SITE_URL}${PATH}`;
-// Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
-const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
 
 // Not the questions on /faq (lib/faq.ts): the same Q&A on two URLs is
 // duplicate structured data.
@@ -77,7 +76,7 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     locale: "en_US",
     type: "article",
-    images: [{ url: "/opengraph-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
     publishedTime: PUBLISHED,
     modifiedTime: MODIFIED,
   },
@@ -85,7 +84,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: "/twitter-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
 };
 

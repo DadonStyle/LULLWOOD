@@ -12,6 +12,25 @@ export const SOCIAL_IMAGE = {
   alt: 'Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game',
 };
 
+// Per-page card: app/og/route.tsx draws `title` over the root forest frame, so
+// each page shares as its own picture instead of one site-wide image.
+export function socialImage(title: string) {
+  return {
+    url: `/og?title=${encodeURIComponent(title)}`,
+    width: 1200,
+    height: 630,
+    alt: `${title} — Lullwood, first-person browser horror game`,
+  };
+}
+
+export function socialOpenGraph(title: string) {
+  return { siteName: SITE_NAME, locale: 'en_US', images: [socialImage(title)] };
+}
+
+export function socialTwitter(title: string) {
+  return { card: 'summary_large_image' as const, images: [socialImage(title)] };
+}
+
 export const SOCIAL_OPEN_GRAPH = { siteName: SITE_NAME, locale: 'en_US', images: [SOCIAL_IMAGE] };
 
 export const SOCIAL_TWITTER = { card: 'summary_large_image' as const, images: [SOCIAL_IMAGE] };
