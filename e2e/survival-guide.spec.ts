@@ -13,10 +13,10 @@ test.describe('survival guide page', () => {
     const canonical = await page.locator('link[rel="canonical"]').getAttribute('href');
     expect(new URL(canonical as string).pathname).toBe('/how-to-survive');
 
-    // The root file-convention social images carry over to this route.
-    expect(await page.locator('meta[property="og:image"]').getAttribute('content')).toContain('opengraph-image.png');
+    // LUL-6473: per-page card drawn by app/og/route.tsx from this page's title.
+    expect(await page.locator('meta[property="og:image"]').getAttribute('content')).toContain('/og?title=How%20to%20Survive%20Lullwood');
     expect(await page.locator('meta[name="twitter:card"]').getAttribute('content')).toBe('summary_large_image');
-    expect(await page.locator('meta[name="twitter:image"]').getAttribute('content')).toContain('twitter-image.png');
+    expect(await page.locator('meta[name="twitter:image"]').getAttribute('content')).toContain('/og?title=How%20to%20Survive%20Lullwood');
 
     // The layout emits its own two blocks; find this page's by content.
     const blocks = await page.locator('script[type="application/ld+json"]').allTextContents();

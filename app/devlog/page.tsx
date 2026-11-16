@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import JsonLd from "@/components/JsonLd";
 import { getAllPosts } from "@/lib/devlog";
-import { DEVLOG_FEED_TYPES, SOCIAL_OPEN_GRAPH, SOCIAL_TWITTER, breadcrumbJsonLd } from "@/lib/seo";
+import { DEVLOG_FEED_TYPES, socialOpenGraph, socialTwitter, breadcrumbJsonLd } from "@/lib/seo";
 
 export const metadata: Metadata = {
   title: "Devlog",
@@ -10,7 +10,7 @@ export const metadata: Metadata = {
     "Development notes from the Lullwood team — design decisions, mechanics, and what we learned building a browser horror game.",
   alternates: { canonical: "/devlog", types: DEVLOG_FEED_TYPES },
   openGraph: {
-    ...SOCIAL_OPEN_GRAPH,
+    ...socialOpenGraph("Devlog"),
     title: "Devlog — Lullwood",
     description:
       "Development notes from the Lullwood team — design decisions, mechanics, and what we learned building a browser horror game.",
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
     type: "website",
   },
   twitter: {
-    ...SOCIAL_TWITTER,
+    ...socialTwitter("Devlog"),
     title: "Devlog — Lullwood",
     description:
       "Development notes from the Lullwood team — design decisions, mechanics, and what we learned building a browser horror game.",

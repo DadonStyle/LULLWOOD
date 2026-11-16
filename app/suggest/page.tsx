@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import SuggestionBox from '@/components/SuggestionBox';
 import JsonLd from '@/components/JsonLd';
-import { SOCIAL_OPEN_GRAPH, SOCIAL_TWITTER, breadcrumbJsonLd } from '@/lib/seo';
+import { socialOpenGraph, socialTwitter, breadcrumbJsonLd } from '@/lib/seo';
 
 // LUL-1918: standalone route, not a HUD overlay. This is a deliberate choice
 // against embedding the box in GameMenu.tsx -- a separate page can never
@@ -16,14 +16,14 @@ export const metadata: Metadata = {
   // this page is a duplicate of the homepage.
   alternates: { canonical: '/suggest' },
   openGraph: {
-    ...SOCIAL_OPEN_GRAPH,
+    ...socialOpenGraph('Suggest something'),
     title: 'Suggest something — Lullwood',
     description: 'Send the Lullwood team an idea. The founder reads every suggestion by hand.',
     url: '/suggest',
     type: 'website',
   },
   twitter: {
-    ...SOCIAL_TWITTER,
+    ...socialTwitter('Suggest something'),
     title: 'Suggest something — Lullwood',
     description: 'Send the Lullwood team an idea. The founder reads every suggestion by hand.',
   },
