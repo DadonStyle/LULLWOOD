@@ -7,8 +7,8 @@ import {
   DEVLOG_FEED_TYPES,
   ORG_REF,
   SOCIAL_IMAGE,
-  SOCIAL_OPEN_GRAPH,
-  SOCIAL_TWITTER,
+  socialOpenGraph,
+  socialTwitter,
   breadcrumbJsonLd,
 } from "@/lib/seo";
 import { SITE_URL } from "@/lib/site";
@@ -34,7 +34,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     description: post.description,
     alternates: { canonical: `/devlog/${slug}`, types: DEVLOG_FEED_TYPES },
     openGraph: {
-      ...SOCIAL_OPEN_GRAPH,
+      ...socialOpenGraph(post.title),
       title: `${post.title} — Lullwood Devlog`,
       description: post.description,
       url: `/devlog/${slug}`,
@@ -43,7 +43,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       modifiedTime: post.updated ?? post.date,
     },
     twitter: {
-      ...SOCIAL_TWITTER,
+      ...socialTwitter(post.title),
       title: `${post.title} — Lullwood Devlog`,
       description: post.description,
     },
