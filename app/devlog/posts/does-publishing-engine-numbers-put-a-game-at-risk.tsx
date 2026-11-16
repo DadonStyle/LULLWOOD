@@ -7,7 +7,7 @@ export default function DoesPublishingEngineNumbersPutAGameAtRisk() {
         No. Publishing an exact engine number does not give a game away,
         because a number is one factor inside a rule and the rule is not the
         game. The one we would defend is 0.65, the multiplier that cuts a
-        Lullwood predator&rsquo;s sight by 35% inside a fog tide.
+        Lullwood predator&rsquo;s sight by up to 35% inside a fog tide.
       </p>
       <p>
         We build <Link href="/">Lullwood</Link>, a free browser horror game, in
