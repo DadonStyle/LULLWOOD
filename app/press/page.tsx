@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { socialImage } from "@/lib/seo";
 
 // Press kit (SEO + GEO, LUL-6056). Every fact below is checked against the
 // shipped game and the repo, not BRAND.md's wording alone: BRAND.md's "for
@@ -17,8 +18,6 @@ const DESCRIPTION =
 const PUBLISHED = "2026-10-22";
 const MODIFIED = "2026-10-22";
 const PAGE_URL = `${SITE_URL}/press`;
-const SOCIAL_IMAGE_ALT =
-  "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
 
 export const metadata: Metadata = {
   title: { absolute: TITLE },
@@ -31,7 +30,7 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     locale: "en_US",
     type: "article",
-    images: [{ url: "/opengraph-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
     publishedTime: PUBLISHED,
     modifiedTime: MODIFIED,
   },
@@ -39,7 +38,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: "/twitter-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
 };
 
