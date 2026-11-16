@@ -111,6 +111,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.6,
     },
     {
+      url: `${SITE_URL}/guides/content-notes`,
+      lastModified: new Date("2026-11-16T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
       url: `${SITE_URL}/guides/controls`,
       lastModified: new Date("2026-11-16T00:00:00.000Z"),
       changeFrequency: "monthly",
