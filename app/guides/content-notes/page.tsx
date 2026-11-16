@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { socialImage } from "@/lib/seo";
 
 // Content notes (S-028, LUL-6469). Every claim below was read off the shipped
 // game on origin/release/next at 0206a79 (2026-11-16); nothing here is stated
@@ -12,18 +13,25 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 //                                   deathAudio :4752-4763 (chomp at +1.35 s),
 //                                   <video id="deathVideo"> GameCanvas.tsx :1088
 //   first death unskippable         HAS_DIED_KEY :3887-3895, skipCutsceneIfAllowed :3995
+//   win edge vignette               winPendingActive :8740, :8885-8887 (0.35 peak over 1.5 s,
+//                                   0.2 fixed under reduced motion), #winPendingCue
 //   win flash (white, full screen)  FLASH_PEAK_OPACITY 0.65 :2039, fireBoom :2124-2132,
 //                                   hold 1.5 s + 0.3 s fade :2159, #flash background
 //                                   #fff GameCanvas.tsx :1055; no motionReduced() check
-//   rustle sting + green edge       rustleSting :4783, rollCoverRustle :4473-4481,
+//   rustle sting + green edge       rustleSting :4783, rollCoverRustle :4473-4481 (fires
+//                                   when hide time clears COVER_RUSTLE_THRESHOLD_S, i.e.
+//                                   staying hidden too long, not moving),
 //                                   rustleFlash :8883-8884 (reduced motion -> 0.15)
 //   approach notes + bearing pulse  pianoTimer :8847-8858 (interval 1.3 s -> 0.35 s
-//                                   within 46 units), pianoNote :4805, bearingPulseT
+//                                   within 46 units; glow skipped when the predator is
+//                                   ahead, :8857), pianoNote :4805, bearingPulseT
 //                                   :8894-8896, #bearingPulse GameCanvas.tsx :1042-1045
 //   child's cry                     childCry :3011, cryTimer :9132-9139
 //   settings                        components/SettingsPanel.tsx :278-303 (reduced
 //                                   motion, captions, Predator Audio), captionsOn
-//                                   default false Hud.tsx :387, Sound button Hud.tsx :981
+//                                   default false Hud.tsx :387; Sound row in the game menu
+//                                   components/GameMenu.tsx :167-175 (the HUD Sound button,
+//                                   Hud.tsx :981, sits in #panel, hidden unless Admin mode)
 // The death clip (public/death.mp4, 3.54 s, 640x360) was decoded in Chrome and
 // 15 evenly spaced frames inspected on 2026-11-16: eyes in black 0-0.8 s, a toothed
 // mouth 1.0-1.3 s, red slashes and specks 1.5-3.5 s, fade to black. No body, no wound.
@@ -31,12 +39,10 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 // an age rating, or any photosensitivity result -- none was established.
 const TITLE = "Does Lullwood Have Jump Scares or Gore? Content Notes";
 const DESCRIPTION =
-  "Does Lullwood have jump scares or gore? It has sudden moments: a sharp stinger, a red edge flash and a 3.5-second death clip. What each is, and how to turn it down.";
+  "Does Lullwood have jump scares or gore? It has sudden moments: a sharp stinger, a red edge flash and a 3.5-second death clip. What each is, and how to mute it.";
 const PUBLISHED = "2026-11-16";
 const MODIFIED = "2026-11-16";
 const PAGE_URL = `${SITE_URL}/guides/content-notes`;
-// Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
-const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
 
 const QUICK = [
   {
@@ -47,7 +53,7 @@ const QUICK = [
   {
     question: "Can I turn the scary sounds off in Lullwood?",
     answer:
-      "Yes. The Sound button in the game silences the game's sound. The Predator Audio slider in Settings lowers predator calls and the death roar, but not the sharp stinger when a predator spots you or the bite sound at the end of the death clip.",
+      "Yes. The Sound row in the game menu silences the game's sound. The Predator Audio slider in Settings lowers predator calls and the death roar, but not the sharp stinger when a predator spots you or the bite sound at the end of the death clip.",
   },
   {
     question: "Can I skip Lullwood's death clip?",
@@ -69,7 +75,7 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     locale: "en_US",
     type: "article",
-    images: [{ url: "/opengraph-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
     publishedTime: PUBLISHED,
     modifiedTime: MODIFIED,
   },
@@ -77,7 +83,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: "/twitter-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
 };
 
@@ -186,14 +192,14 @@ export default function ContentNotesPage() {
                 note plays whenever a predator that is chasing or searching for
                 you is within 46 units, rising in pitch and getting louder as it nears. The notes
                 come about every 1.3 seconds at the edge of that range and as
-                fast as every 0.35 seconds when one is very close, each with a
-                red glow along the screen edge on the side it is approaching
-                from.
+                fast as every 0.35 seconds when one is very close, and when
+                it is to your side or behind, each note comes with a red glow
+                along the screen edge on the side it is approaching from.
               </li>
               <li>
-                <strong>The brush rustles.</strong> When you move in cover and
-                the leaves give you away, a quick three-burst rustle sounds and
-                a green glow shows around the screen edge.
+                <strong>The brush rustles.</strong> When you stay hidden in
+                cover too long and the brush stirs, a quick three-burst rustle
+                sounds and a green glow shows around the screen edge.
               </li>
               <li>
                 <strong>The child&apos;s cry.</strong> It is not a scream: it is
@@ -246,24 +252,30 @@ export default function ContentNotesPage() {
                 quickly it can repeat when several predators lock on in turn.
               </li>
               <li>
-                <strong>Red edge pulse as a predator closes in.</strong> One pulse
-                per piano note, so as often as every 0.35 seconds, just under
-                three times a second, when a predator is very close.
+                <strong>Red edge pulse as a predator closes in.</strong> At most
+                one pulse per piano note, shown only when the predator is to
+                your side or behind, so up to every 0.35 seconds, just under
+                three times a second, when one is very close.
               </li>
               <li>
                 <strong>Green edge flash when the brush rustles.</strong> Up to
                 40% opacity; with reduced motion on it becomes a fixed 15%.
               </li>
               <li>
+                <strong>Warm edge glow after the lift flash.</strong> A
+                warm vignette builds around the screen edge for about 2
+                seconds, up to 35% opacity, or a fixed 20% with reduced motion.
+              </li>
+              <li>
                 <strong>The death clip</strong> cuts from near-black to a bright
-                mouth in a quarter of a second or less, then to red.
+                mouth in about a third of a second, then to red.
               </li>
             </ul>
 
             <h2>Turning it down</h2>
             <ul>
               <li>
-                <strong>Sound button</strong> (in the game and in its menu):
+                <strong>Sound row in the game menu</strong>:
                 silences the game&apos;s sound, including the stinger and the bite.
               </li>
               <li>
@@ -308,7 +320,7 @@ export default function ContentNotesPage() {
               We have not tested for photosensitivity triggers, we have no
               official age rating to give, and we have not audited the game for
               anything beyond the sounds, lights and death clip described here.
-              If you find something this page missed, tell us through the
+              If you find something this page missed, tell us through the{" "}
               <Link href="/suggest">Lullwood suggestion box</Link> and we will
               correct the page.
             </p>
