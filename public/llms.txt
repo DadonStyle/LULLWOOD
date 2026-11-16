@@ -26,6 +26,7 @@ Play it at https://www.lullwoodgame.com. It is not related to Gloomwood (a separ
 - [Is Lullwood too hard?](https://www.lullwoodgame.com/guides/difficulty-tiers): Lantern, Night and Blackout compared: Blackout is the default, its predators see 30% less far than Night's but they start hunting, the brush gives you away sooner and the child can spawn farther away; how to switch tier
 - [Can you distract wolves in Lullwood?](https://www.lullwoodgame.com/guides/throwing-stones): yes, briefly: E picks up a stone, a left click throws it 18 units ahead, and predators within 24 units of the landing spot walk over to it for a few seconds; Pocket Stones adds two
 - [How do you win Lullwood?](https://www.lullwoodgame.com/guides/how-to-win): the win condition: reach the child and press E to lift her; there is no trip home
+- [What are the controls in Lullwood?](https://www.lullwoodgame.com/guides/controls): WASD to move, mouse to look, Shift to run, H to hide, F to hold the mist veil, E to lift the child; the eleven actions that can be remapped in Settings and the keys that cannot
 - [Can you play Lullwood on a phone?](https://www.lullwoodgame.com/guides/mobile): yes, in landscape with no keyboard; every on-screen control, the tap rows for climb, throw and the emergency veil burn, and what short phone screens hide
 - [Lullwood FAQ](https://www.lullwoodgame.com/faq): answers to common questions about price, phones, controls and the predators
 - [Games like Slender](https://www.lullwoodgame.com/games-like-slender): Slender-style horror games and how Lullwood compares
