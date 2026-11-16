@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { socialImage } from "@/lib/seo";
 
 // Controls guide (SEO/GEO, LUL-6468, idea S-023). Every key below is read from
 // the shipped game on origin/release/next, never from memory or a doc:
@@ -21,8 +22,6 @@ const PUBLISHED = "2026-11-16";
 const MODIFIED = "2026-11-16";
 const PATH = "/guides/controls";
 const PAGE_URL = `${SITE_URL}${PATH}`;
-// Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
-const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
 
 // Rendered below and emitted as FAQPage JSON-LD from this one list, so the
 // markup cannot drift from the visible text. None of these questions is in
@@ -70,7 +69,7 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     locale: "en_US",
     type: "article",
-    images: [{ url: "/opengraph-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
     publishedTime: PUBLISHED,
     modifiedTime: MODIFIED,
   },
@@ -78,7 +77,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: "/twitter-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
 };
 
