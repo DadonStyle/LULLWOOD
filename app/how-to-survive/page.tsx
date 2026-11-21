@@ -48,7 +48,7 @@ export const metadata: Metadata = {
 
 const HIDE_QUESTION = "How do you hide in Lullwood?";
 const HIDE_ANSWER =
-  "Walk up to a bramble bush and press H, or tap Hide on a phone. Hidden, you are seen only at touching distance, but the bush is noisy: entering alerts roaming predators within 20 units, and past 12 seconds it rustles every 5 (8 and 4 on Blackout).";
+  "Walk into a bramble bush and press H, or tap Hide on a phone. Hidden, you are seen only at touching distance, but the bush is noisy: entering alerts roaming predators within 20 units, and past 12 seconds it rustles every 5 (8 and 4 on Blackout).";
 
 const BEAR_FAQ = [
   {
@@ -189,8 +189,7 @@ export default function HowToSurvivePage() {
               </li>
               <li>
                 <strong>Shuffle (R).</strong> Shifts you about a unit inside the same
-                bush and resets that clock, with a two-second cooldown. It is silent
-                into the wind and noisy downwind. Face your direction and press R
+                bush and resets that clock, with a two-second cooldown. Face your direction and press R
                 without holding a movement key, or you step out.
               </li>
             </ul>
@@ -346,7 +345,8 @@ export default function HowToSurvivePage() {
             <p>{HIDE_ANSWER}</p>
             <p>
               So hiding is a timer, but a timer on noise, not on sight. The bush
-              never stops hiding you from eyes; what runs out is quiet. The
+              hides you from eyes until something is within touching distance;
+              what runs out is quiet. The
               on-screen Hidden counter counts up from the moment you enter, and the
               first rustle lands one interval after the threshold: 17 seconds in on
               Night, 12 on Blackout (the default) and 22 on Lantern. A rustle only
