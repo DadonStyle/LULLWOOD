@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'does-publishing-engine-numbers-put-a-game-at-risk',
+    title: "Does publishing your game's engine numbers put it at risk? Lullwood publishes 0.65",
+    date: '2026-11-16',
+    description:
+      "No. Lullwood publishes its engine numbers, and 0.65, the fog-tide cut to predator sight, shows why a number is a dial, not the game. Read from the source.",
+  },
+  {
     slug: 'a-rules-popup-that-cannot-lie-about-its-numbers',
     title: 'A rules popup that cannot lie about its numbers: how Lullwood builds "Be the rescuer"',
     date: '2026-11-12',

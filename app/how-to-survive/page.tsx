@@ -207,6 +207,10 @@ export default function HowToSurvivePage() {
             </figure>
 
             <h2>The mist veil and other tools</h2>
+            <p>
+              Every key below is listed with its default and how to remap it in{" "}
+              <Link href="/guides/controls">what are the controls in Lullwood</Link>.
+            </p>
             <ul>
               <li>
                 <strong>Mist veil (hold F).</strong> Mist rolls in over 1.6 seconds

@@ -83,7 +83,8 @@ export default function FaqPage() {
             <p>
               For the long versions, read{" "}
               <Link href="/guides/how-to-win">how you win Lullwood</Link>,{" "}
-              <Link href="/how-to-survive">surviving the forest in Lullwood</Link>,
+              <Link href="/how-to-survive">surviving the forest in Lullwood</Link>,{" "}
+              <Link href="/guides/content-notes">whether Lullwood has jump scares or gore</Link>,{" "}
               or <Link href="/games-like-slender">how Lullwood compares to games like Slender</Link>.
             </p>
           </div>
