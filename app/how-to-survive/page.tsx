@@ -15,7 +15,7 @@ const TITLE = "How to Survive Lullwood: Hiding, Scent and Predator Guide";
 const DESCRIPTION =
   "How to survive Lullwood: how wolves, bears and lions track you by sight and scent, when to hide in bramble, how the mist veil works, and how to win.";
 const PUBLISHED = "2026-10-18";
-const MODIFIED = "2026-10-27";
+const MODIFIED = "2026-11-21";
 const PAGE_URL = `${SITE_URL}/how-to-survive`;
 
 export const metadata: Metadata = {
@@ -45,6 +45,10 @@ export const metadata: Metadata = {
     images: [socialImage(TITLE)],
   },
 };
+
+const HIDE_QUESTION = "How do you hide in Lullwood?";
+const HIDE_ANSWER =
+  "Walk up to a bramble bush and press H, or tap Hide on a phone. Hidden, you are seen only at touching distance, but the bush is noisy: entering alerts roaming predators within 20 units, and past 12 seconds it rustles every 5 (8 and 4 on Blackout).";
 
 const BEAR_FAQ = [
   {
@@ -88,8 +92,8 @@ const jsonLd = {
     },
     {
       "@type": "FAQPage",
-      "@id": `${PAGE_URL}#bear-faq`,
-      mainEntity: BEAR_FAQ.map(({ question, answer }) => ({
+      "@id": `${PAGE_URL}#faq`,
+      mainEntity: [{ question: HIDE_QUESTION, answer: HIDE_ANSWER }, ...BEAR_FAQ].map(({ question, answer }) => ({
         "@type": "Question",
         name: question,
         acceptedAnswer: { "@type": "Answer", text: answer },
@@ -120,7 +124,7 @@ export default function HowToSurvivePage() {
         <article>
           <header>
             <h1>How to survive Lullwood</h1>
-            <time dateTime={MODIFIED}>Updated October 27, 2026</time>
+            <time dateTime={MODIFIED}>Updated November 21, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
@@ -294,7 +298,7 @@ export default function HowToSurvivePage() {
               10 seconds. Ducking into a bush mid-charge won&apos;t save you.
             </p>
 
-            <h2>How do you survive a bear in Lullwood?</h2>
+            <h2 id="how-do-you-survive-a-bear-in-lullwood">How do you survive a bear in Lullwood?</h2>
             <p>
               Lullwood&apos;s bear never charges or flanks, so surviving it means
               staying off its trail, not out of its sight. It is the slowest
@@ -337,6 +341,35 @@ export default function HowToSurvivePage() {
               The wind and scent rules behind this are in{" "}
               <Link href="/devlog/how-scent-and-wind-work">how scent and wind work in Lullwood</Link>.
             </p>
+
+            <h2 id="how-do-you-hide-in-lullwood">{HIDE_QUESTION}</h2>
+            <p>{HIDE_ANSWER}</p>
+            <p>
+              So hiding is a timer, but a timer on noise, not on sight. The bush
+              never stops hiding you from eyes; what runs out is quiet. The
+              on-screen Hidden counter counts up from the moment you enter, and the
+              first rustle lands one interval after the threshold: 17 seconds in on
+              Night, 12 on Blackout (the default) and 22 on Lantern. A rustle only
+              draws predators that are roaming within 20 units. One already chasing
+              you is not affected by it.
+            </p>
+            <ul>
+              <li>
+                <strong>What breaks cover.</strong> Any movement: walking, the phone
+                stick, or a jump. Press H again to step out.
+              </li>
+              <li>
+                <strong>What restarts the clock.</strong> R (Shuffle on a phone)
+                moves you about a unit inside the same bush and resets the counter
+                to zero, with a two-second cooldown. Don&apos;t hold a direction key
+                when you press it, or you step out instead.
+              </li>
+              <li>
+                <strong>What hiding does not fix.</strong> A predator that already
+                holds your scent keeps coming. The lock break is in{" "}
+                <a href="#how-do-you-survive-a-bear-in-lullwood">how to survive a bear in Lullwood</a>.
+              </li>
+            </ul>
 
             <h2>Difficulty tips</h2>
             <ul>

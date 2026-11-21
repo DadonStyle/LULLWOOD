@@ -191,7 +191,8 @@ export default function ControlsPage() {
               <li>
                 <strong>H</strong> — hide. Only bramble bushes count, so pressing
                 H behind a rock or log does nothing. Press it again to step out.
-                Moving also breaks cover.
+                Moving also breaks cover. How long a hiding spot holds is in{" "}
+                <Link href="/how-to-survive#how-do-you-hide-in-lullwood">how do you hide in Lullwood</Link>.
               </li>
               <li>
                 <strong>R</strong> — shuffle to another spot inside the same
