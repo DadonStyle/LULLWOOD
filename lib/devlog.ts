@@ -18,11 +18,74 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'does-publishing-engine-numbers-put-a-game-at-risk',
+    title: "Does publishing your game's engine numbers put it at risk? Lullwood publishes 0.65",
+    date: '2026-11-16',
+    description:
+      "No. Lullwood publishes its engine numbers, and 0.65, the fog-tide cut to predator sight, shows why a number is a dial, not the game. Read from the source.",
+  },
+  {
+    slug: 'a-rules-popup-that-cannot-lie-about-its-numbers',
+    title: 'A rules popup that cannot lie about its numbers: how Lullwood builds "Be the rescuer"',
+    date: '2026-11-12',
+    description:
+      "Lullwood's \"Be the rescuer\" popup reads its numbers from the constants the server enforces. What that fixes, what a test pins, and the three hand-typed claims it misses.",
+  },
+  {
+    slug: 'why-an-ai-built-browser-game-is-threejs',
+    title: 'Why Lullwood, an AI-built browser game, is built in three.js',
+    date: '2026-11-12',
+    description:
+      'Lullwood is three.js because its agents work on text. What git counts as binary in the repo (47 of 793 files, one model), and one real diff. No engine comparison.',
+  },
+  {
+    slug: 'how-many-trees-can-threejs-render',
+    title: 'How many trees can three.js render? 5,200 in Lullwood, with chunked InstancedMesh',
+    date: '2026-11-09',
+    description:
+      'Lullwood draws 5,200 trees with 64 chunked InstancedMesh trios, frustum culling and a 5x5 streaming ring. Real draw-call and triangle counts, from the source.',
+  },
+  {
+    slug: 'can-the-wolf-see-you',
+    title: "Can the wolf see you? Line of sight in Lullwood without a raycaster",
+    date: '2026-11-02',
+    description:
+      'Can a wolf see you in Lullwood? A distance check, then a walk along the line through a spatial hash of cover boxes. No three.js Raycaster. Read from the source.',
+  },
+  {
+    slug: 'procedural-game-audio-web-audio-api',
+    title: 'Horror audio with zero audio files: Web Audio in a three.js game',
+    date: '2026-11-02',
+    description:
+      "Lullwood ships no audio files. Wind, rain, a fog-tide drone and the child's cry are Web Audio noise, oscillators and gain targets. What we searched, and the code.",
+  },
+  {
+    slug: 'a-night-forest-with-one-model-file',
+    title: 'A night forest with one model file: what Lullwood ships instead of assets',
+    date: '2026-11-09',
+    description:
+      'Lullwood, a free three.js browser horror game, ships one .glb and no audio files. A cold first load measured in a browser: 676 KB, 153 KB of it that one model.',
+  },
+  {
+    slug: 'ai-disclosure-game',
+    title: 'Is Lullwood made by AI? AI disclosure in a game',
+    date: '2026-10-30',
+    description:
+      'Is Lullwood made by AI? Yes: Claude agents and one founder. What a game jam rule, Steam, itch.io and our own page each ask a game to disclose.',
+  },
+  {
+    slug: 'the-fog-is-the-wolfs-eyesight',
+    title: "The fog is the wolf's eyesight: Lullwood's fog tide",
+    date: '2026-10-28',
+    description:
+      'Every 90 seconds a fog tide in Lullwood cuts predator sight by up to 35% inside three fixed patches. The clock, the telegraph and the cost, from the source.',
+  },
+  {
     slug: 'indexed-but-zero-impressions',
     title: 'Indexed but zero impressions: ten Lullwood pages, one backlink',
     date: '2026-10-28',
     description:
-      'Lullwood had 10 pages indexed and no Search Console impressions for its name. The cause was one external backlink, not crawling, speed or schema.',
+      'Lullwood had 10 pages indexed and 14 impressions reported in Search Console, but no queries tied to those impressions. The cause was one external backlink, not crawling, speed or schema.',
   },
   {
     slug: 'who-makes-lullwood',
@@ -51,9 +114,9 @@ const POSTS: PostMeta[] = [
     date: '2026-09-05',
     // LUL-6091: the carry-home mechanic this post announced is gone
     // (LUL-2281) -- the excerpt has to read as history, not a current rule.
-    updated: '2026-10-26',
+    updated: '2026-10-29',
     description:
-      'The September 2026 "carry them home" win condition and the return leg cut two weeks later. Lifting the child is the win now; there is no trip home.',
+      'The "carry them home" win condition merged on August 15, 2026 and cut on September 9, 2026. Lifting the child is the win now; there is no trip home.',
   },
   {
     slug: 'eleven-agents-one-release-train',

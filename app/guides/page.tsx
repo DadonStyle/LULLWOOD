@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { socialImage } from "@/lib/seo";
 
 // Guides hub (LUL-6092). This is an index, not an article -- no claim here
 // goes beyond what /how-to-survive or /guides/wolves already state, and both
@@ -9,10 +10,8 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 const TITLE = "Lullwood Guides: How to Survive the Night Forest";
 const DESCRIPTION =
   "Guides for Lullwood, the free browser horror game with no download: how to survive wolves, read scent and wind, and reach the lost child alive.";
-const MODIFIED = "2026-11-02";
+const MODIFIED = "2026-11-24";
 const PAGE_URL = `${SITE_URL}/guides`;
-// Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
-const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
 
 export const metadata: Metadata = {
   // `absolute`: the layout template would append " — Lullwood" to a title that
@@ -28,13 +27,13 @@ export const metadata: Metadata = {
     locale: "en_US",
     // Index page, not an article -- "website" here, no publishedTime.
     type: "website",
-    images: [{ url: "/opengraph-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
   twitter: {
     card: "summary_large_image",
     title: TITLE,
     description: DESCRIPTION,
-    images: [{ url: "/twitter-image.png", width: 1200, height: 630, alt: SOCIAL_IMAGE_ALT }],
+    images: [socialImage(TITLE)],
   },
 };
 
@@ -64,7 +63,7 @@ export default function GuidesHubPage() {
         <article>
           <header>
             <h1>Lullwood guides</h1>
-            <time dateTime={MODIFIED}>Updated November 2, 2026</time>
+            <time dateTime={MODIFIED}>Updated November 24, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
@@ -111,10 +110,56 @@ export default function GuidesHubPage() {
               </li>
               <li>
                 <strong>
+                  <Link href="/guides/fireflies">Do fireflies help in Lullwood?</Link>
+                </strong>{" "}
+                — no: standing in a firefly cluster&apos;s glow raises how far
+                predators can see you by up to 30%. When they appear and what
+                rain does.
+              </li>
+              <li>
+                <strong>
+                  <Link href="/guides/difficulty-tiers">Is Lullwood too hard?</Link>
+                </strong>{" "}
+                — Lantern, Night and Blackout: what each tier changes, why
+                Blackout is harder even though its predators see less far, and
+                how to switch.
+              </li>
+              <li>
+                <strong>
+                  <Link href="/guides/throwing-stones">Can you distract wolves in Lullwood?</Link>
+                </strong>{" "}
+                — yes, briefly: throw a stone with a left click and predators
+                within 24 units of where it lands usually walk over to it.
+                What it fixes and what it does not.
+              </li>
+              <li>
+                <strong>
                   <Link href="/guides/how-to-win">How you win Lullwood</Link>
                 </strong>{" "}
                 — the win condition: reach the child and press E. There is no
                 trip home afterwards.
+              </li>
+              <li>
+                <strong>
+                  <Link href="/guides/content-notes">Does Lullwood have jump scares or gore?</Link>
+                </strong>{" "}
+                — content notes: the sudden sounds and screen flashes, what
+                the death clip shows, what we have not tested, and how to turn
+                the sound down.
+              </li>
+              <li>
+                <strong>
+                  <Link href="/guides/controls">What are the controls in Lullwood?</Link>
+                </strong>{" "}
+                — every key on a keyboard, the one people miss (hold F), and
+                how to remap the eleven actions that can be remapped.
+              </li>
+              <li>
+                <strong>
+                  <Link href="/guides/mobile">Can you play Lullwood on a phone?</Link>
+                </strong>{" "}
+                — yes, in landscape with no keyboard: every on-screen control,
+                which prompts are tap rows, and what a short phone screen hides.
               </li>
               <li>
                 <strong>
@@ -124,7 +169,6 @@ export default function GuidesHubPage() {
                 the mold, and where Lullwood differs.
               </li>
             </ul>
-
           </div>
         </article>
         <footer className="devlog-footer">

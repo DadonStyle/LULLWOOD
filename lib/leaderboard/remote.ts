@@ -48,9 +48,11 @@ function isConnectFailure(err: unknown): boolean {
  * relay, all inside the one `timeoutMs` budget. The bad relay does not refuse
  * connections, it hangs, so each attempt gets an equal slice of the budget and
  * a timeout is retried too. That is safe for a POST: if a timed-out submission
- * did land, the retry is refused by the service's own 10 s per-IP cooldown
- * inside its write transaction, so no duplicate row can be stored (worst case
- * the player sees "please wait" for a run that was saved).
+ * did land, the retry is refused inside the service's write transaction (the
+ * run id is already used, and the 10 s per-IP cooldown), so no duplicate row
+ * can be stored (worst case the player sees "already submitted" for a run that
+ * was saved). A retried run start can open a second session; the client keeps
+ * the one it got, the other expires.
  */
 export async function callService(
   config: ServiceConfig,

@@ -90,6 +90,36 @@ test.describe('telemetry transport — fire-and-forget guarantee', () => {
     expectNoConsoleErrors(errors);
   });
 
+  // LUL-6229: first-touch referrer/UTM rides on the page_view event. Not engine behaviour,
+  // so no qa hook; micro world only to keep boot cheap.
+  async function pageViewBody(page: import('@playwright/test').Page, url: string, referer: string) {
+    await page.addInitScript(() => window.localStorage.setItem('lullwood:welcomeSeen', '1'));
+    const seen = page.waitForRequest(
+      (req) => req.url().endsWith('/api/telemetry') && (req.postData() ?? '').includes('"page_view"'),
+    );
+    await page.route('**/api/telemetry', (route) => route.fulfill({ status: 204, body: '' }));
+    await page.goto(url, { referer, waitUntil: 'domcontentloaded', timeout: 120_000 });
+    return JSON.parse((await seen).postData() ?? '{}') as Record<string, unknown>;
+  }
+
+  test('page_view carries referrer_host and utm_* on first touch', async ({ page }) => {
+    const body = await pageViewBody(
+      page,
+      '/?qaWorld=micro&utm_source=packtest&utm_medium=seoeng&utm_campaign=lul6227',
+      'https://dev.to/some/post?x=1',
+    );
+    expect(body.referrer_host).toBe('dev.to');
+    expect(body.utm_source).toBe('packtest');
+    expect(body.utm_medium).toBe('seoeng');
+    expect(body.utm_campaign).toBe('lul6227');
+  });
+
+  test('page_view with only a referrer has referrer_host and no utm_* keys', async ({ page }) => {
+    const body = await pageViewBody(page, '/?qaWorld=micro', 'https://dev.to/');
+    expect(body.referrer_host).toBe('dev.to');
+    expect(Object.keys(body).filter((k) => k.startsWith('utm_'))).toEqual([]);
+  });
+
   test('/api/telemetry route answers in the CI environment', async ({ request }) => {
     // Sanity-check: the route is reachable and returns 204 (the no-token path).
     // Would catch a broken import or a build error.

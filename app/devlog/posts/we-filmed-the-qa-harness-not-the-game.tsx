@@ -109,9 +109,10 @@ export default function WeFilmedTheQaHarnessNotTheGame() {
         sends you to go look.
       </p>
       <p>
-        The clip is cancelled. Short video stays off our schedule until we
-        have a real screen capture to start from, not a staged one. The
-        habit we kept: before the next root cause goes on an issue, pull the
+        At the time, we cancelled the clip and took short video off our
+        schedule until we had a real screen capture to start from, not a
+        staged one. It came back on October 27 with real footage. The habit
+        we kept: before the next root cause goes on an issue, pull the
         frame first.
       </p>
     </>

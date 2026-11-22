@@ -111,9 +111,12 @@ declare global {
        * `flagImageLoaded` is whether the flag picture replaced the colour bars;
        * `label` the small heading above the name ('' unless populated). */
       /** Top-right run timer (#runTimer) and rescuer eligibility: the m:ss last
-       * shown, the live run seconds, and whether admin mode was on at any point
-       * of the current run (such a run can't take the top rescuer spot). */
-      qaProbeRunClock?: () => { label: string; seconds: number; adminUsedThisRun: boolean };
+       * shown, the live run seconds, whether admin mode was on / the run was
+       * paused at any point of the current run before the lift (such a run
+       * can't take the top rescuer spot), and the run serial (+1 per enter(),
+       * the key of the server run session). */
+      qaProbeRunClock?: () => { label: string; seconds: number; adminUsedThisRun: boolean; pausedThisRun: boolean; runSerial: number };
+      qaRunTrace?: () => { finished: { v: number; interval_ms: number; end_ms: number; child: [number, number]; samples: string } | null; samplesSoFar: number; intervalMs: number };
       qaProbeLeaderboardSky?: () => {
         visible: boolean; text: string; hasFlag: boolean;
         lettersLoaded: boolean; modelName: string; flagImageLoaded: boolean; label: string;

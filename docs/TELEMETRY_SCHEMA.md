@@ -49,7 +49,7 @@ is the source of truth for the exact shape -- this table is a summary, not a cop
 
 | event | fields | fed into |
 |---|---|---|
-| `page_view` | (none) | `computeFunnel` |
+| `page_view` | `referrer_host?`, `utm_source?`, `utm_medium?`, `utm_campaign?` (LUL-6229, first-touch per browser session via `readAttribution()`; keys omitted when absent; values sanitised to `[a-z0-9_.:/-]`, max 64) | `computeFunnel`, stats DB (`events.payload_json`) |
 | `cta_start_clicked` | (none) | `computeFunnel` |
 | `game_start` | `seed`, `viewport_w?`, `viewport_h?`, `dpr?`, `touch?` (LUL-3264, attached by `track()`) | `computeFunnel`, stats DB (`events.payload_json`) |
 | `win` | `time_survived_ms`, `seed`, `payout`, `balance`, `difficulty`, `purchases_made?` (LUL-2998) | `computeFunnel`, `computeOutcomes`, `computeOutcomesByTier`, `computeEconomy` |

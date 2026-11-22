@@ -13,6 +13,9 @@ import {
   DEVTO_URL,
 } from "../lib/site";
 import { DEVLOG_FEED_TYPES } from "../lib/seo";
+import { SiteFooter } from "../components/SiteFooter";
+import { SiteHeader } from "../components/SiteHeader";
+import { AttributionCapture } from "../components/AttributionCapture";
 
 // LUL-529: two things this repo had zero of before.
 // - `viewportFit: 'cover'` is what makes every `env(safe-area-inset-*)` in
@@ -171,9 +174,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           // disabled: GameCanvas never mounts in that case either, so the
           // about content staying reachable is the correct fallback, not a
           // bug -- see the "no JS still sees it in normal document flow"
-          // comment in globals.css.
+          // comment in globals.css. Home only: every other route is a
+          // scrolling document (LUL-6435: this ran on /faq and froze scroll).
           dangerouslySetInnerHTML={{
-            __html: "document.documentElement.style.overflow='hidden';",
+            __html: "if(location.pathname==='/')document.documentElement.style.overflow='hidden';",
           }}
         />
       </head>
@@ -187,7 +191,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             __html: JSON.stringify(siteJsonLd).replace(/</g, "\\u003c"),
           }}
         />
+        <AttributionCapture />
+        <SiteHeader />
         {children}
+        <SiteFooter />
       </body>
     </html>
   );

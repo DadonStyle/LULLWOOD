@@ -115,7 +115,9 @@ export default function Home() {
           <p>
             On a phone or tablet the same actions are on screen: twin sticks
             to move and look, and buttons for jump, hide, veil and lift. Hold the
-            phone in landscape; portrait shows a rotate prompt.
+            phone in landscape; portrait shows a rotate prompt. The{" "}
+            <Link href="/guides/mobile">phone controls guide</Link> lists every
+            on-screen control and what a short phone screen hides.
           </p>
         </section>
         <section>
@@ -220,8 +222,21 @@ export default function Home() {
               difficulty
             </li>
             <li>
+              <Link href="/guides/difficulty-tiers">Is Lullwood too hard?</Link> —
+              what Lantern, Night and Blackout change, and how to switch
+            </li>
+            <li>
               <Link href="/guides/how-to-win">How do you win Lullwood?</Link> —
               the win condition: lift the child, no trip home
+            </li>
+            <li>
+              <Link href="/guides/throwing-stones">Can you distract wolves in Lullwood?</Link> —
+              throw a stone to pull a predator off your trail, and what it
+              does not fix
+            </li>
+            <li>
+              <Link href="/guides">Lullwood guides</Link> — how to survive
+              the wolves and bears, and how the fireflies work
             </li>
             <li>
               <Link href="/games-like-slender">Games like Slender</Link> — what
@@ -230,6 +245,11 @@ export default function Home() {
             <li>
               <Link href="/devlog">The Lullwood devlog</Link> — how the game
               is built, post by post
+            </li>
+            <li>
+              <Link href="/devlog/ai-disclosure-game">Is Lullwood made by AI?</Link>{" "}
+              — yes, and what a game jam rule and a store form ask a game to
+              disclose
             </li>
             <li>
               <Link href="/press">Press kit</Link> — fact sheet,

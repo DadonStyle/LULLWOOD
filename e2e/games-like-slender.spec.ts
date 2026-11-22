@@ -16,10 +16,10 @@ test.describe('games like Slender page', () => {
     const canonical = await page.locator('link[rel="canonical"]').getAttribute('href');
     expect(new URL(canonical as string).pathname).toBe('/games-like-slender');
 
-    // The root file-convention social images are named explicitly on this route.
-    expect(await page.locator('meta[property="og:image"]').getAttribute('content')).toContain('opengraph-image.png');
+    // LUL-6473: per-page card drawn by app/og/route.tsx from this page's title.
+    expect(await page.locator('meta[property="og:image"]').getAttribute('content')).toContain('/og?title=Games%20Like%20Slender');
     expect(await page.locator('meta[name="twitter:card"]').getAttribute('content')).toBe('summary_large_image');
-    expect(await page.locator('meta[name="twitter:image"]').getAttribute('content')).toContain('twitter-image.png');
+    expect(await page.locator('meta[name="twitter:image"]').getAttribute('content')).toContain('/og?title=Games%20Like%20Slender');
 
     // The layout emits its own two blocks; find this page's by content.
     const blocks = await page.locator('script[type="application/ld+json"]').allTextContents();
@@ -37,7 +37,7 @@ test.describe('games like Slender page', () => {
     const crumbs = nodes.find((n) => n['@type'] === 'BreadcrumbList');
     expect(crumbs.itemListElement.map((i: { name: string }) => i.name)).toEqual(['Home', 'Games like Slender']);
 
-    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser' })).toHaveAttribute('href', '/');
+    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser', exact: true })).toHaveAttribute('href', '/');
     await expect(page.getByRole('link', { name: 'Lullwood survival guide' })).toHaveAttribute('href', '/how-to-survive');
     await expect(page.getByRole('link', { name: 'Read the Lullwood devlog' })).toHaveAttribute('href', '/devlog');
   });

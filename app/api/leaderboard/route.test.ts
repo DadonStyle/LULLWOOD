@@ -50,7 +50,8 @@ function post(body: unknown, headers: Record<string, string> = {}) {
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
 }
-const good = { nickname: 'RangerOne', country: 'il', time_ms: 120_000, anon_id: '3f2504e0-4f89-41d3-9a0c-0305e82c3301' };
+const RUN_ID = '0123456789abcdef0123456789abcdef';
+const good = { nickname: 'RangerOne', country: 'il', time_ms: 120_000, anon_id: '3f2504e0-4f89-41d3-9a0c-0305e82c3301', run_id: RUN_ID };
 
 test('a valid submission is forwarded signed, normalized, with a salted IP hash and server-side build sha', async () => {
   process.env.VERCEL_GIT_COMMIT_SHA = 'abcdef1234567';
@@ -65,6 +66,7 @@ test('a valid submission is forwarded signed, normalized, with a salted IP hash 
   assert.equal(s.body!.nickname, 'rangerone');
   assert.equal(s.body!.country, 'IL');
   assert.equal(s.body!.build_sha, 'abcdef1234567');
+  assert.equal(s.body!.run_id, RUN_ID);
   assert.equal(s.body!.device_class, 'mobile');
   assert.match(String(s.body!.ip_hash), /^[0-9a-f]{64}$/);
   assert.equal(JSON.stringify(s.body).includes('198.51.100.7'), false, 'raw IP never leaves Vercel');
@@ -106,6 +108,35 @@ test('invalid fields are 400 before any service call (B1, B2, B4, B9)', async ()
   assert.equal((await POST(post('{bad'))).status, 400);
   assert.equal((await POST(post({ pad: 'x'.repeat(3000) }))).status, 413);
   assert.equal(sent.length, 0);
+});
+
+test('a missing or malformed run_id is 400 before any service call', async () => {
+  for (const run_id of [undefined, null, '', 'abc', RUN_ID.toUpperCase(), `${RUN_ID}0`, `${RUN_ID}\n`, 123]) {
+    const res = await POST(post({ ...good, run_id }));
+    assert.equal(res.status, 400, String(run_id));
+    assert.deepEqual(await res.json(), { error: 'this run could not be verified' });
+  }
+  assert.equal(sent.length, 0);
+});
+
+test('each service run refusal maps to a user-safe message; anything else stays generic', async () => {
+  const cases: [string, string][] = [
+    ['invalid_run', 'this run could not be verified'],
+    ['run_used', 'this run was already submitted'],
+    ['run_expired', 'this run is too old to submit'],
+    ['run_unfinished', 'this run\'s time could not be verified'],
+    ['too_fast', 'this run\'s time could not be verified'],
+    ['clock_mismatch', 'this run\'s time could not be verified'],
+    ['invalid_trace', 'this run\'s path could not be verified'],
+    ['invalid submission', 'invalid submission'],
+    ['<b>internal detail</b>', 'invalid submission'],
+  ];
+  for (const [code, message] of cases) {
+    reply = () => ({ status: 400, body: { error: code } });
+    const res = await POST(post(good));
+    assert.equal(res.status, 400, code);
+    assert.deepEqual(await res.json(), { error: message }, code);
+  }
 });
 
 test('the honeypot looks successful and stores nothing', async () => {

@@ -11,17 +11,22 @@
 // LUL-4341: minimap is admin-gated again -- see ./minimap-setting.spec.ts
 // for the blackout-preset and stale-key regression coverage.
 import { test, expect } from '../fixtures';
-import { boot } from '../helpers';
+import { boot, qaHook } from '../helpers';
 
 test.use({ viewport: { width: 727, height: 393 } }); // landscape, clears OrientationGate (LUL-69)
 
 test('admin mode defaults off and is reachable/toggleable on mobile', async ({ page }) => {
-  await boot(page);
+  // LUL-6456: blackout is the default since LUL-5953 and its preset hides #minimap regardless of
+  // admin mode (engine/tuning.js). Pin 'night' and regenerate so the first generateMap() (already
+  // run with the blackout default) is redone -- same pattern as ../admin-mode.spec.ts.
+  await page.addInitScript(() => window.localStorage.setItem('lullwood:settings', JSON.stringify({ difficulty: 'night' })));
+  await boot(page, { qaHooks: true });
 
   const viewport = page.viewportSize();
   if (!viewport) throw new Error('mobile project must have a viewport size');
   await page.mouse.click(viewport.width / 2, viewport.height / 2);
   await page.waitForTimeout(1200); // gate fade settle
+  await qaHook(page, 'qaRegenerateMap', 1);
 
   await expect(page.locator('#pace')).toBeHidden();
 

@@ -27,8 +27,8 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
 const TITLE = "How to Survive Lions in Lullwood: the Dusk Guide";
 const DESCRIPTION =
   "How to survive lions in Lullwood: the fastest hunter gives about 4 seconds' warning, then goes half-blind at dusk. Hide, veil, jump the charge.";
-const PUBLISHED = "2026-11-02";
-const MODIFIED = "2026-11-02";
+const PUBLISHED = "2026-11-24";
+const MODIFIED = "2026-11-24";
 const PAGE_URL = `${SITE_URL}/guides/lions`;
 // Same text as app/opengraph-image.alt.txt / twitter-image.alt.txt.
 const SOCIAL_IMAGE_ALT = "Lullwood: a glowing child alone in a foggy night forest, first-person browser horror game";
@@ -101,7 +101,7 @@ export default function LionsGuidePage() {
         <article>
           <header>
             <h1>How to survive lions in Lullwood</h1>
-            <time dateTime={MODIFIED}>Updated November 2, 2026</time>
+            <time dateTime={MODIFIED}>Updated November 24, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
@@ -201,9 +201,11 @@ export default function LionsGuidePage() {
               </li>
               <li>
                 <strong>Hide and hold still.</strong> The lion&apos;s sight
-                range falls the longer you stay motionless in bramble. The full
-                rules are in the{" "}
-                <Link href="/how-to-survive">Lullwood survival guide</Link>.
+                range falls the longer you stay motionless in bramble, but the
+                bush is noisy: entering it can alert a roaming lion that is
+                close. How long a bush stays quiet is in{" "}
+                <Link href="/how-to-survive#how-do-you-hide-in-lullwood">how
+                to hide in Lullwood</Link>.
               </li>
               <li>
                 <strong>Do not run.</strong> You cannot outrun it, and a sprint

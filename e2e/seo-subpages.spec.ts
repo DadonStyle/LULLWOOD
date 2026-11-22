@@ -29,12 +29,14 @@ test.describe('SEO on subpages', () => {
       await page.goto(path, { waitUntil: 'domcontentloaded' });
 
       const ogImage = await page.locator('meta[property="og:image"]').getAttribute('content');
-      expect(ogImage).toMatch(/^https?:\/\/.+\/opengraph-image\.png$/);
+      expect(ogImage).toMatch(/^https?:\/\/.+\/og\?title=.+$/);
       await expect(page.locator('meta[property="og:image:alt"]')).toHaveAttribute('content', /\S/);
       await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute('content', 'summary_large_image');
-      await expect(page.locator('meta[name="twitter:image"]')).toHaveAttribute('content', /opengraph-image\.png$/);
-      const image = await page.request.get(new URL(ogImage as string).pathname);
+      await expect(page.locator('meta[name="twitter:image"]')).toHaveAttribute('content', /\/og\?title=.+$/);
+      const ogUrl = new URL(ogImage as string);
+      const image = await page.request.get(ogUrl.pathname + ogUrl.search);
       expect(image.status()).toBe(200);
+      expect(image.headers()['content-type']).toMatch(/^image\//);
 
       const breadcrumbs = (await jsonLdBlocks(page)).filter((d) => d['@type'] === 'BreadcrumbList');
       expect(breadcrumbs).toHaveLength(1);
@@ -65,7 +67,7 @@ test.describe('SEO on subpages', () => {
 
   test('devlog post: links to the game and to its older and newer neighbours', async ({ page }) => {
     await page.goto(`/devlog/${middle.slug}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser' })).toHaveAttribute('href', '/');
+    await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser', exact: true })).toHaveAttribute('href', '/');
     await expect(page.locator('a[rel="prev"]')).toHaveAttribute('href', `/devlog/${posts[2].slug}`);
     await expect(page.locator('a[rel="next"]')).toHaveAttribute('href', `/devlog/${posts[0].slug}`);
   });
@@ -97,7 +99,7 @@ test.describe('SEO on subpages', () => {
       );
       expect(robots).toEqual(['noindex']);
 
-      await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser' })).toHaveAttribute('href', '/');
+      await expect(page.getByRole('link', { name: 'Play Lullwood free in your browser', exact: true })).toHaveAttribute('href', '/');
       await expect(page.locator('main a[href="/devlog"]')).toBeVisible();
       await expect(page.locator(`main a[href="/devlog/${posts[0].slug}"]`)).toBeVisible();
     });

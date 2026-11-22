@@ -184,6 +184,8 @@ export default function WhoMakesLullwood() {
         Lullwood free in your browser at{" "}
         <Link href="/">www.lullwoodgame.com</Link>. For how to stay alive in
         the forest, read <Link href="/how-to-survive">how to survive Lullwood</Link>.
+        For how this page compares with a game jam rule and a store form, read{" "}
+        <Link href="/devlog/ai-disclosure-game">Is Lullwood made by AI?</Link>
       </p>
     </>
   );

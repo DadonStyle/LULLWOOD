@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
   // double-invoked dev effects leave exactly one running instance.
   reactStrictMode: true,
 
+  // LUL-6473: app/og/route.tsx reads app/opengraph-image.png at request time; pin it into the
+  // serverless bundle so /og cannot 500 in production for want of a traced file.
+  outputFileTracingIncludes: { "/og": ["./app/opengraph-image.png"] },
+
   // LUL-5089: `lib/analytics.ts`'s `track()` reads `process.env.NEXT_PUBLIC_BUILD_SHA`
   // and falls back to `'dev'` when unset -- and it has been unset in every production
   // build to date (no env var of that name was ever set in Vercel or here), so every

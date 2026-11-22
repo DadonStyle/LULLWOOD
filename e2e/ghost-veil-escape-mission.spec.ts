@@ -36,6 +36,10 @@ test('a chase give-up while Veil Overload is active completes Ghost', async ({ p
   // already clear -- scentLock: SCENT_TRACK_TIME mirrors a real scentOnto()/spotOnto() chase
   // entry, not a synthetic zero (a zero scentLock would give up on the very first tick, before
   // Veil Overload could ever be activated).
+  // qaSetFixedStep() goes FIRST (same order as e2e/beacon-hunter.spec.ts): it parks the real RAF
+  // loop, so wall-clock frames between staging and the first qaAdvance() cannot decay scentLock
+  // and expire the chase early on a loaded rig (LUL-6277).
+  await qaHook(page, 'qaSetFixedStep', FIXED_DT);
   await qaHook(page, 'qaBuildScene', {
     predators: [{ kind: 'wolf', x: 40, z: 0, state: 'chase', scentLock: 8 }],
   });
@@ -45,7 +49,6 @@ test('a chase give-up while Veil Overload is active completes Ghost', async ({ p
   expect(staged.state).toBe('chase');
   expect(staged.dist, 'the wolf must start beyond its give-up leash or shouldGiveUpChase() never has a chance to fire').toBeGreaterThan(staged.detectRange * 1.5);
 
-  await qaHook(page, 'qaSetFixedStep', FIXED_DT);
   // 390 of the 400 scentLock-decay ticks -- leaves ~0.2s on the clock so the chase is still
   // live right up until Veil Overload activates, proving the completion window (not a give-up
   // that already happened before the key press).
@@ -87,13 +90,13 @@ test('a chase give-up with Veil Overload never activated does not complete Ghost
   const mission = await qaHook(page, 'qaProbeMission');
   expect(mission?.kind).toBe('ghost');
 
+  await qaHook(page, 'qaSetFixedStep', FIXED_DT);
   await qaHook(page, 'qaBuildScene', {
     predators: [{ kind: 'wolf', x: 40, z: 0, state: 'chase', scentLock: 8 }],
   });
   const staged = await qaHook(page, 'qaPredatorState', 0);
   expect(staged.dist).toBeGreaterThan(staged.detectRange * 1.5);
 
-  await qaHook(page, 'qaSetFixedStep', FIXED_DT);
   // Full decay plus margin, no KeyQ press anywhere in this test.
   await qaHook(page, 'qaAdvance', SCENT_TRACK_TICKS + 20, true);
 

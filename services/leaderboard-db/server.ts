@@ -3,7 +3,9 @@ import { execFile } from 'node:child_process';
 import { LeaderboardDb } from './db.ts';
 import {
   validateNickname, validateCountry, validateTimeMs, validateAnonId, clampListLimit, parseCursor,
+  validateRunId, validateDifficulty, RUN_REJECT_CODES, RUN_SESSION_TTL_MS, implausibleWin,
 } from '../../lib/game/leaderboard.ts';
+import { checkRunTrace } from '../../lib/game/run-trace.ts';
 import { SUGGESTION_TEXT_PATTERN } from '../../lib/suggestions/rules.ts';
 import { verify, usableSecret, SIGNATURE_HEADER, TIMESTAMP_HEADER, NONCE_HEADER, SIGNATURE_MAX_SKEW_MS } from '../../lib/leaderboard/signing.ts';
 
@@ -64,6 +66,18 @@ export interface ServiceOptions {
   log?: (line: string) => void;
   /** Founder alert on a new record (threat model B1). Fire-and-forget; never blocks or fails a request. */
   onNewRecord?: (nickname: string, country: string, timeMs: number) => void;
+  /**
+   * Proof of play (lib/game/run-trace.ts): a run must be finished with a valid
+   * trace to be submitted. Default true. False (env LB_TRACE_REQUIRED=0) is
+   * the deploy transition window only: a finish without a trace is then still
+   * accepted, but a trace that is sent is always checked.
+   */
+  requireTrace?: boolean;
+}
+
+/** LB_TRACE_REQUIRED: anything but an explicit "0"/"false"/"off" keeps the trace required. */
+export function traceRequiredFromEnv(value: string | undefined): boolean {
+  return !(value !== undefined && /^(0|false|off|no)$/i.test(value.trim()));
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -113,6 +127,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 export function createService(opts: ServiceOptions): Server {
   const now = opts.now ?? Date.now;
   const log = opts.log ?? ((line: string) => console.log(line));
+  const requireTrace = opts.requireTrace ?? true;
   // Nonces accepted inside the skew window; anything older is rejected as stale anyway.
   const seenNonces = new Map<string, number>();
 
@@ -137,14 +152,49 @@ export function createService(opts: ServiceOptions): Server {
     if (nickname === null || country === null || timeMs === null) throw new HttpError(400, 'invalid submission');
     if (typeof body.ip_hash !== 'string' || !IP_HASH.test(body.ip_hash)) throw new HttpError(400, 'invalid submission');
     if (typeof body.build_sha !== 'string' || !BUILD_SHA.test(body.build_sha)) throw new HttpError(400, 'invalid submission');
+    // Server-timed run session: a submission without a valid run id is refused.
+    const runId = validateRunId(body.run_id);
+    if (runId === null) return [400, { error: 'invalid_run' }];
     const result = opts.db.submit({
-      nickname, country, timeMs,
+      runId, nickname, country, timeMs,
       buildSha: body.build_sha, ipHash: body.ip_hash,
       anonId: validateAnonId(body.anon_id), deviceClass: optionalToken(body.device_class), browser: optionalToken(body.browser),
-    }, now());
-    if (!result.ok) return [429, { error: result.reason }];
+    }, now(), { requireTrace });
+    if (!result.ok) {
+      if (result.reason === 'invalid_trace') log(`[leaderboard-db] submit refused: invalid_trace (time does not match the trace, or no trace)`);
+      return [RUN_REJECT_CODES.has(result.reason) ? 400 : 429, { error: result.reason }];
+    }
     if (result.isRecord) opts.onNewRecord?.(nickname, country, timeMs);
     return [201, { id: result.id, isRecord: result.isRecord }];
+  }
+
+  function startRun(body: Record<string, unknown>): [number, unknown] {
+    const difficulty = validateDifficulty(body.difficulty);
+    if (difficulty === null) throw new HttpError(400, 'invalid run');
+    if (typeof body.ip_hash !== 'string' || !IP_HASH.test(body.ip_hash)) throw new HttpError(400, 'invalid run');
+    const result = opts.db.startRun({ difficulty, anonId: validateAnonId(body.anon_id), ipHash: body.ip_hash }, now());
+    return result.ok ? [201, { run_id: result.runId }] : [429, { error: result.reason }];
+  }
+
+  function finishRun(body: Record<string, unknown>): [number, unknown] {
+    const runId = validateRunId(body.run_id);
+    if (runId === null) return [400, { error: 'invalid_run' }];
+    // Proof of play: the trace is checked before anything is stamped. The
+    // reason is logged (never the path itself) and the caller gets one code.
+    let trace = null;
+    if (body.trace !== undefined) {
+      const check = checkRunTrace(body.trace, RUN_SESSION_TTL_MS);
+      if (!check.ok) {
+        log(`[leaderboard-db] finish refused: invalid_trace reason=${check.reason}${check.detail ? ` (${check.detail})` : ''}`);
+        return [400, { error: 'invalid_trace' }];
+      }
+      trace = { endMs: check.endMs, samples: check.samples };
+    } else if (requireTrace) {
+      log('[leaderboard-db] finish refused: invalid_trace reason=missing');
+      return [400, { error: 'invalid_trace' }];
+    }
+    const result = opts.db.finishRun(runId, validateAnonId(body.anon_id), now(), trace);
+    return result.ok ? [200, { ok: true }] : [400, { error: result.reason }];
   }
 
   function recordEvent(body: Record<string, unknown>): [number, unknown] {
@@ -153,6 +203,13 @@ export function createService(opts: ServiceOptions): Server {
     const p = payload as Record<string, unknown>;
     if (typeof p.event !== 'string' || !EVENTS.has(p.event)) throw new HttpError(400, 'unknown event');
     if (!isPlainPayload(p)) throw new HttpError(400, 'invalid payload');
+    // A win faster than the game allows is forged: dropped, not stored, and
+    // counted in the log. Every other event is untouched.
+    const impossible = implausibleWin(p);
+    if (impossible) {
+      log(`[leaderboard-db] telemetry win dropped: ${impossible} difficulty=${optionalToken(p.difficulty) ?? '-'}`);
+      return [202, { stored: false, reason: 'implausible' }];
+    }
     const stored = opts.db.recordEvent({
       event: p.event,
       eventTs: typeof p.ts === 'number' && Number.isSafeInteger(p.ts) ? p.ts : null,
@@ -191,6 +248,8 @@ export function createService(opts: ServiceOptions): Server {
     authenticate(req, path, body);
 
     if (req.method === 'POST' && url.pathname === '/v1/submit') return submit(parseJsonObject(body));
+    if (req.method === 'POST' && url.pathname === '/v1/runs/start') return startRun(parseJsonObject(body));
+    if (req.method === 'POST' && url.pathname === '/v1/runs/finish') return finishRun(parseJsonObject(body));
     if (req.method === 'POST' && url.pathname === '/v1/events') return recordEvent(parseJsonObject(body));
     if (req.method === 'POST' && url.pathname === '/v1/suggestions') return submitSuggestion(parseJsonObject(body));
     if (req.method === 'GET' && url.pathname === '/v1/suggestions') return [200, { suggestions: opts.db.listSuggestions() }];
@@ -266,6 +325,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     setInterval(takeSnapshot, 60 * 60 * 1000).unref();
   }
   const port = Number(process.env.LB_PORT ?? '8787');
-  createService({ db, secret, onNewRecord: alertCommand(process.env.LB_ALERT_CMD) })
-    .listen(port, '127.0.0.1', () => console.log(`[leaderboard-db] listening on 127.0.0.1:${port}, db=${dbPath}, pruned ${pruned} old events`));
+  const requireTrace = traceRequiredFromEnv(process.env.LB_TRACE_REQUIRED);
+  createService({ db, secret, onNewRecord: alertCommand(process.env.LB_ALERT_CMD), requireTrace })
+    .listen(port, '127.0.0.1', () => console.log(`[leaderboard-db] listening on 127.0.0.1:${port}, db=${dbPath}, pruned ${pruned} old events, trace ${requireTrace ? 'required' : 'optional (transition)'}`));
 }
