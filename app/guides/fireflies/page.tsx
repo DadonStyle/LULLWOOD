@@ -173,7 +173,9 @@ export default function FirefliesGuidePage() {
               rainfall, but it does not touch the penalty. The detection bonus
               is worked out from where you stand and nothing else. A cluster
               that looks faint in the rain is exactly as dangerous as a bright
-              one, so do not read a dim glow as permission to rest in it.
+              one, so do not read a dim glow as permission to rest in it. For
+              what rain does change, see{" "}
+              <Link href="/guides/rain">does rain help you sneak?</Link>
             </p>
 
             <h2>Do the fireflies warn you when a predator is near?</h2>
