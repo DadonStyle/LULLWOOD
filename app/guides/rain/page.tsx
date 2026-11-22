@@ -149,8 +149,8 @@ export default function RainGuidePage() {
               <tbody>
                 <tr>
                   <td style={CELL_STYLE}>
-                    <strong>Footstep noise radius: × 0.65.</strong> Walking
-                    14 units becomes 9.1; running 24 becomes 15.6.
+                    <strong>Footstep noise radius: × 0.65.</strong> On open
+                    ground, walking 14 units becomes 9.1; running 24 becomes 15.6.
                   </td>
                   <td style={CELL_STYLE}>
                     <strong>How far predators see you.</strong> Sight range
@@ -159,8 +159,9 @@ export default function RainGuidePage() {
                 </tr>
                 <tr>
                   <td style={CELL_STYLE}>
-                    <strong>Fog density: +0.08.</strong> The base is 0.04, so
-                    at full rain the fog is three times as dense.
+                    <strong>Fog density: +0.08.</strong> That is on top of the
+                    dry fog, which itself thickens from 0.04 to 0.10 over the
+                    first two minutes of a run.
                   </td>
                   <td style={CELL_STYLE}>
                     <strong>Your scent trail.</strong> How much you leave and
@@ -214,8 +215,8 @@ export default function RainGuidePage() {
 
             <h2>Does the game tell you about rain?</h2>
             <p>
-              Yes, once. The first time rain is falling, a caption reads
-              &ldquo;rain masks footsteps — predators&apos; noise detection
+              Yes, once. The first time you see rain, with hints on, a caption can
+              read &ldquo;rain masks footsteps — predators&apos; noise detection
               drops.&rdquo; It shows for a few seconds, only once per install,
               and not at all if you have turned hints off in Settings. The
               rain sound arrives about 10 seconds earlier than the caption.
