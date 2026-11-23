@@ -10,8 +10,8 @@ export default function WhatHappensWhenYouAltTab() {
         so a predator is where you left it.
       </p>
       <p>
-        There is one exception, and it is the interesting part: the scent
-        trail you were leaving is gone when you return. We build{" "}
+        The interesting part is where the clamp stops: it caps the time step,
+        not the clock that step is read from. We build{" "}
         <Link href="/">Lullwood</Link>, a free browser horror game, in three.js.
         Everything below was read from the source at commit{" "}
         <code>3a184da</code> on 2026-11-23, and the last section says what we
@@ -87,9 +87,7 @@ export default function WhatHappensWhenYouAltTab() {
         listens for <code>pointerlockchange</code>: if the lock is lost
         mid-run, it calls <code>setPaused(true)</code>. The code comment calls
         it &ldquo;Esc / released lock -&gt; menu&rdquo;, so the same path
-        serves Esc and alt-tab. While paused, the per-frame{" "}
-        <code>playing</code> flag is false, which is the gate on the predator
-        update, and the run timer stops.
+        serves Esc and alt-tab. While paused, the run timer stops.
       </p>
       <p>
         That handler is bound in desktop mode only. On a touch device, or on a
@@ -102,26 +100,12 @@ export default function WhatHappensWhenYouAltTab() {
         <code>dt</code> is clamped. <code>clock.elapsedTime</code> is not,
         because <code>getDelta()</code> adds the raw gap to it before the engine
         sees the number. Anything that stores an <code>elapsedTime</code>{" "}
-        snapshot and subtracts it later reads real wall-clock time. Scent works
-        this way: each footstep point stores its birth time, and its age is{" "}
-        <code>clock.elapsedTime - t0</code>. <code>SCENT_LIFETIME</code> is 14
-        seconds, which wind and the quiet-step ember adjust, and the engine
-        prunes expired points every frame.
-      </p>
-      <p>
-        So a 30-second absence, paused or not, ages every point on the trail
-        past its lifetime. When you come back the predators are where you left
-        them, the stamina bar is where you left it, and the trail you were
-        leaving is gone. Nothing in the code compensates for a pause on the
-        scent clock. The run timer does: <code>setPaused(false)</code> slides{" "}
-        <code>enteredAt</code> forward by the paused span, which is why a paused
-        desktop run does not count the time away. Without the pause, on a touch
-        device, the run timer counts it. How the trail works is in{" "}
-        <Link href="/devlog/how-scent-and-wind-work">
-          how scent and wind work
-        </Link>
-        , and what to do with it in the{" "}
-        <Link href="/how-to-survive">survival guide</Link>.
+        snapshot and subtracts it later reads real wall-clock time, however
+        long the tab was away. The run timer is the example we handle on
+        purpose: <code>setPaused(false)</code> slides <code>enteredAt</code>{" "}
+        forward by the paused span, which is why a paused desktop run does not
+        count the time away. Without the pause, on a touch device, the run
+        timer counts it.
       </p>
 
       <h2>What we have not checked</h2>
