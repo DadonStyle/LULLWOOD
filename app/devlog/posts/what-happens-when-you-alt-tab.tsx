@@ -68,7 +68,8 @@ export default function WhatHappensWhenYouAltTab() {
         than you&rdquo; and the lion &ldquo;the fastest hunter here&rdquo;. One
         step of 30 seconds at the player&rsquo;s sprint speed alone is 324
         units, taken in a single frame, which is how a predator ends up on the other
-        side of a wall. One clamped step is 0.54.
+        side of a wall. One clamped step is 0.54. How each predator hunts is
+        in the <Link href="/how-to-survive">survival guide</Link>.
       </p>
       <p>
         Stamina has the same shape. <code>STAMINA_DRAIN_TIME</code> is 6
