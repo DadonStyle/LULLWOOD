@@ -22,7 +22,7 @@ const POSTS: PostMeta[] = [
     title: 'What happens when you alt-tab away from Lullwood for 30 seconds?',
     date: '2026-11-23',
     description:
-      "Almost nothing: Lullwood's frame loop clamps a 30 s gap to 0.05 s, and desktop focus loss pauses the run. The clock the clamp misses: scent. Read from the source.",
+      "Almost nothing: Lullwood's frame loop clamps a 30 s gap to 0.05 s, and desktop focus loss pauses the run. Why the clamp caps the time step but not the clock. Read from the source.",
   },
   {
     slug: 'does-publishing-engine-numbers-put-a-game-at-risk',
