@@ -18,6 +18,13 @@ export interface PostMeta {
 // Add an entry here when you add a post file.
 const POSTS: PostMeta[] = [
   {
+    slug: 'what-happens-when-you-alt-tab',
+    title: 'What happens when you alt-tab away from Lullwood for 30 seconds?',
+    date: '2026-11-23',
+    description:
+      "Almost nothing: Lullwood's frame loop clamps a 30 s gap to 0.05 s, and desktop focus loss pauses the run. The clock the clamp misses: scent. Read from the source.",
+  },
+  {
     slug: 'does-publishing-engine-numbers-put-a-game-at-risk',
     title: "Does publishing your game's engine numbers put it at risk? Lullwood publishes 0.65",
     date: '2026-11-16',
