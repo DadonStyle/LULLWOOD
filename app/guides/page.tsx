@@ -119,6 +119,14 @@ export default function GuidesHubPage() {
               </li>
               <li>
                 <strong>
+                  <Link href="/guides/sprinting">Walk or run in Lullwood?</Link>
+                </strong>{" "}
+                — Shift makes you up to 1.8 times faster, but footsteps carry
+                24 units instead of 14 and your scent trail widens. What else
+                sprinting costs, and what it does not change.
+              </li>
+              <li>
+                <strong>
                   <Link href="/guides/difficulty-tiers">Is Lullwood too hard?</Link>
                 </strong>{" "}
                 — Lantern, Night and Blackout: what each tier changes, why
