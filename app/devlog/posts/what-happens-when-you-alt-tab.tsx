@@ -101,12 +101,12 @@ export default function WhatHappensWhenYouAltTab() {
         <code>dt</code> is clamped. <code>clock.elapsedTime</code> is not,
         because <code>getDelta()</code> adds the raw gap to it before the engine
         sees the number. Anything that stores an <code>elapsedTime</code>{" "}
-        snapshot and subtracts it later reads real wall-clock time, however
-        long the tab was away. The run timer is the example we handle on
-        purpose: <code>setPaused(false)</code> slides <code>enteredAt</code>{" "}
-        forward by the paused span, which is why a paused desktop run does not
-        count the time away. Without the pause, on a touch device, the run
-        timer counts it.
+        snapshot and subtracts it later reads real wall-clock time. The run
+        timer is the example we handle on purpose:{" "}
+        <code>setPaused(false)</code> slides <code>enteredAt</code> forward by
+        the paused span, which is why a paused desktop run does not count the
+        time away. Without the pause, on a touch device, the run timer counts
+        it.
       </p>
 
       <h2>What we have not checked</h2>
