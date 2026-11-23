@@ -172,6 +172,8 @@ export default function ControlsPage() {
               <li>
                 <strong>Shift (hold)</strong> — run. Running is louder and lays a
                 stronger scent trail. A Settings option turns it into a toggle.
+                The numbers are in{" "}
+                <Link href="/guides/sprinting">Walk or run in Lullwood?</Link>
               </li>
               <li>
                 <strong>Space</strong> — jump, and how you clear a charging

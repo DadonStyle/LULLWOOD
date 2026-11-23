@@ -99,6 +99,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.6,
     },
     {
+      url: `${SITE_URL}/guides/sprinting`,
+      lastModified: new Date("2026-11-23T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
       url: `${SITE_URL}/guides/difficulty-tiers`,
       lastModified: new Date("2026-10-29T00:00:00.000Z"),
       changeFrequency: "monthly",
