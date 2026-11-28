@@ -70,7 +70,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       // the brief -- see SEO-GEO.md item 5 on why the sitemap field must not
       // carry a date that hasn't happened yet.
       url: `${SITE_URL}/guides`,
-      lastModified: new Date("2026-10-29T00:00:00.000Z"),
+      lastModified: new Date("2026-11-22T00:00:00.000Z"),
       changeFrequency: "monthly",
       priority: 0.6,
     },
@@ -89,6 +89,18 @@ export default function sitemap(): MetadataRoute.Sitemap {
     {
       url: `${SITE_URL}/guides/fireflies`,
       lastModified: new Date("2026-10-28T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
+      url: `${SITE_URL}/guides/rain`,
+      lastModified: new Date("2026-11-22T00:00:00.000Z"),
+      changeFrequency: "monthly",
+      priority: 0.6,
+    },
+    {
+      url: `${SITE_URL}/guides/sprinting`,
+      lastModified: new Date("2026-11-23T00:00:00.000Z"),
       changeFrequency: "monthly",
       priority: 0.6,
     },

@@ -17,7 +17,7 @@ const TITLE = "How to Survive Wolves in Lullwood: the Pack Flank Guide";
 const DESCRIPTION =
   "How to survive wolves in Lullwood: the pack flanks 60° off your line while a Beacon Hunter reads the wind. Real distances, timings and how to break both.";
 const PUBLISHED = "2026-10-22";
-const MODIFIED = "2026-10-22";
+const MODIFIED = "2026-11-16";
 const PAGE_URL = `${SITE_URL}/guides/wolves`;
 
 export const metadata: Metadata = {
@@ -87,7 +87,7 @@ export default function WolvesGuidePage() {
         <article>
           <header>
             <h1>How to survive wolves in Lullwood</h1>
-            <time dateTime={MODIFIED}>Updated October 22, 2026</time>
+            <time dateTime={MODIFIED}>Updated November 16, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
@@ -97,6 +97,15 @@ export default function WolvesGuidePage() {
               sprinting straight runs you into them. Cut sideways and reach
               bramble instead; the flankers trot, slower than the wolf still
               chasing you.
+            </p>
+
+            <h2>How do you play against wolves in Lullwood?</h2>
+            <p>
+              Never run in a straight line. When one wolf spots you, the others
+              peel off to ambush points about 60 degrees either side of your
+              escape line. Cut sideways toward bramble instead: flankers trot,
+              slower than the wolf chasing you. Break the line and you break
+              the pincer.
             </p>
 
             <h2>Why wolves are different</h2>

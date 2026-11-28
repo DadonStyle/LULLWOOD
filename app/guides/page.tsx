@@ -11,7 +11,7 @@ import { socialImage } from "@/lib/seo";
 const TITLE = "Lullwood Guides: How to Survive the Night Forest";
 const DESCRIPTION =
   "Guides for Lullwood, the free browser horror game with no download: how to survive wolves, read scent and wind, and reach the lost child alive.";
-const MODIFIED = "2026-10-29";
+const MODIFIED = "2026-11-22";
 const PAGE_URL = `${SITE_URL}/guides`;
 
 export const metadata: Metadata = {
@@ -64,7 +64,7 @@ export default function GuidesHubPage() {
         <article>
           <header>
             <h1>Lullwood guides</h1>
-            <time dateTime={MODIFIED}>Updated October 29, 2026</time>
+            <time dateTime={MODIFIED}>Updated November 22, 2026</time>
           </header>
           <div className="devlog-body">
             <p>
@@ -108,6 +108,22 @@ export default function GuidesHubPage() {
                 — no: standing in a firefly cluster&apos;s glow raises how far
                 predators can see you by up to 30%. When they appear and what
                 rain does.
+              </li>
+              <li>
+                <strong>
+                  <Link href="/guides/rain">Does rain help you sneak in Lullwood?</Link>
+                </strong>{" "}
+                — partly: for 20 seconds of every 80, rain cuts how far your
+                footsteps carry by 35%. It does not touch sight or scent, and
+                it thickens the fog.
+              </li>
+              <li>
+                <strong>
+                  <Link href="/guides/sprinting">Walk or run in Lullwood?</Link>
+                </strong>{" "}
+                — Shift makes you up to 1.8 times faster, but footsteps carry
+                24 units instead of 14 and your scent trail widens. What else
+                sprinting costs, and what it does not change.
               </li>
               <li>
                 <strong>
